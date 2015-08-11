@@ -157,6 +157,40 @@ public class MediaFile {
                 "application/vnd.ms-powerpoint");
         addFileType(MtpConstants.FORMAT_MS_POWERPOINT_PRESENTATION,
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+
+        addFileType(MtpConstants.FORMAT_EXIF_JPEG, "image/jpeg");
+        addFileType(MtpConstants.FORMAT_EXIF_JPEG, "image/jpeg");
+        addFileType(MtpConstants.FORMAT_GIF, "image/gif");
+        addFileType(MtpConstants.FORMAT_PNG, "image/png");
+        addFileType(MtpConstants.FORMAT_BMP, "image/x-ms-bmp");
+        addFileType(MtpConstants.FORMAT_DEFINED, "image/vnd.wap.wbmp");
+        addFileType(MtpConstants.FORMAT_DEFINED, "image/webp");
+        addFileType(MtpConstants.FORMAT_HEIF, "image/heif");
+        addFileType(MtpConstants.FORMAT_HEIF, "image/heif");
+
+        addFileType(MtpConstants.FORMAT_DNG, "image/x-adobe-dng");
+        addFileType(MtpConstants.FORMAT_TIFF, "image/x-canon-cr2");
+        addFileType(MtpConstants.FORMAT_TIFF_EP, "image/x-nikon-nef");
+        addFileType(MtpConstants.FORMAT_TIFF, "image/x-nikon-nrw");
+        addFileType(MtpConstants.FORMAT_TIFF, "image/x-sony-arw");
+        addFileType(MtpConstants.FORMAT_TIFF, "image/x-panasonic-rw2");
+        addFileType(MtpConstants.FORMAT_TIFF, "image/x-olympus-orf");
+        addFileType(MtpConstants.FORMAT_DEFINED, "image/x-fuji-raf");
+        addFileType(MtpConstants.FORMAT_TIFF, "image/x-pentax-pef");
+        addFileType(MtpConstants.FORMAT_TIFF, "image/x-samsung-srw");
+
+        addFileType(MtpConstants.FORMAT_M3U_PLAYLIST, "audio/x-mpegurl");
+        addFileType(MtpConstants.FORMAT_M3U_PLAYLIST, "application/x-mpegurl");
+        addFileType(MtpConstants.FORMAT_PLS_PLAYLIST, "audio/x-scpls");
+        addFileType(MtpConstants.FORMAT_WPL_PLAYLIST, "application/vnd.ms-wpl");
+
+        addFileType(MtpConstants.FORMAT_TEXT, "text/plain");
+        addFileType(MtpConstants.FORMAT_HTML, "text/html");
+        addFileType(MtpConstants.FORMAT_HTML, "text/html");
+        addFileType(MtpConstants.FORMAT_MS_WORD_DOCUMENT, "application/msword");
+        addFileType(MtpConstants.FORMAT_MS_EXCEL_SPREADSHEET, "application/vnd.ms-excel");
+        addFileType(MtpConstants.FORMAT_MS_POWERPOINT_PRESENTATION, "application/vnd.ms-powerpoint");
+        addFileType(MtpConstants.FORMAT_FLAC, "audio/flac");
     }
 
     /** @deprecated file types no longer exist */
