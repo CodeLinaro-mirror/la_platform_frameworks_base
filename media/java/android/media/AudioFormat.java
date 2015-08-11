@@ -355,6 +355,31 @@ public final class AudioFormat implements Parcelable {
     /** Audio data format: DRA compressed */
     public static final int ENCODING_DRA = 28;
 
+    /** Audio data format: AMRNB
+     * @hide
+     * */
+    public static final int ENCODING_AMRNB = 100;
+    /** Audio data format: AMRWB
+     * @hide
+     * */
+    public static final int ENCODING_AMRWB = 101;
+    /** Audio data format: EVRC
+     * @hide
+     * */
+    public static final int ENCODING_EVRC = 102;
+    /** Audio data format: EVRCB
+     * @hide
+     * */
+    public static final int ENCODING_EVRCB = 103;
+    /** Audio data format: EVRCWB
+     * @hide
+     * */
+    public static final int ENCODING_EVRCWB = 104;
+    /** Audio data format: EVRCNW
+     * @hide
+     * */
+    public static final int ENCODING_EVRCNW = 105;
+
     /** @hide */
     public static String toLogFriendlyEncoding(int enc) {
         switch(enc) {
@@ -733,6 +758,15 @@ public final class AudioFormat implements Parcelable {
             case ENCODING_PCM_FLOAT:
             case ENCODING_PCM_32BIT:
                 return 4;
+            case ENCODING_AMRNB:
+                return 32;
+            case ENCODING_AMRWB:
+                return 61;
+            case ENCODING_EVRC:
+            case ENCODING_EVRCB:
+            case ENCODING_EVRCWB:
+            case ENCODING_EVRCNW:
+                return 23;
             case ENCODING_INVALID:
             default:
                 throw new IllegalArgumentException("Bad audio format " + audioFormat);
@@ -770,6 +804,12 @@ public final class AudioFormat implements Parcelable {
             case ENCODING_MPEGH_LC_L4:
             case ENCODING_DTS_UHD:
             case ENCODING_DRA:
+            case ENCODING_AMRNB:
+            case ENCODING_AMRWB:
+            case ENCODING_EVRC:
+            case ENCODING_EVRCB:
+            case ENCODING_EVRCWB:
+            case ENCODING_EVRCNW:
                 return true;
             default:
                 return false;
@@ -847,6 +887,12 @@ public final class AudioFormat implements Parcelable {
             case ENCODING_MPEGH_LC_L4:
             case ENCODING_DTS_UHD:
             case ENCODING_DRA:
+            case ENCODING_AMRNB:
+            case ENCODING_AMRWB:
+            case ENCODING_EVRC:
+            case ENCODING_EVRCB:
+            case ENCODING_EVRCWB:
+            case ENCODING_EVRCNW:
                 return false;
             case ENCODING_INVALID:
             default:
@@ -1175,6 +1221,12 @@ public final class AudioFormat implements Parcelable {
                 case ENCODING_MPEGH_LC_L4:
                 case ENCODING_DTS_UHD:
                 case ENCODING_DRA:
+                case ENCODING_AMRNB:
+                case ENCODING_AMRWB:
+                case ENCODING_EVRC:
+                case ENCODING_EVRCB:
+                case ENCODING_EVRCWB:
+                case ENCODING_EVRCNW:
                     mEncoding = encoding;
                     break;
                 case ENCODING_INVALID:
@@ -1403,7 +1455,13 @@ public final class AudioFormat implements Parcelable {
         ENCODING_MPEGH_LC_L3,
         ENCODING_MPEGH_LC_L4,
         ENCODING_DTS_UHD,
-        ENCODING_DRA }
+        ENCODING_DRA,
+        ENCODING_AMRNB,
+        ENCODING_AMRWB,
+        ENCODING_EVRC,
+        ENCODING_EVRCB,
+        ENCODING_EVRCWB,
+        ENCODING_EVRCNW }
     )
     @Retention(RetentionPolicy.SOURCE)
     public @interface Encoding {}
