@@ -1187,9 +1187,7 @@ class ShortcutPackage extends ShortcutPackageItem {
         final int size = shortcuts.size();
         for (int i = 0; i < size; i++) {
             final ShortcutInfo si = shortcuts.valueAt(i);
-            pw.print(prefix);
-            pw.print("    ");
-            pw.println(si.toInsecureString());
+            pw.println(si.toDumpString(prefix + "    "));
             if (si.getBitmapPath() != null) {
                 final long len = new File(si.getBitmapPath()).length();
                 pw.print(prefix);
