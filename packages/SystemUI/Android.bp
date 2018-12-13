@@ -125,8 +125,6 @@ android_library {
        "framework-wifi-vendor-hide-access-defaults",
     ],
     libs: [
-        "android.car",
-        "android.car.userlib",
         "ims-common",
         "extphonelib",
     ],
@@ -253,8 +251,6 @@ android_app {
     },
 
     libs: [
-        "android.car",
-        "android.car.userlib",
         "ims-common",
         "extphonelib",
     ],
