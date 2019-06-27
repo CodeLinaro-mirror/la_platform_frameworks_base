@@ -1412,7 +1412,7 @@ public class BugreportProgressService extends Service {
         return false;
     }
 
-    private static boolean isTv(Context context) {
+    static boolean isTv(Context context) {
         return context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK);
     }
 
