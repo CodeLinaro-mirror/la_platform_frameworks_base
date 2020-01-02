@@ -90,6 +90,14 @@ public final class BluetoothAvrcpController implements BluetoothProfile {
 
     private final BluetoothAdapter mAdapter;
     private final AttributionSource mAttributionSource;
+
+    /* Remote supported Features */
+    public static final int BTRC_FEAT_NONE = 0x00;
+    public static final int BTRC_FEAT_METADATA = 0x01;
+    public static final int BTRC_FEAT_ABSOLUTE_VOLUME = 0x02;
+    public static final int BTRC_FEAT_BROWSE = 0x04;
+    public static final int BTRC_FEAT_COVER_ART = 0x08;
+
     private final BluetoothProfileConnector<IBluetoothAvrcpController> mProfileConnector =
             new BluetoothProfileConnector(this, BluetoothProfile.AVRCP_CONTROLLER,
                     "BluetoothAvrcpController", IBluetoothAvrcpController.class.getName()) {
@@ -279,6 +287,33 @@ public final class BluetoothAvrcpController implements BluetoothProfile {
            }
         }
         if (service == null) Log.w(TAG, "Proxy not attached to service");
+    }
+
+     /**
+     * Get Supported features for Remote.
+     * @hide
+     */
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    public int getSupportedFeatures(BluetoothDevice device) {
+        Log.d(TAG, "getSupportedFeatures dev = " + device);
+        final IBluetoothAvrcpController service =
+                getService();
+        if (service != null && isEnabled()) {
+            try {
+                if (getConnectionState(device) == BluetoothProfile.STATE_CONNECTED) {
+                    return service.getSupportedFeatures(device, mAttributionSource);
+                } else {
+                    Log.w(TAG, "getSupportedFeatures failed, avrcp connection is required");
+                    return 0;
+                }
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error talking to BT service in getSupportedFeatures()", e);
+                return 0;
+            }
+       }
+       if (service == null) Log.w(TAG, "Proxy not attached to service");
+       return 0;
     }
 
     private boolean isEnabled() {
