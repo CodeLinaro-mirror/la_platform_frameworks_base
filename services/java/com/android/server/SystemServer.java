@@ -818,9 +818,9 @@ public final class SystemServer {
             ServiceManager.addService("telephony.registry", telephonyRegistry);
             traceEnd();
 
-            traceBeginAndSlog("StartEntropyMixer");
-            mEntropyMixer = new EntropyMixer(context);
-            traceEnd();
+            //traceBeginAndSlog("StartEntropyMixer");
+            //mEntropyMixer = new EntropyMixer(context);
+            //traceEnd();
 
             mContentResolver = context.getContentResolver();
 
@@ -1140,10 +1140,10 @@ public final class SystemServer {
                     traceBeginAndSlog("StartWifi");
                     mSystemServiceManager.startService(WIFI_SERVICE_CLASS);
                     traceEnd();
-                    traceBeginAndSlog("StartWifiScanning");
-                    mSystemServiceManager.startService(
-                        "com.android.server.wifi.scanner.WifiScanningService");
-                    traceEnd();
+                   // traceBeginAndSlog("StartWifiScanning");
+                   // mSystemServiceManager.startService(
+                   //     "com.android.server.wifi.scanner.WifiScanningService");
+                   // traceEnd();
                 }
 
                 if (context.getPackageManager().hasSystemFeature(
