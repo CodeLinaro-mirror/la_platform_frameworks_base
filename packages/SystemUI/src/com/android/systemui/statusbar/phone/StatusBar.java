@@ -3026,7 +3026,7 @@ public class StatusBar extends SystemUI implements DemoMode,
                             && mStatusBarKeyguardViewManager.isOccluded()) {
                         mStatusBarKeyguardViewManager.addAfterKeyguardGoneRunnable(runnable);
                     } else {
-                        AsyncTask.execute(runnable);
+                        mHandler.post(runnable);
                     }
                 }
                 if (dismissShade) {
