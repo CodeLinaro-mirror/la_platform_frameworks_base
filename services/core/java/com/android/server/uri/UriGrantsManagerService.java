@@ -51,6 +51,7 @@ import android.app.AppGlobals;
 import android.app.GrantedUriPermission;
 import android.app.IUriGrantsManager;
 import android.content.ClipData;
+import android.content.ComponentName;
 import android.content.ContentProvider;
 import android.content.ContentResolver;
 import android.content.Context;

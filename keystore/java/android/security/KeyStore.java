@@ -199,6 +199,9 @@ public class KeyStore {
         } catch (RemoteException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             throw new AssertionError(e);
+        } catch (NullPointerException e) {
+            Log.w(TAG, "state: keystore null ", e);
+            return State.UNINITIALIZED;
         }
 
         switch (ret) {
@@ -231,7 +234,7 @@ public class KeyStore {
         try {
             key = key != null ? key : "";
             return mBinder.get(key, uid);
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
              Log.w(TAG, "Cannot connect to keystore", e);
             return null;
         } catch (android.os.ServiceSpecificException e) {
@@ -262,7 +265,7 @@ public class KeyStore {
                 error = mBinder.insert(key, value, uid, flags);
             }
             return error;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return SYSTEM_ERROR;
         }
@@ -271,7 +274,7 @@ public class KeyStore {
     int delete2(String key, int uid) {
         try {
             return mBinder.del(key, uid);
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return SYSTEM_ERROR;
         }
@@ -290,7 +293,7 @@ public class KeyStore {
     public boolean contains(String key, int uid) {
         try {
             return mBinder.exist(key, uid) == NO_ERROR;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return false;
         }
@@ -306,7 +309,7 @@ public class KeyStore {
     public String[] list(String prefix, int uid) {
         try {
             return mBinder.list(prefix, uid);
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return null;
         } catch (android.os.ServiceSpecificException e) {
@@ -330,7 +333,7 @@ public class KeyStore {
                 Log.w(TAG, String.format("listUidsOfAuthBoundKeys failed with error code %d", rc));
                 return null;
             }
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return null;
         } catch (android.os.ServiceSpecificException e) {
@@ -354,7 +357,7 @@ public class KeyStore {
     public boolean lock(int userId) {
         try {
             return mBinder.lock(userId) == NO_ERROR;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return false;
         }
@@ -380,7 +383,7 @@ public class KeyStore {
             password = password != null ? password : "";
             mError = mBinder.unlock(userId, password);
             return mError == NO_ERROR;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return false;
         }
@@ -397,7 +400,7 @@ public class KeyStore {
     public boolean isEmpty(int userId) {
         try {
             return mBinder.isEmpty(userId) != 0;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return false;
         }
@@ -413,7 +416,7 @@ public class KeyStore {
             String grantAlias =  mBinder.grant(key, uid);
             if (grantAlias == "") return null;
             return grantAlias;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return null;
         }
@@ -422,7 +425,7 @@ public class KeyStore {
     public boolean ungrant(String key, int uid) {
         try {
             return mBinder.ungrant(key, uid) == NO_ERROR;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return false;
         }
@@ -440,7 +443,7 @@ public class KeyStore {
             }
 
             return millis * 1000L;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return -1L;
         }
@@ -458,7 +461,7 @@ public class KeyStore {
     public boolean isHardwareBacked(String keyType) {
         try {
             return mBinder.is_hardware_backed(keyType.toUpperCase(Locale.US)) == NO_ERROR;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return false;
         }
@@ -467,7 +470,7 @@ public class KeyStore {
     public boolean clearUid(int uid) {
         try {
             return mBinder.clear_uid(uid) == NO_ERROR;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return false;
         }
@@ -487,7 +490,7 @@ public class KeyStore {
             } else {
                 return false;
             }
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return false;
         } catch (ExecutionException e) {
@@ -589,7 +592,7 @@ public class KeyStore {
                 error = generateKeyInternal(alias, args, entropy, uid, flags, outCharacteristics);
             }
             return error;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return SYSTEM_ERROR;
         } catch (ExecutionException e) {
@@ -622,7 +625,7 @@ public class KeyStore {
             if (characteristics == null) return SYSTEM_ERROR;
             outCharacteristics.shallowCopyFrom(characteristics);
             return NO_ERROR;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return SYSTEM_ERROR;
         } catch (ExecutionException e) {
@@ -672,7 +675,7 @@ public class KeyStore {
                         outCharacteristics);
             }
             return error;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return SYSTEM_ERROR;
         } catch (ExecutionException e) {
@@ -783,7 +786,7 @@ public class KeyStore {
                         maskingKey, args, rootSid, fingerprintSid, outCharacteristics);
             }
             return error;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return SYSTEM_ERROR;
         } catch (ExecutionException e) {
@@ -822,7 +825,7 @@ public class KeyStore {
             } else {
                 return new ExportResult(error);
             }
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return null;
         } catch (ExecutionException e) {
@@ -868,7 +871,7 @@ public class KeyStore {
             } else {
                 return new OperationResult(errorCode);
             }
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return null;
         } catch (ExecutionException e) {
@@ -898,7 +901,7 @@ public class KeyStore {
             } else {
                 return new OperationResult(errorCode);
             }
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return null;
         } catch (ExecutionException e) {
@@ -934,7 +937,7 @@ public class KeyStore {
             } else {
                 return new OperationResult(errorCode);
             }
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return null;
         } catch (ExecutionException e) {
@@ -976,7 +979,7 @@ public class KeyStore {
             } else {
                 return errorCode;
             }
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return SYSTEM_ERROR;
         } catch (ExecutionException e) {
@@ -997,7 +1000,7 @@ public class KeyStore {
     public int addAuthToken(byte[] authToken) {
         try {
             return mBinder.addAuthToken(authToken);
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return SYSTEM_ERROR;
         }
@@ -1017,7 +1020,7 @@ public class KeyStore {
         }
         try {
             return mBinder.onUserPasswordChanged(userId, newPassword) == NO_ERROR;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return false;
         }
@@ -1034,7 +1037,7 @@ public class KeyStore {
     public void onUserAdded(int userId, int parentId) {
         try {
             mBinder.onUserAdded(userId, parentId);
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
         }
     }
@@ -1056,7 +1059,7 @@ public class KeyStore {
     public void onUserRemoved(int userId) {
         try {
             mBinder.onUserRemoved(userId);
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
         }
     }
@@ -1071,7 +1074,7 @@ public class KeyStore {
     public void onUserLockedStateChanged(int userHandle, boolean locked) {
         try {
             mBinder.onKeyguardVisibilityChanged(locked, userHandle);
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Failed to update user locked state " + userHandle, e);
         }
     }
@@ -1141,7 +1144,7 @@ public class KeyStore {
                 outChain.shallowCopyFrom(result.getCertificateChain());
             }
             return error;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return SYSTEM_ERROR;
         } catch (ExecutionException e) {
@@ -1170,7 +1173,7 @@ public class KeyStore {
                 outChain.shallowCopyFrom(result.getCertificateChain());
             }
             return error;
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return SYSTEM_ERROR;
         } catch (ExecutionException e) {
@@ -1187,7 +1190,7 @@ public class KeyStore {
     public void onDeviceOffBody() {
         try {
             mBinder.onDeviceOffBody();
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
         }
     }
@@ -1222,7 +1225,7 @@ public class KeyStore {
         try {
             return mBinder.presentConfirmationPrompt(listener, promptText, extraData, locale,
                                                      uiOptionsAsFlags);
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return CONFIRMATIONUI_SYSTEM_ERROR;
         }
@@ -1238,7 +1241,7 @@ public class KeyStore {
     public int cancelConfirmationPrompt(IBinder listener) {
         try {
             return mBinder.cancelConfirmationPrompt(listener);
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return CONFIRMATIONUI_SYSTEM_ERROR;
         }
@@ -1252,7 +1255,7 @@ public class KeyStore {
     public boolean isConfirmationPromptSupported() {
         try {
             return mBinder.isConfirmationPromptSupported();
-        } catch (RemoteException e) {
+        } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Cannot connect to keystore", e);
             return false;
         }

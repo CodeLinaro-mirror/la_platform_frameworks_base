@@ -103,14 +103,20 @@ public abstract class BluetoothProfileConnector<T> {
 
     private void doUnbind() {
         synchronized (mConnection) {
-            if (mService != null) {
-                logDebug("Unbinding service...");
-                try {
-                    mContext.unbindService(mConnection);
-                } catch (IllegalArgumentException ie) {
-                    logError("Unable to unbind service: " + ie);
-                } finally {
-                    mService = null;
+            try {
+                if (mService != null) {
+                    logDebug("Unbinding service...");
+                    try {
+                        mContext.unbindService(mConnection);
+                    } catch (IllegalArgumentException ie) {
+                        logError("Unable to unbind service: " + ie);
+                    } finally {
+                        mService = null;
+                    }
+                }
+            } finally {
+                if (mServiceListener != null) {
+                    mServiceListener.onServiceDisconnected(mProfileId);
                 }
             }
         }
@@ -141,6 +147,9 @@ public abstract class BluetoothProfileConnector<T> {
             }
         }
         doUnbind();
+        // Move clear here to ensure profile listener in CarService can listen
+        // and collect Bluetooth profile proxy connections after BT OFF to ON.
+        mServiceListener = null;
     }
 
     T getService() {

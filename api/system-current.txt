@@ -1615,6 +1615,7 @@ package android.bluetooth {
     field @NonNull public static final android.os.ParcelUuid AVRCP_TARGET;
     field @NonNull public static final android.os.ParcelUuid BASE_UUID;
     field @NonNull public static final android.os.ParcelUuid BNEP;
+    field @NonNull public static final android.os.ParcelUuid DIP;
     field @NonNull public static final android.os.ParcelUuid HEARING_AID;
     field @NonNull public static final android.os.ParcelUuid HFP;
     field @NonNull public static final android.os.ParcelUuid HFP_AG;
@@ -7048,6 +7049,7 @@ package android.net.wifi {
   public final class SoftApConfiguration implements android.os.Parcelable {
     method @NonNull public java.util.List<android.net.MacAddress> getAllowedClientList();
     method public int getBand();
+    method @NonNull public java.util.List<java.lang.Integer> getBands();
     method @NonNull public java.util.List<android.net.MacAddress> getBlockedClientList();
     method public int getChannel();
     method public int getMaxNumberOfClients();
@@ -7068,6 +7070,7 @@ package android.net.wifi {
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setAllowedClientList(@NonNull java.util.List<android.net.MacAddress>);
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setAutoShutdownEnabled(boolean);
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setBand(int);
+    method @NonNull public android.net.wifi.SoftApConfiguration.Builder setBands(@NonNull java.util.List<java.lang.Integer>);
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setBlockedClientList(@NonNull java.util.List<android.net.MacAddress>);
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setBssid(@Nullable android.net.MacAddress);
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setChannel(int, int);

@@ -1207,6 +1207,14 @@ public class WifiConfiguration implements Parcelable {
         mRandomizedMacAddress = mac;
     }
 
+    /**
+     * @hide
+     * Wifi Identity to identify on which interface this configuration is allowed.
+     * it should take one of WifiManager.STA_PRIMARY/STA_SECONDARY.
+     * default value: WifiManager.STA_PRIMARY.
+     */
+    public int staId;
+
     /** @hide
      * Boost given to RSSI on a home network for the purpose of calculating the score
      * This adds stickiness to home networks, as defined by:
@@ -2115,6 +2123,7 @@ public class WifiConfiguration implements Parcelable {
         shared = true;
         dtimInterval = 0;
         mRandomizedMacAddress = MacAddress.fromString(WifiInfo.DEFAULT_MAC_ADDRESS);
+        staId = WifiManager.STA_PRIMARY;
     }
 
     /**
@@ -2374,6 +2383,7 @@ public class WifiConfiguration implements Parcelable {
         }
         sbuf.append("recentFailure: ").append("Association Rejection code: ")
                 .append(recentFailure.getAssociationStatus()).append("\n");
+        sbuf.append("wifi id: ").append(this.staId).append("\n");
         return sbuf.toString();
     }
 
@@ -2787,6 +2797,7 @@ public class WifiConfiguration implements Parcelable {
             randomizedMacExpirationTimeMs = source.randomizedMacExpirationTimeMs;
             requirePmf = source.requirePmf;
             updateIdentifier = source.updateIdentifier;
+            staId = source.staId;
             carrierId = source.carrierId;
             mPasspointUniqueId = source.mPasspointUniqueId;
         }
@@ -2859,6 +2870,7 @@ public class WifiConfiguration implements Parcelable {
         dest.writeInt(macRandomizationSetting);
         dest.writeInt(osu ? 1 : 0);
         dest.writeLong(randomizedMacExpirationTimeMs);
+        dest.writeInt(staId);
         dest.writeInt(carrierId);
         dest.writeString(mPasspointUniqueId);
     }
@@ -2933,6 +2945,7 @@ public class WifiConfiguration implements Parcelable {
                 config.macRandomizationSetting = in.readInt();
                 config.osu = in.readInt() != 0;
                 config.randomizedMacExpirationTimeMs = in.readLong();
+                config.staId = in.readInt();
                 config.carrierId = in.readInt();
                 config.mPasspointUniqueId = in.readString();
                 return config;

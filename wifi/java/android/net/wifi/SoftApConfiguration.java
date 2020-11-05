@@ -171,6 +171,12 @@ public final class SoftApConfiguration implements Parcelable {
     private final @BandType int mBand;
 
     /**
+     * The operating bands for the AP.
+     * List of the band types from {@link @BandType}.
+     */
+    private final List<Integer> mBands;
+
+    /**
      * The operating channel of the AP.
      */
     private final int mChannel;
@@ -238,18 +244,26 @@ public final class SoftApConfiguration implements Parcelable {
     public static final int SECURITY_TYPE_WPA3_SAE = 3;
 
     /** @hide */
+    public static final int SECURITY_TYPE_OWE_TRANSITION = 4;
+
+    /** @hide */
+    public static final int SECURITY_TYPE_OWE = 5;
+
+    /** @hide */
     @Retention(RetentionPolicy.SOURCE)
     @IntDef(prefix = { "SECURITY_TYPE_" }, value = {
         SECURITY_TYPE_OPEN,
         SECURITY_TYPE_WPA2_PSK,
         SECURITY_TYPE_WPA3_SAE_TRANSITION,
         SECURITY_TYPE_WPA3_SAE,
+        SECURITY_TYPE_OWE_TRANSITION,
+        SECURITY_TYPE_OWE,
     })
     public @interface SecurityType {}
 
     /** Private constructor for Builder and Parcelable implementation. */
     private SoftApConfiguration(@Nullable String ssid, @Nullable MacAddress bssid,
-            @Nullable String passphrase, boolean hiddenSsid, @BandType int band, int channel,
+            @Nullable String passphrase, boolean hiddenSsid, @BandType int band, List<Integer> bands, int channel,
             @SecurityType int securityType, int maxNumberOfClients, boolean shutdownTimeoutEnabled,
             long shutdownTimeoutMillis, boolean clientControlByUser,
             @NonNull List<MacAddress> blockedList, @NonNull List<MacAddress> allowedList) {
@@ -258,6 +272,7 @@ public final class SoftApConfiguration implements Parcelable {
         mPassphrase = passphrase;
         mHiddenSsid = hiddenSsid;
         mBand = band;
+        mBands = new ArrayList<>(bands);
         mChannel = channel;
         mSecurityType = securityType;
         mMaxNumberOfClients = maxNumberOfClients;
@@ -266,6 +281,18 @@ public final class SoftApConfiguration implements Parcelable {
         mClientControlByUser = clientControlByUser;
         mBlockedClientList = new ArrayList<>(blockedList);
         mAllowedClientList = new ArrayList<>(allowedList);
+    }
+
+    /** Private constructor for Builder and Parcelable implementation. */
+    private SoftApConfiguration(@Nullable String ssid, @Nullable MacAddress bssid,
+            @Nullable String passphrase, boolean hiddenSsid, @BandType int band, int channel,
+            @SecurityType int securityType, int maxNumberOfClients, boolean shutdownTimeoutEnabled,
+            long shutdownTimeoutMillis, boolean clientControlByUser,
+            @NonNull List<MacAddress> blockedList, @NonNull List<MacAddress> allowedList) {
+        this(ssid, bssid, passphrase, hiddenSsid, band, null, channel,
+             securityType, maxNumberOfClients, shutdownTimeoutEnabled,
+             shutdownTimeoutMillis, clientControlByUser,
+             blockedList, allowedList);
     }
 
     @Override
@@ -282,6 +309,7 @@ public final class SoftApConfiguration implements Parcelable {
                 && Objects.equals(mPassphrase, other.mPassphrase)
                 && mHiddenSsid == other.mHiddenSsid
                 && mBand == other.mBand
+                && Objects.equals(mBands, other.mBands)
                 && mChannel == other.mChannel
                 && mSecurityType == other.mSecurityType
                 && mMaxNumberOfClients == other.mMaxNumberOfClients
@@ -295,7 +323,7 @@ public final class SoftApConfiguration implements Parcelable {
     @Override
     public int hashCode() {
         return Objects.hash(mSsid, mBssid, mPassphrase, mHiddenSsid,
-                mBand, mChannel, mSecurityType, mMaxNumberOfClients, mAutoShutdownEnabled,
+                mBand, mBands, mChannel, mSecurityType, mMaxNumberOfClients, mAutoShutdownEnabled,
                 mShutdownTimeoutMillis, mClientControlByUser, mBlockedClientList,
                 mAllowedClientList);
     }
@@ -309,6 +337,7 @@ public final class SoftApConfiguration implements Parcelable {
                 TextUtils.isEmpty(mPassphrase) ? "<empty>" : "<non-empty>");
         sbuf.append(" \n HiddenSsid =").append(mHiddenSsid);
         sbuf.append(" \n Band =").append(mBand);
+        sbuf.append(" \n Bands = ").append(mBands);
         sbuf.append(" \n Channel =").append(mChannel);
         sbuf.append(" \n SecurityType=").append(getSecurityType());
         sbuf.append(" \n MaxClient=").append(mMaxNumberOfClients);
@@ -327,6 +356,7 @@ public final class SoftApConfiguration implements Parcelable {
         dest.writeString(mPassphrase);
         dest.writeBoolean(mHiddenSsid);
         dest.writeInt(mBand);
+        dest.writeList(mBands);
         dest.writeInt(mChannel);
         dest.writeInt(mSecurityType);
         dest.writeInt(mMaxNumberOfClients);
@@ -346,13 +376,26 @@ public final class SoftApConfiguration implements Parcelable {
     public static final Creator<SoftApConfiguration> CREATOR = new Creator<SoftApConfiguration>() {
         @Override
         public SoftApConfiguration createFromParcel(Parcel in) {
-            return new SoftApConfiguration(
-                    in.readString(),
-                    in.readParcelable(MacAddress.class.getClassLoader()),
-                    in.readString(), in.readBoolean(), in.readInt(), in.readInt(), in.readInt(),
-                    in.readInt(), in.readBoolean(), in.readLong(), in.readBoolean(),
-                    in.createTypedArrayList(MacAddress.CREATOR),
-                    in.createTypedArrayList(MacAddress.CREATOR));
+            String ssid = in.readString();
+            MacAddress bssid = in.readParcelable(MacAddress.class.getClassLoader());
+            String passphrase = in.readString();
+            Boolean hiddenSsid = in.readBoolean();
+            @BandType int band = in.readInt();
+            List<Integer> bands = new ArrayList<>();
+            in.readList(bands, Integer.class.getClassLoader());
+            int channel = in.readInt();
+            @SecurityType int securityType = in.readInt();
+            int maxNumberOfClients = in.readInt();
+            boolean autoShutdownEnabled = in.readBoolean();
+            long shutdownTimeoutMillis = in.readLong();
+            boolean clientControlByUser = in.readBoolean();
+            List<MacAddress> blockedClientList = in.createTypedArrayList(MacAddress.CREATOR);
+            List<MacAddress> allowedClientList = in.createTypedArrayList(MacAddress.CREATOR);
+
+            return new SoftApConfiguration(ssid, bssid, passphrase,
+                    hiddenSsid, band, bands, channel, securityType, maxNumberOfClients,
+                    autoShutdownEnabled, shutdownTimeoutMillis, clientControlByUser,
+                    blockedClientList, allowedClientList);
         }
 
         @Override
@@ -410,6 +453,18 @@ public final class SoftApConfiguration implements Parcelable {
     @SystemApi
     public @BandType int getBand() {
         return mBand;
+    }
+
+    /**
+     * Returns list of {@link BandType} set to be the bands for the AP.
+     * {@link Builder#setBands(List<Integer>)}.
+     *
+     * @hide
+     */
+    @NonNull
+    @SystemApi
+    public List<Integer> getBands() {
+        return mBands;
     }
 
     /**
@@ -536,6 +591,14 @@ public final class SoftApConfiguration implements Parcelable {
             case SECURITY_TYPE_WPA3_SAE_TRANSITION:
                 wifiConfig.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA2_PSK);
                 break;
+            case SECURITY_TYPE_WPA3_SAE:
+            case SECURITY_TYPE_WPA3_SAE_TRANSITION:
+                wifiConfig.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.SAE);
+                break;
+            case SECURITY_TYPE_OWE:
+            case SECURITY_TYPE_OWE_TRANSITION:
+                wifiConfig.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.OWE);
+                break;
             default:
                 Log.e(TAG, "Convert fail, unsupported security type :" + mSecurityType);
                 return null;
@@ -577,6 +640,7 @@ public final class SoftApConfiguration implements Parcelable {
         private String mPassphrase;
         private boolean mHiddenSsid;
         private int mBand;
+        private List<Integer> mBands;
         private int mChannel;
         private int mMaxNumberOfClients;
         private int mSecurityType;
@@ -595,6 +659,7 @@ public final class SoftApConfiguration implements Parcelable {
             mPassphrase = null;
             mHiddenSsid = false;
             mBand = BAND_2GHZ;
+            mBands = new ArrayList<>();
             mChannel = 0;
             mMaxNumberOfClients = 0;
             mSecurityType = SECURITY_TYPE_OPEN;
@@ -616,6 +681,7 @@ public final class SoftApConfiguration implements Parcelable {
             mPassphrase = other.mPassphrase;
             mHiddenSsid = other.mHiddenSsid;
             mBand = other.mBand;
+            mBands = new ArrayList<>(other.mBands);
             mChannel = other.mChannel;
             mMaxNumberOfClients = other.mMaxNumberOfClients;
             mSecurityType = other.mSecurityType;
@@ -639,7 +705,7 @@ public final class SoftApConfiguration implements Parcelable {
                 }
             }
             return new SoftApConfiguration(mSsid, mBssid, mPassphrase,
-                    mHiddenSsid, mBand, mChannel, mSecurityType, mMaxNumberOfClients,
+                    mHiddenSsid, mBand, mBands, mChannel, mSecurityType, mMaxNumberOfClients,
                     mAutoShutdownEnabled, mShutdownTimeoutMillis, mClientControlByUser,
                     mBlockedClientList, mAllowedClientList);
         }
@@ -705,7 +771,9 @@ public final class SoftApConfiguration implements Parcelable {
          */
         @NonNull
         public Builder setPassphrase(@Nullable String passphrase, @SecurityType int securityType) {
-            if (securityType == SECURITY_TYPE_OPEN) {
+            if (securityType == SECURITY_TYPE_OPEN
+                    || securityType == SECURITY_TYPE_OWE_TRANSITION
+                    || securityType == SECURITY_TYPE_OWE) {
                 if (passphrase != null) {
                     throw new IllegalArgumentException(
                             "passphrase should be null when security type is open");
@@ -763,6 +831,45 @@ public final class SoftApConfiguration implements Parcelable {
             mBand = band;
             // Since band preference is specified, no specific channel is selected.
             mChannel = 0;
+            return this;
+        }
+
+        /**
+         * Specifies the bands for the AP.
+         * If more than 1 band is set, this will bring up concurrent BSSIDs on the requested bands (if possible)
+         * <p>
+         * <li>If not set, falls back to use to mBand {@link @BandType}.</li>
+         *
+         * For AP random MAC:
+         * If concurrent BSSIDs are requested, frameworks only send down 1 random MAC address, so HAL needs to
+         * derive 2 MAC address using below rule:
+         * <li>MAC address 1: copy value of random MAC address, and set byte 1 = (0xFF - random MAC address [1])</li>
+         * <li>MAC address 2: copy value of random MAC address, and set byte 2 = (0xFF - random MAC address [2])</li>
+         *
+         * For example:
+         * Random MAC address   : e2:38:60:c4:0e:b7
+         * Derived MAC address 1: e2:c7:60:c4:0e:b7
+         * Derived MAC address 2: e2:38:9f:c4:0e:b7
+         *
+         * @param bands List of one or combination of the band types from {@link @BandType}.
+         * @return Builder for chaining.
+         */
+        @NonNull
+        public Builder setBands(@NonNull List<Integer> bands) {
+            if (bands != null && bands.size() > 2) {
+                throw new IllegalArgumentException("Max 2 concurrent BSSes supported");
+            }
+
+            for(int band : bands) {
+                if (!isBandValid(band)) {
+                    throw new IllegalArgumentException("Invalid band type");
+                }
+            }
+            mBands = new ArrayList<>(bands);
+            if (mBands.size() > 0) {
+                // Since band preference is specified, no specific channel is selected.
+                mChannel = 0;
+            }
             return this;
         }
 
