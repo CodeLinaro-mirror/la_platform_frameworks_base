@@ -585,19 +585,12 @@ public final class SoftApConfiguration implements Parcelable {
         wifiConfig.apChannel = mChannel;
         switch (mSecurityType) {
             case SECURITY_TYPE_OPEN:
+            case SECURITY_TYPE_OWE:
                 wifiConfig.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
                 break;
             case SECURITY_TYPE_WPA2_PSK:
             case SECURITY_TYPE_WPA3_SAE_TRANSITION:
                 wifiConfig.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA2_PSK);
-                break;
-            case SECURITY_TYPE_WPA3_SAE:
-            case SECURITY_TYPE_WPA3_SAE_TRANSITION:
-                wifiConfig.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.SAE);
-                break;
-            case SECURITY_TYPE_OWE:
-            case SECURITY_TYPE_OWE_TRANSITION:
-                wifiConfig.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.OWE);
                 break;
             default:
                 Log.e(TAG, "Convert fail, unsupported security type :" + mSecurityType);
