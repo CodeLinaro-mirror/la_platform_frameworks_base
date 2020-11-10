@@ -1371,6 +1371,8 @@ public final class SystemServer implements Dumpable {
         boolean enableVrService = context.getPackageManager().hasSystemFeature(
                 PackageManager.FEATURE_VR_MODE_HIGH_PERFORMANCE);
 
+        boolean isQcomWatch = SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
+
         // For debugging RescueParty
         if (Build.IS_DEBUGGABLE && SystemProperties.getBoolean("debug.crash_system", false)) {
             throw new RuntimeException();
@@ -1723,7 +1725,7 @@ public final class SystemServer implements Dumpable {
             dpms = mSystemServiceManager.startService(DevicePolicyManagerService.Lifecycle.class);
             t.traceEnd();
 
-            if (!isWatch) {
+            if (!isWatch || isQcomWatch) {
                 t.traceBegin("StartStatusBarManagerService");
                 try {
                     statusBar = new StatusBarManagerService(context);
@@ -2106,7 +2108,7 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startService(DockObserver.class);
             t.traceEnd();
 
-            if (isWatch) {
+            if (isWatch && !isQcomWatch) {
                 t.traceBegin("StartThermalObserver");
                 mSystemServiceManager.startService(THERMAL_OBSERVER_CLASS);
                 t.traceEnd();
@@ -2455,13 +2457,13 @@ public final class SystemServer implements Dumpable {
             t.traceEnd();
         }
 
-        if (!isWatch) {
+        if (!isWatch || isQcomWatch) {
             t.traceBegin("StartMediaProjectionManager");
             mSystemServiceManager.startService(MediaProjectionManagerService.class);
             t.traceEnd();
-        }
+            }
 
-        if (isWatch) {
+        if (isWatch && !isQcomWatch) {
             // Must be started before services that depend it, e.g. WearConnectivityService
             t.traceBegin("StartWearPowerService");
             mSystemServiceManager.startService(WEAR_POWER_SERVICE_CLASS);
