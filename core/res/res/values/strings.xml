@@ -1166,7 +1166,12 @@
     <!-- Title of an application permission, listed so the user can choose whether they want to allow the application to do this. -->
     <string name="permlab_recordAudio">record audio</string>
     <!-- Description of an application permission, listed so the user can choose whether they want to allow the application to do this. -->
-    <string name="permdesc_recordAudio">This app can record audio using the microphone at any time.</string>
+    <string name="permdesc_recordAudio">This app can record audio using the microphone while the app is in use.</string>
+
+    <!-- Title of an application permission, listed so the user can choose whether they want to allow the application to do this. [CHAR LIMIT=NONE] -->
+    <string name="permlab_recordBackgroundAudio">record audio in the background</string>
+    <!-- Description of an application permission, listed so the user can choose whether they want to allow the application to do this. [CHAR LIMIT=NONE] -->
+    <string name="permdesc_recordBackgroundAudio">This app can record audio using the microphone at any time.</string>
 
     <!-- Title of an application permission, listed so the user can choose whether they want to allow the application to do this. -->
     <string name="permlab_sim_communication">send commands to the SIM</string>
@@ -1181,7 +1186,12 @@
     <!-- Title of an application permission, listed so the user can choose whether they want to allow the application to do this. -->
     <string name="permlab_camera">take pictures and videos</string>
     <!-- Description of an application permission, listed so the user can choose whether they want to allow the application to do this. -->
-    <string name="permdesc_camera">This app can take pictures and record videos using the camera at any time.</string>
+    <string name="permdesc_camera">This app can take pictures and record videos using the camera while the app is in use.</string>
+
+    <!-- Title of an application permission, listed so the user can choose whether they want to allow the application to do this. [CHAR LIMIT=NONE] -->
+    <string name="permlab_backgroundCamera">take pictures and videos in the background</string>
+    <!-- Description of an application permission, listed so the user can choose whether they want to allow the application to do this. [CHAR LIMIT=NONE] -->
+    <string name="permdesc_backgroundCamera">This app can take pictures and record videos using the camera at any time.</string>
 
     <!-- Title of an application permission, listed so the user can choose whether they want to allow the application to do this. [CHAR_LIMIT=NONE] -->
     <string name="permlab_systemCamera">Allow an application or service access to system cameras to take pictures and videos</string>
@@ -3046,10 +3056,14 @@
     <!-- Default text for a button that can be toggled on and off. -->
     <string name="capital_off">OFF</string>
 
-    <!-- Default state for CompoundButton for on and off. [CHAR LIMIT=32] -->
+    <!-- Default checked text used by accessibility for a button that can be checked or unchecked. [CHAR LIMIT=NONE] -->
     <string name="checked">checked</string>
-    <!-- Default text for a button that can be toggled on and off. [CHAR LIMIT=32] -->
+    <!-- Default not checked text used by accessibility for a button that can be checked or unchecked. [CHAR LIMIT=NONE] -->
     <string name="not_checked">not checked</string>
+    <!-- Default selected text used by accessibility for an element that can be selected or unselected. [CHAR LIMIT=NONE] -->
+    <string name="selected">selected</string>
+    <!-- Default not selected text used by accessibility for an element that can be selected or unselected. [CHAR LIMIT=NONE] -->
+    <string name="not_selected">not selected</string>
 
     <!-- Title of intent resolver dialog when selecting an application to run. -->
     <string name="whichApplication">Complete action using</string>
@@ -4374,7 +4388,7 @@
     </string>
 
     <!-- Dialog title for dialog shown when the multiple accessibility shortcut is activated, and we want to confirm that the user understands what's going to happen. [CHAR LIMIT=none] -->
-    <string name="accessibility_shortcut_multiple_service_warning_title">Turn on accessibility features?</string>
+    <string name="accessibility_shortcut_multiple_service_warning_title">Turn on shortcut for accessibility features?</string>
 
     <!-- Message shown in dialog when user is in the process of enabling the multiple accessibility service via the volume buttons shortcut for the first time. [CHAR LIMIT=none] -->
     <string name="accessibility_shortcut_multiple_service_warning">Holding down both volume keys for a few seconds turns on accessibility features. This may change how your device works.\n\nCurrent features:\n<xliff:g id="service" example="TalkBack">%1$s</xliff:g>\nYou can change selected features in Settings > Accessibility.</string>
@@ -4383,7 +4397,7 @@
     <string name="accessibility_shortcut_multiple_service_list">\t• <xliff:g id="service" example="TalkBack">%1$s</xliff:g>\n</string>
 
     <!-- Dialog title for dialog shown when this accessibility shortcut is activated, and we want to confirm that the user understands what's going to happen. [CHAR LIMIT=none] -->
-    <string name="accessibility_shortcut_single_service_warning_title">Turn on <xliff:g id="service" example="TalkBack">%1$s</xliff:g>?</string>
+    <string name="accessibility_shortcut_single_service_warning_title">Turn on <xliff:g id="service" example="TalkBack">%1$s</xliff:g> shortcut?</string>
 
     <!-- Message shown in dialog when user is in the process of enabling this accessibility service via the volume buttons shortcut for the first time. [CHAR LIMIT=none] -->
     <string name="accessibility_shortcut_single_service_warning">Holding down both volume keys for a few seconds turns on <xliff:g id="service" example="TalkBack">%1$s</xliff:g>, an accessibility feature. This may change how your device works.\n\nYou can change this shortcut to another feature in Settings > Accessibility.</string>
@@ -4483,6 +4497,10 @@
     <!-- Title of Color Correction feature, which is mostly used to help users who are colorblind,
      shown in the warning dialog about the accessibility shortcut. -->
     <string name="color_correction_feature_name">Color Correction</string>
+
+    <!-- TODO(b/170970602): remove translatable=false when RBC has official name and strings -->
+    <!-- Title of Reduce Bright Colors feature, shown in the warning dialog about the accessibility shortcut. [CHAR LIMIT=none] -->
+    <string name="reduce_bright_colors_feature_name" translatable="false">Reduce Bright Colors</string>
 
     <!-- Text in toast to alert the user that the accessibility shortcut turned on an accessibility service. [CHAR LIMIT=none] -->
     <string name="accessibility_shortcut_enabling_service">Held volume keys. <xliff:g id="service_name" example="TalkBack">%1$s</xliff:g> turned on.</string>

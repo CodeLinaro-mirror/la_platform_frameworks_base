@@ -19,6 +19,7 @@ package android.hardware.fingerprint;
 import static android.Manifest.permission.INTERACT_ACROSS_USERS;
 import static android.Manifest.permission.MANAGE_FINGERPRINT;
 import static android.Manifest.permission.RESET_FINGERPRINT_LOCKOUT;
+import static android.Manifest.permission.TEST_BIOMETRIC;
 import static android.Manifest.permission.USE_BIOMETRIC;
 import static android.Manifest.permission.USE_BIOMETRIC_INTERNAL;
 import static android.Manifest.permission.USE_FINGERPRINT;
@@ -28,6 +29,7 @@ import android.annotation.Nullable;
 import android.annotation.RequiresFeature;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemService;
+import android.annotation.TestApi;
 import android.app.ActivityManager;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
@@ -35,8 +37,11 @@ import android.content.pm.PackageManager;
 import android.hardware.biometrics.BiometricAuthenticator;
 import android.hardware.biometrics.BiometricFingerprintConstants;
 import android.hardware.biometrics.BiometricPrompt;
+import android.hardware.biometrics.BiometricTestSession;
 import android.hardware.biometrics.IBiometricServiceLockoutResetCallback;
+import android.hardware.biometrics.SensorProperties;
 import android.os.Binder;
+import android.os.Build;
 import android.os.CancellationSignal;
 import android.os.CancellationSignal.OnCancelListener;
 import android.os.Handler;
@@ -53,10 +58,7 @@ import android.view.Surface;
 import java.security.Signature;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
@@ -96,6 +98,40 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     private CryptoObject mCryptoObject;
     private Fingerprint mRemovalFingerprint;
     private Handler mHandler;
+
+
+    /**
+     * Retrieves a list of properties for all fingerprint sensors on the device.
+     * @hide
+     */
+    @TestApi
+    @NonNull
+    @RequiresPermission(TEST_BIOMETRIC)
+    public List<SensorProperties> getSensorProperties() {
+        final List<SensorProperties> properties = new ArrayList<>();
+        final List<FingerprintSensorPropertiesInternal> internalProperties
+                = getSensorPropertiesInternal();
+        for (FingerprintSensorPropertiesInternal internalProp : internalProperties) {
+            properties.add(FingerprintSensorProperties.from(internalProp));
+        }
+        return properties;
+    }
+
+    /**
+     * Retrieves a test session for FingerprintManager.
+     * @hide
+     */
+    @TestApi
+    @NonNull
+    @RequiresPermission(TEST_BIOMETRIC)
+    public BiometricTestSession createTestSession(int sensorId) {
+        try {
+            return new BiometricTestSession(mContext,
+                    mService.createTestSession(sensorId, mContext.getOpPackageName()));
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
 
     private class OnEnrollCancelListener implements OnCancelListener {
         @Override
@@ -383,6 +419,18 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     }
 
     /**
+     * Use the provided handler thread for events.
+     * @param handler
+     */
+    private void useHandler(Handler handler) {
+        if (handler != null) {
+            mHandler = new MyHandler(handler.getLooper());
+        } else if (mHandler.getLooper() != mContext.getMainLooper()) {
+            mHandler = new MyHandler(mContext.getMainLooper());
+        }
+    }
+
+    /**
      * Request authentication of a crypto object. This call warms up the fingerprint hardware
      * and starts scanning for a fingerprint. It terminates when
      * {@link AuthenticationCallback#onAuthenticationError(int, CharSequence)} or
@@ -413,45 +461,15 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     }
 
     /**
-     * Use the provided handler thread for events.
-     * @param handler
-     */
-    private void useHandler(Handler handler) {
-        if (handler != null) {
-            mHandler = new MyHandler(handler.getLooper());
-        } else if (mHandler.getLooper() != mContext.getMainLooper()){
-            mHandler = new MyHandler(mContext.getMainLooper());
-        }
-    }
-
-    /**
-     * Defaults to {@link FingerprintManager#authenticate(CryptoObject, CancellationSignal,
-     * AuthenticationCallback, Handler, int, Surface)} with {@code surface} set to null.
-     *
-     * @see FingerprintManager#authenticate(CryptoObject, CancellationSignal,
-     * AuthenticationCallback, Handler, int, Surface)
-     *
+     * Per-user version, see {@link FingerprintManager#authenticate(CryptoObject,
+     * CancellationSignal, int, AuthenticationCallback, Handler)}. This version does not
+     * display the BiometricPrompt.
+     * @param userId the user ID that the fingerprint hardware will authenticate for.
      * @hide
      */
     @RequiresPermission(anyOf = {USE_BIOMETRIC, USE_FINGERPRINT})
     public void authenticate(@Nullable CryptoObject crypto, @Nullable CancellationSignal cancel,
             @NonNull AuthenticationCallback callback, Handler handler, int userId) {
-        authenticate(crypto, cancel, callback, handler, userId, null /* surface */);
-    }
-
-    /**
-     * Per-user version, see {@link FingerprintManager#authenticate(CryptoObject,
-     * CancellationSignal, int, AuthenticationCallback, Handler)}. This version does not
-     * display the BiometricPrompt.
-     * @param userId the user ID that the fingerprint hardware will authenticate for.
-     * @param surface for optical fingerprint sensors that require active illumination by the OLED
-     *        display. Should be null for devices that don't require illumination.
-     * @hide
-     */
-    @RequiresPermission(anyOf = {USE_BIOMETRIC, USE_FINGERPRINT})
-    public void authenticate(@Nullable CryptoObject crypto, @Nullable CancellationSignal cancel,
-            @NonNull AuthenticationCallback callback, Handler handler, int userId,
-            @Nullable Surface surface) {
         if (callback == null) {
             throw new IllegalArgumentException("Must supply an authentication callback");
         }
@@ -472,7 +490,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
                 mCryptoObject = crypto;
                 final long operationId = crypto != null ? crypto.getOpId() : 0;
                 mService.authenticate(mToken, operationId, userId, mServiceReceiver,
-                        mContext.getOpPackageName(), surface);
+                        mContext.getOpPackageName());
             } catch (RemoteException e) {
                 Slog.w(TAG, "Remote exception while authenticating: ", e);
                 // Though this may not be a hardware issue, it will cause apps to give up or try
@@ -491,7 +509,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
      */
     @RequiresPermission(USE_BIOMETRIC_INTERNAL)
     public void detectFingerprint(@NonNull CancellationSignal cancel,
-            @NonNull FingerprintDetectionCallback callback, int userId, @Nullable Surface surface) {
+            @NonNull FingerprintDetectionCallback callback, int userId) {
         if (mService == null) {
             return;
         }
@@ -507,25 +525,10 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
 
         try {
             mService.detectFingerprint(mToken, userId, mServiceReceiver,
-                    mContext.getOpPackageName(), surface);
+                    mContext.getOpPackageName());
         } catch (RemoteException e) {
             Slog.w(TAG, "Remote exception when requesting finger detect", e);
         }
-    }
-
-    /**
-     * Defaults to {@link FingerprintManager#enroll(byte[], CancellationSignal, int,
-     * EnrollmentCallback, Surface)} with {@code surface} set to null.
-     *
-     * @see FingerprintManager#enroll(byte[], CancellationSignal, int, EnrollmentCallback,
-     * Surface)
-     *
-     * @hide
-     */
-    @RequiresPermission(MANAGE_FINGERPRINT)
-    public void enroll(byte [] hardwareAuthToken, CancellationSignal cancel, int userId,
-            EnrollmentCallback callback) {
-        enroll(hardwareAuthToken, cancel, userId, callback, null /* surface */);
     }
 
     /**
@@ -545,7 +548,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
      */
     @RequiresPermission(MANAGE_FINGERPRINT)
     public void enroll(byte [] hardwareAuthToken, CancellationSignal cancel, int userId,
-            EnrollmentCallback callback, @Nullable Surface surface) {
+            EnrollmentCallback callback) {
         if (userId == UserHandle.USER_CURRENT) {
             userId = getCurrentUserId();
         }
@@ -566,7 +569,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
             try {
                 mEnrollmentCallback = callback;
                 mService.enroll(mToken, hardwareAuthToken, userId, mServiceReceiver,
-                        mContext.getOpPackageName(), surface);
+                        mContext.getOpPackageName());
             } catch (RemoteException e) {
                 Slog.w(TAG, "Remote exception in enroll: ", e);
                 // Though this may not be a hardware issue, it will cause apps to give up or try
@@ -591,10 +594,10 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
      * @hide
      */
     @RequiresPermission(MANAGE_FINGERPRINT)
-    public void generateChallenge(int sensorId, GenerateChallengeCallback callback) {
+    public void generateChallenge(int sensorId, int userId, GenerateChallengeCallback callback) {
         if (mService != null) try {
             mGenerateChallengeCallback = callback;
-            mService.generateChallenge(mToken, sensorId, mServiceReceiver,
+            mService.generateChallenge(mToken, sensorId, userId, mServiceReceiver,
                     mContext.getOpPackageName());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
@@ -607,25 +610,45 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
      * @hide
      */
     @RequiresPermission(MANAGE_FINGERPRINT)
-    public void generateChallenge(GenerateChallengeCallback callback) {
-        final List<FingerprintSensorProperties> fingerprintSensorProperties = getSensorProperties();
+    public void generateChallenge(int userId, GenerateChallengeCallback callback) {
+        final List<FingerprintSensorPropertiesInternal> fingerprintSensorProperties =
+                getSensorPropertiesInternal();
         if (fingerprintSensorProperties.isEmpty()) {
             Slog.e(TAG, "No sensors");
             return;
         }
 
         final int sensorId = fingerprintSensorProperties.get(0).sensorId;
-        generateChallenge(sensorId, callback);
+        generateChallenge(sensorId, userId, callback);
     }
 
     /**
-     * Finishes enrollment and cancels the current auth token.
+     * Revokes the current challenge.
      * @hide
      */
     @RequiresPermission(MANAGE_FINGERPRINT)
-    public void revokeChallenge() {
+    public void revokeChallenge(int userId) {
+        // On HALs with only single in-flight challenge such as IBiometricsFingerprint@2.1,
+        // this parameter is ignored.
+        revokeChallenge(userId, 0L);
+    }
+
+    /**
+     * Revokes the specified challenge.
+     * @hide
+     */
+    @RequiresPermission(MANAGE_FINGERPRINT)
+    public void revokeChallenge(int userId, long challenge) {
         if (mService != null) try {
-            mService.revokeChallenge(mToken, mContext.getOpPackageName());
+            final List<FingerprintSensorPropertiesInternal> fingerprintSensorProperties =
+                    getSensorPropertiesInternal();
+            if (fingerprintSensorProperties.isEmpty()) {
+                Slog.e(TAG, "No sensors");
+                return;
+            }
+            final int sensorId = fingerprintSensorProperties.get(0).sensorId;
+            mService.revokeChallenge(mToken, sensorId, userId, mContext.getOpPackageName(),
+                    challenge);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -706,7 +729,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
      * @hide
      */
     @RequiresPermission(USE_FINGERPRINT)
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public List<Fingerprint> getEnrolledFingerprints(int userId) {
         if (mService != null) try {
             return mService.getEnrolledFingerprints(userId, mContext.getOpPackageName());
@@ -743,10 +766,30 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     }
 
     /**
+     * Checks if the specified user has enrollments in any of the specified sensors.
      * @hide
      */
     @RequiresPermission(USE_BIOMETRIC_INTERNAL)
-    public void setUdfpsOverlayController(IUdfpsOverlayController controller) {
+    public boolean hasEnrolledTemplatesForAnySensor(int userId,
+            @NonNull List<FingerprintSensorPropertiesInternal> sensors) {
+        if (mService == null) {
+            Slog.w(TAG, "hasEnrolledTemplatesForAnySensor: no fingerprint service");
+            return false;
+        }
+
+        try {
+            return mService.hasEnrolledTemplatesForAnySensor(userId, sensors,
+                    mContext.getOpPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * @hide
+     */
+    @RequiresPermission(USE_BIOMETRIC_INTERNAL)
+    public void setUdfpsOverlayController(@NonNull IUdfpsOverlayController controller) {
         if (mService == null) {
             Slog.w(TAG, "setUdfpsOverlayController: no fingerprint service");
             return;
@@ -755,7 +798,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
         try {
             mService.setUdfpsOverlayController(controller);
         } catch (RemoteException e) {
-            e.rethrowFromSystemServer();
+            throw e.rethrowFromSystemServer();
         }
     }
 
@@ -763,16 +806,16 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
      * @hide
      */
     @RequiresPermission(USE_BIOMETRIC_INTERNAL)
-    public void onFingerDown(int x, int y, float minor, float major) {
+    public void onPointerDown(int sensorId, int x, int y, float minor, float major) {
         if (mService == null) {
             Slog.w(TAG, "onFingerDown: no fingerprint service");
             return;
         }
 
         try {
-            mService.onFingerDown(x, y, minor, major);
+            mService.onPointerDown(sensorId, x, y, minor, major);
         } catch (RemoteException e) {
-            e.rethrowFromSystemServer();
+            throw e.rethrowFromSystemServer();
         }
     }
 
@@ -780,16 +823,16 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
      * @hide
      */
     @RequiresPermission(USE_BIOMETRIC_INTERNAL)
-    public void onFingerUp() {
+    public void onPointerUp(int sensorId) {
         if (mService == null) {
             Slog.w(TAG, "onFingerDown: no fingerprint service");
             return;
         }
 
         try {
-            mService.onFingerUp();
+            mService.onPointerUp(sensorId);
         } catch (RemoteException e) {
-            e.rethrowFromSystemServer();
+            throw e.rethrowFromSystemServer();
         }
     }
 
@@ -803,13 +846,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     @Deprecated
     @RequiresPermission(USE_FINGERPRINT)
     public boolean hasEnrolledFingerprints() {
-        if (mService != null) try {
-            return mService.hasEnrolledFingerprints(
-                    mContext.getUserId(), mContext.getOpPackageName());
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
-        return false;
+        return hasEnrolledFingerprints(UserHandle.myUserId());
     }
 
     /**
@@ -820,7 +857,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
             INTERACT_ACROSS_USERS})
     public boolean hasEnrolledFingerprints(int userId) {
         if (mService != null) try {
-            return mService.hasEnrolledFingerprints(userId, mContext.getOpPackageName());
+            return mService.hasEnrolledFingerprintsDeprecated(userId, mContext.getOpPackageName());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -839,7 +876,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     public boolean isHardwareDetected() {
         if (mService != null) {
             try {
-                return mService.isHardwareDetected(mContext.getOpPackageName());
+                return mService.isHardwareDetectedDeprecated(mContext.getOpPackageName());
             } catch (RemoteException e) {
                 throw e.rethrowFromSystemServer();
             }
@@ -855,16 +892,15 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
      */
     @RequiresPermission(USE_BIOMETRIC_INTERNAL)
     @NonNull
-    public List<FingerprintSensorProperties> getSensorProperties() {
+    public List<FingerprintSensorPropertiesInternal> getSensorPropertiesInternal() {
         try {
-            if (mService == null || !mService.isHardwareDetected(mContext.getOpPackageName())) {
+            if (mService == null) {
                 return new ArrayList<>();
             }
-            return mService.getSensorProperties(mContext.getOpPackageName());
+            return mService.getSensorPropertiesInternal(mContext.getOpPackageName());
         } catch (RemoteException e) {
-            e.rethrowFromSystemServer();
+            throw e.rethrowFromSystemServer();
         }
-        return new ArrayList<>();
     }
 
     /**

@@ -53,6 +53,7 @@ import com.android.systemui.statusbar.notification.people.PeopleNotificationIden
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.NotificationTestHelper;
 import com.android.systemui.statusbar.phone.ShadeController;
+import com.android.wm.shell.bubbles.Bubbles;
 
 import org.junit.After;
 import org.junit.Before;
@@ -60,6 +61,8 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+
+import java.util.Optional;
 
 @SmallTest
 @RunWith(AndroidTestingRunner.class)
@@ -112,7 +115,8 @@ public class NotificationFilterTest extends SysuiTestCase {
         mDependency.injectTestDependency(NotificationGroupManagerLegacy.class,
                 new NotificationGroupManagerLegacy(
                         mock(StatusBarStateController.class),
-                        () -> mock(PeopleNotificationIdentifier.class)));
+                        () -> mock(PeopleNotificationIdentifier.class),
+                        Optional.of(mock(Bubbles.class))));
         mDependency.injectMockDependency(ShadeController.class);
         mDependency.injectMockDependency(NotificationLockscreenUserManager.class);
         mDependency.injectTestDependency(KeyguardEnvironment.class, mEnvironment);

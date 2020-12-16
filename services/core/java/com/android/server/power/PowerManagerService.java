@@ -5408,6 +5408,22 @@ public final class PowerManagerService extends SystemService
         }
 
         @Override // Binder call
+        public boolean isAmbientDisplaySuppressedForTokenByApp(@NonNull String token, int appUid) {
+            mContext.enforceCallingOrSelfPermission(
+                    android.Manifest.permission.READ_DREAM_STATE, null);
+            mContext.enforceCallingOrSelfPermission(
+                    android.Manifest.permission.READ_DREAM_SUPPRESSION, null);
+
+            final long ident = Binder.clearCallingIdentity();
+            try {
+                return isAmbientDisplayAvailable()
+                        && mAmbientDisplaySuppressionController.isSuppressed(token, appUid);
+            } finally {
+                Binder.restoreCallingIdentity(ident);
+            }
+        }
+
+        @Override // Binder call
         public boolean isAmbientDisplaySuppressed() {
             mContext.enforceCallingOrSelfPermission(
                     android.Manifest.permission.READ_DREAM_STATE, null);
@@ -5480,6 +5496,22 @@ public final class PowerManagerService extends SystemService
                 } else {
                     dumpInternal(pw);
                 }
+            } finally {
+                Binder.restoreCallingIdentity(ident);
+            }
+        }
+
+        /**
+         * Returns the tokens used to suppress ambient display by the calling app.
+         *
+         * <p>The calling app suppressed ambient display by calling
+         * {@link #suppressAmbientDisplay(String, boolean)}.
+         */
+        public List<String> getAmbientDisplaySuppressionTokens() {
+            final int uid = Binder.getCallingUid();
+            final long ident = Binder.clearCallingIdentity();
+            try {
+                return mAmbientDisplaySuppressionController.getSuppressionTokens(uid);
             } finally {
                 Binder.restoreCallingIdentity(ident);
             }

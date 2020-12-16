@@ -139,7 +139,9 @@ android_library {
         "SystemUI-tags",
         "SystemUI-proto",
         "metrics-helper-lib",
-        "androidx.test.rules", "hamcrest-library",
+        "hamcrest-library",
+        "androidx.test.rules",
+        "androidx.test.uiautomator",
         "mockito-target-extended-minus-junit4",
         "testables",
         "truth-prebuilt",
@@ -161,6 +163,7 @@ android_library {
 
 android_app {
     name: "SystemUI",
+    defaults: ["platform_app_defaults"],
     static_libs: [
         "SystemUI-core",
     ],
@@ -182,5 +185,4 @@ android_app {
         "privapp_whitelist_com.android.systemui",
         "checked-wm_shell_protolog.json",
     ],
-
 }

@@ -25,8 +25,10 @@ import android.net.NetworkInfo.DetailedState;
 import android.os.Build;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.telephony.SubscriptionManager;
 import android.text.TextUtils;
 
+import com.android.modules.utils.build.SdkLevel;
 import com.android.net.module.util.Inet4AddressUtils;
 
 import java.net.Inet4Address;
@@ -159,6 +161,21 @@ public class WifiInfo implements Parcelable {
     private boolean mTrusted;
 
     /**
+     * Whether the network is oem paid or not.
+     */
+    private boolean mOemPaid;
+
+    /**
+     * Whether the network is oem private or not.
+     */
+    private boolean mOemPrivate;
+
+    /**
+     * Whether the network is a carrier merged network.
+     */
+    private boolean mCarrierMerged;
+
+    /**
      * OSU (Online Sign Up) AP for Passpoint R2.
      */
     private boolean mOsuAp;
@@ -178,6 +195,11 @@ public class WifiInfo implements Parcelable {
      * else null.
      */
     private String mRequestingPackageName;
+
+    /**
+     * Identify which Telephony subscription provides this network.
+     */
+    private int mSubscriptionId;
 
     /**
      * Running total count of lost (not ACKed) transmitted unicast data packets.
@@ -305,6 +327,7 @@ public class WifiInfo implements Parcelable {
         mRssi = INVALID_RSSI;
         mLinkSpeed = LINK_SPEED_UNKNOWN;
         mFrequency = -1;
+        mSubscriptionId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
     }
 
     /** @hide */
@@ -322,11 +345,16 @@ public class WifiInfo implements Parcelable {
         setFrequency(-1);
         setMeteredHint(false);
         setEphemeral(false);
+        setTrusted(false);
+        setOemPaid(false);
+        setOemPrivate(false);
+        setCarrierMerged(false);
         setOsuAp(false);
         setRequestingPackageName(null);
         setFQDN(null);
         setProviderFriendlyName(null);
         setPasspointUniqueId(null);
+        setSubscriptionId(SubscriptionManager.INVALID_SUBSCRIPTION_ID);
         txBad = 0;
         txSuccess = 0;
         rxSuccess = 0;
@@ -358,11 +386,15 @@ public class WifiInfo implements Parcelable {
             mMeteredHint = source.mMeteredHint;
             mEphemeral = source.mEphemeral;
             mTrusted = source.mTrusted;
+            mOemPaid = source.mOemPaid;
+            mOemPrivate = source.mOemPrivate;
+            mCarrierMerged = source.mCarrierMerged;
             mRequestingPackageName =
                     source.mRequestingPackageName;
             mOsuAp = source.mOsuAp;
             mFqdn = source.mFqdn;
             mProviderFriendlyName = source.mProviderFriendlyName;
+            mSubscriptionId = source.mSubscriptionId;
             txBad = source.txBad;
             txRetries = source.txRetries;
             txSuccess = source.txSuccess;
@@ -716,10 +748,72 @@ public class WifiInfo implements Parcelable {
         mTrusted = trusted;
     }
 
-    /** {@hide} */
+    /**
+     * Returns true if the current Wifi network is a trusted network, false otherwise.
+     * @see WifiNetworkSuggestion.Builder#setUntrusted(boolean).
+     * {@hide}
+     */
+    @SystemApi
     public boolean isTrusted() {
         return mTrusted;
     }
+
+    /** {@hide} */
+    public void setOemPaid(boolean oemPaid) {
+        mOemPaid = oemPaid;
+    }
+
+    /**
+     * Returns true if the current Wifi network is an oem paid network, false otherwise.
+     * @see WifiNetworkSuggestion.Builder#setOemPaid(boolean).
+     * {@hide}
+     */
+    @SystemApi
+    public boolean isOemPaid() {
+        if (!SdkLevel.isAtLeastS()) {
+            throw new UnsupportedOperationException();
+        }
+        return mOemPaid;
+    }
+
+    /** {@hide} */
+    public void setOemPrivate(boolean oemPrivate) {
+        mOemPrivate = oemPrivate;
+    }
+
+    /**
+     * Returns true if the current Wifi network is an oem private network, false otherwise.
+     * @see WifiNetworkSuggestion.Builder#setOemPrivate(boolean).
+     * {@hide}
+     */
+    @SystemApi
+    public boolean isOemPrivate() {
+        if (!SdkLevel.isAtLeastS()) {
+            throw new UnsupportedOperationException();
+        }
+        return mOemPrivate;
+    }
+
+    /**
+     * {@hide}
+     */
+    public void setCarrierMerged(boolean carrierMerged) {
+        mCarrierMerged = carrierMerged;
+    }
+
+    /**
+     * Returns true if the current Wifi network is a carrier merged network, false otherwise.
+     * @see WifiNetworkSuggestion.Builder#setCarrierMerged(boolean).
+     * {@hide}
+     */
+    @SystemApi
+    public boolean isCarrierMerged() {
+        if (!SdkLevel.isAtLeastS()) {
+            throw new UnsupportedOperationException();
+        }
+        return mCarrierMerged;
+    }
+
 
     /** {@hide} */
     public void setOsuAp(boolean osuAp) {
@@ -787,6 +881,28 @@ public class WifiInfo implements Parcelable {
     @SystemApi
     public @Nullable String getRequestingPackageName() {
         return mRequestingPackageName;
+    }
+
+    /** {@hide} */
+    public void setSubscriptionId(int subId) {
+        mSubscriptionId = subId;
+    }
+
+    /**
+     * If this network is provisioned by a carrier, returns subscription Id corresponding to the
+     * associated SIM on the device. If this network is not provisioned by a carrier, returns
+     * {@link android.telephony.SubscriptionManager#INVALID_SUBSCRIPTION_ID}
+     *
+     * @see WifiNetworkSuggestion.Builder#setSubscriptionId(int)
+     * @see android.telephony.SubscriptionInfo#getSubscriptionId()
+     * {@hide}
+     */
+    @SystemApi
+    public int getSubscriptionId() {
+        if (!SdkLevel.isAtLeastS()) {
+            throw new UnsupportedOperationException();
+        }
+        return mSubscriptionId;
     }
 
 
@@ -958,6 +1074,9 @@ public class WifiInfo implements Parcelable {
         dest.writeInt(mMeteredHint ? 1 : 0);
         dest.writeInt(mEphemeral ? 1 : 0);
         dest.writeInt(mTrusted ? 1 : 0);
+        dest.writeInt(mOemPaid ? 1 : 0);
+        dest.writeInt(mOemPrivate ? 1 : 0);
+        dest.writeInt(mCarrierMerged ? 1 : 0);
         dest.writeInt(score);
         dest.writeLong(txSuccess);
         dest.writeDouble(mSuccessfulTxPacketsPerSecond);
@@ -976,6 +1095,7 @@ public class WifiInfo implements Parcelable {
         dest.writeInt(mMaxSupportedTxLinkSpeed);
         dest.writeInt(mMaxSupportedRxLinkSpeed);
         dest.writeString(mPasspointUniqueId);
+        dest.writeInt(mSubscriptionId);
     }
 
     /** Implement the Parcelable interface {@hide} */
@@ -1003,6 +1123,9 @@ public class WifiInfo implements Parcelable {
                 info.mMeteredHint = in.readInt() != 0;
                 info.mEphemeral = in.readInt() != 0;
                 info.mTrusted = in.readInt() != 0;
+                info.mOemPaid = in.readInt() != 0;
+                info.mOemPrivate = in.readInt() != 0;
+                info.mCarrierMerged = in.readInt() != 0;
                 info.score = in.readInt();
                 info.txSuccess = in.readLong();
                 info.mSuccessfulTxPacketsPerSecond = in.readDouble();
@@ -1021,6 +1144,7 @@ public class WifiInfo implements Parcelable {
                 info.mMaxSupportedTxLinkSpeed = in.readInt();
                 info.mMaxSupportedRxLinkSpeed = in.readInt();
                 info.mPasspointUniqueId = in.readString();
+                info.mSubscriptionId = in.readInt();
                 return info;
             }
 

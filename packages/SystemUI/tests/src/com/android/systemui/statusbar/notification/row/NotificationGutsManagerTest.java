@@ -67,7 +67,6 @@ import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.UiEventLogger;
 import com.android.internal.logging.testing.UiEventLoggerFake;
 import com.android.systemui.SysuiTestCase;
-import com.android.systemui.bubbles.BubbleController;
 import com.android.systemui.plugins.statusbar.NotificationMenuRowPlugin;
 import com.android.systemui.settings.UserContextProvider;
 import com.android.systemui.statusbar.NotificationLockscreenUserManager;
@@ -81,6 +80,7 @@ import com.android.systemui.statusbar.notification.row.NotificationGutsManager.O
 import com.android.systemui.statusbar.notification.stack.NotificationListContainer;
 import com.android.systemui.statusbar.phone.StatusBar;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
+import com.android.systemui.wmshell.BubblesManager;
 
 import org.junit.Before;
 import org.junit.Ignore;
@@ -92,6 +92,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
+
+import java.util.Optional;
 
 import javax.inject.Provider;
 
@@ -129,7 +131,7 @@ public class NotificationGutsManagerTest extends SysuiTestCase {
     @Mock private ChannelEditorDialogController mChannelEditorDialogController;
     @Mock private PeopleNotificationIdentifier mPeopleNotificationIdentifier;
     @Mock private UserContextProvider mContextTracker;
-    @Mock private BubbleController mBubbleController;
+    @Mock private BubblesManager mBubblesManager;
     @Mock(answer = Answers.RETURNS_SELF)
     private PriorityOnboardingDialogController.Builder mBuilder;
     private Provider<PriorityOnboardingDialogController.Builder> mProvider = () -> mBuilder;
@@ -145,7 +147,6 @@ public class NotificationGutsManagerTest extends SysuiTestCase {
         mDependency.injectTestDependency(
                 OnUserInteractionCallback.class,
                 mOnUserInteractionCallback);
-        mDependency.injectTestDependency(BubbleController.class, mBubbleController);
         mDependency.injectMockDependency(NotificationLockscreenUserManager.class);
         mHandler = Handler.createAsync(mTestableLooper.getLooper());
         mHelper = new NotificationTestHelper(mContext, mDependency, TestableLooper.get(this));
@@ -155,7 +156,7 @@ public class NotificationGutsManagerTest extends SysuiTestCase {
                 () -> mStatusBar, mHandler, mHandler, mAccessibilityManager, mHighPriorityProvider,
                 mINotificationManager, mLauncherApps, mShortcutManager,
                 mChannelEditorDialogController, mContextTracker, mProvider,
-                mAssistantFeedbackController, mBubbleController,
+                mAssistantFeedbackController, Optional.of(mBubblesManager),
                 new UiEventLoggerFake(), mOnUserInteractionCallback);
         mGutsManager.setUpWithPresenter(mPresenter, mNotificationListContainer,
                 mCheckSaveListener, mOnSettingsClickListener);

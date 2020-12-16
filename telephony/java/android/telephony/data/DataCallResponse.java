@@ -69,6 +69,7 @@ public final class DataCallResponse implements Parcelable {
 
     /** {@hide} */
     @IntDef(prefix = "HANDOVER_FAILURE_MODE_", value = {
+            HANDOVER_FAILURE_MODE_UNKNOWN,
             HANDOVER_FAILURE_MODE_LEGACY,
             HANDOVER_FAILURE_MODE_DO_FALLBACK,
             HANDOVER_FAILURE_MODE_NO_FALLBACK_RETRY_HANDOVER,
@@ -80,36 +81,42 @@ public final class DataCallResponse implements Parcelable {
     /**
      * Data handover failure mode is unknown.
      */
-    public static final int HANDOVER_FAILURE_MODE_UNKNOWN = 0;
+    public static final int HANDOVER_FAILURE_MODE_UNKNOWN = -1;
 
     /**
      * Perform fallback to the source data transport on data handover failure using
      * the legacy logic, which is fallback if the fail cause is
      * {@link DataFailCause#HANDOFF_PREFERENCE_CHANGED}.
      */
-    public static final int HANDOVER_FAILURE_MODE_LEGACY = 1;
+    public static final int HANDOVER_FAILURE_MODE_LEGACY = 0;
 
     /**
      * Perform fallback to the source data transport on data handover failure.
      */
-    public static final int HANDOVER_FAILURE_MODE_DO_FALLBACK = 2;
+    public static final int HANDOVER_FAILURE_MODE_DO_FALLBACK = 1;
 
     /**
      * Do not perform fallback to the source data transport on data handover failure.
-     * Frameworks should keep retrying handover by sending
+     * Framework will retry setting up a new data connection by sending
      * {@link DataService#REQUEST_REASON_HANDOVER} request to the underlying {@link DataService}.
      */
-    public static final int HANDOVER_FAILURE_MODE_NO_FALLBACK_RETRY_HANDOVER = 3;
+    public static final int HANDOVER_FAILURE_MODE_NO_FALLBACK_RETRY_HANDOVER = 2;
 
     /**
      * Do not perform fallback to the source transport on data handover failure.
-     * Frameworks should retry setup a new data connection by sending
+     * Framework will retry setting up a new data connection by sending
      * {@link DataService#REQUEST_REASON_NORMAL} request to the underlying {@link DataService}.
      */
-    public static final int HANDOVER_FAILURE_MODE_NO_FALLBACK_RETRY_SETUP_NORMAL = 4;
+    public static final int HANDOVER_FAILURE_MODE_NO_FALLBACK_RETRY_SETUP_NORMAL = 3;
+
+    /**
+     * Indicates that data retry duration is not specified. Platform can determine when to
+     * perform data setup appropriately.
+     */
+    public static final int RETRY_DURATION_UNDEFINED = -1;
 
     private final @DataFailureCause int mCause;
-    private final int mSuggestedRetryTime;
+    private final long mSuggestedRetryTime;
     private final int mId;
     private final @LinkStatus int mLinkStatus;
     private final @ProtocolType int mProtocolType;
@@ -171,7 +178,7 @@ public final class DataCallResponse implements Parcelable {
         mHandoverFailureMode = HANDOVER_FAILURE_MODE_LEGACY;
     }
 
-    private DataCallResponse(@DataFailureCause int cause, int suggestedRetryTime, int id,
+    private DataCallResponse(@DataFailureCause int cause, long suggestedRetryTime, int id,
             @LinkStatus int linkStatus, @ProtocolType int protocolType,
             @Nullable String interfaceName, @Nullable List<LinkAddress> addresses,
             @Nullable List<InetAddress> dnsAddresses, @Nullable List<InetAddress> gatewayAddresses,
@@ -201,7 +208,7 @@ public final class DataCallResponse implements Parcelable {
     @VisibleForTesting
     public DataCallResponse(Parcel source) {
         mCause = source.readInt();
-        mSuggestedRetryTime = source.readInt();
+        mSuggestedRetryTime = source.readLong();
         mId = source.readInt();
         mLinkStatus = source.readInt();
         mProtocolType = source.readInt();
@@ -228,8 +235,28 @@ public final class DataCallResponse implements Parcelable {
 
     /**
      * @return The suggested data retry time in milliseconds.
+     *
+     * @deprecated Use {@link #getRetryDurationMillis()} instead.
      */
-    public int getSuggestedRetryTime() { return mSuggestedRetryTime; }
+    @Deprecated
+    public int getSuggestedRetryTime() {
+        // To match the pre-deprecated getSuggestedRetryTime() behavior.
+        if (mSuggestedRetryTime == RETRY_DURATION_UNDEFINED) {
+            return 0;
+        } else if (mSuggestedRetryTime > Integer.MAX_VALUE) {
+            return Integer.MAX_VALUE;
+        }
+        return (int) mSuggestedRetryTime;
+    }
+
+    /**
+     * @return The network suggested data retry duration in milliseconds. {@code Long.MAX_VALUE}
+     * indicates data retry should not occur. {@link #RETRY_DURATION_UNDEFINED} indicates network
+     * did not suggest any retry duration.
+     */
+    public long getRetryDurationMillis() {
+        return mSuggestedRetryTime;
+    }
 
     /**
      * @return The unique id of the data connection.
@@ -332,6 +359,7 @@ public final class DataCallResponse implements Parcelable {
            .append(" mtu=").append(getMtu())
            .append(" mtuV4=").append(getMtuV4())
            .append(" mtuV6=").append(getMtuV6())
+           .append(" handoverFailureMode=").append(getHandoverFailureMode())
            .append("}");
         return sb.toString();
     }
@@ -361,14 +389,15 @@ public final class DataCallResponse implements Parcelable {
                 && mPcscfAddresses.containsAll(other.mPcscfAddresses)
                 && mMtu == other.mMtu
                 && mMtuV4 == other.mMtuV4
-                && mMtuV6 == other.mMtuV6;
+                && mMtuV6 == other.mMtuV6
+                && mHandoverFailureMode == other.mHandoverFailureMode;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(mCause, mSuggestedRetryTime, mId, mLinkStatus, mProtocolType,
                 mInterfaceName, mAddresses, mDnsAddresses, mGatewayAddresses, mPcscfAddresses,
-                mMtu, mMtuV4, mMtuV6);
+                mMtu, mMtuV4, mMtuV6, mHandoverFailureMode);
     }
 
     @Override
@@ -379,7 +408,7 @@ public final class DataCallResponse implements Parcelable {
     @Override
     public void writeToParcel(Parcel dest, int flags) {
         dest.writeInt(mCause);
-        dest.writeInt(mSuggestedRetryTime);
+        dest.writeLong(mSuggestedRetryTime);
         dest.writeInt(mId);
         dest.writeInt(mLinkStatus);
         dest.writeInt(mProtocolType);
@@ -408,6 +437,25 @@ public final class DataCallResponse implements Parcelable {
             };
 
     /**
+     * Convert handover failure mode to string.
+     *
+     * @param handoverFailureMode Handover failure mode
+     * @return Handover failure mode in string
+     *
+     * @hide
+     */
+    public static String failureModeToString(@HandoverFailureMode int handoverFailureMode) {
+        switch (handoverFailureMode) {
+            case HANDOVER_FAILURE_MODE_UNKNOWN: return "unknown";
+            case HANDOVER_FAILURE_MODE_LEGACY: return "legacy";
+            case HANDOVER_FAILURE_MODE_DO_FALLBACK: return "fallback";
+            case HANDOVER_FAILURE_MODE_NO_FALLBACK_RETRY_HANDOVER: return "retry handover";
+            case HANDOVER_FAILURE_MODE_NO_FALLBACK_RETRY_SETUP_NORMAL: return "retry setup new one";
+            default: return Integer.toString(handoverFailureMode);
+        }
+    }
+
+    /**
      * Provides a convenient way to set the fields of a {@link DataCallResponse} when creating a new
      * instance.
      *
@@ -424,7 +472,7 @@ public final class DataCallResponse implements Parcelable {
     public static final class Builder {
         private @DataFailureCause int mCause;
 
-        private int mSuggestedRetryTime;
+        private long mSuggestedRetryTime = RETRY_DURATION_UNDEFINED;
 
         private int mId;
 
@@ -472,9 +520,23 @@ public final class DataCallResponse implements Parcelable {
          *
          * @param suggestedRetryTime The suggested data retry time in milliseconds.
          * @return The same instance of the builder.
+         *
+         * @deprecated Use {@link #setRetryDurationMillis(long)} instead.
          */
+        @Deprecated
         public @NonNull Builder setSuggestedRetryTime(int suggestedRetryTime) {
-            mSuggestedRetryTime = suggestedRetryTime;
+            mSuggestedRetryTime = (long) suggestedRetryTime;
+            return this;
+        }
+
+        /**
+         * Set the network suggested data retry duration.
+         *
+         * @param retryDurationMillis The suggested data retry duration in milliseconds.
+         * @return The same instance of the builder.
+         */
+        public @NonNull Builder setRetryDurationMillis(long retryDurationMillis) {
+            mSuggestedRetryTime = retryDurationMillis;
             return this;
         }
 

@@ -24,11 +24,17 @@ import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.net.MacAddress;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.net.wifi.hotspot2.PasspointConfiguration;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.telephony.SubscriptionInfo;
+import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
+
+import com.android.modules.utils.build.SdkLevel;
 
 import java.nio.charset.CharsetEncoder;
 import java.nio.charset.StandardCharsets;
@@ -49,6 +55,16 @@ public final class WifiNetworkSuggestion implements Parcelable {
      */
     public static final class Builder {
         private static final int UNASSIGNED_PRIORITY = -1;
+
+        /**
+         * Set WPA Enterprise type according to certificate security level.
+         * This is for backward compatibility in R.
+         */
+        private static final int WPA3_ENTERPRISE_AUTO = 0;
+        /** Set WPA Enterprise type to standard mode only. */
+        private static final int WPA3_ENTERPRISE_STANDARD = 1;
+        /** Set WPA Enterprise type to 192 bit mode only. */
+        private static final int WPA3_ENTERPRISE_192_BIT = 2;
 
         /**
          * SSID of the network.
@@ -80,6 +96,10 @@ public final class WifiNetworkSuggestion implements Parcelable {
          * certificates and other settings associated with the WPA3-Enterprise networks.
          */
         private @Nullable WifiEnterpriseConfig mWpa3EnterpriseConfig;
+        /**
+         * Indicate what type this WPA3-Enterprise network is.
+         */
+        private int mWpa3EnterpriseType = WPA3_ENTERPRISE_AUTO;
         /**
          * The passpoint config for use with Hotspot 2.0 network
          */
@@ -119,6 +139,12 @@ public final class WifiNetworkSuggestion implements Parcelable {
         private int mCarrierId;
 
         /**
+         * The Subscription ID identifies the SIM card for which this network configuration is
+         * valid.
+         */
+        private int mSubscriptionId;
+
+        /**
          * Whether this network is shared credential with user to allow user manually connect.
          */
         private boolean mIsSharedWithUser;
@@ -150,6 +176,22 @@ public final class WifiNetworkSuggestion implements Parcelable {
         private boolean mIsNetworkUntrusted;
 
         /**
+         * Whether this network will be brought up as OEM paid (OEM_PAID capability bit added).
+         */
+        private boolean mIsNetworkOemPaid;
+
+        /**
+         * Whether this network will be brought up as OEM private (OEM_PRIVATE capability bit
+         * added).
+         */
+        private boolean mIsNetworkOemPrivate;
+
+        /**
+         * Whether this network is a carrier merged network.
+         */
+        private boolean mIsCarrierMerged;
+
+        /**
          * Whether this network will use enhanced MAC randomization.
          */
         private boolean mIsEnhancedMacRandomizationEnabled;
@@ -175,8 +217,12 @@ public final class WifiNetworkSuggestion implements Parcelable {
             mWapiPskPassphrase = null;
             mWapiEnterpriseConfig = null;
             mIsNetworkUntrusted = false;
+            mIsNetworkOemPaid = false;
+            mIsNetworkOemPrivate = false;
+            mIsCarrierMerged = false;
             mPriorityGroup = 0;
             mIsEnhancedMacRandomizationEnabled = false;
+            mSubscriptionId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
         }
 
         /**
@@ -294,11 +340,16 @@ public final class WifiNetworkSuggestion implements Parcelable {
          * sha384WithRSAEncryption (OID 1.2.840.113549.1.1.12) or ecdsa-with-SHA384
          * (OID 1.2.840.10045.4.3.3).
          *
+         * @deprecated use {@link #setWpa3EnterpriseStandardModeConfig(WifiEnterpriseConfig)} or
+         * {@link #setWpa3Enterprise192BitModeConfig(WifiEnterpriseConfig)} to specify
+         * WPA3-Enterprise type explicitly.
+         *
          * @param enterpriseConfig Instance of {@link WifiEnterpriseConfig}.
          * @return Instance of {@link Builder} to enable chaining of the builder method.
          * @throws IllegalArgumentException if configuration CA certificate or
          *                                  AltSubjectMatch/DomainSuffixMatch is not set.
          */
+        @Deprecated
         public @NonNull Builder setWpa3EnterpriseConfig(
                 @NonNull WifiEnterpriseConfig enterpriseConfig) {
             checkNotNull(enterpriseConfig);
@@ -306,6 +357,63 @@ public final class WifiNetworkSuggestion implements Parcelable {
                 throw new IllegalArgumentException("Enterprise configuration is insecure");
             }
             mWpa3EnterpriseConfig = new WifiEnterpriseConfig(enterpriseConfig);
+            return this;
+        }
+
+        /**
+         * Set the associated enterprise configuration for this network. Needed for authenticating
+         * to WPA3-Enterprise standard networks. See {@link WifiEnterpriseConfig} for description.
+         * For WPA3-Enterprise in 192-bit security mode networks,
+         * see {@link #setWpa3Enterprise192BitModeConfig(WifiEnterpriseConfig)} for description.
+         *
+         * @param enterpriseConfig Instance of {@link WifiEnterpriseConfig}.
+         * @return Instance of {@link Builder} to enable chaining of the builder method.
+         * @throws IllegalArgumentException if configuration CA certificate or
+         *                                  AltSubjectMatch/DomainSuffixMatch is not set.
+         */
+        public @NonNull Builder setWpa3EnterpriseStandardModeConfig(
+                @NonNull WifiEnterpriseConfig enterpriseConfig) {
+            checkNotNull(enterpriseConfig);
+            if (enterpriseConfig.isInsecure()) {
+                throw new IllegalArgumentException("Enterprise configuration is insecure");
+            }
+            mWpa3EnterpriseConfig = new WifiEnterpriseConfig(enterpriseConfig);
+            mWpa3EnterpriseType = WPA3_ENTERPRISE_STANDARD;
+            return this;
+        }
+
+        /**
+         * Set the associated enterprise configuration for this network. Needed for authenticating
+         * to WPA3-Enterprise in 192-bit security mode networks. See {@link WifiEnterpriseConfig}
+         * for description. Both the client and CA certificates must be provided,
+         * and must be of type of either sha384WithRSAEncryption with key length of 3072bit or
+         * more (OID 1.2.840.113549.1.1.12), or ecdsa-with-SHA384 with key length of 384bit or
+         * more (OID 1.2.840.10045.4.3.3).
+         *
+         * @param enterpriseConfig Instance of {@link WifiEnterpriseConfig}.
+         * @return Instance of {@link Builder} to enable chaining of the builder method.
+         * @throws IllegalArgumentException if the EAP type or certificates do not
+         *                                  meet 192-bit mode requirements.
+         */
+        public @NonNull Builder setWpa3Enterprise192BitModeConfig(
+                @NonNull WifiEnterpriseConfig enterpriseConfig) {
+            checkNotNull(enterpriseConfig);
+            if (enterpriseConfig.getEapMethod() != WifiEnterpriseConfig.Eap.TLS) {
+                throw new IllegalArgumentException("The 192-bit mode network type must be TLS");
+            }
+            if (!WifiEnterpriseConfig.isSuiteBCipherCert(
+                    enterpriseConfig.getClientCertificate())) {
+                throw new IllegalArgumentException(
+                    "The client certificate does not meet 192-bit mode requirements.");
+            }
+            if (!WifiEnterpriseConfig.isSuiteBCipherCert(
+                    enterpriseConfig.getCaCertificate())) {
+                throw new IllegalArgumentException(
+                    "The CA certificate does not meet 192-bit mode requirements.");
+            }
+
+            mWpa3EnterpriseConfig = new WifiEnterpriseConfig(enterpriseConfig);
+            mWpa3EnterpriseType = WPA3_ENTERPRISE_192_BIT;
             return this;
         }
 
@@ -345,6 +453,27 @@ public final class WifiNetworkSuggestion implements Parcelable {
         }
 
         /**
+         * Set the subscription ID of the SIM card for which this suggestion is targeted.
+         * The suggestion will only apply to that SIM card.
+         * <p>
+         * The subscription ID must belong to a carrier ID which meets either of the following
+         * conditions:
+         * <li>The carrier ID specified by the cross carrier provider, or</li>
+         * <li>The carrier ID which is used to validate the suggesting carrier-privileged app, see
+         * {@link TelephonyManager#hasCarrierPrivileges()}</li>
+         *
+         * @param subId subscription ID see {@link SubscriptionInfo#getSubscriptionId()}
+         * @return Instance of {@link Builder} to enable chaining of the builder method.
+         */
+        public @NonNull Builder setSubscriptionId(int subId) {
+            if (!SdkLevel.isAtLeastS()) {
+                throw new UnsupportedOperationException();
+            }
+            mSubscriptionId = subId;
+            return this;
+        }
+
+        /**
          * Set the priority group ID, {@link #setPriority(int)} will only impact the network
          * suggestions from the same priority group within the same app.
          *
@@ -352,6 +481,9 @@ public final class WifiNetworkSuggestion implements Parcelable {
          * @return Instance of {@link Builder} to enable chaining of the builder method.
          */
         public @NonNull Builder setPriorityGroup(int priorityGroup) {
+            if (!SdkLevel.isAtLeastS()) {
+                throw new UnsupportedOperationException();
+            }
             mPriorityGroup = priorityGroup;
             return this;
         }
@@ -543,12 +675,15 @@ public final class WifiNetworkSuggestion implements Parcelable {
 
         /**
          * Specifies whether the system will bring up the network (if selected) as untrusted. An
-         * untrusted network has its {@link android.net.NetworkCapabilities#NET_CAPABILITY_TRUSTED}
+         * untrusted network has its {@link NetworkCapabilities#NET_CAPABILITY_TRUSTED}
          * capability removed. The Wi-Fi network selection process may use this information to
          * influence priority of the suggested network for Wi-Fi network selection (most likely to
          * reduce it). The connectivity service may use this information to influence the overall
          * network configuration of the device.
          * <p>
+         * <li> These suggestions are only considered for network selection if a
+         * {@link NetworkRequest} without {@link NetworkCapabilities#NET_CAPABILITY_TRUSTED}
+         * capability is filed.
          * <li> An untrusted network's credentials may not be shared with the user using
          * {@link #setCredentialSharedWithUser(boolean)}.</li>
          * <li> If not set, defaults to false (i.e. network is trusted).</li>
@@ -559,6 +694,118 @@ public final class WifiNetworkSuggestion implements Parcelable {
          */
         public @NonNull Builder setUntrusted(boolean isUntrusted) {
             mIsNetworkUntrusted = isUntrusted;
+            return this;
+        }
+
+        /**
+         * Specifies whether the system will bring up the network (if selected) as OEM paid. An
+         * OEM paid network has {@link NetworkCapabilities#NET_CAPABILITY_OEM_PAID} capability
+         * added.
+         * Note:
+         * <li>The connectivity service may use this information to influence the overall
+         * network configuration of the device. This network is typically only available to system
+         * apps.
+         * <li>On devices which do not support concurrent connection (indicated via
+         * {@link WifiManager#isMultiStaConcurrencySupported()}, Wi-Fi network selection process may
+         * use this information to influence priority of the suggested network for Wi-Fi network
+         * selection (most likely to reduce it).
+         * <li>On devices which support more than 1 concurrent connections (indicated via
+         * {@link WifiManager#isMultiStaConcurrencySupported()}, these OEM paid networks will be
+         * brought up as a secondary concurrent connection (primary connection will be used
+         * for networks available to the user and all apps.
+         * <p>
+         * <li> An OEM paid network's credentials may not be shared with the user using
+         * {@link #setCredentialSharedWithUser(boolean)}.</li>
+         * <li> These suggestions are only considered for network selection if a
+         * {@link NetworkRequest} with {@link NetworkCapabilities#NET_CAPABILITY_OEM_PAID}
+         * capability is filed.
+         * <li> Each suggestion can have both {@link #setOemPaid(boolean)} and
+         * {@link #setOemPrivate(boolean)} set if the app wants these suggestions considered
+         * for creating either an OEM paid network or OEM private network determined based on
+         * the {@link NetworkRequest} that is active.
+         * <li> If not set, defaults to false (i.e. network is not OEM paid).</li>
+         *
+         * @param isOemPaid Boolean indicating whether the network should be brought up as OEM paid
+         *                  (if true) or not OEM paid (if false).
+         * @return Instance of {@link Builder} to enable chaining of the builder method.
+         * @hide
+         */
+        @SystemApi
+        public @NonNull Builder setOemPaid(boolean isOemPaid) {
+            if (!SdkLevel.isAtLeastS()) {
+                throw new UnsupportedOperationException();
+            }
+            mIsNetworkOemPaid = isOemPaid;
+            return this;
+        }
+
+        /**
+         * Specifies whether the system will bring up the network (if selected) as OEM private. An
+         * OEM private network has {@link NetworkCapabilities#NET_CAPABILITY_OEM_PRIVATE} capability
+         * added.
+         * Note:
+         * <li>The connectivity service may use this information to influence the overall
+         * network configuration of the device. This network is typically only available to system
+         * apps.
+         * <li>On devices which do not support concurrent connection (indicated via
+         * {@link WifiManager#isMultiStaConcurrencySupported()}, Wi-Fi network selection process may
+         * use this information to influence priority of the suggested network for Wi-Fi network
+         * selection (most likely to reduce it).
+         * <li>On devices which support more than 1 concurrent connections (indicated via
+         * {@link WifiManager#isMultiStaConcurrencySupported()}, these OEM private networks will be
+         * brought up as a secondary concurrent connection (primary connection will be used
+         * for networks available to the user and all apps.
+         * <p>
+         * <li> An OEM private network's credentials may not be shared with the user using
+         * {@link #setCredentialSharedWithUser(boolean)}.</li>
+         * <li> These suggestions are only considered for network selection if a
+         * {@link NetworkRequest} with {@link NetworkCapabilities#NET_CAPABILITY_OEM_PRIVATE}
+         * capability is filed.
+         * <li> Each suggestion can have both {@link #setOemPaid(boolean)} and
+         * {@link #setOemPrivate(boolean)} set if the app wants these suggestions considered
+         * for creating either an OEM paid network or OEM private network determined based on
+         * the {@link NetworkRequest} that is active.
+         * <li> If not set, defaults to false (i.e. network is not OEM private).</li>
+         *
+         * @param isOemPrivate Boolean indicating whether the network should be brought up as OEM
+         *                     private (if true) or not OEM private (if false).
+         * @return Instance of {@link Builder} to enable chaining of the builder method.
+         * @hide
+         */
+        @SystemApi
+        public @NonNull Builder setOemPrivate(boolean isOemPrivate) {
+            if (!SdkLevel.isAtLeastS()) {
+                throw new UnsupportedOperationException();
+            }
+            mIsNetworkOemPrivate = isOemPrivate;
+            return this;
+        }
+
+        /**
+         * Specifies whether the suggestion represents a carrier merged network. A carrier merged
+         * Wi-Fi network is treated as part of the mobile carrier network. Such configuration may
+         * impact the user interface and data usage accounting.
+         * <p>
+         * <li>A suggestion marked as carrier merged must be metered enterprise network with a valid
+         * subscription Id set.
+         * @see #setIsMetered(boolean)
+         * @see #setSubscriptionId(int)
+         * @see #setWpa2EnterpriseConfig(WifiEnterpriseConfig)
+         * @see #setWpa3Enterprise192BitModeConfig(WifiEnterpriseConfig)
+         * @see #setWpa3EnterpriseStandardModeConfig(WifiEnterpriseConfig)
+         * @see #setPasspointConfig(PasspointConfiguration)
+         * </li>
+         * <li>If not set, defaults to false (i.e. not a carrier merged network.)</li>
+         * </p>
+         * @param isCarrierMerged Boolean indicating whether the network is treated a carrier
+         *                               merged network (if true) or non-merged network (if false);
+         * @return Instance of {@link Builder} to enable chaining of the builder method.
+         */
+        public @NonNull Builder setCarrierMerged(boolean isCarrierMerged) {
+            if (!SdkLevel.isAtLeastS()) {
+                throw new UnsupportedOperationException();
+            }
+            mIsCarrierMerged = isCarrierMerged;
             return this;
         }
 
@@ -576,23 +823,23 @@ public final class WifiNetworkSuggestion implements Parcelable {
                 configuration.setSecurityParams(WifiConfiguration.SECURITY_TYPE_EAP);
                 configuration.enterpriseConfig = mWpa2EnterpriseConfig;
             } else if (mWpa3EnterpriseConfig != null) { // WPA3-Enterprise
-                if (mWpa3EnterpriseConfig.getEapMethod() == WifiEnterpriseConfig.Eap.TLS
+                if (mWpa3EnterpriseType == WPA3_ENTERPRISE_AUTO
+                        && mWpa3EnterpriseConfig.getEapMethod() == WifiEnterpriseConfig.Eap.TLS
                         && WifiEnterpriseConfig.isSuiteBCipherCert(
                         mWpa3EnterpriseConfig.getClientCertificate())
                         && WifiEnterpriseConfig.isSuiteBCipherCert(
                         mWpa3EnterpriseConfig.getCaCertificate())) {
-                    // WPA3-Enterprise in 192-bit security mode (Suite-B)
-                    configuration.setSecurityParams(WifiConfiguration.SECURITY_TYPE_EAP_SUITE_B);
+                    // WPA3-Enterprise in 192-bit security mode
+                    configuration.setSecurityParams(
+                            WifiConfiguration.SECURITY_TYPE_EAP_WPA3_ENTERPRISE_192_BIT);
+                } else if (mWpa3EnterpriseType == WPA3_ENTERPRISE_192_BIT) {
+                    // WPA3-Enterprise in 192-bit security mode
+                    configuration.setSecurityParams(
+                            WifiConfiguration.SECURITY_TYPE_EAP_WPA3_ENTERPRISE_192_BIT);
                 } else {
                     // WPA3-Enterprise
-                    configuration.setSecurityParams(WifiConfiguration.SECURITY_TYPE_EAP);
-                    configuration.allowedProtocols.set(WifiConfiguration.Protocol.RSN);
-                    configuration.allowedPairwiseCiphers.set(WifiConfiguration.PairwiseCipher.CCMP);
-                    configuration.allowedPairwiseCiphers.set(
-                            WifiConfiguration.PairwiseCipher.GCMP_256);
-                    configuration.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.CCMP);
-                    configuration.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.GCMP_256);
-                    configuration.requirePmf = true;
+                    configuration.setSecurityParams(
+                            WifiConfiguration.SECURITY_TYPE_EAP_WPA3_ENTERPRISE);
                 }
                 configuration.enterpriseConfig = mWpa3EnterpriseConfig;
             } else if (mIsEnhancedOpen) { // OWE network
@@ -628,9 +875,13 @@ public final class WifiNetworkSuggestion implements Parcelable {
             wifiConfiguration.meteredOverride = mMeteredOverride;
             wifiConfiguration.carrierId = mCarrierId;
             wifiConfiguration.trusted = !mIsNetworkUntrusted;
+            wifiConfiguration.oemPaid = mIsNetworkOemPaid;
+            wifiConfiguration.oemPrivate = mIsNetworkOemPrivate;
+            wifiConfiguration.carrierMerged = mIsCarrierMerged;
             wifiConfiguration.macRandomizationSetting = mIsEnhancedMacRandomizationEnabled
                     ? WifiConfiguration.RANDOMIZATION_ENHANCED
                     : WifiConfiguration.RANDOMIZATION_PERSISTENT;
+            wifiConfiguration.subscriptionId = mSubscriptionId;
             return wifiConfiguration;
         }
 
@@ -659,7 +910,12 @@ public final class WifiNetworkSuggestion implements Parcelable {
             wifiConfiguration.priority = mPriority;
             wifiConfiguration.meteredOverride = mMeteredOverride;
             wifiConfiguration.trusted = !mIsNetworkUntrusted;
+            wifiConfiguration.oemPaid = mIsNetworkOemPaid;
+            wifiConfiguration.oemPrivate = mIsNetworkOemPrivate;
+            wifiConfiguration.carrierMerged = mIsCarrierMerged;
+            wifiConfiguration.subscriptionId = mSubscriptionId;
             mPasspointConfiguration.setCarrierId(mCarrierId);
+            mPasspointConfiguration.setSubscriptionId(mSubscriptionId);
             mPasspointConfiguration.setMeteredOverride(wifiConfiguration.meteredOverride);
             wifiConfiguration.macRandomizationSetting = mIsEnhancedMacRandomizationEnabled
                     ? WifiConfiguration.RANDOMIZATION_ENHANCED
@@ -764,9 +1020,33 @@ public final class WifiNetworkSuggestion implements Parcelable {
                 if (mIsSharedWithUserSet && mIsSharedWithUser) {
                     throw new IllegalStateException("Should not be both"
                             + "setCredentialSharedWithUser and +"
-                            + "setIsNetworkAsUntrusted to true");
+                            + "setUntrusted to true");
                 }
                 mIsSharedWithUser = false;
+            }
+            if (mIsNetworkOemPaid) {
+                if (mIsSharedWithUserSet && mIsSharedWithUser) {
+                    throw new IllegalStateException("Should not be both"
+                            + "setCredentialSharedWithUser and +"
+                            + "setOemPaid to true");
+                }
+                mIsSharedWithUser = false;
+            }
+            if (mIsNetworkOemPrivate) {
+                if (mIsSharedWithUserSet && mIsSharedWithUser) {
+                    throw new IllegalStateException("Should not be both"
+                            + "setCredentialSharedWithUser and +"
+                            + "setOemPrivate to true");
+                }
+                mIsSharedWithUser = false;
+            }
+            if (mIsCarrierMerged) {
+                if (mSubscriptionId == SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                        || mMeteredOverride != WifiConfiguration.METERED_OVERRIDE_METERED
+                        || !isEnterpriseSuggestion()) {
+                    throw new IllegalStateException("A carrier merged network must be a metered, "
+                            + "enterprise network with valid subscription Id");
+                }
             }
             return new WifiNetworkSuggestion(
                     wifiConfiguration,
@@ -777,7 +1057,14 @@ public final class WifiNetworkSuggestion implements Parcelable {
                     mIsInitialAutojoinEnabled,
                     mPriorityGroup);
         }
+
+        private boolean isEnterpriseSuggestion() {
+            return !(mWpa2EnterpriseConfig == null && mWpa3EnterpriseConfig == null
+                    && mWapiEnterpriseConfig == null && mPasspointConfiguration == null);
+        }
     }
+
+
 
     /**
      * Network configuration for the provided network.
@@ -893,7 +1180,8 @@ public final class WifiNetworkSuggestion implements Parcelable {
     @Override
     public int hashCode() {
         return Objects.hash(wifiConfiguration.SSID, wifiConfiguration.BSSID,
-                wifiConfiguration.allowedKeyManagement, wifiConfiguration.getKey());
+                wifiConfiguration.allowedKeyManagement, wifiConfiguration.getKey(),
+                wifiConfiguration.subscriptionId, wifiConfiguration.carrierId);
     }
 
     /**
@@ -917,7 +1205,9 @@ public final class WifiNetworkSuggestion implements Parcelable {
                 && Objects.equals(this.wifiConfiguration.allowedKeyManagement,
                 lhs.wifiConfiguration.allowedKeyManagement)
                 && TextUtils.equals(this.wifiConfiguration.getKey(),
-                lhs.wifiConfiguration.getKey());
+                lhs.wifiConfiguration.getKey())
+                && this.wifiConfiguration.carrierId == lhs.wifiConfiguration.carrierId
+                && this.wifiConfiguration.subscriptionId == lhs.wifiConfiguration.subscriptionId;
     }
 
     @Override
@@ -931,6 +1221,9 @@ public final class WifiNetworkSuggestion implements Parcelable {
                 .append(", isCredentialSharedWithUser=").append(isUserAllowedToManuallyConnect)
                 .append(", isInitialAutoJoinEnabled=").append(isInitialAutoJoinEnabled)
                 .append(", isUnTrusted=").append(!wifiConfiguration.trusted)
+                .append(", isOemPaid=").append(wifiConfiguration.oemPaid)
+                .append(", isOemPrivate=").append(wifiConfiguration.oemPrivate)
+                .append(", isCarrierMerged").append(wifiConfiguration.carrierMerged)
                 .append(", priorityGroup=").append(priorityGroup)
                 .append(" ]");
         return sb.toString();
@@ -1026,6 +1319,40 @@ public final class WifiNetworkSuggestion implements Parcelable {
     }
 
     /**
+     * @see Builder#setOemPaid(boolean)
+     * @hide
+     */
+    @SystemApi
+    public boolean isOemPaid() {
+        if (!SdkLevel.isAtLeastS()) {
+            throw new UnsupportedOperationException();
+        }
+        return wifiConfiguration.oemPaid;
+    }
+
+    /**
+     * @see Builder#setOemPrivate(boolean)
+     * @hide
+     */
+    @SystemApi
+    public boolean isOemPrivate() {
+        if (!SdkLevel.isAtLeastS()) {
+            throw new UnsupportedOperationException();
+        }
+        return wifiConfiguration.oemPrivate;
+    }
+
+    /**
+     * @see Builder#setCarrierMerged(boolean)
+     */
+    public boolean isCarrierMerged() {
+        if (!SdkLevel.isAtLeastS()) {
+            throw new UnsupportedOperationException();
+        }
+        return wifiConfiguration.carrierMerged;
+    }
+
+    /**
      * Get the WifiEnterpriseConfig, or null if unset.
      * @see Builder#setWapiEnterpriseConfig(WifiEnterpriseConfig)
      * @see Builder#setWpa2EnterpriseConfig(WifiEnterpriseConfig)
@@ -1057,6 +1384,19 @@ public final class WifiNetworkSuggestion implements Parcelable {
      * @see Builder#setPriorityGroup(int)
      */
     public int getPriorityGroup() {
+        if (!SdkLevel.isAtLeastS()) {
+            throw new UnsupportedOperationException();
+        }
         return priorityGroup;
+    }
+
+    /**
+     * @see Builder#setSubscriptionId(int)
+     */
+    public int getSubscriptionId() {
+        if (!SdkLevel.isAtLeastS()) {
+            throw new UnsupportedOperationException();
+        }
+        return wifiConfiguration.subscriptionId;
     }
 }

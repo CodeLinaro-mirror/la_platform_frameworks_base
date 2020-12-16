@@ -170,9 +170,10 @@ public final class IncrementalStorage {
      * @param size             Size of the new file in bytes.
      * @param metadata         Metadata bytes.
      * @param v4signatureBytes Serialized V4SignatureProto.
+     * @param content          Optionally set file content.
      */
     public void makeFile(@NonNull String path, long size, @Nullable UUID id,
-            @Nullable byte[] metadata, @Nullable byte[] v4signatureBytes)
+            @Nullable byte[] metadata, @Nullable byte[] v4signatureBytes, @Nullable byte[] content)
             throws IOException {
         try {
             if (id == null && metadata == null) {
@@ -184,7 +185,7 @@ public final class IncrementalStorage {
             params.metadata = (metadata == null ? new byte[0] : metadata);
             params.fileId = idToBytes(id);
             params.signature = v4signatureBytes;
-            int res = mService.makeFile(mId, path, params);
+            int res = mService.makeFile(mId, path, params, content);
             if (res != 0) {
                 throw new IOException("makeFile() failed with errno " + -res);
             }
@@ -542,6 +543,33 @@ public final class IncrementalStorage {
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
             return false;
+        }
+    }
+
+    /**
+     * Register to listen to the status changes of the storage health.
+     * @param healthCheckParams Params to specify status change timeouts.
+     * @param listener To report health status change from Incremental Service to the caller.
+     */
+    public boolean registerStorageHealthListener(StorageHealthCheckParams healthCheckParams,
+            IStorageHealthListener listener) {
+        try {
+            return mService.registerStorageHealthListener(mId, healthCheckParams, listener);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+            return false;
+        }
+    }
+
+    /**
+     * Stops listening to the status changes of the storage health.
+     */
+    public void unregisterStorageHealthListener() {
+        try {
+            mService.unregisterStorageHealthListener(mId);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+            return;
         }
     }
 }

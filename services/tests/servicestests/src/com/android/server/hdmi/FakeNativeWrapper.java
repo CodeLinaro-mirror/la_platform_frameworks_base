@@ -16,7 +16,11 @@
 package com.android.server.hdmi;
 
 import android.hardware.hdmi.HdmiPortInfo;
+import android.hardware.tv.cec.V1_0.CecMessage;
+import android.hardware.tv.cec.V1_0.HotplugEvent;
 import android.hardware.tv.cec.V1_0.SendMessageResult;
+import android.os.RemoteException;
+import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.server.hdmi.HdmiCecController.NativeWrapper;
@@ -26,9 +30,12 @@ import com.google.common.collect.Iterables;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Fake {@link NativeWrapper} useful for testing. */
 final class FakeNativeWrapper implements NativeWrapper {
+    private static final String TAG = "FakeNativeWrapper";
+
     private final int[] mPollAddressResponse =
             new int[] {
                 SendMessageResult.NACK,
@@ -49,9 +56,11 @@ final class FakeNativeWrapper implements NativeWrapper {
             };
 
     private final List<HdmiCecMessage> mResultMessages = new ArrayList<>();
+    private final Map<Integer, Boolean> mPortConnectionStatus = new HashMap<>();
     private final HashMap<Integer, Integer> mMessageSendResult = new HashMap<>();
     private int mMyPhysicalAddress = 0;
     private HdmiPortInfo[] mHdmiPortInfo = null;
+    private HdmiCecController.HdmiCecCallback mCallback = null;
 
     @Override
     public String nativeInit() {
@@ -59,7 +68,9 @@ final class FakeNativeWrapper implements NativeWrapper {
     }
 
     @Override
-    public void setCallback(HdmiCecController.HdmiCecCallback callback) {}
+    public void setCallback(HdmiCecController.HdmiCecCallback callback) {
+        this.mCallback = callback;
+    }
 
     @Override
     public int nativeSendCecCommand(
@@ -116,7 +127,48 @@ final class FakeNativeWrapper implements NativeWrapper {
 
     @Override
     public boolean nativeIsConnected(int port) {
-        return false;
+        Boolean isConnected = mPortConnectionStatus.get(port);
+        return isConnected == null ? false : isConnected;
+    }
+
+    public void setPortConnectionStatus(int port, boolean connected) {
+        mPortConnectionStatus.put(port, connected);
+    }
+
+    public void onCecMessage(HdmiCecMessage hdmiCecMessage) {
+        if (mCallback == null) {
+            return;
+        }
+        CecMessage message = new CecMessage();
+        message.initiator = hdmiCecMessage.getSource();
+        message.destination = hdmiCecMessage.getDestination();
+        ArrayList<Byte> body = new ArrayList<>();
+        body.add((byte) hdmiCecMessage.getOpcode());
+        for (byte param : hdmiCecMessage.getParams()) {
+            body.add(param);
+        }
+        message.body = body;
+        try {
+            mCallback.onCecMessage(message);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error sending CEC message", e);
+        }
+    }
+
+    public void onHotplugEvent(int port, boolean connected) {
+        if (mCallback == null) {
+            return;
+        }
+
+        HotplugEvent hotplugEvent = new HotplugEvent();
+        hotplugEvent.portId = port;
+        hotplugEvent.connected = connected;
+
+        try {
+            mCallback.onHotplugEvent(hotplugEvent);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error sending hotplug event", e);
+        }
     }
 
     public List<HdmiCecMessage> getResultMessages() {

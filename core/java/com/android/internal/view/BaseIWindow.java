@@ -24,7 +24,7 @@ import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.util.MergedConfiguration;
 import android.view.DragEvent;
-import android.view.IScrollCaptureController;
+import android.view.IScrollCaptureCallbacks;
 import android.view.IWindow;
 import android.view.IWindowSession;
 import android.view.InsetsSourceControl;
@@ -43,7 +43,6 @@ public class BaseIWindow extends IWindow.Stub {
     public BaseIWindow() {}
 
     private IWindowSession mSession;
-    public int mSeq;
 
     public void setSession(IWindowSession session) {
         mSession = session;
@@ -140,12 +139,6 @@ public class BaseIWindow extends IWindow.Stub {
     }
 
     @Override
-    public void dispatchSystemUiVisibilityChanged(int seq, int globalUi,
-            int localValue, int localChanges) {
-        mSeq = seq;
-    }
-
-    @Override
     public void dispatchWallpaperCommand(String action, int x, int y,
             int z, Bundle extras, boolean sync) {
         if (sync) {
@@ -169,9 +162,9 @@ public class BaseIWindow extends IWindow.Stub {
     }
 
     @Override
-    public void requestScrollCapture(IScrollCaptureController controller) {
+    public void requestScrollCapture(IScrollCaptureCallbacks callbacks) {
         try {
-            controller.onClientUnavailable();
+            callbacks.onUnavailable();
         } catch (RemoteException ex) {
             // ignore
         }

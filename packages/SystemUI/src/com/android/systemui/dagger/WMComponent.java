@@ -16,7 +16,17 @@
 
 package com.android.systemui.dagger;
 
-import javax.inject.Inject;
+import com.android.systemui.wmshell.WMShellModule;
+import com.android.wm.shell.ShellDump;
+import com.android.wm.shell.ShellInit;
+import com.android.wm.shell.apppairs.AppPairs;
+import com.android.wm.shell.bubbles.Bubbles;
+import com.android.wm.shell.hidedisplaycutout.HideDisplayCutout;
+import com.android.wm.shell.onehanded.OneHanded;
+import com.android.wm.shell.pip.Pip;
+import com.android.wm.shell.splitscreen.SplitScreen;
+
+import java.util.Optional;
 
 import dagger.Subcomponent;
 
@@ -24,7 +34,7 @@ import dagger.Subcomponent;
  * Dagger Subcomponent for WindowManager.
  */
 @WMSingleton
-@Subcomponent(modules = {})
+@Subcomponent(modules = {WMShellModule.class})
 public interface WMComponent {
 
     /**
@@ -35,18 +45,38 @@ public interface WMComponent {
         WMComponent build();
     }
 
-
     /**
-     *  Example class used for passing an API to SysUI from WMShell.
-     *
-     *  TODO: Remove this once real WM classes are ready to go.
-     **/
-    @WMSingleton
-    class StubAPIClass {
-        @Inject
-        StubAPIClass() {}
+     * Initializes all the WMShell components before starting any of the SystemUI components.
+     */
+    default void init() {
+        getShellInit().init();
     }
 
-    /** Create a StubAPIClass. */
-    StubAPIClass createStubAPIClass();
+    // Gets the Shell init instance
+    @WMSingleton
+    ShellInit getShellInit();
+
+    // Gets the Shell dump instance
+    @WMSingleton
+    Optional<ShellDump> getShellDump();
+
+    // TODO(b/162923491): We currently pass the instances through to SysUI, but that may change
+    //                    depending on the threading mechanism we go with
+    @WMSingleton
+    Optional<OneHanded> getOneHanded();
+
+    @WMSingleton
+    Optional<Pip> getPip();
+
+    @WMSingleton
+    Optional<SplitScreen> getSplitScreen();
+
+    @WMSingleton
+    Optional<AppPairs> getAppPairs();
+
+    @WMSingleton
+    Optional<Bubbles> getBubbles();
+
+    @WMSingleton
+    Optional<HideDisplayCutout> getHideDisplayCutout();
 }

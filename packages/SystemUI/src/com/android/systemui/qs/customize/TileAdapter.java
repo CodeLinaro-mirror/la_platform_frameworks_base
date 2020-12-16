@@ -18,6 +18,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Canvas;
+import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.view.LayoutInflater;
@@ -45,16 +46,22 @@ import com.android.systemui.qs.QSTileHost;
 import com.android.systemui.qs.customize.TileAdapter.Holder;
 import com.android.systemui.qs.customize.TileQueryHelper.TileInfo;
 import com.android.systemui.qs.customize.TileQueryHelper.TileStateListener;
+import com.android.systemui.qs.dagger.QSScope;
 import com.android.systemui.qs.external.CustomTile;
 import com.android.systemui.qs.tileimpl.QSIconViewImpl;
 
 import java.util.ArrayList;
 import java.util.List;
 
+import javax.inject.Inject;
+
+/** */
+@QSScope
 public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileStateListener {
     private static final long DRAG_LENGTH = 100;
     private static final float DRAG_SCALE = 1.2f;
     public static final long MOVE_DURATION = 150;
+    public static final int NUM_COLUMNS = 4;
 
     private static final int TYPE_TILE = 0;
     private static final int TYPE_EDIT = 1;
@@ -75,7 +82,9 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
     private final List<TileInfo> mTiles = new ArrayList<>();
     private final ItemTouchHelper mItemTouchHelper;
     private final ItemDecoration mDecoration;
+    private final MarginTileDecoration mMarginDecoration;
     private final int mMinNumTiles;
+    private final QSTileHost mHost;
     private int mEditIndex;
     private int mTileDividerIndex;
     private int mFocusIndex;
@@ -87,16 +96,18 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
     private Holder mCurrentDrag;
     private int mAccessibilityAction = ACTION_NONE;
     private int mAccessibilityFromIndex;
-    private QSTileHost mHost;
     private final UiEventLogger mUiEventLogger;
     private final AccessibilityDelegateCompat mAccessibilityDelegate;
     private RecyclerView mRecyclerView;
 
-    public TileAdapter(Context context, UiEventLogger uiEventLogger) {
+    @Inject
+    public TileAdapter(Context context, QSTileHost qsHost, UiEventLogger uiEventLogger) {
         mContext = context;
+        mHost = qsHost;
         mUiEventLogger = uiEventLogger;
         mItemTouchHelper = new ItemTouchHelper(mCallbacks);
         mDecoration = new TileItemDecoration(context);
+        mMarginDecoration = new MarginTileDecoration();
         mMinNumTiles = context.getResources().getInteger(R.integer.quick_settings_min_num_tiles);
         mAccessibilityDelegate = new TileAdapterDelegate();
     }
@@ -111,16 +122,20 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
         mRecyclerView = null;
     }
 
-    public void setHost(QSTileHost host) {
-        mHost = host;
-    }
-
     public ItemTouchHelper getItemTouchHelper() {
         return mItemTouchHelper;
     }
 
     public ItemDecoration getItemDecoration() {
         return mDecoration;
+    }
+
+    public ItemDecoration getMarginItemDecoration() {
+        return mMarginDecoration;
+    }
+
+    public void changeHalfMargin(int halfMargin) {
+        mMarginDecoration.setHalfMargin(halfMargin);
     }
 
     public void saveSpecs(QSTileHost host) {
@@ -143,9 +158,10 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
         mAccessibilityAction = ACTION_NONE;
     }
 
-    public void resetTileSpecs(QSTileHost host, List<String> specs) {
+    /** */
+    public void resetTileSpecs(List<String> specs) {
         // Notify the host so the tiles get removed callbacks.
-        host.changeTiles(mCurrentSpecs, specs);
+        mHost.changeTiles(mCurrentSpecs, specs);
         setTileSpecs(specs);
     }
 
@@ -585,7 +601,11 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
         @Override
         public int getSpanSize(int position) {
             final int type = getItemViewType(position);
-            return type == TYPE_EDIT || type == TYPE_DIVIDER || type == TYPE_HEADER ? 3 : 1;
+            if (type == TYPE_EDIT || type == TYPE_DIVIDER || type == TYPE_HEADER) {
+                return NUM_COLUMNS;
+            } else {
+                return 1;
+            }
         }
     };
 
@@ -595,7 +615,6 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
         private TileItemDecoration(Context context) {
             mDrawable = context.getDrawable(R.drawable.qs_customize_tile_decoration);
         }
-
 
         @Override
         public void onDraw(Canvas c, RecyclerView parent, State state) {
@@ -607,6 +626,12 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
             for (int i = 0; i < childCount; i++) {
                 final View child = parent.getChildAt(i);
                 final ViewHolder holder = parent.getChildViewHolder(child);
+                // Do not draw background for the holder that's currently being dragged
+                if (holder == mCurrentDrag) {
+                    continue;
+                }
+                // Do not draw background for holders before the edit index (header and current
+                // tiles)
                 if (holder.getAdapterPosition() == 0 ||
                         holder.getAdapterPosition() < mEditIndex && !(child instanceof TextView)) {
                     continue;
@@ -620,6 +645,25 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
                 mDrawable.setBounds(0, top, width, bottom);
                 mDrawable.draw(c);
                 break;
+            }
+        }
+    }
+
+    private static class MarginTileDecoration extends ItemDecoration {
+        private int mHalfMargin;
+
+        public void setHalfMargin(int halfMargin) {
+            mHalfMargin = halfMargin;
+        }
+
+        @Override
+        public void getItemOffsets(@NonNull Rect outRect, @NonNull View view,
+                @NonNull RecyclerView parent, @NonNull State state) {
+            if (view instanceof TextView) {
+                super.getItemOffsets(outRect, view, parent, state);
+            } else {
+                outRect.left = mHalfMargin;
+                outRect.right = mHalfMargin;
             }
         }
     }

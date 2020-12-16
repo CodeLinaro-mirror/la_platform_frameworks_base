@@ -28,7 +28,6 @@ import android.annotation.NonNull;
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
 import android.graphics.Rect;
-import android.os.Handler;
 import android.os.RemoteException;
 import android.util.Log;
 import android.view.Display;
@@ -41,7 +40,6 @@ import android.window.WindowOrganizer;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.wm.shell.common.SyncTransactionQueue;
-import com.android.wm.shell.common.TransactionPool;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -85,13 +83,12 @@ class WindowManagerProxy {
 
     private final TaskOrganizer mTaskOrganizer;
 
-    WindowManagerProxy(TransactionPool transactionPool, Handler handler,
-            TaskOrganizer taskOrganizer) {
-        mSyncTransactionQueue = new SyncTransactionQueue(transactionPool, handler);
+    WindowManagerProxy(SyncTransactionQueue syncQueue, TaskOrganizer taskOrganizer) {
+        mSyncTransactionQueue = syncQueue;
         mTaskOrganizer = taskOrganizer;
     }
 
-    void dismissOrMaximizeDocked(final SplitScreenTaskOrganizer tiles, SplitDisplayLayout layout,
+    void dismissOrMaximizeDocked(final SplitScreenTaskListener tiles, SplitDisplayLayout layout,
             final boolean dismissOrMaximize) {
         mExecutor.execute(() -> applyDismissSplit(tiles, layout, dismissOrMaximize));
     }
@@ -123,7 +120,7 @@ class WindowManagerProxy {
         new WindowOrganizer().applyTransaction(t);
     }
 
-    private boolean getHomeAndRecentsTasks(List<ActivityManager.RunningTaskInfo> out,
+    boolean getHomeAndRecentsTasks(List<ActivityManager.RunningTaskInfo> out,
             WindowContainerToken parent) {
         boolean resizable = false;
         List<ActivityManager.RunningTaskInfo> rootTasks = parent == null
@@ -192,7 +189,7 @@ class WindowManagerProxy {
      *
      * @return whether the home stack is resizable
      */
-    boolean applyEnterSplit(SplitScreenTaskOrganizer tiles, SplitDisplayLayout layout) {
+    boolean applyEnterSplit(SplitScreenTaskListener tiles, SplitDisplayLayout layout) {
         // Set launchtile first so that any stack created after
         // getAllRootTaskInfos and before reparent (even if unlikely) are placed
         // correctly.
@@ -212,8 +209,7 @@ class WindowManagerProxy {
                 continue;
             }
             // Only move fullscreen tasks to split secondary.
-            if (rootTask.configuration.windowConfiguration.getWindowingMode()
-                    != WINDOWING_MODE_FULLSCREEN) {
+            if (rootTask.getWindowingMode() != WINDOWING_MODE_FULLSCREEN) {
                 continue;
             }
             // Since this iterates from bottom to top, update topHomeTask for every fullscreen task
@@ -235,7 +231,7 @@ class WindowManagerProxy {
     }
 
     boolean isHomeOrRecentTask(ActivityManager.RunningTaskInfo ti) {
-        final int atype = ti.configuration.windowConfiguration.getActivityType();
+        final int atype = ti.getActivityType();
         return atype == ACTIVITY_TYPE_HOME || atype == ACTIVITY_TYPE_RECENTS;
     }
 
@@ -245,7 +241,7 @@ class WindowManagerProxy {
      *                          split (thus resulting in the top of the secondary split becoming
      *                          fullscreen. {@code false} resolves the other way.
      */
-    void applyDismissSplit(SplitScreenTaskOrganizer tiles, SplitDisplayLayout layout,
+    void applyDismissSplit(SplitScreenTaskListener tiles, SplitDisplayLayout layout,
             boolean dismissOrMaximize) {
         // Set launch root first so that any task created after getChildContainers and
         // before reparent (pretty unlikely) are put into fullscreen.

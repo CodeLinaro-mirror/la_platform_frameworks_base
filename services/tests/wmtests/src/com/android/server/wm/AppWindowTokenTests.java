@@ -32,7 +32,7 @@ import static android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_STARTING;
 import static android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION;
-import static android.view.WindowManager.TRANSIT_ACTIVITY_OPEN;
+import static android.view.WindowManager.TRANSIT_OLD_ACTIVITY_OPEN;
 
 import static androidx.test.platform.app.InstrumentationRegistry.getInstrumentation;
 
@@ -92,7 +92,7 @@ public class AppWindowTokenTests extends WindowTestsBase {
     public void setUp() throws Exception {
         mStack = createTaskStackOnDisplay(mDisplayContent);
         mTask = createTaskInStack(mStack, 0 /* userId */);
-        mActivity = createTestActivityRecord(mDisplayContent);
+        mActivity = createNonAttachedActivityRecord(mDisplayContent);
 
         mTask.addChild(mActivity, 0);
     }
@@ -307,7 +307,7 @@ public class AppWindowTokenTests extends WindowTestsBase {
         assertEquals(Configuration.ORIENTATION_PORTRAIT, displayConfig.orientation);
         assertEquals(Configuration.ORIENTATION_PORTRAIT, activityConfig.orientation);
 
-        final ActivityRecord topActivity = createTestActivityRecord(mStack);
+        final ActivityRecord topActivity = createActivityRecord(mTask);
         topActivity.setOrientation(SCREEN_ORIENTATION_LANDSCAPE);
 
         assertEquals(Configuration.ORIENTATION_LANDSCAPE, displayConfig.orientation);
@@ -414,7 +414,7 @@ public class AppWindowTokenTests extends WindowTestsBase {
         sources.add(activity2);
         doReturn(true).when(activity2).okToAnimate();
         doReturn(true).when(activity2).isAnimating();
-        assertTrue(activity2.applyAnimation(null, TRANSIT_ACTIVITY_OPEN, true, false, sources));
+        assertTrue(activity2.applyAnimation(null, TRANSIT_OLD_ACTIVITY_OPEN, true, false, sources));
     }
 
     @Test
@@ -437,7 +437,7 @@ public class AppWindowTokenTests extends WindowTestsBase {
                 false /* newTask */, false /* keepCurTransition */, null /* options */);
         middle.makeFinishingLocked();
 
-        assertNull(mActivity.startingWindow);
+        assertNull(mActivity.mStartingWindow);
         assertHasStartingWindow(middle);
 
         final ActivityRecord top = new ActivityBuilder(mWm.mAtmService)
@@ -449,7 +449,7 @@ public class AppWindowTokenTests extends WindowTestsBase {
         mStack.startActivityLocked(top, null /* focusedTopActivity */,
                 false /* newTask */, false /* keepCurTransition */, null /* options */);
 
-        assertNull(middle.startingWindow);
+        assertNull(middle.mStartingWindow);
         assertHasStartingWindow(top);
         assertTrue(top.isVisible());
         // The activity was visible by mVisibleSetFromTransferredStartingWindow, so after its
@@ -490,7 +490,7 @@ public class AppWindowTokenTests extends WindowTestsBase {
     }
 
     private ActivityRecord createTestActivityRecordForGivenTask(Task task) {
-        final ActivityRecord activity = createTestActivityRecord(mDisplayContent);
+        final ActivityRecord activity = createNonAttachedActivityRecord(mDisplayContent);
         task.addChild(activity, 0);
         waitUntilHandlersIdle();
         return activity;
@@ -573,14 +573,14 @@ public class AppWindowTokenTests extends WindowTestsBase {
     }
 
     private void assertHasStartingWindow(ActivityRecord atoken) {
-        assertNotNull(atoken.startingSurface);
+        assertNotNull(atoken.mStartingSurface);
         assertNotNull(atoken.mStartingData);
-        assertNotNull(atoken.startingWindow);
+        assertNotNull(atoken.mStartingWindow);
     }
 
     private void assertNoStartingWindow(ActivityRecord atoken) {
-        assertNull(atoken.startingSurface);
-        assertNull(atoken.startingWindow);
+        assertNull(atoken.mStartingSurface);
+        assertNull(atoken.mStartingWindow);
         assertNull(atoken.mStartingData);
         atoken.forAllWindows(windowState -> {
             assertFalse(windowState.getBaseType() == TYPE_APPLICATION_STARTING);

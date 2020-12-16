@@ -41,7 +41,6 @@ import static com.android.server.wm.Task.ActivityState.RESUMED;
 import static com.android.server.wm.Task.ActivityState.STARTED;
 import static com.android.server.wm.Task.ActivityState.STOPPING;
 
-
 import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -138,8 +137,6 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     private volatile String mRequiredAbi;
     // Running any services that are foreground?
     private volatile boolean mHasForegroundServices;
-    // Running any activities that are foreground?
-    private volatile boolean mHasForegroundActivities;
     // Are there any client services with activities?
     private volatile boolean mHasClientActivities;
     // Is this process currently showing a non-activity UI that the user is interacting with?
@@ -179,10 +176,14 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     // Whether this process has ever started a service with the BIND_INPUT_METHOD permission.
     private volatile boolean mHasImeService;
 
+    /** Whether {@link #mActivities} is not empty. */
+    private volatile boolean mHasActivities;
     /** All activities running in the process (exclude destroying). */
     private final ArrayList<ActivityRecord> mActivities = new ArrayList<>();
     /** The activities will be removed but still belong to this process. */
     private ArrayList<ActivityRecord> mInactiveActivities;
+    /** Whether {@link #mRecentTasks} is not empty. */
+    private volatile boolean mHasRecentTasks;
     // any tasks this process had run root activities in
     private final ArrayList<Task> mRecentTasks = new ArrayList<>();
     // The most recent top-most activity that was resumed in the process for pre-Q app.
@@ -195,13 +196,16 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
 
     // Last configuration that was reported to the process.
     private final Configuration mLastReportedConfiguration = new Configuration();
-    // Configuration that is waiting to be dispatched to the process.
-    private Configuration mPendingConfiguration;
+    /** Whether the process configuration is waiting to be dispatched to the process. */
+    private boolean mHasPendingConfigurationChange;
     // Registered display id as a listener to override config change
     private int mDisplayId;
     private ActivityRecord mConfigActivityRecord;
     // Whether the activity config override is allowed for this process.
     private volatile boolean mIsActivityConfigOverrideAllowed = true;
+    /** Non-zero to pause dispatching process configuration change. */
+    private int mPauseConfigurationDispatchCount;
+
     /**
      * Activities that hosts some UI drawn by the current process. The activities live
      * in another process. This is used to check if the process is currently showing anything
@@ -217,10 +221,27 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     private boolean mRunningRemoteAnimation;
 
     @Nullable
-    private BackgroundActivityStartCallback mBackgroundActivityStartCallback;
+    private final BackgroundActivityStartCallback mBackgroundActivityStartCallback;
+
+    // The bits used for mActivityStateFlags.
+    private static final int ACTIVITY_STATE_FLAG_IS_VISIBLE = 1 << 16;
+    private static final int ACTIVITY_STATE_FLAG_IS_PAUSING_OR_PAUSED = 1 << 17;
+    private static final int ACTIVITY_STATE_FLAG_IS_STOPPING = 1 << 18;
+    private static final int ACTIVITY_STATE_FLAG_IS_STOPPING_FINISHING = 1 << 19;
+    private static final int ACTIVITY_STATE_FLAG_IS_WINDOW_VISIBLE = 1 << 20;
+    private static final int ACTIVITY_STATE_FLAG_HAS_RESUMED = 1 << 21;
+    private static final int ACTIVITY_STATE_FLAG_MASK_MIN_TASK_LAYER = 0x0000ffff;
+
+    /**
+     * The state for oom-adjustment calculation. The higher 16 bits are the activity states, and the
+     * lower 16 bits are the task layer rank (see {@link Task#mLayerRank}). This field is written by
+     * window manager and read by activity manager.
+     */
+    private volatile int mActivityStateFlags = ACTIVITY_STATE_FLAG_MASK_MIN_TASK_LAYER;
 
     public WindowProcessController(@NonNull ActivityTaskManagerService atm, ApplicationInfo info,
-            String name, int uid, int userId, Object owner, WindowProcessListener listener) {
+            String name, int uid, int userId, Object owner,
+            @NonNull WindowProcessListener listener) {
         mInfo = info;
         mName = name;
         mUid = uid;
@@ -260,6 +281,9 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             // configuration will update when display is ready.
             if (thread != null) {
                 setLastReportedConfiguration(getConfiguration());
+            } else {
+                // The process is inactive.
+                mAtm.mVisibleActivityProcessTracker.removeProcess(this);
             }
         }
     }
@@ -328,12 +352,10 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         return mHasForegroundServices;
     }
 
-    public void setHasForegroundActivities(boolean hasForegroundActivities) {
-        mHasForegroundActivities = hasForegroundActivities;
-    }
-
     boolean hasForegroundActivities() {
-        return mHasForegroundActivities;
+        return mAtm.mTopApp == this || (mActivityStateFlags
+                & (ACTIVITY_STATE_FLAG_IS_VISIBLE | ACTIVITY_STATE_FLAG_IS_PAUSING_OR_PAUSED
+                        | ACTIVITY_STATE_FLAG_IS_STOPPING)) != 0;
     }
 
     public void setHasClientActivities(boolean hasClientActivities) {
@@ -380,7 +402,6 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     }
 
     void postPendingUiCleanMsg(boolean pendingUiClean) {
-        if (mListener == null) return;
         // Posting on handler so WM lock isn't held when we call into AM.
         final Message m = PooledLambda.obtainMessage(
                 WindowProcessListener::setPendingUiClean, mListener, pendingUiClean);
@@ -465,8 +486,10 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
      * Allows background activity starts using token {@code entity}. Optionally, you can provide
      * {@code originatingToken} if you have one such originating token, this is useful for tracing
      * back the grant in the case of the notification token.
+     *
+     * If {@code entity} is already added, this method will update its {@code originatingToken}.
      */
-    public void addAllowBackgroundActivityStartsToken(Binder entity,
+    public void addOrUpdateAllowBackgroundActivityStartsToken(Binder entity,
             @Nullable IBinder originatingToken) {
         synchronized (mAtm.mGlobalLock) {
             mBackgroundActivityStartTokens.put(entity, originatingToken);
@@ -475,7 +498,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
 
     /**
      * Removes token {@code entity} that allowed background activity starts added via {@link
-     * #addAllowBackgroundActivityStartsToken(Binder, IBinder)}.
+     * #addOrUpdateAllowBackgroundActivityStartsToken(Binder, IBinder)}.
      */
     public void removeAllowBackgroundActivityStartsToken(Binder entity) {
         synchronized (mAtm.mGlobalLock) {
@@ -485,7 +508,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
 
     /**
      * Returns true if background activity starts are allowed by any token added via {@link
-     * #addAllowBackgroundActivityStartsToken(Binder, IBinder)}.
+     * #addOrUpdateAllowBackgroundActivityStartsToken(Binder, IBinder)}.
      */
     public boolean areBackgroundActivityStartsAllowedByToken() {
         synchronized (mAtm.mGlobalLock) {
@@ -493,29 +516,33 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         }
     }
 
-    boolean areBackgroundActivityStartsAllowed() {
-        // allow if any activity in the caller has either started or finished very recently, and
-        // it must be started or finished after last stop app switches time.
-        final long now = SystemClock.uptimeMillis();
-        if (now - mLastActivityLaunchTime < ACTIVITY_BG_START_GRACE_PERIOD_MS
-                || now - mLastActivityFinishTime < ACTIVITY_BG_START_GRACE_PERIOD_MS) {
-            // if activity is started and finished before stop app switch time, we should not
-            // let app to be able to start background activity even it's in grace period.
-            if (mLastActivityLaunchTime > mAtm.getLastStopAppSwitchesTime()
-                    || mLastActivityFinishTime > mAtm.getLastStopAppSwitchesTime()) {
-                if (DEBUG_ACTIVITY_STARTS) {
-                    Slog.d(TAG, "[WindowProcessController(" + mPid
-                            + ")] Activity start allowed: within "
-                            + ACTIVITY_BG_START_GRACE_PERIOD_MS + "ms grace period");
+    boolean areBackgroundActivityStartsAllowed(boolean appSwitchAllowed) {
+        // If app switching is not allowed, we ignore all the start activity grace period
+        // exception so apps cannot start itself in onPause() after pressing home button.
+        if (appSwitchAllowed) {
+            // allow if any activity in the caller has either started or finished very recently, and
+            // it must be started or finished after last stop app switches time.
+            final long now = SystemClock.uptimeMillis();
+            if (now - mLastActivityLaunchTime < ACTIVITY_BG_START_GRACE_PERIOD_MS
+                    || now - mLastActivityFinishTime < ACTIVITY_BG_START_GRACE_PERIOD_MS) {
+                // if activity is started and finished before stop app switch time, we should not
+                // let app to be able to start background activity even it's in grace period.
+                if (mLastActivityLaunchTime > mAtm.getLastStopAppSwitchesTime()
+                        || mLastActivityFinishTime > mAtm.getLastStopAppSwitchesTime()) {
+                    if (DEBUG_ACTIVITY_STARTS) {
+                        Slog.d(TAG, "[WindowProcessController(" + mPid
+                                + ")] Activity start allowed: within "
+                                + ACTIVITY_BG_START_GRACE_PERIOD_MS + "ms grace period");
+                    }
+                    return true;
                 }
-                return true;
-            }
-            if (DEBUG_ACTIVITY_STARTS) {
-                Slog.d(TAG, "[WindowProcessController(" + mPid + ")] Activity start within "
-                        + ACTIVITY_BG_START_GRACE_PERIOD_MS
-                        + "ms grace period but also within stop app switch window");
-            }
+                if (DEBUG_ACTIVITY_STARTS) {
+                    Slog.d(TAG, "[WindowProcessController(" + mPid + ")] Activity start within "
+                            + ACTIVITY_BG_START_GRACE_PERIOD_MS
+                            + "ms grace period but also within stop app switch window");
+                }
 
+            }
         }
         // allow if the proc is instrumenting with background activity starts privs
         if (mInstrumentingWithBackgroundActivityStartPrivileges) {
@@ -527,7 +554,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             return true;
         }
         // allow if the caller has an activity in any foreground task
-        if (hasActivityInVisibleTask()) {
+        if (appSwitchAllowed && hasActivityInVisibleTask()) {
             if (DEBUG_ACTIVITY_STARTS) {
                 Slog.d(TAG, "[WindowProcessController(" + mPid
                         + ")] Activity start allowed: process has activity in foreground task");
@@ -543,8 +570,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             return true;
         }
         // allow if the flag was explicitly set
-        if (!mBackgroundActivityStartTokens.isEmpty()) {
-            onBackgroundStartAllowedByToken();
+        if (isBackgroundStartAllowedByToken()) {
             if (DEBUG_ACTIVITY_STARTS) {
                 Slog.d(TAG, "[WindowProcessController(" + mPid
                         + ")] Activity start allowed: process allowed by token");
@@ -554,18 +580,29 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         return false;
     }
 
-    private void onBackgroundStartAllowedByToken() {
+    /**
+     * If there are no tokens, we don't allow *by token*. If there are tokens, we need to check if
+     * the callback handles all the tokens, if so we ask the callback if the activity should be
+     * started, otherwise we allow.
+     */
+    private boolean isBackgroundStartAllowedByToken() {
+        if (mBackgroundActivityStartTokens.isEmpty()) {
+            return false;
+        }
         if (mBackgroundActivityStartCallback == null) {
-            return;
+            // We have tokens but no callback to decide => allow
+            return true;
         }
         IBinder callbackToken = mBackgroundActivityStartCallback.getToken();
         for (IBinder token : mBackgroundActivityStartTokens.values()) {
             if (token != callbackToken) {
-                return;
+                // The callback doesn't handle all the tokens => allow
+                return true;
             }
         }
-        mAtm.mH.post(() ->
-                mBackgroundActivityStartCallback.onExclusiveTokenActivityStart(mInfo.packageName));
+        // The callback handles all the tokens => callback decides
+        return mBackgroundActivityStartCallback.isActivityStartAllowed(mInfo.uid,
+                mInfo.packageName);
     }
 
     private boolean isBoundByForegroundUid() {
@@ -638,6 +675,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             return;
         }
         mActivities.add(r);
+        mHasActivities = true;
         if (mInactiveActivities != null) {
             mInactiveActivities.remove(r);
         }
@@ -666,40 +704,30 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             mInactiveActivities.remove(r);
         }
         mActivities.remove(r);
+        mHasActivities = !mActivities.isEmpty();
         updateActivityConfigurationListener();
     }
 
     void clearActivities() {
         mInactiveActivities = null;
         mActivities.clear();
+        mHasActivities = false;
         updateActivityConfigurationListener();
     }
 
     @HotPath(caller = HotPath.OOM_ADJUSTMENT)
     public boolean hasActivities() {
-        synchronized (mAtm.mGlobalLockWithoutBoost) {
-            return !mActivities.isEmpty();
-        }
+        return mHasActivities;
     }
 
     @HotPath(caller = HotPath.OOM_ADJUSTMENT)
     public boolean hasVisibleActivities() {
-        synchronized (mAtm.mGlobalLockWithoutBoost) {
-            for (int i = mActivities.size() - 1; i >= 0; --i) {
-                final ActivityRecord r = mActivities.get(i);
-                if (r.mVisibleRequested) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return (mActivityStateFlags & ACTIVITY_STATE_FLAG_IS_VISIBLE) != 0;
     }
 
     @HotPath(caller = HotPath.LRU_UPDATE)
     public boolean hasActivitiesOrRecentTasks() {
-        synchronized (mAtm.mGlobalLockWithoutBoost) {
-            return !mActivities.isEmpty() || !mRecentTasks.isEmpty();
-        }
+        return mHasActivities || mHasRecentTasks;
     }
 
     private boolean hasActivityInVisibleTask() {
@@ -768,7 +796,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
                 final Task stack = mPreQTopResumedActivity.getRootTask();
                 if (stack != null) {
                     stack.startPausingLocked(false /* userLeaving */, false /* uiSleeping */,
-                            activity);
+                            activity, "top-resumed-changed");
                 }
             }
             mPreQTopResumedActivity = activity;
@@ -869,15 +897,8 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     }
 
     boolean hasResumedActivity() {
-        for (int i = mActivities.size() - 1; i >= 0; --i) {
-            final ActivityRecord activity = mActivities.get(i);
-            if (activity.isState(RESUMED)) {
-                return true;
-            }
-        }
-        return false;
+        return (mActivityStateFlags & ACTIVITY_STATE_FLAG_HAS_RESUMED) != 0;
     }
-
 
     void updateIntentForHeavyWeightActivity(Intent intent) {
         if (mActivities.isEmpty()) {
@@ -994,64 +1015,106 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         void onOtherActivity();
     }
 
+    /**
+     * Returns the minimum task layer rank. It should only be called if {@link #hasActivities}
+     * returns {@code true}.
+     */
     @HotPath(caller = HotPath.OOM_ADJUSTMENT)
-    public int computeOomAdjFromActivities(int minTaskLayer, ComputeOomAdjCallback callback) {
-        // Since there could be more than one activities in a process record, we don't need to
-        // compute the OomAdj with each of them, just need to find out the activity with the
-        // "best" state, the order would be visible, pausing, stopping...
-        Task.ActivityState best = DESTROYED;
-        boolean finishing = true;
-        boolean visible = false;
-        synchronized (mAtm.mGlobalLockWithoutBoost) {
-            final int activitiesSize = mActivities.size();
-            for (int j = 0; j < activitiesSize; j++) {
-                final ActivityRecord r = mActivities.get(j);
-                if (r.app != this) {
-                    Log.e(TAG, "Found activity " + r + " in proc activity list using " + r.app
-                            + " instead of expected " + this);
-                    if (r.app == null || (r.app.mUid == mUid)) {
-                        // Only fix things up when they look sane
-                        r.setProcess(this);
-                    } else {
-                        continue;
-                    }
-                }
-                if (r.mVisibleRequested) {
-                    final Task task = r.getTask();
-                    if (task != null && minTaskLayer > 0) {
-                        final int layer = task.mLayerRank;
-                        if (layer >= 0 && minTaskLayer > layer) {
-                            minTaskLayer = layer;
-                        }
-                    }
-                    visible = true;
-                    // continue the loop, in case there are multiple visible activities in
-                    // this process, we'd find out the one with the minimal layer, thus it'll
-                    // get a higher adj score.
-                } else {
-                    if (best != PAUSING && best != PAUSED) {
-                        if (r.isState(PAUSING, PAUSED)) {
-                            best = PAUSING;
-                        } else if (r.isState(STOPPING)) {
-                            best = STOPPING;
-                            // Not "finishing" if any of activity isn't finishing.
-                            finishing &= r.finishing;
-                        }
-                    }
-                }
-            }
-        }
-        if (visible) {
+    public int computeOomAdjFromActivities(ComputeOomAdjCallback callback) {
+        final int flags = mActivityStateFlags;
+        if ((flags & ACTIVITY_STATE_FLAG_IS_VISIBLE) != 0) {
             callback.onVisibleActivity();
-        } else if (best == PAUSING) {
+        } else if ((flags & ACTIVITY_STATE_FLAG_IS_PAUSING_OR_PAUSED) != 0) {
             callback.onPausedActivity();
-        } else if (best == STOPPING) {
-            callback.onStoppingActivity(finishing);
+        } else if ((flags & ACTIVITY_STATE_FLAG_IS_STOPPING) != 0) {
+            callback.onStoppingActivity(
+                    (flags & ACTIVITY_STATE_FLAG_IS_STOPPING_FINISHING) != 0);
         } else {
             callback.onOtherActivity();
         }
+        return flags & ACTIVITY_STATE_FLAG_MASK_MIN_TASK_LAYER;
+    }
 
-        return minTaskLayer;
+    void computeProcessActivityState() {
+        // Since there could be more than one activities in a process record, we don't need to
+        // compute the OomAdj with each of them, just need to find out the activity with the
+        // "best" state, the order would be visible, pausing, stopping...
+        Task.ActivityState bestInvisibleState = DESTROYED;
+        boolean allStoppingFinishing = true;
+        boolean visible = false;
+        int minTaskLayer = Integer.MAX_VALUE;
+        int stateFlags = 0;
+        final boolean wasResumed = hasResumedActivity();
+        final boolean wasAnyVisible = (mActivityStateFlags
+                & (ACTIVITY_STATE_FLAG_IS_VISIBLE | ACTIVITY_STATE_FLAG_IS_WINDOW_VISIBLE)) != 0;
+        for (int i = mActivities.size() - 1; i >= 0; i--) {
+            final ActivityRecord r = mActivities.get(i);
+            if (r.app != this) {
+                Slog.e(TAG, "Found activity " + r + " in proc activity list using " + r.app
+                        + " instead of expected " + this);
+                if (r.app == null || (r.app.mUid == mUid)) {
+                    // Only fix things up when they look valid.
+                    r.setProcess(this);
+                } else {
+                    continue;
+                }
+            }
+            if (r.isVisible()) {
+                stateFlags |= ACTIVITY_STATE_FLAG_IS_WINDOW_VISIBLE;
+            }
+            if (r.mVisibleRequested) {
+                if (r.isState(RESUMED)) {
+                    stateFlags |= ACTIVITY_STATE_FLAG_HAS_RESUMED;
+                }
+                final Task task = r.getTask();
+                if (task != null && minTaskLayer > 0) {
+                    final int layer = task.mLayerRank;
+                    if (layer >= 0 && minTaskLayer > layer) {
+                        minTaskLayer = layer;
+                    }
+                }
+                visible = true;
+                // continue the loop, in case there are multiple visible activities in
+                // this process, we'd find out the one with the minimal layer, thus it'll
+                // get a higher adj score.
+            } else if (!visible && bestInvisibleState != PAUSING) {
+                if (r.isState(PAUSING, PAUSED)) {
+                    bestInvisibleState = PAUSING;
+                } else if (r.isState(STOPPING)) {
+                    bestInvisibleState = STOPPING;
+                    // Not "finishing" if any of activity isn't finishing.
+                    allStoppingFinishing &= r.finishing;
+                }
+            }
+        }
+
+        stateFlags |= minTaskLayer & ACTIVITY_STATE_FLAG_MASK_MIN_TASK_LAYER;
+        if (visible) {
+            stateFlags |= ACTIVITY_STATE_FLAG_IS_VISIBLE;
+        } else if (bestInvisibleState == PAUSING) {
+            stateFlags |= ACTIVITY_STATE_FLAG_IS_PAUSING_OR_PAUSED;
+        } else if (bestInvisibleState == STOPPING) {
+            stateFlags |= ACTIVITY_STATE_FLAG_IS_STOPPING;
+            if (allStoppingFinishing) {
+                stateFlags |= ACTIVITY_STATE_FLAG_IS_STOPPING_FINISHING;
+            }
+        }
+        mActivityStateFlags = stateFlags;
+
+        final boolean anyVisible = (stateFlags
+                & (ACTIVITY_STATE_FLAG_IS_VISIBLE | ACTIVITY_STATE_FLAG_IS_WINDOW_VISIBLE)) != 0;
+        if (!wasAnyVisible && anyVisible) {
+            mAtm.mVisibleActivityProcessTracker.onAnyActivityVisible(this);
+        } else if (wasAnyVisible && !anyVisible) {
+            mAtm.mVisibleActivityProcessTracker.onAllActivitiesInvisible(this);
+        } else if (wasAnyVisible && !wasResumed && hasResumedActivity()) {
+            mAtm.mVisibleActivityProcessTracker.onActivityResumedWhileVisible(this);
+        }
+    }
+
+    /** Called when the process has some oom related changes and it is going to update oom-adj. */
+    private void prepareOomAdjustment() {
+        mAtm.mRootWindowContainer.rankTaskLayersIfNeeded();
     }
 
     public int computeRelaunchReason() {
@@ -1081,7 +1144,6 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     }
 
     void clearProfilerIfNeeded() {
-        if (mListener == null) return;
         // Posting on handler so WM lock isn't held when we call into AM.
         mAtm.mH.sendMessage(PooledLambda.obtainMessage(
                 WindowProcessListener::clearProfilerIfNeeded, mListener));
@@ -1089,9 +1151,11 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
 
     void updateProcessInfo(boolean updateServiceConnectionActivities, boolean activityChange,
             boolean updateOomAdj, boolean addPendingTopUid) {
-        if (mListener == null) return;
         if (addPendingTopUid) {
             mAtm.mAmInternal.addPendingTopUid(mUid, mPid);
+        }
+        if (updateOomAdj) {
+            prepareOomAdjustment();
         }
         // Posting on handler so WM lock isn't held when we call into AM.
         final Message m = PooledLambda.obtainMessage(WindowProcessListener::updateProcessInfo,
@@ -1100,14 +1164,12 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     }
 
     void updateServiceConnectionActivities() {
-        if (mListener == null) return;
         // Posting on handler so WM lock isn't held when we call into AM.
         mAtm.mH.sendMessage(PooledLambda.obtainMessage(
                 WindowProcessListener::updateServiceConnectionActivities, mListener));
     }
 
     void setPendingUiCleanAndForceProcessStateUpTo(int newState) {
-        if (mListener == null) return;
         // Posting on handler so WM lock isn't held when we call into AM.
         final Message m = PooledLambda.obtainMessage(
                 WindowProcessListener::setPendingUiCleanAndForceProcessStateUpTo,
@@ -1116,7 +1178,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     }
 
     boolean isRemoved() {
-        return mListener == null ? false : mListener.isRemoved();
+        return mListener.isRemoved();
     }
 
     private boolean shouldSetProfileProc() {
@@ -1141,7 +1203,6 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     }
 
     void onStartActivity(int topProcessState, ActivityInfo info) {
-        if (mListener == null) return;
         String packageName = null;
         if ((info.flags & ActivityInfo.FLAG_MULTIPROCESS) == 0
                 || !"android".equals(info.packageName)) {
@@ -1154,6 +1215,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         if (topProcessState == ActivityManager.PROCESS_STATE_TOP) {
             mAtm.mAmInternal.addPendingTopUid(mUid, mPid);
         }
+        prepareOomAdjustment();
         // Posting the message at the front of queue so WM lock isn't held when we call into AM,
         // and the process state of starting activity can be updated quicker which will give it a
         // higher scheduling group.
@@ -1164,7 +1226,6 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     }
 
     void appDied(String reason) {
-        if (mListener == null) return;
         // Posting on handler so WM lock isn't held when we call into AM.
         final Message m = PooledLambda.obtainMessage(
                 WindowProcessListener::appDied, mListener, reason);
@@ -1180,20 +1241,27 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         mAtm.mStackSupervisor.removeHistoryRecords(this);
 
         boolean hasVisibleActivities = false;
-        if (mInactiveActivities != null && !mInactiveActivities.isEmpty()) {
+        final boolean hasInactiveActivities =
+                mInactiveActivities != null && !mInactiveActivities.isEmpty();
+        final ArrayList<ActivityRecord> activities =
+                (mHasActivities || hasInactiveActivities) ? new ArrayList<>() : mActivities;
+        if (mHasActivities) {
+            activities.addAll(mActivities);
+        }
+        if (hasInactiveActivities) {
             // Make sure that all activities in this process are handled.
-            mActivities.addAll(mInactiveActivities);
+            activities.addAll(mInactiveActivities);
         }
         if (isRemoved()) {
             // The package of the died process should be force-stopped, so make its activities as
             // finishing to prevent the process from being started again if the next top (or being
             // visible) activity also resides in the same process. This must be done before removal.
-            for (int i = mActivities.size() - 1; i >= 0; i--) {
-                mActivities.get(i).makeFinishingLocked();
+            for (int i = activities.size() - 1; i >= 0; i--) {
+                activities.get(i).makeFinishingLocked();
             }
         }
-        for (int i = mActivities.size() - 1; i >= 0; i--) {
-            final ActivityRecord r = mActivities.get(i);
+        for (int i = activities.size() - 1; i >= 0; i--) {
+            final ActivityRecord r = activities.get(i);
             if (r.mVisibleRequested || r.isVisible()) {
                 // While an activity launches a new activity, it's possible that the old activity
                 // is already requested to be hidden (mVisibleRequested=false), but this visibility
@@ -1242,8 +1310,10 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         onMergedOverrideConfigurationChanged(Configuration.EMPTY);
     }
 
-    private void registerActivityConfigurationListener(ActivityRecord activityRecord) {
-        if (activityRecord == null || activityRecord.containsListener(this)) {
+    void registerActivityConfigurationListener(ActivityRecord activityRecord) {
+        if (activityRecord == null || activityRecord.containsListener(this)
+                // Check for the caller from outside of this class.
+                || !mIsActivityConfigOverrideAllowed) {
             return;
         }
         // A process can only register to one activityRecord to listen to the override configuration
@@ -1295,25 +1365,25 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
 
     @Override
     public void onRequestedOverrideConfigurationChanged(Configuration overrideConfiguration) {
-        super.onRequestedOverrideConfigurationChanged(
-                sanitizeProcessConfiguration(overrideConfiguration));
+        super.onRequestedOverrideConfigurationChanged(overrideConfiguration);
     }
 
     @Override
     public void onMergedOverrideConfigurationChanged(Configuration mergedOverrideConfig) {
-        super.onRequestedOverrideConfigurationChanged(
-                sanitizeProcessConfiguration(mergedOverrideConfig));
+        super.onRequestedOverrideConfigurationChanged(mergedOverrideConfig);
     }
 
-    private static Configuration sanitizeProcessConfiguration(Configuration config) {
+    @Override
+    void resolveOverrideConfiguration(Configuration newParentConfig) {
+        super.resolveOverrideConfiguration(newParentConfig);
+        final Configuration resolvedConfig = getResolvedOverrideConfiguration();
         // Make sure that we don't accidentally override the activity type.
-        if (config.windowConfiguration.getActivityType() != ACTIVITY_TYPE_UNDEFINED) {
-            final Configuration sanitizedConfig = new Configuration(config);
-            sanitizedConfig.windowConfiguration.setActivityType(ACTIVITY_TYPE_UNDEFINED);
-            return sanitizedConfig;
-        }
-
-        return config;
+        resolvedConfig.windowConfiguration.setActivityType(ACTIVITY_TYPE_UNDEFINED);
+        // Activity has an independent ActivityRecord#mConfigurationSeq. If this process registers
+        // activity configuration, its config seq shouldn't go backwards by activity configuration.
+        // Otherwise if other places send wpc.getConfiguration() to client, the configuration may
+        // be ignored due to the seq is older.
+        resolvedConfig.seq = newParentConfig.seq;
     }
 
     private void updateConfiguration() {
@@ -1328,21 +1398,11 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             return;
         }
 
-        if (mListener.isCached()) {
-            // This process is in a cached state. We will delay delivering the config change to the
-            // process until the process is no longer cached.
-            if (mPendingConfiguration == null) {
-                mPendingConfiguration = new Configuration(config);
-            } else {
-                mPendingConfiguration.setTo(config);
-            }
+        if (mPauseConfigurationDispatchCount > 0) {
+            mHasPendingConfigurationChange = true;
             return;
         }
-
-        dispatchConfigurationChange(config);
-    }
-
-    private void dispatchConfigurationChange(Configuration config) {
+        mHasPendingConfigurationChange = false;
         if (mThread == null) {
             if (Build.IS_DEBUGGABLE && mHasImeService) {
                 // TODO (b/135719017): Temporary log for debugging IME service.
@@ -1368,7 +1428,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         }
     }
 
-    private void setLastReportedConfiguration(Configuration config) {
+    void setLastReportedConfiguration(Configuration config) {
         mLastReportedConfiguration.setTo(config);
     }
 
@@ -1376,24 +1436,48 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         return mLastReportedConfiguration;
     }
 
+    void pauseConfigurationDispatch() {
+        mPauseConfigurationDispatchCount++;
+    }
+
+    void resumeConfigurationDispatch() {
+        mPauseConfigurationDispatchCount--;
+    }
+
+    /**
+     * This is called for sending {@link android.app.servertransaction.LaunchActivityItem}.
+     * The caller must call {@link #setLastReportedConfiguration} if the delivered configuration
+     * is newer.
+     */
+    Configuration prepareConfigurationForLaunchingActivity() {
+        final Configuration config = getConfiguration();
+        if (mHasPendingConfigurationChange) {
+            mHasPendingConfigurationChange = false;
+            // The global configuration may not change, so the client process may have the same
+            // config seq. This increment ensures that the client won't ignore the configuration.
+            config.seq = mAtm.increaseConfigurationSeqLocked();
+        }
+        return config;
+    }
+
     /** Returns the total time (in milliseconds) spent executing in both user and system code. */
     public long getCpuTime() {
-        return (mListener != null) ? mListener.getCpuTime() : 0;
+        return mListener.getCpuTime();
     }
 
     void addRecentTask(Task task) {
         mRecentTasks.add(task);
+        mHasRecentTasks = true;
     }
 
     void removeRecentTask(Task task) {
         mRecentTasks.remove(task);
+        mHasRecentTasks = !mRecentTasks.isEmpty();
     }
 
     @HotPath(caller = HotPath.OOM_ADJUSTMENT)
     public boolean hasRecentTasks() {
-        synchronized (mAtm.mGlobalLockWithoutBoost) {
-            return !mRecentTasks.isEmpty();
-        }
+        return mHasRecentTasks;
     }
 
     void clearRecentTasks() {
@@ -1401,6 +1485,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             mRecentTasks.get(i).clearRootProcess();
         }
         mRecentTasks.clear();
+        mHasRecentTasks = false;
     }
 
     public void appEarlyNotResponding(String annotation, Runnable killAppCallback) {
@@ -1459,24 +1544,6 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     }
 
     /**
-     * Called to notify WindowProcessController of a change in the process's cached state.
-     *
-     * @param isCached whether or not the process is cached.
-     */
-    @HotPath(caller = HotPath.OOM_ADJUSTMENT)
-    public void onProcCachedStateChanged(boolean isCached) {
-        if (!isCached) {
-            synchronized (mAtm.mGlobalLockWithoutBoost) {
-                if (mPendingConfiguration != null) {
-                    final Configuration config = mPendingConfiguration;
-                    mPendingConfiguration = null;
-                    dispatchConfigurationChange(config);
-                }
-            }
-        }
-    }
-
-    /**
      * Called to notify {@link WindowProcessController} of a started service.
      *
      * @param serviceInfo information describing the started service.
@@ -1507,23 +1574,28 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
 
     @HotPath(caller = HotPath.OOM_ADJUSTMENT)
     public void onTopProcChanged() {
-        synchronized (mAtm.mGlobalLockWithoutBoost) {
-            mAtm.mVrController.onTopProcChangedLocked(this);
+        if (mAtm.mVrController.isInterestingToSchedGroup()) {
+            mAtm.mH.post(() -> {
+                synchronized (mAtm.mGlobalLock) {
+                    mAtm.mVrController.onTopProcChangedLocked(this);
+                }
+            });
         }
     }
 
     @HotPath(caller = HotPath.OOM_ADJUSTMENT)
     public boolean isHomeProcess() {
-        synchronized (mAtm.mGlobalLockWithoutBoost) {
-            return this == mAtm.mHomeProcess;
-        }
+        return this == mAtm.mHomeProcess;
     }
 
     @HotPath(caller = HotPath.OOM_ADJUSTMENT)
     public boolean isPreviousProcess() {
-        synchronized (mAtm.mGlobalLockWithoutBoost) {
-            return this == mAtm.mPreviousProcess;
-        }
+        return this == mAtm.mPreviousProcess;
+    }
+
+    @HotPath(caller = HotPath.OOM_ADJUSTMENT)
+    public boolean isHeavyWeightProcess() {
+        return this == mAtm.mHeavyWeightProcess;
     }
 
     void setRunningRecentsAnimation(boolean running) {
@@ -1575,21 +1647,49 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
                 pw.print(prefix); pw.print("mVrThreadTid="); pw.println(mVrThreadTid);
             }
             if (mBackgroundActivityStartTokens.size() > 0) {
-                pw.print(prefix); pw.println("Background activity start tokens:");
+                pw.print(prefix);
+                pw.println("Background activity start tokens (token: originating token):");
                 for (int i = 0; i < mBackgroundActivityStartTokens.size(); i++) {
                     pw.print(prefix); pw.print("  - ");
-                    pw.println(mBackgroundActivityStartTokens.keyAt(i));
+                    pw.print(mBackgroundActivityStartTokens.keyAt(i));
+                    pw.print(": ");
+                    pw.println(mBackgroundActivityStartTokens.valueAt(i));
+
                 }
             }
         }
         pw.println(prefix + " Configuration=" + getConfiguration());
         pw.println(prefix + " OverrideConfiguration=" + getRequestedOverrideConfiguration());
         pw.println(prefix + " mLastReportedConfiguration=" + mLastReportedConfiguration);
+
+        final int stateFlags = mActivityStateFlags;
+        if (stateFlags != ACTIVITY_STATE_FLAG_MASK_MIN_TASK_LAYER) {
+            pw.print(prefix + " mActivityStateFlags=");
+            if ((stateFlags & ACTIVITY_STATE_FLAG_IS_WINDOW_VISIBLE) != 0) {
+                pw.print("W|");
+            }
+            if ((stateFlags & ACTIVITY_STATE_FLAG_IS_VISIBLE) != 0) {
+                pw.print("V|");
+                if ((stateFlags & ACTIVITY_STATE_FLAG_HAS_RESUMED) != 0) {
+                    pw.print("R|");
+                }
+            } else if ((stateFlags & ACTIVITY_STATE_FLAG_IS_PAUSING_OR_PAUSED) != 0) {
+                pw.print("P|");
+            } else if ((stateFlags & ACTIVITY_STATE_FLAG_IS_STOPPING) != 0) {
+                pw.print("S|");
+                if ((stateFlags & ACTIVITY_STATE_FLAG_IS_STOPPING_FINISHING) != 0) {
+                    pw.print("F|");
+                }
+            }
+            final int taskLayer = stateFlags & ACTIVITY_STATE_FLAG_MASK_MIN_TASK_LAYER;
+            if (taskLayer != ACTIVITY_STATE_FLAG_MASK_MIN_TASK_LAYER) {
+                pw.print("taskLayer=" + taskLayer);
+            }
+            pw.println();
+        }
     }
 
     void dumpDebug(ProtoOutputStream proto, long fieldId) {
-        if (mListener != null) {
-            mListener.dumpDebug(proto, fieldId);
-        }
+        mListener.dumpDebug(proto, fieldId);
     }
 }

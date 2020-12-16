@@ -344,6 +344,11 @@
              the app is uninstalled.
         -->
         <flag name="immutablyRestricted" value="0x10" />
+        <!--
+             Modifier for permission restriction. This permission cannot
+             be exempted by the installer.
+        -->
+        <flag name="installerExemptIgnored" value="0x20" />
     </attr>
 
     <!-- Specified the name of a group that this permission is associated
@@ -996,6 +1001,8 @@
         <!-- The font scaling factor has changed, that is the user has
              selected a new global font size. -->
         <flag name="fontScale" value="0x40000000" />
+        <!-- The user has enabled or disabled displaying all text in bold -->
+        <flag name="forceBoldText" value="0x10000000" />
     </attr>
 
     <!-- Indicate that the activity can be launched as the embedded child of another
@@ -2007,6 +2014,22 @@
         requested.  If it does support the feature, it will be as if the manifest didn't
         request it at all. -->
         <attr name="requiredNotFeature" format="string" />
+    </declare-styleable>
+
+    <!-- <code>required-feature</code> and <code>required-not-feature</code> elements inside
+         <code>uses-permission<code/> can be used to request the permission based on the fact
+         whether the system supports or does not support certain features.
+         If multiple <code>required-feature</code> and/or <code>required-not-feature</code> elements
+         are present, the permission will be “requested” only if the system supports all of the
+         listed "required-features" and does not support any of the "required-not-features".
+         -->
+    <declare-styleable name="AndroidManifestRequiredFeature">
+        <!-- The name of the feature. -->
+        <attr name="name" />
+    </declare-styleable>
+    <declare-styleable name="AndroidManifestRequiredNotFeature">
+        <!-- The name of the feature. -->
+        <attr name="name" />
     </declare-styleable>
 
     <!-- The <code>uses-configuration</code> tag specifies
@@ -3177,6 +3200,28 @@
          then the system will set the same minimal height on all other activities in the task. It
          will also ignore any other minimal height attributes of non-root activities. -->
         <attr name="minHeight" />
+
+        <!-- Window layout affinity of this activity. Activities with the same window layout
+          affinity will share the same layout record. That is, if a user is opening an activity in
+          a new task on a display that can host freeform windows, and the user had opened a task
+          before and that task had a root activity who had the same window layout affinity, the
+          new task's window will be created in the same window mode and around the location which
+          the previously opened task was in.
+
+          <p>For example, if a user maximizes a task with root activity A and opens another
+          activity B that has the same window layout affinity as activity A has, activity B will
+          be created in fullscreen window mode. Similarly, if they move/resize a task with root
+          activity C and open another activity D that has the same window layout affinity as
+          activity C has, activity D will be in freeform window mode and as close to the position
+          of activity C as conditions permit. It doesn't require the user to keep the task with
+          activity A or activity C open. It won't, however, put any task into split-screen or PIP
+          window mode on launch.
+
+          <p>If the user is opening an activity with its window layout affinity for the first time,
+          the window mode and position is OEM defined.
+
+          <p>By default activity doesn't share any affinity with other activities. -->
+        <attr name="windowLayoutAffinity" format="string" />
     </declare-styleable>
 
     <!-- <code>restrict-update</code> tag restricts system apps from being updated unless the

@@ -44,8 +44,8 @@ import java.util.Objects;
  * are made to the {@link TimeZoneDetectorInternal}, and the {@link LocationTimeZoneProvider}s that
  * offer {@link android.location.timezone.LocationTimeZoneEvent}s.
  *
- * TODO(b/152744911): This implementation currently only supports a primary provider. Support for a
- *  secondary provider must be added in a later commit.
+ * <p>For details of the time zone suggestion behavior, see {@link
+ * LocationTimeZoneProviderController}.
  *
  * <p>Implementation details:
  *
@@ -79,21 +79,22 @@ public class LocationTimeZoneManagerService extends Binder {
 
         @Override
         public void onStart() {
-            if (TimeZoneDetectorService.GEOLOCATION_TIME_ZONE_DETECTION_ENABLED) {
-                Context context = getContext();
+            Context context = getContext();
+            if (TimeZoneDetectorService.isGeoLocationTimeZoneDetectionEnabled(context)) {
                 mService = new LocationTimeZoneManagerService(context);
 
                 // The service currently exposes no LocalService or Binder API, but it extends
                 // Binder and is registered as a binder service so it can receive shell commands.
                 publishBinderService("location_time_zone_manager", mService);
             } else {
-                Slog.i(TAG, getClass() + " is compile-time disabled");
+                Slog.i(TAG, getClass() + " is disabled");
             }
         }
 
         @Override
         public void onBootPhase(int phase) {
-            if (TimeZoneDetectorService.GEOLOCATION_TIME_ZONE_DETECTION_ENABLED) {
+            Context context = getContext();
+            if (TimeZoneDetectorService.isGeoLocationTimeZoneDetectionEnabled(context)) {
                 if (phase == PHASE_SYSTEM_SERVICES_READY) {
                     // The location service must be functioning after this boot phase.
                     mService.onSystemReady();
@@ -109,6 +110,7 @@ public class LocationTimeZoneManagerService extends Binder {
     static final String TAG = "LocationTZDetector";
 
     static final String PRIMARY_PROVIDER_NAME = "primary";
+    static final String SECONDARY_PROVIDER_NAME = "secondary";
 
     private static final String SIMULATION_MODE_SYSTEM_PROPERTY_PREFIX =
             "persist.sys.location_tz_simulation_mode.";
@@ -117,6 +119,8 @@ public class LocationTimeZoneManagerService extends Binder {
 
     private static final String PRIMARY_LOCATION_TIME_ZONE_SERVICE_ACTION =
             "com.android.location.timezone.service.v1.PrimaryLocationTimeZoneProvider";
+    private static final String SECONDARY_LOCATION_TIME_ZONE_SERVICE_ACTION =
+            "com.android.location.timezone.service.v1.SecondaryLocationTimeZoneProvider";
 
 
     @NonNull private final Context mContext;
@@ -160,7 +164,9 @@ public class LocationTimeZoneManagerService extends Binder {
         // Called on an arbitrary thread during initialization.
         synchronized (mSharedLock) {
             LocationTimeZoneProvider primary = createPrimaryProvider();
-            mLocationTimeZoneDetectorController = new ControllerImpl(mThreadingDomain, primary);
+            LocationTimeZoneProvider secondary = createSecondaryProvider();
+            mLocationTimeZoneDetectorController =
+                    new ControllerImpl(mThreadingDomain, primary, secondary);
             ControllerCallbackImpl callback = new ControllerCallbackImpl(mThreadingDomain);
             ControllerEnvironmentImpl environment = new ControllerEnvironmentImpl(
                     mThreadingDomain, mLocationTimeZoneDetectorController);
@@ -177,9 +183,6 @@ public class LocationTimeZoneManagerService extends Binder {
         if (isInSimulationMode(PRIMARY_PROVIDER_NAME)) {
             proxy = new SimulatedLocationTimeZoneProviderProxy(mContext, mThreadingDomain);
         } else {
-            // TODO Uncomment this code in a later commit.
-            throw new UnsupportedOperationException("Not implemented");
-            /*
             proxy = RealLocationTimeZoneProviderProxy.createAndRegister(
                     mContext,
                     mThreadingDomain,
@@ -187,9 +190,25 @@ public class LocationTimeZoneManagerService extends Binder {
                     com.android.internal.R.bool.config_enablePrimaryLocationTimeZoneOverlay,
                     com.android.internal.R.string.config_primaryLocationTimeZoneProviderPackageName
             );
-            */
         }
         return createLocationTimeZoneProvider(PRIMARY_PROVIDER_NAME, proxy);
+    }
+
+    private LocationTimeZoneProvider createSecondaryProvider() {
+        LocationTimeZoneProviderProxy proxy;
+        if (isInSimulationMode(SECONDARY_PROVIDER_NAME)) {
+            proxy = new SimulatedLocationTimeZoneProviderProxy(mContext, mThreadingDomain);
+        } else {
+            proxy = RealLocationTimeZoneProviderProxy.createAndRegister(
+                    mContext,
+                    mThreadingDomain,
+                    SECONDARY_LOCATION_TIME_ZONE_SERVICE_ACTION,
+                    com.android.internal.R.bool.config_enableSecondaryLocationTimeZoneOverlay,
+                    com.android.internal.R.string
+                            .config_secondaryLocationTimeZoneProviderPackageName
+            );
+        }
+        return createLocationTimeZoneProvider(SECONDARY_PROVIDER_NAME, proxy);
     }
 
     private boolean isInSimulationMode(String providerName) {

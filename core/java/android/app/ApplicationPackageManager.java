@@ -16,13 +16,13 @@
 
 package android.app;
 
-import static android.content.pm.Checksum.PARTIAL_MERKLE_ROOT_1M_SHA256;
-import static android.content.pm.Checksum.PARTIAL_MERKLE_ROOT_1M_SHA512;
-import static android.content.pm.Checksum.WHOLE_MD5;
-import static android.content.pm.Checksum.WHOLE_MERKLE_ROOT_4K_SHA256;
-import static android.content.pm.Checksum.WHOLE_SHA1;
-import static android.content.pm.Checksum.WHOLE_SHA256;
-import static android.content.pm.Checksum.WHOLE_SHA512;
+import static android.content.pm.Checksum.TYPE_PARTIAL_MERKLE_ROOT_1M_SHA256;
+import static android.content.pm.Checksum.TYPE_PARTIAL_MERKLE_ROOT_1M_SHA512;
+import static android.content.pm.Checksum.TYPE_WHOLE_MD5;
+import static android.content.pm.Checksum.TYPE_WHOLE_MERKLE_ROOT_4K_SHA256;
+import static android.content.pm.Checksum.TYPE_WHOLE_SHA1;
+import static android.content.pm.Checksum.TYPE_WHOLE_SHA256;
+import static android.content.pm.Checksum.TYPE_WHOLE_SHA512;
 
 import android.annotation.DrawableRes;
 import android.annotation.NonNull;
@@ -117,7 +117,6 @@ import dalvik.system.VMRuntime;
 
 import libcore.util.EmptyArray;
 
-import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateEncodingException;
@@ -150,10 +149,11 @@ public class ApplicationPackageManager extends PackageManager {
     private static final int sDefaultFlags = GET_SHARED_LIBRARY_FILES;
 
     /** Default set of checksums - includes all available checksums.
-     * @see PackageManager#getChecksums  */
+     * @see PackageManager#requestChecksums  */
     private static final int DEFAULT_CHECKSUMS =
-            WHOLE_MERKLE_ROOT_4K_SHA256 | WHOLE_MD5 | WHOLE_SHA1 | WHOLE_SHA256 | WHOLE_SHA512
-                    | PARTIAL_MERKLE_ROOT_1M_SHA256 | PARTIAL_MERKLE_ROOT_1M_SHA512;
+            TYPE_WHOLE_MERKLE_ROOT_4K_SHA256 | TYPE_WHOLE_MD5 | TYPE_WHOLE_SHA1 | TYPE_WHOLE_SHA256
+                    | TYPE_WHOLE_SHA512 | TYPE_PARTIAL_MERKLE_ROOT_1M_SHA256
+                    | TYPE_PARTIAL_MERKLE_ROOT_1M_SHA512;
 
     // Name of the resource which provides background permission button string
     public static final String APP_PERMISSION_BUTTON_ALLOW_ALWAYS =
@@ -667,7 +667,7 @@ public class ApplicationPackageManager extends PackageManager {
                     name, version);
         }
         @Override
-        public boolean equals(Object o) {
+        public boolean equals(@Nullable Object o) {
             if (o instanceof HasSystemFeatureQuery) {
                 HasSystemFeatureQuery r = (HasSystemFeatureQuery) o;
                 return Objects.equals(name, r.name) &&  version == r.version;
@@ -994,14 +994,24 @@ public class ApplicationPackageManager extends PackageManager {
     }
 
     @Override
-    public void getChecksums(@NonNull String packageName, boolean includeSplits,
-            @Checksum.Kind int required, @Nullable List<Certificate> trustedInstallers,
+    public void requestChecksums(@NonNull String packageName, boolean includeSplits,
+            @Checksum.Type int required, @NonNull List<Certificate> trustedInstallers,
             @NonNull IntentSender statusReceiver)
-            throws CertificateEncodingException, IOException, NameNotFoundException {
+            throws CertificateEncodingException, NameNotFoundException {
         Objects.requireNonNull(packageName);
         Objects.requireNonNull(statusReceiver);
+        Objects.requireNonNull(trustedInstallers);
         try {
-            mPM.getChecksums(packageName, includeSplits, DEFAULT_CHECKSUMS, required,
+            if (trustedInstallers == TRUST_ALL) {
+                trustedInstallers = null;
+            } else if (trustedInstallers == TRUST_NONE) {
+                trustedInstallers = Collections.emptyList();
+            } else if (trustedInstallers.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "trustedInstallers has to be one of TRUST_ALL/TRUST_NONE or a non-empty "
+                                + "list of certificates.");
+            }
+            mPM.requestChecksums(packageName, includeSplits, DEFAULT_CHECKSUMS, required,
                     encodeCertificates(trustedInstallers), statusReceiver, getUserId());
         } catch (ParcelableException e) {
             e.maybeRethrow(PackageManager.NameNotFoundException.class);
@@ -1040,7 +1050,7 @@ public class ApplicationPackageManager extends PackageManager {
          * are handled first.
          */
         @Override
-        public boolean equals(Object o) {
+        public boolean equals(@Nullable Object o) {
             if (o instanceof GetPackagesForUidResult) {
                 String [] r = ((GetPackagesForUidResult) o).mValue;
                 String [] l = mValue;
@@ -1299,7 +1309,7 @@ public class ApplicationPackageManager extends PackageManager {
         }
     }
 
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @Override
     public boolean setInstantAppCookie(@NonNull byte[] cookie) {
         try {
@@ -2073,7 +2083,7 @@ public class ApplicationPackageManager extends PackageManager {
         }
 
         @Override
-        public boolean equals(Object o) {
+        public boolean equals(@Nullable Object o) {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
 
@@ -2412,7 +2422,7 @@ public class ApplicationPackageManager extends PackageManager {
     }
 
     @Override
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public @Nullable VolumeInfo getPackageCurrentVolume(ApplicationInfo app) {
         final StorageManager storage = mContext.getSystemService(StorageManager.class);
         return getPackageCurrentVolume(app, storage);

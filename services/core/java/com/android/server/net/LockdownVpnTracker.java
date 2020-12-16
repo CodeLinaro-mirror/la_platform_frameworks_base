@@ -18,6 +18,8 @@ package com.android.server.net;
 
 import static android.provider.Settings.ACTION_VPN_SETTINGS;
 
+import static com.android.server.connectivity.NetworkNotificationManager.NOTIFICATION_VPN;
+
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.Notification;
@@ -42,7 +44,6 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.messages.nano.SystemMessageProto.SystemMessage;
 import com.android.internal.net.VpnConfig;
 import com.android.internal.net.VpnProfile;
-import com.android.internal.notification.SystemNotificationChannels;
 import com.android.server.ConnectivityService;
 import com.android.server.EventLogTags;
 import com.android.server.connectivity.Vpn;
@@ -65,6 +66,7 @@ public class LockdownVpnTracker {
 
     @NonNull private final Context mContext;
     @NonNull private final ConnectivityService mConnService;
+    @NonNull private final NotificationManager mNotificationManager;
     @NonNull private final Handler mHandler;
     @NonNull private final Vpn mVpn;
     @NonNull private final VpnProfile mProfile;
@@ -93,13 +95,16 @@ public class LockdownVpnTracker {
         mHandler = Objects.requireNonNull(handler);
         mVpn = Objects.requireNonNull(vpn);
         mProfile = Objects.requireNonNull(profile);
+        mNotificationManager = mContext.getSystemService(NotificationManager.class);
 
         final Intent configIntent = new Intent(ACTION_VPN_SETTINGS);
-        mConfigIntent = PendingIntent.getActivity(mContext, 0, configIntent, 0);
+        mConfigIntent = PendingIntent.getActivity(mContext, 0 /* requestCode */, configIntent,
+                PendingIntent.FLAG_IMMUTABLE);
 
         final Intent resetIntent = new Intent(ACTION_LOCKDOWN_RESET);
         resetIntent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
-        mResetIntent = PendingIntent.getBroadcast(mContext, 0, resetIntent, 0);
+        mResetIntent = PendingIntent.getBroadcast(mContext, 0 /* requestCode */, resetIntent,
+                PendingIntent.FLAG_IMMUTABLE);
     }
 
     /**
@@ -252,7 +257,7 @@ public class LockdownVpnTracker {
 
     private void showNotification(int titleRes, int iconRes) {
         final Notification.Builder builder =
-                new Notification.Builder(mContext, SystemNotificationChannels.VPN)
+                new Notification.Builder(mContext, NOTIFICATION_VPN)
                         .setWhen(0)
                         .setSmallIcon(iconRes)
                         .setContentTitle(mContext.getString(titleRes))
@@ -264,11 +269,11 @@ public class LockdownVpnTracker {
                         .setColor(mContext.getColor(
                                 com.android.internal.R.color.system_notification_accent_color));
 
-        NotificationManager.from(mContext).notify(null, SystemMessage.NOTE_VPN_STATUS,
+        mNotificationManager.notify(null /* tag */, SystemMessage.NOTE_VPN_STATUS,
                 builder.build());
     }
 
     private void hideNotification() {
-        NotificationManager.from(mContext).cancel(null, SystemMessage.NOTE_VPN_STATUS);
+        mNotificationManager.cancel(null, SystemMessage.NOTE_VPN_STATUS);
     }
 }

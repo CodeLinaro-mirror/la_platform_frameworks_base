@@ -27,7 +27,7 @@
 namespace android {
 namespace uirenderer {
 
-#define UI_THREAD_FRAME_INFO_SIZE 10
+#define UI_THREAD_FRAME_INFO_SIZE 11
 
 enum class FrameInfoIndex {
     Flags = 0,
@@ -40,6 +40,7 @@ enum class FrameInfoIndex {
     AnimationStart,
     PerformTraversalsStart,
     DrawStart,
+    FrameDeadline,
     // End of UI frame info
 
     SyncQueued,
@@ -77,9 +78,11 @@ public:
     explicit UiFrameInfoBuilder(int64_t* buffer) : mBuffer(buffer) {
         memset(mBuffer, 0, UI_THREAD_FRAME_INFO_SIZE * sizeof(int64_t));
         set(FrameInfoIndex::FrameTimelineVsyncId) = INVALID_VSYNC_ID;
+        set(FrameInfoIndex::FrameDeadline) = std::numeric_limits<int64_t>::max();
     }
 
-    UiFrameInfoBuilder& setVsync(nsecs_t vsyncTime, nsecs_t intendedVsync, int64_t vsyncId) {
+    UiFrameInfoBuilder& setVsync(nsecs_t vsyncTime, nsecs_t intendedVsync,
+                                 int64_t vsyncId, int64_t frameDeadline) {
         set(FrameInfoIndex::FrameTimelineVsyncId) = vsyncId;
         set(FrameInfoIndex::Vsync) = vsyncTime;
         set(FrameInfoIndex::IntendedVsync) = intendedVsync;
@@ -89,6 +92,7 @@ public:
         set(FrameInfoIndex::AnimationStart) = vsyncTime;
         set(FrameInfoIndex::PerformTraversalsStart) = vsyncTime;
         set(FrameInfoIndex::DrawStart) = vsyncTime;
+        set(FrameInfoIndex::FrameDeadline) = frameDeadline;
         return *this;
     }
 
@@ -154,7 +158,7 @@ public:
         // GPU start time is approximated to the moment before swapBuffer is invoked.
         // We could add an EGLSyncKHR fence at the beginning of the frame, but that is an overhead.
         int64_t endTime = get(FrameInfoIndex::GpuCompleted);
-        return endTime > 0 ? endTime - get(FrameInfoIndex::SwapBuffers) : -1;
+        return endTime > 0 ? endTime - get(FrameInfoIndex::SwapBuffers) : 0;
     }
 
     inline int64_t& set(FrameInfoIndex index) { return mFrameInfo[static_cast<int>(index)]; }

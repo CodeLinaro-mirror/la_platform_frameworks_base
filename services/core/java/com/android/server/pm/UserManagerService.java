@@ -94,6 +94,8 @@ import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.util.SparseIntArray;
 import android.util.TimeUtils;
+import android.util.TypedXmlPullParser;
+import android.util.TypedXmlSerializer;
 import android.util.Xml;
 
 import com.android.internal.annotations.GuardedBy;
@@ -102,7 +104,6 @@ import com.android.internal.app.IAppOpsService;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.os.BackgroundThread;
 import com.android.internal.util.DumpUtils;
-import com.android.internal.util.FastXmlSerializer;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.Preconditions;
 import com.android.internal.util.XmlUtils;
@@ -110,7 +111,6 @@ import com.android.internal.widget.LockPatternUtils;
 import com.android.server.LocalServices;
 import com.android.server.LockGuard;
 import com.android.server.SystemService;
-import com.android.server.SystemService.TargetUser;
 import com.android.server.am.UserState;
 import com.android.server.storage.DeviceStorageMonitorInternal;
 import com.android.server.utils.TimingsTraceAndSlog;
@@ -122,7 +122,6 @@ import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 import org.xmlpull.v1.XmlSerializer;
 
-import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
@@ -132,7 +131,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -221,10 +219,12 @@ public class UserManagerService extends IUserManager.Stub {
 
     private static final int ALLOWED_FLAGS_FOR_CREATE_USERS_PERMISSION =
             UserInfo.FLAG_MANAGED_PROFILE
+            | UserInfo.FLAG_PROFILE
             | UserInfo.FLAG_EPHEMERAL
             | UserInfo.FLAG_RESTRICTED
             | UserInfo.FLAG_GUEST
-            | UserInfo.FLAG_DEMO;
+            | UserInfo.FLAG_DEMO
+            | UserInfo.FLAG_FULL;
 
     @VisibleForTesting
     static final int MIN_USER_ID = UserHandle.MIN_SECONDARY_USER_ID;
@@ -251,9 +251,17 @@ public class UserManagerService extends IUserManager.Stub {
 
     private final Context mContext;
     private final PackageManagerService mPm;
+
+    /**
+     * Lock for packages. If using with {@link #mUsersLock}, {@link #mPackagesLock} should be
+     * acquired first.
+     */
     private final Object mPackagesLock;
     private final UserDataPreparer mUserDataPreparer;
-    // Short-term lock for internal state, when interaction/sync with PM is not required
+    /**
+     * Short-term lock for internal state, when interaction/sync with PM is not required. If using
+     * with {@link #mPackagesLock}, {@link #mPackagesLock} should be acquired first.
+     */
     private final Object mUsersLock = LockGuard.installNewLock(LockGuard.INDEX_USER);
     private final Object mRestrictionsLock = new Object();
     // Used for serializing access to app restriction files
@@ -1658,7 +1666,7 @@ public class UserManagerService extends IUserManager.Stub {
             }
         }
         if (changed) {
-            long ident = Binder.clearCallingIdentity();
+            final long ident = Binder.clearCallingIdentity();
             try {
                 sendUserInfoChangedBroadcast(userId);
             } finally {
@@ -1727,6 +1735,7 @@ public class UserManagerService extends IUserManager.Stub {
     }
 
     public void makeInitialized(@UserIdInt int userId) {
+        if (DBG) Slog.d(LOG_TAG, "makeInitialized(" + userId + ")");
         checkManageUsersPermission("makeInitialized");
         boolean scheduleWriteUser = false;
         UserData userData;
@@ -2538,8 +2547,7 @@ public class UserManagerService extends IUserManager.Stub {
         AtomicFile userListFile = new AtomicFile(mUserListFile);
         try {
             fis = userListFile.openRead();
-            XmlPullParser parser = Xml.newPullParser();
-            parser.setInput(fis, StandardCharsets.UTF_8.name());
+            final TypedXmlPullParser parser = Xml.resolvePullParser(fis);
             int type;
             while ((type = parser.next()) != XmlPullParser.START_TAG
                     && type != XmlPullParser.END_DOCUMENT) {
@@ -2864,8 +2872,7 @@ public class UserManagerService extends IUserManager.Stub {
         AtomicFile userFile = new AtomicFile(new File(mUsersDir, userData.info.id + XML_SUFFIX));
         try {
             fos = userFile.startWrite();
-            final BufferedOutputStream bos = new BufferedOutputStream(fos);
-            writeUserLP(userData, bos);
+            writeUserLP(userData, fos);
             userFile.finishWrite(fos);
         } catch (Exception ioe) {
             Slog.e(LOG_TAG, "Error writing user info " + userData.info.id, ioe);
@@ -2883,9 +2890,7 @@ public class UserManagerService extends IUserManager.Stub {
     @VisibleForTesting
     void writeUserLP(UserData userData, OutputStream os)
             throws IOException, XmlPullParserException {
-        // XmlSerializer serializer = XmlUtils.serializerInstance();
-        final XmlSerializer serializer = new FastXmlSerializer();
-        serializer.setOutput(os, StandardCharsets.UTF_8.name());
+        final TypedXmlSerializer serializer = Xml.resolveSerializer(os);
         serializer.startDocument(null, true);
         serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
 
@@ -2991,11 +2996,7 @@ public class UserManagerService extends IUserManager.Stub {
         AtomicFile userListFile = new AtomicFile(mUserListFile);
         try {
             fos = userListFile.startWrite();
-            final BufferedOutputStream bos = new BufferedOutputStream(fos);
-
-            // XmlSerializer serializer = XmlUtils.serializerInstance();
-            final XmlSerializer serializer = new FastXmlSerializer();
-            serializer.setOutput(bos, StandardCharsets.UTF_8.name());
+            final TypedXmlSerializer serializer = Xml.resolveSerializer(fos);
             serializer.startDocument(null, true);
             serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
 
@@ -3082,8 +3083,7 @@ public class UserManagerService extends IUserManager.Stub {
         RestrictionsSet localRestrictions = null;
         Bundle globalRestrictions = null;
 
-        XmlPullParser parser = Xml.newPullParser();
-        parser.setInput(is, StandardCharsets.UTF_8.name());
+        final TypedXmlPullParser parser = Xml.resolvePullParser(is);
         int type;
         while ((type = parser.next()) != XmlPullParser.START_TAG
                 && type != XmlPullParser.END_DOCUMENT) {
@@ -3221,7 +3221,7 @@ public class UserManagerService extends IUserManager.Stub {
         return userData;
     }
 
-    private int readIntAttribute(XmlPullParser parser, String attr, int defaultValue) {
+    private int readIntAttribute(TypedXmlPullParser parser, String attr, int defaultValue) {
         String valueString = parser.getAttributeValue(null, attr);
         if (valueString == null) return defaultValue;
         try {
@@ -3231,7 +3231,7 @@ public class UserManagerService extends IUserManager.Stub {
         }
     }
 
-    private long readLongAttribute(XmlPullParser parser, String attr, long defaultValue) {
+    private long readLongAttribute(TypedXmlPullParser parser, String attr, long defaultValue) {
         String valueString = parser.getAttributeValue(null, attr);
         if (valueString == null) return defaultValue;
         try {
@@ -3551,8 +3551,7 @@ public class UserManagerService extends IUserManager.Stub {
                 // Must start user (which will be stopped right away, through
                 // UserController.finishUserUnlockedCompleted) so services can properly
                 // intialize it.
-                // TODO(b/143092698): in the long-term, it might be better to add a onCreateUser()
-                // callback on SystemService instead.
+                // NOTE: user will be stopped on UserController.finishUserUnlockedCompleted().
                 Slog.i(LOG_TAG, "starting pre-created user " + userInfo.toFullString());
                 final IActivityManager am = ActivityManager.getService();
                 try {
@@ -3767,7 +3766,7 @@ public class UserManagerService extends IUserManager.Stub {
         if (user == null) {
             return null;
         }
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             setUserRestriction(UserManager.DISALLOW_MODIFY_ACCOUNTS, true, user.id);
             // Change the setting before applying the DISALLOW_SHARE_LOCATION restriction, otherwise
@@ -3820,7 +3819,7 @@ public class UserManagerService extends IUserManager.Stub {
             return false;
         }
 
-        long ident = Binder.clearCallingIdentity();
+        final long ident = Binder.clearCallingIdentity();
         try {
             final UserData userData;
             synchronized (mPackagesLock) {
@@ -3857,16 +3856,10 @@ public class UserManagerService extends IUserManager.Stub {
      */
     @Override
     public boolean removeUser(@UserIdInt int userId) {
-        Slog.i(LOG_TAG, "removeUser u" + userId);
+        Slog.i(LOG_TAG, "removeUser u" + userId, new Exception());
         checkManageOrCreateUsersPermission("Only the system can remove users");
 
-        final boolean isManagedProfile;
-        synchronized (mUsersLock) {
-            UserInfo userInfo = getUserInfoLU(userId);
-            isManagedProfile = userInfo != null && userInfo.isManagedProfile();
-        }
-        String restriction = isManagedProfile
-                ? UserManager.DISALLOW_REMOVE_MANAGED_PROFILE : UserManager.DISALLOW_REMOVE_USER;
+        final String restriction = getUserRemovalRestriction(userId);
         if (getUserRestrictions(UserHandle.getCallingUserId()).getBoolean(restriction, false)) {
             Slog.w(LOG_TAG, "Cannot remove user. " + restriction + " is enabled.");
             return false;
@@ -3880,8 +3873,23 @@ public class UserManagerService extends IUserManager.Stub {
         return removeUserUnchecked(userId);
     }
 
+    /**
+     * Returns the string name of the restriction to check for user removal. The restriction name
+     * varies depending on whether the user is a managed profile.
+     */
+    private String getUserRemovalRestriction(@UserIdInt int userId) {
+        final boolean isManagedProfile;
+        final UserInfo userInfo;
+        synchronized (mUsersLock) {
+            userInfo = getUserInfoLU(userId);
+        }
+        isManagedProfile = userInfo != null && userInfo.isManagedProfile();
+        return isManagedProfile
+                ? UserManager.DISALLOW_REMOVE_MANAGED_PROFILE : UserManager.DISALLOW_REMOVE_USER;
+    }
+
     private boolean removeUserUnchecked(@UserIdInt int userId) {
-        long ident = Binder.clearCallingIdentity();
+        final long ident = Binder.clearCallingIdentity();
         try {
             final UserData userData;
             int currentUser = ActivityManager.getCurrentUser();
@@ -3972,6 +3980,64 @@ public class UserManagerService extends IUserManager.Stub {
         }
     }
 
+    @Override
+    public @UserManager.RemoveResult int removeUserOrSetEphemeral(@UserIdInt int userId) {
+        Slog.i(LOG_TAG, "removeUserOrSetEphemeral u" + userId);
+        checkManageOrCreateUsersPermission("Only the system can remove users");
+        final String restriction = getUserRemovalRestriction(userId);
+        if (getUserRestrictions(UserHandle.getCallingUserId()).getBoolean(restriction, false)) {
+            Slog.w(LOG_TAG, "Cannot remove user. " + restriction + " is enabled.");
+            return UserManager.REMOVE_RESULT_ERROR;
+        }
+        if (userId == UserHandle.USER_SYSTEM) {
+            Slog.e(LOG_TAG, "System user cannot be removed.");
+            return UserManager.REMOVE_RESULT_ERROR;
+        }
+
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            final UserData userData;
+            synchronized (mPackagesLock) {
+                synchronized (mUsersLock) {
+                    userData = mUsers.get(userId);
+                    if (userData == null) {
+                        Slog.e(LOG_TAG,
+                                "Cannot remove user " + userId + ", invalid user id provided.");
+                        return UserManager.REMOVE_RESULT_ERROR;
+                    }
+
+                    if (mRemovingUserIds.get(userId)) {
+                        Slog.e(LOG_TAG, "User " + userId + " is already scheduled for removal.");
+                        return UserManager.REMOVE_RESULT_ALREADY_BEING_REMOVED;
+                    }
+                }
+
+                // Attempt to immediately remove a non-current user
+                final int currentUser = ActivityManager.getCurrentUser();
+                if (currentUser != userId) {
+                    // Attempt to remove the user. This will fail if the user is the current user
+                    if (removeUser(userId)) {
+                        return UserManager.REMOVE_RESULT_REMOVED;
+                    }
+
+                    Slog.w(LOG_TAG, "Unable to immediately remove non-current user: " + userId
+                            + ". User is still set as ephemeral and will be removed on user "
+                            + "switch or reboot.");
+                }
+
+                // If the user was not immediately removed, make sure it is marked as ephemeral.
+                // Don't mark as disabled since, per UserInfo.FLAG_DISABLED documentation, an
+                // ephemeral user should only be marked as disabled when its removal is in progress.
+                userData.info.flags |= UserInfo.FLAG_EPHEMERAL;
+                writeUserLP(userData);
+
+                return UserManager.REMOVE_RESULT_SET_EPHEMERAL;
+            }
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
     void finishRemoveUser(final @UserIdInt int userId) {
         if (DBG) Slog.i(LOG_TAG, "finishRemoveUser " + userId);
 
@@ -3989,7 +4055,7 @@ public class UserManagerService extends IUserManager.Stub {
 
         // Let other services shutdown any activity and clean up their state before completely
         // wiping the user's system directory and removing from the user list
-        long ident = Binder.clearCallingIdentity();
+        final long ident = Binder.clearCallingIdentity();
         try {
             Intent removedIntent = new Intent(Intent.ACTION_USER_REMOVED);
             removedIntent.putExtra(Intent.EXTRA_USER_HANDLE, userId);
@@ -4151,7 +4217,7 @@ public class UserManagerService extends IUserManager.Stub {
     }
 
     private int getUidForPackage(String packageName) {
-        long ident = Binder.clearCallingIdentity();
+        final long ident = Binder.clearCallingIdentity();
         try {
             return mContext.getPackageManager().getApplicationInfo(packageName,
                     PackageManager.MATCH_ANY_USER).uid;
@@ -4183,8 +4249,7 @@ public class UserManagerService extends IUserManager.Stub {
         FileInputStream fis = null;
         try {
             fis = restrictionsFile.openRead();
-            XmlPullParser parser = Xml.newPullParser();
-            parser.setInput(fis, StandardCharsets.UTF_8.name());
+            final TypedXmlPullParser parser = Xml.resolvePullParser(fis);
             XmlUtils.nextElement(parser);
             if (parser.getEventType() != XmlPullParser.START_TAG) {
                 Slog.e(LOG_TAG, "Unable to read restrictions file "
@@ -4203,7 +4268,7 @@ public class UserManagerService extends IUserManager.Stub {
     }
 
     private static void readEntry(Bundle restrictions, ArrayList<String> values,
-            XmlPullParser parser) throws XmlPullParserException, IOException {
+            TypedXmlPullParser parser) throws XmlPullParserException, IOException {
         int type = parser.getEventType();
         if (type == XmlPullParser.START_TAG && parser.getName().equals(TAG_ENTRY)) {
             String key = parser.getAttributeValue(null, ATTR_KEY);
@@ -4246,7 +4311,7 @@ public class UserManagerService extends IUserManager.Stub {
         }
     }
 
-    private static Bundle readBundleEntry(XmlPullParser parser, ArrayList<String> values)
+    private static Bundle readBundleEntry(TypedXmlPullParser parser, ArrayList<String> values)
             throws IOException, XmlPullParserException {
         Bundle childBundle = new Bundle();
         final int outerDepth = parser.getDepth();
@@ -4271,10 +4336,7 @@ public class UserManagerService extends IUserManager.Stub {
         FileOutputStream fos = null;
         try {
             fos = restrictionsFile.startWrite();
-            final BufferedOutputStream bos = new BufferedOutputStream(fos);
-
-            final XmlSerializer serializer = new FastXmlSerializer();
-            serializer.setOutput(bos, StandardCharsets.UTF_8.name());
+            final TypedXmlSerializer serializer = Xml.resolveSerializer(fos);
             serializer.startDocument(null, true);
             serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
 
@@ -4290,7 +4352,7 @@ public class UserManagerService extends IUserManager.Stub {
         }
     }
 
-    private static void writeBundle(Bundle restrictions, XmlSerializer serializer)
+    private static void writeBundle(Bundle restrictions, TypedXmlSerializer serializer)
             throws IOException {
         for (String key : restrictions.keySet()) {
             Object value = restrictions.get(key);
@@ -4382,7 +4444,7 @@ public class UserManagerService extends IUserManager.Stub {
             }
         }
         if (userInfo == null) {
-            throw new SecurityException("userId can only be the calling user or a managed "
+            throw new SecurityException("userId can only be the calling user or a "
                     + "profile associated with this user");
         }
         return userInfo.creationTime;
@@ -4706,9 +4768,12 @@ public class UserManagerService extends IUserManager.Stub {
                 final UserInfo user = users.get(i);
                 final boolean running = am.isUserRunning(user.id, 0);
                 final boolean current = user.id == currentUser;
+                final boolean hasParent = user.profileGroupId != user.id
+                        && user.profileGroupId != UserInfo.NO_PROFILE_GROUP_ID;
                 if (verbose) {
-                    pw.printf("%d: id=%d, name=%s, flags=%s%s%s%s%s\n", i, user.id, user.name,
+                    pw.printf("%d: id=%d, name=%s, flags=%s%s%s%s%s%s%s\n", i, user.id, user.name,
                             UserInfo.flagsToString(user.flags),
+                            hasParent ? " (parentId=" + user.profileGroupId + ")" : "",
                             running ? " (running)" : "",
                             user.partial ? " (partial)" : "",
                             user.preCreated ? " (pre-created)" : "",
@@ -4789,6 +4854,11 @@ public class UserManagerService extends IUserManager.Stub {
                     pw.print("  "); pw.print(userInfo);
                     pw.print(" serialNo="); pw.print(userInfo.serialNumber);
                     pw.print(" isPrimary="); pw.print(userInfo.isPrimary());
+                    if (userInfo.profileGroupId != userInfo.id
+                            &&  userInfo.profileGroupId != UserInfo.NO_PROFILE_GROUP_ID) {
+                        pw.print(" parentId="); pw.print(userInfo.profileGroupId);
+                    }
+
                     if (mRemovingUserIds.get(userId)) {
                         pw.print(" <removing> ");
                     }
@@ -4963,6 +5033,9 @@ public class UserManagerService extends IUserManager.Stub {
                         UserData userData = getUserDataNoChecks(userId);
                         if (userData != null) {
                             writeUserLP(userData);
+                        } else {
+                            Slog.i(LOG_TAG, "handle(WRITE_USER_MSG): no data for user " + userId
+                                    + ", it was probably removed before handler could handle it");
                         }
                     }
             }
@@ -5062,7 +5135,7 @@ public class UserManagerService extends IUserManager.Stub {
 
         @Override
         public void setUserIcon(@UserIdInt int userId, Bitmap bitmap) {
-            long ident = Binder.clearCallingIdentity();
+            final long ident = Binder.clearCallingIdentity();
             try {
                 synchronized (mPackagesLock) {
                     UserData userData = getUserDataNoChecks(userId);

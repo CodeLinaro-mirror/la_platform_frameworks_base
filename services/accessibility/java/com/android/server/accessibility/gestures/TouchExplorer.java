@@ -37,6 +37,7 @@ import static android.view.accessibility.AccessibilityEvent.TYPE_VIEW_HOVER_EXIT
 import static com.android.server.accessibility.gestures.TouchState.ALL_POINTER_ID_BITS;
 
 import android.accessibilityservice.AccessibilityGestureEvent;
+import android.accessibilityservice.AccessibilityService;
 import android.annotation.NonNull;
 import android.content.Context;
 import android.graphics.Region;
@@ -198,7 +199,7 @@ public class TouchExplorer extends BaseEventStreamTransformation
                 new SendAccessibilityEventDelayed(
                         TYPE_TOUCH_INTERACTION_END, mDetermineUserIntentTimeout);
         if (detector == null) {
-            mGestureDetector = new GestureManifold(context, this, mState);
+            mGestureDetector = new GestureManifold(context, this, mState, mHandler);
         } else {
             mGestureDetector = detector;
         }
@@ -244,6 +245,8 @@ public class TouchExplorer extends BaseEventStreamTransformation
         mSendTouchInteractionEndDelayed.cancel();
         // Clear the gesture detector
         mGestureDetector.clear();
+        // Clear the offset data by long pressing.
+        mDispatcher.clear();
         // Go to initial state.
         mState.clear();
         mAms.onTouchInteractionEnd();
@@ -340,6 +343,14 @@ public class TouchExplorer extends BaseEventStreamTransformation
     public void onDoubleTapAndHold(MotionEvent event, MotionEvent rawEvent, int policyFlags) {
         if (mDispatcher.longPressWithTouchEvents(event, policyFlags)) {
             sendHoverExitAndTouchExplorationGestureEndIfNeeded(policyFlags);
+            if (isSendMotionEventsEnabled()) {
+                AccessibilityGestureEvent gestureEvent =
+                        new AccessibilityGestureEvent(
+                                AccessibilityService.GESTURE_DOUBLE_TAP_AND_HOLD,
+                                event.getDisplayId(),
+                                mGestureDetector.getMotionEvents());
+                mAms.onGesture(gestureEvent);
+            }
             mState.startDelegating();
         }
     }
@@ -350,7 +361,14 @@ public class TouchExplorer extends BaseEventStreamTransformation
         // Remove pending event deliveries.
         mSendHoverEnterAndMoveDelayed.cancel();
         mSendHoverExitDelayed.cancel();
-
+        if (isSendMotionEventsEnabled()) {
+            AccessibilityGestureEvent gestureEvent =
+                    new AccessibilityGestureEvent(
+                            AccessibilityService.GESTURE_DOUBLE_TAP,
+                            event.getDisplayId(),
+                            mGestureDetector.getMotionEvents());
+            mAms.onGesture(gestureEvent);
+        }
         if (mSendTouchExplorationEndDelayed.isPending()) {
             mSendTouchExplorationEndDelayed.forceSendAndRemove();
         }
@@ -373,7 +391,6 @@ public class TouchExplorer extends BaseEventStreamTransformation
     public boolean onGestureStarted() {
         // We have to perform gesture detection, so
         // clear the current state and try to detect.
-        mState.startGestureDetecting();
         mSendHoverEnterAndMoveDelayed.cancel();
         mSendHoverExitDelayed.cancel();
         mExitGestureDetectionModeDelayed.post();
@@ -385,6 +402,9 @@ public class TouchExplorer extends BaseEventStreamTransformation
 
     @Override
     public boolean onGestureCompleted(AccessibilityGestureEvent gestureEvent) {
+        if (DEBUG) {
+            Slog.d(LOG_TAG, "Dispatching gesture event:" + gestureEvent.toString());
+        }
         endGestureDetection(true);
         mSendTouchInteractionEndDelayed.cancel();
         mAms.onGesture(gestureEvent);
@@ -411,11 +431,23 @@ public class TouchExplorer extends BaseEventStreamTransformation
                 mDispatcher.sendMotionEvent(
                         event,
                         ACTION_HOVER_MOVE,
-                        mState.getLastReceivedEvent(),
+                        event,
                         pointerIdBits,
                         policyFlags);
                 return true;
             }
+        }
+        if (isSendMotionEventsEnabled()) {
+            // Send a gesture with motion events to represent the cancelled gesture.
+            AccessibilityGestureEvent gestureEvent =
+                    new AccessibilityGestureEvent(
+                            AccessibilityService.GESTURE_UNKNOWN,
+                            event.getDisplayId(),
+                            mGestureDetector.getMotionEvents());
+            if (DEBUG) {
+                Slog.d(LOG_TAG, "Dispatching gesture event:" + gestureEvent.toString());
+            }
+            mAms.onGesture(gestureEvent);
         }
         return false;
     }
@@ -620,6 +652,14 @@ public class TouchExplorer extends BaseEventStreamTransformation
                 if (isDraggingGesture(event)) {
                     // Two pointers moving in the same direction within
                     // a given distance perform a drag.
+                    if (isSendMotionEventsEnabled()) {
+                        AccessibilityGestureEvent gestureEvent =
+                                new AccessibilityGestureEvent(
+                                        AccessibilityService.GESTURE_PASSTHROUGH,
+                                        event.getDisplayId(),
+                                        mGestureDetector.getMotionEvents());
+                        mAms.onGesture(gestureEvent);
+                    }
                     computeDraggingPointerIdIfNeeded(event);
                     pointerIdBits = 1 << mDraggingPointerId;
                     event.setEdgeFlags(mReceivedPointerTracker.getLastReceivedDownEdgeFlags());
@@ -636,6 +676,14 @@ public class TouchExplorer extends BaseEventStreamTransformation
                     mState.startDragging();
                 } else {
                     // Two pointers moving arbitrary are delegated to the view hierarchy.
+                    if (isSendMotionEventsEnabled()) {
+                        AccessibilityGestureEvent gestureEvent =
+                                new AccessibilityGestureEvent(
+                                        AccessibilityService.GESTURE_PASSTHROUGH,
+                                        event.getDisplayId(),
+                                        mGestureDetector.getMotionEvents());
+                        mAms.onGesture(gestureEvent);
+                    }
                     mState.startDelegating();
                     mDispatcher.sendDownForAllNotInjectedPointers(event, policyFlags);
                 }
@@ -650,6 +698,14 @@ public class TouchExplorer extends BaseEventStreamTransformation
                                 if (DEBUG) {
                                     Slog.d(LOG_TAG, "Three-finger edge swipe detected.");
                                 }
+                                if (isSendMotionEventsEnabled()) {
+                                    AccessibilityGestureEvent gestureEvent =
+                                            new AccessibilityGestureEvent(
+                                                    AccessibilityService.GESTURE_PASSTHROUGH,
+                                                    event.getDisplayId(),
+                                                    mGestureDetector.getMotionEvents());
+                                    mAms.onGesture(gestureEvent);
+                                }
                                 mState.startDelegating();
                                 if (mState.isTouchExploring()) {
                                     mDispatcher.sendDownForAllNotInjectedPointers(event,
@@ -663,6 +719,14 @@ public class TouchExplorer extends BaseEventStreamTransformation
                     }
                 } else {
                     // More than two pointers are delegated to the view hierarchy.
+                    if (isSendMotionEventsEnabled()) {
+                        AccessibilityGestureEvent gestureEvent =
+                                new AccessibilityGestureEvent(
+                                        AccessibilityService.GESTURE_PASSTHROUGH,
+                                        event.getDisplayId(),
+                                        mGestureDetector.getMotionEvents());
+                        mAms.onGesture(gestureEvent);
+                    }
                     mState.startDelegating();
                     event = MotionEvent.obtainNoHistory(event);
                     mDispatcher.sendDownForAllNotInjectedPointers(event, policyFlags);
@@ -1109,6 +1173,7 @@ public class TouchExplorer extends BaseEventStreamTransformation
     public void setTwoFingerPassthroughEnabled(boolean enabled) {
         mGestureDetector.setTwoFingerPassthroughEnabled(enabled);
     }
+
     public void setGestureDetectionPassthroughRegion(Region region) {
         mGestureDetectionPassthroughRegion = region;
     }
@@ -1117,8 +1182,19 @@ public class TouchExplorer extends BaseEventStreamTransformation
         mTouchExplorationPassthroughRegion = region;
     }
 
+    /**
+     * Whether to send the motion events that make up each gesture to the accessibility service.
+     */
+    public void setSendMotionEventsEnabled(boolean mode) {
+        mGestureDetector.setSendMotionEventsEnabled(mode);
+    }
+
+    public boolean isSendMotionEventsEnabled() {
+        return mGestureDetector.isSendMotionEventsEnabled();
+    }
+
     private boolean shouldPerformGestureDetection(MotionEvent event) {
-        if (mState.isDelegating()) {
+        if (mState.isDelegating() || mState.isDragging()) {
             return false;
         }
         if (event.getActionMasked() == ACTION_DOWN) {
@@ -1211,9 +1287,25 @@ public class TouchExplorer extends BaseEventStreamTransformation
         }
 
         public void run() {
+            if (mReceivedPointerTracker.getReceivedPointerDownCount() > 1) {
+                // Multi-finger touch exploration doesn't make sense.
+                Slog.e(
+                        LOG_TAG,
+                        "Attempted touch exploration with "
+                                + mReceivedPointerTracker.getReceivedPointerDownCount()
+                                + " pointers down.");
+                return;
+            }
             // Send an accessibility event to announce the touch exploration start.
             mDispatcher.sendAccessibilityEvent(TYPE_TOUCH_EXPLORATION_GESTURE_START);
-
+            if (isSendMotionEventsEnabled()) {
+                AccessibilityGestureEvent gestureEvent =
+                        new AccessibilityGestureEvent(
+                                AccessibilityService.GESTURE_TOUCH_EXPLORATION,
+                                mState.getLastReceivedEvent().getDisplayId(),
+                                mGestureDetector.getMotionEvents());
+                mAms.onGesture(gestureEvent);
+            }
             if (!mEvents.isEmpty() && !mRawEvents.isEmpty()) {
                 // Deliver a down event.
                 mDispatcher.sendMotionEvent(mEvents.get(0), ACTION_HOVER_ENTER,

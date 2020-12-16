@@ -17,6 +17,7 @@
 package android.media;
 
 import static android.media.ExifInterfaceUtils.byteArrayToHexString;
+import static android.media.ExifInterfaceUtils.closeFileDescriptor;
 import static android.media.ExifInterfaceUtils.closeQuietly;
 import static android.media.ExifInterfaceUtils.convertToLongArray;
 import static android.media.ExifInterfaceUtils.copy;
@@ -30,7 +31,7 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.os.Build;
+import android.os.FileUtils;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
@@ -70,7 +71,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TimeZone;
-import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.CRC32;
@@ -78,7 +78,8 @@ import java.util.zip.CRC32;
 /**
  * This is a class for reading and writing Exif tags in various image file formats.
  * <p>
- * Supported for reading: JPEG, PNG, WebP, HEIF, DNG, CR2, NEF, NRW, ARW, RW2, ORF, PEF, SRW, RAF.
+ * Supported for reading: JPEG, PNG, WebP, HEIF, DNG, CR2, NEF, NRW, ARW, RW2, ORF, PEF, SRW, RAF,
+ * AVIF.
  * <p>
  * Supported for writing: JPEG, PNG, WebP.
  * <p>
@@ -542,6 +543,8 @@ public class ExifInterface {
     private static final byte[] HEIF_TYPE_FTYP = new byte[] {'f', 't', 'y', 'p'};
     private static final byte[] HEIF_BRAND_MIF1 = new byte[] {'m', 'i', 'f', '1'};
     private static final byte[] HEIF_BRAND_HEIC = new byte[] {'h', 'e', 'i', 'c'};
+    private static final byte[] HEIF_BRAND_AVIF = new byte[] {'a', 'v', 'i', 'f'};
+    private static final byte[] HEIF_BRAND_AVIS = new byte[] {'a', 'v', 'i', 's'};
 
     // See http://fileformats.archiveteam.org/wiki/Olympus_ORF
     private static final short ORF_SIGNATURE_1 = 0x4f52;
@@ -598,7 +601,6 @@ public class ExifInterface {
     private static final int WEBP_CHUNK_TYPE_BYTE_LENGTH = 4;
     private static final int WEBP_CHUNK_SIZE_BYTE_LENGTH = 4;
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
     @GuardedBy("sFormatter")
     private static SimpleDateFormat sFormatter;
     @GuardedBy("sFormatterTz")
@@ -1445,18 +1447,17 @@ public class ExifInterface {
         sExifPointerTagMap.put(EXIF_POINTER_TAGS[5].number, IFD_TYPE_ORF_IMAGE_PROCESSING); // 8256
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
     private String mFilename;
     private FileDescriptor mSeekableFileDescriptor;
     private AssetManager.AssetInputStream mAssetInputStream;
     private boolean mIsInputStream;
     private int mMimeType;
     private boolean mIsExifDataOnly;
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(publicAlternatives = "Use {@link #getAttribute(java.lang.String)} "
+            + "instead.")
     private final HashMap[] mAttributes = new HashMap[EXIF_TAGS.length];
     private Set<Integer> mHandledIfdOffsets = new HashSet<>(EXIF_TAGS.length);
     private ByteOrder mExifByteOrder = ByteOrder.BIG_ENDIAN;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
     private boolean mHasThumbnail;
     private boolean mHasThumbnailStrips;
     private boolean mAreThumbnailStripsConsecutive;
@@ -1526,12 +1527,15 @@ public class ExifInterface {
         if (fileDescriptor == null) {
             throw new NullPointerException("fileDescriptor cannot be null");
         }
+        FileDescriptor modernFd = FileUtils.convertToModernFd(fileDescriptor);
+        if (modernFd != null) {
+            fileDescriptor = modernFd;
+        }
 
         mAssetInputStream = null;
         mFilename = null;
-        // When FileDescriptor is duplicated and set to FileInputStream, ownership needs to be
-        // clarified in order for garbage collection to take place.
-        boolean isFdOwner = false;
+
+        boolean isFdDuped = false;
         if (isSeekableFD(fileDescriptor)) {
             mSeekableFileDescriptor = fileDescriptor;
             // Keep the original file descriptor in order to save attributes when it's seekable.
@@ -1539,7 +1543,7 @@ public class ExifInterface {
             // feature won't be working.
             try {
                 fileDescriptor = Os.dup(fileDescriptor);
-                isFdOwner = true;
+                isFdDuped = true;
             } catch (ErrnoException e) {
                 throw e.rethrowAsIOException();
             }
@@ -1549,10 +1553,13 @@ public class ExifInterface {
         mIsInputStream = false;
         FileInputStream in = null;
         try {
-            in = new FileInputStream(fileDescriptor, isFdOwner);
+            in = new FileInputStream(fileDescriptor);
             loadAttributes(in);
         } finally {
             closeQuietly(in);
+            if (isFdDuped) {
+                closeFileDescriptor(fileDescriptor);
+            }
         }
     }
 
@@ -2088,28 +2095,18 @@ public class ExifInterface {
 
         FileInputStream in = null;
         FileOutputStream out = null;
-        File originalFile = null;
-        if (mFilename != null) {
-            originalFile = new File(mFilename);
-        }
         File tempFile = null;
         try {
-            // Move the original file to temporary file.
+            // Copy the original file to temporary file.
+            tempFile = File.createTempFile("temp", "tmp");
             if (mFilename != null) {
-                String parent = originalFile.getParent();
-                String name = originalFile.getName();
-                String tempPrefix = UUID.randomUUID().toString() + "_";
-                tempFile = new File(parent, tempPrefix + name);
-                if (!originalFile.renameTo(tempFile)) {
-                    throw new IOException("Couldn't rename to " + tempFile.getAbsolutePath());
-                }
+                in = new FileInputStream(mFilename);
             } else if (mSeekableFileDescriptor != null) {
-                tempFile = File.createTempFile("temp", "tmp");
                 Os.lseek(mSeekableFileDescriptor, 0, OsConstants.SEEK_SET);
                 in = new FileInputStream(mSeekableFileDescriptor);
-                out = new FileOutputStream(tempFile);
-                copy(in, out);
             }
+            out = new FileOutputStream(tempFile);
+            copy(in, out);
         } catch (Exception e) {
             throw new IOException("Failed to copy original file to temp file", e);
         } finally {
@@ -2139,12 +2136,23 @@ public class ExifInterface {
                 }
             }
         } catch (Exception e) {
+            // Restore original file
+            in = new FileInputStream(tempFile);
             if (mFilename != null) {
-                if (!tempFile.renameTo(originalFile)) {
-                    throw new IOException("Couldn't restore original file: "
-                            + originalFile.getAbsolutePath());
+                out = new FileOutputStream(mFilename);
+            } else if (mSeekableFileDescriptor != null) {
+                try {
+                    Os.lseek(mSeekableFileDescriptor, 0, OsConstants.SEEK_SET);
+                } catch (ErrnoException exception) {
+                    throw new IOException("Failed to save new file. Original file may be "
+                            + "corrupted since error occurred while trying to restore it.",
+                            exception);
                 }
+                out = new FileOutputStream(mSeekableFileDescriptor);
             }
+            copy(in, out);
+            closeQuietly(in);
+            closeQuietly(out);
             throw new IOException("Failed to save new file", e);
         } finally {
             closeQuietly(in);
@@ -2199,6 +2207,7 @@ public class ExifInterface {
 
         // Read the thumbnail.
         InputStream in = null;
+        FileDescriptor newFileDescriptor = null;
         try {
             if (mAssetInputStream != null) {
                 in = mAssetInputStream;
@@ -2211,9 +2220,9 @@ public class ExifInterface {
             } else if (mFilename != null) {
                 in = new FileInputStream(mFilename);
             } else if (mSeekableFileDescriptor != null) {
-                FileDescriptor fileDescriptor = Os.dup(mSeekableFileDescriptor);
-                Os.lseek(fileDescriptor, 0, OsConstants.SEEK_SET);
-                in = new FileInputStream(fileDescriptor, true);
+                newFileDescriptor = Os.dup(mSeekableFileDescriptor);
+                Os.lseek(newFileDescriptor, 0, OsConstants.SEEK_SET);
+                in = new FileInputStream(newFileDescriptor);
             }
             if (in == null) {
                 // Should not be reached this.
@@ -2234,6 +2243,9 @@ public class ExifInterface {
             Log.d(TAG, "Encountered exception while getting thumbnail", e);
         } finally {
             closeQuietly(in);
+            if (newFileDescriptor != null) {
+                closeFileDescriptor(newFileDescriptor);
+            }
         }
         return null;
     }
@@ -2402,11 +2414,8 @@ public class ExifInterface {
     }
 
     /**
-     * Returns parsed {@code DateTime} value, or -1 if unavailable or invalid.
-     * 
-     * @hide
+     * Returns parsed {@link #TAG_DATETIME} value, or -1 if unavailable or invalid.
      */
-    @UnsupportedAppUsage
     public @CurrentTimeMillisLong long getDateTime() {
         return parseDateTime(getAttribute(TAG_DATETIME),
                 getAttribute(TAG_SUBSEC_TIME),
@@ -2414,10 +2423,7 @@ public class ExifInterface {
     }
 
     /**
-     * Returns parsed {@code DateTimeDigitized} value, or -1 if unavailable or
-     * invalid.
-     *
-     * @hide
+     * Returns parsed {@link #TAG_DATETIME_DIGITIZED} value, or -1 if unavailable or invalid.
      */
     public @CurrentTimeMillisLong long getDateTimeDigitized() {
         return parseDateTime(getAttribute(TAG_DATETIME_DIGITIZED),
@@ -2426,12 +2432,8 @@ public class ExifInterface {
     }
 
     /**
-     * Returns parsed {@code DateTimeOriginal} value, or -1 if unavailable or
-     * invalid.
-     *
-     * @hide
+     * Returns parsed {@link #TAG_DATETIME_ORIGINAL} value, or -1 if unavailable or invalid.
      */
-    @UnsupportedAppUsage
     public @CurrentTimeMillisLong long getDateTimeOriginal() {
         return parseDateTime(getAttribute(TAG_DATETIME_ORIGINAL),
                 getAttribute(TAG_SUBSEC_TIME_ORIGINAL),
@@ -2483,9 +2485,7 @@ public class ExifInterface {
     /**
      * Returns number of milliseconds since Jan. 1, 1970, midnight UTC.
      * Returns -1 if the date time information if not available.
-     * @hide
      */
-    @UnsupportedAppUsage
     public long getGpsDateTime() {
         String date = getAttribute(TAG_GPS_DATESTAMP);
         String time = getAttribute(TAG_GPS_TIMESTAMP);
@@ -2511,7 +2511,6 @@ public class ExifInterface {
     }
 
     /** {@hide} */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
     public static float convertRationalLatLonToFloat(String rationalString, String ref) {
         try {
             String [] parts = rationalString.split(",");
@@ -2542,11 +2541,18 @@ public class ExifInterface {
 
     private void initForFilename(String filename) throws IOException {
         FileInputStream in = null;
+        FileInputStream legacyInputStream = null;
         mAssetInputStream = null;
         mFilename = filename;
         mIsInputStream = false;
         try {
             in = new FileInputStream(filename);
+            FileDescriptor modernFd = FileUtils.convertToModernFd(in.getFD());
+            if (modernFd != null) {
+                legacyInputStream = in;
+                in = new FileInputStream(modernFd);
+            }
+
             if (isSeekableFD(in.getFD())) {
                 mSeekableFileDescriptor = in.getFD();
             } else {
@@ -2555,6 +2561,7 @@ public class ExifInterface {
             loadAttributes(in);
         } finally {
             closeQuietly(in);
+            closeQuietly(legacyInputStream);
         }
     }
 
@@ -2654,6 +2661,7 @@ public class ExifInterface {
             byte[] brand = new byte[4];
             boolean isMif1 = false;
             boolean isHeic = false;
+            boolean isAvif = false;
             for (long i = 0; i < chunkDataSize / 4;  ++i) {
                 if (signatureInputStream.read(brand) != brand.length) {
                     return false;
@@ -2666,8 +2674,11 @@ public class ExifInterface {
                     isMif1 = true;
                 } else if (Arrays.equals(brand, HEIF_BRAND_HEIC)) {
                     isHeic = true;
+                } else if (Arrays.equals(brand, HEIF_BRAND_AVIF)
+                        || Arrays.equals(brand, HEIF_BRAND_AVIS)) {
+                    isAvif = true;
                 }
-                if (isMif1 && isHeic) {
+                if (isMif1 && (isHeic || isAvif)) {
                     return true;
                 }
             }

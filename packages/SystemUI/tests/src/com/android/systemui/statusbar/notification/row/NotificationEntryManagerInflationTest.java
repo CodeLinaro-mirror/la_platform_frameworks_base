@@ -45,6 +45,7 @@ import com.android.internal.util.NotificationMessagingUtil;
 import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.media.MediaFeatureFlag;
+import com.android.systemui.media.dialog.MediaOutputDialogFactory;
 import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.shared.plugins.PluginManager;
@@ -79,10 +80,11 @@ import com.android.systemui.statusbar.notification.row.dagger.NotificationRowCom
 import com.android.systemui.statusbar.notification.stack.NotificationListContainer;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.statusbar.policy.HeadsUpManager;
-import com.android.systemui.statusbar.policy.SmartReplyConstants;
+import com.android.systemui.statusbar.policy.InflatedSmartReplies;
 import com.android.systemui.util.concurrency.FakeExecutor;
 import com.android.systemui.util.leak.LeakDetector;
 import com.android.systemui.util.time.FakeSystemClock;
+import com.android.systemui.wmshell.BubblesManager;
 
 import org.junit.After;
 import org.junit.Before;
@@ -95,6 +97,7 @@ import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 import org.mockito.stubbing.Answer;
 
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 
 /**
@@ -138,6 +141,7 @@ public class NotificationEntryManagerInflationTest extends SysuiTestCase {
     @Mock private ActivatableNotificationViewController mActivatableNotificationViewController;
     @Mock private NotificationRowComponent.Builder mNotificationRowComponentBuilder;
     @Mock private PeopleNotificationIdentifier mPeopleNotificationIdentifier;
+    @Mock private InflatedSmartReplies mInflatedSmartReplies;
 
     private StatusBarNotification mSbn;
     private NotificationListenerService.RankingMap mRankingMap;
@@ -151,6 +155,7 @@ public class NotificationEntryManagerInflationTest extends SysuiTestCase {
     public void setUp() {
         MockitoAnnotations.initMocks(this);
         mDependency.injectMockDependency(SmartReplyController.class);
+        mDependency.injectMockDependency(MediaOutputDialogFactory.class);
 
         mHandler = Handler.createAsync(TestableLooper.get(this).getLooper());
 
@@ -199,11 +204,11 @@ public class NotificationEntryManagerInflationTest extends SysuiTestCase {
         NotificationContentInflater binder = new NotificationContentInflater(
                 cache,
                 mRemoteInputManager,
-                () -> mock(SmartReplyConstants.class),
-                () -> mock(SmartReplyController.class),
                 mock(ConversationNotificationProcessor.class),
                 mock(MediaFeatureFlag.class),
-                mBgExecutor);
+                mBgExecutor,
+                (sysuiContext, notifPackageContext, entry, existingRepliesAndAction) ->
+                        mInflatedSmartReplies);
         mRowContentBindStage = new RowContentBindStage(
                 binder,
                 mock(NotifInflationErrorManager.class),
@@ -240,7 +245,8 @@ public class NotificationEntryManagerInflationTest extends SysuiTestCase {
                                 true,
                                 null,
                                 mFalsingManager,
-                                mPeopleNotificationIdentifier
+                                mPeopleNotificationIdentifier,
+                                Optional.of(mock(BubblesManager.class))
                         ));
 
         when(mNotificationRowComponentBuilder.activatableNotificationView(any()))

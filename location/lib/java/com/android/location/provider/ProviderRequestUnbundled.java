@@ -25,7 +25,7 @@ import androidx.annotation.RequiresApi;
 
 import com.android.internal.location.ProviderRequest;
 
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -65,6 +65,28 @@ public final class ProviderRequestUnbundled {
     }
 
     /**
+     * The quality hint for this location request. The quality hint informs the provider how it
+     * should attempt to manage any accuracy vs power tradeoffs while attempting to satisfy this
+     * provider request.
+     */
+    @RequiresApi(Build.VERSION_CODES.S)
+    public @LocationRequest.Quality int getQuality() {
+        return mRequest.getQuality();
+    }
+
+    /**
+     * The maximum time any location update may be delayed, and thus grouped with following updates
+     * to enable location batching. If the maximum update delay is equal to or greater than
+     * twice the interval, then the provider may provide batched results if possible. The maximum
+     * batch size a provider is allowed to return is the maximum update delay divided by the
+     * interval.
+     */
+    @RequiresApi(Build.VERSION_CODES.S)
+    public long getMaxUpdateDelayMillis() {
+        return mRequest.getMaxUpdateDelayMillis();
+    }
+
+    /**
      * Whether any applicable hardware low power modes should be used to satisfy this request.
      */
     @RequiresApi(Build.VERSION_CODES.S)
@@ -84,14 +106,22 @@ public final class ProviderRequestUnbundled {
 
     /**
      * The full list of location requests contributing to this provider request.
+     *
+     * @deprecated Do not use.
      */
+    @Deprecated
     public @NonNull List<LocationRequestUnbundled> getLocationRequests() {
-        List<LocationRequestUnbundled> result = new ArrayList<>(
-                mRequest.getLocationRequests().size());
-        for (LocationRequest r : mRequest.getLocationRequests()) {
-            result.add(new LocationRequestUnbundled(r));
+        if (!mRequest.isActive()) {
+            return Collections.emptyList();
         }
-        return result;
+
+        return Collections.singletonList(new LocationRequestUnbundled(
+                new LocationRequest.Builder(mRequest.getIntervalMillis())
+                        .setQuality(mRequest.getQuality())
+                        .setLowPower(mRequest.isLowPower())
+                        .setLocationSettingsIgnored(mRequest.isLocationSettingsIgnored())
+                        .setWorkSource(mRequest.getWorkSource())
+                        .build()));
     }
 
     /**

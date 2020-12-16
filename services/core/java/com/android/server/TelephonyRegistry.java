@@ -78,6 +78,7 @@ import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
 import android.telephony.emergency.EmergencyNumber;
 import android.telephony.ims.ImsReasonInfo;
+import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.LocalLog;
 import android.util.Pair;
@@ -340,7 +341,8 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
                     | PhoneStateListener.LISTEN_CALL_ATTRIBUTES_CHANGED
                     | PhoneStateListener.LISTEN_IMS_CALL_DISCONNECT_CAUSES
                     | PhoneStateListener.LISTEN_REGISTRATION_FAILURE
-                    | PhoneStateListener.LISTEN_BARRING_INFO;
+                    | PhoneStateListener.LISTEN_BARRING_INFO
+                    | PhoneStateListener.LISTEN_PHYSICAL_CHANNEL_CONFIGURATION;
 
     static final long READ_ACTIVE_EMERGENCY_SESSION_PERMISSION_MASK =
             PhoneStateListener.LISTEN_OUTGOING_EMERGENCY_CALL
@@ -1623,10 +1625,12 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
         if (!checkNotifyPermission("notifyDisplayInfoChanged()")) {
             return;
         }
+        String str = "notifyDisplayInfoChanged: PhoneId=" + phoneId + " subId=" + subId
+                + " telephonyDisplayInfo=" + telephonyDisplayInfo;
         if (VDBG) {
-            log("notifyDisplayInfoChanged: PhoneId=" + phoneId
-                    + " subId=" + subId + " telephonyDisplayInfo=" + telephonyDisplayInfo);
+            log(str);
         }
+        mLocalLog.log(str);
         synchronized (mRecords) {
             if (validatePhoneId(phoneId)) {
                 mTelephonyDisplayInfos[phoneId] = telephonyDisplayInfo;
@@ -2354,10 +2358,10 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
                 pw.println("mOutgoingCallEmergencyNumber=" + mOutgoingCallEmergencyNumber[i]);
                 pw.println("mOutgoingSmsEmergencyNumber=" + mOutgoingSmsEmergencyNumber[i]);
                 pw.println("mBarringInfo=" + mBarringInfo.get(i));
+                pw.println("mTelephonyDisplayInfo=" + mTelephonyDisplayInfos[i]);
                 pw.decreaseIndent();
             }
             pw.println("mCarrierNetworkChangeState=" + mCarrierNetworkChangeState);
-
             pw.println("mPhoneCapability=" + mPhoneCapability);
             pw.println("mActiveDataSubId=" + mActiveDataSubId);
             pw.println("mRadioPowerState=" + mRadioPowerState);
@@ -2418,7 +2422,7 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
     public static final String ACTION_SIGNAL_STRENGTH_CHANGED = "android.intent.action.SIG_STR";
 
     private void broadcastServiceStateChanged(ServiceState state, int phoneId, int subId) {
-        long ident = Binder.clearCallingIdentity();
+        final long ident = Binder.clearCallingIdentity();
         try {
             mBatteryStats.notePhoneState(state.getState());
         } catch (RemoteException re) {
@@ -2442,7 +2446,7 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
 
     private void broadcastSignalStrengthChanged(SignalStrength signalStrength, int phoneId,
             int subId) {
-        long ident = Binder.clearCallingIdentity();
+        final long ident = Binder.clearCallingIdentity();
         try {
             mBatteryStats.notePhoneSignalStrength(signalStrength);
         } catch (RemoteException e) {
@@ -2487,7 +2491,7 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
      */
     private void broadcastCallStateChanged(int state, String incomingNumber, int phoneId,
                 int subId) {
-        long ident = Binder.clearCallingIdentity();
+        final long ident = Binder.clearCallingIdentity();
         try {
             if (state == TelephonyManager.CALL_STATE_IDLE) {
                 mBatteryStats.notePhoneOff();
@@ -2561,10 +2565,31 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
                 TelephonyUtils.dataStateToString(pdcs.getState()));
         intent.putExtra(PHONE_CONSTANTS_DATA_APN_KEY, pdcs.getApnSetting().getApnName());
         intent.putExtra(PHONE_CONSTANTS_DATA_APN_TYPE_KEY,
-                ApnSetting.getApnTypesStringFromBitmask(pdcs.getApnSetting().getApnTypeBitmask()));
+                getApnTypesStringFromBitmask(pdcs.getApnSetting().getApnTypeBitmask()));
         intent.putExtra(PHONE_CONSTANTS_SLOT_KEY, slotIndex);
         intent.putExtra(PHONE_CONSTANTS_SUBSCRIPTION_KEY, subId);
         mContext.sendBroadcastAsUser(intent, UserHandle.ALL, Manifest.permission.READ_PHONE_STATE);
+    }
+
+    /**
+     * Reimplementation of {@link ApnSetting#getApnTypesStringFromBitmask}.
+     */
+    @VisibleForTesting
+    public static String getApnTypesStringFromBitmask(int apnTypeBitmask) {
+        List<String> types = new ArrayList<>();
+        int remainingApnTypes = apnTypeBitmask;
+        // special case for DEFAULT since it's not a pure bit
+        if ((remainingApnTypes & ApnSetting.TYPE_DEFAULT) == ApnSetting.TYPE_DEFAULT) {
+            types.add(ApnSetting.TYPE_DEFAULT_STRING);
+            remainingApnTypes &= ~ApnSetting.TYPE_DEFAULT;
+        }
+        while (remainingApnTypes != 0) {
+            int highestApnTypeBit = Integer.highestOneBit(remainingApnTypes);
+            String apnString = ApnSetting.getApnTypeString(highestApnTypeBit);
+            if (!TextUtils.isEmpty(apnString)) types.add(apnString);
+            remainingApnTypes &= ~highestApnTypeBit;
+        }
+        return TextUtils.join(",", types);
     }
 
     private void enforceNotifyPermissionOrCarrierPrivilege(String method) {
@@ -2676,7 +2701,7 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
 
     private boolean validateEventsAndUserLocked(Record r, int events) {
         int foregroundUser;
-        long callingIdentity = Binder.clearCallingIdentity();
+        final long callingIdentity = Binder.clearCallingIdentity();
         boolean valid = false;
         try {
             foregroundUser = ActivityManager.getCurrentUser();

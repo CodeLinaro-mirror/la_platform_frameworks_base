@@ -28,7 +28,7 @@
     <string name="wifi_disabled_network_failure" msgid="2660396183242399585">"‏پیکربندی IP انجام نشد"</string>
     <string name="wifi_disabled_by_recommendation_provider" msgid="1302938248432705534">"اتصال ناموفق به دلیل شبکه با کیفیت پایین"</string>
     <string name="wifi_disabled_wifi_failure" msgid="8819554899148331100">"‏اتصال Wi-Fi برقرار نشد"</string>
-    <string name="wifi_disabled_password_failure" msgid="6892387079613226738">"مشکل احراز هویت"</string>
+    <string name="wifi_disabled_password_failure" msgid="6892387079613226738">"مشکل اصالت‌سنجی"</string>
     <string name="wifi_cant_connect" msgid="5718417542623056783">"برقراری اتصال ممکن نیست"</string>
     <string name="wifi_cant_connect_to_ap" msgid="3099667989279700135">"برقراری اتصال به «<xliff:g id="AP_NAME">%1$s</xliff:g>» ممکن نیست"</string>
     <string name="wifi_check_password_try_again" msgid="8817789642851605628">"گذرواژه را بررسی و دوباره امتحان کنید"</string>
@@ -399,6 +399,12 @@
     <string name="inactive_app_inactive_summary" msgid="3161222402614236260">"غیرفعال. برای تغییر حالت ضربه بزنید."</string>
     <string name="inactive_app_active_summary" msgid="8047630990208722344">"فعال. برای تغییر حالت ضربه بزنید."</string>
     <string name="standby_bucket_summary" msgid="5128193447550429600">"وضعیت حالت آماده به‌کار برنامه:<xliff:g id="BUCKET"> %s</xliff:g>"</string>
+    <!-- no translation found for transcode_settings_title (6700974145733932357) -->
+    <skip />
+    <!-- no translation found for transcode_enable_all (4719796495995795404) -->
+    <skip />
+    <!-- no translation found for transcode_skip_apps (5680997722349545778) -->
+    <skip />
     <string name="runningservices_settings_title" msgid="6460099290493086515">"سرویس‌های در حال اجرا"</string>
     <string name="runningservices_settings_summary" msgid="1046080643262665743">"مشاهده و کنترل سرویس‌های در حال اجرای فعلی"</string>
     <string name="select_webview_provider_title" msgid="3917815648099445503">"اجرای وب‌نما"</string>
@@ -545,12 +551,19 @@
     <string name="user_need_lock_message" msgid="4311424336209509301">"قبل از ایجاد یک نمایه محدود، باید یک قفل صفحه را برای محافظت از برنامه‌ها و داده‌های شخصی خود تنظیم کنید."</string>
     <string name="user_set_lock_button" msgid="1427128184982594856">"تنظیم قفل"</string>
     <string name="user_switch_to_user" msgid="6975428297154968543">"رفتن به <xliff:g id="USER_NAME">%s</xliff:g>"</string>
+    <string name="creating_new_user_dialog_message" msgid="7232880257538970375">"درحال ایجاد کاربر جدید…"</string>
+    <string name="user_nickname" msgid="262624187455825083">"نام مستعار"</string>
     <string name="guest_new_guest" msgid="3482026122932643557">"افزودن مهمان"</string>
     <string name="guest_exit_guest" msgid="5908239569510734136">"حذف مهمان"</string>
     <string name="guest_nickname" msgid="6332276931583337261">"مهمان"</string>
+    <string name="user_image_take_photo" msgid="467512954561638530">"عکس گرفتن"</string>
+    <string name="user_image_choose_photo" msgid="1363820919146782908">"انتخاب تصویر"</string>
+    <string name="user_image_photo_selector" msgid="433658323306627093">"انتخاب عکس"</string>
     <string name="cached_apps_freezer_device_default" msgid="2616594131750144342">"پیش‌فرض دستگاه"</string>
     <string name="cached_apps_freezer_disabled" msgid="4816382260660472042">"غیرفعال"</string>
     <string name="cached_apps_freezer_enabled" msgid="8866703500183051546">"فعال"</string>
     <string name="cached_apps_freezer_reboot_dialog_text" msgid="695330563489230096">"برای اعمال این تغییر، دستگاهتان باید راه‌اندازی مجدد شود. اکنون راه‌اندازی مجدد کنید یا لغو کنید."</string>
     <string name="media_transfer_wired_usb_device_name" msgid="7699141088423210903">"هدفون سیمی"</string>
+    <string name="wifi_hotspot_switch_on_text" msgid="9212273118217786155">"روشن"</string>
+    <string name="wifi_hotspot_switch_off_text" msgid="7245567251496959764">"خاموش"</string>
 </resources>

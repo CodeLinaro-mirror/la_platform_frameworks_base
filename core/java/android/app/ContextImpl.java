@@ -187,16 +187,6 @@ class ContextImpl extends Context {
     private static final String XATTR_INODE_CODE_CACHE = "user.inode_code_cache";
 
     /**
-     * Special intent extra that critical system apps can use to hide the notification for a
-     * foreground service. This extra should be placed in the intent passed into {@link
-     * #startForegroundService(Intent)}.
-     *
-     * @hide
-     */
-    private static final String EXTRA_HIDDEN_FOREGROUND_SERVICE =
-            "android.intent.extra.HIDDEN_FOREGROUND_SERVICE";
-
-    /**
      * Map from package name, to preference name, to cached preferences.
      */
     @GuardedBy("ContextImpl.class")
@@ -1049,7 +1039,7 @@ class ContextImpl extends Context {
     public void startActivityAsUser(Intent intent, Bundle options, UserHandle user) {
         try {
             ActivityTaskManager.getService().startActivityAsUser(
-                    mMainThread.getApplicationThread(), getBasePackageName(), getAttributionTag(),
+                    mMainThread.getApplicationThread(), getOpPackageName(), getAttributionTag(),
                     intent, intent.resolveTypeIfNeeded(getContentResolver()),
                     null, null, 0, Intent.FLAG_ACTIVITY_NEW_TASK, null, options,
                     user.getIdentifier());
@@ -1717,12 +1707,9 @@ class ContextImpl extends Context {
         try {
             validateServiceIntent(service);
             service.prepareToLeaveProcess(this);
-            final boolean hideForegroundNotification = requireForeground
-                    && service.getBooleanExtra(EXTRA_HIDDEN_FOREGROUND_SERVICE, false);
             ComponentName cn = ActivityManager.getService().startService(
                     mMainThread.getApplicationThread(), service,
                     service.resolveTypeIfNeeded(getContentResolver()), requireForeground,
-                    hideForegroundNotification,
                     getOpPackageName(), getAttributionTag(), user.getIdentifier());
             if (cn != null) {
                 if (cn.getPackageName().equals("!")) {
@@ -2413,7 +2400,6 @@ class ContextImpl extends Context {
         context.setResources(createResources(mToken, mPackageInfo, mSplitName, overrideDisplayId,
                 overrideConfiguration, getDisplayAdjustments(displayId).getCompatibilityInfo(),
                 mResources.getLoaders()));
-        context.mIsUiContext = isSelfOrOuterUiContext();
         return context;
     }
 
@@ -2442,6 +2428,11 @@ class ContextImpl extends Context {
         // the display that would otherwise be inherited from mToken (or the global configuration if
         // mToken is null).
         context.mForceDisplayOverrideInResources = true;
+        // Note that even if a display context is derived from an UI context, it should not be
+        // treated as UI context because it does not handle configuration changes from the server
+        // side. If the context does need to handle configuration changes, please use
+        // Context#createWindowContext(int, Bundle).
+        context.mIsUiContext = false;
         return context;
     }
 
@@ -2709,7 +2700,7 @@ class ContextImpl extends Context {
         return context;
     }
 
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     static ContextImpl createActivityContext(ActivityThread mainThread,
             LoadedApk packageInfo, ActivityInfo activityInfo, IBinder activityToken, int displayId,
             Configuration overrideConfiguration) {
@@ -2806,6 +2797,7 @@ class ContextImpl extends Context {
             mIsAssociatedWithDisplay = container.mIsAssociatedWithDisplay;
             mIsSystemOrSystemUiContext = container.mIsSystemOrSystemUiContext;
             mForceDisplayOverrideInResources = container.mForceDisplayOverrideInResources;
+            mIsUiContext = container.isSelfOrOuterUiContext();
         } else {
             mBasePackageName = packageInfo.mPackageName;
             ApplicationInfo ainfo = packageInfo.getApplicationInfo();

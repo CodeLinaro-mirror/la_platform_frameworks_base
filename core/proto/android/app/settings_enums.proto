@@ -779,6 +779,26 @@ enum Action {
     // CATEGORY: SETTINGS
     // OS: S
     ACTION_COLUMBUS_ACTION_NOTIFICATION_SHADE = 1746;
+
+    // ACTION: Settings > System > Gestures > Double tap > Require harder taps
+    // CATEGORY: SETTINGS
+    // OS: S
+    ACTION_COLUMBUS_LOW_SENSITIVITY = 1747;
+
+    // OPEN: Columbus Gesture training intro in Settings
+    // CATEGORY: SETTINGS
+    // OS: S
+    SETTINGS_COLUMBUS_GESTURE_TRAINING_INTRO = 1748;
+
+    // OPEN: Columbus Gesture training enrolling in Settings
+    // CATEGORY: SETTINGS
+    // OS: S
+    SETTINGS_COLUMBUS_GESTURE_TRAINING_ENROLLING = 1749;
+
+    // OPEN: Columbus Gesture training finished in Settings
+    // CATEGORY: SETTINGS
+    // OS: S
+    SETTINGS_COLUMBUS_GESTURE_TRAINING_FINISHED = 1750;
 }
 
 /**
@@ -2751,4 +2771,24 @@ enum PageId {
 
     // OS: R QPR2
     BLUETOOTH_PAIRING_RECEIVER = 1851;
+
+    // OPEN: Settings > Display > Screen timeout
+    // CATEGORY: SETTINGS
+    // OS: S
+    SCREEN_TIMEOUT = 1852;
+
+    // OPEN: Settings > Accessibility > Reduce Bright Colors
+    // CATEGORY: SETTINGS
+    // OS: S
+    REDUCE_BRIGHT_COLORS_SETTINGS = 1853;
+
+    // OPEN: Settings > Location > Time Zone Detection
+    // CATEGORY: SETTINGS
+    // OS: S
+    LOCATION_TIME_ZONE_DETECTION = 1854;
+
+    // OPEN: Settings > Developer options > Media transcode settings
+    // CATEGORY: SETTINGS
+    // OS: S
+    TRANSCODE_SETTINGS = 1855;
 }

@@ -44,7 +44,6 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -292,11 +291,10 @@ public class RecentTasksTest extends WindowTestsBase {
             mRecentTasks.add(mTasks.get(1));
             invocation.callRealMethod();
             return null;
-        }).when(mSupervisor).endActivityVisibilityUpdate(any(), anyInt(), anyBoolean(),
-                anyBoolean());
+        }).when(mSupervisor).endActivityVisibilityUpdate();
 
         mTaskContainer.ensureActivitiesVisible(null /* starting */, 0 /* configChanges */,
-                false /* preserveWindows */, false /* notifyClients */);
+                false /* preserveWindows */, false /* notifyClients */, false /* userLeaving */);
 
         assertFalse(mSupervisor.inActivityVisibilityUpdate());
         assertThat(mCallbacksRecorder.mAdded).hasSize(2);
@@ -473,6 +471,28 @@ public class RecentTasksTest extends WindowTestsBase {
         mRecentTasks.add(task3);
         assertEquals(2, mRecentTasks.getRecentTasks(MAX_VALUE, 0 /* flags */,
                 true /* getTasksAllowed */, TEST_USER_0_ID, 0).getList().size());
+    }
+
+    @Test
+    public void testAppendOrganizedChildTaskInfo() {
+        final Task root = createTaskBuilder(".CreatedByOrganizerRoot").build();
+        root.mCreatedByOrganizer = true;
+        // Add organized and non-organized child.
+        final Task child1 = createTaskBuilder(".Task1").setParentTask(root).build();
+        final Task child2 = createTaskBuilder(".Task2").setParentTask(root).build();
+        doReturn(true).when(child1).isOrganized();
+        doReturn(false).when(child2).isOrganized();
+        mRecentTasks.add(root);
+
+        doNothing().when(mRecentTasks).loadUserRecentsLocked(anyInt());
+        doReturn(true).when(mRecentTasks).isUserRunning(anyInt(), anyInt());
+        final List<RecentTaskInfo> infos = mRecentTasks.getRecentTasks(MAX_VALUE, 0 /* flags */,
+                true /* getTasksAllowed */, TEST_USER_0_ID, 0 /* callingUid */).getList();
+
+        // Make sure only organized child will be appended.
+        final List<RecentTaskInfo> childrenTaskInfos = infos.get(0).childrenTaskInfos;
+        assertEquals(childrenTaskInfos.size(), 1);
+        assertEquals(childrenTaskInfos.get(0).taskId, child1.mTaskId);
     }
 
     @Test
@@ -738,7 +758,7 @@ public class RecentTasksTest extends WindowTestsBase {
     }
 
     /**
-     * Tests that tasks on singleTaskDisplay are not visible and not trimmed/removed.
+     * Tests that tasks on always on top multi-window tasks are not visible and not trimmed/removed.
      */
     @Test
     public void testVisibleTasks_alwaysOnTop() {
@@ -1156,22 +1176,22 @@ public class RecentTasksTest extends WindowTestsBase {
     }
 
     private void doTestRecentTasksApis(boolean expectCallable) {
-        assertSecurityException(expectCallable, () -> mAtm.removeStack(INVALID_STACK_ID));
+        assertSecurityException(expectCallable, () -> mAtm.removeTask(INVALID_STACK_ID));
         assertSecurityException(expectCallable,
-                () -> mAtm.removeStacksInWindowingModes(
+                () -> mAtm.removeRootTasksInWindowingModes(
                         new int[]{WINDOWING_MODE_UNDEFINED}));
         assertSecurityException(expectCallable,
-                () -> mAtm.removeStacksWithActivityTypes(
+                () -> mAtm.removeRootTasksWithActivityTypes(
                         new int[]{ACTIVITY_TYPE_UNDEFINED}));
         assertSecurityException(expectCallable, () -> mAtm.removeTask(0));
         assertSecurityException(expectCallable,
                 () -> mAtm.setTaskWindowingMode(0, WINDOWING_MODE_UNDEFINED, true));
         assertSecurityException(expectCallable,
-                () -> mAtm.moveTaskToStack(0, INVALID_STACK_ID, true));
+                () -> mAtm.moveTaskToRootTask(0, INVALID_STACK_ID, true));
         assertSecurityException(expectCallable,
                 () -> mAtm.setTaskWindowingModeSplitScreenPrimary(0, true));
         assertSecurityException(expectCallable,
-                () -> mAtm.moveTopActivityToPinnedStack(INVALID_STACK_ID, new Rect()));
+                () -> mAtm.moveTopActivityToPinnedRootTask(INVALID_STACK_ID, new Rect()));
         assertSecurityException(expectCallable, () -> mAtm.getAllRootTaskInfos());
         assertSecurityException(expectCallable,
                 () -> mAtm.getRootTaskInfo(WINDOWING_MODE_UNDEFINED, ACTIVITY_TYPE_UNDEFINED));
@@ -1190,7 +1210,7 @@ public class RecentTasksTest extends WindowTestsBase {
                 () -> mAtm.unregisterTaskStackListener(null));
         assertSecurityException(expectCallable, () -> mAtm.getTaskDescription(0));
         assertSecurityException(expectCallable, () -> mAtm.cancelTaskWindowTransition(0));
-        assertSecurityException(expectCallable, () -> mAtm.startRecentsActivity(null, null,
+        assertSecurityException(expectCallable, () -> mAtm.startRecentsActivity(null, 0,
                 null));
         assertSecurityException(expectCallable, () -> mAtm.cancelRecentsAnimation(true));
         assertSecurityException(expectCallable, () -> mAtm.stopAppSwitches());

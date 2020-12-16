@@ -20,6 +20,8 @@ import static android.app.UiModeManager.DEFAULT_PRIORITY;
 import static android.app.UiModeManager.MODE_NIGHT_AUTO;
 import static android.app.UiModeManager.MODE_NIGHT_CUSTOM;
 import static android.app.UiModeManager.MODE_NIGHT_YES;
+import static android.app.UiModeManager.PROJECTION_TYPE_AUTOMOTIVE;
+import static android.app.UiModeManager.PROJECTION_TYPE_NONE;
 import static android.os.UserHandle.USER_SYSTEM;
 import static android.util.TimeUtils.isTimeBetween;
 
@@ -30,6 +32,7 @@ import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
 import android.app.AlarmManager;
+import android.app.IOnProjectionStateChangeListener;
 import android.app.IUiModeManager;
 import android.app.Notification;
 import android.app.NotificationManager;
@@ -48,10 +51,12 @@ import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Binder;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.PowerManager;
 import android.os.PowerManager.ServiceType;
 import android.os.PowerManagerInternal;
 import android.os.Process;
+import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.ResultReceiver;
 import android.os.ServiceManager;
@@ -65,14 +70,15 @@ import android.service.vr.IVrManager;
 import android.service.vr.IVrStateCallbacks;
 import android.util.ArraySet;
 import android.util.Slog;
+import android.util.SparseArray;
 
 import com.android.internal.R;
+import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.app.DisableCarModeActivity;
 import com.android.internal.messages.nano.SystemMessageProto.SystemMessage;
 import com.android.internal.notification.SystemNotificationChannels;
 import com.android.internal.util.DumpUtils;
-import com.android.server.SystemService.TargetUser;
 import com.android.server.twilight.TwilightListener;
 import com.android.server.twilight.TwilightManager;
 import com.android.server.twilight.TwilightState;
@@ -84,7 +90,9 @@ import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -98,7 +106,9 @@ final class UiModeManagerService extends SystemService {
     private static final boolean ENABLE_LAUNCH_DESK_DOCK_APP = true;
     private static final String SYSTEM_PROPERTY_DEVICE_THEME = "persist.sys.theme";
 
-    final Object mLock = new Object();
+    private final Injector mInjector;
+    private final Object mLock = new Object();
+
     private int mDockState = Intent.EXTRA_DOCK_STATE_UNDOCKED;
 
     private int mLastBroadcastState = Intent.EXTRA_DOCK_STATE_UNDOCKED;
@@ -163,17 +173,25 @@ final class UiModeManagerService extends SystemService {
     private final LocalService mLocalService = new LocalService();
     private PowerManagerInternal mLocalPowerManager;
 
+    @GuardedBy("mLock")
+    @Nullable
+    private SparseArray<List<ProjectionHolder>> mProjectionHolders;
+    @GuardedBy("mLock")
+    @Nullable
+    private SparseArray<RemoteCallbackList<IOnProjectionStateChangeListener>> mProjectionListeners;
+
     public UiModeManagerService(Context context) {
-        super(context);
-        mConfiguration.setToDefaults();
+        this(context, /* setupWizardComplete= */ false, /* tm= */ null, new Injector());
     }
 
     @VisibleForTesting
     protected UiModeManagerService(Context context, boolean setupWizardComplete,
-            TwilightManager tm) {
-        this(context);
+            TwilightManager tm, Injector injector) {
+        super(context);
+        mConfiguration.setToDefaults();
         mSetupWizardComplete = setupWizardComplete;
         mTwilightManager = tm;
+        mInjector = injector;
     }
 
     private static Intent buildHomeIntent(String category) {
@@ -327,8 +345,16 @@ final class UiModeManagerService extends SystemService {
     @Override
     public void onUserSwitching(@Nullable TargetUser from, @NonNull TargetUser to) {
         mCurrentUser = to.getUserIdentifier();
+        if (mNightMode == MODE_NIGHT_AUTO) persistComputedNightMode(from.getUserIdentifier());
         getContext().getContentResolver().unregisterContentObserver(mSetupWizardObserver);
         verifySetupWizardCompleted();
+        synchronized (mLock) {
+            // only update if the value is actually changed
+            if (updateNightModeFromSettingsLocked(getContext(), getContext().getResources(),
+                    to.getUserIdentifier())) {
+                updateLocked(0, 0);
+            }
+        }
     }
 
     @Override
@@ -356,11 +382,10 @@ final class UiModeManagerService extends SystemService {
                         new IntentFilter(Intent.ACTION_DOCK_EVENT));
                 IntentFilter batteryFilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
                 context.registerReceiver(mBatteryReceiver, batteryFilter);
-                IntentFilter filter = new IntentFilter();
-                filter.addAction(Intent.ACTION_USER_SWITCHED);
                 context.registerReceiver(mSettingsRestored,
                         new IntentFilter(Intent.ACTION_SETTING_RESTORED));
-                context.registerReceiver(new UserSwitchedReceiver(), filter, null, mHandler);
+                context.registerReceiver(mOnShutdown,
+                        new IntentFilter(Intent.ACTION_SHUTDOWN));
                 updateConfigurationLocked();
                 applyConfigurationExternallyLocked();
             }
@@ -405,6 +430,21 @@ final class UiModeManagerService extends SystemService {
         }, TAG + ".onStart");
         publishBinderService(Context.UI_MODE_SERVICE, mService);
         publishLocalService(UiModeManagerInternal.class, mLocalService);
+    }
+
+    private final BroadcastReceiver mOnShutdown = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (mNightMode == MODE_NIGHT_AUTO) {
+                persistComputedNightMode(mCurrentUser);
+            }
+        }
+    };
+
+    private void persistComputedNightMode(int userId) {
+        Secure.putIntForUser(getContext().getContentResolver(),
+                Secure.UI_NIGHT_MODE_LAST_COMPUTED, mComputedNightMode ? 1 : 0,
+                userId);
     }
 
     private final BroadcastReceiver mSettingsRestored = new BroadcastReceiver() {
@@ -480,7 +520,7 @@ final class UiModeManagerService extends SystemService {
     }
 
     /**
-     * Updates the night mode setting in Settings.Global and returns if the value was successfully
+     * Updates the night mode setting in Settings.Secure and returns if the value was successfully
      * changed.
      *
      * @param context A valid context
@@ -495,7 +535,8 @@ final class UiModeManagerService extends SystemService {
         int oldNightMode = mNightMode;
         if (mSetupWizardComplete) {
             mNightMode = Secure.getIntForUser(context.getContentResolver(),
-                    Secure.UI_NIGHT_MODE, mNightMode, userId);
+                    Secure.UI_NIGHT_MODE, res.getInteger(
+                            com.android.internal.R.integer.config_defaultNightMode), userId);
             mOverrideNightModeOn = Secure.getIntForUser(context.getContentResolver(),
                     Secure.UI_NIGHT_MODE_OVERRIDE_ON, 0, userId) != 0;
             mOverrideNightModeOff = Secure.getIntForUser(context.getContentResolver(),
@@ -508,6 +549,10 @@ final class UiModeManagerService extends SystemService {
                     Secure.getLongForUser(context.getContentResolver(),
                             Secure.DARK_THEME_CUSTOM_END_TIME,
                             DEFAULT_CUSTOM_NIGHT_END_TIME.toNanoOfDay() / 1000L, userId) * 1000);
+            if (mNightMode == MODE_NIGHT_AUTO) {
+                mComputedNightMode = Secure.getIntForUser(context.getContentResolver(),
+                        Secure.UI_NIGHT_MODE_LAST_COMPUTED, 0, userId) != 0;
+            }
         }
 
         return oldNightMode != mNightMode;
@@ -613,7 +658,7 @@ final class UiModeManagerService extends SystemService {
             // If the caller is the system, we will allow the DISABLE_CAR_MODE_ALL_PRIORITIES car
             // mode flag to be specified; this is so that the user can disable car mode at all
             // priorities using the persistent notification.
-            boolean isSystemCaller = Binder.getCallingUid() == Process.SYSTEM_UID;
+            boolean isSystemCaller = mInjector.getCallingUid() == Process.SYSTEM_UID;
             final int carModeFlags =
                     isSystemCaller ? flags : flags & ~UiModeManager.DISABLE_CAR_MODE_ALL_PRIORITIES;
 
@@ -827,7 +872,307 @@ final class UiModeManagerService extends SystemService {
                 Binder.restoreCallingIdentity(ident);
             }
         }
+
+        @Override
+        public boolean requestProjection(IBinder binder,
+                @UiModeManager.ProjectionType int projectionType,
+                @NonNull String callingPackage) {
+            assertLegit(callingPackage);
+            assertSingleProjectionType(projectionType);
+            enforceProjectionTypePermissions(projectionType);
+            synchronized (mLock) {
+                if (mProjectionHolders == null) {
+                    mProjectionHolders = new SparseArray<>(1);
+                }
+                if (!mProjectionHolders.contains(projectionType)) {
+                    mProjectionHolders.put(projectionType, new ArrayList<>(1));
+                }
+                List<ProjectionHolder> currentHolders = mProjectionHolders.get(projectionType);
+
+                // For all projection types, it's a noop if already held.
+                for (int i = 0; i < currentHolders.size(); ++i) {
+                    if (callingPackage.equals(currentHolders.get(i).mPackageName)) {
+                        return true;
+                    }
+                }
+
+                // Enforce projection type-specific restrictions here.
+
+                // Automotive projection can only be set if it is currently unset. The case where it
+                // is already set by the calling package is taken care of above.
+                if (projectionType == PROJECTION_TYPE_AUTOMOTIVE && !currentHolders.isEmpty()) {
+                    return false;
+                }
+
+                ProjectionHolder projectionHolder = new ProjectionHolder(callingPackage,
+                        projectionType, binder,
+                        UiModeManagerService.this::releaseProjectionUnchecked);
+                if (!projectionHolder.linkToDeath()) {
+                    return false;
+                }
+                currentHolders.add(projectionHolder);
+                Slog.d(TAG, "Package " + callingPackage + " set projection type "
+                        + projectionType + ".");
+                onProjectionStateChangedLocked(projectionType);
+            }
+            return true;
+        }
+
+        @Override
+        public boolean releaseProjection(@UiModeManager.ProjectionType int projectionType,
+                @NonNull String callingPackage) {
+            assertLegit(callingPackage);
+            assertSingleProjectionType(projectionType);
+            enforceProjectionTypePermissions(projectionType);
+            return releaseProjectionUnchecked(projectionType, callingPackage);
+        }
+
+        @Override
+        public @UiModeManager.ProjectionType int getActiveProjectionTypes() {
+            getContext().enforceCallingOrSelfPermission(
+                    android.Manifest.permission.READ_PROJECTION_STATE, "getActiveProjectionTypes");
+            @UiModeManager.ProjectionType int projectionTypeFlag = PROJECTION_TYPE_NONE;
+            synchronized (mLock) {
+                if (mProjectionHolders != null) {
+                    for (int i = 0; i < mProjectionHolders.size(); ++i) {
+                        if (!mProjectionHolders.valueAt(i).isEmpty()) {
+                            projectionTypeFlag = projectionTypeFlag | mProjectionHolders.keyAt(i);
+                        }
+                    }
+                }
+            }
+            return projectionTypeFlag;
+        }
+
+        @Override
+        public List<String> getProjectingPackages(
+                @UiModeManager.ProjectionType int projectionType) {
+            getContext().enforceCallingOrSelfPermission(
+                    android.Manifest.permission.READ_PROJECTION_STATE, "getProjectionState");
+            synchronized (mLock) {
+                List<String> packageNames = new ArrayList<>();
+                populateWithRelevantActivePackageNames(projectionType, packageNames);
+                return packageNames;
+            }
+        }
+
+        public void addOnProjectionStateChangeListener(IOnProjectionStateChangeListener listener,
+                @UiModeManager.ProjectionType int projectionType) {
+            getContext().enforceCallingOrSelfPermission(
+                    android.Manifest.permission.READ_PROJECTION_STATE,
+                    "registerProjectionStateListener");
+            if (projectionType == PROJECTION_TYPE_NONE) {
+                return;
+            }
+            synchronized (mLock) {
+                if (mProjectionListeners == null) {
+                    mProjectionListeners = new SparseArray<>(1);
+                }
+                if (!mProjectionListeners.contains(projectionType)) {
+                    mProjectionListeners.put(projectionType, new RemoteCallbackList<>());
+                }
+                if (mProjectionListeners.get(projectionType).register(listener)) {
+                    // If any of those types are active, send a callback immediately.
+                    List<String> packageNames = new ArrayList<>();
+                    @UiModeManager.ProjectionType int activeProjectionTypes =
+                            populateWithRelevantActivePackageNames(projectionType, packageNames);
+                    if (!packageNames.isEmpty()) {
+                        try {
+                            listener.onProjectionStateChanged(activeProjectionTypes, packageNames);
+                        } catch (RemoteException e) {
+                            Slog.w(TAG,
+                                    "Failed a call to onProjectionStateChanged() during listener "
+                                            + "registration.");
+                        }
+                    }
+                }
+            }
+        }
+
+
+        public void removeOnProjectionStateChangeListener(
+                IOnProjectionStateChangeListener listener) {
+            getContext().enforceCallingOrSelfPermission(
+                    android.Manifest.permission.READ_PROJECTION_STATE,
+                    "unregisterProjectionStateListener");
+            synchronized (mLock) {
+                if (mProjectionListeners != null) {
+                    for (int i = 0; i < mProjectionListeners.size(); ++i) {
+                        mProjectionListeners.valueAt(i).unregister(listener);
+                    }
+                }
+            }
+        }
     };
+
+    private void enforceProjectionTypePermissions(@UiModeManager.ProjectionType int p) {
+        if ((p & PROJECTION_TYPE_AUTOMOTIVE) != 0) {
+            getContext().enforceCallingPermission(
+                    android.Manifest.permission.TOGGLE_AUTOMOTIVE_PROJECTION,
+                    "toggleProjection");
+        }
+    }
+
+    private static void assertSingleProjectionType(@UiModeManager.ProjectionType int p) {
+        // To be a single projection type it must be greater than zero and an exact power of two.
+        boolean projectionTypeIsPowerOfTwoOrZero = (p & p - 1) == 0;
+        if (p <= 0 || !projectionTypeIsPowerOfTwoOrZero) {
+            throw new IllegalArgumentException("Must specify exactly one projection type.");
+        }
+    }
+
+    private static List<String> toPackageNameList(Collection<ProjectionHolder> c) {
+        List<String> packageNames = new ArrayList<>();
+        for (ProjectionHolder p : c) {
+            packageNames.add(p.mPackageName);
+        }
+        return packageNames;
+    }
+
+    /**
+     * Populates a list with the package names that have set any of the given projection types.
+     * @param projectionType the projection types to include
+     * @param packageNames the list to populate with package names
+     * @return the active projection types
+     */
+    @GuardedBy("mLock")
+    @UiModeManager.ProjectionType
+    private int populateWithRelevantActivePackageNames(
+            @UiModeManager.ProjectionType int projectionType, List<String> packageNames) {
+        packageNames.clear();
+        @UiModeManager.ProjectionType int projectionTypeFlag = PROJECTION_TYPE_NONE;
+        if (mProjectionHolders != null) {
+            for (int i = 0; i < mProjectionHolders.size(); ++i) {
+                int key = mProjectionHolders.keyAt(i);
+                List<ProjectionHolder> holders = mProjectionHolders.valueAt(i);
+                if ((projectionType & key) != 0) {
+                    if (packageNames.addAll(toPackageNameList(holders))) {
+                        projectionTypeFlag = projectionTypeFlag | key;
+                    }
+                }
+            }
+        }
+        return projectionTypeFlag;
+    }
+
+    private boolean releaseProjectionUnchecked(@UiModeManager.ProjectionType int projectionType,
+            @NonNull String pkg) {
+        synchronized (mLock) {
+            boolean removed = false;
+            if (mProjectionHolders != null) {
+                List<ProjectionHolder> holders = mProjectionHolders.get(projectionType);
+                if (holders != null) {
+                    // Iterate backward so we can safely remove while iterating.
+                    for (int i = holders.size() - 1; i >= 0; --i) {
+                        ProjectionHolder holder = holders.get(i);
+                        if (pkg.equals(holder.mPackageName)) {
+                            holder.unlinkToDeath();
+                            Slog.d(TAG, "Projection type " + projectionType + " released by "
+                                    + pkg + ".");
+                            holders.remove(i);
+                            removed = true;
+                        }
+                    }
+                }
+            }
+            if (removed) {
+                onProjectionStateChangedLocked(projectionType);
+            } else {
+                Slog.w(TAG, pkg + " tried to release projection type " + projectionType
+                        + " but was not set by that package.");
+            }
+            return removed;
+        }
+    }
+
+    private static class ProjectionHolder implements IBinder.DeathRecipient {
+        private final String mPackageName;
+        private final @UiModeManager.ProjectionType int mProjectionType;
+        private final IBinder mBinder;
+        private final ProjectionReleaser mProjectionReleaser;
+
+        private ProjectionHolder(String packageName,
+                @UiModeManager.ProjectionType int projectionType, IBinder binder,
+                ProjectionReleaser projectionReleaser) {
+            mPackageName = packageName;
+            mProjectionType = projectionType;
+            mBinder = binder;
+            mProjectionReleaser = projectionReleaser;
+        }
+
+        private boolean linkToDeath() {
+            try {
+                mBinder.linkToDeath(this, 0);
+            } catch (RemoteException e) {
+                Slog.e(TAG, "linkToDeath failed for projection requester: " + mPackageName + ".",
+                        e);
+                return false;
+            }
+            return true;
+        }
+
+        private void unlinkToDeath() {
+            mBinder.unlinkToDeath(this, 0);
+        }
+
+        @Override
+        public void binderDied() {
+            Slog.w(TAG, "Projection holder " + mPackageName
+                    + " died. Releasing projection type " + mProjectionType + ".");
+            mProjectionReleaser.release(mProjectionType, mPackageName);
+        }
+
+        private interface ProjectionReleaser {
+            boolean release(@UiModeManager.ProjectionType int projectionType,
+                    @NonNull String packageName);
+        }
+    }
+
+    private void assertLegit(@NonNull String packageName) {
+        if (!doesPackageHaveCallingUid(packageName)) {
+            throw new SecurityException("Caller claimed bogus packageName: " + packageName + ".");
+        }
+    }
+
+    private boolean doesPackageHaveCallingUid(@NonNull String packageName) {
+        try {
+            return getContext().getPackageManager().getPackageUid(packageName, 0)
+                    == mInjector.getCallingUid();
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    @GuardedBy("mLock")
+    private void onProjectionStateChangedLocked(
+            @UiModeManager.ProjectionType int changedProjectionType) {
+        if (mProjectionListeners == null) {
+            return;
+        }
+        for (int i = 0; i < mProjectionListeners.size(); ++i) {
+            int listenerProjectionType = mProjectionListeners.keyAt(i);
+            // Every listener that is affected must be called back with all the state they are
+            // listening for.
+            if ((changedProjectionType & listenerProjectionType) != 0) {
+                RemoteCallbackList<IOnProjectionStateChangeListener> listeners =
+                        mProjectionListeners.valueAt(i);
+                List<String> packageNames = new ArrayList<>();
+                @UiModeManager.ProjectionType int activeProjectionTypes =
+                        populateWithRelevantActivePackageNames(listenerProjectionType,
+                                packageNames);
+                int listenerCount = listeners.beginBroadcast();
+                for (int j = 0; j < listenerCount; ++j) {
+                    try {
+                        listeners.getBroadcastItem(j).onProjectionStateChanged(
+                                activeProjectionTypes, packageNames);
+                    } catch (RemoteException e) {
+                        Slog.w(TAG, "Failed a call to onProjectionStateChanged().");
+                    }
+                }
+                listeners.finishBroadcast();
+            }
+        }
+    }
 
     private void onCustomTimeUpdated(int user) {
         persistNightMode(user);
@@ -1631,17 +1976,10 @@ final class UiModeManagerService extends SystemService {
         }
     }
 
-    private final class UserSwitchedReceiver extends BroadcastReceiver {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            synchronized (mLock) {
-                final int currentId = intent.getIntExtra(
-                        Intent.EXTRA_USER_HANDLE, USER_SYSTEM);
-                // only update if the value is actually changed
-                if (updateNightModeFromSettingsLocked(context, context.getResources(), currentId)) {
-                    updateLocked(0, 0);
-                }
-            }
+    @VisibleForTesting
+    public static class Injector {
+        public int getCallingUid() {
+            return Binder.getCallingUid();
         }
     }
 }

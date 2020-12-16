@@ -17,21 +17,24 @@
 package com.android.server;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.content.Context;
 import android.content.pm.UserInfo;
 import android.os.Environment;
 import android.os.SystemClock;
 import android.os.Trace;
-import android.os.UserHandle;
 import android.os.UserManagerInternal;
 import android.util.ArrayMap;
+import android.util.EventLog;
+import android.util.IndentingPrintWriter;
 import android.util.Slog;
 import android.util.SparseArray;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.Preconditions;
 import com.android.server.SystemService.TargetUser;
+import com.android.server.am.EventLogTags;
 import com.android.server.utils.TimingsTraceAndSlog;
 
 import dalvik.system.PathClassLoader;
@@ -47,18 +50,20 @@ import java.util.ArrayList;
  *
  * {@hide}
  */
-public final class SystemServiceManager {
+public final class SystemServiceManager implements Dumpable {
     private static final String TAG = SystemServiceManager.class.getSimpleName();
     private static final boolean DEBUG = false;
     private static final int SERVICE_CALL_WARN_TIME_MS = 50;
 
     // Constants used on onUser(...)
-    private static final String START = "Start";
-    private static final String UNLOCKING = "Unlocking";
-    private static final String UNLOCKED = "Unlocked";
-    private static final String SWITCH = "Switch";
-    private static final String STOP = "Stop";
-    private static final String CLEANUP = "Cleanup";
+    // NOTE: do not change their values, as they're used on Trace calls and changes might break
+    // performance tests that rely on them.
+    private static final String USER_STARTING = "Start";
+    private static final String USER_UNLOCKING = "Unlocking";
+    private static final String USER_UNLOCKED = "Unlocked";
+    private static final String USER_SWITCHING = "Switch";
+    private static final String USER_STOPPING = "Stop";
+    private static final String USER_STOPPED = "Cleanup";
 
     private static File sSystemDir;
     private final Context mContext;
@@ -83,6 +88,13 @@ public final class SystemServiceManager {
      */
     @GuardedBy("mTargetUsers")
     private final SparseArray<TargetUser> mTargetUsers = new SparseArray<>();
+
+    /**
+     * Reference to the current user, it's used to set the {@link TargetUser} on
+     * {@link #onUserSwitching(int, int)} as the previous user might have been removed already.
+     */
+    @GuardedBy("mTargetUsers")
+    private @Nullable TargetUser mCurrentUser;
 
     SystemServiceManager(Context context) {
         mContext = context;
@@ -259,53 +271,83 @@ public final class SystemServiceManager {
         return targetUser;
     }
 
+    private @NonNull TargetUser newTargetUser(@UserIdInt int userId) {
+        final UserInfo userInfo = mUserManagerInternal.getUserInfo(userId);
+        Preconditions.checkState(userInfo != null, "No UserInfo for " + userId);
+        return new TargetUser(userInfo);
+    }
+
     /**
      * Starts the given user.
      */
-    public void startUser(@NonNull TimingsTraceAndSlog t, @UserIdInt int userId) {
-        // Create cached TargetUser
-        final UserInfo userInfo = mUserManagerInternal.getUserInfo(userId);
-        Preconditions.checkState(userInfo != null, "No UserInfo for " + userId);
+    public void onUserStarting(@NonNull TimingsTraceAndSlog t, @UserIdInt int userId) {
+        EventLog.writeEvent(EventLogTags.SSM_USER_STARTING, userId);
+
+        final TargetUser targetUser = newTargetUser(userId);
         synchronized (mTargetUsers) {
-            mTargetUsers.put(userId, new TargetUser(userInfo));
+            mTargetUsers.put(userId, targetUser);
         }
 
-        onUser(t, START, userId);
+        onUser(t, USER_STARTING, /* prevUser= */ null, targetUser);
     }
 
     /**
      * Unlocks the given user.
      */
-    public void unlockUser(@UserIdInt int userId) {
-        onUser(UNLOCKING, userId);
+    public void onUserUnlocking(@UserIdInt int userId) {
+        EventLog.writeEvent(EventLogTags.SSM_USER_UNLOCKING, userId);
+        onUser(USER_UNLOCKING, userId);
     }
 
     /**
      * Called after the user was unlocked.
      */
     public void onUserUnlocked(@UserIdInt int userId) {
-        onUser(UNLOCKED, userId);
+        EventLog.writeEvent(EventLogTags.SSM_USER_UNLOCKED, userId);
+        onUser(USER_UNLOCKED, userId);
     }
 
     /**
      * Switches to the given user.
      */
-    public void switchUser(@UserIdInt int from, @UserIdInt int to) {
-        onUser(TimingsTraceAndSlog.newAsyncLog(), SWITCH, to, from);
+    public void onUserSwitching(@UserIdInt int from, @UserIdInt int to) {
+        EventLog.writeEvent(EventLogTags.SSM_USER_SWITCHING, from, to);
+        final TargetUser curUser, prevUser;
+        synchronized (mTargetUsers) {
+            if (mCurrentUser == null) {
+                if (DEBUG) {
+                    Slog.d(TAG, "First user switch: from " + from + " to " + to);
+                }
+                prevUser = newTargetUser(from);
+            } else {
+                if (from != mCurrentUser.getUserIdentifier()) {
+                    Slog.wtf(TAG, "switchUser(" + from + "," + to + "): mCurrentUser is "
+                            + mCurrentUser + ", it should be " + from);
+                }
+                prevUser = mCurrentUser;
+            }
+            curUser = mCurrentUser = getTargetUser(to);
+            if (DEBUG) {
+                Slog.d(TAG, "Set mCurrentUser to " + mCurrentUser);
+            }
+        }
+        onUser(TimingsTraceAndSlog.newAsyncLog(), USER_SWITCHING, prevUser, curUser);
     }
 
     /**
      * Stops the given user.
      */
-    public void stopUser(@UserIdInt int userId) {
-        onUser(STOP, userId);
+    public void onUserStopping(@UserIdInt int userId) {
+        EventLog.writeEvent(EventLogTags.SSM_USER_STOPPING, userId);
+        onUser(USER_STOPPING, userId);
     }
 
     /**
      * Cleans up the given user.
      */
-    public void cleanupUser(@UserIdInt int userId) {
-        onUser(CLEANUP, userId);
+    public void onUserStopped(@UserIdInt int userId) {
+        EventLog.writeEvent(EventLogTags.SSM_USER_STOPPED, userId);
+        onUser(USER_STOPPED, userId);
 
         // Remove cached TargetUser
         synchronized (mTargetUsers) {
@@ -314,21 +356,17 @@ public final class SystemServiceManager {
     }
 
     private void onUser(@NonNull String onWhat, @UserIdInt int userId) {
-        onUser(TimingsTraceAndSlog.newAsyncLog(), onWhat, userId);
+        onUser(TimingsTraceAndSlog.newAsyncLog(), onWhat, /* prevUser= */ null,
+                getTargetUser(userId));
     }
 
     private void onUser(@NonNull TimingsTraceAndSlog t, @NonNull String onWhat,
-            @UserIdInt int userId) {
-        onUser(t, onWhat, userId, UserHandle.USER_NULL);
-    }
-
-    private void onUser(@NonNull TimingsTraceAndSlog t, @NonNull String onWhat,
-            @UserIdInt int curUserId, @UserIdInt int prevUserId) {
+            @Nullable TargetUser prevUser, @NonNull TargetUser curUser) {
+        final int curUserId = curUser.getUserIdentifier();
+        // NOTE: do not change label below, or it might break performance tests that rely on it.
         t.traceBegin("ssm." + onWhat + "User-" + curUserId);
-        Slog.i(TAG, "Calling on" + onWhat + "User " + curUserId);
-        final TargetUser curUser = getTargetUser(curUserId);
-        final TargetUser prevUser = prevUserId == UserHandle.USER_NULL ? null
-                : getTargetUser(prevUserId);
+        Slog.i(TAG, "Calling on" + onWhat + "User " + curUserId
+                + (prevUser != null ? " (from " + prevUser + ")" : ""));
         final int serviceLen = mServices.size();
         for (int i = 0; i < serviceLen; i++) {
             final SystemService service = mServices.get(i);
@@ -356,22 +394,22 @@ public final class SystemServiceManager {
             long time = SystemClock.elapsedRealtime();
             try {
                 switch (onWhat) {
-                    case SWITCH:
+                    case USER_SWITCHING:
                         service.onUserSwitching(prevUser, curUser);
                         break;
-                    case START:
+                    case USER_STARTING:
                         service.onUserStarting(curUser);
                         break;
-                    case UNLOCKING:
+                    case USER_UNLOCKING:
                         service.onUserUnlocking(curUser);
                         break;
-                    case UNLOCKED:
+                    case USER_UNLOCKED:
                         service.onUserUnlocked(curUser);
                         break;
-                    case STOP:
+                    case USER_STOPPING:
                         service.onUserStopping(curUser);
                         break;
-                    case CLEANUP:
+                    case USER_STOPPED:
                         service.onUserStopped(curUser);
                         break;
                     default:
@@ -452,29 +490,39 @@ public final class SystemServiceManager {
         return sSystemDir;
     }
 
-    /**
-     * Outputs the state of this manager to the System log.
-     */
-    public void dump() {
-        StringBuilder builder = new StringBuilder();
-        builder.append("Current phase: ").append(mCurrentPhase).append('\n');
-        builder.append("Services:\n");
+    @Override
+    public void dump(IndentingPrintWriter pw, String[] args) {
+        pw.printf("Current phase: %d\n", mCurrentPhase);
+        synchronized (mTargetUsers) {
+            if (mCurrentUser != null) {
+                pw.print("Current user: "); mCurrentUser.dump(pw); pw.println();
+            } else {
+                pw.println("Current user not set!");
+            }
+
+            final int targetUsersSize = mTargetUsers.size();
+            if (targetUsersSize > 0) {
+                pw.printf("%d target users: ", targetUsersSize);
+                for (int i = 0; i < targetUsersSize; i++) {
+                    mTargetUsers.valueAt(i).dump(pw);
+                    if (i != targetUsersSize - 1) pw.print(", ");
+                }
+                pw.println();
+            } else {
+                pw.println("No target users");
+            }
+        }
         final int startedLen = mServices.size();
-        for (int i = 0; i < startedLen; i++) {
-            final SystemService service = mServices.get(i);
-            builder.append("\t")
-                    .append(service.getClass().getSimpleName())
-                    .append("\n");
+        if (startedLen > 0) {
+            pw.printf("%d started services:\n", startedLen);
+            pw.increaseIndent();
+            for (int i = 0; i < startedLen; i++) {
+                final SystemService service = mServices.get(i);
+                pw.println(service.getClass().getCanonicalName());
+            }
+            pw.decreaseIndent();
+        } else {
+            pw.println("No started services");
         }
-
-        builder.append("Target users: ");
-        final int targetUsersSize = mTargetUsers.size();
-        for (int i = 0; i < targetUsersSize; i++) {
-            mTargetUsers.valueAt(i).dump(builder);
-            if (i != targetUsersSize - 1) builder.append(',');
-        }
-        builder.append('\n');
-
-        Slog.e(TAG, builder.toString());
     }
 }

@@ -32,7 +32,6 @@ import android.os.IInterface;
 import android.os.Process;
 import android.util.ArraySet;
 
-import com.android.internal.listeners.ListenerExecutor.ListenerOperation;
 import com.android.internal.util.Preconditions;
 import com.android.server.LocalServices;
 import com.android.server.location.listeners.BinderListenerRegistration;
@@ -44,7 +43,6 @@ import com.android.server.location.util.SettingsHelper;
 import com.android.server.location.util.UserInfoHelper;
 import com.android.server.location.util.UserInfoHelper.UserListener;
 
-import java.io.PrintWriter;
 import java.util.Collection;
 import java.util.Objects;
 
@@ -61,14 +59,14 @@ import java.util.Objects;
  */
 public abstract class GnssListenerMultiplexer<TRequest, TListener extends IInterface,
         TMergedRegistration> extends
-        ListenerMultiplexer<IBinder, TListener, ListenerOperation<TListener>,
+        ListenerMultiplexer<IBinder, TListener,
                 GnssListenerMultiplexer<TRequest, TListener, TMergedRegistration>
                         .GnssListenerRegistration, TMergedRegistration> {
 
     /**
      * Registration object for GNSS listeners.
      */
-    protected final class GnssListenerRegistration extends
+    protected class GnssListenerRegistration extends
             BinderListenerRegistration<TRequest, TListener> {
 
         // we store these values because we don't trust the listeners not to give us dupes, not to
@@ -230,20 +228,28 @@ public abstract class GnssListenerMultiplexer<TRequest, TListener extends IInter
      */
     protected void addListener(TRequest request, CallerIdentity callerIdentity,
             TListener listener) {
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
-            addRegistration(listener.asBinder(),
-                    new GnssListenerRegistration(request, callerIdentity, listener));
+            putRegistration(listener.asBinder(),
+                    createRegistration(request, callerIdentity, listener));
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
     }
 
     /**
+     * May be overridden by subclasses to change the registration type.
+     */
+    protected GnssListenerRegistration createRegistration(TRequest request,
+            CallerIdentity callerIdentity, TListener listener) {
+        return new GnssListenerRegistration(request, callerIdentity, listener);
+    }
+
+    /**
      * Removes the given listener.
      */
     public void removeListener(TListener listener) {
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             removeRegistration(listener.asBinder());
         } finally {
@@ -260,7 +266,7 @@ public abstract class GnssListenerMultiplexer<TRequest, TListener extends IInter
         CallerIdentity identity = registration.getIdentity();
         return registration.isPermitted()
                 && (registration.isForeground() || isBackgroundRestrictionExempt(identity))
-                && mUserInfoHelper.isCurrentUserId(identity.getUserId())
+                && (identity.isSystem() || mUserInfoHelper.isCurrentUserId(identity.getUserId()))
                 && mLocationManagerInternal.isProviderEnabledForUser(GPS_PROVIDER,
                 identity.getUserId())
                 && !mSettingsHelper.isLocationPackageBlacklisted(identity.getUserId(),
@@ -361,11 +367,11 @@ public abstract class GnssListenerMultiplexer<TRequest, TListener extends IInter
     }
 
     @Override
-    protected void dumpServiceState(PrintWriter pw) {
+    protected String getServiceState() {
         if (!isServiceSupported()) {
-            pw.print("unsupported");
+            return "unsupported";
         } else {
-            super.dumpServiceState(pw);
+            return super.getServiceState();
         }
     }
 }

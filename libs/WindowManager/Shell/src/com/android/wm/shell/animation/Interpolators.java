@@ -17,12 +17,26 @@
 package com.android.wm.shell.animation;
 
 import android.view.animation.Interpolator;
+import android.view.animation.LinearInterpolator;
 import android.view.animation.PathInterpolator;
 
 /**
  * Common interpolators used in wm shell library.
  */
 public class Interpolators {
+
+    public static final Interpolator LINEAR = new LinearInterpolator();
+
+    /**
+     * Interpolator for alpha in animation.
+     */
+    public static final Interpolator ALPHA_IN = new PathInterpolator(0.4f, 0f, 1f, 1f);
+
+    /**
+     * Interpolator for alpha out animation.
+     */
+    public static final Interpolator ALPHA_OUT = new PathInterpolator(0f, 0f, 0.8f, 1f);
+
     /**
      * Interpolator for fast out linear in animation.
      */
@@ -42,4 +56,10 @@ public class Interpolators {
      * Interpolator to be used when animating a move based on a click. Pair with enough duration.
      */
     public static final Interpolator TOUCH_RESPONSE = new PathInterpolator(0.3f, 0f, 0.1f, 1f);
+
+    /**
+     * Interpolator to be used when animating a panel closing.
+     */
+    public static final Interpolator PANEL_CLOSE_ACCELERATED =
+            new PathInterpolator(0.3f, 0, 0.5f, 1);
 }

@@ -23,7 +23,6 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
-import androidx.constraintlayout.widget.ConstraintSet
 import com.android.systemui.R
 import com.android.systemui.util.animation.TransitionLayout
 
@@ -61,8 +60,10 @@ class PlayerViewHolder private constructor(itemView: View) {
     val action4 = itemView.requireViewById<ImageButton>(R.id.action4)
 
     // Settings screen
+    val settingsText = itemView.requireViewById<TextView>(R.id.remove_text)
     val cancel = itemView.requireViewById<View>(R.id.cancel)
-    val dismiss = itemView.requireViewById<View>(R.id.dismiss)
+    val dismiss = itemView.requireViewById<ViewGroup>(R.id.dismiss)
+    val dismissLabel = dismiss.getChildAt(0)
     val settings = itemView.requireViewById<View>(R.id.settings)
 
     init {

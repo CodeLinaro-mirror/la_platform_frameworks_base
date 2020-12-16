@@ -16,6 +16,7 @@
 
 package com.android.systemui.statusbar.notification.stack;
 
+import static com.android.internal.jank.InteractionJankMonitor.CUJ_NOTIFICATION_SHADE_SCROLL_FLING;
 import static com.android.systemui.statusbar.notification.ActivityLaunchAnimator.ExpandAnimationParameters;
 import static com.android.systemui.statusbar.notification.stack.NotificationSectionsManagerKt.BUCKET_SILENT;
 import static com.android.systemui.statusbar.notification.stack.StackScrollAlgorithm.ANCHOR_SCROLLING;
@@ -73,6 +74,7 @@ import android.widget.ScrollView;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.graphics.ColorUtils;
+import com.android.internal.jank.InteractionJankMonitor;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.keyguard.KeyguardSliceView;
 import com.android.settingslib.Utils;
@@ -97,7 +99,6 @@ import com.android.systemui.statusbar.notification.NotificationUtils;
 import com.android.systemui.statusbar.notification.ShadeViewRefactor;
 import com.android.systemui.statusbar.notification.ShadeViewRefactor.RefactorComponent;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
-import com.android.systemui.statusbar.notification.collection.legacy.VisualStabilityManager;
 import com.android.systemui.statusbar.notification.collection.render.GroupExpansionManager;
 import com.android.systemui.statusbar.notification.collection.render.GroupMembershipManager;
 import com.android.systemui.statusbar.notification.logging.NotificationLogger;
@@ -197,7 +198,6 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
     private int mIntrinsicContentHeight;
     private int mCollapsedSize;
     private int mPaddingBetweenElements;
-    private int mIncreasedPaddingBetweenElements;
     private int mMaxTopPadding;
     private int mTopPadding;
     private int mBottomMargin;
@@ -260,6 +260,7 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
     private boolean mDismissAllInProgress;
     private boolean mFadeNotificationsOnDismiss;
     private FooterDismissListener mFooterDismissListener;
+    private boolean mFlingAfterUpEvent;
 
     /**
      * Was the scroller scrolled to the top when the down motion was observed?
@@ -833,7 +834,13 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
         if (!mShouldDrawNotificationBackground) {
             return;
         }
-
+        final boolean clearUndershelf = Settings.Global.getInt(mContext.getContentResolver(),
+                Settings.Global.SHOW_NEW_NOTIF_DISMISS, 0 /* show background by default */) == 1;
+        if (clearUndershelf) {
+            mBackgroundPaint.setColor(Color.TRANSPARENT);
+            invalidate();
+            return;
+        }
         // Interpolate between semi-transparent notification panel background color
         // and white AOD separator.
         float colorInterpolation = MathUtils.smoothStep(0.4f /* start */, 1f /* end */,
@@ -875,8 +882,6 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
         mAmbientState.reload(context);
         mPaddingBetweenElements = Math.max(1,
                 res.getDimensionPixelSize(R.dimen.notification_divider_height));
-        mIncreasedPaddingBetweenElements =
-                res.getDimensionPixelSize(R.dimen.notification_divider_height_increased);
         mMinTopOverScrollToEscape = res.getDimensionPixelSize(
                 R.dimen.min_top_overscroll_to_qs);
         mStatusBarHeight = res.getDimensionPixelSize(R.dimen.status_bar_height);
@@ -884,15 +889,13 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
         mSidePaddings = res.getDimensionPixelSize(R.dimen.notification_side_paddings);
         mMinInteractionHeight = res.getDimensionPixelSize(
                 R.dimen.notification_min_interaction_height);
-        mCornerRadius = res.getDimensionPixelSize(
-                Utils.getThemeAttr(mContext, android.R.attr.dialogCornerRadius));
+        mCornerRadius = res.getDimensionPixelSize(R.dimen.notification_corner_radius);
         mHeadsUpInset = mStatusBarHeight + res.getDimensionPixelSize(
                 R.dimen.heads_up_status_bar_padding);
     }
 
     void updateCornerRadius() {
-        int newRadius = getResources().getDimensionPixelSize(
-                Utils.getThemeAttr(getContext(), android.R.attr.dialogCornerRadius));
+        int newRadius = getResources().getDimensionPixelSize(R.dimen.notification_corner_radius);
         if (mCornerRadius != newRadius) {
             mCornerRadius = newRadius;
             invalidate();
@@ -1093,11 +1096,8 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
             for (int i = 0; i < getChildCount(); i++) {
                 ExpandableView child = (ExpandableView) getChildAt(i);
                 if (mChildrenToAddAnimated.contains(child)) {
-                    int startingPosition = getPositionInLinearLayout(child);
-                    float increasedPaddingAmount = child.getIncreasedPaddingAmount();
-                    int padding = increasedPaddingAmount == 1.0f ? mIncreasedPaddingBetweenElements
-                            : increasedPaddingAmount == -1.0f ? 0 : mPaddingBetweenElements;
-                    int childHeight = getIntrinsicHeight(child) + padding;
+                    final int startingPosition = getPositionInLinearLayout(child);
+                    final int childHeight = getIntrinsicHeight(child) + mPaddingBetweenElements;
                     if (startingPosition < mOwnScrollY) {
                         // This child starts off screen, so let's keep it offscreen to keep the
                         // others visible
@@ -1338,8 +1338,11 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
     @ShadeViewRefactor(RefactorComponent.COORDINATOR)
     private float getAppearStartPosition() {
         if (isHeadsUpTransition()) {
-            return mHeadsUpInset
-                    + getFirstVisibleSection().getFirstVisibleChild().getPinnedHeadsUpHeight();
+            final NotificationSection firstVisibleSection = getFirstVisibleSection();
+            final int pinnedHeight = firstVisibleSection != null
+                    ? firstVisibleSection.getFirstVisibleChild().getPinnedHeadsUpHeight()
+                    : 0;
+            return mHeadsUpInset + pinnedHeight;
         }
         return getMinExpansionHeight();
     }
@@ -2288,7 +2291,6 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
     private void updateContentHeight() {
         int height = 0;
         float previousPaddingRequest = mPaddingBetweenElements;
-        float previousPaddingAmount = 0.0f;
         int numShownItems = 0;
         boolean finish = false;
         int maxDisplayedNotifications = mMaxDisplayedNotifications;
@@ -2307,37 +2309,10 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
                 } else {
                     viewHeight = expandableView.getIntrinsicHeight();
                 }
-                float increasedPaddingAmount = expandableView.getIncreasedPaddingAmount();
-                float padding;
-                if (increasedPaddingAmount >= 0.0f) {
-                    padding = (int) NotificationUtils.interpolate(
-                            previousPaddingRequest,
-                            mIncreasedPaddingBetweenElements,
-                            increasedPaddingAmount);
-                    previousPaddingRequest = (int) NotificationUtils.interpolate(
-                            mPaddingBetweenElements,
-                            mIncreasedPaddingBetweenElements,
-                            increasedPaddingAmount);
-                } else {
-                    int ownPadding = (int) NotificationUtils.interpolate(
-                            0,
-                            mPaddingBetweenElements,
-                            1.0f + increasedPaddingAmount);
-                    if (previousPaddingAmount > 0.0f) {
-                        padding = (int) NotificationUtils.interpolate(
-                                ownPadding,
-                                mIncreasedPaddingBetweenElements,
-                                previousPaddingAmount);
-                    } else {
-                        padding = ownPadding;
-                    }
-                    previousPaddingRequest = ownPadding;
-                }
                 if (height != 0) {
-                    height += padding;
+                    height += mPaddingBetweenElements;
                 }
                 height += calculateGapHeight(previousView, expandableView, numShownItems);
-                previousPaddingAmount = increasedPaddingAmount;
                 height += viewHeight;
                 numShownItems++;
                 previousView = expandableView;
@@ -3045,22 +3020,9 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
             }
             updateOnScrollChange();
         } else {
-            int startingPosition = getPositionInLinearLayout(removedChild);
-            float increasedPaddingAmount = removedChild.getIncreasedPaddingAmount();
-            int padding;
-            if (increasedPaddingAmount >= 0) {
-                padding = (int) NotificationUtils.interpolate(
-                        mPaddingBetweenElements,
-                        mIncreasedPaddingBetweenElements,
-                        increasedPaddingAmount);
-            } else {
-                padding = (int) NotificationUtils.interpolate(
-                        0,
-                        mPaddingBetweenElements,
-                        1.0f + increasedPaddingAmount);
-            }
-            int childHeight = getIntrinsicHeight(removedChild) + padding;
-            int endPosition = startingPosition + childHeight;
+            final int startingPosition = getPositionInLinearLayout(removedChild);
+            final int childHeight = getIntrinsicHeight(removedChild) + mPaddingBetweenElements;
+            final int endPosition = startingPosition + childHeight;
             if (endPosition <= mOwnScrollY) {
                 // This child is fully scrolled of the top, so we have to deduct its height from the
                 // scrollPosition
@@ -3093,42 +3055,13 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
             requestedView = requestedRow = childInGroup.getNotificationParent();
         }
         int position = 0;
-        float previousPaddingRequest = mPaddingBetweenElements;
-        float previousPaddingAmount = 0.0f;
         for (int i = 0; i < getChildCount(); i++) {
             ExpandableView child = (ExpandableView) getChildAt(i);
             boolean notGone = child.getVisibility() != View.GONE;
             if (notGone && !child.hasNoContentHeight()) {
-                float increasedPaddingAmount = child.getIncreasedPaddingAmount();
-                float padding;
-                if (increasedPaddingAmount >= 0.0f) {
-                    padding = (int) NotificationUtils.interpolate(
-                            previousPaddingRequest,
-                            mIncreasedPaddingBetweenElements,
-                            increasedPaddingAmount);
-                    previousPaddingRequest = (int) NotificationUtils.interpolate(
-                            mPaddingBetweenElements,
-                            mIncreasedPaddingBetweenElements,
-                            increasedPaddingAmount);
-                } else {
-                    int ownPadding = (int) NotificationUtils.interpolate(
-                            0,
-                            mPaddingBetweenElements,
-                            1.0f + increasedPaddingAmount);
-                    if (previousPaddingAmount > 0.0f) {
-                        padding = (int) NotificationUtils.interpolate(
-                                ownPadding,
-                                mIncreasedPaddingBetweenElements,
-                                previousPaddingAmount);
-                    } else {
-                        padding = ownPadding;
-                    }
-                    previousPaddingRequest = ownPadding;
-                }
                 if (position != 0) {
-                    position += padding;
+                    position += mPaddingBetweenElements;
                 }
-                previousPaddingAmount = increasedPaddingAmount;
             }
             if (child == requestedView) {
                 if (requestedRow != null) {
@@ -3789,6 +3722,13 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
                             if ((Math.abs(initialVelocity) > mMinimumVelocity)) {
                                 float currentOverScrollTop = getCurrentOverScrollAmount(true);
                                 if (currentOverScrollTop == 0.0f || initialVelocity > 0) {
+                                    mFlingAfterUpEvent = true;
+                                    setFinishScrollingCallback(() -> {
+                                        mFlingAfterUpEvent = false;
+                                        InteractionJankMonitor.getInstance()
+                                                .end(CUJ_NOTIFICATION_SHADE_SCROLL_FLING);
+                                        setFinishScrollingCallback(null);
+                                    });
                                     fling(-initialVelocity);
                                 } else {
                                     onOverScrollFling(false, initialVelocity);
@@ -3838,6 +3778,10 @@ public class NotificationStackScrollLayout extends ViewGroup implements Dumpable
                 break;
         }
         return true;
+    }
+
+    boolean isFlingAfterUpEvent() {
+        return mFlingAfterUpEvent;
     }
 
     @ShadeViewRefactor(RefactorComponent.INPUT)

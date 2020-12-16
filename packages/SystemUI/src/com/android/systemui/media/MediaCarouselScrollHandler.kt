@@ -32,7 +32,7 @@ import com.android.systemui.qs.PageIndicator
 import com.android.systemui.R
 import com.android.systemui.classifier.Classifier.NOTIFICATION_DISMISS
 import com.android.systemui.plugins.FalsingManager
-import com.android.systemui.util.animation.PhysicsAnimator
+import com.android.wm.shell.animation.PhysicsAnimator
 import com.android.systemui.util.concurrency.DelayableExecutor
 
 private const val FLING_SLOP = 1000000
@@ -282,10 +282,12 @@ class MediaCarouselScrollHandler(
                 scrollXAmount = -1 * relativePos
             }
             if (scrollXAmount != 0) {
+                val dx = if (isRtl) -scrollXAmount else scrollXAmount
+                val newScrollX = scrollView.relativeScrollX + dx
                 // Delay the scrolling since scrollView calls springback which cancels
                 // the animation again..
                 mainExecutor.execute {
-                    scrollView.smoothScrollBy(if (isRtl) -scrollXAmount else scrollXAmount, 0)
+                    scrollView.smoothScrollTo(newScrollX, scrollView.scrollY)
                 }
             }
             val currentTranslation = scrollView.getContentTranslation()

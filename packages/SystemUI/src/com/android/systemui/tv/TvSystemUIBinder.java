@@ -17,11 +17,12 @@
 package com.android.systemui.tv;
 
 import com.android.systemui.dagger.GlobalRootComponent;
+import com.android.systemui.wmshell.TvPipModule;
 
 import dagger.Binds;
 import dagger.Module;
 
-@Module()
+@Module
 interface TvSystemUIBinder {
     @Binds
     GlobalRootComponent bindGlobalRootComponent(TvGlobalRootComponent globalRootComponent);

@@ -19,6 +19,7 @@ package com.android.wm.shell.onehanded;
 import static android.os.UserHandle.USER_CURRENT;
 import static android.view.Display.DEFAULT_DISPLAY;
 
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.om.IOverlayManager;
 import android.content.om.OverlayInfo;
@@ -30,13 +31,16 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemProperties;
 import android.provider.Settings;
-import android.util.Log;
+import android.util.Slog;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import com.android.wm.shell.common.DisplayChangeController;
 import com.android.wm.shell.common.DisplayController;
+import com.android.wm.shell.common.TaskStackListenerCallback;
+import com.android.wm.shell.common.TaskStackListenerImpl;
 import com.android.wm.shell.onehanded.OneHandedGestureHandler.OneHandedGestureEventCallback;
 
 import java.io.PrintWriter;
@@ -54,7 +58,6 @@ public class OneHandedController implements OneHanded {
 
     static final String SUPPORT_ONE_HANDED_MODE = "ro.support_one_handed_mode";
 
-    private final boolean mHasOneHandedFeature;
     private boolean mIsOneHandedEnabled;
     private boolean mIsSwipeToNotificationEnabled;
     private boolean mTaskChangeToExit;
@@ -77,7 +80,7 @@ public class OneHandedController implements OneHanded {
     private final DisplayChangeController.OnDisplayChangingListener mRotationController =
             (display, fromRotation, toRotation, wct) -> {
                 if (mDisplayAreaOrganizer != null) {
-                    mDisplayAreaOrganizer.onRotateDisplay(fromRotation, toRotation);
+                    mDisplayAreaOrganizer.onRotateDisplay(fromRotation, toRotation, wct);
                 }
             };
 
@@ -160,10 +163,17 @@ public class OneHandedController implements OneHanded {
             };
 
     /**
-     * The static constructor method to create OneHnadedController.
+     * Creates {@link OneHandedController}, returns {@code null} if the feature is not supported.
      */
+    @Nullable
     public static OneHandedController create(
-            Context context, DisplayController displayController) {
+            Context context, DisplayController displayController,
+            TaskStackListenerImpl taskStackListener) {
+        if (!SystemProperties.getBoolean(SUPPORT_ONE_HANDED_MODE, false)) {
+            Slog.w(TAG, "Device doesn't support OneHanded feature");
+            return null;
+        }
+
         OneHandedTutorialHandler tutorialHandler = new OneHandedTutorialHandler(context);
         OneHandedAnimationController animationController =
                 new OneHandedAnimationController(context);
@@ -175,7 +185,7 @@ public class OneHandedController implements OneHanded {
         IOverlayManager overlayManager = IOverlayManager.Stub.asInterface(
                 ServiceManager.getService(Context.OVERLAY_SERVICE));
         return new OneHandedController(context, displayController, organizer, touchHandler,
-                tutorialHandler, gestureHandler, overlayManager);
+                tutorialHandler, gestureHandler, overlayManager, taskStackListener);
     }
 
     @VisibleForTesting
@@ -185,44 +195,45 @@ public class OneHandedController implements OneHanded {
             OneHandedTouchHandler touchHandler,
             OneHandedTutorialHandler tutorialHandler,
             OneHandedGestureHandler gestureHandler,
-            IOverlayManager overlayManager) {
-        mHasOneHandedFeature = SystemProperties.getBoolean(SUPPORT_ONE_HANDED_MODE, false);
-        if (!mHasOneHandedFeature) {
-            Log.i(TAG, "Device config SUPPORT_ONE_HANDED_MODE off");
-            mContext = null;
-            mDisplayAreaOrganizer = null;
-            mDisplayController = null;
-            mTouchHandler = null;
-            mTutorialHandler = null;
-            mGestureHandler = null;
-            mTimeoutHandler = null;
-            mOverlayManager = null;
-        } else {
-            mContext = context;
-            mDisplayAreaOrganizer = displayAreaOrganizer;
-            mDisplayController = displayController;
-            mTouchHandler = touchHandler;
-            mTutorialHandler = tutorialHandler;
-            mGestureHandler = gestureHandler;
-            mOverlayManager = overlayManager;
+            IOverlayManager overlayManager,
+            TaskStackListenerImpl taskStackListener) {
+        mContext = context;
+        mDisplayAreaOrganizer = displayAreaOrganizer;
+        mDisplayController = displayController;
+        mTouchHandler = touchHandler;
+        mTutorialHandler = tutorialHandler;
+        mGestureHandler = gestureHandler;
+        mOverlayManager = overlayManager;
 
-            mOffSetFraction = SystemProperties.getInt(ONE_HANDED_MODE_OFFSET_PERCENTAGE, 50)
-                    / 100.0f;
-            mIsOneHandedEnabled = OneHandedSettingsUtil.getSettingsOneHandedModeEnabled(
-                    context.getContentResolver());
-            mIsSwipeToNotificationEnabled =
-                    OneHandedSettingsUtil.getSettingsSwipeToNotificationEnabled(
-                            context.getContentResolver());
-            mTimeoutHandler = OneHandedTimeoutHandler.get();
+        mOffSetFraction = SystemProperties.getInt(ONE_HANDED_MODE_OFFSET_PERCENTAGE, 50)
+                / 100.0f;
+        mIsOneHandedEnabled = OneHandedSettingsUtil.getSettingsOneHandedModeEnabled(
+                context.getContentResolver());
+        mIsSwipeToNotificationEnabled =
+                OneHandedSettingsUtil.getSettingsSwipeToNotificationEnabled(
+                        context.getContentResolver());
+        mTimeoutHandler = OneHandedTimeoutHandler.get();
 
-            mDisplayController.addDisplayChangingController(mRotationController);
+        mDisplayController.addDisplayChangingController(mRotationController);
 
-            setupCallback();
-            setupSettingObservers();
-            setupTimeoutListener();
-            setupGesturalOverlay();
-            updateSettings();
-        }
+        setupCallback();
+        setupSettingObservers();
+        setupTimeoutListener();
+        setupGesturalOverlay();
+        updateSettings();
+
+        taskStackListener.addListener(
+                new TaskStackListenerCallback() {
+                    @Override
+                    public void onTaskCreated(int taskId, ComponentName componentName) {
+                        stopOneHanded(OneHandedEvents.EVENT_ONE_HANDED_TRIGGER_APP_TAPS_OUT);
+                    }
+
+                    @Override
+                    public void onTaskMovedToFront(int taskId) {
+                        stopOneHanded(OneHandedEvents.EVENT_ONE_HANDED_TRIGGER_APP_TAPS_OUT);
+                    }
+                });
     }
 
     /**
@@ -246,11 +257,6 @@ public class OneHandedController implements OneHanded {
     void setSwipeToNotificationEnabled(boolean enabled) {
         mIsSwipeToNotificationEnabled = enabled;
         updateOneHandedEnabled();
-    }
-
-    @Override
-    public boolean hasOneHandedFeature() {
-        return mHasOneHandedFeature;
     }
 
     @Override

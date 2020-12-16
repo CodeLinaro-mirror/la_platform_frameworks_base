@@ -23,7 +23,6 @@ import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.annotation.StringDef;
 import android.annotation.SystemApi;
-import android.annotation.TestApi;
 import android.annotation.WorkerThread;
 import android.os.Binder;
 import android.os.RemoteException;
@@ -59,7 +58,6 @@ import java.util.concurrent.Executor;
  * @hide
  */
 @SystemApi
-@TestApi
 public class ProvisioningManager {
 
     /**@hide*/
@@ -879,7 +877,7 @@ public class ProvisioningManager {
 
             @Override
             public final void onIntConfigChanged(int item, int value) {
-                long callingIdentity = Binder.clearCallingIdentity();
+                final long callingIdentity = Binder.clearCallingIdentity();
                 try {
                     mExecutor.execute(() ->
                             mLocalConfigurationCallback.onProvisioningIntChanged(item, value));
@@ -890,7 +888,7 @@ public class ProvisioningManager {
 
             @Override
             public final void onStringConfigChanged(int item, String value) {
-                long callingIdentity = Binder.clearCallingIdentity();
+                final long callingIdentity = Binder.clearCallingIdentity();
                 try {
                     mExecutor.execute(() ->
                             mLocalConfigurationCallback.onProvisioningStringChanged(item, value));

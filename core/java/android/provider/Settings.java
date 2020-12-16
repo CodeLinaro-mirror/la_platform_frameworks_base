@@ -60,6 +60,7 @@ import android.net.wifi.WifiManager;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.os.BatteryManager;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Build.VERSION_CODES;
 import android.os.Bundle;
 import android.os.DropBoxManager;
@@ -81,6 +82,7 @@ import android.util.ArraySet;
 import android.util.Log;
 import android.util.MemoryIntArray;
 import android.view.Display;
+import android.view.WindowManager.LayoutParams;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.Preconditions;
@@ -228,7 +230,6 @@ public final class Settings {
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     @SystemApi
-    @TestApi
     public static final String ACTION_TETHER_PROVISIONING_UI =
             "android.settings.TETHER_PROVISIONING_UI";
 
@@ -324,6 +325,21 @@ public final class Settings {
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_ACCESSIBILITY_DETAILS_SETTINGS =
             "android.settings.ACCESSIBILITY_DETAILS_SETTINGS";
+
+    /**
+     * Activity Action: Show settings to allow configuration of Reduce Bright Colors.
+     * <p>
+     * In some cases, a matching Activity may not exist, so ensure you
+     * safeguard against this.
+     * <p>
+     * Input: Nothing.
+     * <p>
+     * Output: Nothing.
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_REDUCE_BRIGHT_COLORS_SETTINGS =
+            "android.settings.REDUCE_BRIGHT_COLORS_SETTINGS";
 
     /**
      * Activity Action: Show settings to control access to usage information.
@@ -927,7 +943,7 @@ public final class Settings {
      * @hide
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static final String ACTION_USER_DICTIONARY_INSERT =
             "com.android.settings.USER_DICTIONARY_INSERT";
 
@@ -1037,7 +1053,6 @@ public final class Settings {
      *
      * @hide
      */
-    @TestApi
     @SystemApi
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_MANAGE_APP_OVERLAY_PERMISSION =
@@ -1879,7 +1894,7 @@ public final class Settings {
             = "android.settings.ACTION_APP_NOTIFICATION_REDACTION";
 
     /** @hide */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static final String EXTRA_APP_UID = "app_uid";
 
     /**
@@ -2001,7 +2016,6 @@ public final class Settings {
      * @hide
      */
     @SystemApi
-    @TestApi
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_ENTERPRISE_PRIVACY_SETTINGS
             = "android.settings.ENTERPRISE_PRIVACY_SETTINGS";
@@ -2084,7 +2098,6 @@ public final class Settings {
      * @hide
      */
     @SystemApi
-    @TestApi
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_REQUEST_ENABLE_CONTENT_CAPTURE =
             "android.settings.REQUEST_ENABLE_CONTENT_CAPTURE";
@@ -2409,7 +2422,7 @@ public final class Settings {
      * This is the only type of reset available to non-system clients.
      * @hide
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @TestApi
     public static final int RESET_MODE_PACKAGE_DEFAULTS = 1;
 
@@ -3054,7 +3067,7 @@ public final class Settings {
         public static final Uri CONTENT_URI =
             Uri.parse("content://" + AUTHORITY + "/system");
 
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         private static final ContentProviderHolder sProviderHolder =
                 new ContentProviderHolder(CONTENT_URI);
 
@@ -3103,9 +3116,9 @@ public final class Settings {
             MOVED_TO_SECURE.add(Secure.INSTALL_NON_MARKET_APPS);
         }
 
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         private static final HashSet<String> MOVED_TO_GLOBAL;
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         private static final HashSet<String> MOVED_TO_SECURE_THEN_GLOBAL;
         static {
             MOVED_TO_GLOBAL = new HashSet<>();
@@ -3567,6 +3580,9 @@ public final class Settings {
             if (outConfig.fontScale < 0) {
                 outConfig.fontScale = DEFAULT_FONT_SCALE;
             }
+            outConfig.forceBoldText = Settings.Secure.getIntForUser(
+                    cr, Settings.Secure.FORCE_BOLD_TEXT, Configuration.FORCE_BOLD_TEXT_NO,
+                    userHandle);
 
             final String localeValue =
                     Settings.System.getStringForUser(cr, SYSTEM_LOCALES, userHandle);
@@ -3597,6 +3613,7 @@ public final class Settings {
             if (!inoutConfig.userSetLocale && !inoutConfig.getLocales().isEmpty()) {
                 inoutConfig.clearLocales();
             }
+            inoutConfig.forceBoldText = Configuration.FORCE_BOLD_TEXT_UNDEFINED;
         }
 
         /**
@@ -3620,7 +3637,11 @@ public final class Settings {
                             DEFAULT_OVERRIDEABLE_BY_RESTORE);
         }
 
-        /** @hide */
+        /**
+         * Convenience function for checking if settings should be overwritten with config changes.
+         * @see #putConfigurationForUser(ContentResolver, Configuration, int)
+         * @hide
+         */
         public static boolean hasInterestingConfigurationChanges(int changes) {
             return (changes & ActivityInfo.CONFIG_FONT_SCALE) != 0 ||
                     (changes & ActivityInfo.CONFIG_LOCALE) != 0;
@@ -4254,7 +4275,7 @@ public final class Settings {
          * Kept for use by legacy database upgrade code in DatabaseHelper.
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String VIBRATE_IN_SILENT = "vibrate_in_silent";
 
         /**
@@ -4549,7 +4570,7 @@ public final class Settings {
          * 3 = HCO
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String TTY_MODE = "tty_mode";
 
         /**
@@ -4576,7 +4597,7 @@ public final class Settings {
          * pending. The value is boolean (1 or 0).
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String NOTIFICATION_LIGHT_PULSE = "notification_light_pulse";
 
         /**
@@ -4585,7 +4606,7 @@ public final class Settings {
          * 1 = yes
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String POINTER_LOCATION = "pointer_location";
 
         /**
@@ -4594,7 +4615,7 @@ public final class Settings {
          * 1 = yes
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String SHOW_TOUCHES = "show_touches";
 
         /**
@@ -4622,14 +4643,14 @@ public final class Settings {
          * @hide
          */
         @Deprecated
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String DOCK_SOUNDS_ENABLED = Global.DOCK_SOUNDS_ENABLED;
 
         /**
          * Whether to play sounds when the keyguard is shown and dismissed.
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String LOCKSCREEN_SOUNDS_ENABLED = "lockscreen_sounds_enabled";
 
         /**
@@ -4652,7 +4673,7 @@ public final class Settings {
          * @hide
          */
         @Deprecated
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String DESK_DOCK_SOUND = Global.DESK_DOCK_SOUND;
 
         /**
@@ -4661,7 +4682,7 @@ public final class Settings {
          * @hide
          */
         @Deprecated
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String DESK_UNDOCK_SOUND = Global.DESK_UNDOCK_SOUND;
 
         /**
@@ -4670,7 +4691,7 @@ public final class Settings {
          * @hide
          */
         @Deprecated
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String CAR_DOCK_SOUND = Global.CAR_DOCK_SOUND;
 
         /**
@@ -4679,7 +4700,7 @@ public final class Settings {
          * @hide
          */
         @Deprecated
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String CAR_UNDOCK_SOUND = Global.CAR_UNDOCK_SOUND;
 
         /**
@@ -4688,7 +4709,7 @@ public final class Settings {
          * @hide
          */
         @Deprecated
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String LOCK_SOUND = Global.LOCK_SOUND;
 
         /**
@@ -4697,7 +4718,7 @@ public final class Settings {
          * @hide
          */
         @Deprecated
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String UNLOCK_SOUND = Global.UNLOCK_SOUND;
 
         /**
@@ -4746,7 +4767,7 @@ public final class Settings {
          *   +7 = fastest
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String POINTER_SPEED = "pointer_speed";
 
         /**
@@ -4804,7 +4825,7 @@ public final class Settings {
          *
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final Set<String> PUBLIC_SETTINGS = new ArraySet<>();
         static {
             PUBLIC_SETTINGS.add(END_BUTTON_BEHAVIOR);
@@ -4863,7 +4884,7 @@ public final class Settings {
          *
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final Set<String> PRIVATE_SETTINGS = new ArraySet<>();
         static {
             PRIVATE_SETTINGS.add(WIFI_USE_STATIC_IP);
@@ -4912,7 +4933,7 @@ public final class Settings {
          * These entries are considered common between the personal and the managed profile,
          * since the managed profile doesn't get to change them.
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         private static final Set<String> CLONE_TO_MANAGED_PROFILE = new ArraySet<>();
         static {
             CLONE_TO_MANAGED_PROFILE.add(DATE_FORMAT);
@@ -5239,7 +5260,7 @@ public final class Settings {
         public static final Uri CONTENT_URI =
             Uri.parse("content://" + AUTHORITY + "/secure");
 
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         private static final ContentProviderHolder sProviderHolder =
                 new ContentProviderHolder(CONTENT_URI);
 
@@ -5479,7 +5500,7 @@ public final class Settings {
         }
 
         /** @hide */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static boolean putStringForUser(@NonNull ContentResolver resolver,
                 @NonNull String name, @Nullable String value, @Nullable String tag,
                 boolean makeDefault, @UserIdInt int userHandle, boolean overrideableByRestore) {
@@ -5556,7 +5577,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         @RequiresPermission(Manifest.permission.WRITE_SECURE_SETTINGS)
         public static void resetToDefaults(@NonNull ContentResolver resolver,
                 @Nullable String tag) {
@@ -5720,7 +5740,7 @@ public final class Settings {
         }
 
         /** @hide */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static long getLongForUser(ContentResolver cr, String name, long def,
                 int userHandle) {
             String valString = getStringForUser(cr, name, userHandle);
@@ -5784,7 +5804,7 @@ public final class Settings {
         }
 
         /** @hide */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static boolean putLongForUser(ContentResolver cr, String name, long value,
                 int userHandle) {
             return putStringForUser(cr, name, Long.toString(value), userHandle);
@@ -6027,7 +6047,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String AUTOFILL_FEATURE_FIELD_CLASSIFICATION =
                 "autofill_field_classification";
 
@@ -6061,7 +6080,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String AUTOFILL_USER_DATA_MAX_USER_DATA_SIZE =
                 "autofill_user_data_max_user_data_size";
 
@@ -6072,7 +6090,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String AUTOFILL_USER_DATA_MAX_FIELD_CLASSIFICATION_IDS_SIZE =
                 "autofill_user_data_max_field_classification_size";
 
@@ -6083,7 +6100,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String AUTOFILL_USER_DATA_MAX_CATEGORY_COUNT =
                 "autofill_user_data_max_category_count";
 
@@ -6093,7 +6109,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String AUTOFILL_USER_DATA_MAX_VALUE_LENGTH =
                 "autofill_user_data_max_value_length";
 
@@ -6103,7 +6118,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String AUTOFILL_USER_DATA_MIN_VALUE_LENGTH =
                 "autofill_user_data_min_value_length";
 
@@ -6153,7 +6167,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String USER_SETUP_COMPLETE = "user_setup_complete";
 
         /**
@@ -6321,9 +6334,10 @@ public final class Settings {
          * Comma-separated list of location providers that are enabled. Do not rely on this value
          * being present or correct, or on ContentObserver notifications on the corresponding Uri.
          *
-         * @deprecated The preferred methods for checking provider status and listening for changes
-         * are via {@link LocationManager#isProviderEnabled(String)} and
-         * {@link LocationManager#PROVIDERS_CHANGED_ACTION}.
+         * @deprecated This setting no longer exists from Android S onwards as it no longer is
+         * capable of realistically reflecting location settings. Use {@link
+         * LocationManager#isProviderEnabled(String)} or {@link LocationManager#isLocationEnabled()}
+         * instead.
          */
         @Deprecated
         public static final String LOCATION_PROVIDERS_ALLOWED = "location_providers_allowed";
@@ -6474,7 +6488,7 @@ public final class Settings {
          * subject to current DeviceAdmin policy limits.
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String LOCK_SCREEN_LOCK_AFTER_TIMEOUT = "lock_screen_lock_after_timeout";
 
 
@@ -6516,7 +6530,7 @@ public final class Settings {
          * @deprecated
          */
         @Deprecated
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String LOCK_SCREEN_OWNER_INFO_ENABLED =
             "lock_screen_owner_info_enabled";
 
@@ -6529,7 +6543,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String LOCK_SCREEN_ALLOW_PRIVATE_NOTIFICATIONS =
                 "lock_screen_allow_private_notifications";
 
@@ -6648,7 +6661,7 @@ public final class Settings {
          * accessibility feature.
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         @TestApi
         public static final String ACCESSIBILITY_SHORTCUT_TARGET_SERVICE =
                 "accessibility_shortcut_target_service";
@@ -6803,6 +6816,12 @@ public final class Settings {
         /**
          * Whether to draw text in bold.
          *
+         * <p>Values:
+         *  1 - Text is not displayed in bold. (Default)
+         *  2 - Text is displayed in bold.
+         *
+         * @see Configuration#FORCE_BOLD_TEXT_NO
+         * @see Configuration#FORCE_BOLD_TEXT_YES
          * @hide
          */
         public static final String FORCE_BOLD_TEXT = "force_bold_text";
@@ -7009,7 +7028,7 @@ public final class Settings {
          * @see android.graphics.Typeface
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String ACCESSIBILITY_CAPTIONING_TYPEFACE =
                 "accessibility_captioning_typeface";
 
@@ -7049,7 +7068,7 @@ public final class Settings {
          *
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String ACCESSIBILITY_DISPLAY_DALTONIZER =
                 "accessibility_display_daltonizer";
 
@@ -7114,6 +7133,33 @@ public final class Settings {
          */
         public static final String ACCESSIBILITY_INTERACTIVE_UI_TIMEOUT_MS =
                 "accessibility_interactive_ui_timeout_ms";
+
+
+        /**
+         * Setting that specifies whether Reduce Bright Colors, or brightness dimming by color
+         * adjustment, is enabled.
+         *
+         * @hide
+         */
+        public static final String REDUCE_BRIGHT_COLORS_ACTIVATED =
+                "reduce_bright_colors_activated";
+
+        /**
+         * Setting that specifies the level of Reduce Bright Colors in intensity. The range is
+         * [0, 100].
+         *
+         * @hide
+         */
+        public static final String REDUCE_BRIGHT_COLORS_LEVEL =
+                "reduce_bright_colors_level";
+
+        /**
+         * Setting that specifies whether Reduce Bright Colors should persist across reboots.
+         *
+         * @hide
+         */
+        public static final String REDUCE_BRIGHT_COLORS_PERSIST_ACROSS_REBOOTS =
+                "reduce_bright_colors_persist_across_reboots";
 
         /**
          * List of the enabled print services.
@@ -7436,7 +7482,7 @@ public final class Settings {
          * Type: int ( 0 = disabled, 1 = enabled )
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String BACKUP_ENABLED = "backup_enabled";
 
         /**
@@ -7445,7 +7491,7 @@ public final class Settings {
          * Type: int ( 0 = disabled, 1 = enabled )
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String BACKUP_AUTO_RESTORE = "backup_auto_restore";
 
         /**
@@ -7453,14 +7499,14 @@ public final class Settings {
          * Type: int ( 0 = unprovisioned, 1 = fully provisioned )
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String BACKUP_PROVISIONED = "backup_provisioned";
 
         /**
          * Component of the transport to use for backup/restore.
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String BACKUP_TRANSPORT = "backup_transport";
 
         /**
@@ -7632,7 +7678,7 @@ public final class Settings {
          * Also prevents ANRs and crash dialogs from being suppressed.
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         @TestApi
         @SuppressLint("NoSettingsProvider")
         public static final String ANR_SHOW_BACKGROUND = "anr_show_background";
@@ -7653,7 +7699,7 @@ public final class Settings {
          *
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String VOICE_RECOGNITION_SERVICE = "voice_recognition_service";
 
         /**
@@ -7662,7 +7708,9 @@ public final class Settings {
          *
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+        @TestApi
+        @SuppressLint("NoSettingsProvider")
         public static final String SELECTED_SPELL_CHECKER = "selected_spell_checker";
 
         /**
@@ -7672,7 +7720,9 @@ public final class Settings {
          *
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+        @TestApi
+        @SuppressLint("NoSettingsProvider")
         public static final String SELECTED_SPELL_CHECKER_SUBTYPE =
                 "selected_spell_checker_subtype";
 
@@ -7709,6 +7759,21 @@ public final class Settings {
          */
         public static final String MINIMAL_POST_PROCESSING_ALLOWED =
                 "minimal_post_processing_allowed";
+
+        /**
+         * User's preference for refresh rate switching.
+         *
+         * <p>Values:
+         * 0 - Never switch refresh rates.
+         * 1 - Switch refresh rates only when it can be done seamlessly. (Default behaviour)
+         * 2 - Always prefer refresh rate switching even if it's going to have visual interruptions
+         *     for the user.
+         *
+         * @see android.view.Surface#setFrameRate
+         * @hide
+         */
+        public static final String MATCH_CONTENT_FRAME_RATE =
+                "match_content_frame_rate";
 
         /**
          * INCALL_POWER_BUTTON_BEHAVIOR value for "turn off screen".
@@ -7780,7 +7845,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String DOZE_ALWAYS_ON = "doze_always_on";
 
         /**
@@ -7954,6 +8018,12 @@ public final class Settings {
         public static final String UI_NIGHT_MODE_OVERRIDE_ON = "ui_night_mode_override_on";
 
         /**
+         * The last computed night mode bool the last time the phone was on
+         * @hide
+         */
+        public static final String UI_NIGHT_MODE_LAST_COMPUTED = "ui_night_mode_last_computed";
+
+        /**
          * The current night mode that has been overridden to turn off by the system.  Owned
          * and controlled by UiModeManagerService.  Constants are as per
          * UiModeManager.
@@ -8000,7 +8070,7 @@ public final class Settings {
          * The default NFC payment component
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         @TestApi
         public static final String NFC_PAYMENT_DEFAULT_COMPONENT = "nfc_payment_default_component";
 
@@ -8014,14 +8084,14 @@ public final class Settings {
          * Specifies the package name currently configured to be the primary sms application
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String SMS_DEFAULT_APPLICATION = "sms_default_application";
 
         /**
          * Specifies the package name currently configured to be the default dialer application
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String DIALER_DEFAULT_APPLICATION = "dialer_default_application";
 
         /**
@@ -8159,7 +8229,7 @@ public final class Settings {
         /**
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         @TestApi
         public static final String IMMERSIVE_MODE_CONFIRMATIONS = "immersive_mode_confirmations";
 
@@ -8207,7 +8277,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String LOCK_SCREEN_SHOW_NOTIFICATIONS =
                 "lock_screen_show_notifications";
 
@@ -8328,18 +8397,19 @@ public final class Settings {
         public static final String CAMERA_GESTURE_DISABLED = "camera_gesture_disabled";
 
         /**
-         * Whether the panic button (emergency sos) gesture should be enabled.
+         * Whether the emergency gesture should be enabled.
          *
          * @hide
          */
-        public static final String PANIC_GESTURE_ENABLED = "panic_gesture_enabled";
+        public static final String EMERGENCY_GESTURE_ENABLED = "emergency_gesture_enabled";
 
         /**
-         * Whether the panic button (emergency sos) sound should be enabled.
+         * Whether the emergency gesture sound should be enabled.
          *
          * @hide
          */
-        public static final String PANIC_SOUND_ENABLED = "panic_sound_enabled";
+        public static final String EMERGENCY_GESTURE_SOUND_ENABLED =
+                "emergency_gesture_sound_enabled";
 
         /**
          * Whether the camera launch gesture to double tap the power button when the screen is off
@@ -8569,7 +8639,7 @@ public final class Settings {
          *
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         @TestApi
         public static final String ENABLED_VR_LISTENERS = "enabled_vr_listeners";
 
@@ -8738,7 +8808,7 @@ public final class Settings {
          * The value is boolean (1 or 0).
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         @TestApi
         public static final String NOTIFICATION_BADGING = "notification_badging";
 
@@ -8884,17 +8954,10 @@ public final class Settings {
                 "packages_to_clear_data_before_full_restore";
 
         /**
-         * Setting to determine whether to use the new notification priority handling features.
-         * @hide
-         */
-        public static final String NOTIFICATION_NEW_INTERRUPTION_MODEL = "new_interruption_model";
-
-        /**
          * How often to check for location access.
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String LOCATION_ACCESS_CHECK_INTERVAL_MILLIS =
                 "location_access_check_interval_millis";
 
@@ -8903,7 +8966,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String LOCATION_ACCESS_CHECK_DELAY_MILLIS =
                 "location_access_check_delay_millis";
 
@@ -9008,12 +9070,6 @@ public final class Settings {
         public static final String MEDIA_CONTROLS_RESUME_BLOCKED = "qs_media_resumption_blocked";
 
         /**
-         * Controls if window magnification is enabled.
-         * @hide
-         */
-        public static final String WINDOW_MAGNIFICATION = "window_magnification";
-
-        /**
          * Controls magnification mode when magnification is enabled via a system-wide triple tap
          * gesture or the accessibility shortcut.
          *
@@ -9021,6 +9077,7 @@ public final class Settings {
          * @see#ACCESSIBILITY_MAGNIFICATION_MODE_WINDOW
          * @hide
          */
+        @TestApi
         public static final String ACCESSIBILITY_MAGNIFICATION_MODE =
                 "accessibility_magnification_mode";
 
@@ -9028,12 +9085,14 @@ public final class Settings {
          * Magnification mode value that magnifies whole display.
          * @hide
          */
+        @TestApi
         public static final int ACCESSIBILITY_MAGNIFICATION_MODE_FULLSCREEN = 0x1;
 
         /**
          * Magnification mode value that magnifies magnify particular region in a window
          * @hide
          */
+        @TestApi
         public static final int ACCESSIBILITY_MAGNIFICATION_MODE_WINDOW = 0x2;
 
         /**
@@ -9041,6 +9100,7 @@ public final class Settings {
          * region in a window.
          * @hide
          */
+        @TestApi
         public static final int ACCESSIBILITY_MAGNIFICATION_MODE_ALL = 0x3;
 
         /**
@@ -9052,8 +9112,18 @@ public final class Settings {
          * @see#ACCESSIBILITY_MAGNIFICATION_MODE_ALL
          * @hide
          */
+        @TestApi
         public static final String ACCESSIBILITY_MAGNIFICATION_CAPABILITY =
                 "accessibility_magnification_capability";
+
+        /**
+         *  Whether to show the window magnification prompt dialog when the user uses full-screen
+         *  magnification first time after database is upgraded .
+         *
+         * @hide
+         */
+        public static final String ACCESSIBILITY_SHOW_WINDOW_MAGNIFICATION_PROMPT =
+                "accessibility_show_window_magnification_prompt";
 
         /**
          * Whether the Adaptive connectivity option is enabled.
@@ -9076,6 +9146,22 @@ public final class Settings {
                 ENABLED_NOTIFICATION_ASSISTANT,
                 ENABLED_NOTIFICATION_POLICY_ACCESS_PACKAGES
         };
+
+        /**
+         * How long Assistant handles have enabled in milliseconds.
+         *
+         * @hide
+         */
+        public static final String ASSIST_HANDLES_LEARNING_TIME_ELAPSED_MILLIS =
+                "reminder_exp_learning_time_elapsed";
+
+        /**
+         * How many times the Assistant has been triggered using the touch gesture.
+         *
+         * @hide
+         */
+        public static final String ASSIST_HANDLES_LEARNING_EVENT_COUNT =
+                "reminder_exp_learning_event_count";
 
         /**
          * These entries are considered common between the personal and the managed profile,
@@ -9686,6 +9772,30 @@ public final class Settings {
         public static final String DEVELOPMENT_RENDER_SHADOWS_IN_COMPOSITOR =
                 "render_shadows_in_compositor";
 
+        /**
+         * If true, submit buffers using blast in ViewRootImpl.
+         * (0 = false, 1 = true)
+         * @hide
+         */
+        public static final String DEVELOPMENT_USE_BLAST_ADAPTER_VR =
+                "use_blast_adapter_vr";
+
+        /**
+         * If true, submit buffers using blast in SurfaceView.
+         * (0 = false, 1 = true)
+         * @hide
+         */
+        public static final String DEVELOPMENT_USE_BLAST_ADAPTER_SV =
+                "use_blast_adapter_sv";
+
+        /**
+         * If {@code true}, vendor provided window manager display settings will be ignored.
+         * (0 = false, 1 = true)
+         * @hide
+         */
+        public static final String DEVELOPMENT_IGNORE_VENDOR_DISPLAY_SETTINGS =
+                "ignore_vendor_display_settings";
+
        /**
         * Whether user has enabled development settings.
         */
@@ -9814,6 +9924,13 @@ public final class Settings {
                 "hdmi_cec_switch_enabled";
 
         /**
+         * HDMI CEC version to use. Defaults to v1.4b.
+         * @hide
+         */
+        public static final String HDMI_CEC_VERSION =
+                "hdmi_cec_version";
+
+        /**
          * Whether TV will automatically turn on upon reception of the CEC command
          * &lt;Text View On&gt; or &lt;Image View On&gt;. (0 = false, 1 = true)
          *
@@ -9832,13 +9949,19 @@ public final class Settings {
                 "hdmi_control_auto_device_off_enabled";
 
         /**
-         * Property to decide which devices the playback device can send a <Standby> message to upon
-         * going to sleep. Supported values are:
+         * Property to decide which devices the playback device can send a <Standby> message to
+         * upon going to sleep. It additionally controls whether a playback device attempts to turn
+         * on the connected Audio system when waking up. Supported values are:
          * <ul>
-         * <li>{@link HdmiControlManager#SEND_STANDBY_ON_SLEEP_TO_TV} to TV only.</li>
-         * <li>{@link HdmiControlManager#SEND_STANDBY_ON_SLEEP_BROADCAST} to all devices in the
-         * network.</li>
-         * <li>{@link HdmiControlManager#SEND_STANDBY_ON_SLEEP_NONE} no <Standby> message sent.</li>
+         * <li>{@link HdmiControlManager#SEND_STANDBY_ON_SLEEP_TO_TV} Upon going to sleep, device
+         * sends {@code <Standby>} to TV only. Upon waking up, device does not turn on the Audio
+         * system via {@code <System Audio Mode Request>}.</li>
+         * <li>{@link HdmiControlManager#SEND_STANDBY_ON_SLEEP_BROADCAST} Upon going to sleep,
+         * device sends {@code <Standby>} to all devices in the network. Upon waking up, device
+         * attempts to turn on the Audio system via {@code <System Audio Mode Request>}.</li>
+         * <li>{@link HdmiControlManager#SEND_STANDBY_ON_SLEEP_NONE} Upon going to sleep, device
+         * does not send any {@code <Standby>} message. Upon waking up, device does not turn on the
+         * Audio system via {@code <System Audio Mode Request>}.</li>
          * </ul>
          *
          * @hide
@@ -10006,7 +10129,7 @@ public final class Settings {
         * scorer app, external network scores will neither be requested nor accepted.
         * @hide
         */
-       @UnsupportedAppUsage
+       @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
        public static final String NETWORK_SCORER_APP = "network_scorer_app";
 
         /**
@@ -10286,7 +10409,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String TETHER_OFFLOAD_DISABLED = "tether_offload_disabled";
 
         /**
@@ -10347,19 +10469,11 @@ public final class Settings {
                 "webview_data_reduction_proxy_key";
 
        /**
-        * Whether or not the WebView fallback mechanism should be enabled.
-        * 0=disabled, 1=enabled.
-        * @hide
-        */
-       public static final String WEBVIEW_FALLBACK_LOGIC_ENABLED =
-               "webview_fallback_logic_enabled";
-
-       /**
         * Name of the package used as WebView provider (if unset the provider is instead determined
         * by the system).
         * @hide
         */
-       @UnsupportedAppUsage
+       @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
        public static final String WEBVIEW_PROVIDER = "webview_provider";
 
        /**
@@ -10609,7 +10723,7 @@ public final class Settings {
          *    0 = Disabled
          *    1 = Enabled
          *
-         * Most readers of this setting should simply check if value == 1 to determined the
+         * Most readers of this setting should simply check if value == 1 to determine the
          * enabled state.
          * @hide
          * @deprecated To be removed.
@@ -10751,7 +10865,7 @@ public final class Settings {
         * the setting needs to be set to 0 to disable it.
         * @hide
         */
-       @UnsupportedAppUsage
+       @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
        public static final String WIFI_WATCHDOG_POOR_NETWORK_TEST_ENABLED =
                "wifi_watchdog_poor_network_test_enabled";
 
@@ -10929,7 +11043,7 @@ public final class Settings {
          *
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         @TestApi
         public static final String OVERLAY_DISPLAY_DEVICES = "overlay_display_devices";
 
@@ -11571,7 +11685,7 @@ public final class Settings {
          * @hide
          * @see com.android.server.power.batterysaver.BatterySaverPolicy
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         @TestApi
         public static final String BATTERY_SAVER_CONSTANTS = "battery_saver_constants";
 
@@ -11750,37 +11864,6 @@ public final class Settings {
         public static final String APP_TIME_LIMIT_USAGE_SOURCE = "app_time_limit_usage_source";
 
         /**
-         * App standby (app idle) specific settings.
-         * This is encoded as a key=value list, separated by commas. Ex:
-         * <p>
-         * "idle_duration=5000,prediction_timeout=4500,screen_thresholds=0/0/60000/120000"
-         * <p>
-         * All durations are in millis.
-         * Array values are separated by forward slashes
-         * The following keys are supported:
-         *
-         * <pre>
-         * screen_thresholds                (long[4])
-         * elapsed_thresholds               (long[4])
-         * strong_usage_duration            (long)
-         * notification_seen_duration       (long)
-         * system_update_usage_duration     (long)
-         * prediction_timeout               (long)
-         * sync_adapter_duration            (long)
-         * exempted_sync_duration           (long)
-         * system_interaction_duration      (long)
-         * initial_foreground_service_start_duration (long)
-         * cross_profile_apps_share_standby_buckets  (boolean)
-         * </pre>
-         *
-         * <p>
-         * Type: string
-         * @hide
-         * @see com.android.server.usage.AppStandbyController
-         */
-        public static final String APP_IDLE_CONSTANTS = "app_idle_constants";
-
-        /**
          * Enable ART bytecode verification verifications for debuggable apps.
          * 0 = disable, 1 = enable.
          * @hide
@@ -11806,44 +11889,6 @@ public final class Settings {
          * @see com.android.server.power.PowerManagerConstants
          */
         public static final String POWER_MANAGER_CONSTANTS = "power_manager_constants";
-
-        /**
-         * Alarm manager specific settings.
-         * This is encoded as a key=value list, separated by commas. Ex:
-         *
-         * "min_futurity=5000,allow_while_idle_short_time=4500"
-         *
-         * The following keys are supported:
-         *
-         * <pre>
-         * min_futurity                         (long)
-         * min_interval                         (long)
-         * allow_while_idle_short_time          (long)
-         * allow_while_idle_long_time           (long)
-         * allow_while_idle_whitelist_duration  (long)
-         * </pre>
-         *
-         * <p>
-         * Type: string
-         * @hide
-         * @see com.android.server.AlarmManagerService.Constants
-         */
-        public static final String ALARM_MANAGER_CONSTANTS = "alarm_manager_constants";
-
-        /**
-         * Job scheduler QuotaController specific settings.
-         * This is encoded as a key=value list, separated by commas. Ex:
-         *
-         * "max_job_count_working=5,max_job_count_rare=2"
-         *
-         * <p>
-         * Type: string
-         *
-         * @hide
-         * @see com.android.server.job.JobSchedulerService.Constants
-         */
-        public static final String JOB_SCHEDULER_QUOTA_CONTROLLER_CONSTANTS =
-                "job_scheduler_quota_controller_constants";
 
         /**
          * ShortcutManager specific settings.
@@ -12251,7 +12296,7 @@ public final class Settings {
          * See RIL_PreferredNetworkType in ril.h
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String PREFERRED_NETWORK_MODE =
                 "preferred_network_mode";
 
@@ -12285,45 +12330,50 @@ public final class Settings {
          * to dumpable apps that opt-in.
          * @hide
          */
-        public static final String GLOBAL_SETTINGS_ANGLE_DEBUG_PACKAGE =
-                "angle_debug_package";
+        public static final String ANGLE_DEBUG_PACKAGE = "angle_debug_package";
 
         /**
          * Force all PKGs to use ANGLE, regardless of any other settings
          * The value is a boolean (1 or 0).
          * @hide
          */
-        public static final String GLOBAL_SETTINGS_ANGLE_GL_DRIVER_ALL_ANGLE =
-                "angle_gl_driver_all_angle";
+        public static final String ANGLE_GL_DRIVER_ALL_ANGLE = "angle_gl_driver_all_angle";
 
         /**
          * List of PKGs that have an OpenGL driver selected
          * @hide
          */
-        public static final String GLOBAL_SETTINGS_ANGLE_GL_DRIVER_SELECTION_PKGS =
+        public static final String ANGLE_GL_DRIVER_SELECTION_PKGS =
                 "angle_gl_driver_selection_pkgs";
 
         /**
          * List of selected OpenGL drivers, corresponding to the PKGs in GLOBAL_SETTINGS_DRIVER_PKGS
          * @hide
          */
-        public static final String GLOBAL_SETTINGS_ANGLE_GL_DRIVER_SELECTION_VALUES =
+        public static final String ANGLE_GL_DRIVER_SELECTION_VALUES =
                 "angle_gl_driver_selection_values";
 
         /**
          * List of package names that should check ANGLE rules
          * @hide
          */
-        public static final String GLOBAL_SETTINGS_ANGLE_ALLOWLIST =
-                "angle_allowlist";
+        public static final String ANGLE_ALLOWLIST = "angle_allowlist";
+
+        /**
+         * Lists of ANGLE EGL features for debugging.
+         * Each list of features is separated by a comma, each feature in each list is separated by
+         * a colon.
+         * e.g. feature1:feature2:feature3,feature1:feature3:feature5
+         * @hide
+         */
+        public static final String ANGLE_EGL_FEATURES = "angle_egl_features";
 
         /**
          * Show the "ANGLE In Use" dialog box to the user when ANGLE is the OpenGL driver.
          * The value is a boolean (1 or 0).
          * @hide
          */
-        public static final String GLOBAL_SETTINGS_SHOW_ANGLE_IN_USE_DIALOG_BOX =
-                "show_angle_in_use_dialog_box";
+        public static final String SHOW_ANGLE_IN_USE_DIALOG_BOX = "show_angle_in_use_dialog_box";
 
         /**
          * Updatable driver global preference for all Apps.
@@ -12853,7 +12903,7 @@ public final class Settings {
         @UnsupportedAppUsage
         public static final int ZEN_MODE_NO_INTERRUPTIONS = 2;
         /** @hide */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final int ZEN_MODE_ALARMS = 3;
 
         /** @hide */ public static String zenModeToString(int mode) {
@@ -12916,15 +12966,15 @@ public final class Settings {
          *
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String HEADS_UP_NOTIFICATIONS_ENABLED =
                 "heads_up_notifications_enabled";
 
         /** @hide */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final int HEADS_UP_OFF = 0;
         /** @hide */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final int HEADS_UP_ON = 1;
 
         /**
@@ -13282,7 +13332,6 @@ public final class Settings {
          * @hide
          */
         @SystemApi
-        @TestApi
         public static final String AUTOFILL_COMPAT_MODE_ALLOWED_PACKAGES =
                 "autofill_compat_mode_allowed_packages";
 
@@ -13330,6 +13379,7 @@ public final class Settings {
          *
          * @hide
          */
+        @TestApi
         public static final String HIDDEN_API_POLICY = "hidden_api_policy";
 
         /**
@@ -13387,15 +13437,6 @@ public final class Settings {
                 "power_button_very_long_press";
 
         /**
-         * Global settings that shouldn't be persisted.
-         *
-         * @hide
-         */
-        public static final String[] TRANSIENT_SETTINGS = {
-                LOCATION_GLOBAL_KILL_SWITCH,
-        };
-
-        /**
          * Keys we no longer back up under the current schema, but want to continue to
          * process when restoring historical backup datasets.
          *
@@ -13407,7 +13448,7 @@ public final class Settings {
         public static final String[] LEGACY_RESTORE_SETTINGS = {
         };
 
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         private static final ContentProviderHolder sProviderHolder =
                 new ContentProviderHolder(CONTENT_URI);
 
@@ -13457,7 +13498,7 @@ public final class Settings {
         }
 
         /** @hide */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static String getStringForUser(ContentResolver resolver, String name,
                 int userHandle) {
             if (MOVED_TO_SECURE.contains(name)) {
@@ -13607,7 +13648,7 @@ public final class Settings {
         }
 
         /** @hide */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static boolean putStringForUser(ContentResolver resolver,
                 String name, String value, int userHandle) {
             return putStringForUser(resolver, name, value, null, false, userHandle,
@@ -14265,18 +14306,17 @@ public final class Settings {
                 "backup_agent_timeout_parameters";
 
         /**
-         * Blacklist of GNSS satellites.
+         * Blocklist of GNSS satellites.
          *
          * This is a list of integers separated by commas to represent pairs of (constellation,
          * svid). Thus, the number of integers should be even.
          *
          * E.g.: "3,0,5,24" denotes (constellation=3, svid=0) and (constellation=5, svid=24) are
-         * blacklisted. Note that svid=0 denotes all svids in the
-         * constellation are blacklisted.
+         * blocklisted. Note that svid=0 denotes all svids in the constellation are blocklisted.
          *
          * @hide
          */
-        public static final String GNSS_SATELLITE_BLACKLIST = "gnss_satellite_blacklist";
+        public static final String GNSS_SATELLITE_BLOCKLIST = "gnss_satellite_blocklist";
 
         /**
          * Duration of updates in millisecond for GNSS location request from HAL to framework.
@@ -14457,6 +14497,98 @@ public final class Settings {
          */
         public static final String NR_NSA_TRACKING_SCREEN_OFF_MODE =
                 "nr_nsa_tracking_screen_off_mode";
+
+        /**
+         * Whether to show People Space.
+         * Values are:
+         * 0: Disabled (default)
+         * 1: Enabled
+         * @hide
+         */
+        public static final String SHOW_PEOPLE_SPACE = "show_people_space";
+
+        /**
+         * Which types of conversations to show in People Space.
+         * Values are:
+         * 0: All conversations (default)
+         * 1: Priority conversations only
+         * @hide
+         */
+        public static final String PEOPLE_SPACE_CONVERSATION_TYPE =
+                "people_space_conversation_type";
+
+        /**
+         * Whether to show new lockscreen & AOD UI.
+         * Values are:
+         * 0: Disabled (default)
+         * 1: Enabled
+         * @hide
+         */
+        public static final String SHOW_NEW_LOCKSCREEN = "show_new_lockscreen";
+
+        /**
+         * Whether to show new notification dismissal.
+         * Values are:
+         * 0: Disabled
+         * 1: Enabled
+         * @hide
+         */
+        public static final String SHOW_NEW_NOTIF_DISMISS = "show_new_notif_dismiss";
+
+        /**
+         * Block untrusted touches mode.
+         *
+         * Can be one of:
+         * <ul>
+         *      <li>0 = {@link BlockUntrustedTouchesMode#DISABLED}: Feature is off.
+         *      <li>1 = {@link BlockUntrustedTouchesMode#PERMISSIVE}: Untrusted touches are flagged
+         *          but not blocked
+         *      <li>2 = {@link BlockUntrustedTouchesMode#BLOCK}: Untrusted touches are blocked
+         * </ul>
+         *
+         * @hide
+         */
+        public static final String BLOCK_UNTRUSTED_TOUCHES_MODE = "block_untrusted_touches";
+
+        /**
+         * The maximum allowed obscuring opacity by UID to propagate touches.
+         *
+         * For certain window types (eg. SAWs), the decision of honoring {@link LayoutParams
+         * #FLAG_NOT_TOUCHABLE} or not depends on the combined obscuring opacity of the windows
+         * above the touch-consuming window.
+         *
+         * For a certain UID:
+         * <ul>
+         *     <li>If it's the same as the UID of the touch-consuming window, allow it to propagate
+         *     the touch.
+         *     <li>Otherwise take all its windows of eligible window types above the touch-consuming
+         *     window, compute their combined obscuring opacity considering that {@code
+         *     opacity(A, B) = 1 - (1 - opacity(A))*(1 - opacity(B))}. If the computed value is
+         *     lesser than or equal to this setting and there are no other windows preventing the
+         *     touch, allow the UID to propagate the touch.
+         * </ul>
+         *
+         * @see android.hardware.input.InputManager#getMaximumObscuringOpacityForTouch(Context)
+         * @see android.hardware.input.InputManager#setMaximumObscuringOpacityForTouch(Context,
+         * float)
+         *
+         * @hide
+         */
+        public static final String MAXIMUM_OBSCURING_OPACITY_FOR_TOUCH =
+                "maximum_obscuring_opacity_for_touch";
+
+        /**
+         * LatencyTracker settings.
+         *
+         * The following strings are supported as keys:
+         * <pre>
+         *     enabled              (boolean)
+         *     sampling_interval    (int)
+         * </pre>
+         *
+         * @hide
+         */
+        public static final String LATENCY_TRACKER = "latency_tracker";
     }
 
     /**
@@ -15090,7 +15222,7 @@ public final class Settings {
      * callingPackage, a negative result will be returned.
      * @hide
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static boolean isCallingPackageAllowedToWriteSettings(Context context, int uid,
             String callingPackage, boolean throwException) {
         return isCallingPackageAllowedToPerformAppOpsProtectedOperation(context, uid,

@@ -22,6 +22,7 @@ import android.content.Context;
 import android.database.ContentObserver;
 import android.net.Uri;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.os.PowerManager;
 import android.os.UserHandle;
@@ -36,7 +37,7 @@ import java.util.Queue;
  * (new) system for storing the brightness. It has methods to convert between the two and also
  * observes for when one of the settings is changed and syncs this with the other.
  */
-public class BrightnessSynchronizer{
+public class BrightnessSynchronizer {
 
     private static final int MSG_UPDATE_FLOAT = 1;
     private static final int MSG_UPDATE_INT = 2;
@@ -55,7 +56,7 @@ public class BrightnessSynchronizer{
 
     private final Queue<Object> mWriteHistory = new LinkedList<>();
 
-    private final Handler mHandler = new Handler() {
+    private final Handler mHandler = new Handler(Looper.getMainLooper()) {
         @Override
         public void handleMessage(Message msg) {
             switch (msg.what) {
@@ -72,12 +73,39 @@ public class BrightnessSynchronizer{
         }
     };
 
+    private float mPreferredSettingValue;
 
     public BrightnessSynchronizer(Context context) {
-        final BrightnessSyncObserver mBrightnessSyncObserver;
         mContext = context;
-        mBrightnessSyncObserver = new BrightnessSyncObserver(mHandler);
-        mBrightnessSyncObserver.startObserving();
+    }
+
+    /**
+     * Starts brightnessSyncObserver to ensure that the float and int brightness values stay
+     * in sync.
+     * This also ensures that values are synchronized at system start up too.
+     * So we force an update to the int value, since float is the source of truth. Fallback to int
+     * value, if float is invalid. If both are invalid, use default float value from config.
+     */
+    public void startSynchronizing() {
+        final BrightnessSyncObserver brightnessSyncObserver;
+        brightnessSyncObserver = new BrightnessSyncObserver(mHandler);
+        brightnessSyncObserver.startObserving();
+
+        final float currentFloatBrightness = getScreenBrightnessFloat(mContext);
+        final int currentIntBrightness = getScreenBrightnessInt(mContext);
+
+        if (!Float.isNaN(currentFloatBrightness)) {
+            updateBrightnessIntFromFloat(currentFloatBrightness);
+        } else if (currentIntBrightness != -1) {
+            updateBrightnessFloatFromInt(currentIntBrightness);
+        } else {
+            final float defaultBrightness = mContext.getResources().getFloat(
+                    com.android.internal.R.dimen.config_screenBrightnessSettingDefaultFloat);
+            Settings.System.putFloatForUser(mContext.getContentResolver(),
+                    Settings.System.SCREEN_BRIGHTNESS_FLOAT, defaultBrightness,
+                    UserHandle.USER_CURRENT);
+
+        }
     }
 
     /**
@@ -132,10 +160,9 @@ public class BrightnessSynchronizer{
 
     private static int getScreenBrightnessInt(Context context) {
         return Settings.System.getIntForUser(context.getContentResolver(),
-                Settings.System.SCREEN_BRIGHTNESS, 0, UserHandle.USER_CURRENT);
+                Settings.System.SCREEN_BRIGHTNESS, PowerManager.BRIGHTNESS_INVALID,
+                UserHandle.USER_CURRENT);
     }
-
-    private float mPreferredSettingValue;
 
     /**
      * Updates the float setting based on a passed in int value. This is called whenever the int
@@ -225,10 +252,12 @@ public class BrightnessSynchronizer{
             }
             if (BRIGHTNESS_URI.equals(uri)) {
                 int currentBrightness = getScreenBrightnessInt(mContext);
+                mHandler.removeMessages(MSG_UPDATE_FLOAT);
                 mHandler.obtainMessage(MSG_UPDATE_FLOAT, currentBrightness, 0).sendToTarget();
             } else if (BRIGHTNESS_FLOAT_URI.equals(uri)) {
                 float currentFloat = getScreenBrightnessFloat(mContext);
                 int toSend = Float.floatToIntBits(currentFloat);
+                mHandler.removeMessages(MSG_UPDATE_INT);
                 mHandler.obtainMessage(MSG_UPDATE_INT, toSend, 0).sendToTarget();
             }
         }

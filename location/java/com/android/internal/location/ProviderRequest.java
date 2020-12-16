@@ -16,10 +16,15 @@
 
 package com.android.internal.location;
 
+import static android.location.LocationRequest.QUALITY_BALANCED_POWER_ACCURACY;
+import static android.location.LocationRequest.QUALITY_HIGH_ACCURACY;
+import static android.location.LocationRequest.QUALITY_LOW_POWER;
+
 import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.location.LocationRequest;
+import android.location.LocationRequest.Quality;
 import android.os.Build;
 import android.os.Parcel;
 import android.os.Parcelable;
@@ -41,7 +46,7 @@ public final class ProviderRequest implements Parcelable {
     public static final long INTERVAL_DISABLED = Long.MAX_VALUE;
 
     public static final ProviderRequest EMPTY_REQUEST = new ProviderRequest(
-            INTERVAL_DISABLED, false, false, Collections.emptyList(), new WorkSource());
+            INTERVAL_DISABLED, QUALITY_BALANCED_POWER_ACCURACY, 0, false, false, new WorkSource());
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, publicAlternatives = "{@link "
             + "ProviderRequest}")
@@ -49,6 +54,8 @@ public final class ProviderRequest implements Parcelable {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, publicAlternatives = "{@link "
             + "ProviderRequest}")
     public final long interval;
+    private final @Quality int mQuality;
+    private final long mMaxUpdateDelayMillis;
     private final boolean mLowPower;
     private final boolean mLocationSettingsIgnored;
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, publicAlternatives = "{@link "
@@ -56,15 +63,30 @@ public final class ProviderRequest implements Parcelable {
     public final List<LocationRequest> locationRequests;
     private final WorkSource mWorkSource;
 
-    private ProviderRequest(long intervalMillis, boolean lowPower,
-            boolean locationSettingsIgnored, @NonNull List<LocationRequest> locationRequests,
+    private ProviderRequest(
+            long intervalMillis,
+            @Quality int quality,
+            long maxUpdateDelayMillis,
+            boolean lowPower,
+            boolean locationSettingsIgnored,
             @NonNull WorkSource workSource) {
         reportLocation = intervalMillis != INTERVAL_DISABLED;
         interval = intervalMillis;
+        mQuality = quality;
+        mMaxUpdateDelayMillis = maxUpdateDelayMillis;
         mLowPower = lowPower;
         mLocationSettingsIgnored = locationSettingsIgnored;
-        this.locationRequests = locationRequests;
-        mWorkSource = workSource;
+        if (intervalMillis != INTERVAL_DISABLED) {
+            locationRequests = Collections.singletonList(new LocationRequest.Builder(intervalMillis)
+                    .setQuality(quality)
+                    .setLowPower(lowPower)
+                    .setLocationSettingsIgnored(locationSettingsIgnored)
+                    .setWorkSource(workSource)
+                    .build());
+        } else {
+            locationRequests = Collections.emptyList();
+        }
+        mWorkSource = Objects.requireNonNull(workSource);
     }
 
     /**
@@ -84,6 +106,26 @@ public final class ProviderRequest implements Parcelable {
     }
 
     /**
+     * The quality hint for this location request. The quality hint informs the provider how it
+     * should attempt to manage any accuracy vs power tradeoffs while attempting to satisfy this
+     * provider request.
+     */
+    public @Quality int getQuality() {
+        return mQuality;
+    }
+
+    /**
+     * The maximum time any location update may be delayed, and thus grouped with following updates
+     * to enable location batching. If the maximum update delay is equal to or greater than
+     * twice the interval, then the provider may provide batched results if possible. The maximum
+     * batch size a provider is allowed to return is the maximum update delay divided by the
+     * interval.
+     */
+    public @IntRange(from = 0) long getMaxUpdateDelayMillis() {
+        return mMaxUpdateDelayMillis;
+    }
+
+    /**
      * Whether any applicable hardware low power modes should be used to satisfy this request.
      */
     public boolean isLowPower() {
@@ -100,13 +142,6 @@ public final class ProviderRequest implements Parcelable {
     }
 
     /**
-     * The full list of location requests contributing to this provider request.
-     */
-    public @NonNull List<LocationRequest> getLocationRequests() {
-        return locationRequests;
-    }
-
-    /**
      * The power blame for this provider request.
      */
     public @NonNull WorkSource getWorkSource() {
@@ -117,13 +152,18 @@ public final class ProviderRequest implements Parcelable {
             new Parcelable.Creator<ProviderRequest>() {
                 @Override
                 public ProviderRequest createFromParcel(Parcel in) {
-                    return new ProviderRequest(
-                            /* intervalMillis= */ in.readLong(),
-                            /* lowPower= */ in.readBoolean(),
-                            /* locationSettingsIgnored= */ in.readBoolean(),
-                            /* locationRequests= */
-                            in.createTypedArrayList(LocationRequest.CREATOR),
-                            /* workSource= */ in.readTypedObject(WorkSource.CREATOR));
+                    long intervalMillis = in.readLong();
+                    if (intervalMillis == INTERVAL_DISABLED) {
+                        return EMPTY_REQUEST;
+                    } else {
+                        return new ProviderRequest(
+                                intervalMillis,
+                                /* quality= */ in.readInt(),
+                                /* maxUpdateDelayMillis= */ in.readLong(),
+                                /* lowPower= */ in.readBoolean(),
+                                /* locationSettingsIgnored= */ in.readBoolean(),
+                                /* workSource= */ in.readTypedObject(WorkSource.CREATOR));
+                    }
                 }
 
                 @Override
@@ -140,10 +180,13 @@ public final class ProviderRequest implements Parcelable {
     @Override
     public void writeToParcel(Parcel parcel, int flags) {
         parcel.writeLong(interval);
-        parcel.writeBoolean(mLowPower);
-        parcel.writeBoolean(mLocationSettingsIgnored);
-        parcel.writeTypedList(locationRequests);
-        parcel.writeTypedObject(mWorkSource, flags);
+        if (interval != INTERVAL_DISABLED) {
+            parcel.writeInt(mQuality);
+            parcel.writeLong(mMaxUpdateDelayMillis);
+            parcel.writeBoolean(mLowPower);
+            parcel.writeBoolean(mLocationSettingsIgnored);
+            parcel.writeTypedObject(mWorkSource, flags);
+        }
     }
 
     @Override
@@ -160,16 +203,17 @@ public final class ProviderRequest implements Parcelable {
             return that.interval == INTERVAL_DISABLED;
         } else {
             return interval == that.interval
+                    && mQuality == that.mQuality
+                    && mMaxUpdateDelayMillis == that.mMaxUpdateDelayMillis
                     && mLowPower == that.mLowPower
                     && mLocationSettingsIgnored == that.mLocationSettingsIgnored
-                    && locationRequests.equals(that.locationRequests)
                     && mWorkSource.equals(that.mWorkSource);
         }
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(interval, mWorkSource);
+        return Objects.hash(interval, mQuality, mWorkSource);
     }
 
     @Override
@@ -179,6 +223,17 @@ public final class ProviderRequest implements Parcelable {
         if (interval != INTERVAL_DISABLED) {
             s.append("@");
             TimeUtils.formatDuration(interval, s);
+            if (mQuality != QUALITY_BALANCED_POWER_ACCURACY) {
+                if (mQuality == QUALITY_HIGH_ACCURACY) {
+                    s.append(", HIGH_ACCURACY");
+                } else if (mQuality == QUALITY_LOW_POWER) {
+                    s.append(", LOW_POWER");
+                }
+            }
+            if (mMaxUpdateDelayMillis / 2 > interval) {
+                s.append(", maxUpdateDelay=");
+                TimeUtils.formatDuration(mMaxUpdateDelayMillis, s);
+            }
             if (mLowPower) {
                 s.append(", lowPower");
             }
@@ -200,9 +255,10 @@ public final class ProviderRequest implements Parcelable {
      */
     public static class Builder {
         private long mIntervalMillis = INTERVAL_DISABLED;
+        private int mQuality = QUALITY_BALANCED_POWER_ACCURACY;
+        private long mMaxUpdateDelayMillis = 0;
         private boolean mLowPower;
         private boolean mLocationSettingsIgnored;
-        private List<LocationRequest> mLocationRequests = Collections.emptyList();
         private WorkSource mWorkSource = new WorkSource();
 
         /**
@@ -212,6 +268,33 @@ public final class ProviderRequest implements Parcelable {
         public @NonNull Builder setIntervalMillis(@IntRange(from = 0) long intervalMillis) {
             mIntervalMillis = Preconditions.checkArgumentInRange(intervalMillis, 0, Long.MAX_VALUE,
                     "intervalMillis");
+            return this;
+        }
+
+        /**
+         * Sets the request quality. The quality is a hint to providers on how they should weigh
+         * power vs accuracy tradeoffs. High accuracy locations may cost more power to produce, and
+         * lower accuracy locations may cost less power to produce. Defaults to
+         * {@link LocationRequest#QUALITY_BALANCED_POWER_ACCURACY}.
+         */
+        public @NonNull Builder setQuality(@Quality int quality) {
+            Preconditions.checkArgument(
+                    quality == QUALITY_LOW_POWER || quality == QUALITY_BALANCED_POWER_ACCURACY
+                            || quality == QUALITY_HIGH_ACCURACY);
+            mQuality = quality;
+            return this;
+        }
+
+        /**
+         * Sets the maximum time any location update may be delayed, and thus grouped with following
+         * updates to enable location batching. If the maximum update delay is equal to or greater
+         * than twice the interval, then location providers may provide batched results. Defaults to
+         * 0.
+         */
+        public @NonNull Builder setMaxUpdateDelayMillis(
+                @IntRange(from = 0) long maxUpdateDelayMillis) {
+            mMaxUpdateDelayMillis = Preconditions.checkArgumentInRange(maxUpdateDelayMillis, 0,
+                    Long.MAX_VALUE, "maxUpdateDelayMillis");
             return this;
         }
 
@@ -232,15 +315,6 @@ public final class ProviderRequest implements Parcelable {
         }
 
         /**
-         * Sets the {@link LocationRequest}s associated with this request. Empty by default.
-         */
-        public @NonNull Builder setLocationRequests(
-                @NonNull List<LocationRequest> locationRequests) {
-            this.mLocationRequests = Objects.requireNonNull(locationRequests);
-            return this;
-        }
-
-        /**
          * Sets the work source for power blame. Empty by default.
          */
         public @NonNull Builder setWorkSource(@NonNull WorkSource workSource) {
@@ -255,8 +329,13 @@ public final class ProviderRequest implements Parcelable {
             if (mIntervalMillis == INTERVAL_DISABLED) {
                 return EMPTY_REQUEST;
             } else {
-                return new ProviderRequest(mIntervalMillis, mLowPower, mLocationSettingsIgnored,
-                        mLocationRequests, mWorkSource);
+                return new ProviderRequest(
+                        mIntervalMillis,
+                        mQuality,
+                        mMaxUpdateDelayMillis,
+                        mLowPower,
+                        mLocationSettingsIgnored,
+                        mWorkSource);
             }
         }
     }

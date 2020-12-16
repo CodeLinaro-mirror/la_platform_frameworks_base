@@ -173,13 +173,6 @@ public abstract class ActivityTaskManagerInternal {
     public abstract boolean hasResumedActivity(int uid);
 
     /**
-     * Notify listeners that contents are drawn for the first time on a single task display.
-     *
-     * @param displayId An ID of the display on which contents are drawn.
-     */
-    public abstract void notifySingleTaskDisplayDrawn(int displayId);
-
-    /**
      * Start activity {@code intents} as if {@code packageName/featureId} on user {@code userId} did
      * it.
      *
@@ -283,7 +276,7 @@ public abstract class ActivityTaskManagerInternal {
     /**
      * Cancels any currently running recents animation.
      */
-    public abstract void cancelRecentsAnimation(boolean restoreHomeStackPosition);
+    public abstract void cancelRecentsAnimation(boolean restoreHomeRootTaskPosition);
 
     /**
      * This enforces {@code func} can only be called if either the caller is Recents activity or
@@ -324,7 +317,6 @@ public abstract class ActivityTaskManagerInternal {
     public abstract void onProcessRemoved(String name, int uid);
     public abstract void onCleanUpApplicationRecord(WindowProcessController proc);
     public abstract int getTopProcessState();
-    public abstract boolean isHeavyWeightProcess(WindowProcessController proc);
     public abstract void clearHeavyWeightProcessIfEquals(WindowProcessController proc);
     public abstract void finishHeavyWeightApp();
 
@@ -499,9 +491,6 @@ public abstract class ActivityTaskManagerInternal {
     /** @return the process for the top-most resumed activity in the system. */
     public abstract WindowProcessController getTopApp();
 
-    /** Generate oom-score-adjustment rank for all tasks in the system based on z-order. */
-    public abstract void rankTaskLayersIfNeeded();
-
     /** Destroy all activities. */
     public abstract void scheduleDestroyAllActivities(String reason);
 
@@ -544,9 +533,6 @@ public abstract class ActivityTaskManagerInternal {
     /** Flush recent tasks to disk. */
     public abstract void flushRecentTasks();
 
-    public abstract WindowProcessController getHomeProcess();
-    public abstract WindowProcessController getPreviousProcess();
-
     public abstract void clearLockedTasks(String reason);
     public abstract void updateUserConfiguration();
     public abstract boolean canShowErrorDialogs();
@@ -576,4 +562,10 @@ public abstract class ActivityTaskManagerInternal {
 
     /** Set all associated companion app that belongs to an userId. */
     public abstract void setCompanionAppPackages(int userId, Set<String> companionAppPackages);
+
+    /**
+     * @param packageName The package to check
+     * @return Whether the package is the base of any locked task
+     */
+    public abstract boolean isBaseOfLockedTask(String packageName);
 }

@@ -37,6 +37,7 @@ import android.graphics.Rect;
 import android.hardware.HardwareBuffer;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.IRemoteCallback;
 import android.os.Parcel;
 import android.os.Parcelable;
@@ -306,6 +307,12 @@ public class ActivityOptions {
     private static final String KEY_REMOTE_ANIMATION_ADAPTER
             = "android:activity.remoteAnimationAdapter";
 
+    /**
+     * @see #setLaunchCookie
+     * @hide
+     */
+    private static final String KEY_LAUNCH_COOKIE = "android.activity.launchCookie";
+
     /** @hide */
     public static final int ANIM_UNDEFINED = -1;
     /** @hide */
@@ -381,6 +388,7 @@ public class ActivityOptions {
     private Bundle mAppVerificationBundle;
     private IAppTransitionAnimationSpecsFuture mSpecsFuture;
     private RemoteAnimationAdapter mRemoteAnimationAdapter;
+    private IBinder mLaunchCookie;
 
     /**
      * Create an ActivityOptions specifying a custom animation to run when
@@ -1071,6 +1079,7 @@ public class ActivityOptions {
                     KEY_SPECS_FUTURE));
         }
         mRemoteAnimationAdapter = opts.getParcelable(KEY_REMOTE_ANIMATION_ADAPTER);
+        mLaunchCookie = opts.getBinder(KEY_LAUNCH_COOKIE);
     }
 
     /**
@@ -1284,10 +1293,10 @@ public class ActivityOptions {
     }
 
     /**
-     * Sets the id of the display where activity should be launched.
-     * An app can launch activities on public displays or private displays that are owned by the app
-     * or where an app already has activities. Otherwise, trying to launch on a private display
-     * or providing an invalid display id will result in an exception.
+     * Sets the id of the display where the activity should be launched.
+     * An app can launch activities on public displays or displays where the app already has
+     * activities. Otherwise, trying to launch on a private display or providing an invalid display
+     * id will result in an exception.
      * <p>
      * Setting launch display id will be ignored on devices that don't have
      * {@link android.content.pm.PackageManager#FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS}.
@@ -1493,6 +1502,25 @@ public class ActivityOptions {
     /**  @hide */
     public boolean isApplyActivityFlagsForBubbles() {
         return mApplyActivityFlagsForBubbles;
+    }
+
+    /**
+     * Sets a launch cookie that can be used to track the activity and task that are launch as a
+     * result of this option.
+     *
+     * @hide
+     */
+    public void setLaunchCookie(IBinder launchCookie) {
+        mLaunchCookie = launchCookie;
+    }
+
+    /**
+     * @return The launch tracking cookie if set or {@code null} otherwise.
+     *
+     * @hide
+     */
+    public IBinder getLaunchCookie() {
+        return mLaunchCookie;
     }
 
     /**
@@ -1717,6 +1745,9 @@ public class ActivityOptions {
         if (mRemoteAnimationAdapter != null) {
             b.putParcelable(KEY_REMOTE_ANIMATION_ADAPTER, mRemoteAnimationAdapter);
         }
+        if (mLaunchCookie != null) {
+            b.putBinder(KEY_LAUNCH_COOKIE, mLaunchCookie);
+        }
         return b;
     }
 
@@ -1910,6 +1941,8 @@ public class ActivityOptions {
         public static final int TYPE_NOTIFICATION = 2;
         /** Launched from lockscreen, including notification while the device is locked. */
         public static final int TYPE_LOCKSCREEN = 3;
+        /** Launched from recents gesture handler. */
+        public static final int TYPE_RECENTS_ANIMATION = 4;
 
         @IntDef(flag = true, prefix = { "TYPE_" }, value = {
                 TYPE_LAUNCHER,

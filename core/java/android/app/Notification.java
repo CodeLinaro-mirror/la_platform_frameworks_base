@@ -82,7 +82,6 @@ import android.util.Pair;
 import android.util.SparseArray;
 import android.util.proto.ProtoOutputStream;
 import android.view.Gravity;
-import android.view.NotificationHeaderView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.contentcapture.ContentCaptureContext;
@@ -898,6 +897,26 @@ public class Notification implements Parcelable
     public static final String CATEGORY_CAR_INFORMATION = "car_information";
 
     /**
+     * Notification category: tracking a user's workout.
+     */
+    public static final String CATEGORY_WORKOUT = "workout";
+
+    /**
+     * Notification category: temporarily sharing location.
+     */
+    public static final String CATEGORY_LOCATION_SHARING = "location_sharing";
+
+    /**
+     * Notification category: running stopwatch.
+     */
+    public static final String CATEGORY_STOPWATCH = "stopwatch";
+
+    /**
+     * Notification category: missed call.
+     */
+    public static final String CATEGORY_MISSED_CALL = "missed_call";
+
+    /**
      * One of the predefined notification categories (see the <code>CATEGORY_*</code> constants)
      * that best describes this Notification.  May be used by the system for ranking and filtering.
      */
@@ -1146,6 +1165,14 @@ public class Notification implements Parcelable
      * notifications, supplied to {@link BigPictureStyle#bigPicture(android.graphics.Bitmap)}.
      */
     public static final String EXTRA_PICTURE = "android.picture";
+
+    /**
+     * {@link #extras} key: this is a content description of the big picture supplied from
+     * {@link BigPictureStyle#bigPicture(Bitmap)}, supplied to
+     * {@link BigPictureStyle#bigPictureContentDescription(CharSequence)}.
+     */
+    public static final String EXTRA_PICTURE_CONTENT_DESCRIPTION =
+            "android.pictureContentDescription";
 
     /**
      * {@link #extras} key: An array of CharSequences to show in {@link InboxStyle} expanded
@@ -2240,7 +2267,8 @@ public class Notification implements Parcelable
                 .setTicker(tickerText)
                 .setContentTitle(contentTitle)
                 .setContentText(contentText)
-                .setContentIntent(PendingIntent.getActivity(context, 0, contentIntent, 0))
+                .setContentIntent(PendingIntent.getActivity(
+                        context, 0, contentIntent, PendingIntent.FLAG_MUTABLE))
                 .buildInto(this);
     }
 
@@ -4824,7 +4852,7 @@ public class Notification implements Parcelable
         private void resetNotificationHeader(RemoteViews contentView) {
             // Small icon doesn't need to be reset, as it's always set. Resetting would prevent
             // re-using the drawable when the notification is updated.
-            contentView.setBoolean(R.id.notification_header, "setExpanded", false);
+            contentView.setBoolean(R.id.expand_button, "setExpanded", false);
             contentView.setTextViewText(R.id.app_name_text, null);
             contentView.setViewVisibility(R.id.chronometer, View.GONE);
             contentView.setViewVisibility(R.id.header_text, View.GONE);
@@ -5266,7 +5294,7 @@ public class Notification implements Parcelable
         /**
          * @hide
          */
-        @UnsupportedAppUsage
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public String loadHeaderAppName() {
             CharSequence name = null;
             final PackageManager pm = mContext.getPackageManager();
@@ -5568,7 +5596,7 @@ public class Notification implements Parcelable
          */
         public static void makeHeaderExpanded(RemoteViews result) {
             if (result != null) {
-                result.setBoolean(R.id.notification_header, "setExpanded", true);
+                result.setBoolean(R.id.expand_button, "setExpanded", true);
             }
         }
 
@@ -5861,24 +5889,16 @@ public class Notification implements Parcelable
         }
 
         /**
-         * Apply any necessariy colors to the small icon
+         * Apply any necessary colors to the small icon
          */
         private void processSmallIconColor(Icon smallIcon, RemoteViews contentView,
                 StandardTemplateParams p) {
             boolean colorable = !isLegacy() || getColorUtil().isGrayscaleIcon(mContext, smallIcon);
-            int color;
-            if (isColorized(p)) {
-                color = getPrimaryTextColor(p);
-            } else {
-                color = resolveContrastColor(p);
-            }
-            if (colorable) {
-                contentView.setDrawableTint(R.id.icon, false, color,
-                        PorterDuff.Mode.SRC_ATOP);
-
-            }
+            int color = isColorized(p) ? getPrimaryTextColor(p) : resolveContrastColor(p);
+            contentView.setInt(R.id.icon, "setBackgroundColor",
+                    resolveBackgroundColor(p));
             contentView.setInt(R.id.icon, "setOriginalIconColor",
-                    colorable ? color : NotificationHeaderView.NO_COLOR);
+                    colorable ? color : COLOR_INVALID);
         }
 
         /**
@@ -5891,8 +5911,8 @@ public class Notification implements Parcelable
             if (largeIcon != null && isLegacy()
                     && getColorUtil().isGrayscaleIcon(mContext, largeIcon)) {
                 // resolve color will fall back to the default when legacy
-                contentView.setDrawableTint(R.id.icon, false, resolveContrastColor(p),
-                        PorterDuff.Mode.SRC_ATOP);
+                int color = resolveContrastColor(p);
+                contentView.setInt(R.id.icon, "setOriginalIconColor", color);
             }
         }
 
@@ -6736,6 +6756,7 @@ public class Notification implements Parcelable
         private Bitmap mPicture;
         private Icon mBigLargeIcon;
         private boolean mBigLargeIconSet = false;
+        private CharSequence mPictureContentDescription;
 
         public BigPictureStyle() {
         }
@@ -6762,6 +6783,16 @@ public class Notification implements Parcelable
          */
         public BigPictureStyle setSummaryText(CharSequence cs) {
             internalSetSummaryText(safeCharSequence(cs));
+            return this;
+        }
+
+        /**
+         * Set the content description of the big picture.
+         */
+        @NonNull
+        public BigPictureStyle bigPictureContentDescription(
+                @Nullable CharSequence contentDescription) {
+            mPictureContentDescription = contentDescription;
             return this;
         }
 
@@ -6878,6 +6909,11 @@ public class Notification implements Parcelable
             }
 
             contentView.setImageViewBitmap(R.id.big_picture, mPicture);
+
+            if (mPictureContentDescription != null) {
+                contentView.setContentDescription(R.id.big_picture, mPictureContentDescription);
+            }
+
             return contentView;
         }
 
@@ -6889,6 +6925,10 @@ public class Notification implements Parcelable
 
             if (mBigLargeIconSet) {
                 extras.putParcelable(EXTRA_LARGE_ICON_BIG, mBigLargeIcon);
+            }
+            if (mPictureContentDescription != null) {
+                extras.putCharSequence(EXTRA_PICTURE_CONTENT_DESCRIPTION,
+                        mPictureContentDescription);
             }
             extras.putParcelable(EXTRA_PICTURE, mPicture);
         }
@@ -6904,6 +6944,12 @@ public class Notification implements Parcelable
                 mBigLargeIconSet = true;
                 mBigLargeIcon = extras.getParcelable(EXTRA_LARGE_ICON_BIG);
             }
+
+            if (extras.containsKey(EXTRA_PICTURE_CONTENT_DESCRIPTION)) {
+                mPictureContentDescription =
+                        extras.getCharSequence(EXTRA_PICTURE_CONTENT_DESCRIPTION);
+            }
+
             mPicture = extras.getParcelable(EXTRA_PICTURE);
         }
 
@@ -8456,9 +8502,7 @@ public class Notification implements Parcelable
                 Action action, StandardTemplateParams p) {
             final boolean tombstone = (action.actionIntent == null);
             container.setViewVisibility(buttonId, View.VISIBLE);
-            if (buttonId != R.id.media_seamless) {
-                container.setImageViewIcon(buttonId, action.getIcon());
-            }
+            container.setImageViewIcon(buttonId, action.getIcon());
 
             // If the action buttons should not be tinted, then just use the default
             // notification color. Otherwise, just use the passed-in color.
@@ -8512,10 +8556,6 @@ public class Notification implements Parcelable
                     view.setViewVisibility(MEDIA_BUTTON_IDS[i], View.GONE);
                 }
             }
-            bindMediaActionButton(view, R.id.media_seamless, new Action(
-                    R.drawable.ic_media_seamless, mBuilder.mContext.getString(
-                            com.android.internal.R.string.ext_media_seamless_action), null), p);
-            view.setViewVisibility(R.id.media_seamless, View.GONE);
             handleImage(view);
             // handle the content margin
             int endMargin = R.dimen.notification_content_margin_end;
@@ -8552,10 +8592,6 @@ public class Notification implements Parcelable
                     big.setViewVisibility(MEDIA_BUTTON_IDS[i], View.GONE);
                 }
             }
-            bindMediaActionButton(big, R.id.media_seamless, new Action(R.drawable.ic_media_seamless,
-                    mBuilder.mContext.getString(
-                            com.android.internal.R.string.ext_media_seamless_action), null), p);
-            big.setViewVisibility(R.id.media_seamless, View.GONE);
             handleImage(big);
             return big;
         }

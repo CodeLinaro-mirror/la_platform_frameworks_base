@@ -271,11 +271,6 @@
          when there's no network connection. If the scan doesn't timeout, use zero -->
     <integer name="config_radioScanningTimeout">0</integer>
 
-    <!-- When true, Android uses the PAC implementation included in WebView to handle
-         networks with PAC scripts.
-         When false, Android's own implementation of libpac is used.-->
-    <bool name ="config_useWebViewPacProcessor">true</bool>
-
     <!-- XXXXX NOTE THE FOLLOWING RESOURCES USE THE WRONG NAMING CONVENTION.
          Please don't copy them, copy anything else. -->
 
@@ -820,6 +815,30 @@
         <!-- B a-coefficient --> <item>-0.0000000189359041</item>
         <!-- B b-coefficient --> <item>0.000302412211</item>
         <!-- B y-intercept --> <item>-0.198650895</item>
+    </string-array>
+
+    <string-array name="config_reduceBrightColorsCoefficientsNative">
+        <!-- R a-coefficient --> <item>-0.691218457</item>
+        <!-- R b-coefficient --> <item>0.050135153</item>
+        <!-- R y-intercept --> <item>0.917684143</item>
+        <!-- G a-coefficient --> <item>-0.691218457</item>
+        <!-- G b-coefficient --> <item>0.050135153</item>
+        <!-- G y-intercept --> <item>0.917684143</item>
+        <!-- B a-coefficient --> <item>-0.691218457</item>
+        <!-- B b-coefficient --> <item>0.050135153</item>
+        <!-- B y-intercept --> <item>0.917684143</item>
+    </string-array>
+
+    <string-array name="config_reduceBrightColorsCoefficients">
+        <!-- R a-coefficient --> <item>0.00000000000000154</item>
+        <!-- R b-coefficient --> <item>-1.0</item>
+        <!-- R y-intercept --> <item>1.045977011</item>
+        <!-- G a-coefficient --> <item>0.00000000000000224</item>
+        <!-- G b-coefficient --> <item>-1.0</item>
+        <!-- G y-intercept --> <item>1.045977011</item>
+        <!-- B a-coefficient --> <item>0.0000000000000022</item>
+        <!-- B b-coefficient --> <item>-1.0</item>
+        <!-- B y-intercept --> <item>1.045977011</item>
     </string-array>
 
     <!-- Boolean indicating whether display white balance is supported. -->
@@ -1583,6 +1602,29 @@
          config_timeZoneRulesUpdateTrackingEnabled are true.] -->
     <integer name="config_timeZoneRulesCheckRetryCount">5</integer>
 
+    <!-- Whether the geolocation time zone detection feature is enabled. -->
+    <bool name="config_enableGeolocationTimeZoneDetection" translatable="false">false</bool>
+
+    <!-- Whether to enable primary location time zone provider overlay which allows the primary
+         location time zone provider to be replaced by an app at run-time. When disabled, only the
+         config_primaryLocationTimeZoneProviderPackageName package will be searched for the primary
+         location time zone provider, otherwise any system package is eligible. Anyone who wants to
+         disable the overlay mechanism can set it to false. -->
+    <bool name="config_enablePrimaryLocationTimeZoneOverlay" translatable="false">false</bool>
+    <!-- Package name providing the primary location time zone provider. Used only when
+         config_enablePrimaryLocationTimeZoneOverlay is false. -->
+    <string name="config_primaryLocationTimeZoneProviderPackageName" translatable="false">@null</string>
+
+    <!-- Whether to enable secondary location time zone provider overlay which allows the secondary
+         location time zone provider to be replaced by an app at run-time. When disabled, only the
+         config_secondaryLocationTimeZoneProviderPackageName package will be searched for the
+         secondary location time zone provider, otherwise any system package is eligible. Anyone who
+         wants to disable the overlay mechanism can set it to false. -->
+    <bool name="config_enableSecondaryLocationTimeZoneOverlay" translatable="false">false</bool>
+    <!-- Package name providing the secondary location time zone provider. Used only when
+         config_enableSecondaryLocationTimeZoneOverlay is false. -->
+    <string name="config_secondaryLocationTimeZoneProviderPackageName" translatable="false">@null</string>
+
     <!-- Whether to enable network location overlay which allows network location provider to be
          replaced by an app at run-time. When disabled, only the
          config_networkLocationProviderPackageName package will be searched for network location
@@ -1656,6 +1698,13 @@
         <item>com.android.location.fused</item>
     </string-array>
 
+    <!-- Gnss Psds Servers -->
+    <string name="config_longterm_psds_server_1" translatable="false"></string>
+    <string name="config_longterm_psds_server_2" translatable="false"></string>
+    <string name="config_longterm_psds_server_3" translatable="false"></string>
+    <string name="config_normal_psds_server" translatable="false"></string>
+    <string name="config_realtime_psds_server" translatable="false"></string>
+
     <!-- This string array can be overriden to enable test location providers initially. -->
     <!-- Array of "[locationProviderName],[requiresNetwork],
          [requiresSatellite],[requiresCell],[hasMonetaryCost],
@@ -1669,6 +1718,21 @@
         <!-- Example test network location provider
         <item>network,false,false,false,false,true,true,true,1,2</item>
         -->
+    </string-array>
+
+    <!-- Optional IPsec algorithms enabled by this device, defaulting to empty. OEMs can override
+         it by providing a list of algorithm names in an overlay config.xml file.
+
+         As Android releases new versions, more algorithms are becoming mandatory. Mandatory
+         algorithms will be automatically enabled on the device. Optional algorithms need
+         to be explicitly declared in this resource to be enabled.
+             * SDK level 28 makes the following algorithms mandatory : "cbc(aes)", "hmac(md5)",
+               "hmac(sha1)", "hmac(sha256)", "hmac(sha384)", "hmac(sha512)", "rfc4106(gcm(aes))"
+             * SDK level 31 makes the following algorithms mandatory : "rfc3686(ctr(aes))",
+               "xcbc(aes)", "rfc7539esp(chacha20,poly1305)"
+     -->
+    <string-array name="config_optionalIpSecAlgorithms" translatable="false">
+        <!-- Add algorithm here -->
     </string-array>
 
     <!-- Boolean indicating if current platform supports bluetooth SCO for off call
@@ -1788,6 +1852,9 @@
          Note: This config is deprecated, please use config_defaultSms instead. -->
     <string name="default_sms_application" translatable="false">com.android.messaging</string>
 
+    <!-- Flag indicating whether the current device supports "Ask every time" for sms-->
+    <bool name="config_sms_ask_every_time_support">true</bool>
+
     <!-- Flag indicating whether the current device allows data.
          If true, this means that the device supports data connectivity through
          the telephony network.
@@ -1824,8 +1891,12 @@
     <string name="config_defaultCallScreening" translatable="false"></string>
     <!-- The name of the package that will hold the system gallery role. -->
     <string name="config_systemGallery" translatable="false">com.android.gallery3d</string>
+    <!-- The names of the packages that will hold the automotive projection role. -->
+    <string name="config_systemAutomotiveProjection" translatable="false"></string>
     <!-- The name of the package that will hold the system cluster service role. -->
     <string name="config_systemAutomotiveCluster" translatable="false"></string>
+    <!-- The name of the package that will hold the system video call role. -->
+    <string name="config_systemVideoCall" translatable="false"></string>
 
     <!-- The name of the package that will be allowed to change its components' label/icon. -->
     <string name="config_overrideComponentUiPackage" translatable="false"></string>
@@ -3321,6 +3392,10 @@
          ratio larger than this is considered to wide and short to be usable. Currently 2.39:1. -->
     <item name="config_pictureInPictureMaxAspectRatio" format="float" type="dimen">2.39</item>
 
+    <!-- The maximum number of actions that is supported for picture-in-picture. This number
+         must be no less than 3 for back compatibility. -->
+    <integer name="config_pictureInPictureMaxNumberOfActions">3</integer>
+
     <!-- Controls the snap mode for the docked stack divider
              0 - 3 snap targets: left/top has 16:9 ratio, 1:1, and right/bottom has 16:9 ratio
              1 - 3 snap targets: fixed ratio, 1:1, (1 - fixed ratio)
@@ -3436,7 +3511,7 @@
     <string name="config_emergency_call_number" translatable="false">112</string>
 
     <!-- Package name that provides Emergency Dialer -->
-    <string name="config_emergency_dialer_package">com.android.phone</string>
+    <string name="config_emergency_dialer_package" translatable="false">com.android.phone</string>
 
     <!-- Do not translate. Mcc codes whose existence trigger the presence of emergency
          affordances-->
@@ -3642,6 +3717,8 @@
          Example: "com.android.contentsuggestions/.ContentSuggestionsService"
     -->
     <string name="config_defaultContentSuggestionsService" translatable="false"></string>
+
+    <string name="config_defaultMusicRecognitionService" translatable="false"></string>
 
     <!-- The package name for the default retail demo app.
          This package must be trusted, as it has the permissions to query the usage stats on the
@@ -4421,4 +4498,22 @@
 
     <!-- WindowsManager JetPack display features -->
     <string name="config_display_features" translatable="false" />
+
+    <!-- Physical Display IDs of the display-devices that are swapped when a folding device folds.
+         This list is expected to contain two elements: the first is the display to use
+         when the device is folded, the second is the display to use when unfolded. If the array
+         is empty or the display IDs are not recognized, this feature is turned off and the value
+         ignored.
+         TODO: b/170470621 - remove once we can have multiple Internal displays in DMS as
+               well as a notification from DisplayStateManager. -->
+    <string-array name="config_internalFoldedPhysicalDisplayIds" translatable="false" />
+
+    <!-- Aspect ratio of task level letterboxing. Values <= 1.0 will be ignored.
+         Note: Activity min/max aspect ratio restrictions will still be respected by the
+         activity-level letterboxing (size-compat mode). Therefore this override can control the
+         maximum screen area that can be occupied by the app in the letterbox mode. -->
+    <item name="config_taskLetterboxAspectRatio" format="float" type="dimen">0.0</item>
+
+    <!-- If true, hide the display cutout with display area -->
+    <bool name="config_hideDisplayCutoutWithDisplayArea">false</bool>
 </resources>

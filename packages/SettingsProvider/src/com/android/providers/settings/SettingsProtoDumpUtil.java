@@ -48,8 +48,12 @@ class SettingsProtoDumpUtil {
                 ConfigSettingsProto.ACTIVITY_MANAGER_SETTINGS);
         namespaceToFieldMap.put(DeviceConfig.NAMESPACE_ACTIVITY_MANAGER_NATIVE_BOOT,
                 ConfigSettingsProto.ACTIVITY_MANAGER_NATIVE_BOOT_SETTINGS);
+        namespaceToFieldMap.put(DeviceConfig.NAMESPACE_ALARM_MANAGER,
+                ConfigSettingsProto.ALARM_MANAGER_SETTINGS);
         namespaceToFieldMap.put(DeviceConfig.NAMESPACE_APP_COMPAT,
                 ConfigSettingsProto.APP_COMPAT_SETTINGS);
+        namespaceToFieldMap.put(DeviceConfig.NAMESPACE_APP_STANDBY,
+                ConfigSettingsProto.APP_STANDBY_SETTINGS);
         namespaceToFieldMap.put(DeviceConfig.NAMESPACE_AUTOFILL,
                 ConfigSettingsProto.AUTOFILL_SETTINGS);
         namespaceToFieldMap.put(DeviceConfig.NAMESPACE_BLOBSTORE,
@@ -183,9 +187,6 @@ class SettingsProtoDumpUtil {
         p.end(airplaneModeToken);
 
         dumpSetting(s, p,
-                Settings.Global.ALARM_MANAGER_CONSTANTS,
-                GlobalSettingsProto.ALARM_MANAGER_CONSTANTS);
-        dumpSetting(s, p,
                 Settings.Global.ALLOW_USER_SWITCHING_WHEN_SYSTEM_USER_LOCKED,
                 GlobalSettingsProto.ALLOW_USER_SWITCHING_WHEN_SYSTEM_USER_LOCKED);
         dumpSetting(s, p,
@@ -220,9 +221,6 @@ class SettingsProtoDumpUtil {
         p.end(apnDbToken);
 
         final long appToken = p.start(GlobalSettingsProto.APP);
-        dumpSetting(s, p,
-                Settings.Global.APP_IDLE_CONSTANTS,
-                GlobalSettingsProto.App.IDLE_CONSTANTS);
         dumpSetting(s, p,
                 Settings.Global.APP_STANDBY_ENABLED,
                 GlobalSettingsProto.App.STANDBY_ENABLED);
@@ -750,22 +748,25 @@ class SettingsProtoDumpUtil {
                 Settings.Global.GPU_DEBUG_LAYERS,
                 GlobalSettingsProto.Gpu.DEBUG_LAYERS);
         dumpSetting(s, p,
-                Settings.Global.GLOBAL_SETTINGS_ANGLE_DEBUG_PACKAGE,
+                Settings.Global.ANGLE_DEBUG_PACKAGE,
                 GlobalSettingsProto.Gpu.ANGLE_DEBUG_PACKAGE);
         dumpSetting(s, p,
-                Settings.Global.GLOBAL_SETTINGS_ANGLE_GL_DRIVER_ALL_ANGLE,
+                Settings.Global.ANGLE_GL_DRIVER_ALL_ANGLE,
                 GlobalSettingsProto.Gpu.ANGLE_GL_DRIVER_ALL_ANGLE);
         dumpSetting(s, p,
-                Settings.Global.GLOBAL_SETTINGS_ANGLE_GL_DRIVER_SELECTION_PKGS,
+                Settings.Global.ANGLE_GL_DRIVER_SELECTION_PKGS,
                 GlobalSettingsProto.Gpu.ANGLE_GL_DRIVER_SELECTION_PKGS);
         dumpSetting(s, p,
-                Settings.Global.GLOBAL_SETTINGS_ANGLE_GL_DRIVER_SELECTION_VALUES,
+                Settings.Global.ANGLE_GL_DRIVER_SELECTION_VALUES,
                 GlobalSettingsProto.Gpu.ANGLE_GL_DRIVER_SELECTION_VALUES);
         dumpSetting(s, p,
-                Settings.Global.GLOBAL_SETTINGS_ANGLE_ALLOWLIST,
+                Settings.Global.ANGLE_ALLOWLIST,
                 GlobalSettingsProto.Gpu.ANGLE_ALLOWLIST);
         dumpSetting(s, p,
-                Settings.Global.GLOBAL_SETTINGS_SHOW_ANGLE_IN_USE_DIALOG_BOX,
+                Settings.Global.ANGLE_EGL_FEATURES,
+                GlobalSettingsProto.Gpu.ANGLE_EGL_FEATURES);
+        dumpSetting(s, p,
+                Settings.Global.SHOW_ANGLE_IN_USE_DIALOG_BOX,
                 GlobalSettingsProto.Gpu.SHOW_ANGLE_IN_USE_DIALOG);
         dumpSetting(s, p,
                 Settings.Global.GPU_DEBUG_LAYER_APP,
@@ -861,9 +862,6 @@ class SettingsProtoDumpUtil {
         p.end(intentFirewallToken);
 
         dumpSetting(s, p,
-                Settings.Global.JOB_SCHEDULER_QUOTA_CONTROLLER_CONSTANTS,
-                GlobalSettingsProto.JOB_SCHEDULER_QUOTA_CONTROLLER_CONSTANTS);
-        dumpSetting(s, p,
                 Settings.Global.KEEP_PROFILE_IN_BACKGROUND,
                 GlobalSettingsProto.KEEP_PROFILE_IN_BACKGROUND);
 
@@ -890,11 +888,8 @@ class SettingsProtoDumpUtil {
                 Settings.Global.LOCATION_SETTINGS_LINK_TO_PERMISSIONS_ENABLED,
                 GlobalSettingsProto.Location.SETTINGS_LINK_TO_PERMISSIONS_ENABLED);
         dumpSetting(s, p,
-                Settings.Global.LOCATION_GLOBAL_KILL_SWITCH,
-                GlobalSettingsProto.Location.GLOBAL_KILL_SWITCH);
-        dumpSetting(s, p,
-                Settings.Global.GNSS_SATELLITE_BLACKLIST,
-                GlobalSettingsProto.Location.GNSS_SATELLITE_BLACKLIST);
+                Settings.Global.GNSS_SATELLITE_BLOCKLIST,
+                GlobalSettingsProto.Location.GNSS_SATELLITE_BLOCKLIST);
         dumpSetting(s, p,
                 Settings.Global.GNSS_HAL_LOCATION_REQUEST_DURATION_MILLIS,
                 GlobalSettingsProto.Location.GNSS_HAL_LOCATION_REQUEST_DURATION_MILLIS);
@@ -1495,9 +1490,6 @@ class SettingsProtoDumpUtil {
                 Settings.Global.WEBVIEW_DATA_REDUCTION_PROXY_KEY,
                 GlobalSettingsProto.Webview.DATA_REDUCTION_PROXY_KEY);
         dumpSetting(s, p,
-                Settings.Global.WEBVIEW_FALLBACK_LOGIC_ENABLED,
-                GlobalSettingsProto.Webview.FALLBACK_LOGIC_ENABLED);
-        dumpSetting(s, p,
                 Settings.Global.WEBVIEW_PROVIDER,
                 GlobalSettingsProto.Webview.PROVIDER);
         dumpSetting(s, p,
@@ -1876,6 +1868,15 @@ class SettingsProtoDumpUtil {
                 SecureSettingsProto.Assist.GESTURE_SETUP_COMPLETE);
         p.end(assistToken);
 
+        final long assistHandlesToken = p.start(SecureSettingsProto.ASSIST_HANDLES);
+        dumpSetting(s, p,
+                Settings.Secure.ASSIST_HANDLES_LEARNING_TIME_ELAPSED_MILLIS,
+                SecureSettingsProto.AssistHandles.LEARNING_TIME_ELAPSED_MILLIS);
+        dumpSetting(s, p,
+                Settings.Secure.ASSIST_HANDLES_LEARNING_EVENT_COUNT,
+                SecureSettingsProto.AssistHandles.LEARNING_EVENT_COUNT);
+        p.end(assistHandlesToken);
+
         final long autofillToken = p.start(SecureSettingsProto.AUTOFILL);
         dumpSetting(s, p,
                 Settings.Secure.AUTOFILL_SERVICE,
@@ -2030,11 +2031,11 @@ class SettingsProtoDumpUtil {
 
         final long emergencyResponseToken = p.start(SecureSettingsProto.EMERGENCY_RESPONSE);
         dumpSetting(s, p,
-                Settings.Secure.PANIC_GESTURE_ENABLED,
-                SecureSettingsProto.EmergencyResponse.PANIC_GESTURE_ENABLED);
+                Settings.Secure.EMERGENCY_GESTURE_ENABLED,
+                SecureSettingsProto.EmergencyResponse.EMERGENCY_GESTURE_ENABLED);
         dumpSetting(s, p,
-                Settings.Secure.PANIC_SOUND_ENABLED,
-                SecureSettingsProto.EmergencyResponse.PANIC_SOUND_ENABLED);
+                Settings.Secure.EMERGENCY_GESTURE_SOUND_ENABLED,
+                SecureSettingsProto.EmergencyResponse.EMERGENCY_GESTURE_SOUND_ENABLED);
         p.end(emergencyResponseToken);
 
         dumpSetting(s, p,
@@ -2284,6 +2285,18 @@ class SettingsProtoDumpUtil {
                 SecureSettingsProto.Notification.IN_CALL_NOTIFICATION_ENABLED);
         p.end(notificationToken);
 
+        final long oneHandedToken = p.start(SecureSettingsProto.ONEHANDED);
+        dumpSetting(s, p,
+                Settings.Secure.ONE_HANDED_MODE_ENABLED,
+                SecureSettingsProto.OneHanded.ONE_HANDED_MODE_ENABLED);
+        dumpSetting(s, p,
+                Settings.Secure.ONE_HANDED_MODE_TIMEOUT,
+                SecureSettingsProto.OneHanded.ONE_HANDED_MODE_TIMEOUT);
+        dumpSetting(s, p,
+                Settings.Secure.TAPS_APP_TO_EXIT,
+                SecureSettingsProto.OneHanded.TAPS_APP_TO_EXIT);
+        p.end(oneHandedToken);
+
         final long parentalControlToken = p.start(SecureSettingsProto.PARENTAL_CONTROL);
         dumpSetting(s, p,
                 Settings.Secure.PARENTAL_CONTROL_ENABLED,
@@ -2322,6 +2335,18 @@ class SettingsProtoDumpUtil {
                 Settings.Secure.QS_AUTO_ADDED_TILES,
                 SecureSettingsProto.QuickSettings.AUTO_ADDED_TILES);
         p.end(qsToken);
+
+        final long reduceBrightColorsToken = p.start(SecureSettingsProto.REDUCE_BRIGHT_COLORS);
+        dumpSetting(s, p,
+                Settings.Secure.REDUCE_BRIGHT_COLORS_ACTIVATED,
+                SecureSettingsProto.ReduceBrightColors.ACTIVATED);
+        dumpSetting(s, p,
+                Settings.Secure.REDUCE_BRIGHT_COLORS_LEVEL,
+                SecureSettingsProto.ReduceBrightColors.LEVEL);
+        dumpSetting(s, p,
+                Settings.Secure.REDUCE_BRIGHT_COLORS_PERSIST_ACROSS_REBOOTS,
+                SecureSettingsProto.ReduceBrightColors.PERSIST_ACROSS_REBOOTS);
+        p.end(reduceBrightColorsToken);
 
         final long rotationToken = p.start(SecureSettingsProto.ROTATION);
         dumpSetting(s, p,
@@ -2452,6 +2477,9 @@ class SettingsProtoDumpUtil {
         p.end(soundsToken);
 
         dumpSetting(s, p,
+                Settings.Secure.SWIPE_BOTTOM_TO_NOTIFICATION_ENABLED,
+                SecureSettingsProto.SWIPE_BOTTOM_TO_NOTIFICATION_ENABLED);
+        dumpSetting(s, p,
                 Settings.Secure.SYNC_PARENT_SOUNDS,
                 SecureSettingsProto.SYNC_PARENT_SOUNDS);
         dumpSetting(s, p,
@@ -2571,22 +2599,6 @@ class SettingsProtoDumpUtil {
                 Settings.Secure.ZEN_SETTINGS_SUGGESTION_VIEWED,
                 SecureSettingsProto.Zen.SETTINGS_SUGGESTION_VIEWED);
         p.end(zenToken);
-
-        dumpSetting(s, p,
-                Settings.Secure.ONE_HANDED_MODE_ENABLED,
-                SecureSettingsProto.OneHanded.ONE_HANDED_MODE_ENABLED);
-
-        dumpSetting(s, p,
-                Settings.Secure.ONE_HANDED_MODE_TIMEOUT,
-                SecureSettingsProto.OneHanded.ONE_HANDED_MODE_TIMEOUT);
-
-        dumpSetting(s, p,
-                Settings.Secure.TAPS_APP_TO_EXIT,
-                SecureSettingsProto.OneHanded.TAPS_APP_TO_EXIT);
-
-        dumpSetting(s, p,
-                Settings.Secure.SWIPE_BOTTOM_TO_NOTIFICATION_ENABLED,
-                SecureSettingsProto.SWIPE_BOTTOM_TO_NOTIFICATION_ENABLED);
 
         // Please insert new settings using the same order as in SecureSettingsProto.
         p.end(token);

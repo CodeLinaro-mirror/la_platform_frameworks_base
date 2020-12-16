@@ -500,6 +500,7 @@ public final class OomAdjuster {
         final ProcessRecord topApp = mService.getTopAppLocked();
         // Clear any pending ones because we are doing a full update now.
         mPendingProcessSet.clear();
+        mService.mAppProfiler.mHasPreviousProcess = mService.mAppProfiler.mHasHomeProcess = false;
         updateOomAdjLockedInner(oomAdjReason, topApp , null, null, true, true);
     }
 
@@ -731,10 +732,6 @@ public final class OomAdjuster {
                 Slog.i(TAG_UID_OBSERVERS, "Starting update of " + uidRec);
             }
             uidRec.reset();
-        }
-
-        if (mService.mAtmInternal != null) {
-            mService.mAtmInternal.rankTaskLayersIfNeeded();
         }
 
         mAdjSeq++;
@@ -1151,7 +1148,7 @@ public final class OomAdjuster {
                 uidRec.setWhitelist = uidRec.curWhitelist;
                 uidRec.setIdle = uidRec.idle;
                 mService.mAtmInternal.onUidProcStateChanged(uidRec.uid, uidRec.setProcState);
-                mService.mUidObserverController.enqueueUidChangeLocked(uidRec, -1, uidChange);
+                mService.enqueueUidChangeLocked(uidRec, -1, uidChange);
                 mService.noteUidProcessState(uidRec.uid, uidRec.getCurProcState(),
                         uidRec.curCapability);
                 if (uidRec.foregroundServices) {
@@ -1332,6 +1329,8 @@ public final class OomAdjuster {
         app.setCached(false);
         app.shouldNotFreeze = false;
 
+        app.mAllowStartFgsState = PROCESS_STATE_NONEXISTENT;
+
         final int appUid = app.info.uid;
         final int logUid = mService.mCurOomAdjUid;
 
@@ -1352,6 +1351,7 @@ public final class OomAdjuster {
             app.setCurrentSchedulingGroup(ProcessList.SCHED_GROUP_DEFAULT);
             app.curCapability = PROCESS_CAPABILITY_ALL;
             app.setCurProcState(ActivityManager.PROCESS_STATE_PERSISTENT);
+            app.bumpAllowStartFgsState(PROCESS_STATE_PERSISTENT);
             // System processes can do UI, and when they do we want to have
             // them trim their memory after the user leaves the UI.  To
             // facilitate this, here we need to determine whether or not it
@@ -1406,6 +1406,7 @@ public final class OomAdjuster {
             app.adjType = "top-activity";
             foregroundActivities = true;
             procState = PROCESS_STATE_CUR_TOP;
+            app.bumpAllowStartFgsState(PROCESS_STATE_TOP);
             if (DEBUG_OOM_ADJ_REASON || logUid == appUid) {
                 reportOomAdjMessageLocked(TAG_OOM_ADJ, "Making top: " + app);
             }
@@ -1503,6 +1504,7 @@ public final class OomAdjuster {
                 // The user is aware of this app, so make it visible.
                 adj = ProcessList.PERCEPTIBLE_APP_ADJ;
                 procState = PROCESS_STATE_FOREGROUND_SERVICE;
+                app.bumpAllowStartFgsState(PROCESS_STATE_FOREGROUND_SERVICE);
                 app.adjType = "fg-service";
                 app.setCached(false);
                 schedGroup = ProcessList.SCHED_GROUP_DEFAULT;
@@ -1890,7 +1892,9 @@ public final class OomAdjuster {
                                 // into the top state, since they are not on top.  Instead
                                 // give them the best bound state after that.
                                 if (cr.hasFlag(Context.BIND_FOREGROUND_SERVICE)) {
-                                    clientProcState = PROCESS_STATE_BOUND_FOREGROUND_SERVICE;                                                                                                                       ;
+                                    clientProcState = PROCESS_STATE_BOUND_FOREGROUND_SERVICE;
+                                    app.bumpAllowStartFgsState(
+                                            PROCESS_STATE_BOUND_FOREGROUND_SERVICE);
                                 } else if (mService.mWakefulness
                                         == PowerManagerInternal.WAKEFULNESS_AWAKE
                                         && (cr.flags & Context.BIND_FOREGROUND_SERVICE_WHILE_AWAKE)
@@ -1904,6 +1908,7 @@ public final class OomAdjuster {
                                 // Go at most to BOUND_TOP, unless requested to elevate
                                 // to client's state.
                                 clientProcState = PROCESS_STATE_BOUND_TOP;
+                                app.bumpAllowStartFgsState(PROCESS_STATE_BOUND_TOP);
                                 boolean enabled = false;
                                 try {
                                     enabled = mPlatformCompatCache.isChangeEnabled(

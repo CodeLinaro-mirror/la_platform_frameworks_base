@@ -18,18 +18,20 @@ package com.android.server.timezonedetector;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.app.timezonedetector.ITimeZoneConfigurationListener;
+import android.app.time.ITimeZoneDetectorListener;
+import android.app.time.TimeZoneCapabilitiesAndConfig;
+import android.app.time.TimeZoneConfiguration;
 import android.app.timezonedetector.ITimeZoneDetectorService;
 import android.app.timezonedetector.ManualTimeZoneSuggestion;
 import android.app.timezonedetector.TelephonyTimeZoneSuggestion;
-import android.app.timezonedetector.TimeZoneCapabilities;
-import android.app.timezonedetector.TimeZoneConfiguration;
 import android.content.Context;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ResultReceiver;
 import android.os.ShellCallback;
+import android.os.SystemProperties;
+import android.util.ArrayMap;
 import android.util.IndentingPrintWriter;
 import android.util.Slog;
 
@@ -41,7 +43,6 @@ import com.android.server.SystemService;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
-import java.util.ArrayList;
 import java.util.Objects;
 
 /**
@@ -58,11 +59,25 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
     private static final String TAG = "TimeZoneDetectorService";
 
     /**
-     * A compile time constant "feature switch" for enabling / disabling location-based time zone
-     * detection on Android. If this is {@code false}, there should be few / little changes in
-     * behavior with previous releases and little overhead associated with geolocation components.
+     * A "feature switch" for location-based time zone detection. If this is {@code false}. It is
+     * initialized and never refreshed; it affects what services are started on boot so consistency
+     * is important.
      */
-    public static final boolean GEOLOCATION_TIME_ZONE_DETECTION_ENABLED = false;
+    @Nullable
+    private static Boolean sGeoLocationTimeZoneDetectionEnabled;
+
+    /** Returns {@code true} if the location-based time zone detection feature is enabled. */
+    public static boolean isGeoLocationTimeZoneDetectionEnabled(Context context) {
+        if (sGeoLocationTimeZoneDetectionEnabled == null) {
+            // The config value is expected to be the main switch. Platform developers can also
+            // enable the feature using a persistent system property.
+            sGeoLocationTimeZoneDetectionEnabled = context.getResources().getBoolean(
+                    com.android.internal.R.bool.config_enableGeolocationTimeZoneDetection)
+                    || SystemProperties.getBoolean(
+                            "persist.sys.location_time_zone_detection_feature_enabled", false);
+        }
+        return sGeoLocationTimeZoneDetectionEnabled;
+    }
 
     /**
      * Handles the service lifecycle for {@link TimeZoneDetectorService} and
@@ -80,9 +95,11 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
             Context context = getContext();
             Handler handler = FgThread.getHandler();
 
+            boolean geolocationTimeZoneDetectionEnabled =
+                    isGeoLocationTimeZoneDetectionEnabled(context);
             TimeZoneDetectorStrategy timeZoneDetectorStrategy =
                     TimeZoneDetectorStrategyImpl.create(
-                            context, handler, GEOLOCATION_TIME_ZONE_DETECTION_ENABLED);
+                            context, handler, geolocationTimeZoneDetectionEnabled);
 
             // Create and publish the local service for use by internal callers.
             TimeZoneDetectorInternal internal =
@@ -109,10 +126,14 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
     @NonNull
     private final TimeZoneDetectorStrategy mTimeZoneDetectorStrategy;
 
-    @GuardedBy("mConfigurationListeners")
+    /**
+     * Holds the listeners. The key is the {@link IBinder} associated with the listener, the value
+     * is the listener itself.
+     */
+    @GuardedBy("mListeners")
     @NonNull
-    private final ArrayList<ITimeZoneConfigurationListener> mConfigurationListeners =
-            new ArrayList<>();
+    private final ArrayMap<IBinder, ITimeZoneDetectorListener> mListeners =
+            new ArrayMap<>();
 
     private static TimeZoneDetectorService create(
             @NonNull Context context, @NonNull Handler handler,
@@ -133,20 +154,22 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
         mCallerIdentityInjector = Objects.requireNonNull(callerIdentityInjector);
         mTimeZoneDetectorStrategy = Objects.requireNonNull(timeZoneDetectorStrategy);
 
-        // Wire up a change listener so that ITimeZoneConfigurationListeners can be notified when
+        // Wire up a change listener so that ITimeZoneDetectorListeners can be notified when
         // the configuration changes for any reason.
         mTimeZoneDetectorStrategy.addConfigChangeListener(this::handleConfigurationChanged);
     }
 
     @Override
     @NonNull
-    public TimeZoneCapabilities getCapabilities() {
-        enforceManageTimeZoneDetectorConfigurationPermission();
+    public TimeZoneCapabilitiesAndConfig getCapabilitiesAndConfig() {
+        enforceManageTimeZoneDetectorPermission();
 
         int userId = mCallerIdentityInjector.getCallingUserId();
-        long token = mCallerIdentityInjector.clearCallingIdentity();
+        final long token = mCallerIdentityInjector.clearCallingIdentity();
         try {
-            return mTimeZoneDetectorStrategy.getConfigurationInternal(userId).createCapabilities();
+            ConfigurationInternal configurationInternal =
+                    mTimeZoneDetectorStrategy.getConfigurationInternal(userId);
+            return configurationInternal.createCapabilitiesAndConfig();
         } finally {
             mCallerIdentityInjector.restoreCallingIdentity(token);
         }
@@ -154,37 +177,34 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
 
     @Override
     public boolean updateConfiguration(@NonNull TimeZoneConfiguration configuration) {
-        enforceManageTimeZoneDetectorConfigurationPermission();
+        enforceManageTimeZoneDetectorPermission();
         Objects.requireNonNull(configuration);
 
         int callingUserId = mCallerIdentityInjector.getCallingUserId();
-        if (callingUserId != configuration.getUserId()) {
-            return false;
-        }
-
-        long token = mCallerIdentityInjector.clearCallingIdentity();
+        final long token = mCallerIdentityInjector.clearCallingIdentity();
         try {
-            return mTimeZoneDetectorStrategy.updateConfiguration(configuration);
+            return mTimeZoneDetectorStrategy.updateConfiguration(callingUserId, configuration);
         } finally {
             mCallerIdentityInjector.restoreCallingIdentity(token);
         }
     }
 
     @Override
-    public void addConfigurationListener(@NonNull ITimeZoneConfigurationListener listener) {
-        enforceManageTimeZoneDetectorConfigurationPermission();
+    public void addListener(@NonNull ITimeZoneDetectorListener listener) {
+        enforceManageTimeZoneDetectorPermission();
         Objects.requireNonNull(listener);
 
-        synchronized (mConfigurationListeners) {
-            if (mConfigurationListeners.contains(listener)) {
+        synchronized (mListeners) {
+            IBinder listenerBinder = listener.asBinder();
+            if (mListeners.containsKey(listenerBinder)) {
                 return;
             }
             try {
                 // Ensure the reference to the listener will be removed if the client process dies.
-                listener.asBinder().linkToDeath(this, 0 /* flags */);
+                listenerBinder.linkToDeath(this, 0 /* flags */);
 
                 // Only add the listener if we can linkToDeath().
-                mConfigurationListeners.add(listener);
+                mListeners.put(listenerBinder, listener);
             } catch (RemoteException e) {
                 Slog.e(TAG, "Unable to linkToDeath() for listener=" + listener, e);
             }
@@ -192,21 +212,22 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
     }
 
     @Override
-    public void removeConfigurationListener(@NonNull ITimeZoneConfigurationListener listener) {
-        enforceManageTimeZoneDetectorConfigurationPermission();
+    public void removeListener(@NonNull ITimeZoneDetectorListener listener) {
+        enforceManageTimeZoneDetectorPermission();
         Objects.requireNonNull(listener);
 
-        synchronized (mConfigurationListeners) {
+        synchronized (mListeners) {
+            IBinder listenerBinder = listener.asBinder();
             boolean removedListener = false;
-            if (mConfigurationListeners.remove(listener)) {
+            if (mListeners.remove(listenerBinder) != null) {
                 // Stop listening for the client process to die.
-                listener.asBinder().unlinkToDeath(this, 0 /* flags */);
+                listenerBinder.unlinkToDeath(this, 0 /* flags */);
                 removedListener = true;
             }
             if (!removedListener) {
                 Slog.w(TAG, "Client asked to remove listener=" + listener
                         + ", but no listeners were removed."
-                        + " mConfigurationListeners=" + mConfigurationListeners);
+                        + " mListeners=" + mListeners);
             }
         }
     }
@@ -218,19 +239,18 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
     }
 
     /**
-     * Called when one of the ITimeZoneConfigurationListener processes dies before calling
-     * {@link #removeConfigurationListener(ITimeZoneConfigurationListener)}.
+     * Called when one of the ITimeZoneDetectorListener processes dies before calling
+     * {@link #removeListener(ITimeZoneDetectorListener)}.
      */
     @Override
     public void binderDied(IBinder who) {
-        synchronized (mConfigurationListeners) {
+        synchronized (mListeners) {
             boolean removedListener = false;
-            final int listenerCount = mConfigurationListeners.size();
+            final int listenerCount = mListeners.size();
             for (int listenerIndex = listenerCount - 1; listenerIndex >= 0; listenerIndex--) {
-                ITimeZoneConfigurationListener listener =
-                        mConfigurationListeners.get(listenerIndex);
-                if (listener.asBinder().equals(who)) {
-                    mConfigurationListeners.remove(listenerIndex);
+                IBinder listenerBinder = mListeners.keyAt(listenerIndex);
+                if (listenerBinder.equals(who)) {
+                    mListeners.removeAt(listenerIndex);
                     removedListener = true;
                     break;
                 }
@@ -238,7 +258,7 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
             if (!removedListener) {
                 Slog.w(TAG, "Notified of binder death for who=" + who
                         + ", but did not remove any listeners."
-                        + " mConfigurationListeners=" + mConfigurationListeners);
+                        + " mConfigurationListeners=" + mListeners);
             }
         }
     }
@@ -247,11 +267,10 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
         // Configuration has changed, but each user may have a different view of the configuration.
         // It's possible that this will cause unnecessary notifications but that shouldn't be a
         // problem.
-        synchronized (mConfigurationListeners) {
-            final int listenerCount = mConfigurationListeners.size();
+        synchronized (mListeners) {
+            final int listenerCount = mListeners.size();
             for (int listenerIndex = 0; listenerIndex < listenerCount; listenerIndex++) {
-                ITimeZoneConfigurationListener listener =
-                        mConfigurationListeners.get(listenerIndex);
+                ITimeZoneDetectorListener listener = mListeners.valueAt(listenerIndex);
                 try {
                     listener.onChange();
                 } catch (RemoteException e) {
@@ -276,7 +295,7 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
         Objects.requireNonNull(timeZoneSuggestion);
 
         int userId = mCallerIdentityInjector.getCallingUserId();
-        long token = mCallerIdentityInjector.clearCallingIdentity();
+        final long token = mCallerIdentityInjector.clearCallingIdentity();
         try {
             return mTimeZoneDetectorStrategy.suggestManualTimeZone(userId, timeZoneSuggestion);
         } finally {
@@ -302,11 +321,10 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
         ipw.flush();
     }
 
-    private void enforceManageTimeZoneDetectorConfigurationPermission() {
-        // TODO Switch to a dedicated MANAGE_TIME_AND_ZONE_CONFIGURATION permission.
+    private void enforceManageTimeZoneDetectorPermission() {
         mContext.enforceCallingPermission(
-                android.Manifest.permission.WRITE_SECURE_SETTINGS,
-                "manage time and time zone configuration");
+                android.Manifest.permission.MANAGE_TIME_AND_ZONE_DETECTION,
+                "manage time and time zone detection");
     }
 
     private void enforceSuggestGeolocationTimeZonePermission() {
@@ -333,7 +351,7 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
     public void onShellCommand(FileDescriptor in, FileDescriptor out,
             FileDescriptor err, String[] args, ShellCallback callback,
             ResultReceiver resultReceiver) {
-        (new TimeZoneDetectorShellCommand(this)).exec(
+        new TimeZoneDetectorShellCommand(this).exec(
                 this, in, out, err, args, callback, resultReceiver);
     }
 }

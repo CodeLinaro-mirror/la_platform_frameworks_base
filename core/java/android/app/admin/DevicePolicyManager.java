@@ -122,6 +122,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 
+// TODO(b/172376923) - add CarDevicePolicyManager examples below (or remove reference to it).
 /**
  * Public interface for managing policies enforced on a device. Most clients of this class must be
  * registered with the system as a <a href="{@docRoot}guide/topics/admin/device-admin.html">device
@@ -130,6 +131,13 @@ import java.util.concurrent.Executor;
  * for that method specifies that it is restricted to either device or profile owners. Any
  * application calling an api may only pass as an argument a device administrator component it
  * owns. Otherwise, a {@link SecurityException} will be thrown.
+ *
+ * <p><b>Note: </b>on
+ * {@link android.content.pm.PackageManager#FEATURE_AUTOMOTIVE automotive builds}, some methods can
+ * throw an {@link UnsafeStateException} exception (for example, if the vehicle is moving), so
+ * callers running on automotive builds should wrap every method call under the methods provided by
+ * {@code android.car.admin.CarDevicePolicyManager}.
+ *
  * <div class="special reference">
  * <h3>Developer Guides</h3>
  * <p>
@@ -1396,7 +1404,7 @@ public class DevicePolicyManager {
      * sent to the parent user.
      * @hide
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static final String ACTION_DEVICE_POLICY_MANAGER_STATE_CHANGED
             = "android.app.action.DEVICE_POLICY_MANAGER_STATE_CHANGED";
 
@@ -1465,7 +1473,7 @@ public class DevicePolicyManager {
      * @see #createAdminSupportIntent(String)
      * @hide
      */
-    @TestApi @SystemApi
+    @SystemApi
     public static final String EXTRA_RESTRICTION = "android.app.extra.RESTRICTION";
 
     /**
@@ -1830,6 +1838,15 @@ public class DevicePolicyManager {
     public static final int STATE_USER_PROFILE_COMPLETE = 4;
 
     /**
+     * Management setup on a managed profile.
+     * <p>This is used as an intermediate state after {@link #STATE_USER_PROFILE_COMPLETE} once the
+     * work profile has been created.
+     * @hide
+     */
+    @SystemApi
+    public static final int STATE_USER_PROFILE_FINALIZED = 5;
+
+    /**
      * @hide
      */
     @IntDef(prefix = { "STATE_USER_" }, value = {
@@ -1837,7 +1854,8 @@ public class DevicePolicyManager {
             STATE_USER_SETUP_INCOMPLETE,
             STATE_USER_SETUP_COMPLETE,
             STATE_USER_SETUP_FINALIZED,
-            STATE_USER_PROFILE_COMPLETE
+            STATE_USER_PROFILE_COMPLETE,
+            STATE_USER_PROFILE_FINALIZED
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface UserProvisioningState {}
@@ -1962,6 +1980,7 @@ public class DevicePolicyManager {
     public static final int CODE_CANNOT_ADD_MANAGED_PROFILE = 11;
 
     /**
+     * TODO (b/137101239): clean up split system user codes
      * Result code for {@link #checkProvisioningPreCondition}.
      *
      * <p>Returned for {@link #ACTION_PROVISION_MANAGED_USER} and
@@ -1985,6 +2004,7 @@ public class DevicePolicyManager {
     public static final int CODE_DEVICE_ADMIN_NOT_SUPPORTED = 13;
 
     /**
+     * TODO (b/137101239): clean up split system user codes
      * Result code for {@link #checkProvisioningPreCondition}.
      *
      * <p>Returned for {@link #ACTION_PROVISION_MANAGED_PROFILE} when the device the user is a
@@ -2433,6 +2453,19 @@ public class DevicePolicyManager {
     @Retention(RetentionPolicy.SOURCE)
     public @interface PersonalAppsSuspensionReason {}
 
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_LOCK_NOW = 1;
+
+    // TODO(b/172376923) - add all operations
+    /** @hide */
+    @IntDef(prefix = "OPERATION_", value = {
+            OPERATION_LOCK_NOW,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public static @interface DevicePolicyOperation {
+    }
+
     /**
      * Return true if the given administrator component is currently active (enabled) in the system.
      *
@@ -2688,13 +2721,11 @@ public class DevicePolicyManager {
      * </ul>
      */
     @SystemApi
-    @TestApi
     public static final String ACCOUNT_FEATURE_DEVICE_OR_PROFILE_OWNER_ALLOWED =
             "android.account.DEVICE_OR_PROFILE_OWNER_ALLOWED";
 
     /** @hide See {@link #ACCOUNT_FEATURE_DEVICE_OR_PROFILE_OWNER_ALLOWED} */
     @SystemApi
-    @TestApi
     public static final String ACCOUNT_FEATURE_DEVICE_OR_PROFILE_OWNER_DISALLOWED =
             "android.account.DEVICE_OR_PROFILE_OWNER_DISALLOWED";
 
@@ -2720,6 +2751,9 @@ public class DevicePolicyManager {
      * This method can be called on the {@link DevicePolicyManager} instance returned by
      * {@link #getParentProfileInstance(ComponentName)} in order to set restrictions on the parent
      * profile.
+     *
+     * <p><strong>Note:</strong> Specifying password requirements using this method clears the
+     * password complexity requirements set using {@link #setRequiredPasswordComplexity(int)}.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with.
      * @param quality The new desired quality. One of {@link #PASSWORD_QUALITY_UNSPECIFIED},
@@ -3599,13 +3633,18 @@ public class DevicePolicyManager {
      * <p>Note that when called from a profile which uses an unified challenge with its parent, the
      * screen lock complexity of the parent will be returned.
      *
+     * <p>Apps need the {@link permission#REQUEST_PASSWORD_COMPLEXITY} permission to call this
+     * method. On Android {@link android.os.Build.VERSION_CODES#S} and above, the calling
+     * application does not need this permission if it is a device owner or a profile owner.
+     *
      * <p>This method can be called on the {@link DevicePolicyManager} instance
      * returned by {@link #getParentProfileInstance(ComponentName)} in order to retrieve
      * restrictions on the parent profile.
      *
      * @throws IllegalStateException if the user is not unlocked.
      * @throws SecurityException     if the calling application does not have the permission
-     *                               {@link permission#REQUEST_PASSWORD_COMPLEXITY}
+     *                               {@link permission#REQUEST_PASSWORD_COMPLEXITY}, and is not a
+     *                               device owner or a profile owner.
      */
     @PasswordComplexity
     @RequiresPermission(android.Manifest.permission.REQUEST_PASSWORD_COMPLEXITY)
@@ -3616,6 +3655,66 @@ public class DevicePolicyManager {
 
         try {
             return mService.getPasswordComplexity(mParentInstance);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Sets a password complexity requirement for the user's screen lock.
+     * The complexity level is one of the pre-defined levels.
+     *
+     * <p>Note that when called on a profile which uses an unified challenge with its parent, the
+     * complexity would apply to the unified challenge.
+     *
+     * <p>This method can be called on the {@link DevicePolicyManager} instance
+     * returned by {@link #getParentProfileInstance(ComponentName)} in order to set
+     * restrictions on the parent profile.
+     *
+     * <p><strong>Note:</strong> Specifying password requirements using this method clears any
+     * password requirements set using the obsolete {@link #setPasswordQuality(ComponentName, int)}
+     * and any of its associated methods.
+     *
+     * @throws SecurityException if the calling application is not a device owner or a profile
+     * owner.
+     * @throws IllegalArgumentException if the complexity level is not one of the four above.
+     */
+    public void setRequiredPasswordComplexity(@PasswordComplexity int passwordComplexity) {
+        if (mService == null) {
+            return;
+        }
+
+        try {
+            mService.setRequiredPasswordComplexity(passwordComplexity, mParentInstance);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+
+    /**
+     * Gets the password complexity requirement set by {@link #setRequiredPasswordComplexity(int)},
+     * for the current user.
+     *
+     * <p>The difference between this method and {@link #getPasswordComplexity()} is that this
+     * method simply returns the value set by {@link #setRequiredPasswordComplexity(int)} while
+     * {@link #getPasswordComplexity()} returns the complexity of the actual password.
+     *
+     * <p>This method can be called on the {@link DevicePolicyManager} instance
+     * returned by {@link #getParentProfileInstance(ComponentName)} in order to get
+     * restrictions on the parent profile.
+     *
+     * @throws SecurityException if the calling application is not a device owner or a profile
+     * owner.
+     */
+    @PasswordComplexity
+    public int getRequiredPasswordComplexity() {
+        if (mService == null) {
+            return PASSWORD_COMPLEXITY_NONE;
+        }
+
+        try {
+            return mService.getRequiredPasswordComplexity(mParentInstance);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -4124,7 +4223,7 @@ public class DevicePolicyManager {
     }
 
     /** @hide per-user version */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public long getMaximumTimeToLock(@Nullable ComponentName admin, int userHandle) {
         if (mService != null) {
             try {
@@ -4206,7 +4305,7 @@ public class DevicePolicyManager {
     }
 
     /** @hide per-user version */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @RequiresFeature(PackageManager.FEATURE_SECURE_LOCK_SCREEN)
     public long getRequiredStrongAuthTimeout(@Nullable ComponentName admin, @UserIdInt int userId) {
         if (mService != null) {
@@ -4263,6 +4362,9 @@ public class DevicePolicyManager {
      * This method can be called on the {@link DevicePolicyManager} instance returned by
      * {@link #getParentProfileInstance(ComponentName)} in order to lock the parent profile.
      * <p>
+     * NOTE: on {@link android.content.pm.PackageManager#FEATURE_AUTOMOTIVE automotive builds}, this
+     * method doesn't turn off the screen as it would be a driving safety distraction.
+     * <p>
      * Equivalent to calling {@link #lockNow(int)} with no flags.
      *
      * @throws SecurityException if the calling application does not own an active administrator
@@ -4306,6 +4408,9 @@ public class DevicePolicyManager {
      * Calling the method twice in this order ensures that all users are locked and does not
      * stop the device admin on the managed profile from issuing a second call to lock its own
      * profile.
+     * <p>
+     * NOTE: on {@link android.content.pm.PackageManager#FEATURE_AUTOMOTIVE automotive builds}, this
+     * method doesn't turn off the screen as it would be a driving safety distraction.
      *
      * @param flags May be 0 or {@link #FLAG_EVICT_CREDENTIAL_ENCRYPTION_KEY}.
      * @throws SecurityException if the calling application does not own an active administrator
@@ -4508,7 +4613,7 @@ public class DevicePolicyManager {
      *            of the device admin that sets the proxy.
      * @hide
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public @Nullable ComponentName setGlobalProxy(@NonNull ComponentName admin, Proxy proxySpec,
             List<String> exclusionList ) {
         throwIfParentInstance("setGlobalProxy");
@@ -5718,8 +5823,8 @@ public class DevicePolicyManager {
      * System apps can always bypass VPN.
      * <p> Note that the system doesn't update the allowlist when packages are installed or
      * uninstalled, the admin app must call this method to keep the list up to date.
-     * <p> When {@code lockdownEnabled} is false {@code lockdownWhitelist} is ignored . When
-     * {@code lockdownEnabled} is {@code true} and {@code lockdownWhitelist} is {@code null} or
+     * <p> When {@code lockdownEnabled} is false {@code lockdownAllowlist} is ignored . When
+     * {@code lockdownEnabled} is {@code true} and {@code lockdownAllowlist} is {@code null} or
      * empty, only system apps can bypass VPN.
      * <p> Setting always-on VPN package to {@code null} or using
      * {@link #setAlwaysOnVpnPackage(ComponentName, String, boolean)} clears lockdown allowlist.
@@ -5728,24 +5833,24 @@ public class DevicePolicyManager {
      *         to remove an existing always-on VPN configuration
      * @param lockdownEnabled {@code true} to disallow networking when the VPN is not connected or
      *         {@code false} otherwise. This has no effect when clearing.
-     * @param lockdownWhitelist Packages that will be able to access the network directly when VPN
+     * @param lockdownAllowlist Packages that will be able to access the network directly when VPN
      *         is in lockdown mode but not connected. Has no effect when clearing.
      * @throws SecurityException if {@code admin} is not a device or a profile
      *         owner.
      * @throws NameNotFoundException if {@code vpnPackage} or one of
-     *         {@code lockdownWhitelist} is not installed.
+     *         {@code lockdownAllowlist} is not installed.
      * @throws UnsupportedOperationException if {@code vpnPackage} exists but does
      *         not support being set as always-on, or if always-on VPN is not
      *         available.
      */
     public void setAlwaysOnVpnPackage(@NonNull ComponentName admin, @Nullable String vpnPackage,
-            boolean lockdownEnabled, @Nullable Set<String> lockdownWhitelist)
+            boolean lockdownEnabled, @Nullable Set<String> lockdownAllowlist)
             throws NameNotFoundException {
         throwIfParentInstance("setAlwaysOnVpnPackage");
         if (mService != null) {
             try {
                 mService.setAlwaysOnVpnPackage(admin, vpnPackage, lockdownEnabled,
-                        lockdownWhitelist == null ? null : new ArrayList<>(lockdownWhitelist));
+                        lockdownAllowlist == null ? null : new ArrayList<>(lockdownAllowlist));
             } catch (ServiceSpecificException e) {
                 switch (e.errorCode) {
                     case ERROR_VPN_PACKAGE_NOT_FOUND:
@@ -5820,9 +5925,9 @@ public class DevicePolicyManager {
         throwIfParentInstance("getAlwaysOnVpnLockdownWhitelist");
         if (mService != null) {
             try {
-                final List<String> whitelist =
-                        mService.getAlwaysOnVpnLockdownWhitelist(admin);
-                return whitelist == null ? null : new HashSet<>(whitelist);
+                final List<String> allowlist =
+                        mService.getAlwaysOnVpnLockdownAllowlist(admin);
+                return allowlist == null ? null : new HashSet<>(allowlist);
             } catch (RemoteException e) {
                 throw e.rethrowFromSystemServer();
             }
@@ -6310,7 +6415,7 @@ public class DevicePolicyManager {
     /**
      * @hide
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public void setActiveAdmin(@NonNull ComponentName policyReceiver, boolean refreshing,
             int userHandle) {
         if (mService != null) {
@@ -6671,8 +6776,7 @@ public class DevicePolicyManager {
      * @hide
      */
     @SystemApi
-    @TestApi
-    @SuppressLint("Doclava125")
+    @SuppressLint("RequiresPermission")
     public boolean isDeviceManaged() {
         try {
             return mService.hasDeviceOwner();
@@ -6983,7 +7087,7 @@ public class DevicePolicyManager {
         throwIfParentInstance("isProfileOwnerApp");
         if (mService != null) {
             try {
-                ComponentName profileOwner = mService.getProfileOwner(myUserId());
+                ComponentName profileOwner = mService.getProfileOwnerAsUser(myUserId());
                 return profileOwner != null
                         && profileOwner.getPackageName().equals(packageName);
             } catch (RemoteException re) {
@@ -7025,7 +7129,7 @@ public class DevicePolicyManager {
     /**
      * @hide
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public @Nullable ComponentName getProfileOwnerAsUser(final int userId) {
         if (mService != null) {
             try {
@@ -7440,7 +7544,7 @@ public class DevicePolicyManager {
     }
 
     /** @hide per-user version */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @RequiresFeature(PackageManager.FEATURE_SECURE_LOCK_SCREEN)
     public @Nullable List<PersistableBundle> getTrustAgentConfiguration(
             @Nullable ComponentName admin, @NonNull ComponentName agent, int userHandle) {
@@ -9974,6 +10078,8 @@ public class DevicePolicyManager {
      * <li>{@link #getRequiredStrongAuthTimeout}</li>
      * <li>{@link #setRequiredStrongAuthTimeout}</li>
      * <li>{@link #getAccountTypesWithManagementDisabled}</li>
+     * <li>{@link #setRequiredPasswordComplexity(int)} </li>
+     * <li>{@link #getRequiredPasswordComplexity()}</li>
      * </ul>
      * <p>
      * The following methods are supported for the parent instance but can only be called by the
@@ -10381,8 +10487,7 @@ public class DevicePolicyManager {
      * @hide
      */
     @SystemApi
-    @TestApi
-    @SuppressLint("Doclava125")
+    @SuppressLint("RequiresPermission")
     public @Nullable CharSequence getDeviceOwnerOrganizationName() {
         try {
             return mService.getDeviceOwnerOrganizationName();
@@ -10627,7 +10732,7 @@ public class DevicePolicyManager {
         }
     }
 
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private void throwIfParentInstance(String functionName) {
         if (mParentInstance) {
             throw new SecurityException(functionName + " cannot be called on the parent instance");

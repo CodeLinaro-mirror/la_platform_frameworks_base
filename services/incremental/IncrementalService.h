@@ -127,7 +127,7 @@ public:
     int setStorageParams(StorageId storage, bool enableReadLogs);
 
     int makeFile(StorageId storage, std::string_view path, int mode, FileId id,
-                 incfs::NewFileParams params);
+                 incfs::NewFileParams params, std::span<const uint8_t> data);
     int makeDir(StorageId storage, std::string_view path, int mode = 0755);
     int makeDirs(StorageId storage, std::string_view path, int mode = 0755);
 
@@ -140,7 +140,10 @@ public:
     bool registerLoadingProgressListener(StorageId storage,
                                          const StorageLoadingProgressListener& progressListener);
     bool unregisterLoadingProgressListener(StorageId storage);
-
+    bool registerStorageHealthListener(StorageId storage,
+                                       StorageHealthCheckParams&& healthCheckParams,
+                                       const StorageHealthListener& healthListener);
+    void unregisterStorageHealthListener(StorageId storage);
     RawMetadata getMetadata(StorageId storage, std::string_view path) const;
     RawMetadata getMetadata(StorageId storage, FileId node) const;
 
@@ -197,9 +200,12 @@ private:
 
         MountId id() const { return mId.load(std::memory_order_relaxed); }
         const content::pm::DataLoaderParamsParcel& params() const { return mParams; }
+        void setHealthListener(StorageHealthCheckParams&& healthCheckParams,
+                               const StorageHealthListener* healthListener);
 
     private:
         binder::Status onStatusChanged(MountId mount, int newStatus) final;
+        binder::Status reportStreamHealth(MountId mount, int newStatus) final;
 
         sp<content::pm::IDataLoader> getDataLoader();
 
@@ -250,6 +256,8 @@ private:
             BootClockTsUs kernelTsUs;
         } mHealthBase = {TimePoint::max(), kMaxBootClockTsUs};
         StorageHealthCheckParams mHealthCheckParams;
+        int mStreamStatus = content::pm::IDataLoaderStatusListener::STREAM_HEALTHY;
+        std::vector<incfs::ReadInfo> mLastPendingReads;
     };
     using DataLoaderStubPtr = sp<DataLoaderStub>;
 
@@ -349,13 +357,16 @@ private:
     int isFileFullyLoadedFromPath(const IncFsMount& ifs, std::string_view filePath) const;
     float getLoadingProgressFromPath(const IncFsMount& ifs, std::string_view path) const;
 
+    int setFileContent(const IfsMountPtr& ifs, const incfs::FileId& fileId,
+                       std::string_view debugFilePath, std::span<const uint8_t> data) const;
+
     void registerAppOpsCallback(const std::string& packageName);
     bool unregisterAppOpsCallback(const std::string& packageName);
     void onAppOpChanged(const std::string& packageName);
 
     void runJobProcessing();
     void extractZipFile(const IfsMountPtr& ifs, ZipArchiveHandle zipFile, ZipEntry& entry,
-                        const incfs::FileId& libFileId, std::string_view targetLibPath,
+                        const incfs::FileId& libFileId, std::string_view debugLibPath,
                         Clock::time_point scheduledTs);
 
     void runCmdLooper();

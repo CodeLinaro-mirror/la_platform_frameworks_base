@@ -90,6 +90,8 @@ import android.util.EventLog;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
+import android.util.TypedXmlPullParser;
+import android.util.TypedXmlSerializer;
 import android.util.Xml;
 import android.view.Display;
 import android.view.DisplayInfo;
@@ -1444,7 +1446,7 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
         public void engineShown(IWallpaperEngine engine) {
             synchronized (mLock) {
                 if (mReply != null) {
-                    long ident = Binder.clearCallingIdentity();
+                    final long ident = Binder.clearCallingIdentity();
                     try {
                         mReply.sendResult(null);
                     } catch (RemoteException e) {
@@ -2009,7 +2011,7 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
     public boolean hasNamedWallpaper(String name) {
         synchronized (mLock) {
             List<UserInfo> users;
-            long ident = Binder.clearCallingIdentity();
+            final long ident = Binder.clearCallingIdentity();
             try {
                 users = ((UserManager) mContext.getSystemService(Context.USER_SERVICE)).getUsers();
             } finally {
@@ -2910,10 +2912,9 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
         FileOutputStream fstream = null;
         BufferedOutputStream stream = null;
         try {
-            XmlSerializer out = new FastXmlSerializer();
             fstream = new FileOutputStream(journal.chooseForWrite(), false);
             stream = new BufferedOutputStream(fstream);
-            out.setOutput(stream, StandardCharsets.UTF_8.name());
+            TypedXmlSerializer out = Xml.resolveSerializer(stream);
             out.startDocument(null, true);
 
             WallpaperData wallpaper;
@@ -3110,8 +3111,7 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
         final DisplayData wpdData = getDisplayDataOrCreate(DEFAULT_DISPLAY);
         try {
             stream = new FileInputStream(file);
-            XmlPullParser parser = Xml.newPullParser();
-            parser.setInput(stream, StandardCharsets.UTF_8.name());
+            TypedXmlPullParser parser = Xml.resolvePullParser(stream);
 
             int type;
             do {

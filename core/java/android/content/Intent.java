@@ -28,7 +28,6 @@ import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
-import android.annotation.TestApi;
 import android.app.AppGlobals;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.pm.ActivityInfo;
@@ -631,6 +630,7 @@ import java.util.TimeZone;
  *     <li> {@link #EXTRA_TEXT}
  *     <li> {@link #EXTRA_TITLE}
  *     <li> {@link #EXTRA_UID}
+ *     <li> {@link #EXTRA_USER_INITIATED}
  * </ul>
  *
  * <h3>Flags</h3>
@@ -1747,7 +1747,6 @@ public class Intent implements Parcelable, Cloneable {
      * @hide
      */
     @SystemApi
-    @TestApi
     public static final String EXTRA_ORIGINATING_UID
             = "android.intent.extra.ORIGINATING_UID";
 
@@ -1978,7 +1977,6 @@ public class Intent implements Parcelable, Cloneable {
     @RequiresPermission(android.Manifest.permission.MANAGE_ROLE_HOLDERS)
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     @SystemApi
-    @TestApi
     public static final String ACTION_MANAGE_DEFAULT_APP =
             "android.intent.action.MANAGE_DEFAULT_APP";
 
@@ -1993,7 +1991,6 @@ public class Intent implements Parcelable, Cloneable {
      * @hide
      */
     @SystemApi
-    @TestApi
     public static final String EXTRA_ROLE_NAME = "android.intent.extra.ROLE_NAME";
 
     /**
@@ -2341,7 +2338,7 @@ public class Intent implements Parcelable, Cloneable {
      * @hide
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static final String ACTION_ALARM_CHANGED = "android.intent.action.ALARM_CHANGED";
 
     /**
@@ -2464,6 +2461,8 @@ public class Intent implements Parcelable, Cloneable {
      * application -- data and code -- is being removed.
      * <li> {@link #EXTRA_REPLACING} is set to true if this will be followed
      * by an {@link #ACTION_PACKAGE_ADDED} broadcast for the same package.
+     * <li> {@link #EXTRA_USER_INITIATED} containing boolean field to signal that the application
+     * was removed with the user-initiated action.
      * </ul>
      *
      * <p class="note">This is a protected intent that can only be sent
@@ -2538,7 +2537,7 @@ public class Intent implements Parcelable, Cloneable {
      *
      * @hide
      */
-    @SystemApi @TestApi
+    @SystemApi
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_ROLLBACK_COMMITTED =
             "android.intent.action.ROLLBACK_COMMITTED";
@@ -2730,6 +2729,54 @@ public class Intent implements Parcelable, Cloneable {
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_MY_PACKAGE_UNSUSPENDED = "android.intent.action.MY_PACKAGE_UNSUSPENDED";
+
+    /**
+     * Broadcast Action: Sent to indicate that the package becomes startable.
+     * The intent will have the following extra values:
+     * <ul>
+     * <li> {@link #EXTRA_UID} containing the integer uid assigned to the package. </li>
+     * <li> {@link #EXTRA_PACKAGE_NAME} containing the package name. </li>
+     * </li>
+     * </ul>
+     *
+     * <p class="note">This is a protected intent that can only be sent by the system.
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_PACKAGE_STARTABLE = "android.intent.action.PACKAGE_STARTABLE";
+
+    /**
+     * Broadcast Action: Sent to indicate that the package becomes unstartable.
+     * The intent will have the following extra values:
+     * <ul>
+     * <li> {@link #EXTRA_UID} containing the integer uid assigned to the package. </li>
+     * <li> {@link #EXTRA_PACKAGE_NAME} containing the package name. </li>
+     * <li> {@link #EXTRA_UNSTARTABLE_REASON} containing the integer indicating the reason for
+     * the state change,
+     * @see PackageManager.UnstartableReason
+     * </li>
+     * </ul>
+     *
+     * <p class="note">This is a protected intent that can only be sent by the system.
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_PACKAGE_UNSTARTABLE =
+            "android.intent.action.PACKAGE_UNSTARTABLE";
+
+    /**
+     * Broadcast Action: Sent to indicate that the package is fully loaded.
+     * <ul>
+     * <li> {@link #EXTRA_UID} containing the integer uid assigned to the package. </li>
+     * <li> {@link #EXTRA_PACKAGE_NAME} containing the package name. </li>
+     * </li>
+     * </ul>
+     *
+     * <p class="note">This is a protected intent that can only be sent by the system.
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_PACKAGE_FULLY_LOADED =
+            "android.intent.action.PACKAGE_FULLY_LOADED";
 
     /**
      * Broadcast Action: A user ID has been removed from the system.  The user
@@ -3679,7 +3726,7 @@ public class Intent implements Parcelable, Cloneable {
      * {@link android.Manifest.permission#MANAGE_USERS} to receive this broadcast.
      * @hide
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static final String ACTION_USER_SWITCHED =
             "android.intent.action.USER_SWITCHED";
 
@@ -5509,6 +5556,12 @@ public class Intent implements Parcelable, Cloneable {
     public static final String EXTRA_DONT_KILL_APP = "android.intent.extra.DONT_KILL_APP";
 
     /**
+     * Used as a boolean extra field in {@link android.content.Intent#ACTION_PACKAGE_REMOVED}
+     * intents to signal that the application was removed with the user-initiated action.
+     */
+    public static final String EXTRA_USER_INITIATED = "android.intent.extra.USER_INITIATED";
+
+    /**
      * A String holding the phone number originally entered in
      * {@link android.content.Intent#ACTION_NEW_OUTGOING_CALL}, or the actual
      * number to call in a {@link android.content.Intent#ACTION_CALL}.
@@ -5955,6 +6008,13 @@ public class Intent implements Parcelable, Cloneable {
      * </p>
      */
     public static final String EXTRA_LOCUS_ID = "android.intent.extra.LOCUS_ID";
+
+    /**
+     * Intent extra: the reason that the package associated with this intent has become unstartable.
+     *
+     * <p>Type: String
+     */
+    public static final String EXTRA_UNSTARTABLE_REASON = "android.intent.extra.UNSTARTABLE_REASON";
 
     // ---------------------------------------------------------------------
     // ---------------------------------------------------------------------
@@ -7386,7 +7446,8 @@ public class Intent implements Parcelable, Cloneable {
     }
 
     /** @hide */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @SuppressWarnings("AndroidFrameworkEfficientCollections")
     public static Intent parseCommandArgs(ShellCommand cmd, CommandOptionHandler optionHandler)
             throws URISyntaxException {
         Intent intent = new Intent();
@@ -7777,7 +7838,7 @@ public class Intent implements Parcelable, Cloneable {
     }
 
     /** @hide */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static void printIntentArgsHelp(PrintWriter pw, String prefix) {
         final String[] lines = new String[] {
                 "<INTENT> specifications include these flags and arguments:",
@@ -8067,7 +8128,7 @@ public class Intent implements Parcelable, Cloneable {
     }
 
     /** {@hide} */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public void setAllowFds(boolean allowFds) {
         if (mExtras != null) {
             mExtras.setAllowFds(allowFds);
@@ -10314,7 +10375,7 @@ public class Intent implements Parcelable, Cloneable {
         }
 
         @Override
-        public boolean equals(Object obj) {
+        public boolean equals(@Nullable Object obj) {
             if (obj instanceof FilterComparison) {
                 Intent other = ((FilterComparison)obj).mIntent;
                 return mIntent.filterEquals(other);
@@ -10414,23 +10475,12 @@ public class Intent implements Parcelable, Cloneable {
     }
 
     /** @hide */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public String toInsecureString() {
         StringBuilder b = new StringBuilder(128);
 
         b.append("Intent { ");
         toShortString(b, false, true, true, false);
-        b.append(" }");
-
-        return b.toString();
-    }
-
-    /** @hide */
-    public String toInsecureStringWithClip() {
-        StringBuilder b = new StringBuilder(128);
-
-        b.append("Intent { ");
-        toShortString(b, false, true, true, true);
         b.append(" }");
 
         return b.toString();
@@ -10522,16 +10572,7 @@ public class Intent implements Parcelable, Cloneable {
                 b.append(' ');
             }
             b.append("clip={");
-            if (clip) {
-                mClipData.toShortString(b);
-            } else {
-                if (mClipData.getDescription() != null) {
-                    first = !mClipData.getDescription().toShortStringTypesOnly(b);
-                } else {
-                    first = true;
-                }
-                mClipData.toShortStringShortItems(b, first);
-            }
+            mClipData.toShortString(b, !clip || secure);
             first = false;
             b.append('}');
         }
@@ -10609,11 +10650,7 @@ public class Intent implements Parcelable, Cloneable {
         }
         if (mClipData != null) {
             StringBuilder b = new StringBuilder();
-            if (clip) {
-                mClipData.toShortString(b);
-            } else {
-                mClipData.toShortStringShortItems(b, false);
-            }
+            mClipData.toShortString(b, !clip || secure);
             proto.write(IntentProto.CLIP_DATA, b.toString());
         }
         if (extras && mExtras != null) {
@@ -11097,7 +11134,7 @@ public class Intent implements Parcelable, Cloneable {
      *
      * @hide
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public void prepareToLeaveProcess(Context context) {
         final boolean leavingPackage = (mComponent == null)
                 || !Objects.equals(mComponent.getPackageName(), context.getPackageName());

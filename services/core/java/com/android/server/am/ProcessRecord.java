@@ -36,6 +36,8 @@ import android.app.IApplicationThread;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.IncrementalStatesInfo;
+import android.content.pm.PackageManagerInternal;
 import android.content.pm.ProcessInfo;
 import android.content.pm.ServiceInfo;
 import android.content.pm.VersionedPackage;
@@ -77,6 +79,7 @@ import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
@@ -245,7 +248,7 @@ class ProcessRecord implements WindowProcessListener {
     long lastTopTime;           // The last time the process was in the TOP state or greater.
     boolean reportLowMemory;    // Set to true when waiting to report low mem
     boolean empty;              // Is this an empty background process?
-    private volatile boolean mCached;    // Is this a cached process?
+    private boolean mCached;    // Is this a cached process?
     String adjType;             // Debugging: primary thing impacting oom_adj.
     int adjTypeCode;            // Debugging: adj code to report to app.
     Object adjSource;           // Debugging: option dependent object.
@@ -351,6 +354,10 @@ class ProcessRecord implements WindowProcessListener {
     boolean mReachable; // Whether or not this process is reachable from given process
 
     long mKillTime; // The timestamp in uptime when this process was killed.
+
+    // If the proc state is PROCESS_STATE_BOUND_FOREGROUND_SERVICE or above, it can start FGS.
+    // It must obtain the proc state from a persistent/top process or FGS, not transitive.
+    int mAllowStartFgsState = PROCESS_STATE_NONEXISTENT;
 
     void setStartParams(int startUid, HostingRecord hostingRecord, String seInfo,
             long startTime) {
@@ -465,6 +472,8 @@ class ProcessRecord implements WindowProcessListener {
                 pw.print(" setCapability=");
                 ActivityManager.printCapabilitiesFull(pw, setCapability);
                 pw.println();
+        pw.print(prefix); pw.print("allowStartFgsState=");
+                pw.println(mAllowStartFgsState);
         if (hasShownUi || mPendingUiClean || hasAboveClient || treatLikeActivity) {
             pw.print(prefix); pw.print("hasShownUi="); pw.print(hasShownUi);
                     pw.print(" pendingUiClean="); pw.print(mPendingUiClean);
@@ -793,10 +802,7 @@ class ProcessRecord implements WindowProcessListener {
     }
 
     void setCached(boolean cached) {
-        if (mCached != cached) {
-            mCached = cached;
-            mWindowProcessController.onProcCachedStateChanged(cached);
-        }
+        mCached = cached;
     }
 
     @Override
@@ -886,7 +892,7 @@ class ProcessRecord implements WindowProcessListener {
                     Slog.w(TAG, "scheduleCrash: trying to crash system process!");
                     return;
                 }
-                long ident = Binder.clearCallingIdentity();
+                final long ident = Binder.clearCallingIdentity();
                 try {
                     thread.scheduleCrash(message);
                 } catch (RemoteException e) {
@@ -1254,7 +1260,6 @@ class ProcessRecord implements WindowProcessListener {
 
     void setHasForegroundActivities(boolean hasForegroundActivities) {
         mHasForegroundActivities = hasForegroundActivities;
-        mWindowProcessController.setHasForegroundActivities(hasForegroundActivities);
     }
 
     boolean hasForegroundActivities() {
@@ -1338,13 +1343,15 @@ class ProcessRecord implements WindowProcessListener {
      * {@param originatingToken} if you have one such originating token, this is useful for tracing
      * back the grant in the case of the notification token.
      */
-    void addAllowBackgroundActivityStartsToken(Binder entity, @Nullable IBinder originatingToken) {
-        if (entity == null) return;
-        mWindowProcessController.addAllowBackgroundActivityStartsToken(entity, originatingToken);
+    void addOrUpdateAllowBackgroundActivityStartsToken(Binder entity,
+            @Nullable IBinder originatingToken) {
+        Objects.requireNonNull(entity);
+        mWindowProcessController.addOrUpdateAllowBackgroundActivityStartsToken(entity,
+                originatingToken);
     }
 
     void removeAllowBackgroundActivityStartsToken(Binder entity) {
-        if (entity == null) return;
+        Objects.requireNonNull(entity);
         mWindowProcessController.removeAllowBackgroundActivityStartsToken(entity);
     }
 
@@ -1459,6 +1466,12 @@ class ProcessRecord implements WindowProcessListener {
         synchronized (mService) {
             if (updateServiceConnectionActivities) {
                 mService.mServices.updateServiceConnectionActivitiesLocked(this);
+            }
+            if (thread == null) {
+                // Only update lru and oom-adj if the process is alive. Because it may be called
+                // when cleaning up the last activity from handling process died, the dead process
+                // should not be added to lru list again.
+                return;
             }
             mService.mProcessList.updateLruProcessLocked(this, activityChange, null /* client */);
             if (updateOomAdj) {
@@ -1641,6 +1654,19 @@ class ProcessRecord implements WindowProcessListener {
             }
         }
 
+        // Check if package is still being loaded
+        boolean isPackageLoading = false;
+        final PackageManagerInternal packageManagerInternal =
+                mService.getPackageManagerInternalLocked();
+        if (aInfo != null && aInfo.packageName != null) {
+            IncrementalStatesInfo incrementalStatesInfo =
+                    packageManagerInternal.getIncrementalStatesInfo(
+                            aInfo.packageName, uid, userId);
+            if (incrementalStatesInfo != null) {
+                isPackageLoading = incrementalStatesInfo.isLoading();
+            }
+        }
+
         // Log the ANR to the main log.
         StringBuilder info = new StringBuilder();
         info.setLength(0);
@@ -1656,6 +1682,13 @@ class ProcessRecord implements WindowProcessListener {
         if (parentShortComponentName != null
                 && parentShortComponentName.equals(activityShortComponentName)) {
             info.append("Parent: ").append(parentShortComponentName).append("\n");
+        }
+
+        if (isPackageLoading) {
+            // Report in the main log that the package is still loading
+            final float loadingProgress = packageManagerInternal.getIncrementalStatesInfo(
+                    aInfo.packageName, uid, userId).getProgress();
+            info.append("Package is ").append((int) (loadingProgress * 100)).append("% loaded.\n");
         }
 
         StringBuilder report = new StringBuilder();
@@ -1725,7 +1758,7 @@ class ProcessRecord implements WindowProcessListener {
                         ? FrameworkStatsLog.ANROCCURRED__FOREGROUND_STATE__FOREGROUND
                         : FrameworkStatsLog.ANROCCURRED__FOREGROUND_STATE__BACKGROUND,
                 getProcessClassEnum(),
-                (this.info != null) ? this.info.packageName : "");
+                (this.info != null) ? this.info.packageName : "", isPackageLoading);
         final ProcessRecord parentPr = parentProcess != null
                 ? (ProcessRecord) parentProcess.mOwner : null;
         mService.addErrorToDropBox("anr", this, processName, activityShortComponentName,
@@ -1757,6 +1790,11 @@ class ProcessRecord implements WindowProcessListener {
             // Set the app's notResponding state, and look up the errorReportReceiver
             makeAppNotRespondingLocked(activityShortComponentName,
                     annotation != null ? "ANR " + annotation : "ANR", info.toString());
+
+            // Notify package manager service to possibly update package state
+            if (aInfo != null && aInfo.packageName != null) {
+                packageManagerInternal.notifyPackageCrashOrAnr(aInfo.packageName);
+            }
 
             // mUiHandler can be null if the AMS is constructed with injector only. This will only
             // happen in tests.
@@ -1847,8 +1885,8 @@ class ProcessRecord implements WindowProcessListener {
 
     boolean getCachedIsHeavyWeight() {
         if (mCachedIsHeavyWeight == VALUE_INVALID) {
-            mCachedIsHeavyWeight = mService.mAtmInternal.isHeavyWeightProcess(
-                    getWindowProcessController()) ? VALUE_TRUE : VALUE_FALSE;
+            mCachedIsHeavyWeight = getWindowProcessController().isHeavyWeightProcess()
+                    ? VALUE_TRUE : VALUE_FALSE;
         }
         return mCachedIsHeavyWeight == VALUE_TRUE;
     }
@@ -1863,16 +1901,24 @@ class ProcessRecord implements WindowProcessListener {
 
     boolean getCachedIsHomeProcess() {
         if (mCachedIsHomeProcess == VALUE_INVALID) {
-            mCachedIsHomeProcess = getWindowProcessController().isHomeProcess()
-                    ? VALUE_TRUE : VALUE_FALSE;
+            if (getWindowProcessController().isHomeProcess()) {
+                mCachedIsHomeProcess = VALUE_TRUE;
+                mService.mAppProfiler.mHasHomeProcess = true;
+            } else {
+                mCachedIsHomeProcess = VALUE_FALSE;
+            }
         }
         return mCachedIsHomeProcess == VALUE_TRUE;
     }
 
     boolean getCachedIsPreviousProcess() {
         if (mCachedIsPreviousProcess == VALUE_INVALID) {
-            mCachedIsPreviousProcess = getWindowProcessController().isPreviousProcess()
-                    ? VALUE_TRUE : VALUE_FALSE;
+            if (getWindowProcessController().isPreviousProcess()) {
+                mCachedIsPreviousProcess = VALUE_TRUE;
+                mService.mAppProfiler.mHasPreviousProcess = true;
+            } else {
+                mCachedIsPreviousProcess = VALUE_FALSE;
+            }
         }
         return mCachedIsPreviousProcess == VALUE_TRUE;
     }
@@ -1906,8 +1952,8 @@ class ProcessRecord implements WindowProcessListener {
         }
         callback.initialize(this, adj, foregroundActivities, procState, schedGroup, appUid, logUid,
                 processCurTop);
-        final int minLayer = getWindowProcessController().computeOomAdjFromActivities(
-                ProcessList.VISIBLE_APP_LAYER_MAX, callback);
+        final int minLayer = Math.min(ProcessList.VISIBLE_APP_LAYER_MAX,
+                getWindowProcessController().computeOomAdjFromActivities(callback));
 
         mCachedAdj = callback.adj;
         mCachedForegroundActivities = callback.foregroundActivities;
@@ -1921,6 +1967,12 @@ class ProcessRecord implements WindowProcessListener {
 
     ErrorDialogController getDialogController() {
         return mDialogController;
+    }
+
+    void bumpAllowStartFgsState(int newProcState) {
+        if (newProcState < mAllowStartFgsState) {
+            mAllowStartFgsState = newProcState;
+        }
     }
 
     /** A controller to generate error dialogs in {@link ProcessRecord} */

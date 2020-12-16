@@ -43,6 +43,8 @@ import android.util.PackageUtils;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
+import android.util.TypedXmlPullParser;
+import android.util.TypedXmlSerializer;
 import android.util.Xml;
 
 import com.android.internal.annotations.GuardedBy;
@@ -771,8 +773,8 @@ class InstantAppRegistry {
             for (int i = 0; i < packageCount; i++) {
                 final String packageToDelete = packagesToDelete.get(i);
                 if (mService.deletePackageX(packageToDelete, PackageManager.VERSION_CODE_HIGHEST,
-                        UserHandle.USER_SYSTEM, PackageManager.DELETE_ALL_USERS)
-                                == PackageManager.DELETE_SUCCEEDED) {
+                        UserHandle.USER_SYSTEM, PackageManager.DELETE_ALL_USERS,
+                        true /*removedBySystem*/) == PackageManager.DELETE_SUCCEEDED) {
                     if (file.getUsableSpace() >= neededSpace) {
                         return true;
                     }
@@ -918,7 +920,7 @@ class InstantAppRegistry {
         try {
             for (String grantedPermission : appInfo.getGrantedPermissions()) {
                 final boolean propagatePermission =
-                        mService.mSettings.canPropagatePermissionToInstantApp(grantedPermission);
+                        mPermissionManager.canPropagatePermissionToInstantApp(grantedPermission);
                 if (propagatePermission && pkg.getRequestedPermissions().contains(
                         grantedPermission)) {
                     mService.grantRuntimePermission(pkg.getPackageName(), grantedPermission,
@@ -1020,8 +1022,7 @@ class InstantAppRegistry {
         final String packageName = instantDir.getName();
 
         try {
-            XmlPullParser parser = Xml.newPullParser();
-            parser.setInput(in, StandardCharsets.UTF_8.name());
+            TypedXmlPullParser parser = Xml.resolvePullParser(in);
             return new UninstalledInstantAppState(
                     parseMetadata(parser, packageName), timestamp);
         } catch (XmlPullParserException | IOException e) {
@@ -1061,7 +1062,7 @@ class InstantAppRegistry {
     }
 
     private static @Nullable
-    InstantAppInfo parseMetadata(@NonNull XmlPullParser parser,
+    InstantAppInfo parseMetadata(@NonNull TypedXmlPullParser parser,
                                  @NonNull String packageName)
             throws IOException, XmlPullParserException {
         final int outerDepth = parser.getDepth();
@@ -1073,7 +1074,7 @@ class InstantAppRegistry {
         return null;
     }
 
-    private static InstantAppInfo parsePackage(@NonNull XmlPullParser parser,
+    private static InstantAppInfo parsePackage(@NonNull TypedXmlPullParser parser,
                                                @NonNull String packageName)
             throws IOException, XmlPullParserException {
         String label = parser.getAttributeValue(null, ATTR_LABEL);
@@ -1098,7 +1099,7 @@ class InstantAppRegistry {
                 requestedPermissions, grantedPermissions);
     }
 
-    private static void parsePermissions(@NonNull XmlPullParser parser,
+    private static void parsePermissions(@NonNull TypedXmlPullParser parser,
             @NonNull List<String> outRequestedPermissions,
             @NonNull List<String> outGrantedPermissions)
             throws IOException, XmlPullParserException {
@@ -1128,8 +1129,7 @@ class InstantAppRegistry {
         try {
             out = destination.startWrite();
 
-            XmlSerializer serializer = Xml.newSerializer();
-            serializer.setOutput(out, StandardCharsets.UTF_8.name());
+            TypedXmlSerializer serializer = Xml.resolveSerializer(out);
             serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
 
             serializer.startDocument(null, true);

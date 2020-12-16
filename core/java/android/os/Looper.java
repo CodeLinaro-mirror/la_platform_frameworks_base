@@ -44,7 +44,7 @@ import android.util.proto.ProtoOutputStream;
   *      public void run() {
   *          Looper.prepare();
   *
-  *          mHandler = new Handler() {
+  *          mHandler = new Handler(Looper.myLooper()) {
   *              public void handleMessage(Message msg) {
   *                  // process incoming messages here
   *              }
@@ -155,6 +155,7 @@ public final class Looper {
     /**
      * Poll and deliver single message, return true if the outer loop should continue.
      */
+    @SuppressWarnings("AndroidFrameworkBinderIdentity")
     private static boolean loopOnce(final Looper me,
             final long ident, final int thresholdOverride) {
         Message msg = me.mQueue.next(); // might block
@@ -255,6 +256,7 @@ public final class Looper {
      * Run the message queue in this thread. Be sure to call
      * {@link #quit()} to end the loop.
      */
+    @SuppressWarnings("AndroidFrameworkBinderIdentity")
     public static void loop() {
         final Looper me = myLooper();
         if (me == null) {

@@ -45,15 +45,13 @@ import android.widget.RemoteViews;
 
 import com.android.systemui.R;
 import com.android.systemui.TestableDependency;
-import com.android.systemui.bubbles.BubbleController;
-import com.android.systemui.bubbles.BubblesTestActivity;
 import com.android.systemui.media.MediaFeatureFlag;
+import com.android.systemui.media.dialog.MediaOutputDialogFactory;
 import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.NotificationMediaManager;
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
-import com.android.systemui.statusbar.SmartReplyController;
 import com.android.systemui.statusbar.notification.ConversationNotificationProcessor;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.collection.NotificationEntryBuilder;
@@ -69,10 +67,14 @@ import com.android.systemui.statusbar.notification.row.NotificationRowContentBin
 import com.android.systemui.statusbar.phone.ConfigurationControllerImpl;
 import com.android.systemui.statusbar.phone.HeadsUpManagerPhone;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
-import com.android.systemui.statusbar.policy.SmartReplyConstants;
+import com.android.systemui.statusbar.policy.InflatedSmartReplies;
+import com.android.systemui.wmshell.BubblesManager;
+import com.android.systemui.wmshell.BubblesTestActivity;
+import com.android.wm.shell.bubbles.Bubbles;
 
 import org.mockito.ArgumentCaptor;
 
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -114,12 +116,13 @@ public class NotificationTestHelper {
         mContext = context;
         mTestLooper = testLooper;
         dependency.injectMockDependency(NotificationMediaManager.class);
-        dependency.injectMockDependency(BubbleController.class);
         dependency.injectMockDependency(NotificationShadeWindowController.class);
+        dependency.injectMockDependency(MediaOutputDialogFactory.class);
         mStatusBarStateController = mock(StatusBarStateController.class);
         mGroupMembershipManager = new NotificationGroupManagerLegacy(
                 mStatusBarStateController,
-                () -> mock(PeopleNotificationIdentifier.class));
+                () -> mock(PeopleNotificationIdentifier.class),
+                Optional.of((mock(Bubbles.class))));
         mGroupExpansionManager = mGroupMembershipManager;
         mHeadsUpManager = new HeadsUpManagerPhone(mContext, mStatusBarStateController,
                 mock(KeyguardBypassController.class), mock(NotificationGroupManagerLegacy.class),
@@ -133,11 +136,11 @@ public class NotificationTestHelper {
         NotificationContentInflater contentBinder = new NotificationContentInflater(
                 mock(NotifRemoteViewCache.class),
                 mock(NotificationRemoteInputManager.class),
-                () -> mock(SmartReplyConstants.class),
-                () -> mock(SmartReplyController.class),
                 mock(ConversationNotificationProcessor.class),
                 mock(MediaFeatureFlag.class),
-                mock(Executor.class));
+                mock(Executor.class),
+                (sysuiContext, notifPackageContext, entry, existingRepliesAndAction) ->
+                        mock(InflatedSmartReplies.class));
         contentBinder.setInflateSynchronously(true);
         mBindStage = new RowContentBindStage(contentBinder,
                 mock(NotifInflationErrorManager.class),
@@ -428,7 +431,9 @@ public class NotificationTestHelper {
                 mock(FalsingManager.class),
                 mStatusBarStateController,
                 mPeopleNotificationIdentifier,
-                mock(OnUserInteractionCallback.class));
+                mock(OnUserInteractionCallback.class),
+                Optional.of(mock(BubblesManager.class)),
+                mock(NotificationGutsManager.class));
 
         row.setAboveShelfChangedListener(aboveShelf -> { });
         mBindStage.getStageParams(entry).requireContentViews(extraInflationFlags);

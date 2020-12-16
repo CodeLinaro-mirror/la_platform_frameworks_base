@@ -639,7 +639,7 @@ public class WindowConfiguration implements Parcelable, Comparable<WindowConfigu
 
     /** @hide */
     @Override
-    public boolean equals(Object that) {
+    public boolean equals(@Nullable Object that) {
         if (that == null) return false;
         if (that == this) return true;
         if (!(that instanceof WindowConfiguration)) {
@@ -849,15 +849,6 @@ public class WindowConfiguration implements Parcelable, Comparable<WindowConfigu
      */
     public boolean useWindowFrameForBackdrop() {
         return mWindowingMode == WINDOWING_MODE_FREEFORM || mWindowingMode == WINDOWING_MODE_PINNED;
-    }
-
-    /**
-     * Returns true if this container may be scaled without resizing, and windows within may need
-     * to be configured as such.
-     * @hide
-     */
-    public boolean windowsAreScaleable() {
-        return mWindowingMode == WINDOWING_MODE_PINNED;
     }
 
     /**

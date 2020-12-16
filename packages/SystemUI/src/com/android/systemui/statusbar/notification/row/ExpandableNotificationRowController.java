@@ -43,8 +43,10 @@ import com.android.systemui.statusbar.notification.stack.NotificationListContain
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.statusbar.policy.HeadsUpManager;
 import com.android.systemui.util.time.SystemClock;
+import com.android.systemui.wmshell.BubblesManager;
 
 import java.util.List;
+import java.util.Optional;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -79,24 +81,32 @@ public class ExpandableNotificationRowController implements NodeController {
     private final FalsingManager mFalsingManager;
     private final boolean mAllowLongPress;
     private final PeopleNotificationIdentifier mPeopleNotificationIdentifier;
+    private final Optional<BubblesManager> mBubblesManagerOptional;
 
     @Inject
-    public ExpandableNotificationRowController(ExpandableNotificationRow view,
+    public ExpandableNotificationRowController(
+            ExpandableNotificationRow view,
             NotificationListContainer listContainer,
             ActivatableNotificationViewController activatableNotificationViewController,
-            NotificationMediaManager mediaManager, PluginManager pluginManager,
-            SystemClock clock, @AppName String appName, @NotificationKey String notificationKey,
+            NotificationMediaManager mediaManager,
+            PluginManager pluginManager,
+            SystemClock clock,
+            @AppName String appName,
+            @NotificationKey String notificationKey,
             KeyguardBypassController keyguardBypassController,
             GroupMembershipManager groupMembershipManager,
             GroupExpansionManager groupExpansionManager,
             RowContentBindStage rowContentBindStage,
-            NotificationLogger notificationLogger, HeadsUpManager headsUpManager,
+            NotificationLogger notificationLogger,
+            HeadsUpManager headsUpManager,
             ExpandableNotificationRow.OnExpandClickListener onExpandClickListener,
             StatusBarStateController statusBarStateController,
             NotificationGutsManager notificationGutsManager,
             @Named(ALLOW_NOTIFICATION_LONG_PRESS_NAME) boolean allowLongPress,
-            OnUserInteractionCallback onUserInteractionCallback, FalsingManager falsingManager,
-            PeopleNotificationIdentifier peopleNotificationIdentifier) {
+            OnUserInteractionCallback onUserInteractionCallback,
+            FalsingManager falsingManager,
+            PeopleNotificationIdentifier peopleNotificationIdentifier,
+            Optional<BubblesManager> bubblesManagerOptional) {
         mView = view;
         mListContainer = listContainer;
         mActivatableNotificationViewController = activatableNotificationViewController;
@@ -119,6 +129,7 @@ public class ExpandableNotificationRowController implements NodeController {
         mAllowLongPress = allowLongPress;
         mFalsingManager = falsingManager;
         mPeopleNotificationIdentifier = peopleNotificationIdentifier;
+        mBubblesManagerOptional = bubblesManagerOptional;
     }
 
     /**
@@ -142,8 +153,9 @@ public class ExpandableNotificationRowController implements NodeController {
                 mFalsingManager,
                 mStatusBarStateController,
                 mPeopleNotificationIdentifier,
-                mOnUserInteractionCallback
-
+                mOnUserInteractionCallback,
+                mBubblesManagerOptional,
+                mNotificationGutsManager
         );
         mView.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         if (mAllowLongPress) {

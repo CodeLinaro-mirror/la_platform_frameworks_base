@@ -19,13 +19,19 @@ package com.android.systemui.wmshell;
 import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_3BUTTON;
 
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_BOUNCER_SHOWING;
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_BUBBLES_EXPANDED;
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_GLOBAL_ACTIONS_SHOWING;
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_NOTIFICATION_PANEL_EXPANDED;
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_ONE_HANDED_ACTIVE;
-import static com.android.systemui.shared.system.WindowManagerWrapper.WINDOWING_MODE_SPLIT_SCREEN_PRIMARY;
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_QUICK_SETTINGS_EXPANDED;
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING;
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING_OCCLUDED;
 
-import android.app.ActivityManager;
-import android.content.ComponentName;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.inputmethodservice.InputMethodService;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
@@ -34,30 +40,31 @@ import android.view.KeyEvent;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.KeyguardUpdateMonitorCallback;
+import com.android.systemui.Dependency;
 import com.android.systemui.SystemUI;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.keyguard.ScreenLifecycle;
 import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.NavigationModeController;
-import com.android.systemui.pip.Pip;
-import com.android.systemui.shared.system.ActivityManagerWrapper;
-import com.android.systemui.shared.system.TaskStackChangeListener;
 import com.android.systemui.shared.tracing.ProtoTraceable;
 import com.android.systemui.statusbar.CommandQueue;
+import com.android.systemui.statusbar.policy.ConfigurationController;
+import com.android.systemui.statusbar.policy.UserInfoController;
 import com.android.systemui.tracing.ProtoTracer;
 import com.android.systemui.tracing.nano.SystemUiTraceProto;
-import com.android.wm.shell.ShellTaskOrganizer;
-import com.android.wm.shell.common.DisplayImeController;
+import com.android.wm.shell.ShellDump;
+import com.android.wm.shell.apppairs.AppPairs;
+import com.android.wm.shell.hidedisplaycutout.HideDisplayCutout;
 import com.android.wm.shell.nano.WmShellTraceProto;
 import com.android.wm.shell.onehanded.OneHanded;
 import com.android.wm.shell.onehanded.OneHandedEvents;
 import com.android.wm.shell.onehanded.OneHandedGestureHandler.OneHandedGestureEventCallback;
 import com.android.wm.shell.onehanded.OneHandedTransitionCallback;
+import com.android.wm.shell.pip.Pip;
 import com.android.wm.shell.protolog.ShellProtoLogImpl;
 import com.android.wm.shell.splitscreen.SplitScreen;
 
 import java.io.FileDescriptor;
-import java.io.FileOutputStream;
 import java.io.PrintWriter;
 import java.util.Arrays;
 import java.util.Optional;
@@ -70,63 +77,73 @@ import javax.inject.Inject;
 @SysUISingleton
 public final class WMShell extends SystemUI
         implements CommandQueue.Callbacks, ProtoTraceable<SystemUiTraceProto> {
+    private static final String TAG = WMShell.class.getName();
+    private static final int INVALID_SYSUI_STATE_MASK =
+            SYSUI_STATE_GLOBAL_ACTIONS_SHOWING
+                    | SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING
+                    | SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING_OCCLUDED
+                    | SYSUI_STATE_BOUNCER_SHOWING
+                    | SYSUI_STATE_NOTIFICATION_PANEL_EXPANDED
+                    | SYSUI_STATE_BUBBLES_EXPANDED
+                    | SYSUI_STATE_QUICK_SETTINGS_EXPANDED;
+
     private final CommandQueue mCommandQueue;
-    private final DisplayImeController mDisplayImeController;
+    private final ConfigurationController mConfigurationController;
     private final KeyguardUpdateMonitor mKeyguardUpdateMonitor;
-    private final ActivityManagerWrapper mActivityManagerWrapper;
     private final NavigationModeController mNavigationModeController;
     private final ScreenLifecycle mScreenLifecycle;
     private final SysUiState mSysUiState;
     private final Optional<Pip> mPipOptional;
     private final Optional<SplitScreen> mSplitScreenOptional;
     private final Optional<OneHanded> mOneHandedOptional;
-    // Inject the organizer directly in case the optionals aren't loaded to depend on it. There
-    // are non-optional windowing features like FULLSCREEN.
-    private final ShellTaskOrganizer mShellTaskOrganizer;
+    private final Optional<HideDisplayCutout> mHideDisplayCutoutOptional;
     private final ProtoTracer mProtoTracer;
+    private final Optional<ShellDump> mShellDump;
+    private final Optional<AppPairs> mAppPairsOptional;
 
+    private boolean mIsSysUiStateValid;
     private KeyguardUpdateMonitorCallback mSplitScreenKeyguardCallback;
+    private KeyguardUpdateMonitorCallback mPipKeyguardCallback;
     private KeyguardUpdateMonitorCallback mOneHandedKeyguardCallback;
 
     @Inject
     public WMShell(Context context, CommandQueue commandQueue,
+            ConfigurationController configurationController,
             KeyguardUpdateMonitor keyguardUpdateMonitor,
-            ActivityManagerWrapper activityManagerWrapper,
-            DisplayImeController displayImeController,
             NavigationModeController navigationModeController,
             ScreenLifecycle screenLifecycle,
             SysUiState sysUiState,
             Optional<Pip> pipOptional,
             Optional<SplitScreen> splitScreenOptional,
             Optional<OneHanded> oneHandedOptional,
-            ShellTaskOrganizer shellTaskOrganizer,
-            ProtoTracer protoTracer) {
+            Optional<HideDisplayCutout> hideDisplayCutoutOptional,
+            ProtoTracer protoTracer,
+            Optional<ShellDump> shellDump,
+            Optional<AppPairs> appPairsOptional) {
         super(context);
         mCommandQueue = commandQueue;
-        mCommandQueue.addCallback(this);
+        mConfigurationController = configurationController;
         mKeyguardUpdateMonitor = keyguardUpdateMonitor;
-        mActivityManagerWrapper = activityManagerWrapper;
-        mDisplayImeController = displayImeController;
         mNavigationModeController = navigationModeController;
         mScreenLifecycle = screenLifecycle;
         mSysUiState = sysUiState;
         mPipOptional = pipOptional;
         mSplitScreenOptional = splitScreenOptional;
         mOneHandedOptional = oneHandedOptional;
-        mShellTaskOrganizer = shellTaskOrganizer;
+        mHideDisplayCutoutOptional = hideDisplayCutoutOptional;
         mProtoTracer = protoTracer;
         mProtoTracer.add(this);
+        mShellDump = shellDump;
+        mAppPairsOptional = appPairsOptional;
     }
 
     @Override
     public void start() {
-        // This is to prevent circular init problem by separating registration step out of its
-        // constructor. And make sure the initialization of DisplayImeController won't depend on
-        // specific feature anymore.
-        mDisplayImeController.startMonitorDisplays();
+        mCommandQueue.addCallback(this);
         mPipOptional.ifPresent(this::initPip);
         mSplitScreenOptional.ifPresent(this::initSplitScreen);
         mOneHandedOptional.ifPresent(this::initOneHanded);
+        mHideDisplayCutoutOptional.ifPresent(this::initHideDisplayCutout);
     }
 
     @VisibleForTesting
@@ -137,6 +154,38 @@ public final class WMShell extends SystemUI
                 pip.showPictureInPictureMenu();
             }
         });
+
+        mPipKeyguardCallback = new KeyguardUpdateMonitorCallback() {
+            @Override
+            public void onKeyguardVisibilityChanged(boolean showing) {
+                if (showing) {
+                    pip.hidePipMenu(null, null);
+                }
+            }
+        };
+        mKeyguardUpdateMonitor.registerCallback(mPipKeyguardCallback);
+
+        mSysUiState.addCallback(sysUiStateFlag -> {
+            mIsSysUiStateValid = (sysUiStateFlag & INVALID_SYSUI_STATE_MASK) == 0;
+            pip.onSystemUiStateChanged(mIsSysUiStateValid, sysUiStateFlag);
+        });
+
+        mConfigurationController.addCallback(new ConfigurationController.ConfigurationListener() {
+            @Override
+            public void onDensityOrFontScaleChanged() {
+                pip.onDensityOrFontScaleChanged();
+            }
+
+            @Override
+            public void onOverlayChanged() {
+                pip.onOverlayChanged();
+            }
+        });
+
+        // The media session listener needs to be re-registered when switching users
+        UserInfoController userInfoController = Dependency.get(UserInfoController.class);
+        userInfoController.addCallback((String name, Drawable picture, String userAccount) ->
+                pip.registerSessionListenerForCurrentUser());
     }
 
     @VisibleForTesting
@@ -152,47 +201,10 @@ public final class WMShell extends SystemUI
             }
         };
         mKeyguardUpdateMonitor.registerCallback(mSplitScreenKeyguardCallback);
-
-        mActivityManagerWrapper.registerTaskStackListener(
-                new TaskStackChangeListener() {
-                    @Override
-                    public void onActivityRestartAttempt(ActivityManager.RunningTaskInfo task,
-                            boolean homeTaskVisible, boolean clearedTask, boolean wasVisible) {
-                        if (!wasVisible || task.configuration.windowConfiguration.getWindowingMode()
-                                != WINDOWING_MODE_SPLIT_SCREEN_PRIMARY
-                                || !splitScreen.isSplitScreenSupported()) {
-                            return;
-                        }
-
-                        if (splitScreen.isMinimized()) {
-                            splitScreen.onUndockingTask();
-                        }
-                    }
-
-                    @Override
-                    public void onActivityForcedResizable(String packageName, int taskId,
-                            int reason) {
-                        splitScreen.onActivityForcedResizable(packageName, taskId, reason);
-                    }
-
-                    @Override
-                    public void onActivityDismissingDockedStack() {
-                        splitScreen.onActivityDismissingSplitScreen();
-                    }
-
-                    @Override
-                    public void onActivityLaunchOnSecondaryDisplayFailed() {
-                        splitScreen.onActivityLaunchOnSecondaryDisplayFailed();
-                    }
-                });
     }
 
     @VisibleForTesting
     void initOneHanded(OneHanded oneHanded) {
-        if (!oneHanded.hasOneHandedFeature()) {
-            return;
-        }
-
         int currentMode = mNavigationModeController.addListener(mode ->
                 oneHanded.setThreeButtonModeEnabled(mode == NAV_BAR_MODE_3BUTTON));
         oneHanded.setThreeButtonModeEnabled(currentMode == NAV_BAR_MODE_3BUTTON);
@@ -268,21 +280,16 @@ public final class WMShell extends SystemUI
                 }
             }
         });
+    }
 
-        mActivityManagerWrapper.registerTaskStackListener(
-                new TaskStackChangeListener() {
-                    @Override
-                    public void onTaskCreated(int taskId, ComponentName componentName) {
-                        oneHanded.stopOneHanded(
-                                OneHandedEvents.EVENT_ONE_HANDED_TRIGGER_APP_TAPS_OUT);
-                    }
-
-                    @Override
-                    public void onTaskMovedToFront(int taskId) {
-                        oneHanded.stopOneHanded(
-                                OneHandedEvents.EVENT_ONE_HANDED_TRIGGER_APP_TAPS_OUT);
-                    }
-                });
+    @VisibleForTesting
+    void initHideDisplayCutout(HideDisplayCutout hideDisplayCutout) {
+        mConfigurationController.addCallback(new ConfigurationController.ConfigurationListener() {
+            @Override
+            public void onConfigChanged(Configuration newConfig) {
+                hideDisplayCutout.onConfigurationChanged(newConfig);
+            }
+        });
     }
 
     @Override
@@ -300,8 +307,8 @@ public final class WMShell extends SystemUI
         if (handleLoggingCommand(args, pw)) {
             return;
         }
-
         // Dump WMShell stuff here if no commands were handled
+        mShellDump.ifPresent((shellDump) -> shellDump.dump(pw));
     }
 
     @Override
@@ -330,6 +337,21 @@ public final class WMShell extends SystemUI
                     if (result == 0) {
                         pw.println("Stopping logging on groups: " + Arrays.toString(groups));
                     }
+                    return true;
+                }
+
+                case "pair": {
+                    String[] groups = Arrays.copyOfRange(args, i + 1, args.length);
+                    final int taskId1 = new Integer(groups[0]);
+                    final int taskId2 = new Integer(groups[1]);
+                    mAppPairsOptional.ifPresent(appPairs -> appPairs.pair(taskId1, taskId2));
+                    return true;
+                }
+
+                case "unpair": {
+                    String[] groups = Arrays.copyOfRange(args, i + 1, args.length);
+                    final int taskId = new Integer(groups[0]);
+                    mAppPairsOptional.ifPresent(appPairs -> appPairs.unpair(taskId));
                     return true;
                 }
             }

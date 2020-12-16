@@ -23,11 +23,10 @@ import static android.app.ActivityManager.USER_OP_ERROR_IS_SYSTEM;
 import static android.app.ActivityManager.USER_OP_ERROR_RELATED_USERS_CANNOT_STOP;
 import static android.app.ActivityManager.USER_OP_IS_CURRENT;
 import static android.app.ActivityManager.USER_OP_SUCCESS;
-import static android.app.ActivityManagerInternal.ALLOW_ACROSS_PROFILES_IN_PROFILE_OR_FULL;
-import static android.app.ActivityManagerInternal.ALLOW_ACROSS_PROFILES_IN_PROFILE_OR_NON_FULL;
+import static android.app.ActivityManagerInternal.ALLOW_ALL_PROFILE_PERMISSIONS_IN_PROFILE;
 import static android.app.ActivityManagerInternal.ALLOW_FULL_ONLY;
 import static android.app.ActivityManagerInternal.ALLOW_NON_FULL;
-import static android.app.ActivityManagerInternal.ALLOW_NON_FULL_IN_PROFILE_OR_FULL;
+import static android.app.ActivityManagerInternal.ALLOW_NON_FULL_IN_PROFILE;
 import static android.os.Process.SHELL_UID;
 import static android.os.Process.SYSTEM_UID;
 
@@ -713,8 +712,6 @@ class UserController implements Handler.Callback {
             Slog.i(TAG, "Stopping pre-created user " + userInfo.toFullString());
             // Pre-created user was started right after creation so services could properly
             // intialize it; it should be stopped right away as it's not really a "real" user.
-            // TODO(b/143092698): in the long-term, it might be better to add a onCreateUser()
-            // callback on SystemService instead.
             stopUser(userInfo.id, /* force= */ true, /* allowDelayedLocking= */ false,
                     /* stopUserCallback= */ null, /* keyEvictedCallback= */ null);
             return;
@@ -955,7 +952,7 @@ class UserController implements Handler.Callback {
         mInjector.batteryStatsServiceNoteEvent(
                 BatteryStats.HistoryItem.EVENT_USER_RUNNING_FINISH,
                 Integer.toString(userId), userId);
-        mInjector.getSystemServiceManager().stopUser(userId);
+        mInjector.getSystemServiceManager().onUserStopping(userId);
 
         Runnable finishUserStoppedAsync = () ->
                 mHandler.post(() -> finishUserStopped(uss, allowDelayedLocking));
@@ -1031,7 +1028,7 @@ class UserController implements Handler.Callback {
         }
 
         if (stopped) {
-            mInjector.systemServiceManagerCleanupUser(userId);
+            mInjector.systemServiceManagerOnUserStopped(userId);
             mInjector.stackSupervisorRemoveUser(userId);
 
             // Remove the user if it is ephemeral.
@@ -1310,7 +1307,7 @@ class UserController implements Handler.Callback {
                 Slog.w(TAG, "No user info for user #" + userId);
                 return false;
             }
-            if (foreground && userInfo.isManagedProfile()) {
+            if (foreground && userInfo.isProfile()) {
                 Slog.w(TAG, "Cannot switch to User #" + userId + ": not a full user");
                 return false;
             }
@@ -1615,7 +1612,7 @@ class UserController implements Handler.Callback {
             Slog.w(TAG, "Cannot switch to User #" + targetUserId + ": not supported");
             return false;
         }
-        if (targetUserInfo.isManagedProfile()) {
+        if (targetUserInfo.isProfile()) {
             Slog.w(TAG, "Cannot switch to User #" + targetUserId + ": not a full user");
             return false;
         }
@@ -1817,7 +1814,7 @@ class UserController implements Handler.Callback {
     void sendUserSwitchBroadcasts(int oldUserId, int newUserId) {
         final int callingUid = Binder.getCallingUid();
         final int callingPid = Binder.getCallingPid();
-        long ident = Binder.clearCallingIdentity();
+        final long ident = Binder.clearCallingIdentity();
         try {
             Intent intent;
             if (oldUserId >= 0) {
@@ -1912,12 +1909,11 @@ class UserController implements Handler.Callback {
                     callingUid, -1, true) != PackageManager.PERMISSION_GRANTED) {
                 // If the caller does not have either permission, they are always doomed.
                 allow = false;
-            } else if (allowMode == ALLOW_NON_FULL
-                    || allowMode == ALLOW_ACROSS_PROFILES_IN_PROFILE_OR_NON_FULL) {
+            } else if (allowMode == ALLOW_NON_FULL) {
                 // We are blanket allowing non-full access, you lucky caller!
                 allow = true;
-            } else if (allowMode == ALLOW_NON_FULL_IN_PROFILE_OR_FULL
-                        || allowMode == ALLOW_ACROSS_PROFILES_IN_PROFILE_OR_FULL) {
+            } else if (allowMode == ALLOW_NON_FULL_IN_PROFILE
+                        || allowMode == ALLOW_ALL_PROFILE_PERMISSIONS_IN_PROFILE) {
                 // We may or may not allow this depending on whether the two users are
                 // in the same profile.
                 allow = isSameProfileGroup;
@@ -1944,15 +1940,12 @@ class UserController implements Handler.Callback {
                     builder.append("; this requires ");
                     builder.append(INTERACT_ACROSS_USERS_FULL);
                     if (allowMode != ALLOW_FULL_ONLY) {
-                        if (allowMode == ALLOW_NON_FULL
-                                || allowMode == ALLOW_ACROSS_PROFILES_IN_PROFILE_OR_NON_FULL
-                                || isSameProfileGroup) {
+                        if (allowMode == ALLOW_NON_FULL || isSameProfileGroup) {
                             builder.append(" or ");
                             builder.append(INTERACT_ACROSS_USERS);
                         }
                         if (isSameProfileGroup
-                                && (allowMode == ALLOW_ACROSS_PROFILES_IN_PROFILE_OR_FULL
-                                || allowMode == ALLOW_ACROSS_PROFILES_IN_PROFILE_OR_NON_FULL)) {
+                                && allowMode == ALLOW_ALL_PROFILE_PERMISSIONS_IN_PROFILE) {
                             builder.append(" or ");
                             builder.append(INTERACT_ACROSS_PROFILES);
                         }
@@ -1979,8 +1972,7 @@ class UserController implements Handler.Callback {
     private boolean canInteractWithAcrossProfilesPermission(
             int allowMode, boolean isSameProfileGroup, int callingPid, int callingUid,
             String callingPackage) {
-        if (allowMode != ALLOW_ACROSS_PROFILES_IN_PROFILE_OR_FULL
-                && allowMode != ALLOW_ACROSS_PROFILES_IN_PROFILE_OR_NON_FULL) {
+        if (allowMode != ALLOW_ALL_PROFILE_PERMISSIONS_IN_PROFILE) {
             return false;
         }
         if (!isSameProfileGroup) {
@@ -2502,8 +2494,8 @@ class UserController implements Handler.Callback {
                 logUserLifecycleEvent(msg.arg1, USER_LIFECYCLE_EVENT_START_USER,
                         USER_LIFECYCLE_EVENT_STATE_BEGIN);
 
-                mInjector.getSystemServiceManager().startUser(TimingsTraceAndSlog.newAsyncLog(),
-                        msg.arg1);
+                mInjector.getSystemServiceManager().onUserStarting(
+                        TimingsTraceAndSlog.newAsyncLog(), msg.arg1);
 
                 logUserLifecycleEvent(msg.arg1, USER_LIFECYCLE_EVENT_START_USER,
                         USER_LIFECYCLE_EVENT_STATE_FINISH);
@@ -2511,7 +2503,7 @@ class UserController implements Handler.Callback {
                 break;
             case USER_UNLOCK_MSG:
                 final int userId = msg.arg1;
-                mInjector.getSystemServiceManager().unlockUser(userId);
+                mInjector.getSystemServiceManager().onUserUnlocking(userId);
                 // Loads recents on a worker thread that allows disk I/O
                 FgThread.getHandler().post(() -> {
                     mInjector.loadUserRecents(userId);
@@ -2536,7 +2528,7 @@ class UserController implements Handler.Callback {
                         BatteryStats.HistoryItem.EVENT_USER_FOREGROUND_START,
                         Integer.toString(msg.arg1), msg.arg1);
 
-                mInjector.getSystemServiceManager().switchUser(msg.arg2, msg.arg1);
+                mInjector.getSystemServiceManager().onUserSwitching(msg.arg2, msg.arg1);
                 break;
             case FOREGROUND_PROFILE_CHANGED_MSG:
                 dispatchForegroundProfileChanged(msg.arg1);
@@ -2789,8 +2781,8 @@ class UserController implements Handler.Callback {
             LocalServices.getService(ActivityTaskManagerInternal.class).onUserStopped(userId);
         }
 
-        void systemServiceManagerCleanupUser(@UserIdInt int userId) {
-            mService.mSystemServiceManager.cleanupUser(userId);
+        void systemServiceManagerOnUserStopped(@UserIdInt int userId) {
+            mService.mSystemServiceManager.onUserStopped(userId);
         }
 
         protected UserManagerService getUserManager() {

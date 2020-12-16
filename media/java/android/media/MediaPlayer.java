@@ -16,6 +16,9 @@
 
 package android.media;
 
+import static android.Manifest.permission.BIND_IMS_SERVICE;
+import static android.content.pm.PackageManager.PERMISSION_GRANTED;
+
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -31,6 +34,9 @@ import android.graphics.SurfaceTexture;
 import android.media.SubtitleController.Anchor;
 import android.media.SubtitleTrack.RenderingWidget;
 import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.FileUtils;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
@@ -80,6 +86,7 @@ import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Scanner;
 import java.util.Set;
 import java.util.UUID;
@@ -1104,7 +1111,13 @@ public class MediaPlayer extends PlayerBase
     }
 
     private boolean attemptDataSource(ContentResolver resolver, Uri uri) {
-        try (AssetFileDescriptor afd = resolver.openAssetFileDescriptor(uri, "r")) {
+        boolean optimize = SystemProperties.getBoolean("fuse.sys.transcode_player_optimize",
+                false);
+        Bundle opts = new Bundle();
+        opts.putBoolean("android.provider.extra.ACCEPT_ORIGINAL_MEDIA_FORMAT", true);
+        try (AssetFileDescriptor afd = optimize
+                ? resolver.openTypedAssetFileDescriptor(uri, "*/*", opts)
+                : resolver.openAssetFileDescriptor(uri, "r")) {
             setDataSource(afd);
             return true;
         } catch (NullPointerException | SecurityException | IOException ex) {
@@ -1144,7 +1157,7 @@ public class MediaPlayer extends PlayerBase
         setDataSource(path, headers, null);
     }
 
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private void setDataSource(String path, Map<String, String> headers, List<HttpCookie> cookies)
             throws IOException, IllegalArgumentException, SecurityException, IllegalStateException
     {
@@ -1165,7 +1178,7 @@ public class MediaPlayer extends PlayerBase
         setDataSource(path, keys, values, cookies);
     }
 
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private void setDataSource(String path, String[] keys, String[] values,
             List<HttpCookie> cookies)
             throws IOException, IllegalArgumentException, SecurityException, IllegalStateException {
@@ -1245,7 +1258,12 @@ public class MediaPlayer extends PlayerBase
      */
     public void setDataSource(FileDescriptor fd, long offset, long length)
             throws IOException, IllegalArgumentException, IllegalStateException {
-        _setDataSource(fd, offset, length);
+        FileDescriptor modernFd = FileUtils.convertToModernFd(fd);
+        if (modernFd == null) {
+            _setDataSource(fd, offset, length);
+        } else {
+            _setDataSource(modernFd, offset, length);
+        }
     }
 
     private native void _setDataSource(FileDescriptor fd, long offset, long length)
@@ -2094,8 +2112,8 @@ public class MediaPlayer extends PlayerBase
         mOnInfoListener = null;
         mOnVideoSizeChangedListener = null;
         mOnTimedTextListener = null;
-        mOnImsRxNoticeListener = null;
-        mOnImsRxNoticeHandler = null;
+        mOnRtpRxNoticeListener = null;
+        mOnRtpRxNoticeHandler = null;
         synchronized (mTimeProviderLock) {
             if (mTimeProvider != null) {
                 mTimeProvider.close();
@@ -2899,8 +2917,13 @@ public class MediaPlayer extends PlayerBase
 
         AssetFileDescriptor fd = null;
         try {
+            boolean optimize = SystemProperties.getBoolean("fuse.sys.transcode_player_optimize",
+                    false);
             ContentResolver resolver = context.getContentResolver();
-            fd = resolver.openAssetFileDescriptor(uri, "r");
+            Bundle opts = new Bundle();
+            opts.putBoolean("android.provider.extra.ACCEPT_ORIGINAL_MEDIA_FORMAT", true);
+            fd = optimize ? resolver.openTypedAssetFileDescriptor(uri, "*/*", opts)
+                    : resolver.openAssetFileDescriptor(uri, "r");
             if (fd == null) {
                 return;
             }
@@ -3303,7 +3326,7 @@ public class MediaPlayer extends PlayerBase
     private static final int MEDIA_META_DATA = 202;
     private static final int MEDIA_DRM_INFO = 210;
     private static final int MEDIA_TIME_DISCONTINUITY = 211;
-    private static final int MEDIA_IMS_RX_NOTICE = 300;
+    private static final int MEDIA_RTP_RX_NOTICE = 300;
     private static final int MEDIA_AUDIO_ROUTING_CHANGED = 10000;
 
     private TimeProvider mTimeProvider;
@@ -3613,31 +3636,34 @@ public class MediaPlayer extends PlayerBase
                 }
                 return;
 
-            case MEDIA_IMS_RX_NOTICE:
-                final OnImsRxNoticeListener imsRxNoticeListener;
-                final Handler imsRxNoticeHandler;
-                imsRxNoticeListener = mOnImsRxNoticeListener;
-                imsRxNoticeHandler = mOnImsRxNoticeHandler;
-                if (imsRxNoticeListener == null) {
+            case MEDIA_RTP_RX_NOTICE:
+                final OnRtpRxNoticeListener rtpRxNoticeListener = mOnRtpRxNoticeListener;
+                final Handler rtpRxNoticeHandler = mOnRtpRxNoticeHandler;
+                if (rtpRxNoticeListener == null) {
                     return;
                 }
                 if (msg.obj instanceof Parcel) {
                     Parcel parcel = (Parcel) msg.obj;
-                    byte[] event;
+                    parcel.setDataPosition(0);
+                    int noticeType;
+                    int[] data;
                     try {
-                        event = parcel.marshall();
+                        noticeType = parcel.readInt();
+                        int numOfArgs = parcel.dataAvail() / 4;
+                        data = new int[numOfArgs];
+                        for (int i = 0; i < numOfArgs; i++) {
+                            data[i] = parcel.readInt();
+                        }
                     } finally {
                         parcel.recycle();
                     }
-                    if (imsRxNoticeHandler == null) {
-                        imsRxNoticeListener.onImsRxNotice(mMediaPlayer, event);
+                    if (rtpRxNoticeHandler == null) {
+                        rtpRxNoticeListener.onRtpRxNotice(mMediaPlayer, noticeType, data);
                     } else {
-                        imsRxNoticeHandler.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                imsRxNoticeListener.onImsRxNotice(mMediaPlayer, event);
-                            }
-                        });
+                        rtpRxNoticeHandler.post(
+                                () ->
+                                        rtpRxNoticeListener
+                                                .onRtpRxNotice(mMediaPlayer, noticeType, data));
                     }
                 }
                 return;
@@ -4083,18 +4109,18 @@ public class MediaPlayer extends PlayerBase
 
     /**
      * Interface definition of a callback to be invoked when
-     * IMS Rx connection has a notice.
+     * RTP Rx connection has a notice.
      *
-     * @see MediaPlayer.setOnImsRxNoticeListener
+     * @see #setOnRtpRxNoticeListener
      *
      * @hide
      */
     @SystemApi
-    public interface OnImsRxNoticeListener
+    public interface OnRtpRxNoticeListener
     {
         /**
-         * Called to indicate an IMS event noticed from native media frameworks.
-         * <p></p>
+         * Called when an RTP Rx connection has a notice.
+         * <p>
          * Basic format. All TYPE and ARG are 4 bytes unsigned integer in native byte order.
          * <pre>{@code
          * 0                4               8                12
@@ -4149,14 +4175,14 @@ public class MediaPlayer extends PlayerBase
          * TYPE 205 - Transport layer Feedback message. (RFC-5104 Sec.4.2)
          * 0                4               8                12
          * +----------------+---------------+----------------+----------------+
-         * |      205       |      SSRC     | FB type(1 or 3)|     value      |
+         * |      205       |FB type(1 or 3)|      SSRC      |      Value     |
          * +----------------+---------------+----------------+----------------+
-         * SSRC
-         *      - Remote side's SSRC value of the media sender (RFC-3550 Sec.5.1)
          * Feedback (FB) type: determines the type of the event.
          *      - if 1, we received a NACK request from the remote side.
          *      - if 3, we received a TMMBR (Temporary Maximum Media Stream Bit Rate Request) from
          *        the remote side.
+         * SSRC
+         *      - Remote side's SSRC value of the media sender (RFC-3550 Sec.5.1)
          * Value: the FCI (Feedback Control Information) depending on the value of FB type
          *      - if FB type is 1, the Generic NACK as specified in RFC-4585 Sec.6.2.1
          *      - if FB type is 3, the TMMBR as specified in RFC-5104 Sec.4.2.1.1
@@ -4165,13 +4191,13 @@ public class MediaPlayer extends PlayerBase
          * TYPE 206 - Payload-specific Feedback message. (RFC-5104 Sec.4.3)
          * 0                4               8
          * +----------------+---------------+----------------+
-         * |      206       |      SSRC     | FB type(1 or 4)|
+         * |      206       |FB type(1 or 4)|      SSRC      |
          * +----------------+---------------+----------------+
-         * SSRC
-         *      - Remote side's SSRC value of the media sender (RFC-3550 Sec.5.1)
          * Feedback (FB) type: determines the type of the event.
          *      - if 1, we received a PLI request from the remote side.
          *      - if 4, we received a FIR request from the remote side.
+         * SSRC
+         *      - Remote side's SSRC value of the media sender (RFC-3550 Sec.5.1)
          *
          *
          * TYPE 300 - CVO (RTP Extension) message.
@@ -4192,34 +4218,39 @@ public class MediaPlayer extends PlayerBase
          * }</pre>
          *
          * @param mp the {@code MediaPlayer} associated with this callback.
-         * @param event an IMS media event serialized as byte[] array.
+         * @param noticeType TYPE of the event.
+         * @param params RTP Rx media data serialized as int[] array.
          */
-        void onImsRxNotice(@NonNull MediaPlayer mp, @NonNull byte[] event);
+        void onRtpRxNotice(@NonNull MediaPlayer mp, int noticeType, @NonNull int[] params);
     }
 
     /**
-     * Register a callback to be invoked when IMS Rx connection has a notice.
-     * The callback required if mediaplayer configured for RTPSource by
-     * MediaPlayer.setDataSource(String8 rtpParams) of mediaplayer.h
+     * Sets the listener to be invoked when an RTP Rx connection has a notice.
+     * The listener is required if MediaPlayer is configured for RTPSource by
+     * MediaPlayer.setDataSource(String8 rtpParams) of mediaplayer.h.
      *
-     * @see MediaPlayer.OnImsRxNoticeListener
+     * @see OnRtpRxNoticeListener
      *
-     * @param listener the callback that will be run
-     * @param handler Specifies Handler object for the thread on which to execute
-     * the callback. If null, the handler on the main looper will be used.
+     * @param listener the listener called after a notice from RTP Rx
+     * @param handler the {@link Handler} that receives RTP Tx events
      *
      * @hide
      */
     @SystemApi
     @RequiresPermission("android.permission.BIND_IMS_SERVICE")
-    public void setOnImsRxNoticeListener(
-        @Nullable OnImsRxNoticeListener listener, @Nullable Handler handler) {
-        mOnImsRxNoticeListener = listener;
-        mOnImsRxNoticeHandler = handler;
+    public void setOnRtpRxNoticeListener(
+            @NonNull Context context,
+            @NonNull OnRtpRxNoticeListener listener, @Nullable Handler handler) {
+        Objects.requireNonNull(context);
+        Preconditions.checkArgument(
+                context.checkSelfPermission(BIND_IMS_SERVICE) == PERMISSION_GRANTED,
+                "android.permission.BIND_IMS_SERVICE permission not granted.");
+        mOnRtpRxNoticeListener = Objects.requireNonNull(listener);
+        mOnRtpRxNoticeHandler = handler;
     }
 
-    private OnImsRxNoticeListener mOnImsRxNoticeListener;
-    private Handler mOnImsRxNoticeHandler;
+    private OnRtpRxNoticeListener mOnRtpRxNoticeListener;
+    private Handler mOnRtpRxNoticeHandler;
 
     /**
      * Register a callback to be invoked when a selected track has timed metadata available.
@@ -4391,7 +4422,7 @@ public class MediaPlayer extends PlayerBase
      *  JAVA framework to avoid triggering track scanning.
      * @hide
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static final int MEDIA_INFO_EXTERNAL_METADATA_UPDATE = 803;
 
     /** Informs that audio is not playing. Note that playback of the video
@@ -4411,7 +4442,7 @@ public class MediaPlayer extends PlayerBase
      *
      * {@hide}
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static final int MEDIA_INFO_TIMED_TEXT_ERROR = 900;
 
     /** Subtitle track was not supported by the media framework.

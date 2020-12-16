@@ -20,7 +20,6 @@ import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
-import android.annotation.TestApi;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.os.Binder;
@@ -437,7 +436,6 @@ public class PhoneStateListener {
      * @hide
      */
     @SystemApi
-    @TestApi
     @RequiresPermission(Manifest.permission.READ_ACTIVE_EMERGENCY_SESSION)
     public static final int LISTEN_OUTGOING_EMERGENCY_CALL                  = 0x10000000;
 
@@ -450,7 +448,6 @@ public class PhoneStateListener {
      * @hide
      */
     @SystemApi
-    @TestApi
     @RequiresPermission(Manifest.permission.READ_ACTIVE_EMERGENCY_SESSION)
     public static final int LISTEN_OUTGOING_EMERGENCY_SMS                   = 0x20000000;
 
@@ -846,7 +843,7 @@ public class PhoneStateListener {
      *
      * @hide
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public void onDataConnectionRealTimeInfoChanged(
             DataConnectionRealTimeInfo dcRtInfo) {
         // default implementation empty
@@ -936,18 +933,21 @@ public class PhoneStateListener {
     /**
      * Callback invoked when the current emergency number list has changed on the registered
      * subscription.
-     * Note, the registration subId comes from {@link TelephonyManager} object which registers
-     * PhoneStateListener by {@link TelephonyManager#listen(PhoneStateListener, int)}.
+     *
+     * Note, the registered subscription is associated with {@link TelephonyManager} object
+     * on which {@link TelephonyManager#listen(PhoneStateListener, int)} was called.
      * If this TelephonyManager object was created with
      * {@link TelephonyManager#createForSubscriptionId(int)}, then the callback applies to the
-     * subId. Otherwise, this callback applies to
+     * given subId. Otherwise, this callback applies to
      * {@link SubscriptionManager#getDefaultSubscriptionId()}.
      *
-     * @param emergencyNumberList Map including the key as the active subscription ID
-     *                           (Note: if there is no active subscription, the key is
-     *                           {@link SubscriptionManager#getDefaultSubscriptionId})
-     *                           and the value as the list of {@link EmergencyNumber};
-     *                           null if this information is not available.
+     * @param emergencyNumberList Map associating all active subscriptions on the device with the
+     *                            list of emergency numbers originating from that subscription.
+     *                            If there are no active subscriptions, the map will contain a
+     *                            single entry with
+     *                            {@link SubscriptionManager#INVALID_SUBSCRIPTION_ID} as
+     *                            the key and a list of emergency numbers as the value. If no
+     *                            emergency number information is available, the value will be null.
      */
     public void onEmergencyNumberListChanged(
             @NonNull Map<Integer, List<EmergencyNumber>> emergencyNumberList) {
@@ -966,7 +966,6 @@ public class PhoneStateListener {
      * @hide
      */
     @SystemApi
-    @TestApi
     @Deprecated
     public void onOutgoingEmergencyCall(@NonNull EmergencyNumber placedEmergencyNumber) {
         // default implementation empty
@@ -991,7 +990,6 @@ public class PhoneStateListener {
      * @hide
      */
     @SystemApi
-    @TestApi
     public void onOutgoingEmergencyCall(@NonNull EmergencyNumber placedEmergencyNumber,
             int subscriptionId) {
         // Default implementation for backwards compatibility
@@ -1008,7 +1006,6 @@ public class PhoneStateListener {
      * @hide
      */
     @SystemApi
-    @TestApi
     @Deprecated
     public void onOutgoingEmergencySms(@NonNull EmergencyNumber sentEmergencyNumber) {
         // default implementation empty
@@ -1030,7 +1027,6 @@ public class PhoneStateListener {
      * @hide
      */
     @SystemApi
-    @TestApi
     public void onOutgoingEmergencySms(@NonNull EmergencyNumber sentEmergencyNumber,
             int subscriptionId) {
         // Default implementation for backwards compatibility
@@ -1050,7 +1046,7 @@ public class PhoneStateListener {
      * @param rawData is the byte array of the OEM hook raw data.
      * @hide
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public void onOemHookRawEvent(byte[] rawData) {
         // default implementation empty
     }

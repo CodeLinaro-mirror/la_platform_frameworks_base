@@ -399,6 +399,9 @@
     <string name="inactive_app_inactive_summary" msgid="3161222402614236260">"Inactief. Tik om te schakelen."</string>
     <string name="inactive_app_active_summary" msgid="8047630990208722344">"Actief. Tik om te schakelen."</string>
     <string name="standby_bucket_summary" msgid="5128193447550429600">"Stand-bystatus app: <xliff:g id="BUCKET"> %s</xliff:g>"</string>
+    <string name="transcode_settings_title" msgid="6700974145733932357">"Instellingen voor mediatranscodering"</string>
+    <string name="transcode_enable_all" msgid="4719796495995795404">"Transcodering inschakelen voor alle apps"</string>
+    <string name="transcode_skip_apps" msgid="5680997722349545778">"Transcodering uitschakelen voor alle apps"</string>
     <string name="runningservices_settings_title" msgid="6460099290493086515">"Actieve services"</string>
     <string name="runningservices_settings_summary" msgid="1046080643262665743">"Services die momenteel actief zijn, weergeven en beheren"</string>
     <string name="select_webview_provider_title" msgid="3917815648099445503">"WebView-implementatie"</string>
@@ -545,12 +548,19 @@
     <string name="user_need_lock_message" msgid="4311424336209509301">"Voordat je een beperkt profiel kunt maken, moet je een schermvergrendeling instellen om je apps en persoonsgegevens te beschermen."</string>
     <string name="user_set_lock_button" msgid="1427128184982594856">"Vergrendeling instellen"</string>
     <string name="user_switch_to_user" msgid="6975428297154968543">"Overschakelen naar <xliff:g id="USER_NAME">%s</xliff:g>"</string>
+    <string name="creating_new_user_dialog_message" msgid="7232880257538970375">"Nieuwe gebruiker maken…"</string>
+    <string name="user_nickname" msgid="262624187455825083">"Bijnaam"</string>
     <string name="guest_new_guest" msgid="3482026122932643557">"Gast toevoegen"</string>
     <string name="guest_exit_guest" msgid="5908239569510734136">"Gast verwijderen"</string>
     <string name="guest_nickname" msgid="6332276931583337261">"Gast"</string>
+    <string name="user_image_take_photo" msgid="467512954561638530">"Foto maken"</string>
+    <string name="user_image_choose_photo" msgid="1363820919146782908">"Afbeelding kiezen"</string>
+    <string name="user_image_photo_selector" msgid="433658323306627093">"Foto selecteren"</string>
     <string name="cached_apps_freezer_device_default" msgid="2616594131750144342">"Apparaatstandaard"</string>
     <string name="cached_apps_freezer_disabled" msgid="4816382260660472042">"Uitgeschakeld"</string>
     <string name="cached_apps_freezer_enabled" msgid="8866703500183051546">"Ingeschakeld"</string>
     <string name="cached_apps_freezer_reboot_dialog_text" msgid="695330563489230096">"Je apparaat moet opnieuw worden opgestart om deze wijziging toe te passen. Start nu opnieuw op of annuleer de wijziging."</string>
     <string name="media_transfer_wired_usb_device_name" msgid="7699141088423210903">"Bedrade hoofdtelefoon"</string>
+    <string name="wifi_hotspot_switch_on_text" msgid="9212273118217786155">"Aan"</string>
+    <string name="wifi_hotspot_switch_off_text" msgid="7245567251496959764">"Uit"</string>
 </resources>

@@ -197,8 +197,7 @@ public class ActivityDisplayTests extends WindowTestsBase {
 
         // Add activity that should be shown on the keyguard.
         final ActivityRecord showWhenLockedActivity = new ActivityBuilder(mAtm)
-                .setCreateTask(true)
-                .setStack(stack)
+                .setTask(stack)
                 .setActivityFlags(FLAG_SHOW_WHEN_LOCKED)
                 .build();
 
@@ -225,8 +224,8 @@ public class ActivityDisplayTests extends WindowTestsBase {
         final TaskDisplayArea taskDisplayArea = mRootWindowContainer.getDefaultTaskDisplayArea();
         final Task alwaysOnTopStack = taskDisplayArea.createStack(WINDOWING_MODE_FREEFORM,
                 ACTIVITY_TYPE_STANDARD, true /* onTop */);
-        final ActivityRecord activity = new ActivityBuilder(mAtm).setCreateTask(true)
-                .setStack(alwaysOnTopStack).build();
+        final ActivityRecord activity = new ActivityBuilder(mAtm)
+                .setTask(alwaysOnTopStack).build();
         alwaysOnTopStack.setAlwaysOnTop(true);
         taskDisplayArea.positionChildAt(POSITION_TOP, alwaysOnTopStack,
                 false /* includingParents */);
@@ -300,15 +299,15 @@ public class ActivityDisplayTests extends WindowTestsBase {
     }
 
     @Test
-    public void testRemoveStackInWindowingModes() {
-        removeStackTests(() -> mRootWindowContainer.removeStacksInWindowingModes(
+    public void testRemoveRootTaskInWindowingModes() {
+        removeStackTests(() -> mRootWindowContainer.removeRootTasksInWindowingModes(
                 WINDOWING_MODE_FULLSCREEN));
     }
 
     @Test
     public void testRemoveStackWithActivityTypes() {
-        removeStackTests(
-                () -> mRootWindowContainer.removeStacksWithActivityTypes(ACTIVITY_TYPE_STANDARD));
+        removeStackTests(() -> mRootWindowContainer.removeRootTasksWithActivityTypes(
+                ACTIVITY_TYPE_STANDARD));
     }
 
     private void removeStackTests(Runnable runnable) {

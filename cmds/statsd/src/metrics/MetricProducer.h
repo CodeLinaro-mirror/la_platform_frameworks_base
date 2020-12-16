@@ -26,6 +26,7 @@
 #include "anomaly/AnomalyTracker.h"
 #include "condition/ConditionWizard.h"
 #include "config/ConfigKey.h"
+#include "matchers/EventMatcherWizard.h"
 #include "matchers/matcher_util.h"
 #include "packages/PackageInfoListener.h"
 #include "state/StateListener.h"
@@ -151,6 +152,34 @@ public:
         return conditionIndex >= 0 ? initialConditionCache[conditionIndex] : ConditionState::kTrue;
     }
 
+    // Update appropriate state on config updates. Primarily, all indices need to be updated.
+    // This metric and all of its dependencies are guaranteed to be preserved across the update.
+    // This function also updates several maps used by metricsManager.
+    // This function clears all anomaly trackers. All anomaly trackers need to be added again.
+    bool onConfigUpdated(
+            const StatsdConfig& config, const int configIndex, const int metricIndex,
+            const std::vector<sp<AtomMatchingTracker>>& allAtomMatchingTrackers,
+            const std::unordered_map<int64_t, int>& oldAtomMatchingTrackerMap,
+            const std::unordered_map<int64_t, int>& newAtomMatchingTrackerMap,
+            const sp<EventMatcherWizard>& matcherWizard,
+            const std::vector<sp<ConditionTracker>>& allConditionTrackers,
+            const std::unordered_map<int64_t, int>& conditionTrackerMap,
+            const sp<ConditionWizard>& wizard,
+            const std::unordered_map<int64_t, int>& metricToActivationMap,
+            std::unordered_map<int, std::vector<int>>& trackerToMetricMap,
+            std::unordered_map<int, std::vector<int>>& conditionToMetricMap,
+            std::unordered_map<int, std::vector<int>>& activationAtomTrackerToMetricMap,
+            std::unordered_map<int, std::vector<int>>& deactivationAtomTrackerToMetricMap,
+            std::vector<int>& metricsWithActivation) {
+        std::lock_guard<std::mutex> lock(mMutex);
+        return onConfigUpdatedLocked(config, configIndex, metricIndex, allAtomMatchingTrackers,
+                                     oldAtomMatchingTrackerMap, newAtomMatchingTrackerMap,
+                                     matcherWizard, allConditionTrackers, conditionTrackerMap,
+                                     wizard, metricToActivationMap, trackerToMetricMap,
+                                     conditionToMetricMap, activationAtomTrackerToMetricMap,
+                                     deactivationAtomTrackerToMetricMap, metricsWithActivation);
+    };
+
     /**
      * Force a partial bucket split on app upgrade
      */
@@ -208,6 +237,22 @@ public:
         return onDumpReportLocked(dumpTimeNs, include_current_partial_bucket, erase_data,
                 dumpLatency, str_set, protoOutput);
     }
+
+    virtual bool onConfigUpdatedLocked(
+            const StatsdConfig& config, const int configIndex, const int metricIndex,
+            const std::vector<sp<AtomMatchingTracker>>& allAtomMatchingTrackers,
+            const std::unordered_map<int64_t, int>& oldAtomMatchingTrackerMap,
+            const std::unordered_map<int64_t, int>& newAtomMatchingTrackerMap,
+            const sp<EventMatcherWizard>& matcherWizard,
+            const std::vector<sp<ConditionTracker>>& allConditionTrackers,
+            const std::unordered_map<int64_t, int>& conditionTrackerMap,
+            const sp<ConditionWizard>& wizard,
+            const std::unordered_map<int64_t, int>& metricToActivationMap,
+            std::unordered_map<int, std::vector<int>>& trackerToMetricMap,
+            std::unordered_map<int, std::vector<int>>& conditionToMetricMap,
+            std::unordered_map<int, std::vector<int>>& activationAtomTrackerToMetricMap,
+            std::unordered_map<int, std::vector<int>>& deactivationAtomTrackerToMetricMap,
+            std::vector<int>& metricsWithActivation);
 
     void clearPastBuckets(const int64_t dumpTimeNs) {
         std::lock_guard<std::mutex> lock(mMutex);
@@ -291,15 +336,19 @@ public:
         return mSlicedStateAtoms;
     }
 
-    /* If alert is valid, adds an AnomalyTracker and returns it. If invalid, returns nullptr. */
+    /* Adds an AnomalyTracker and returns it. */
     virtual sp<AnomalyTracker> addAnomalyTracker(const Alert &alert,
                                                  const sp<AlarmMonitor>& anomalyAlarmMonitor) {
         std::lock_guard<std::mutex> lock(mMutex);
         sp<AnomalyTracker> anomalyTracker = new AnomalyTracker(alert, mConfigKey);
-        if (anomalyTracker != nullptr) {
-            mAnomalyTrackers.push_back(anomalyTracker);
-        }
+        mAnomalyTrackers.push_back(anomalyTracker);
         return anomalyTracker;
+    }
+
+    /* Adds an AnomalyTracker that has already been created */
+    virtual void addAnomalyTracker(sp<AnomalyTracker>& anomalyTracker) {
+        std::lock_guard<std::mutex> lock(mMutex);
+        mAnomalyTrackers.push_back(anomalyTracker);
     }
     // End: getters/setters
 protected:
@@ -517,6 +566,14 @@ protected:
     FRIEND_TEST(ValueMetricE2eTest, TestInitialConditionChanges);
 
     FRIEND_TEST(MetricsManagerTest, TestInitialConditions);
+
+    FRIEND_TEST(ConfigUpdateTest, TestUpdateMetricActivations);
+    FRIEND_TEST(ConfigUpdateTest, TestUpdateCountMetrics);
+    FRIEND_TEST(ConfigUpdateTest, TestUpdateEventMetrics);
+    FRIEND_TEST(ConfigUpdateTest, TestUpdateGaugeMetrics);
+    FRIEND_TEST(ConfigUpdateTest, TestUpdateDurationMetrics);
+    FRIEND_TEST(ConfigUpdateTest, TestUpdateMetricsMultipleTypes);
+    FRIEND_TEST(ConfigUpdateTest, TestUpdateAlerts);
 };
 
 }  // namespace statsd

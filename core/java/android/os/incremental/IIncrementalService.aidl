@@ -69,7 +69,7 @@ interface IIncrementalService {
     /**
      * Creates a file under a storage.
      */
-    int makeFile(int storageId, in @utf8InCpp String path, in IncrementalNewFileParams params);
+    int makeFile(int storageId, in @utf8InCpp String path, in IncrementalNewFileParams params, in @nullable byte[] content);
 
     /**
      * Creates a file under a storage. Content of the file is from a range inside another file.
@@ -144,4 +144,14 @@ interface IIncrementalService {
      * Stop listening for the loading progress change for a storage.
      */
     boolean unregisterLoadingProgressListener(int storageId);
+
+    /**
+     * Register storage health status listener.
+     */
+    boolean registerStorageHealthListener(int storageId, in StorageHealthCheckParams params, in IStorageHealthListener listener);
+
+    /**
+     * Register storage health status listener.
+     */
+    void unregisterStorageHealthListener(int storageId);
 }

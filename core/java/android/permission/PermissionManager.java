@@ -16,6 +16,8 @@
 
 package android.permission;
 
+import static android.os.Build.VERSION_CODES.S;
+
 import android.Manifest;
 import android.annotation.CallbackExecutor;
 import android.annotation.IntRange;
@@ -24,17 +26,17 @@ import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
-import android.annotation.TestApi;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.ActivityThread;
 import android.app.IActivityManager;
 import android.app.PropertyInvalidatedCache;
+import android.compat.annotation.ChangeId;
+import android.compat.annotation.EnabledAfter;
 import android.content.Context;
 import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
 import android.content.pm.permission.SplitPermissionInfoParcelable;
-import android.os.Binder;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -58,7 +60,6 @@ import java.util.function.Consumer;
  *
  * @hide
  */
-@TestApi
 @SystemApi
 @SystemService(Context.PERMISSION_SERVICE)
 public final class PermissionManager {
@@ -70,6 +71,17 @@ public final class PermissionManager {
     /** @hide */
     public static final String KILL_APP_REASON_GIDS_CHANGED =
             "permission grant or revoke changed gids";
+
+    /**
+     * Refuse to install package if groups of permissions are bad
+     * - Permission groups should only be shared between apps sharing a certificate
+     * - If a permission belongs to a group that group should be defined
+     *
+     * @hide
+     */
+    @ChangeId
+    @EnabledAfter(targetSdkVersion = S)
+    public static final long CANNOT_INSTALL_WITH_BAD_PERMISSION_GROUPS = 146211400;
 
     private final @NonNull Context mContext;
 
@@ -116,7 +128,6 @@ public final class PermissionManager {
      *
      * @hide
      */
-    @TestApi
     @SystemApi
     @RequiresPermission(anyOf = {
             Manifest.permission.ADJUST_RUNTIME_PERMISSIONS_POLICY,
@@ -137,7 +148,6 @@ public final class PermissionManager {
      *
      * @hide
      */
-    @TestApi
     @SystemApi
     @RequiresPermission(anyOf = {
             Manifest.permission.ADJUST_RUNTIME_PERMISSIONS_POLICY,
@@ -544,15 +554,10 @@ public final class PermissionManager {
                     + permission);
             return PackageManager.PERMISSION_DENIED;
         }
-        // Clear Binder.callingUid in case this is called inside the system server. See
-        // more extensive comment in checkPackageNamePermissionUncached
-        long token = Binder.clearCallingIdentity();
         try {
             return am.checkPermission(permission, pid, uid);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
-        } finally {
-            Binder.restoreCallingIdentity(token);
         }
     }
 
@@ -593,7 +598,7 @@ public final class PermissionManager {
         }
 
         @Override
-        public boolean equals(Object rval) {
+        public boolean equals(@Nullable Object rval) {
             // N.B. pid doesn't count toward equality!
             if (rval == null) {
                 return false;
@@ -615,7 +620,7 @@ public final class PermissionManager {
     /** @hide */
     private static final PropertyInvalidatedCache<PermissionQuery, Integer> sPermissionCache =
             new PropertyInvalidatedCache<PermissionQuery, Integer>(
-                    16, CACHE_KEY_PACKAGE_INFO, "checkPermission") {
+                    2048, CACHE_KEY_PACKAGE_INFO, "checkPermission") {
                 @Override
                 protected Integer recompute(PermissionQuery query) {
                     return checkPermissionUncached(query.permission, query.pid, query.uid);
@@ -666,7 +671,7 @@ public final class PermissionManager {
         }
 
         @Override
-        public boolean equals(Object rval) {
+        public boolean equals(@Nullable Object rval) {
             if (rval == null) {
                 return false;
             }
@@ -685,20 +690,11 @@ public final class PermissionManager {
     /* @hide */
     private static int checkPackageNamePermissionUncached(
             String permName, String pkgName, @UserIdInt int userId) {
-        // Makeing the binder call "checkPermission" usually sets Binder.callingUid to the calling
-        // processes UID. Hence clearing the calling UID is superflous.
-        // If the call is inside the system server though "checkPermission" is not a binder all, it
-        // is only a method call. Hence Binder.callingUid might still be set to the app that called
-        // the system server. This can lead to problems as not every app can check the same
-        // permissions the system server can check.
-        long token = Binder.clearCallingIdentity();
         try {
             return ActivityThread.getPermissionManager().checkPermission(
                     permName, pkgName, userId);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
-        } finally {
-            Binder.restoreCallingIdentity(token);
         }
     }
 

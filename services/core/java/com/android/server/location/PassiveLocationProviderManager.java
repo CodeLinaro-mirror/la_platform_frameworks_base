@@ -18,16 +18,14 @@ package com.android.server.location;
 
 import android.annotation.Nullable;
 import android.content.Context;
-import android.location.Location;
 import android.location.LocationManager;
-import android.location.LocationRequest;
+import android.location.LocationResult;
 import android.os.Binder;
 
 import com.android.internal.location.ProviderRequest;
 import com.android.internal.util.Preconditions;
 import com.android.server.location.util.Injector;
 
-import java.util.ArrayList;
 import java.util.Collection;
 
 class PassiveLocationProviderManager extends LocationProviderManager {
@@ -38,25 +36,25 @@ class PassiveLocationProviderManager extends LocationProviderManager {
 
     @Override
     public void setRealProvider(AbstractLocationProvider provider) {
-        Preconditions.checkArgument(provider instanceof PassiveProvider);
+        Preconditions.checkArgument(provider instanceof PassiveLocationProvider);
         super.setRealProvider(provider);
     }
 
     @Override
-    public void setMockProvider(@Nullable MockProvider provider) {
+    public void setMockProvider(@Nullable MockLocationProvider provider) {
         if (provider != null) {
             throw new IllegalArgumentException("Cannot mock the passive provider");
         }
     }
 
-    public void updateLocation(Location location) {
+    public void updateLocation(LocationResult locationResult) {
         synchronized (mLock) {
-            PassiveProvider passiveProvider = (PassiveProvider) mProvider.getProvider();
-            Preconditions.checkState(passiveProvider != null);
+            PassiveLocationProvider passive = (PassiveLocationProvider) mProvider.getProvider();
+            Preconditions.checkState(passive != null);
 
-            long identity = Binder.clearCallingIdentity();
+            final long identity = Binder.clearCallingIdentity();
             try {
-                passiveProvider.updateLocation(location);
+                passive.updateLocation(locationResult);
             } finally {
                 Binder.restoreCallingIdentity(identity);
             }
@@ -65,17 +63,17 @@ class PassiveLocationProviderManager extends LocationProviderManager {
 
     @Override
     protected ProviderRequest mergeRegistrations(Collection<Registration> registrations) {
-        ProviderRequest.Builder providerRequest = new ProviderRequest.Builder()
-                .setIntervalMillis(0);
+        return new ProviderRequest.Builder().setIntervalMillis(0).build();
+    }
 
-        ArrayList<LocationRequest> requests = new ArrayList<>(registrations.size());
-        for (Registration registration : registrations) {
-            requests.add(registration.getRequest());
-            if (registration.getRequest().isLocationSettingsIgnored()) {
-                providerRequest.setLocationSettingsIgnored(true);
-            }
-        }
+    @Override
+    protected long calculateRequestDelayMillis(long newIntervalMs,
+            Collection<Registration> registrations) {
+        return 0;
+    }
 
-        return providerRequest.setLocationRequests(requests).build();
+    @Override
+    protected String getServiceState() {
+        return mProvider.getCurrentRequest().isActive() ? "registered" : "unregistered";
     }
 }

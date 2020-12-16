@@ -58,7 +58,9 @@ public:
     binder::Status makeDirectories(int32_t storageId, const std::string& path,
                                    int32_t* _aidl_return) final;
     binder::Status makeFile(int32_t storageId, const std::string& path,
-                            const IncrementalNewFileParams& params, int32_t* _aidl_return) final;
+                            const IncrementalNewFileParams& params,
+                            const ::std::optional<::std::vector<uint8_t>>& content,
+                            int32_t* _aidl_return) final;
     binder::Status makeFileFromRange(int32_t storageId, const std::string& targetPath,
                                      const std::string& sourcePath, int64_t start, int64_t end,
                                      int32_t* _aidl_return) final;
@@ -87,6 +89,11 @@ public:
                     progressListener,
             bool* _aidl_return) final;
     binder::Status unregisterLoadingProgressListener(int32_t storageId, bool* _aidl_return) final;
+    binder::Status registerStorageHealthListener(
+            int32_t storageId,
+            const ::android::os::incremental::StorageHealthCheckParams& healthCheckParams,
+            const ::android::sp<IStorageHealthListener>& healthListener, bool* _aidl_return) final;
+    binder::Status unregisterStorageHealthListener(int32_t storageId) final;
 
 private:
     android::incremental::IncrementalService mImpl;

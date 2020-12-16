@@ -26,15 +26,16 @@ import static android.app.servertransaction.ActivityLifecycleItem.ON_STOP;
 import static androidx.test.platform.app.InstrumentationRegistry.getInstrumentation;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.mock;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.mockitoSession;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.spyOn;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -52,7 +53,7 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.res.CompatibilityInfo;
 import android.content.res.Configuration;
-import android.os.Binder;
+import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.platform.test.annotations.Presubmit;
@@ -85,7 +86,7 @@ import java.util.concurrent.TimeUnit;
 @MediumTest
 @Presubmit
 public class ActivityThreadClientTest {
-    private static final long WAIT_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(5);
+    private static final long WAIT_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(10);
 
     @Test
     @UiThreadTest
@@ -200,9 +201,9 @@ public class ActivityThreadClientTest {
     private void recreateAndVerifyNoRelaunch(ActivityThread activityThread, TestActivity activity) {
         clearInvocations(activityThread);
         getInstrumentation().runOnMainSync(() -> activity.recreate());
+        getInstrumentation().waitForIdleSync();
 
-        verify(activityThread, after(WAIT_TIMEOUT_MS).never())
-                .handleRelaunchActivity(any(), any());
+        verify(activityThread, never()).handleRelaunchActivity(any(), any());
     }
 
     private void recreateAndVerifyRelaunched(ActivityThread activityThread, TestActivity activity,
@@ -243,27 +244,27 @@ public class ActivityThreadClientTest {
         }
 
         private void startActivity(ActivityClientRecord r) {
-            mThread.handleStartActivity(r.token, null /* pendingActions */);
+            mThread.handleStartActivity(r, null /* pendingActions */);
         }
 
         private void resumeActivity(ActivityClientRecord r) {
-            mThread.handleResumeActivity(r.token, true /* finalStateRequest */,
+            mThread.handleResumeActivity(r, true /* finalStateRequest */,
                     true /* isForward */, "test");
         }
 
         private void pauseActivity(ActivityClientRecord r) {
-            mThread.handlePauseActivity(r.token, false /* finished */,
+            mThread.handlePauseActivity(r, false /* finished */,
                     false /* userLeaving */, 0 /* configChanges */, null /* pendingActions */,
                     "test");
         }
 
         private void stopActivity(ActivityClientRecord r) {
-            mThread.handleStopActivity(r.token, 0 /* configChanges */,
+            mThread.handleStopActivity(r, 0 /* configChanges */,
                     new PendingTransactionActions(), false /* finalStateRequest */, "test");
         }
 
         private void destroyActivity(ActivityClientRecord r) {
-            mThread.handleDestroyActivity(r.token, true /* finishing */, 0 /* configChanges */,
+            mThread.handleDestroyActivity(r, true /* finishing */, 0 /* configChanges */,
                     false /* getNonConfigInstance */, "test");
         }
 
@@ -292,7 +293,7 @@ public class ActivityThreadClientTest {
             spyOn(packageInfo);
             doNothing().when(packageInfo).updateApplicationInfo(any(), any());
 
-            return new ActivityClientRecord(new Binder(), Intent.makeMainActivity(component),
+            return new ActivityClientRecord(mock(IBinder.class), Intent.makeMainActivity(component),
                     0 /* ident */, info, new Configuration(),
                     CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null /* referrer */,
                     null /* voiceInteractor */, null /* state */, null /* persistentState */,

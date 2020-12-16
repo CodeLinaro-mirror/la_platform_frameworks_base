@@ -16,16 +16,20 @@
 
 package com.android.systemui.biometrics;
 
+import static junit.framework.Assert.assertEquals;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyFloat;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.res.Resources;
 import android.content.res.TypedArray;
+import android.hardware.biometrics.SensorProperties;
 import android.hardware.fingerprint.FingerprintManager;
+import android.hardware.fingerprint.FingerprintSensorProperties;
+import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
 import android.hardware.fingerprint.IUdfpsOverlayController;
 import android.os.PowerManager;
 import android.os.RemoteException;
@@ -54,10 +58,17 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @SmallTest
 @RunWith(AndroidTestingRunner.class)
 @RunWithLooper
 public class UdfpsControllerTest extends SysuiTestCase {
+
+    // Use this for inputs going into SystemUI. Use UdfpsController.mUdfpsSensorId for things
+    // leaving SystemUI.
+    private static final int TEST_UDFPS_SENSOR_ID = 1;
 
     @Rule
     public MockitoRule rule = MockitoJUnit.rule();
@@ -78,6 +89,7 @@ public class UdfpsControllerTest extends SysuiTestCase {
     private WindowManager mWindowManager;
     @Mock
     private StatusBarStateController mStatusBarStateController;
+
     private FakeSettings mSystemSettings;
     private FakeExecutor mFgExecutor;
 
@@ -98,6 +110,13 @@ public class UdfpsControllerTest extends SysuiTestCase {
     public void setUp() {
         setUpResources();
         when(mLayoutInflater.inflate(R.layout.udfps_view, null, false)).thenReturn(mUdfpsView);
+        final List<FingerprintSensorPropertiesInternal> props = new ArrayList<>();
+        props.add(new FingerprintSensorPropertiesInternal(TEST_UDFPS_SENSOR_ID,
+                SensorProperties.STRENGTH_STRONG,
+                5 /* maxEnrollmentsPerUser */,
+                FingerprintSensorProperties.TYPE_UDFPS_OPTICAL,
+                true /* resetLockoutRequiresHardwareAuthToken */));
+        when(mFingerprintManager.getSensorPropertiesInternal()).thenReturn(props);
         mSystemSettings = new FakeSettings();
         mFgExecutor = new FakeExecutor(new FakeSystemClock());
         mUdfpsController = new UdfpsController(
@@ -112,6 +131,8 @@ public class UdfpsControllerTest extends SysuiTestCase {
                 mFgExecutor);
         verify(mFingerprintManager).setUdfpsOverlayController(mOverlayCaptor.capture());
         mOverlayController = mOverlayCaptor.getValue();
+
+        assertEquals(TEST_UDFPS_SENSOR_ID, mUdfpsController.mSensorProps.sensorId);
     }
 
     private void setUpResources() {
@@ -138,52 +159,17 @@ public class UdfpsControllerTest extends SysuiTestCase {
 
     @Test
     public void showUdfpsOverlay_addsViewToWindow() throws RemoteException {
-        mOverlayController.showUdfpsOverlay();
+        mOverlayController.showUdfpsOverlay(TEST_UDFPS_SENSOR_ID);
         mFgExecutor.runAllReady();
         verify(mWindowManager).addView(eq(mUdfpsView), any());
     }
 
     @Test
     public void hideUdfpsOverlay_removesViewFromWindow() throws RemoteException {
-        mOverlayController.showUdfpsOverlay();
-        mOverlayController.hideUdfpsOverlay();
+        mOverlayController.showUdfpsOverlay(TEST_UDFPS_SENSOR_ID);
+        mOverlayController.hideUdfpsOverlay(TEST_UDFPS_SENSOR_ID);
         mFgExecutor.runAllReady();
         verify(mWindowManager).removeView(eq(mUdfpsView));
-    }
-
-    @Test
-    public void showUdfpsOverlay_bouncerShowing() throws RemoteException {
-        // GIVEN that the bouncer is showing
-        mUdfpsController.setBouncerVisibility(/* isShowing */ true);
-        // WHEN a request to show the overlay is received
-        mOverlayController.showUdfpsOverlay();
-        mFgExecutor.runAllReady();
-        // THEN the overlay is not attached
-        verify(mWindowManager, never()).addView(eq(mUdfpsView), any());
-    }
-
-    @Test
-    public void setBouncerVisibility_overlayDetached() throws RemoteException {
-        // GIVEN that the overlay has been requested
-        mOverlayController.showUdfpsOverlay();
-        // WHEN the bouncer becomes visible
-        mUdfpsController.setBouncerVisibility(/* isShowing */ true);
-        mFgExecutor.runAllReady();
-        // THEN the overlay is detached
-        verify(mWindowManager).removeView(eq(mUdfpsView));
-    }
-
-    @Test
-    public void setBouncerVisibility_overlayAttached() throws RemoteException {
-        // GIVEN that the bouncer is visible
-        mUdfpsController.setBouncerVisibility(/* isShowing */ true);
-        // AND the overlay has been requested
-        mOverlayController.showUdfpsOverlay();
-        // WHEN the bouncer is closed
-        mUdfpsController.setBouncerVisibility(/* isShowing */ false);
-        mFgExecutor.runAllReady();
-        // THEN the overlay is attached
-        verify(mWindowManager).addView(eq(mUdfpsView), any());
     }
 
     @Test
@@ -193,7 +179,7 @@ public class UdfpsControllerTest extends SysuiTestCase {
         when(mUdfpsView.isValidTouch(anyFloat(), anyFloat(), anyFloat())).thenReturn(true);
 
         // GIVEN that the overlay is showing
-        mOverlayController.showUdfpsOverlay();
+        mOverlayController.showUdfpsOverlay(TEST_UDFPS_SENSOR_ID);
         mFgExecutor.runAllReady();
         // WHEN ACTION_DOWN is received
         verify(mUdfpsView).setOnTouchListener(mTouchListenerCaptor.capture());
@@ -201,7 +187,8 @@ public class UdfpsControllerTest extends SysuiTestCase {
         mTouchListenerCaptor.getValue().onTouch(mUdfpsView, event);
         event.recycle();
         // THEN the event is passed to the FingerprintManager
-        verify(mFingerprintManager).onFingerDown(eq(0), eq(0), eq(0f), eq(0f));
+        verify(mFingerprintManager).onPointerDown(eq(mUdfpsController.mSensorProps.sensorId), eq(0),
+                eq(0), eq(0f), eq(0f));
         // AND the scrim and dot is shown
         verify(mUdfpsView).showScrimAndDot();
     }
@@ -209,12 +196,13 @@ public class UdfpsControllerTest extends SysuiTestCase {
     @Test
     public void aodInterrupt() throws RemoteException {
         // GIVEN that the overlay is showing
-        mOverlayController.showUdfpsOverlay();
+        mOverlayController.showUdfpsOverlay(TEST_UDFPS_SENSOR_ID);
         mFgExecutor.runAllReady();
         // WHEN fingerprint is requested because of AOD interrupt
-        mUdfpsController.onAodInterrupt(0, 0);
+        mUdfpsController.onAodInterrupt(0, 0, 2f, 3f);
         // THEN the event is passed to the FingerprintManager
-        verify(mFingerprintManager).onFingerDown(eq(0), eq(0), anyFloat(), anyFloat());
+        verify(mFingerprintManager).onPointerDown(eq(mUdfpsController.mSensorProps.sensorId), eq(0),
+                eq(0), eq(3f) /* minor */, eq(2f) /* major */);
         // AND the scrim and dot is shown
         verify(mUdfpsView).showScrimAndDot();
     }
@@ -222,9 +210,9 @@ public class UdfpsControllerTest extends SysuiTestCase {
     @Test
     public void cancelAodInterrupt() throws RemoteException {
         // GIVEN AOD interrupt
-        mOverlayController.showUdfpsOverlay();
+        mOverlayController.showUdfpsOverlay(TEST_UDFPS_SENSOR_ID);
         mFgExecutor.runAllReady();
-        mUdfpsController.onAodInterrupt(0, 0);
+        mUdfpsController.onAodInterrupt(0, 0, 0f, 0f);
         // WHEN it is cancelled
         mUdfpsController.onCancelAodInterrupt();
         // THEN the scrim and dot is hidden
@@ -234,9 +222,9 @@ public class UdfpsControllerTest extends SysuiTestCase {
     @Test
     public void aodInterruptTimeout() throws RemoteException {
         // GIVEN AOD interrupt
-        mOverlayController.showUdfpsOverlay();
+        mOverlayController.showUdfpsOverlay(TEST_UDFPS_SENSOR_ID);
         mFgExecutor.runAllReady();
-        mUdfpsController.onAodInterrupt(0, 0);
+        mUdfpsController.onAodInterrupt(0, 0, 0f, 0f);
         // WHEN it times out
         mFgExecutor.advanceClockToNext();
         mFgExecutor.runAllReady();

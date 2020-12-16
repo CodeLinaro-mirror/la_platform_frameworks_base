@@ -24,6 +24,15 @@ import com.android.systemui.dump.DumpManager;
 import com.android.systemui.keyguard.KeyguardSliceProvider;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.util.InjectionInflationController;
+import com.android.wm.shell.ShellDump;
+import com.android.wm.shell.apppairs.AppPairs;
+import com.android.wm.shell.bubbles.Bubbles;
+import com.android.wm.shell.hidedisplaycutout.HideDisplayCutout;
+import com.android.wm.shell.onehanded.OneHanded;
+import com.android.wm.shell.pip.Pip;
+import com.android.wm.shell.splitscreen.SplitScreen;
+
+import java.util.Optional;
 
 import dagger.BindsInstance;
 import dagger.Subcomponent;
@@ -43,12 +52,38 @@ public interface SysUIComponent {
     /**
      * Builder for a SysUIComponent.
      */
+    @SysUISingleton
     @Subcomponent.Builder
     interface Builder {
         @BindsInstance
-        Builder setStubAPIClass(WMComponent.StubAPIClass stubAPIClass);
+        Builder setPip(Optional<Pip> p);
+
+        @BindsInstance
+        Builder setSplitScreen(Optional<SplitScreen> s);
+
+        @BindsInstance
+        Builder setAppPairs(Optional<AppPairs> s);
+
+        @BindsInstance
+        Builder setOneHanded(Optional<OneHanded> o);
+
+        @BindsInstance
+        Builder setBubbles(Optional<Bubbles> b);
+
+        @BindsInstance
+        Builder setHideDisplayCutout(Optional<HideDisplayCutout> h);
+
+        @BindsInstance
+        Builder setShellDump(Optional<ShellDump> shellDump);
 
         SysUIComponent build();
+    }
+
+    /**
+     * Initializes all the SysUI components.
+     */
+    default void init() {
+        // Do nothing
     }
 
     /**

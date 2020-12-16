@@ -30,6 +30,7 @@ import android.app.TaskStackBuilder;
 import android.content.Context;
 import android.content.Intent;
 import android.os.AsyncTask;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.RemoteException;
@@ -40,7 +41,6 @@ import android.service.notification.StatusBarNotification;
 import android.text.TextUtils;
 import android.util.EventLog;
 import android.view.RemoteAnimationAdapter;
-import android.view.View;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.statusbar.NotificationVisibility;
@@ -48,7 +48,6 @@ import com.android.internal.widget.LockPatternUtils;
 import com.android.systemui.ActivityIntentHelper;
 import com.android.systemui.EventLogTags;
 import com.android.systemui.assist.AssistManager;
-import com.android.systemui.bubbles.BubbleController;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dagger.qualifiers.UiBackground;
@@ -76,7 +75,9 @@ import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow
 import com.android.systemui.statusbar.notification.row.OnUserInteractionCallback;
 import com.android.systemui.statusbar.policy.HeadsUpUtil;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
+import com.android.systemui.wmshell.BubblesManager;
 
+import java.util.Optional;
 import java.util.concurrent.Executor;
 
 import javax.inject.Inject;
@@ -103,7 +104,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
     private final StatusBarKeyguardViewManager mStatusBarKeyguardViewManager;
     private final KeyguardManager mKeyguardManager;
     private final IDreamManager mDreamManager;
-    private final BubbleController mBubbleController;
+    private final Optional<BubblesManager> mBubblesManagerOptional;
     private final Lazy<AssistManager> mAssistManagerLazy;
     private final NotificationRemoteInputManager mRemoteInputManager;
     private final GroupMembershipManager mGroupMembershipManager;
@@ -141,7 +142,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
             StatusBarKeyguardViewManager statusBarKeyguardViewManager,
             KeyguardManager keyguardManager,
             IDreamManager dreamManager,
-            BubbleController bubbleController,
+            Optional<BubblesManager> bubblesManagerOptional,
             Lazy<AssistManager> assistManagerLazy,
             NotificationRemoteInputManager remoteInputManager,
             GroupMembershipManager groupMembershipManager,
@@ -175,7 +176,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
         mStatusBarKeyguardViewManager = statusBarKeyguardViewManager;
         mKeyguardManager = keyguardManager;
         mDreamManager = dreamManager;
-        mBubbleController = bubbleController;
+        mBubblesManagerOptional = bubblesManagerOptional;
         mAssistManagerLazy = assistManagerLazy;
         mRemoteInputManager = remoteInputManager;
         mGroupMembershipManager = groupMembershipManager;
@@ -359,15 +360,11 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
             collapseOnMainThread();
         }
 
-        final int count = getVisibleNotificationsCount();
-        final int rank = entry.getRanking().getRank();
         NotificationVisibility.NotificationLocation location =
                 NotificationLogger.getNotificationLocation(entry);
-        final NotificationVisibility nv = NotificationVisibility.obtain(notificationKey,
-                rank, count, true, location);
+        final NotificationVisibility nv = NotificationVisibility.obtain(entry.getKey(),
+                entry.getRanking().getRank(), getVisibleNotificationsCount(), true, location);
 
-        // NMS will officially remove notification if the notification has FLAG_AUTO_CANCEL:
-        mClickNotifier.onNotificationClick(notificationKey, nv);
 
         // TODO (b/162832756): delete these notification removals when migrating to the new
         //  pipeline; this is taken care of in {@link NotifCollection#tryRemoveNotification}
@@ -377,20 +374,40 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
             if (shouldAutoCancel(entry.getSbn())
                     || mRemoteInputManager.isNotificationKeptForRemoteInputHistory(
                     notificationKey)) {
-                // manually call notification removal in order to cancel any lifetime extenders
-                removeNotification(row.getEntry());
+                // Immediately remove notification from visually showing.
+                // We have to post the removal to the UI thread for synchronization.
+                mMainThreadHandler.post(() -> {
+                    final Runnable removeNotification = () -> {
+                        mOnUserInteractionCallback.onDismiss(entry, REASON_CLICK);
+                        mClickNotifier.onNotificationClick(entry.getKey(), nv);
+                    };
+                    if (mPresenter.isCollapsing()) {
+                        // To avoid lags we're only performing the remove
+                        // after the shade is collapsed
+                        mShadeController.addPostCollapseAction(removeNotification);
+                    } else {
+                        removeNotification.run();
+                    }
+                });
             }
+        } else {
+            // inform NMS that the notification was clicked
+            mClickNotifier.onNotificationClick(notificationKey, nv);
         }
 
         mIsCollapsingToShowActivityOverLockscreen = false;
     }
 
     private void expandBubbleStackOnMainThread(NotificationEntry entry) {
+        if (!mBubblesManagerOptional.isPresent()) {
+            return;
+        }
+
         if (Looper.getMainLooper().isCurrentThread()) {
-            mBubbleController.expandStackAndSelectBubble(entry);
+            mBubblesManagerOptional.get().expandStackAndSelectBubble(entry);
         } else {
             mMainThreadHandler.post(
-                    () -> mBubbleController.expandStackAndSelectBubble(entry));
+                    () -> mBubblesManagerOptional.get().expandStackAndSelectBubble(entry));
         }
     }
 
@@ -398,7 +415,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
             PendingIntent intent,
             Intent fillInIntent,
             NotificationEntry entry,
-            View row,
+            ExpandableNotificationRow row,
             boolean wasOccluded,
             boolean isActivityIntent) {
         RemoteAnimationAdapter adapter = mActivityLaunchAnimator.getLaunchAnimation(row,
@@ -410,8 +427,11 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
                         .registerRemoteAnimationForNextActivityStart(
                                 intent.getCreatorPackage(), adapter);
             }
+            long eventTime = row.getAndResetLastActionUpTime();
+            Bundle options = eventTime > 0 ? getActivityOptions(adapter,
+                    mKeyguardStateController.isShowing(), eventTime) : getActivityOptions(adapter);
             int launchResult = intent.sendAndReturnResult(mContext, 0, fillInIntent, null,
-                    null, null, getActivityOptions(adapter));
+                    null, null, options);
             mMainThreadHandler.post(() -> {
                 mActivityLaunchAnimator.setLaunchResult(launchResult, isActivityIntent);
             });
@@ -558,21 +578,6 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
         return entry.shouldSuppressFullScreenIntent();
     }
 
-    private void removeNotification(NotificationEntry entry) {
-        // We have to post it to the UI thread for synchronization
-        mMainThreadHandler.post(() -> {
-            if (mPresenter.isCollapsing()) {
-                // To avoid lags we're only performing the remove
-                // after the shade was collapsed
-                mShadeController.addPostCollapseAction(
-                        () -> mOnUserInteractionCallback.onDismiss(entry, REASON_CLICK)
-                );
-            } else {
-                mOnUserInteractionCallback.onDismiss(entry, REASON_CLICK);
-            }
-        });
-    }
-
     // --------------------- NotificationEntryManager/NotifPipeline methods ------------------------
 
     private int getVisibleNotificationsCount() {
@@ -602,7 +607,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
         private final StatusBarKeyguardViewManager mStatusBarKeyguardViewManager;
         private final KeyguardManager mKeyguardManager;
         private final IDreamManager mDreamManager;
-        private final BubbleController mBubbleController;
+        private final Optional<BubblesManager> mBubblesManagerOptional;
         private final Lazy<AssistManager> mAssistManagerLazy;
         private final NotificationRemoteInputManager mRemoteInputManager;
         private final GroupMembershipManager mGroupMembershipManager;
@@ -639,7 +644,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
                 StatusBarKeyguardViewManager statusBarKeyguardViewManager,
                 KeyguardManager keyguardManager,
                 IDreamManager dreamManager,
-                BubbleController bubbleController,
+                Optional<BubblesManager> bubblesManager,
                 Lazy<AssistManager> assistManagerLazy,
                 NotificationRemoteInputManager remoteInputManager,
                 GroupMembershipManager groupMembershipManager,
@@ -669,7 +674,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
             mStatusBarKeyguardViewManager = statusBarKeyguardViewManager;
             mKeyguardManager = keyguardManager;
             mDreamManager = dreamManager;
-            mBubbleController = bubbleController;
+            mBubblesManagerOptional = bubblesManager;
             mAssistManagerLazy = assistManagerLazy;
             mRemoteInputManager = remoteInputManager;
             mGroupMembershipManager = groupMembershipManager;
@@ -725,7 +730,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
                     mStatusBarKeyguardViewManager,
                     mKeyguardManager,
                     mDreamManager,
-                    mBubbleController,
+                    mBubblesManagerOptional,
                     mAssistManagerLazy,
                     mRemoteInputManager,
                     mGroupMembershipManager,
@@ -736,12 +741,10 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
                     mLockPatternUtils,
                     mRemoteInputCallback,
                     mActivityIntentHelper,
-
                     mFeatureFlags,
                     mMetricsLogger,
                     mLogger,
                     mOnUserInteractionCallback,
-
                     mStatusBar,
                     mNotificationPresenter,
                     mNotificationPanelViewController,

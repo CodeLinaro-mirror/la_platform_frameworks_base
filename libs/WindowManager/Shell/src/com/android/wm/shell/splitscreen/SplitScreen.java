@@ -27,9 +27,6 @@ import java.util.function.Consumer;
  * Interface to engage split screen feature.
  */
 public interface SplitScreen {
-    /** Returns {@code true} if split screen is supported on the device. */
-    boolean isSplitScreenSupported();
-
     /** Called when keyguard showing state changed. */
     void onKeyguardVisibilityChanged(boolean isShowing);
 
@@ -48,31 +45,8 @@ public interface SplitScreen {
     /** Switch to minimized state if appropriate. */
     void setMinimized(boolean minimized);
 
-    /**
-     * Workaround for b/62528361, at the time recents has drawn, it may happen before a
-     * configuration change to the Divider, and internally, the event will be posted to the
-     * subscriber, or DividerView, which has been removed and prevented from resizing. Instead,
-     * register the event handler here and proxy the event to the current DividerView.
-     */
-    void onRecentsDrawn();
-
-    /** Called when there's an activity forced resizable. */
-    void onActivityForcedResizable(String packageName, int taskId, int reason);
-
-    /** Called when there's an activity dismissing split screen. */
-    void onActivityDismissingSplitScreen();
-
-    /** Called when there's an activity launch on secondary display failed. */
-    void onActivityLaunchOnSecondaryDisplayFailed();
-
     /** Called when there's a task undocking. */
     void onUndockingTask();
-
-    /** Called when the first docked animation frame rendered. */
-    void onDockedFirstAnimationFrame();
-
-    /** Called when top task docked. */
-    void onDockedTopTask();
 
     /** Called when app transition finished. */
     void onAppTransitionFinished();
@@ -83,9 +57,26 @@ public interface SplitScreen {
     /** Registers listener that gets called whenever the existence of the divider changes. */
     void registerInSplitScreenListener(Consumer<Boolean> listener);
 
+    /** Unregisters listener that gets called whenever the existence of the divider changes. */
+    void unregisterInSplitScreenListener(Consumer<Boolean> listener);
+
     /** Registers listener that gets called whenever the split screen bounds changes. */
     void registerBoundsChangeListener(BiConsumer<Rect, Rect> listener);
 
     /** @return the container token for the secondary split root task. */
     WindowContainerToken getSecondaryRoot();
+
+    /**
+     * Splits the primary task if feasible, this is to preserve legacy way to toggle split screen.
+     * Like triggering split screen through long pressing recents app button or through
+     * {@link android.accessibilityservice.AccessibilityService#GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN}.
+     *
+     * @return {@code true} if it successes to split the primary task.
+     */
+    boolean splitPrimaryTask();
+
+    /**
+     * Exits the split to make the primary task fullscreen.
+     */
+    void dismissSplitToPrimaryTask();
 }

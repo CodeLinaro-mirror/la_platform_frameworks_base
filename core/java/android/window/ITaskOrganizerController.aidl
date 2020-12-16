@@ -17,7 +17,9 @@
 package android.window;
 
 import android.app.ActivityManager;
+import android.content.pm.ParceledListSlice;
 import android.window.ITaskOrganizer;
+import android.window.TaskAppearedInfo;
 import android.window.WindowContainerToken;
 import android.window.WindowContainerTransaction;
 
@@ -26,8 +28,11 @@ interface ITaskOrganizerController {
 
     /**
      * Register a TaskOrganizer to manage all the tasks with supported windowing modes.
+     *
+     * @return a list of the tasks that should be managed by the organizer, not including tasks
+     *         created via {@link #createRootTask}.
      */
-    void registerTaskOrganizer(ITaskOrganizer organizer);
+    ParceledListSlice<TaskAppearedInfo> registerTaskOrganizer(ITaskOrganizer organizer);
 
     /**
      * Unregisters a previously registered task organizer.
@@ -35,7 +40,7 @@ interface ITaskOrganizerController {
     void unregisterTaskOrganizer(ITaskOrganizer organizer);
 
     /** Creates a persistent root task in WM for a particular windowing-mode. */
-    ActivityManager.RunningTaskInfo createRootTask(int displayId, int windowingMode);
+    void createRootTask(int displayId, int windowingMode, IBinder launchCookie);
 
     /** Deletes a persistent root task in WM */
     boolean deleteRootTask(in WindowContainerToken task);

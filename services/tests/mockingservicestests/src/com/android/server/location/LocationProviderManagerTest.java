@@ -16,14 +16,13 @@
 
 package com.android.server.location;
 
-import static android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP;
-import static android.app.AlarmManager.WINDOW_EXACT;
 import static android.app.AppOpsManager.OP_FINE_LOCATION;
 import static android.app.AppOpsManager.OP_MONITOR_HIGH_POWER_LOCATION;
 import static android.app.AppOpsManager.OP_MONITOR_LOCATION;
 import static android.location.Criteria.ACCURACY_COARSE;
 import static android.location.Criteria.ACCURACY_FINE;
 import static android.location.Criteria.POWER_HIGH;
+import static android.location.LocationRequest.PASSIVE_INTERVAL;
 import static android.os.PowerManager.LOCATION_MODE_THROTTLE_REQUESTS_WHEN_SCREEN_OFF;
 
 import static androidx.test.ext.truth.location.LocationSubject.assertThat;
@@ -32,6 +31,7 @@ import static com.android.internal.util.ConcurrentUtils.DIRECT_EXECUTOR;
 import static com.android.server.location.LocationPermissions.PERMISSION_COARSE;
 import static com.android.server.location.LocationPermissions.PERMISSION_FINE;
 import static com.android.server.location.LocationUtils.createLocation;
+import static com.android.server.location.LocationUtils.createLocationResult;
 import static com.android.server.location.listeners.RemoteListenerRegistration.IN_PROCESS_EXECUTOR;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -46,6 +46,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -54,9 +55,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.MockitoAnnotations.initMocks;
+import static org.testng.Assert.assertThrows;
 
-import android.app.AlarmManager;
-import android.app.AlarmManager.OnAlarmListener;
 import android.content.Context;
 import android.location.ILocationCallback;
 import android.location.ILocationListener;
@@ -64,16 +64,14 @@ import android.location.Location;
 import android.location.LocationManagerInternal;
 import android.location.LocationManagerInternal.ProviderEnabledListener;
 import android.location.LocationRequest;
+import android.location.LocationResult;
 import android.location.util.identity.CallerIdentity;
 import android.os.Bundle;
-import android.os.CancellationSignal;
-import android.os.Handler;
 import android.os.ICancellationSignal;
 import android.os.IRemoteCallback;
 import android.os.PowerManager;
 import android.os.Process;
 import android.os.RemoteException;
-import android.os.SystemClock;
 import android.os.WorkSource;
 import android.platform.test.annotations.Presubmit;
 import android.util.Log;
@@ -92,11 +90,12 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Random;
 import java.util.concurrent.CountDownLatch;
@@ -120,6 +119,7 @@ public class LocationProviderManagerTest {
     private static final CallerIdentity IDENTITY = CallerIdentity.forTest(CURRENT_USER, 1,
             "mypackage",
             "attribution");
+    private static final WorkSource WORK_SOURCE = new WorkSource(IDENTITY.getUid());
 
     private Random mRandom;
 
@@ -127,8 +127,6 @@ public class LocationProviderManagerTest {
     private LocationManagerInternal mInternal;
     @Mock
     private Context mContext;
-    @Mock
-    private AlarmManager mAlarmManager;
     @Mock
     private PowerManager mPowerManager;
     @Mock
@@ -152,7 +150,6 @@ public class LocationProviderManagerTest {
         LocalServices.addService(LocationManagerInternal.class, mInternal);
 
         doReturn("android").when(mContext).getPackageName();
-        doReturn(mAlarmManager).when(mContext).getSystemService(AlarmManager.class);
         doReturn(mPowerManager).when(mContext).getSystemService(PowerManager.class);
         doReturn(mWakeLock).when(mPowerManager).newWakeLock(anyInt(), anyString());
 
@@ -161,7 +158,7 @@ public class LocationProviderManagerTest {
 
         mPassive = new PassiveLocationProviderManager(mContext, mInjector);
         mPassive.startManager();
-        mPassive.setRealProvider(new PassiveProvider(mContext));
+        mPassive.setRealProvider(new PassiveLocationProvider(mContext));
 
         mProvider = new TestProvider(PROPERTIES, IDENTITY);
         mProvider.setProviderAllowed(true);
@@ -214,22 +211,20 @@ public class LocationProviderManagerTest {
     @Test
     public void testIsEnabled() {
         assertThat(mManager.isEnabled(CURRENT_USER)).isTrue();
+        assertThat(mManager.isEnabled(OTHER_USER)).isTrue();
 
         mInjector.getSettingsHelper().setLocationEnabled(false, CURRENT_USER);
         assertThat(mManager.isEnabled(CURRENT_USER)).isFalse();
+        assertThat(mManager.isEnabled(OTHER_USER)).isTrue();
 
         mInjector.getSettingsHelper().setLocationEnabled(true, CURRENT_USER);
         mProvider.setAllowed(false);
         assertThat(mManager.isEnabled(CURRENT_USER)).isFalse();
+        assertThat(mManager.isEnabled(OTHER_USER)).isFalse();
 
         mProvider.setAllowed(true);
-        mInjector.getUserInfoHelper().setCurrentUserId(OTHER_USER);
-        assertThat(mManager.isEnabled(CURRENT_USER)).isFalse();
-        assertThat(mManager.isEnabled(OTHER_USER)).isTrue();
-
-        mInjector.getUserInfoHelper().setCurrentUserId(CURRENT_USER);
         assertThat(mManager.isEnabled(CURRENT_USER)).isTrue();
-        assertThat(mManager.isEnabled(OTHER_USER)).isFalse();
+        assertThat(mManager.isEnabled(OTHER_USER)).isTrue();
     }
 
     @Test
@@ -249,22 +244,14 @@ public class LocationProviderManagerTest {
         mProvider.setAllowed(false);
         verify(listener, timeout(TIMEOUT_MS).times(2)).onProviderEnabledChanged(NAME, CURRENT_USER,
                 false);
+        verify(listener, timeout(TIMEOUT_MS).times(1)).onProviderEnabledChanged(NAME, OTHER_USER,
+                false);
 
         mProvider.setAllowed(true);
         verify(listener, timeout(TIMEOUT_MS).times(2)).onProviderEnabledChanged(NAME, CURRENT_USER,
                 true);
-
-        mInjector.getUserInfoHelper().setCurrentUserId(OTHER_USER);
-        verify(listener, timeout(TIMEOUT_MS).times(3)).onProviderEnabledChanged(NAME, CURRENT_USER,
-                false);
         verify(listener, timeout(TIMEOUT_MS).times(1)).onProviderEnabledChanged(NAME, OTHER_USER,
                 true);
-
-        mInjector.getUserInfoHelper().setCurrentUserId(CURRENT_USER);
-        verify(listener, timeout(TIMEOUT_MS).times(3)).onProviderEnabledChanged(NAME, CURRENT_USER,
-                true);
-        verify(listener, timeout(TIMEOUT_MS).times(1)).onProviderEnabledChanged(NAME, OTHER_USER,
-                false);
 
         mManager.removeEnabledListener(listener);
         mInjector.getSettingsHelper().setLocationEnabled(false, CURRENT_USER);
@@ -327,7 +314,7 @@ public class LocationProviderManagerTest {
 
     @Test
     public void testGetLastLocation_ClearOnMockRemoval() {
-        MockProvider mockProvider = new MockProvider(PROPERTIES, IDENTITY);
+        MockLocationProvider mockProvider = new MockLocationProvider(PROPERTIES, IDENTITY);
         mockProvider.setAllowed(true);
         mManager.setMockProvider(mockProvider);
 
@@ -355,16 +342,12 @@ public class LocationProviderManagerTest {
     @Test
     public void testPassive_Listener() throws Exception {
         ILocationListener listener = createMockLocationListener();
-        LocationRequest request = new LocationRequest.Builder(0).build();
+        LocationRequest request = new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build();
         mPassive.registerLocationRequest(request, IDENTITY, PERMISSION_FINE, listener);
 
-        Location loc = createLocation(NAME, mRandom);
+        LocationResult loc = createLocationResult(NAME, mRandom);
         mProvider.setProviderLocation(loc);
-
-        ArgumentCaptor<Location> locationCaptor = ArgumentCaptor.forClass(Location.class);
-        verify(listener).onLocationChanged(locationCaptor.capture(),
-                nullable(IRemoteCallback.class));
-        assertThat(locationCaptor.getValue()).isEqualTo(loc);
+        verify(listener).onLocationChanged(eq(loc), nullable(IRemoteCallback.class));
     }
 
     @Test
@@ -377,23 +360,22 @@ public class LocationProviderManagerTest {
 
     @Test
     public void testRegisterListener() throws Exception {
-        ArgumentCaptor<Location> locationCaptor = ArgumentCaptor.forClass(Location.class);
-
         ILocationListener listener = createMockLocationListener();
-        mManager.registerLocationRequest(new LocationRequest.Builder(0).build(), IDENTITY,
-                PERMISSION_FINE, listener);
+        mManager.registerLocationRequest(
+                new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build(),
+                IDENTITY,
+                PERMISSION_FINE,
+                listener);
 
-        Location loc = createLocation(NAME, mRandom);
+        LocationResult loc = createLocationResult(NAME, mRandom);
         mProvider.setProviderLocation(loc);
-        verify(listener, times(1)).onLocationChanged(locationCaptor.capture(),
-                nullable(IRemoteCallback.class));
-        assertThat(locationCaptor.getValue()).isEqualTo(loc);
+        verify(listener).onLocationChanged(eq(loc), nullable(IRemoteCallback.class));
 
         mInjector.getSettingsHelper().setLocationEnabled(false, CURRENT_USER);
         verify(listener, timeout(TIMEOUT_MS).times(1)).onProviderEnabledChanged(NAME, false);
-        loc = createLocation(NAME, mRandom);
+        loc = createLocationResult(NAME, mRandom);
         mProvider.setProviderLocation(loc);
-        verify(listener, times(1)).onLocationChanged(any(Location.class),
+        verify(listener, times(1)).onLocationChanged(any(LocationResult.class),
                 nullable(IRemoteCallback.class));
 
         mInjector.getSettingsHelper().setLocationEnabled(true, CURRENT_USER);
@@ -401,58 +383,49 @@ public class LocationProviderManagerTest {
 
         mProvider.setAllowed(false);
         verify(listener, timeout(TIMEOUT_MS).times(2)).onProviderEnabledChanged(NAME, false);
-        loc = createLocation(NAME, mRandom);
+        loc = createLocationResult(NAME, mRandom);
         mProvider.setProviderLocation(loc);
-        verify(listener, times(1)).onLocationChanged(any(Location.class),
+        verify(listener, times(1)).onLocationChanged(any(LocationResult.class),
                 nullable(IRemoteCallback.class));
 
         mProvider.setAllowed(true);
         verify(listener, timeout(TIMEOUT_MS).times(2)).onProviderEnabledChanged(NAME, true);
 
-        mInjector.getUserInfoHelper().setCurrentUserId(OTHER_USER);
-        verify(listener, timeout(TIMEOUT_MS).times(3)).onProviderEnabledChanged(NAME, false);
-        loc = createLocation(NAME, mRandom);
+        loc = createLocationResult(NAME, mRandom);
         mProvider.setProviderLocation(loc);
-        verify(listener, times(1)).onLocationChanged(any(Location.class),
-                nullable(IRemoteCallback.class));
-
-        mInjector.getUserInfoHelper().setCurrentUserId(CURRENT_USER);
-        verify(listener, timeout(TIMEOUT_MS).times(3)).onProviderEnabledChanged(NAME, true);
-
-        loc = createLocation(NAME, mRandom);
-        mProvider.setProviderLocation(loc);
-        verify(listener, times(2)).onLocationChanged(locationCaptor.capture(),
-                nullable(IRemoteCallback.class));
-        assertThat(locationCaptor.getValue()).isEqualTo(loc);
+        verify(listener).onLocationChanged(eq(loc), nullable(IRemoteCallback.class));
     }
 
     @Test
     public void testRegisterListener_SameProcess() throws Exception {
-        ArgumentCaptor<Location> locationCaptor = ArgumentCaptor.forClass(Location.class);
-
         CallerIdentity identity = CallerIdentity.forTest(CURRENT_USER, Process.myPid(), "mypackage",
                 "attribution");
 
         ILocationListener listener = createMockLocationListener();
-        mManager.registerLocationRequest(new LocationRequest.Builder(0).build(), identity,
-                PERMISSION_FINE, listener);
+        mManager.registerLocationRequest(
+                new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build(),
+                identity,
+                PERMISSION_FINE,
+                listener);
 
-        Location loc = createLocation(NAME, mRandom);
+        LocationResult loc = createLocationResult(NAME, mRandom);
         mProvider.setProviderLocation(loc);
-        verify(listener, timeout(TIMEOUT_MS).times(1)).onLocationChanged(locationCaptor.capture(),
+        verify(listener, timeout(TIMEOUT_MS).times(1)).onLocationChanged(eq(loc),
                 nullable(IRemoteCallback.class));
-        assertThat(locationCaptor.getValue()).isEqualTo(loc);
     }
 
     @Test
     public void testRegisterListener_Unregister() throws Exception {
         ILocationListener listener = createMockLocationListener();
-        mManager.registerLocationRequest(new LocationRequest.Builder(0).build(), IDENTITY,
-                PERMISSION_FINE, listener);
+        mManager.registerLocationRequest(
+                new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build(),
+                IDENTITY,
+                PERMISSION_FINE,
+                listener);
         mManager.unregisterLocationRequest(listener);
 
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
-        verify(listener, never()).onLocationChanged(any(Location.class),
+        verify(listener, never()).onLocationChanged(any(LocationResult.class),
                 nullable(IRemoteCallback.class));
 
         mInjector.getSettingsHelper().setLocationEnabled(false, CURRENT_USER);
@@ -465,8 +438,11 @@ public class LocationProviderManagerTest {
                 "attribution");
 
         ILocationListener listener = createMockLocationListener();
-        mManager.registerLocationRequest(new LocationRequest.Builder(0).build(), identity,
-                PERMISSION_FINE, listener);
+        mManager.registerLocationRequest(
+                new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build(),
+                identity,
+                PERMISSION_FINE,
+                listener);
 
         CountDownLatch blocker = new CountDownLatch(1);
         IN_PROCESS_EXECUTOR.execute(() -> {
@@ -480,14 +456,17 @@ public class LocationProviderManagerTest {
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
         mManager.unregisterLocationRequest(listener);
         blocker.countDown();
-        verify(listener, after(TIMEOUT_MS).never()).onLocationChanged(any(Location.class),
+        verify(listener, after(TIMEOUT_MS).never()).onLocationChanged(any(LocationResult.class),
                 nullable(IRemoteCallback.class));
     }
 
     @Test
     public void testRegisterListener_NumUpdates() throws Exception {
         ILocationListener listener = createMockLocationListener();
-        LocationRequest request = new LocationRequest.Builder(0).setMaxUpdates(5).build();
+        LocationRequest request = new LocationRequest.Builder(0)
+                .setMaxUpdates(5)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request, IDENTITY, PERMISSION_FINE, listener);
 
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
@@ -497,79 +476,78 @@ public class LocationProviderManagerTest {
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
 
-        verify(listener, times(5)).onLocationChanged(any(Location.class),
+        verify(listener, times(5)).onLocationChanged(any(LocationResult.class),
                 nullable(IRemoteCallback.class));
     }
 
     @Test
     public void testRegisterListener_ExpiringAlarm() throws Exception {
         ILocationListener listener = createMockLocationListener();
-        LocationRequest request = new LocationRequest.Builder(0).setDurationMillis(5000).build();
+        LocationRequest request = new LocationRequest.Builder(0)
+                .setDurationMillis(5000)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request, IDENTITY, PERMISSION_FINE, listener);
-        long baseTimeMs = SystemClock.elapsedRealtime();
 
-        ArgumentCaptor<Long> timeoutCapture = ArgumentCaptor.forClass(Long.class);
-        ArgumentCaptor<OnAlarmListener> listenerCapture = ArgumentCaptor.forClass(
-                OnAlarmListener.class);
-        verify(mAlarmManager).set(eq(ELAPSED_REALTIME_WAKEUP), timeoutCapture.capture(),
-                eq(WINDOW_EXACT), eq(0L), listenerCapture.capture(), any(Handler.class),
-                any(WorkSource.class));
-
-        assertThat(timeoutCapture.getValue()).isAtLeast(baseTimeMs + 4000);
-        assertThat(timeoutCapture.getValue()).isAtMost(baseTimeMs + 5000);
-        listenerCapture.getValue().onAlarm();
-
+        mInjector.getAlarmHelper().incrementAlarmTime(5000);
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
-        verify(listener, never()).onLocationChanged(any(Location.class),
+        verify(listener, never()).onLocationChanged(any(LocationResult.class),
                 nullable(IRemoteCallback.class));
     }
 
     @Test
     public void testRegisterListener_ExpiringNoAlarm() throws Exception {
         ILocationListener listener = createMockLocationListener();
-        LocationRequest request = new LocationRequest.Builder(0).setDurationMillis(25).build();
+        LocationRequest request = new LocationRequest.Builder(0)
+                .setDurationMillis(25)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request, IDENTITY, PERMISSION_FINE, listener);
 
         Thread.sleep(25);
 
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
-        verify(listener, never()).onLocationChanged(any(Location.class),
+        verify(listener, never()).onLocationChanged(any(LocationResult.class),
                 nullable(IRemoteCallback.class));
     }
 
     @Test
     public void testRegisterListener_FastestInterval() throws Exception {
         ILocationListener listener = createMockLocationListener();
-        LocationRequest request = new LocationRequest.Builder(5000).setMinUpdateIntervalMillis(
-                5000).build();
+        LocationRequest request = new LocationRequest.Builder(5000)
+                .setMinUpdateIntervalMillis(5000)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request, IDENTITY, PERMISSION_FINE, listener);
 
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
 
-        verify(listener, times(1)).onLocationChanged(any(Location.class),
-                nullable(IRemoteCallback.class));
+        verify(listener, times(1)).onLocationChanged(
+                any(LocationResult.class), nullable(IRemoteCallback.class));
     }
 
     @Test
     public void testRegisterListener_SmallestDisplacement() throws Exception {
         ILocationListener listener = createMockLocationListener();
-        LocationRequest request = new LocationRequest.Builder(5000).setMinUpdateDistanceMeters(
-                1f).build();
+        LocationRequest request = new LocationRequest.Builder(5000)
+                .setMinUpdateDistanceMeters(1f)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request, IDENTITY, PERMISSION_FINE, listener);
 
         Location loc = createLocation(NAME, mRandom);
         mProvider.setProviderLocation(loc);
         mProvider.setProviderLocation(loc);
 
-        verify(listener, times(1)).onLocationChanged(any(Location.class),
-                nullable(IRemoteCallback.class));
+        verify(listener, times(1)).onLocationChanged(
+                any(LocationResult.class), nullable(IRemoteCallback.class));
     }
 
     @Test
     public void testRegisterListener_NoteOpFailure() throws Exception {
         ILocationListener listener = createMockLocationListener();
-        LocationRequest request = new LocationRequest.Builder(0).build();
+        LocationRequest request = new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build();
         mManager.registerLocationRequest(request, IDENTITY, PERMISSION_FINE, listener);
 
         mInjector.getAppOpsHelper().setAppOpAllowed(OP_FINE_LOCATION, IDENTITY.getPackageName(),
@@ -577,7 +555,7 @@ public class LocationProviderManagerTest {
 
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
 
-        verify(listener, never()).onLocationChanged(any(Location.class),
+        verify(listener, never()).onLocationChanged(any(LocationResult.class),
                 nullable(IRemoteCallback.class));
     }
 
@@ -587,8 +565,11 @@ public class LocationProviderManagerTest {
                 "attribution");
 
         ILocationListener listener = createMockLocationListener();
-        mManager.registerLocationRequest(new LocationRequest.Builder(0).build(), identity,
-                PERMISSION_FINE, listener);
+        mManager.registerLocationRequest(
+                new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build(),
+                identity,
+                PERMISSION_FINE,
+                listener);
 
         CountDownLatch blocker = new CountDownLatch(1);
         IN_PROCESS_EXECUTOR.execute(() -> {
@@ -604,51 +585,73 @@ public class LocationProviderManagerTest {
         verify(mWakeLock, never()).release();
 
         blocker.countDown();
-        verify(listener, timeout(TIMEOUT_MS)).onLocationChanged(any(Location.class),
+        verify(listener, timeout(TIMEOUT_MS)).onLocationChanged(any(LocationResult.class),
                 nullable(IRemoteCallback.class));
         verify(mWakeLock).acquire(anyLong());
         verify(mWakeLock, timeout(TIMEOUT_MS)).release();
     }
 
     @Test
-    public void testGetCurrentLocation() throws Exception {
-        ArgumentCaptor<Location> locationCaptor = ArgumentCaptor.forClass(Location.class);
+    public void testRegisterListener_Coarse() throws Exception {
+        ILocationListener listener = createMockLocationListener();
+        mManager.registerLocationRequest(
+                new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build(),
+                IDENTITY,
+                PERMISSION_COARSE,
+                listener);
 
+        mProvider.setProviderLocation(createLocation(NAME, mRandom));
+        mProvider.setProviderLocation(createLocation(NAME, mRandom));
+        verify(listener, times(1))
+                .onLocationChanged(any(LocationResult.class), nullable(IRemoteCallback.class));
+    }
+
+    @Test
+    public void testRegisterListener_Coarse_Passive() throws Exception {
+        ILocationListener listener = createMockLocationListener();
+        mManager.registerLocationRequest(
+                new LocationRequest.Builder(PASSIVE_INTERVAL)
+                        .setMinUpdateIntervalMillis(0)
+                        .setWorkSource(WORK_SOURCE).build(),
+                IDENTITY,
+                PERMISSION_COARSE,
+                listener);
+
+        mProvider.setProviderLocation(createLocation(NAME, mRandom));
+        mProvider.setProviderLocation(createLocation(NAME, mRandom));
+        verify(listener, times(1))
+                .onLocationChanged(any(LocationResult.class), nullable(IRemoteCallback.class));
+    }
+
+    @Test
+    public void testGetCurrentLocation() throws Exception {
         ILocationCallback listener = createMockGetCurrentLocationListener();
-        LocationRequest locationRequest = new LocationRequest.Builder(0).build();
-        ICancellationSignal cancellationSignal = CancellationSignal.createTransport();
-        mManager.getCurrentLocation(locationRequest, IDENTITY,
-                PERMISSION_FINE, cancellationSignal, listener);
+        LocationRequest request = new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build();
+        mManager.getCurrentLocation(request, IDENTITY, PERMISSION_FINE, listener);
 
         Location loc = createLocation(NAME, mRandom);
         mProvider.setProviderLocation(loc);
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
-
-        verify(listener, times(1)).onLocation(locationCaptor.capture());
-        assertThat(locationCaptor.getValue()).isEqualTo(loc);
+        verify(listener, times(1)).onLocation(loc);
     }
 
     @Test
     public void testGetCurrentLocation_Cancel() throws Exception {
         ILocationCallback listener = createMockGetCurrentLocationListener();
-        LocationRequest locationRequest = new LocationRequest.Builder(0).build();
-        ICancellationSignal cancellationSignal = CancellationSignal.createTransport();
-        mManager.getCurrentLocation(locationRequest, IDENTITY,
-                PERMISSION_FINE, cancellationSignal, listener);
+        LocationRequest request = new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build();
+        ICancellationSignal cancellationSignal = mManager.getCurrentLocation(request,
+                IDENTITY, PERMISSION_FINE, listener);
 
         cancellationSignal.cancel();
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
-
         verify(listener, never()).onLocation(nullable(Location.class));
     }
 
     @Test
     public void testGetCurrentLocation_ProviderDisabled() throws Exception {
         ILocationCallback listener = createMockGetCurrentLocationListener();
-        LocationRequest locationRequest = new LocationRequest.Builder(0).build();
-        ICancellationSignal cancellationSignal = CancellationSignal.createTransport();
-        mManager.getCurrentLocation(locationRequest, IDENTITY,
-                PERMISSION_FINE, cancellationSignal, listener);
+        LocationRequest request = new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build();
+        mManager.getCurrentLocation(request, IDENTITY, PERMISSION_FINE, listener);
 
         mProvider.setProviderAllowed(false);
         mProvider.setProviderAllowed(true);
@@ -661,10 +664,8 @@ public class LocationProviderManagerTest {
         mProvider.setProviderAllowed(false);
 
         ILocationCallback listener = createMockGetCurrentLocationListener();
-        LocationRequest locationRequest = new LocationRequest.Builder(0).build();
-        ICancellationSignal cancellationSignal = CancellationSignal.createTransport();
-        mManager.getCurrentLocation(locationRequest, IDENTITY,
-                PERMISSION_FINE, cancellationSignal, listener);
+        LocationRequest request = new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build();
+        mManager.getCurrentLocation(request, IDENTITY, PERMISSION_FINE, listener);
 
         mProvider.setProviderAllowed(true);
         mProvider.setProviderLocation(createLocation(NAME, mRandom));
@@ -673,37 +674,49 @@ public class LocationProviderManagerTest {
 
     @Test
     public void testGetCurrentLocation_LastLocation() throws Exception {
-        ArgumentCaptor<Location> locationCaptor = ArgumentCaptor.forClass(Location.class);
-
         Location loc = createLocation(NAME, mRandom);
         mProvider.setProviderLocation(loc);
 
         ILocationCallback listener = createMockGetCurrentLocationListener();
-        LocationRequest locationRequest = new LocationRequest.Builder(0).build();
-        ICancellationSignal cancellationSignal = CancellationSignal.createTransport();
-        mManager.getCurrentLocation(locationRequest, IDENTITY,
-                PERMISSION_FINE, cancellationSignal, listener);
-
-        verify(listener, times(1)).onLocation(locationCaptor.capture());
-        assertThat(locationCaptor.getValue()).isEqualTo(loc);
+        LocationRequest request = new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build();
+        mManager.getCurrentLocation(request, IDENTITY, PERMISSION_FINE, listener);
+        verify(listener, times(1)).onLocation(eq(loc));
     }
 
     @Test
     public void testGetCurrentLocation_Timeout() throws Exception {
         ILocationCallback listener = createMockGetCurrentLocationListener();
-        LocationRequest locationRequest = new LocationRequest.Builder(0).build();
-        ICancellationSignal cancellationSignal = CancellationSignal.createTransport();
-        mManager.getCurrentLocation(locationRequest, IDENTITY,
-                PERMISSION_FINE, cancellationSignal, listener);
+        LocationRequest request = new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build();
+        mManager.getCurrentLocation(request, IDENTITY, PERMISSION_FINE, listener);
 
-        ArgumentCaptor<OnAlarmListener> listenerCapture = ArgumentCaptor.forClass(
-                OnAlarmListener.class);
-        verify(mAlarmManager).set(eq(ELAPSED_REALTIME_WAKEUP), anyLong(),
-                eq(WINDOW_EXACT), eq(0L), listenerCapture.capture(), any(Handler.class),
-                any(WorkSource.class));
-        listenerCapture.getValue().onAlarm();
-
+        mInjector.getAlarmHelper().incrementAlarmTime(60000);
         verify(listener, times(1)).onLocation(isNull());
+    }
+
+    @Test
+    public void testFlush() throws Exception {
+        ILocationListener listener = createMockLocationListener();
+        mManager.registerLocationRequest(
+                new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build(),
+                IDENTITY,
+                PERMISSION_FINE,
+                listener);
+
+        mManager.flush(listener, 99);
+
+        LocationResult loc = createLocationResult(NAME, mRandom);
+        mProvider.setProviderLocation(loc);
+        mProvider.completeFlushes();
+
+        InOrder inOrder = inOrder(listener);
+        inOrder.verify(listener).onLocationChanged(eq(loc), any(IRemoteCallback.class));
+        inOrder.verify(listener).onFlushComplete(99);
+    }
+
+    @Test
+    public void testFlush_UnknownKey() {
+        assertThrows(IllegalArgumentException.class,
+                () -> mManager.flush(createMockLocationListener(), 0));
     }
 
     @Test
@@ -714,7 +727,7 @@ public class LocationProviderManagerTest {
                 IDENTITY.getPackageName())).isFalse();
 
         ILocationListener listener = createMockLocationListener();
-        LocationRequest request = new LocationRequest.Builder(0).build();
+        LocationRequest request = new LocationRequest.Builder(0).setWorkSource(WORK_SOURCE).build();
         mManager.registerLocationRequest(request, IDENTITY, PERMISSION_FINE, listener);
 
         assertThat(mInjector.getAppOpsHelper().isAppOpStarted(OP_MONITOR_LOCATION,
@@ -740,26 +753,26 @@ public class LocationProviderManagerTest {
     @Test
     public void testProviderRequest() {
         assertThat(mProvider.getRequest().isActive()).isFalse();
-        assertThat(mProvider.getRequest().getLocationRequests()).isEmpty();
 
         ILocationListener listener1 = createMockLocationListener();
-        LocationRequest request1 = new LocationRequest.Builder(5).build();
+        LocationRequest request1 = new LocationRequest.Builder(5).setWorkSource(
+                WORK_SOURCE).build();
         mManager.registerLocationRequest(request1, IDENTITY, PERMISSION_FINE, listener1);
 
         assertThat(mProvider.getRequest().isActive()).isTrue();
-        assertThat(mProvider.getRequest().getLocationRequests()).containsExactly(request1);
         assertThat(mProvider.getRequest().isLocationSettingsIgnored()).isFalse();
         assertThat(mProvider.getRequest().getIntervalMillis()).isEqualTo(5);
         assertThat(mProvider.getRequest().isLowPower()).isFalse();
         assertThat(mProvider.getRequest().getWorkSource()).isNotNull();
 
         ILocationListener listener2 = createMockLocationListener();
-        LocationRequest request2 = new LocationRequest.Builder(1).setLowPower(true).build();
+        LocationRequest request2 = new LocationRequest.Builder(1)
+                .setLowPower(true)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request2, IDENTITY, PERMISSION_FINE, listener2);
 
         assertThat(mProvider.getRequest().isActive()).isTrue();
-        assertThat(mProvider.getRequest().getLocationRequests()).containsExactly(request1,
-                request2);
         assertThat(mProvider.getRequest().isLocationSettingsIgnored()).isFalse();
         assertThat(mProvider.getRequest().getIntervalMillis()).isEqualTo(1);
         assertThat(mProvider.getRequest().isLowPower()).isFalse();
@@ -768,7 +781,6 @@ public class LocationProviderManagerTest {
         mManager.unregisterLocationRequest(listener1);
 
         assertThat(mProvider.getRequest().isActive()).isTrue();
-        assertThat(mProvider.getRequest().getLocationRequests()).containsExactly(request2);
         assertThat(mProvider.getRequest().isLocationSettingsIgnored()).isFalse();
         assertThat(mProvider.getRequest().getIntervalMillis()).isEqualTo(1);
         assertThat(mProvider.getRequest().isLowPower()).isTrue();
@@ -777,13 +789,53 @@ public class LocationProviderManagerTest {
         mManager.unregisterLocationRequest(listener2);
 
         assertThat(mProvider.getRequest().isActive()).isFalse();
-        assertThat(mProvider.getRequest().getLocationRequests()).isEmpty();
+    }
+
+    @Test
+    public void testProviderRequest_DelayedRequest() throws Exception {
+        mProvider.setProviderLocation(createLocation(NAME, mRandom));
+
+        ILocationListener listener1 = createMockLocationListener();
+        LocationRequest request1 = new LocationRequest.Builder(60000)
+                .setWorkSource(WORK_SOURCE)
+                .build();
+        mManager.registerLocationRequest(request1, IDENTITY, PERMISSION_FINE, listener1);
+
+        verify(listener1).onLocationChanged(any(LocationResult.class),
+                nullable(IRemoteCallback.class));
+
+        assertThat(mProvider.getRequest().isActive()).isFalse();
+
+        mInjector.getAlarmHelper().incrementAlarmTime(60000);
+        assertThat(mProvider.getRequest().isActive()).isTrue();
+        assertThat(mProvider.getRequest().getIntervalMillis()).isEqualTo(60000);
+    }
+
+    @Test
+    public void testProviderRequest_SpamRequesting() {
+        mProvider.setProviderLocation(createLocation(NAME, mRandom));
+
+        ILocationListener listener1 = createMockLocationListener();
+        LocationRequest request1 = new LocationRequest.Builder(60000)
+                .setWorkSource(WORK_SOURCE)
+                .build();
+
+        mManager.registerLocationRequest(request1, IDENTITY, PERMISSION_FINE, listener1);
+        assertThat(mProvider.getRequest().isActive()).isFalse();
+        mManager.unregisterLocationRequest(listener1);
+        assertThat(mProvider.getRequest().isActive()).isFalse();
+        mManager.registerLocationRequest(request1, IDENTITY, PERMISSION_FINE, listener1);
+        assertThat(mProvider.getRequest().isActive()).isFalse();
+        mManager.unregisterLocationRequest(listener1);
+        assertThat(mProvider.getRequest().isActive()).isFalse();
     }
 
     @Test
     public void testProviderRequest_BackgroundThrottle() {
         ILocationListener listener1 = createMockLocationListener();
-        LocationRequest request1 = new LocationRequest.Builder(5).build();
+        LocationRequest request1 = new LocationRequest.Builder(5)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request1, IDENTITY, PERMISSION_FINE, listener1);
 
         assertThat(mProvider.getRequest().getIntervalMillis()).isEqualTo(5);
@@ -799,7 +851,9 @@ public class LocationProviderManagerTest {
                 Collections.singleton(IDENTITY.getPackageName()));
 
         ILocationListener listener1 = createMockLocationListener();
-        LocationRequest request1 = new LocationRequest.Builder(5).build();
+        LocationRequest request1 = new LocationRequest.Builder(5)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request1, IDENTITY, PERMISSION_FINE, listener1);
 
         assertThat(mProvider.getRequest().isActive()).isTrue();
@@ -807,8 +861,10 @@ public class LocationProviderManagerTest {
         assertThat(mProvider.getRequest().isLocationSettingsIgnored()).isFalse();
 
         ILocationListener listener2 = createMockLocationListener();
-        LocationRequest request2 = new LocationRequest.Builder(1).setLocationSettingsIgnored(
-                true).build();
+        LocationRequest request2 = new LocationRequest.Builder(1)
+                .setLocationSettingsIgnored(true)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request2, IDENTITY, PERMISSION_FINE, listener2);
 
         assertThat(mProvider.getRequest().isActive()).isTrue();
@@ -822,18 +878,21 @@ public class LocationProviderManagerTest {
                 Collections.singleton(IDENTITY.getPackageName()));
 
         ILocationListener listener1 = createMockLocationListener();
-        LocationRequest request1 = new LocationRequest.Builder(1).build();
+        LocationRequest request1 = new LocationRequest.Builder(1)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request1, IDENTITY, PERMISSION_FINE, listener1);
 
         ILocationListener listener2 = createMockLocationListener();
-        LocationRequest request2 = new LocationRequest.Builder(5).setLocationSettingsIgnored(
-                true).build();
+        LocationRequest request2 = new LocationRequest.Builder(5)
+                .setLocationSettingsIgnored(true)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request2, IDENTITY, PERMISSION_FINE, listener2);
 
         mInjector.getSettingsHelper().setLocationEnabled(false, IDENTITY.getUserId());
 
         assertThat(mProvider.getRequest().isActive()).isTrue();
-        assertThat(mProvider.getRequest().getLocationRequests()).containsExactly(request2);
         assertThat(mProvider.getRequest().getIntervalMillis()).isEqualTo(5);
         assertThat(mProvider.getRequest().isLocationSettingsIgnored()).isTrue();
     }
@@ -844,8 +903,10 @@ public class LocationProviderManagerTest {
                 Collections.singleton(IDENTITY.getPackageName()));
 
         ILocationListener listener = createMockLocationListener();
-        LocationRequest request = new LocationRequest.Builder(1).setLocationSettingsIgnored(
-                true).build();
+        LocationRequest request = new LocationRequest.Builder(1)
+                .setLocationSettingsIgnored(true)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request, IDENTITY, PERMISSION_FINE, listener);
 
         mInjector.getSettingsHelper().setIgnoreSettingsPackageWhitelist(Collections.emptySet());
@@ -861,8 +922,10 @@ public class LocationProviderManagerTest {
                 Collections.singleton(IDENTITY.getPackageName()));
 
         ILocationListener listener1 = createMockLocationListener();
-        LocationRequest request1 = new LocationRequest.Builder(5).setLocationSettingsIgnored(
-                true).build();
+        LocationRequest request1 = new LocationRequest.Builder(5)
+                .setLocationSettingsIgnored(true)
+                .setWorkSource(WORK_SOURCE)
+                .build();
         mManager.registerLocationRequest(request1, IDENTITY, PERMISSION_FINE, listener1);
 
         assertThat(mProvider.getRequest().getIntervalMillis()).isEqualTo(5);
@@ -877,7 +940,7 @@ public class LocationProviderManagerTest {
                 LOCATION_MODE_THROTTLE_REQUESTS_WHEN_SCREEN_OFF);
 
         ILocationListener listener = createMockLocationListener();
-        LocationRequest request = new LocationRequest.Builder(5).build();
+        LocationRequest request = new LocationRequest.Builder(5).setWorkSource(WORK_SOURCE).build();
         mManager.registerLocationRequest(request, IDENTITY, PERMISSION_FINE, listener);
 
         assertThat(mProvider.getRequest().isActive()).isTrue();
@@ -889,7 +952,8 @@ public class LocationProviderManagerTest {
     private ILocationListener createMockLocationListener() {
         return spy(new ILocationListener.Stub() {
             @Override
-            public void onLocationChanged(Location location, IRemoteCallback onCompleteCallback) {
+            public void onLocationChanged(LocationResult location,
+                    IRemoteCallback onCompleteCallback) {
                 if (onCompleteCallback != null) {
                     try {
                         onCompleteCallback.sendResult(null);
@@ -897,6 +961,10 @@ public class LocationProviderManagerTest {
                         e.rethrowFromSystemServer();
                     }
                 }
+            }
+
+            @Override
+            public void onFlushComplete(int requestCode) {
             }
 
             @Override
@@ -917,6 +985,8 @@ public class LocationProviderManagerTest {
 
         private ProviderRequest mProviderRequest = ProviderRequest.EMPTY_REQUEST;
 
+        private final ArrayList<Runnable> mFlushCallbacks = new ArrayList<>();
+
         TestProvider(ProviderProperties properties, CallerIdentity identity) {
             super(DIRECT_EXECUTOR, identity);
             setProperties(properties);
@@ -927,7 +997,18 @@ public class LocationProviderManagerTest {
         }
 
         public void setProviderLocation(Location l) {
-            reportLocation(new Location(l));
+            reportLocation(LocationResult.create(new Location(l)));
+        }
+
+        public void setProviderLocation(LocationResult l) {
+            reportLocation(l);
+        }
+
+        public void completeFlushes() {
+            for (Runnable r : mFlushCallbacks) {
+                r.run();
+            }
+            mFlushCallbacks.clear();
         }
 
         public ProviderRequest getRequest() {
@@ -937,6 +1018,11 @@ public class LocationProviderManagerTest {
         @Override
         public void onSetRequest(ProviderRequest request) {
             mProviderRequest = request;
+        }
+
+        @Override
+        protected void onFlush(Runnable callback) {
+            mFlushCallbacks.add(callback);
         }
 
         @Override

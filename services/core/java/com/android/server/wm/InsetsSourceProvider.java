@@ -16,11 +16,28 @@
 
 package com.android.server.wm;
 
+import static android.view.InsetsState.ITYPE_CLIMATE_BAR;
+import static android.view.InsetsState.ITYPE_EXTRA_NAVIGATION_BAR;
 import static android.view.InsetsState.ITYPE_IME;
 import static android.view.InsetsState.ITYPE_NAVIGATION_BAR;
 import static android.view.InsetsState.ITYPE_STATUS_BAR;
 
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_IME;
+import static com.android.server.wm.InsetsSourceProviderProto.CAPTURED_LEASH;
+import static com.android.server.wm.InsetsSourceProviderProto.CLIENT_VISIBLE;
+import static com.android.server.wm.InsetsSourceProviderProto.CONTROL;
+import static com.android.server.wm.InsetsSourceProviderProto.CONTROLLABLE;
+import static com.android.server.wm.InsetsSourceProviderProto.CONTROL_TARGET;
+import static com.android.server.wm.InsetsSourceProviderProto.FAKE_CONTROL;
+import static com.android.server.wm.InsetsSourceProviderProto.FAKE_CONTROL_TARGET;
+import static com.android.server.wm.InsetsSourceProviderProto.FINISH_SEAMLESS_ROTATE_FRAME_NUMBER;
+import static com.android.server.wm.InsetsSourceProviderProto.FRAME;
+import static com.android.server.wm.InsetsSourceProviderProto.IME_OVERRIDDEN_FRAME;
+import static com.android.server.wm.InsetsSourceProviderProto.IS_LEASH_READY_FOR_DISPATCHING;
+import static com.android.server.wm.InsetsSourceProviderProto.PENDING_CONTROL_TARGET;
+import static com.android.server.wm.InsetsSourceProviderProto.SEAMLESS_ROTATING;
+import static com.android.server.wm.InsetsSourceProviderProto.SERVER_VISIBLE;
+import static com.android.server.wm.InsetsSourceProviderProto.SOURCE;
 import static com.android.server.wm.SurfaceAnimator.ANIMATION_TYPE_INSETS_CONTROL;
 import static com.android.server.wm.WindowManagerService.H.LAYOUT_AND_ASSIGN_WINDOW_LAYERS_IF_NEEDED;
 
@@ -93,6 +110,8 @@ class InsetsSourceProvider {
             case ITYPE_STATUS_BAR:
             case ITYPE_NAVIGATION_BAR:
             case ITYPE_IME:
+            case ITYPE_CLIMATE_BAR:
+            case ITYPE_EXTRA_NAVIGATION_BAR:
                 mControllable = true;
                 break;
             default:
@@ -132,6 +151,7 @@ class InsetsSourceProvider {
             // TODO: Ideally, we should wait for the animation to finish so previous window can
             // animate-out as new one animates-in.
             mWin.cancelAnimation();
+            mWin.mPendingPositionChanged = null;
         }
         ProtoLog.d(WM_DEBUG_IME, "InsetsSource setWin %s", win);
         mWin = win;
@@ -162,7 +182,9 @@ class InsetsSourceProvider {
      * window gets laid out.
      */
     void updateSourceFrame() {
-        if (mWin == null) {
+        if (mWin == null || mWin.mGivenInsetsPending) {
+            // If the given insets are pending, they are not reliable for now. The source frame
+            // should be updated after the new given insets are sent to window manager.
             return;
         }
 
@@ -219,16 +241,42 @@ class InsetsSourceProvider {
             return;
         }
 
-        setServerVisible(mWin.wouldBeVisibleIfPolicyIgnored() && mWin.isVisibleByPolicy()
-                && !mWin.mGivenInsetsPending);
+        setServerVisible(mWin.wouldBeVisibleIfPolicyIgnored() && mWin.isVisibleByPolicy());
         updateSourceFrame();
         if (mControl != null) {
             final Rect frame = mWin.getWindowFrames().mFrame;
             if (mControl.setSurfacePosition(frame.left, frame.top) && mControlTarget != null) {
-                // The leash has been stale, we need to create a new one for the client.
-                updateControlForTarget(mControlTarget, true /* force */);
+                if (!mWin.getWindowFrames().didFrameSizeChange()) {
+                    updateLeashPosition(frame, -1 /* frameNumber */);
+                } else if (mWin.mInRelayout) {
+                    updateLeashPosition(frame, mWin.getFrameNumber());
+                } else {
+                    mWin.mPendingPositionChanged = this;
+                }
                 mStateController.notifyControlChanged(mControlTarget);
             }
+        }
+    }
+
+    void updateLeashPosition(Rect frame, long frameNumber) {
+        if (mControl == null) {
+            return;
+        }
+        final SurfaceControl leash = mControl.getLeash();
+        if (leash != null) {
+            final Transaction t = mDisplayContent.getPendingTransaction();
+            Point position = new Point();
+            mWin.transformFrameToSurfacePosition(frame.left, frame.top, position);
+            t.setPosition(leash, position.x, position.y);
+            deferTransactionUntil(t, leash, frameNumber);
+        }
+    }
+
+    private void deferTransactionUntil(Transaction t, SurfaceControl leash, long frameNumber) {
+        if (frameNumber >= 0) {
+            final SurfaceControl barrier = mWin.getClientViewRootSurface();
+            t.deferTransactionUntil(mWin.getSurfaceControl(), barrier, frameNumber);
+            t.deferTransactionUntil(leash, barrier, frameNumber);
         }
     }
 
@@ -286,14 +334,12 @@ class InsetsSourceProvider {
         final SurfaceControl leash = mAdapter.mCapturedLeash;
         final long frameNumber = mFinishSeamlessRotateFrameNumber;
         mFinishSeamlessRotateFrameNumber = -1;
-        if (frameNumber >= 0 && mWin.mHasSurface && leash != null) {
+        if (mWin.mHasSurface && leash != null) {
             // We just finished the seamless rotation. We don't want to change the position or the
             // window crop of the surface controls (including the leash) until the client finishes
             // drawing the new frame of the new orientation. Although we cannot defer the reparent
             // operation, it is fine, because reparent won't cause any visual effect.
-            final SurfaceControl barrier = mWin.getClientViewRootSurface();
-            t.deferTransactionUntil(mWin.getSurfaceControl(), barrier, frameNumber);
-            t.deferTransactionUntil(leash, barrier, frameNumber);
+            deferTransactionUntil(t, leash, frameNumber);
         }
         mControlTarget = target;
         updateVisibility();
@@ -319,11 +365,12 @@ class InsetsSourceProvider {
         }
     }
 
-    boolean onInsetsModified(InsetsControlTarget caller, InsetsSource modifiedSource) {
-        if (mControlTarget != caller || modifiedSource.isVisible() == mClientVisible) {
+    boolean updateClientVisibility(InsetsControlTarget caller) {
+        final boolean requestedVisible = caller.getRequestedVisibility(mSource.getType());
+        if (caller != mControlTarget || requestedVisible == mClientVisible) {
             return false;
         }
-        setClientVisible(modifiedSource.isVisible());
+        setClientVisible(requestedVisible);
         return true;
     }
 
@@ -331,7 +378,7 @@ class InsetsSourceProvider {
         mIsLeashReadyForDispatching = true;
     }
 
-    private void setClientVisible(boolean clientVisible) {
+    void setClientVisible(boolean clientVisible) {
         if (mClientVisible == clientVisible) {
             return;
         }
@@ -446,6 +493,36 @@ class InsetsSourceProvider {
                 mFakeControlTarget.getWindow().dump(pw, prefix + "  ", false /* dumpAll */);
             }
         }
+    }
+
+    void dumpDebug(ProtoOutputStream proto, long fieldId, @WindowTraceLogLevel int logLevel) {
+        final long token = proto.start(fieldId);
+        mSource.dumpDebug(proto, SOURCE);
+        mTmpRect.dumpDebug(proto, FRAME);
+        mFakeControl.dumpDebug(proto, FAKE_CONTROL);
+        if (mControl != null) {
+            mControl.dumpDebug(proto, CONTROL);
+        }
+        if (mControlTarget != null && mControlTarget.getWindow() != null) {
+            mControlTarget.getWindow().dumpDebug(proto, CONTROL_TARGET, logLevel);
+        }
+        if (mPendingControlTarget != null && mPendingControlTarget.getWindow() != null) {
+            mPendingControlTarget.getWindow().dumpDebug(proto, PENDING_CONTROL_TARGET, logLevel);
+        }
+        if (mFakeControlTarget != null && mFakeControlTarget.getWindow() != null) {
+            mFakeControlTarget.getWindow().dumpDebug(proto, FAKE_CONTROL_TARGET, logLevel);
+        }
+        if (mAdapter != null && mAdapter.mCapturedLeash != null) {
+            mAdapter.mCapturedLeash.dumpDebug(proto, CAPTURED_LEASH);
+        }
+        mImeOverrideFrame.dumpDebug(proto, IME_OVERRIDDEN_FRAME);
+        proto.write(IS_LEASH_READY_FOR_DISPATCHING, mIsLeashReadyForDispatching);
+        proto.write(CLIENT_VISIBLE, mClientVisible);
+        proto.write(SERVER_VISIBLE, mServerVisible);
+        proto.write(SEAMLESS_ROTATING, mSeamlessRotating);
+        proto.write(FINISH_SEAMLESS_ROTATE_FRAME_NUMBER, mFinishSeamlessRotateFrameNumber);
+        proto.write(CONTROLLABLE, mControllable);
+        proto.end(token);
     }
 
     private class ControlAdapter implements AnimationAdapter {

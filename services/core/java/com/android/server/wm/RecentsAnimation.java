@@ -23,7 +23,6 @@ import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.content.Intent.FLAG_ACTIVITY_NEW_TASK;
 import static android.content.Intent.FLAG_ACTIVITY_NO_ANIMATION;
 import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
-import static android.view.WindowManager.TRANSIT_NONE;
 
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_RECENTS_ANIMATIONS;
 import static com.android.server.wm.ActivityStackSupervisor.PRESERVE_WINDOWS;
@@ -161,7 +160,7 @@ class RecentsAnimation implements RecentsAnimationCallbacks,
         }
     }
 
-    void startRecentsActivity(IRecentsAnimationRunner recentsAnimationRunner) {
+    void startRecentsActivity(IRecentsAnimationRunner recentsAnimationRunner, long eventTime) {
         ProtoLog.d(WM_DEBUG_RECENTS_ANIMATIONS, "startRecentsActivity(): intent=%s", mTargetIntent);
         Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "RecentsAnimation#startRecentsActivity");
 
@@ -221,7 +220,7 @@ class RecentsAnimation implements RecentsAnimationCallbacks,
                 ProtoLog.d(WM_DEBUG_RECENTS_ANIMATIONS, "Moved stack=%s behind stack=%s",
                         targetStack, getStackAbove(targetStack));
 
-                mWindowManager.prepareAppTransition(TRANSIT_NONE, false);
+                mWindowManager.prepareAppTransitionNone();
                 mWindowManager.executeAppTransition();
 
                 // TODO: Maybe wait for app to draw in this particular case?
@@ -249,8 +248,13 @@ class RecentsAnimation implements RecentsAnimationCallbacks,
             // we fetch the visible tasks to be controlled by the animation
             mService.mRootWindowContainer.ensureActivitiesVisible(null, 0, PRESERVE_WINDOWS);
 
+            ActivityOptions options = null;
+            if (eventTime > 0) {
+                options = ActivityOptions.makeBasic();
+                options.setSourceInfo(ActivityOptions.SourceInfo.TYPE_RECENTS_ANIMATION, eventTime);
+            }
             mStackSupervisor.getActivityMetricsLogger().notifyActivityLaunched(launchingState,
-                    START_TASK_TO_FRONT, targetActivity, null /* options */);
+                    START_TASK_TO_FRONT, targetActivity, options);
 
             // Register for stack order changes
             mDefaultTaskDisplayArea.registerStackOrderChangedListener(this);
@@ -372,7 +376,7 @@ class RecentsAnimation implements RecentsAnimationCallbacks,
                         return;
                     }
 
-                    mWindowManager.prepareAppTransition(TRANSIT_NONE, false);
+                    mWindowManager.prepareAppTransitionNone();
                     mService.mRootWindowContainer.ensureActivitiesVisible(null, 0, false);
                     mService.mRootWindowContainer.resumeFocusedStacksTopActivities();
 
@@ -431,7 +435,7 @@ class RecentsAnimation implements RecentsAnimationCallbacks,
                 || controller.isTargetApp(stack.getTopNonFinishingActivity()))
                 && controller.shouldDeferCancelUntilNextTransition()) {
             // Always prepare an app transition since we rely on the transition callbacks to cleanup
-            mWindowManager.prepareAppTransition(TRANSIT_NONE, false);
+            mWindowManager.prepareAppTransitionNone();
             controller.setCancelOnNextTransitionStart();
         }
     }

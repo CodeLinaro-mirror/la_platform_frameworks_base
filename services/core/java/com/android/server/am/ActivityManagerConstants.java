@@ -91,6 +91,9 @@ final class ActivityManagerConstants extends ContentObserver {
     static final String KEY_TOP_TO_FGS_GRACE_DURATION = "top_to_fgs_grace_duration";
     static final String KEY_PENDINGINTENT_WARNING_THRESHOLD = "pendingintent_warning_threshold";
     static final String KEY_MIN_CRASH_INTERVAL = "min_crash_interval";
+    static final String KEY_PROCESS_CRASH_COUNT_RESET_INTERVAL =
+            "process_crash_count_reset_interval";
+    static final String KEY_PROCESS_CRASH_COUNT_LIMIT = "process_crash_count_limit";
 
     private static final int DEFAULT_MAX_CACHED_PROCESSES = 32;
     private static final long DEFAULT_BACKGROUND_SETTLE_TIME = 60*1000;
@@ -126,6 +129,8 @@ final class ActivityManagerConstants extends ContentObserver {
     private static final int DEFAULT_PENDINGINTENT_WARNING_THRESHOLD = 2000;
     private static final int DEFAULT_MIN_CRASH_INTERVAL = 2 * 60 * 1000;
     private static final int DEFAULT_MAX_PHANTOM_PROCESSES = 32;
+    private static final int DEFAULT_PROCESS_CRASH_COUNT_RESET_INTERVAL = 12 * 60 * 60 * 1000;
+    private static final int DEFAULT_PROCESS_CRASH_COUNT_LIMIT = 12;
 
 
     // Flag stored in the DeviceConfig API.
@@ -160,6 +165,13 @@ final class ActivityManagerConstants extends ContentObserver {
      */
     private static final String KEY_DEFAULT_FGS_STARTS_RESTRICTION_ENABLED =
             "default_fgs_starts_restriction_enabled";
+
+    /**
+     * Default value for mFlagFgsStartTempAllowListEnabled if not explicitly set in
+     * Settings.Global.
+     */
+    private static final String KEY_DEFAULT_FGS_STARTS_TEMP_ALLOWLIST_ENABLED =
+            "default_fgs_starts_temp_allowlist_enabled";
 
     // Maximum number of cached processes we will allow.
     public int MAX_CACHED_PROCESSES = DEFAULT_MAX_CACHED_PROCESSES;
@@ -294,8 +306,26 @@ final class ActivityManagerConstants extends ContentObserver {
     /**
      * The minimum time we allow between crashes, for us to consider this
      * application to be bad and stop its services and reject broadcasts.
+     * A reasonable interval here would be anything between 1-3 minutes.
      */
     public static int MIN_CRASH_INTERVAL = DEFAULT_MIN_CRASH_INTERVAL;
+
+    /**
+     * We will allow for a maximum number of {@link PROCESS_CRASH_COUNT_LIMIT} crashes within this
+     * time period before we consider the application to be bad and stop services and reject
+     * broadcasts.
+     * A reasonable reset interval here would be anything between 10-20 hours along with a crash
+     * count limit of 10-20 crashes.
+     */
+    static long PROCESS_CRASH_COUNT_RESET_INTERVAL = DEFAULT_PROCESS_CRASH_COUNT_RESET_INTERVAL;
+
+    /**
+     * The maximum number of crashes allowed within {@link PROCESS_CRASH_COUNT_RESET_INTERVAL_MS}
+     * before we consider the application to be bad and stop services and reject broadcasts.
+     * A reasonable crash count limit here would be anything between 10-20 crashes along with a
+     * reset interval of 10-20 hours.
+     */
+    static int PROCESS_CRASH_COUNT_LIMIT = DEFAULT_PROCESS_CRASH_COUNT_LIMIT;
 
     // Indicates whether the activity starts logging is enabled.
     // Controlled by Settings.Global.ACTIVITY_STARTS_LOGGING_ENABLED
@@ -320,6 +350,10 @@ final class ActivityManagerConstants extends ContentObserver {
     // When the restriction is enabled, service is not allowed to startForeground from background
     // at all.
     volatile boolean mFlagFgsStartRestrictionEnabled = false;
+
+    // When the foreground service background start restriction is enabled, if the app in
+    // DeviceIdleController's Temp AllowList is allowed to bypass the restriction.
+    volatile boolean mFlagFgsStartTempAllowListEnabled = false;
 
     private final ActivityManagerService mService;
     private ContentResolver mResolver;
@@ -471,6 +505,9 @@ final class ActivityManagerConstants extends ContentObserver {
                                 break;
                             case KEY_DEFAULT_FGS_STARTS_RESTRICTION_ENABLED:
                                 updateFgsStartsRestriction();
+                                break;
+                            case KEY_DEFAULT_FGS_STARTS_TEMP_ALLOWLIST_ENABLED:
+                                updateFgsStartsTempAllowList();
                                 break;
                             case KEY_OOMADJ_UPDATE_POLICY:
                                 updateOomAdjUpdatePolicy();
@@ -680,6 +717,11 @@ final class ActivityManagerConstants extends ContentObserver {
                     DEFAULT_MIN_CRASH_INTERVAL);
             PENDINGINTENT_WARNING_THRESHOLD = mParser.getInt(KEY_PENDINGINTENT_WARNING_THRESHOLD,
                     DEFAULT_PENDINGINTENT_WARNING_THRESHOLD);
+            PROCESS_CRASH_COUNT_RESET_INTERVAL = mParser.getInt(
+                    KEY_PROCESS_CRASH_COUNT_RESET_INTERVAL,
+                    DEFAULT_PROCESS_CRASH_COUNT_RESET_INTERVAL);
+            PROCESS_CRASH_COUNT_LIMIT = mParser.getInt(KEY_PROCESS_CRASH_COUNT_LIMIT,
+                    DEFAULT_PROCESS_CRASH_COUNT_LIMIT);
 
             if (POWER_CHECK_INTERVAL != currentPowerCheckInterval) {
                 mService.mHandler.removeMessages(
@@ -721,6 +763,13 @@ final class ActivityManagerConstants extends ContentObserver {
         mFlagFgsStartRestrictionEnabled = DeviceConfig.getBoolean(
                 DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
                 KEY_DEFAULT_FGS_STARTS_RESTRICTION_ENABLED,
+                /*defaultValue*/ false);
+    }
+
+    private void updateFgsStartsTempAllowList() {
+        mFlagFgsStartTempAllowListEnabled = DeviceConfig.getBoolean(
+                DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
+                KEY_DEFAULT_FGS_STARTS_TEMP_ALLOWLIST_ENABLED,
                 /*defaultValue*/ false);
     }
 
@@ -913,6 +962,10 @@ final class ActivityManagerConstants extends ContentObserver {
         pw.println(TOP_TO_FGS_GRACE_DURATION);
         pw.print("  "); pw.print(KEY_MIN_CRASH_INTERVAL); pw.print("=");
         pw.println(MIN_CRASH_INTERVAL);
+        pw.print("  "); pw.print(KEY_PROCESS_CRASH_COUNT_RESET_INTERVAL); pw.print("=");
+        pw.println(PROCESS_CRASH_COUNT_RESET_INTERVAL);
+        pw.print("  "); pw.print(KEY_PROCESS_CRASH_COUNT_LIMIT); pw.print("=");
+        pw.println(PROCESS_CRASH_COUNT_LIMIT);
         pw.print("  "); pw.print(KEY_IMPERCEPTIBLE_KILL_EXEMPT_PROC_STATES); pw.print("=");
         pw.println(Arrays.toString(IMPERCEPTIBLE_KILL_EXEMPT_PROC_STATES.toArray()));
         pw.print("  "); pw.print(KEY_IMPERCEPTIBLE_KILL_EXEMPT_PACKAGES); pw.print("=");

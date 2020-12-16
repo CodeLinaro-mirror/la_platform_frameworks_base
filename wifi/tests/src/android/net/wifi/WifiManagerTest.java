@@ -33,6 +33,8 @@ import static android.net.wifi.WifiManager.STATUS_SUGGESTION_CONNECTION_FAILURE_
 import static android.net.wifi.WifiManager.WIFI_AP_STATE_ENABLED;
 import static android.net.wifi.WifiManager.WIFI_AP_STATE_ENABLING;
 import static android.net.wifi.WifiManager.WIFI_AP_STATE_FAILED;
+import static android.net.wifi.WifiManager.WIFI_FEATURE_ADDITIONAL_STA;
+import static android.net.wifi.WifiManager.WIFI_FEATURE_AP_STA;
 import static android.net.wifi.WifiManager.WIFI_FEATURE_DPP;
 import static android.net.wifi.WifiManager.WIFI_FEATURE_OWE;
 import static android.net.wifi.WifiManager.WIFI_FEATURE_P2P;
@@ -49,6 +51,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.any;
@@ -93,6 +96,8 @@ import android.os.test.TestLooper;
 import android.util.SparseArray;
 
 import androidx.test.filters.SmallTest;
+
+import com.android.modules.utils.build.SdkLevel;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -1708,6 +1713,34 @@ public class WifiManagerTest {
     }
 
     /**
+     * Test behavior of isStaApConcurrencySupported
+     */
+    @Test
+    public void testIsStaApConcurrencyOpenSupported() throws Exception {
+        when(mWifiService.getSupportedFeatures())
+                .thenReturn(new Long(WIFI_FEATURE_AP_STA));
+        assertTrue(mWifiManager.isStaApConcurrencySupported());
+        when(mWifiService.getSupportedFeatures())
+                .thenReturn(new Long(~WIFI_FEATURE_AP_STA));
+        assertFalse(mWifiManager.isStaApConcurrencySupported());
+    }
+
+    /**
+     * Test behavior of isMultiStaConcurrencySupported
+     */
+    @Test
+    public void testIsMultiStaConcurrencyOpenSupported() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastS());
+
+        when(mWifiService.getSupportedFeatures())
+                .thenReturn(new Long(WIFI_FEATURE_ADDITIONAL_STA));
+        assertTrue(mWifiManager.isMultiStaConcurrencySupported());
+        when(mWifiService.getSupportedFeatures())
+                .thenReturn(new Long(~WIFI_FEATURE_ADDITIONAL_STA));
+        assertFalse(mWifiManager.isMultiStaConcurrencySupported());
+    }
+
+    /**
      * Test behavior of {@link WifiManager#addNetwork(WifiConfiguration)}
      */
     @Test
@@ -1858,7 +1891,6 @@ public class WifiManagerTest {
         assertFalse(mWifiManager.isDeviceToDeviceRttSupported());
         assertFalse(mWifiManager.isDeviceToApRttSupported());
         assertFalse(mWifiManager.isPreferredNetworkOffloadSupported());
-        assertFalse(mWifiManager.isAdditionalStaSupported());
         assertFalse(mWifiManager.isTdlsSupported());
         assertFalse(mWifiManager.isOffChannelTdlsSupported());
         assertFalse(mWifiManager.isEnhancedPowerReportingSupported());
@@ -2382,5 +2414,14 @@ public class WifiManagerTest {
         when(mWifiService.isScanAlwaysAvailable()).thenReturn(false);
         assertFalse(mWifiManager.isScanAlwaysAvailable());
         verify(mWifiService).isScanAlwaysAvailable();
+    }
+
+    @Test
+    public void testGetNetworkSuggestionUserApprovalStatus() throws Exception {
+        when(mWifiService.getNetworkSuggestionUserApprovalStatus(TEST_PACKAGE_NAME))
+                .thenReturn(WifiManager.STATUS_SUGGESTION_APPROVAL_APPROVED_BY_USER);
+        assertEquals(WifiManager.STATUS_SUGGESTION_APPROVAL_APPROVED_BY_USER,
+                mWifiManager.getNetworkSuggestionUserApprovalStatus());
+        verify(mWifiService).getNetworkSuggestionUserApprovalStatus(TEST_PACKAGE_NAME);
     }
 }

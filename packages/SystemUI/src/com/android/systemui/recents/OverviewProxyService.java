@@ -16,7 +16,6 @@
 
 package com.android.systemui.recents;
 
-import static android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE;
 import static android.content.pm.PackageManager.MATCH_SYSTEM_ONLY;
 import static android.view.MotionEvent.ACTION_CANCEL;
 import static android.view.MotionEvent.ACTION_DOWN;
@@ -36,12 +35,14 @@ import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_T
 
 import android.annotation.FloatRange;
 import android.app.ActivityTaskManager;
+import android.app.PictureInPictureParams;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.content.pm.ActivityInfo;
 import android.graphics.Bitmap;
 import android.graphics.Insets;
 import android.graphics.Rect;
@@ -65,6 +66,7 @@ import android.view.accessibility.AccessibilityManager;
 import androidx.annotation.NonNull;
 
 import com.android.internal.accessibility.dialog.AccessibilityButtonChooserActivity;
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.policy.ScreenDecorationsUtils;
 import com.android.internal.util.ScreenshotHelper;
 import com.android.systemui.Dumpable;
@@ -75,8 +77,6 @@ import com.android.systemui.navigationbar.NavigationBar;
 import com.android.systemui.navigationbar.NavigationBarController;
 import com.android.systemui.navigationbar.NavigationBarView;
 import com.android.systemui.navigationbar.NavigationModeController;
-import com.android.systemui.pip.Pip;
-import com.android.systemui.pip.PipAnimationController;
 import com.android.systemui.recents.OverviewProxyService.OverviewProxyListener;
 import com.android.systemui.settings.CurrentUserTracker;
 import com.android.systemui.shared.recents.IOverviewProxy;
@@ -93,6 +93,8 @@ import com.android.systemui.statusbar.phone.StatusBarWindowCallback;
 import com.android.systemui.statusbar.policy.CallbackController;
 import com.android.wm.shell.onehanded.OneHanded;
 import com.android.wm.shell.onehanded.OneHandedEvents;
+import com.android.wm.shell.pip.Pip;
+import com.android.wm.shell.pip.PipAnimationController;
 import com.android.wm.shell.splitscreen.SplitScreen;
 
 import java.io.FileDescriptor;
@@ -101,10 +103,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 import javax.inject.Inject;
 
 import dagger.Lazy;
+
 
 /**
  * Class to send information from overview to launcher with a binder.
@@ -141,11 +145,11 @@ public class OverviewProxyService extends CurrentUserTracker implements
 
     private Region mActiveNavBarRegion;
 
+    private IPinnedStackAnimationListener mIPinnedStackAnimationListener;
     private IOverviewProxy mOverviewProxy;
     private int mConnectionBackoffAttempts;
     private boolean mBound;
     private boolean mIsEnabled;
-    private boolean mHasPipFeature;
     private int mCurrentBoundedUserId = -1;
     private float mNavBarButtonAlpha;
     private boolean mInputFocusTransferStarted;
@@ -155,14 +159,14 @@ public class OverviewProxyService extends CurrentUserTracker implements
     private boolean mSupportsRoundedCornersOnWindows;
     private int mNavBarMode = NAV_BAR_MODE_3BUTTON;
 
-    private ISystemUiProxy mSysUiProxy = new ISystemUiProxy.Stub() {
-
+    @VisibleForTesting
+    public ISystemUiProxy mSysUiProxy = new ISystemUiProxy.Stub() {
         @Override
         public void startScreenPinning(int taskId) {
             if (!verifyCaller("startScreenPinning")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mHandler.post(() -> {
                     mStatusBarOptionalLazy.ifPresent(
@@ -179,7 +183,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("stopScreenPinning")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mHandler.post(() -> {
                     try {
@@ -199,12 +203,13 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("onStatusBarMotionEvent")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 // TODO move this logic to message queue
                 mStatusBarOptionalLazy.ifPresent(statusBarLazy -> {
+                    StatusBar statusBar = statusBarLazy.get();
+                    statusBar.getPanelController().startExpandLatencyTracking();
                     mHandler.post(()-> {
-                        StatusBar statusBar = statusBarLazy.get();
                         int action = event.getActionMasked();
                         if (action == ACTION_DOWN) {
                             mInputFocusTransferStarted = true;
@@ -230,26 +235,11 @@ public class OverviewProxyService extends CurrentUserTracker implements
         }
 
         @Override
-        public void onSplitScreenInvoked() {
-            if (!verifyCaller("onSplitScreenInvoked")) {
-                return;
-            }
-            long token = Binder.clearCallingIdentity();
-            try {
-                mSplitScreenOptional.ifPresent(splitScreen -> {
-                    splitScreen.onDockedFirstAnimationFrame();
-                });
-            } finally {
-                Binder.restoreCallingIdentity(token);
-            }
-        }
-
-        @Override
         public void onOverviewShown(boolean fromHome) {
             if (!verifyCaller("onOverviewShown")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mHandler.post(() -> {
                     for (int i = mConnectionCallbacks.size() - 1; i >= 0; --i) {
@@ -266,7 +256,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("getNonMinimizedSplitScreenSecondaryBounds")) {
                 return null;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 return mSplitScreenOptional.map(splitScreen ->
                         splitScreen.getDividerView().getNonMinimizedSplitScreenSecondaryBounds())
@@ -281,7 +271,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("setNavBarButtonAlpha")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mNavBarButtonAlpha = alpha;
                 mHandler.post(() -> notifyNavBarButtonAlphaChanged(alpha, animate));
@@ -300,7 +290,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("onAssistantProgress")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mHandler.post(() -> notifyAssistantProgress(progress));
             } finally {
@@ -313,7 +303,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("onAssistantGestureCompletion")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mHandler.post(() -> notifyAssistantGestureCompletion(velocity));
             } finally {
@@ -326,7 +316,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("startAssistant")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mHandler.post(() -> notifyStartAssistant(bundle));
             } finally {
@@ -339,7 +329,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("monitorGestureInput")) {
                 return null;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 final InputMonitor monitor =
                         InputManager.getInstance().monitorGestureInput(name, displayId);
@@ -357,7 +347,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("notifyAccessibilityButtonClicked")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 AccessibilityManager.getInstance(mContext)
                         .notifyAccessibilityButtonClicked(displayId);
@@ -371,7 +361,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("notifyAccessibilityButtonLongClicked")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 final Intent intent =
                         new Intent(AccessibilityManager.ACTION_CHOOSE_ACCESSIBILITY_BUTTON);
@@ -386,12 +376,10 @@ public class OverviewProxyService extends CurrentUserTracker implements
 
         @Override
         public void setShelfHeight(boolean visible, int shelfHeight) {
-            if (!verifyCaller("setShelfHeight") || !mHasPipFeature) {
-                Log.w(TAG_OPS,
-                        "ByPass setShelfHeight, FEATURE_PICTURE_IN_PICTURE:" + mHasPipFeature);
+            if (!verifyCaller("setShelfHeight")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mPipOptional.ifPresent(
                         pip -> pip.setShelfHeight(visible, shelfHeight));
@@ -414,12 +402,10 @@ public class OverviewProxyService extends CurrentUserTracker implements
 
         @Override
         public void notifySwipeToHomeFinished() {
-            if (!verifyCaller("notifySwipeToHomeFinished") || !mHasPipFeature) {
-                Log.w(TAG_OPS, "ByPass notifySwipeToHomeFinished, FEATURE_PICTURE_IN_PICTURE:"
-                        + mHasPipFeature);
+            if (!verifyCaller("notifySwipeToHomeFinished")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mPipOptional.ifPresent(
                         pip -> pip.setPinnedStackAnimationType(
@@ -431,15 +417,14 @@ public class OverviewProxyService extends CurrentUserTracker implements
 
         @Override
         public void setPinnedStackAnimationListener(IPinnedStackAnimationListener listener) {
-            if (!verifyCaller("setPinnedStackAnimationListener") || !mHasPipFeature) {
-                Log.w(TAG_OPS, "ByPass setPinnedStackAnimationListener, FEATURE_PICTURE_IN_PICTURE:"
-                        + mHasPipFeature);
+            if (!verifyCaller("setPinnedStackAnimationListener")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            mIPinnedStackAnimationListener = listener;
+            final long token = Binder.clearCallingIdentity();
             try {
                 mPipOptional.ifPresent(
-                        pip -> pip.setPinnedStackAnimationListener(listener));
+                        pip -> pip.setPinnedStackAnimationListener(mPinnedStackAnimationCallback));
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
@@ -450,7 +435,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("onQuickSwitchToNewTask")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mHandler.post(() -> notifyQuickSwitchToNewTask(rotation));
             } finally {
@@ -463,7 +448,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("startOneHandedMode")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mOneHandedOptional.ifPresent(oneHanded -> oneHanded.startOneHanded());
             } finally {
@@ -476,7 +461,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("stopOneHandedMode")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mOneHandedOptional.ifPresent(oneHanded -> oneHanded.stopOneHanded(
                                 OneHandedEvents.EVENT_ONE_HANDED_TRIGGER_GESTURE_OUT));
@@ -505,11 +490,43 @@ public class OverviewProxyService extends CurrentUserTracker implements
             if (!verifyCaller("expandNotificationPanel")) {
                 return;
             }
-            long token = Binder.clearCallingIdentity();
+            final long token = Binder.clearCallingIdentity();
             try {
                 mCommandQueue.handleSystemKey(KeyEvent.KEYCODE_SYSTEM_NAVIGATION_DOWN);
             } finally {
                 Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public Rect startSwipePipToHome(ComponentName componentName, ActivityInfo activityInfo,
+                PictureInPictureParams pictureInPictureParams,
+                int launcherRotation, int shelfHeight) {
+            if (!verifyCaller("startSwipePipToHome")) {
+                return null;
+            }
+            final long binderToken = Binder.clearCallingIdentity();
+            try {
+                return mPipOptional.map(pip ->
+                        pip.startSwipePipToHome(componentName, activityInfo,
+                                pictureInPictureParams, launcherRotation, shelfHeight))
+                        .orElse(null);
+            } finally {
+                Binder.restoreCallingIdentity(binderToken);
+            }
+        }
+
+        @Override
+        public void stopSwipePipToHome(ComponentName componentName, Rect destinationBounds) {
+            if (!verifyCaller("stopSwipePipToHome")) {
+                return;
+            }
+            final long binderToken = Binder.clearCallingIdentity();
+            try {
+                mPipOptional.ifPresent(pip -> pip.stopSwipePipToHome(
+                        componentName, destinationBounds));
+            } finally {
+                Binder.restoreCallingIdentity(binderToken);
             }
         }
 
@@ -605,6 +622,8 @@ public class OverviewProxyService extends CurrentUserTracker implements
     private final StatusBarWindowCallback mStatusBarWindowCallback = this::onStatusBarStateChanged;
     private final BiConsumer<Rect, Rect> mSplitScreenBoundsChangeListener =
             this::notifySplitScreenBoundsChanged;
+    private final Consumer<Boolean> mPinnedStackAnimationCallback =
+            this::notifyPinnedStackAnimationStarted;
 
     // This is the death handler for the binder from the launcher service
     private final IBinder.DeathRecipient mOverviewServiceDeathRcpt
@@ -624,7 +643,6 @@ public class OverviewProxyService extends CurrentUserTracker implements
         super(broadcastDispatcher);
         mContext = context;
         mPipOptional = pipOptional;
-        mHasPipFeature = mContext.getPackageManager().hasSystemFeature(FEATURE_PICTURE_IN_PICTURE);
         mStatusBarOptionalLazy = statusBarOptionalLazy;
         mHandler = new Handler();
         mNavBarControllerLazy = navBarControllerLazy;
@@ -734,6 +752,17 @@ public class OverviewProxyService extends CurrentUserTracker implements
         }
     }
 
+    private void notifyPinnedStackAnimationStarted(Boolean isAnimationStarted) {
+        if (mIPinnedStackAnimationListener == null) {
+            return;
+        }
+        try {
+            mIPinnedStackAnimationListener.onPinnedStackAnimationStarted();
+        } catch (RemoteException e) {
+            Log.e(TAG_OPS, "Failed to call onPinnedStackAnimationStarted()", e);
+        }
+    }
+
     private void onStatusBarStateChanged(boolean keyguardShowing, boolean keyguardOccluded,
             boolean bouncerShowing) {
         mSysUiState.setFlag(SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING,
@@ -764,7 +793,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
 
     public void cleanupAfterDeath() {
         if (mInputFocusTransferStarted) {
-            mHandler.post(()-> {
+            mHandler.post(() -> {
                 mStatusBarOptionalLazy.ifPresent(statusBarLazy -> {
                     mInputFocusTransferStarted = false;
                     statusBarLazy.get().onInputFocusTransfer(false, true /* cancel */,

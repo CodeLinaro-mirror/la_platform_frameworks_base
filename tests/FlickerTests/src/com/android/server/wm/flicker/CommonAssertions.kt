@@ -16,18 +16,24 @@
 
 package com.android.server.wm.flicker
 
+import android.platform.helpers.IAppHelper
 import com.android.server.wm.flicker.dsl.EventLogAssertion
 import com.android.server.wm.flicker.dsl.LayersAssertion
 import com.android.server.wm.flicker.dsl.WmAssertion
 import com.android.server.wm.flicker.helpers.WindowUtils
+
+const val NAVIGATION_BAR_WINDOW_TITLE = "NavigationBar"
+const val STATUS_BAR_WINDOW_TITLE = "StatusBar"
+const val DOCKED_STACK_DIVIDER = "DockedStackDivider"
+const val WALLPAPER_TITLE = "Wallpaper"
 
 @JvmOverloads
 fun WmAssertion.statusBarWindowIsAlwaysVisible(
     bugId: Int = 0,
     enabled: Boolean = bugId == 0
 ) {
-    all("statusBarWindowIsAlwaysVisible", enabled, bugId) {
-        this.showsAboveAppWindow(FlickerTestBase.STATUS_BAR_WINDOW_TITLE)
+    all("statusBarWindowIsAlwaysVisible", bugId, enabled) {
+        this.showsAboveAppWindow(STATUS_BAR_WINDOW_TITLE)
     }
 }
 
@@ -36,8 +42,50 @@ fun WmAssertion.navBarWindowIsAlwaysVisible(
     bugId: Int = 0,
     enabled: Boolean = bugId == 0
 ) {
-    all("navBarWindowIsAlwaysVisible", enabled, bugId) {
-        this.showsAboveAppWindow(FlickerTestBase.NAVIGATION_BAR_WINDOW_TITLE)
+    all("navBarWindowIsAlwaysVisible", bugId, enabled) {
+        this.showsAboveAppWindow(NAVIGATION_BAR_WINDOW_TITLE)
+    }
+}
+
+fun WmAssertion.visibleWindowsShownMoreThanOneConsecutiveEntry(
+    bugId: Int = 0,
+    enabled: Boolean = bugId == 0
+) {
+    all("visibleWindowShownMoreThanOneConsecutiveEntry", bugId, enabled) {
+        this.visibleWindowsShownMoreThanOneConsecutiveEntry()
+    }
+}
+
+fun WmAssertion.launcherReplacesAppWindowAsTopWindow(
+    testApp: IAppHelper,
+    bugId: Int = 0,
+    enabled: Boolean = bugId == 0
+) {
+    all("launcherReplacesAppWindowAsTopWindow", bugId, enabled) {
+        this.showsAppWindowOnTop(testApp.getPackage())
+                .then()
+                .showsAppWindowOnTop("Launcher")
+    }
+}
+
+fun WmAssertion.wallpaperWindowBecomesVisible(
+    bugId: Int = 0,
+    enabled: Boolean = bugId == 0
+) {
+    all("wallpaperWindowBecomesVisible", bugId, enabled) {
+        this.hidesBelowAppWindow(WALLPAPER_TITLE)
+                .then()
+                .showsBelowAppWindow(WALLPAPER_TITLE)
+    }
+}
+
+fun WmAssertion.windowAlwaysVisible(
+    packageName: String,
+    bugId: Int = 0,
+    enabled: Boolean = bugId == 0
+) {
+    all("windowAlwaysVisible", bugId, enabled) {
+        this.showsAppWindowOnTop(packageName)
     }
 }
 
@@ -52,7 +100,7 @@ fun LayersAssertion.noUncoveredRegions(
     val startingBounds = WindowUtils.getDisplayBounds(beginRotation)
     val endingBounds = WindowUtils.getDisplayBounds(endRotation)
     if (allStates) {
-        all("noUncoveredRegions", enabled, bugId) {
+        all("noUncoveredRegions", bugId, enabled) {
             if (startingBounds == endingBounds) {
                 this.coversAtLeastRegion(startingBounds)
             } else {
@@ -73,21 +121,43 @@ fun LayersAssertion.noUncoveredRegions(
 
 @JvmOverloads
 fun LayersAssertion.navBarLayerIsAlwaysVisible(
+    rotatesScreen: Boolean = false,
     bugId: Int = 0,
     enabled: Boolean = bugId == 0
 ) {
-    all("navBarLayerIsAlwaysVisible", enabled, bugId) {
-        this.showsLayer(FlickerTestBase.NAVIGATION_BAR_WINDOW_TITLE)
+    if (rotatesScreen) {
+        all("navBarLayerIsAlwaysVisible", bugId, enabled) {
+            this.showsLayer(NAVIGATION_BAR_WINDOW_TITLE)
+                    .then()
+                    .hidesLayer(NAVIGATION_BAR_WINDOW_TITLE)
+                    .then()
+                    .showsLayer(NAVIGATION_BAR_WINDOW_TITLE)
+        }
+    } else {
+        all("navBarLayerIsAlwaysVisible", bugId, enabled) {
+            this.showsLayer(NAVIGATION_BAR_WINDOW_TITLE)
+        }
     }
 }
 
 @JvmOverloads
 fun LayersAssertion.statusBarLayerIsAlwaysVisible(
+    rotatesScreen: Boolean = false,
     bugId: Int = 0,
     enabled: Boolean = bugId == 0
 ) {
-    all("statusBarLayerIsAlwaysVisible", enabled, bugId) {
-        this.showsLayer(FlickerTestBase.STATUS_BAR_WINDOW_TITLE)
+    if (rotatesScreen) {
+        all("statusBarLayerIsAlwaysVisible", bugId, enabled) {
+            this.showsLayer(STATUS_BAR_WINDOW_TITLE)
+                    .then()
+                    hidesLayer(STATUS_BAR_WINDOW_TITLE)
+                    .then()
+                    .showsLayer(STATUS_BAR_WINDOW_TITLE)
+        }
+    } else {
+        all("statusBarLayerIsAlwaysVisible", bugId, enabled) {
+            this.showsLayer(STATUS_BAR_WINDOW_TITLE)
+        }
     }
 }
 
@@ -101,16 +171,16 @@ fun LayersAssertion.navBarLayerRotatesAndScales(
     val startingPos = WindowUtils.getNavigationBarPosition(beginRotation)
     val endingPos = WindowUtils.getNavigationBarPosition(endRotation)
 
-    start("navBarLayerRotatesAndScales_StartingPos", enabled, bugId) {
-        this.hasVisibleRegion(FlickerTestBase.NAVIGATION_BAR_WINDOW_TITLE, startingPos)
+    start("navBarLayerRotatesAndScales_StartingPos", bugId, enabled) {
+        this.hasVisibleRegion(NAVIGATION_BAR_WINDOW_TITLE, startingPos)
     }
-    end("navBarLayerRotatesAndScales_EndingPost", enabled, bugId) {
-        this.hasVisibleRegion(FlickerTestBase.NAVIGATION_BAR_WINDOW_TITLE, endingPos)
+    end("navBarLayerRotatesAndScales_EndingPost", bugId, enabled) {
+        this.hasVisibleRegion(NAVIGATION_BAR_WINDOW_TITLE, endingPos)
     }
 
     if (startingPos == endingPos) {
         all("navBarLayerRotatesAndScales", enabled = false, bugId = 167747321) {
-            this.hasVisibleRegion(FlickerTestBase.NAVIGATION_BAR_WINDOW_TITLE, startingPos)
+            this.hasVisibleRegion(NAVIGATION_BAR_WINDOW_TITLE, startingPos)
         }
     }
 }
@@ -125,11 +195,42 @@ fun LayersAssertion.statusBarLayerRotatesScales(
     val startingPos = WindowUtils.getStatusBarPosition(beginRotation)
     val endingPos = WindowUtils.getStatusBarPosition(endRotation)
 
-    start("statusBarLayerRotatesScales_StartingPos", enabled, bugId) {
-        this.hasVisibleRegion(FlickerTestBase.STATUS_BAR_WINDOW_TITLE, startingPos)
+    start("statusBarLayerRotatesScales_StartingPos", bugId, enabled) {
+        this.hasVisibleRegion(STATUS_BAR_WINDOW_TITLE, startingPos)
     }
-    end("statusBarLayerRotatesScales_EndingPos", enabled, bugId) {
-        this.hasVisibleRegion(FlickerTestBase.STATUS_BAR_WINDOW_TITLE, endingPos)
+    end("statusBarLayerRotatesScales_EndingPos", bugId, enabled) {
+        this.hasVisibleRegion(STATUS_BAR_WINDOW_TITLE, endingPos)
+    }
+}
+
+fun LayersAssertion.visibleLayersShownMoreThanOneConsecutiveEntry(
+    bugId: Int = 0,
+    enabled: Boolean = bugId == 0
+) {
+    all("visibleLayersShownMoreThanOneConsecutiveEntry", bugId, enabled) {
+        this.visibleLayersShownMoreThanOneConsecutiveEntry()
+    }
+}
+
+fun LayersAssertion.wallpaperLayerReplacesAppLayer(
+    testApp: IAppHelper,
+    bugId: Int = 0,
+    enabled: Boolean = bugId == 0
+) {
+    all("appLayerReplacesWallpaperLayer", bugId, enabled) {
+        this.showsLayer(testApp.getPackage())
+                .then()
+                .replaceVisibleLayer(testApp.getPackage(), WALLPAPER_TITLE)
+    }
+}
+
+fun LayersAssertion.layerAlwaysVisible(
+    packageName: String,
+    bugId: Int = 0,
+    enabled: Boolean = bugId == 0
+) {
+    all("layerAlwaysVisible", bugId, enabled) {
+        this.showsLayer(packageName)
     }
 }
 

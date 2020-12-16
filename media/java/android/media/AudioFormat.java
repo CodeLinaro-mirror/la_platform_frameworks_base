@@ -21,6 +21,7 @@ import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.annotation.TestApi;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.os.Build;
 import android.os.Parcel;
 import android.os.Parcelable;
 
@@ -108,6 +109,24 @@ import java.util.Objects;
  * <code>AudioRecord</code> as of API {@link android.os.Build.VERSION_CODES#M} and
  * <code>AudioTrack</code> as of API {@link android.os.Build.VERSION_CODES#LOLLIPOP}
  * support <code>ENCODING_PCM_FLOAT</code>.
+ * </li>
+ * <li> {@link #ENCODING_PCM_24BIT_PACKED}: Introduced in
+ * API {@link android.os.Build.VERSION_CODES#S},
+ * this encoding specifies the audio sample is an
+ * extended precision 24 bit signed integer
+ * stored as a 3 Java bytes in a {@code ByteBuffer} or byte array in native endian
+ * (see {@link java.nio.ByteOrder#nativeOrder()}).
+ * Each sample has full range from [-8388608, 8388607],
+ * and can be interpreted as fixed point Q.23 data.
+ * </li>
+ * <li> {@link #ENCODING_PCM_32BIT}: Introduced in
+ * API {@link android.os.Build.VERSION_CODES#S},
+ * this encoding specifies the audio sample is an
+ * extended precision 32 bit signed integer
+ * stored as a 4 Java bytes in a {@code ByteBuffer} or byte array in native endian
+ * (see {@link java.nio.ByteOrder#nativeOrder()}).
+ * Each sample has full range from [-2147483648, 2147483647],
+ * and can be interpreted as fixed point Q.31 data.
  * </li>
  * </ul>
  * <p>For compressed audio, the encoding specifies the method of compression,
@@ -284,6 +303,19 @@ public final class AudioFormat implements Parcelable {
     /** Audio data format: OPUS compressed. */
     public static final int ENCODING_OPUS = 20;
 
+    /** @hide
+     * We do not permit legacy short array reads or writes for encodings
+     * introduced after this threshold.
+     */
+    public static final int ENCODING_LEGACY_SHORT_ARRAY_THRESHOLD = ENCODING_OPUS;
+
+    /** Audio data format: PCM 24 bit per sample packed as 3 bytes.
+     * Not guaranteed to be supported by devices, may be emulated if not supported. */
+    public static final int ENCODING_PCM_24BIT_PACKED = 21;
+    /** Audio data format: PCM 32 bit per sample.
+     * Not guaranteed to be supported by devices, may be emulated if not supported. */
+    public static final int ENCODING_PCM_32BIT = 22;
+
     /** @hide */
     public static String toLogFriendlyEncoding(int enc) {
         switch(enc) {
@@ -327,6 +359,10 @@ public final class AudioFormat implements Parcelable {
                 return "ENCODING_DOLBY_MAT";
             case ENCODING_OPUS:
                 return "ENCODING_OPUS";
+            case ENCODING_PCM_24BIT_PACKED:
+                return "ENCODING_PCM_24BIT_PACKED";
+            case ENCODING_PCM_32BIT:
+                return "ENCODING_PCM_32BIT";
             default :
                 return "invalid encoding " + enc;
         }
@@ -516,17 +552,20 @@ public final class AudioFormat implements Parcelable {
     public static int getBytesPerSample(int audioFormat)
     {
         switch (audioFormat) {
-        case ENCODING_PCM_8BIT:
-            return 1;
-        case ENCODING_PCM_16BIT:
-        case ENCODING_IEC61937:
-        case ENCODING_DEFAULT:
-            return 2;
-        case ENCODING_PCM_FLOAT:
-            return 4;
-        case ENCODING_INVALID:
-        default:
-            throw new IllegalArgumentException("Bad audio format " + audioFormat);
+            case ENCODING_PCM_8BIT:
+                return 1;
+            case ENCODING_PCM_16BIT:
+            case ENCODING_IEC61937:
+            case ENCODING_DEFAULT:
+                return 2;
+            case ENCODING_PCM_24BIT_PACKED:
+                return 3;
+            case ENCODING_PCM_FLOAT:
+            case ENCODING_PCM_32BIT:
+                return 4;
+            case ENCODING_INVALID:
+            default:
+                throw new IllegalArgumentException("Bad audio format " + audioFormat);
         }
     }
 
@@ -553,6 +592,8 @@ public final class AudioFormat implements Parcelable {
             case ENCODING_E_AC3_JOC:
             case ENCODING_DOLBY_MAT:
             case ENCODING_OPUS:
+            case ENCODING_PCM_24BIT_PACKED:
+            case ENCODING_PCM_32BIT:
                 return true;
             default:
                 return false;
@@ -582,6 +623,8 @@ public final class AudioFormat implements Parcelable {
             case ENCODING_E_AC3_JOC:
             case ENCODING_DOLBY_MAT:
             case ENCODING_OPUS:
+            case ENCODING_PCM_24BIT_PACKED:
+            case ENCODING_PCM_32BIT:
                 return true;
             default:
                 return false;
@@ -596,6 +639,8 @@ public final class AudioFormat implements Parcelable {
             case ENCODING_PCM_16BIT:
             case ENCODING_PCM_8BIT:
             case ENCODING_PCM_FLOAT:
+            case ENCODING_PCM_24BIT_PACKED:
+            case ENCODING_PCM_32BIT:
             case ENCODING_DEFAULT:
                 return true;
             case ENCODING_AC3:
@@ -629,6 +674,8 @@ public final class AudioFormat implements Parcelable {
             case ENCODING_PCM_8BIT:
             case ENCODING_PCM_FLOAT:
             case ENCODING_IEC61937: // same size as stereo PCM
+            case ENCODING_PCM_24BIT_PACKED:
+            case ENCODING_PCM_32BIT:
             case ENCODING_DEFAULT:
                 return true;
             case ENCODING_AC3:
@@ -685,7 +732,7 @@ public final class AudioFormat implements Parcelable {
      */
     // Update sound trigger JNI in core/jni/android_hardware_SoundTrigger.cpp when modifying this
     // constructor
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private AudioFormat(int encoding, int sampleRate, int channelMask, int channelIndexMask) {
         this(
              AUDIO_FORMAT_HAS_PROPERTY_ENCODING
@@ -744,11 +791,11 @@ public final class AudioFormat implements Parcelable {
     // This is an immutable class, all member variables are final.
 
     // Essential values.
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private final int mEncoding;
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private final int mSampleRate;
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private final int mChannelMask;
     private final int mChannelIndexMask;
     private final int mPropertySetMask;
@@ -926,6 +973,8 @@ public final class AudioFormat implements Parcelable {
                 case ENCODING_E_AC3_JOC:
                 case ENCODING_DOLBY_MAT:
                 case ENCODING_OPUS:
+                case ENCODING_PCM_24BIT_PACKED:
+                case ENCODING_PCM_32BIT:
                     mEncoding = encoding;
                     break;
                 case ENCODING_INVALID:
@@ -942,7 +991,7 @@ public final class AudioFormat implements Parcelable {
          * with named endpoint channels. The samples in the frame correspond to the
          * named set bits in the channel position mask, in ascending bit order.
          * See {@link #setChannelIndexMask(int)} to specify channels
-         * based on endpoint numbered channels. This <a href="#channelPositionMask>description of
+         * based on endpoint numbered channels. This <a href="#channelPositionMask">description of
          * channel position masks</a> covers the concept in more details.
          * @param channelMask describes the configuration of the audio channels.
          *    <p> For output, the channelMask can be an OR-ed combination of
@@ -1146,7 +1195,9 @@ public final class AudioFormat implements Parcelable {
         ENCODING_AC4,
         ENCODING_E_AC3_JOC,
         ENCODING_DOLBY_MAT,
-        ENCODING_OPUS }
+        ENCODING_OPUS,
+        ENCODING_PCM_24BIT_PACKED,
+        ENCODING_PCM_32BIT }
     )
     @Retention(RetentionPolicy.SOURCE)
     public @interface Encoding {}

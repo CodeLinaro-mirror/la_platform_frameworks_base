@@ -138,6 +138,9 @@
     <!-- accessibility test permissions -->
     <uses-permission android:name="android.permission.RETRIEVE_WINDOW_CONTENT" />
 
+    <!-- vibrator test permissions -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- vr test permissions -->
     <uses-permission android:name="android.permission.RESTRICTED_VR_ACCESS" />
 
@@ -161,6 +164,14 @@
                 <category android:name="android.intent.category.FRAMEWORK_INSTRUMENTATION_TEST" />
             </intent-filter>
         </activity>
+        <activity android:name="android.view.ViewInputConnectionTestActivity"
+                  android:label="View Input Connection Test"
+                  android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.FRAMEWORK_INSTRUMENTATION_TEST" />
+            </intent-filter>
+        </activity>
         <activity android:name="StubTestBrowserActivity"
             android:label="Stubbed Test Browser"
             android:exported="true">
@@ -176,6 +187,17 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.UNIT_TEST"/>
+            </intent-filter>
+        </activity>
+
+        <activity android:name="android.widget.CustomInputConnectionEditTextActivity"
+                  android:label="CustomInputConnectionEditTextActivity"
+                  android:screenOrientation="portrait"
+                  android:exported="true"
+                  android:theme="@android:style/Theme.Material.Light">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.FRAMEWORK_INSTRUMENTATION_TEST" />
             </intent-filter>
         </activity>
 
@@ -221,15 +243,6 @@
 
         <activity android:name="android.widget.focus.RequestFocus"
             android:label="RequestFocus"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.FRAMEWORK_INSTRUMENTATION_TEST" />
-            </intent-filter>
-        </activity>
-
-        <activity android:name="android.widget.focus.ListOfButtons"
-            android:label="ListOfButtons"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -1608,6 +1621,7 @@
         </activity>
 
         <activity android:name="android.app.activity.ActivityThreadTest$TestActivity"
+            android:configChanges="screenLayout|screenSize|orientation|smallestScreenSize"
             android:supportsPictureInPicture="true"
             android:exported="true">
         </activity>

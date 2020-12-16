@@ -25,8 +25,8 @@ import android.testing.TestableLooper;
 
 import androidx.test.filters.SmallTest;
 
+import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.systemui.SysuiTestCase;
-import com.android.systemui.bubbles.BubbleController;
 import com.android.systemui.demomode.DemoModeController;
 import com.android.systemui.plugins.DarkIconDispatcher;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
@@ -34,12 +34,15 @@ import com.android.systemui.statusbar.NotificationListener;
 import com.android.systemui.statusbar.NotificationMediaManager;
 import com.android.systemui.statusbar.notification.NotificationWakeUpCoordinator;
 import com.android.systemui.statusbar.notification.collection.notifcollection.CommonNotifCollection;
+import com.android.wm.shell.bubbles.Bubbles;
 
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+
+import java.util.Optional;
 
 @SmallTest
 @RunWith(AndroidTestingRunner.class)
@@ -66,7 +69,7 @@ public class NotificationIconAreaControllerTest extends SysuiTestCase {
     StatusBarWindowController mStatusBarWindowController;
     private NotificationIconAreaController mController;
     @Mock
-    private BubbleController mBubbleController;
+    private Bubbles mBubbles;
     @Mock private DemoModeController mDemoModeController;
     @Mock
     private NotificationIconContainer mAodIcons;
@@ -74,7 +77,6 @@ public class NotificationIconAreaControllerTest extends SysuiTestCase {
     @Before
     public void setup() {
         MockitoAnnotations.initMocks(this);
-
         mController = new NotificationIconAreaController(
                 mContext,
                 mStatusBarStateController,
@@ -83,11 +85,10 @@ public class NotificationIconAreaControllerTest extends SysuiTestCase {
                 mNotificationMediaManager,
                 mListener,
                 mDozeParameters,
-                mBubbleController,
+                Optional.of(mBubbles),
                 mDemoModeController,
                 mDarkIconDispatcher,
                 mStatusBarWindowController);
-        mController.setupAodIcons(mAodIcons);
     }
 
     @Test
@@ -106,6 +107,9 @@ public class NotificationIconAreaControllerTest extends SysuiTestCase {
 
     @Test
     public void testAppearResetsTranslation() {
+        mController.setupAodIcons(
+                mAodIcons,
+                KeyguardUpdateMonitor.LOCK_SCREEN_MODE_NORMAL);
         when(mDozeParameters.shouldControlScreenOff()).thenReturn(false);
         mController.appearAodIcons();
         verify(mAodIcons).setTranslationY(0);

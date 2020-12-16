@@ -90,11 +90,107 @@ MetricsManager::MetricsManager(const ConfigKey& key, const StatsdConfig& config,
     mVersionStringsInReport = config.version_strings_in_metric_report();
     mInstallerInReport = config.installer_in_metric_report();
 
+    createAllLogSourcesFromConfig(config);
+    mPullerManager->RegisterPullUidProvider(mConfigKey, this);
+
+    // Store the sub-configs used.
+    for (const auto& annotation : config.annotation()) {
+        mAnnotations.emplace_back(annotation.field_int64(), annotation.field_int32());
+    }
+    verifyGuardrailsAndUpdateStatsdStats();
+    initializeConfigActiveStatus();
+}
+
+MetricsManager::~MetricsManager() {
+    for (auto it : mAllMetricProducers) {
+        for (int atomId : it->getSlicedStateAtoms()) {
+            StateManager::getInstance().unregisterListener(atomId, it);
+        }
+    }
+    mPullerManager->UnregisterPullUidProvider(mConfigKey, this);
+
+    VLOG("~MetricsManager()");
+}
+
+bool MetricsManager::updateConfig(const StatsdConfig& config, const int64_t timeBaseNs,
+                                  const int64_t currentTimeNs,
+                                  const sp<AlarmMonitor>& anomalyAlarmMonitor,
+                                  const sp<AlarmMonitor>& periodicAlarmMonitor) {
+    vector<sp<AtomMatchingTracker>> newAtomMatchingTrackers;
+    unordered_map<int64_t, int> newAtomMatchingTrackerMap;
+    vector<sp<ConditionTracker>> newConditionTrackers;
+    unordered_map<int64_t, int> newConditionTrackerMap;
+    map<int64_t, uint64_t> newStateProtoHashes;
+    vector<sp<MetricProducer>> newMetricProducers;
+    unordered_map<int64_t, int> newMetricProducerMap;
+    vector<sp<AnomalyTracker>> newAnomalyTrackers;
+    unordered_map<int64_t, int> newAlertTrackerMap;
+    vector<sp<AlarmTracker>> newPeriodicAlarmTrackers;
+    mTagIds.clear();
+    mConditionToMetricMap.clear();
+    mTrackerToMetricMap.clear();
+    mTrackerToConditionMap.clear();
+    mActivationAtomTrackerToMetricMap.clear();
+    mDeactivationAtomTrackerToMetricMap.clear();
+    mMetricIndexesWithActivation.clear();
+    mNoReportMetricIds.clear();
+    mConfigValid = updateStatsdConfig(
+            mConfigKey, config, mUidMap, mPullerManager, anomalyAlarmMonitor, periodicAlarmMonitor,
+            timeBaseNs, currentTimeNs, mAllAtomMatchingTrackers, mAtomMatchingTrackerMap,
+            mAllConditionTrackers, mConditionTrackerMap, mAllMetricProducers, mMetricProducerMap,
+            mAllAnomalyTrackers, mAlertTrackerMap, mStateProtoHashes, mTagIds,
+            newAtomMatchingTrackers, newAtomMatchingTrackerMap, newConditionTrackers,
+            newConditionTrackerMap, newMetricProducers, newMetricProducerMap, newAnomalyTrackers,
+            newAlertTrackerMap, newPeriodicAlarmTrackers, mConditionToMetricMap,
+            mTrackerToMetricMap, mTrackerToConditionMap, mActivationAtomTrackerToMetricMap,
+            mDeactivationAtomTrackerToMetricMap, mMetricIndexesWithActivation, newStateProtoHashes,
+            mNoReportMetricIds);
+    mAllAtomMatchingTrackers = newAtomMatchingTrackers;
+    mAtomMatchingTrackerMap = newAtomMatchingTrackerMap;
+    mAllConditionTrackers = newConditionTrackers;
+    mConditionTrackerMap = newConditionTrackerMap;
+    mAllMetricProducers = newMetricProducers;
+    mMetricProducerMap = newMetricProducerMap;
+    mStateProtoHashes = newStateProtoHashes;
+    mAllAnomalyTrackers = newAnomalyTrackers;
+    mAlertTrackerMap = newAlertTrackerMap;
+    mAllPeriodicAlarmTrackers = newPeriodicAlarmTrackers;
+
+    mTtlNs = config.has_ttl_in_seconds() ? config.ttl_in_seconds() * NS_PER_SEC : -1;
+    refreshTtl(currentTimeNs);
+
+    mHashStringsInReport = config.hash_strings_in_metric_report();
+    mVersionStringsInReport = config.version_strings_in_metric_report();
+    mInstallerInReport = config.installer_in_metric_report();
+    mWhitelistedAtomIds.clear();
+    mWhitelistedAtomIds.insert(config.whitelisted_atom_ids().begin(),
+                               config.whitelisted_atom_ids().end());
+    mShouldPersistHistory = config.persist_locally();
+
+    // Store the sub-configs used.
+    mAnnotations.clear();
+    for (const auto& annotation : config.annotation()) {
+        mAnnotations.emplace_back(annotation.field_int64(), annotation.field_int32());
+    }
+
+    mAllowedUid.clear();
+    mAllowedPkg.clear();
+    mDefaultPullUids.clear();
+    mPullAtomUids.clear();
+    mPullAtomPackages.clear();
+    createAllLogSourcesFromConfig(config);
+
+    verifyGuardrailsAndUpdateStatsdStats();
+    initializeConfigActiveStatus();
+    return mConfigValid;
+}
+
+void MetricsManager::createAllLogSourcesFromConfig(const StatsdConfig& config) {
     // Init allowed pushed atom uids.
     if (config.allowed_log_source_size() == 0) {
         mConfigValid = false;
         ALOGE("Log source allowlist is empty! This config won't get any data. Suggest adding at "
-                      "least AID_SYSTEM and AID_STATSD to the allowed_log_source field.");
+              "least AID_SYSTEM and AID_STATSD to the allowed_log_source field.");
     } else {
         for (const auto& source : config.allowed_log_source()) {
             auto it = UidMap::sAidToUidMapping.find(source);
@@ -109,7 +205,7 @@ MetricsManager::MetricsManager(const ConfigKey& key, const StatsdConfig& config,
             ALOGE("Too many log sources. This is likely to be an error in the config.");
             mConfigValid = false;
         } else {
-            initLogSourceWhiteList();
+            initAllowedLogSources();
         }
     }
 
@@ -145,13 +241,9 @@ MetricsManager::MetricsManager(const ConfigKey& key, const StatsdConfig& config,
     } else {
         initPullAtomSources();
     }
-    mPullerManager->RegisterPullUidProvider(mConfigKey, this);
+}
 
-    // Store the sub-configs used.
-    for (const auto& annotation : config.annotation()) {
-        mAnnotations.emplace_back(annotation.field_int64(), annotation.field_int32());
-    }
-
+void MetricsManager::verifyGuardrailsAndUpdateStatsdStats() {
     // Guardrail. Reject the config if it's too big.
     if (mAllMetricProducers.size() > StatsdStats::kMaxMetricCountPerConfig ||
         mAllConditionTrackers.size() > StatsdStats::kMaxConditionCountPerConfig ||
@@ -163,65 +255,24 @@ MetricsManager::MetricsManager(const ConfigKey& key, const StatsdConfig& config,
         ALOGE("This config has too many alerts! Reject!");
         mConfigValid = false;
     }
-
-    mIsAlwaysActive = (mMetricIndexesWithActivation.size() != mAllMetricProducers.size()) ||
-            (mAllMetricProducers.size() == 0);
-    bool isActive = mIsAlwaysActive;
-    for (int metric : mMetricIndexesWithActivation) {
-        isActive |= mAllMetricProducers[metric]->isActive();
-    }
-    mIsActive = isActive;
-    VLOG("mIsActive is initialized to %d", mIsActive)
-
     // no matter whether this config is valid, log it in the stats.
     StatsdStats::getInstance().noteConfigReceived(
-            key, mAllMetricProducers.size(), mAllConditionTrackers.size(),
+            mConfigKey, mAllMetricProducers.size(), mAllConditionTrackers.size(),
             mAllAtomMatchingTrackers.size(), mAllAnomalyTrackers.size(), mAnnotations,
             mConfigValid);
-    // Check active
-    for (const auto& metric : mAllMetricProducers) {
-        if (metric->isActive()) {
-            mIsActive = true;
-            break;
-        }
+}
+
+void MetricsManager::initializeConfigActiveStatus() {
+    mIsAlwaysActive = (mMetricIndexesWithActivation.size() != mAllMetricProducers.size()) ||
+                      (mAllMetricProducers.size() == 0);
+    mIsActive = mIsAlwaysActive;
+    for (int metric : mMetricIndexesWithActivation) {
+        mIsActive |= mAllMetricProducers[metric]->isActive();
     }
+    VLOG("mIsActive is initialized to %d", mIsActive);
 }
 
-MetricsManager::~MetricsManager() {
-    for (auto it : mAllMetricProducers) {
-        for (int atomId : it->getSlicedStateAtoms()) {
-            StateManager::getInstance().unregisterListener(atomId, it);
-        }
-    }
-    mPullerManager->UnregisterPullUidProvider(mConfigKey, this);
-
-    VLOG("~MetricsManager()");
-}
-
-bool MetricsManager::updateConfig(const StatsdConfig& config, const int64_t timeBaseNs,
-                                  const int64_t currentTimeNs,
-                                  const sp<AlarmMonitor>& anomalyAlarmMonitor,
-                                  const sp<AlarmMonitor>& periodicAlarmMonitor) {
-    vector<sp<AtomMatchingTracker>> newAtomMatchingTrackers;
-    unordered_map<int64_t, int> newAtomMatchingTrackerMap;
-    vector<sp<ConditionTracker>> newConditionTrackers;
-    unordered_map<int64_t, int> newConditionTrackerMap;
-    mTagIds.clear();
-    mTrackerToConditionMap.clear();
-    mConfigValid = updateStatsdConfig(
-            mConfigKey, config, mUidMap, mPullerManager, anomalyAlarmMonitor, periodicAlarmMonitor,
-            timeBaseNs, currentTimeNs, mAllAtomMatchingTrackers, mAtomMatchingTrackerMap,
-            mAllConditionTrackers, mConditionTrackerMap, mTagIds, newAtomMatchingTrackers,
-            newAtomMatchingTrackerMap, newConditionTrackers, newConditionTrackerMap,
-            mTrackerToConditionMap);
-    mAllAtomMatchingTrackers = newAtomMatchingTrackers;
-    mAtomMatchingTrackerMap = newAtomMatchingTrackerMap;
-    mAllConditionTrackers = newConditionTrackers;
-    mConditionTrackerMap = newConditionTrackerMap;
-    return mConfigValid;
-}
-
-void MetricsManager::initLogSourceWhiteList() {
+void MetricsManager::initAllowedLogSources() {
     std::lock_guard<std::mutex> lock(mAllowedLogSourcesMutex);
     mAllowedLogSources.clear();
     mAllowedLogSources.insert(mAllowedUid.begin(), mAllowedUid.end());
@@ -265,7 +316,7 @@ void MetricsManager::notifyAppUpgrade(const int64_t& eventTimeNs, const string& 
     if (std::find(mAllowedPkg.begin(), mAllowedPkg.end(), apk) != mAllowedPkg.end()) {
         // We will re-initialize the whole list because we don't want to keep the multi mapping of
         // UID<->pkg inside MetricsManager to reduce the memory usage.
-        initLogSourceWhiteList();
+        initAllowedLogSources();
     }
 
     for (const auto& it : mPullAtomPackages) {
@@ -286,7 +337,7 @@ void MetricsManager::notifyAppRemoved(const int64_t& eventTimeNs, const string& 
     if (std::find(mAllowedPkg.begin(), mAllowedPkg.end(), apk) != mAllowedPkg.end()) {
         // We will re-initialize the whole list because we don't want to keep the multi mapping of
         // UID<->pkg inside MetricsManager to reduce the memory usage.
-        initLogSourceWhiteList();
+        initAllowedLogSources();
     }
 
     for (const auto& it : mPullAtomPackages) {
@@ -306,7 +357,7 @@ void MetricsManager::onUidMapReceived(const int64_t& eventTimeNs) {
     if (mAllowedPkg.size() == 0) {
         return;
     }
-    initLogSourceWhiteList();
+    initAllowedLogSources();
 }
 
 void MetricsManager::onStatsdInitCompleted(const int64_t& eventTimeNs) {

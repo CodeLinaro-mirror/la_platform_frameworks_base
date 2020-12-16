@@ -143,6 +143,11 @@ class MediaCarouselController @Inject constructor(
             if (newConfig == null) return
             isRtl = newConfig.layoutDirection == View.LAYOUT_DIRECTION_RTL
         }
+
+        override fun onUiModeChanged() {
+            // Only settings button needs to update for dark theme
+            inflateSettingsButton()
+        }
     }
 
     init {
@@ -174,7 +179,7 @@ class MediaCarouselController @Inject constructor(
         mediaManager.addListener(object : MediaDataManager.Listener {
             override fun onMediaDataLoaded(key: String, oldKey: String?, data: MediaData) {
                 addOrUpdatePlayer(key, oldKey, data)
-                val canRemove = data.isPlaying?.let { !it } ?: data.isClearable
+                val canRemove = data.isPlaying?.let { !it } ?: data.isClearable && !data.active
                 if (canRemove && !Utils.useMediaResumption(context)) {
                     // This view isn't playing, let's remove this! This happens e.g when
                     // dismissing/timing out a view. We still have the data around because
@@ -250,13 +255,13 @@ class MediaCarouselController @Inject constructor(
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT)
             newPlayer.view?.player?.setLayoutParams(lp)
-            newPlayer.bind(data)
+            newPlayer.bind(data, key)
             newPlayer.setListening(currentlyExpanded)
             MediaPlayerData.addMediaPlayer(key, data, newPlayer)
             updatePlayerToState(newPlayer, noAnimation = true)
             reorderAllPlayers()
         } else {
-            existingPlayer.bind(data)
+            existingPlayer.bind(data, key)
             MediaPlayerData.addMediaPlayer(key, data, existingPlayer)
             if (visualStabilityManager.isReorderingAllowed) {
                 reorderAllPlayers()
@@ -274,7 +279,7 @@ class MediaCarouselController @Inject constructor(
         }
     }
 
-    private fun removePlayer(key: String) {
+    private fun removePlayer(key: String, dismissMediaData: Boolean = true) {
         val removed = MediaPlayerData.removeMediaPlayer(key)
         removed?.apply {
             mediaCarouselScrollHandler.onPrePlayerRemoved(removed)
@@ -283,13 +288,16 @@ class MediaCarouselController @Inject constructor(
             mediaCarouselScrollHandler.onPlayersChanged()
             updatePageIndicator()
 
-            // Inform the media manager of a potentially late dismissal
-            mediaManager.dismissMediaData(key, 0L)
+            if (dismissMediaData) {
+                // Inform the media manager of a potentially late dismissal
+                mediaManager.dismissMediaData(key, 0L)
+            }
         }
     }
 
     private fun recreatePlayers() {
         MediaPlayerData.mediaData().forEach { (key, data) ->
+            removePlayer(key, dismissMediaData = false)
             addOrUpdatePlayer(key = key, oldKey = null, data = data)
         }
     }

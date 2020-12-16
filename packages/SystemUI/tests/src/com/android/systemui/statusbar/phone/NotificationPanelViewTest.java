@@ -21,6 +21,7 @@ import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
@@ -53,14 +54,17 @@ import com.android.internal.util.LatencyTracker;
 import com.android.keyguard.KeyguardClockSwitch;
 import com.android.keyguard.KeyguardClockSwitchController;
 import com.android.keyguard.KeyguardStatusView;
+import com.android.keyguard.KeyguardStatusViewController;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.dagger.KeyguardStatusViewComponent;
 import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.classifier.FalsingManagerFake;
 import com.android.systemui.doze.DozeLog;
 import com.android.systemui.media.MediaHierarchyManager;
 import com.android.systemui.plugins.FalsingManager;
+import com.android.systemui.qs.QSDetailDisplayer;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.KeyguardAffordanceView;
 import com.android.systemui.statusbar.NotificationLockscreenUserManager;
@@ -190,7 +194,11 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     @Mock
     private KeyguardClockSwitchController mKeyguardClockSwitchController;
     @Mock
+    private KeyguardStatusViewController mKeyguardStatusViewController;
+    @Mock
     private NotificationStackScrollLayoutController mNotificationStackScrollLayoutController;
+    @Mock
+    private AuthController mAuthController;
 
     private NotificationPanelViewController mNotificationPanelViewController;
     private View.AccessibilityDelegate mAccessibiltyDelegate;
@@ -198,6 +206,7 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     @Before
     public void setup() {
         MockitoAnnotations.initMocks(this);
+        when(mAuthController.isUdfpsEnrolled(anyInt())).thenReturn(false);
         when(mHeadsUpCallback.getContext()).thenReturn(mContext);
         when(mView.getResources()).thenReturn(mResources);
         when(mResources.getConfiguration()).thenReturn(mConfiguration);
@@ -206,6 +215,7 @@ public class NotificationPanelViewTest extends SysuiTestCase {
         mDisplayMetrics.density = 100;
         when(mResources.getBoolean(R.bool.config_enableNotificationShadeDrag)).thenReturn(true);
         when(mView.getContext()).thenReturn(getContext());
+        when(mView.findViewById(R.id.keyguard_header)).thenReturn(mKeyguardStatusBar);
         when(mView.findViewById(R.id.keyguard_clock_container)).thenReturn(mKeyguardClockSwitch);
         when(mView.findViewById(R.id.notification_stack_scroller))
                 .thenReturn(mNotificationStackScrollLayout);
@@ -246,6 +256,8 @@ public class NotificationPanelViewTest extends SysuiTestCase {
                 .thenReturn(mKeyguardStatusViewComponent);
         when(mKeyguardStatusViewComponent.getKeyguardClockSwitchController())
                 .thenReturn(mKeyguardClockSwitchController);
+        when(mKeyguardStatusViewComponent.getKeyguardStatusViewController())
+                .thenReturn(mKeyguardStatusViewController);
         mNotificationPanelViewController = new NotificationPanelViewController(mView,
                 mResources,
                 mInjectionInflationController,
@@ -262,7 +274,9 @@ public class NotificationPanelViewTest extends SysuiTestCase {
                 mNotificationStackScrollLayoutController,
                 mKeyguardStatusViewComponentFactory,
                 mGroupManager,
-                mNotificationAreaController);
+                mNotificationAreaController,
+                mAuthController,
+                new QSDetailDisplayer());
         mNotificationPanelViewController.initDependencies(
                 mStatusBar,
                 mNotificationShelfController);
@@ -350,7 +364,7 @@ public class NotificationPanelViewTest extends SysuiTestCase {
         mAccessibiltyDelegate.onInitializeAccessibilityNodeInfo(mView, nodeInfo);
 
         List<AccessibilityNodeInfo.AccessibilityAction> actionList = nodeInfo.getActionList();
-        assertThat(actionList).containsAllIn(
+        assertThat(actionList).containsAtLeastElementsIn(
                 new AccessibilityNodeInfo.AccessibilityAction[] {
                         AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD,
                         AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP}

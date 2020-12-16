@@ -187,7 +187,7 @@ interface IWifiManager
 
     void factoryReset(String packageName);
 
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = 30, trackingBug = 170729553)
     Network getCurrentNetwork();
 
     byte[] retrieveBackupData();
@@ -275,4 +275,6 @@ interface IWifiManager
     void setAutoWakeupEnabled(boolean enable);
 
     boolean isAutoWakeupEnabled();
+
+    int getNetworkSuggestionUserApprovalStatus(String packageName);
 }

@@ -309,6 +309,7 @@ public class CompanionDeviceManagerService extends SystemService implements Bind
             mFindDeviceCallback = callback;
             mRequest = request;
             mCallingPackage = callingPackage;
+            request.setCallingPackage(callingPackage);
             callback.asBinder().linkToDeath(CompanionDeviceManagerService.this /* recipient */, 0);
 
             final long callingIdentity = Binder.clearCallingIdentity();
@@ -317,7 +318,7 @@ public class CompanionDeviceManagerService extends SystemService implements Bind
                     AndroidFuture<Association> future = new AndroidFuture<>();
                     service.startDiscovery(request, callingPackage, callback, future);
                     return future;
-                }).whenComplete(uncheckExceptions((association, err) -> {
+                }).cancelTimeout().whenComplete(uncheckExceptions((association, err) -> {
                     if (err == null) {
                         addAssociation(association);
                     } else {
@@ -391,7 +392,10 @@ public class CompanionDeviceManagerService extends SystemService implements Bind
 
             checkArgument(getCallingUserId() == userId,
                     "Must be called by either same user or system");
-            mAppOpsManager.checkPackage(Binder.getCallingUid(), pkg);
+            int callingUid = Binder.getCallingUid();
+            if (mAppOpsManager.checkPackage(callingUid, pkg) != AppOpsManager.MODE_ALLOWED) {
+                throw new SecurityException(pkg + " doesn't belong to uid " + callingUid);
+            }
         }
 
         @Override
@@ -408,7 +412,7 @@ public class CompanionDeviceManagerService extends SystemService implements Bind
                                     PackageItemInfo.SAFE_LABEL_FLAG_TRIM
                                             | PackageItemInfo.SAFE_LABEL_FLAG_FIRST_LINE)
                             .toString());
-            long identity = Binder.clearCallingIdentity();
+            final long identity = Binder.clearCallingIdentity();
             try {
                 return PendingIntent.getActivityAsUser(getContext(),
                         0 /* request code */,

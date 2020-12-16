@@ -24,6 +24,7 @@ import android.annotation.NonNull;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.pm.ActivityInfo;
 import android.content.res.CompatibilityInfo.Translator;
+import android.graphics.BLASTBufferQueue;
 import android.graphics.Canvas;
 import android.graphics.ColorSpace;
 import android.graphics.HardwareRenderer;
@@ -33,6 +34,7 @@ import android.graphics.Rect;
 import android.graphics.RenderNode;
 import android.graphics.SurfaceTexture;
 import android.hardware.HardwareBuffer;
+import android.os.Build;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.Log;
@@ -66,12 +68,14 @@ public class Surface implements Parcelable {
     private static native long nativeCreateFromSurfaceControl(long surfaceControlNativeObject);
     private static native long nativeGetFromSurfaceControl(long surfaceObject,
             long surfaceControlNativeObject);
+    private static native long nativeGetFromBlastBufferQueue(long surfaceObject,
+                                                             long blastBufferQueueNativeObject);
 
     private static native long nativeLockCanvas(long nativeObject, Canvas canvas, Rect dirty)
             throws OutOfResourcesException;
     private static native void nativeUnlockCanvasAndPost(long nativeObject, Canvas canvas);
 
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private static native void nativeRelease(long nativeObject);
     private static native boolean nativeIsValid(long nativeObject);
     private static native boolean nativeIsConsumerRunningBehind(long nativeObject);
@@ -124,7 +128,7 @@ public class Surface implements Parcelable {
     private String mName;
     @UnsupportedAppUsage
     long mNativeObject; // package scope only for SurfaceControl access
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private long mLockedObject;
     private int mGenerationId; // incremented each time mNativeObject changes
     private final Canvas mCanvas = new CompatibleCanvas();
@@ -261,7 +265,7 @@ public class Surface implements Parcelable {
     }
 
     /* called from android_view_Surface_createFromIGraphicBufferProducer() */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private Surface(long nativeObject) {
         synchronized (mLock) {
             setNativeObjectLocked(nativeObject);
@@ -534,6 +538,18 @@ public class Surface implements Parcelable {
         }
     }
 
+    private void updateNativeObject(long newNativeObject) {
+        synchronized (mLock) {
+            if (newNativeObject == mNativeObject) {
+                return;
+            }
+            if (mNativeObject != 0) {
+                nativeRelease(mNativeObject);
+            }
+            setNativeObjectLocked(newNativeObject);
+        }
+    }
+
     /**
      * Copy another surface to this one.  This surface now holds a reference
      * to the same data as the original surface, and is -not- the owner.
@@ -557,16 +573,27 @@ public class Surface implements Parcelable {
                     "null SurfaceControl native object. Are you using a released SurfaceControl?");
         }
         long newNativeObject = nativeGetFromSurfaceControl(mNativeObject, surfaceControlPtr);
+        updateNativeObject(newNativeObject);
+    }
 
-        synchronized (mLock) {
-            if (newNativeObject == mNativeObject) {
-                return;
-            }
-            if (mNativeObject != 0) {
-                nativeRelease(mNativeObject);
-            }
-            setNativeObjectLocked(newNativeObject);
+    /**
+     * Update the surface if the BLASTBufferQueue IGraphicBufferProducer is different from this
+     * surface's IGraphicBufferProducer.
+     *
+     * @param queue {@link BLASTBufferQueue} to copy from.
+     * @hide
+     */
+    public void copyFrom(BLASTBufferQueue queue) {
+        if (queue == null) {
+            throw new IllegalArgumentException("queue must not be null");
         }
+
+        long blastBufferQueuePtr = queue.mNativeObject;
+        if (blastBufferQueuePtr == 0) {
+            throw new NullPointerException("Null BLASTBufferQueue native object");
+        }
+        long newNativeObject = nativeGetFromBlastBufferQueue(mNativeObject, blastBufferQueuePtr);
+        updateNativeObject(newNativeObject);
     }
 
     /**
@@ -713,7 +740,7 @@ public class Surface implements Parcelable {
      * Set the scaling mode to be used for this surfaces buffers
      * @hide
      */
-    void setScalingMode(@ScalingMode int scalingMode) {
+     public void setScalingMode(@ScalingMode int scalingMode) {
         synchronized (mLock) {
             checkNotReleasedLocked();
             int err = nativeSetScalingMode(mNativeObject, scalingMode);

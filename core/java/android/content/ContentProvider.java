@@ -129,7 +129,7 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
     // performance.
     @UnsupportedAppUsage
     private String mAuthority;
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private String[] mAuthorities;
     @UnsupportedAppUsage
     private String mReadPermission;
@@ -624,6 +624,20 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
         }
 
         @Override
+        public void uncanonicalizeAsync(String callingPkg, @Nullable String attributionTag, Uri uri,
+                RemoteCallback callback) {
+            final Bundle result = new Bundle();
+            try {
+                result.putParcelable(ContentResolver.REMOTE_CALLBACK_RESULT,
+                        uncanonicalize(callingPkg, attributionTag, uri));
+            } catch (Exception e) {
+                result.putParcelable(ContentResolver.REMOTE_CALLBACK_ERROR,
+                        new ParcelableException(e));
+            }
+            callback.sendResult(result);
+        }
+
+        @Override
         public boolean refresh(String callingPkg, String attributionTag, Uri uri, Bundle extras,
                 ICancellationSignal cancellationSignal) throws RemoteException {
             uri = validateIncomingUri(uri);
@@ -1043,6 +1057,7 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
      *         calling identity by passing it to
      *         {@link #restoreCallingIdentity}.
      */
+    @SuppressWarnings("AndroidFrameworkBinderIdentity")
     public final @NonNull CallingIdentity clearCallingIdentity() {
         return new CallingIdentity(Binder.clearCallingIdentity(), setCallingPackage(null));
     }
@@ -2341,7 +2356,7 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
      * when directly instantiating the provider for testing.
      * @hide
      */
-    @UnsupportedAppUsage
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public void attachInfoForTesting(Context context, ProviderInfo info) {
         attachInfo(context, info, true);
     }

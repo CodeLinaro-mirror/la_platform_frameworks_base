@@ -40,6 +40,7 @@
 #include <private/gui/ComposerService.h>
 #include <stdio.h>
 #include <system/graphics.h>
+#include <ui/BlurRegion.h>
 #include <ui/ConfigStoreTypes.h>
 #include <ui/DeviceProductInfo.h>
 #include <ui/DisplayConfig.h>
@@ -110,6 +111,8 @@ static struct {
     jfieldID sourceCrop;
     jfieldID frameScale;
     jfieldID captureSecureLayers;
+    jfieldID allowProtected;
+    jfieldID uid;
 } gCaptureArgsClassInfo;
 
 static struct {
@@ -196,6 +199,7 @@ static struct {
     jclass clazz;
     jmethodID ctor;
     jfieldID defaultConfig;
+    jfieldID allowGroupSwitching;
     jfieldID primaryRefreshRateMin;
     jfieldID primaryRefreshRateMax;
     jfieldID appRequestRefreshRateMin;
@@ -318,8 +322,13 @@ static jlong nativeCreate(JNIEnv* env, jclass clazz, jobject sessionObj,
         }
     }
 
-    status_t err = client->createSurfaceChecked(
-            String8(name.c_str()), w, h, format, &surface, flags, parent, std::move(metadata));
+    sp<IBinder> parentHandle;
+    if (parent != nullptr) {
+        parentHandle = parent->getHandle();
+    }
+
+    status_t err = client->createSurfaceChecked(String8(name.c_str()), w, h, format, &surface,
+                                                flags, parentHandle, std::move(metadata));
     if (err == NAME_NOT_FOUND) {
         jniThrowException(env, "java/lang/IllegalArgumentException", NULL);
         return 0;
@@ -362,6 +371,9 @@ static void getCaptureArgs(JNIEnv* env, jobject captureArgsObject, CaptureArgs& 
             env->GetFloatField(captureArgsObject, gCaptureArgsClassInfo.frameScale);
     captureArgs.captureSecureLayers =
             env->GetBooleanField(captureArgsObject, gCaptureArgsClassInfo.captureSecureLayers);
+    captureArgs.allowProtected =
+            env->GetBooleanField(captureArgsObject, gCaptureArgsClassInfo.allowProtected);
+    captureArgs.uid = env->GetLongField(captureArgsObject, gCaptureArgsClassInfo.uid);
 }
 
 static DisplayCaptureArgs displayCaptureArgsFromObject(JNIEnv* env,
@@ -481,7 +493,7 @@ static void nativeSetRelativeLayer(JNIEnv* env, jclass clazz, jlong transactionO
     auto ctrl = reinterpret_cast<SurfaceControl *>(nativeObject);
     auto relative = reinterpret_cast<SurfaceControl *>(relativeToObject);
     auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
-    transaction->setRelativeLayer(ctrl, relative->getHandle(), zorder);
+    transaction->setRelativeLayer(ctrl, relative, zorder);
 }
 
 static void nativeSetPosition(JNIEnv* env, jclass clazz, jlong transactionObj,
@@ -509,6 +521,43 @@ static void nativeSetGeometry(JNIEnv* env, jclass clazz, jlong transactionObj, j
         dst.makeInvalid();
     }
     transaction->setGeometry(ctrl, source, dst, orientation);
+}
+
+static void nativeSetBlurRegions(JNIEnv* env, jclass clazz, jlong transactionObj,
+                                 jlong nativeObject, jobjectArray regions, jint regionsLength) {
+    auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
+    SurfaceControl* const ctrl = reinterpret_cast<SurfaceControl*>(nativeObject);
+
+    std::vector<BlurRegion> blurRegionVector;
+    const int size = regionsLength;
+    float region[10];
+    for (int i = 0; i < size; i++) {
+        jfloatArray regionArray = (jfloatArray)env->GetObjectArrayElement(regions, i);
+        env->GetFloatArrayRegion(regionArray, 0, 10, region);
+        float blurRadius = region[0];
+        float alpha = region[1];
+        float left = region[2];
+        float top = region[3];
+        float right = region[4];
+        float bottom = region[5];
+        float cornerRadiusTL = region[6];
+        float cornerRadiusTR = region[7];
+        float cornerRadiusBL = region[8];
+        float cornerRadiusBR = region[9];
+
+        blurRegionVector.push_back(BlurRegion{.blurRadius = static_cast<uint32_t>(blurRadius),
+                                              .cornerRadiusTL = cornerRadiusTL,
+                                              .cornerRadiusTR = cornerRadiusTR,
+                                              .cornerRadiusBL = cornerRadiusBL,
+                                              .cornerRadiusBR = cornerRadiusBR,
+                                              .alpha = alpha,
+                                              .left = static_cast<int>(left),
+                                              .top = static_cast<int>(top),
+                                              .right = static_cast<int>(right),
+                                              .bottom = static_cast<int>(bottom)});
+    }
+
+    transaction->setBlurRegions(ctrl, blurRegionVector);
 }
 
 static void nativeSetSize(JNIEnv* env, jclass clazz, jlong transactionObj,
@@ -998,6 +1047,9 @@ static jboolean nativeSetDesiredDisplayConfigSpecs(JNIEnv* env, jclass clazz, jo
 
     jint defaultConfig = env->GetIntField(desiredDisplayConfigSpecs,
                                           gDesiredDisplayConfigSpecsClassInfo.defaultConfig);
+    jboolean allowGroupSwitching =
+            env->GetBooleanField(desiredDisplayConfigSpecs,
+                                 gDesiredDisplayConfigSpecsClassInfo.allowGroupSwitching);
     jfloat primaryRefreshRateMin =
             env->GetFloatField(desiredDisplayConfigSpecs,
                                gDesiredDisplayConfigSpecsClassInfo.primaryRefreshRateMin);
@@ -1012,6 +1064,7 @@ static jboolean nativeSetDesiredDisplayConfigSpecs(JNIEnv* env, jclass clazz, jo
                                gDesiredDisplayConfigSpecsClassInfo.appRequestRefreshRateMax);
 
     size_t result = SurfaceComposerClient::setDesiredDisplayConfigSpecs(token, defaultConfig,
+                                                                        allowGroupSwitching,
                                                                         primaryRefreshRateMin,
                                                                         primaryRefreshRateMax,
                                                                         appRequestRefreshRateMin,
@@ -1024,11 +1077,13 @@ static jobject nativeGetDesiredDisplayConfigSpecs(JNIEnv* env, jclass clazz, job
     if (token == nullptr) return nullptr;
 
     int32_t defaultConfig;
+    bool allowGroupSwitching;
     float primaryRefreshRateMin;
     float primaryRefreshRateMax;
     float appRequestRefreshRateMin;
     float appRequestRefreshRateMax;
     if (SurfaceComposerClient::getDesiredDisplayConfigSpecs(token, &defaultConfig,
+                                                            &allowGroupSwitching,
                                                             &primaryRefreshRateMin,
                                                             &primaryRefreshRateMax,
                                                             &appRequestRefreshRateMin,
@@ -1039,8 +1094,8 @@ static jobject nativeGetDesiredDisplayConfigSpecs(JNIEnv* env, jclass clazz, job
 
     return env->NewObject(gDesiredDisplayConfigSpecsClassInfo.clazz,
                           gDesiredDisplayConfigSpecsClassInfo.ctor, defaultConfig,
-                          primaryRefreshRateMin, primaryRefreshRateMax, appRequestRefreshRateMin,
-                          appRequestRefreshRateMax);
+                          allowGroupSwitching, primaryRefreshRateMin, primaryRefreshRateMax,
+                          appRequestRefreshRateMin, appRequestRefreshRateMax);
 }
 
 static jint nativeGetActiveConfig(JNIEnv* env, jclass clazz, jobject tokenObj) {
@@ -1327,20 +1382,9 @@ static jboolean nativeGetAnimationFrameStats(JNIEnv* env, jclass clazz, jobject 
 
 static void nativeDeferTransactionUntil(JNIEnv* env, jclass clazz, jlong transactionObj,
         jlong nativeObject, jlong barrierObject, jlong frameNumber) {
-    auto ctrl = reinterpret_cast<SurfaceControl *>(nativeObject);
-    auto barrier = reinterpret_cast<SurfaceControl *>(barrierObject);
+    sp<SurfaceControl> ctrl = reinterpret_cast<SurfaceControl*>(nativeObject);
+    sp<SurfaceControl> barrier = reinterpret_cast<SurfaceControl*>(barrierObject);
     auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
-    transaction->deferTransactionUntil_legacy(ctrl, barrier->getHandle(), frameNumber);
-}
-
-static void nativeDeferTransactionUntilSurface(JNIEnv* env, jclass clazz, jlong transactionObj,
-        jlong nativeObject,
-        jlong surfaceObject, jlong frameNumber) {
-    auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
-
-    auto ctrl = reinterpret_cast<SurfaceControl *>(nativeObject);
-    sp<Surface> barrier = reinterpret_cast<Surface *>(surfaceObject);
-
     transaction->deferTransactionUntil_legacy(ctrl, barrier, frameNumber);
 }
 
@@ -1351,7 +1395,7 @@ static void nativeReparentChildren(JNIEnv* env, jclass clazz, jlong transactionO
     auto ctrl = reinterpret_cast<SurfaceControl *>(nativeObject);
     auto newParent = reinterpret_cast<SurfaceControl *>(newParentObject);
     auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
-    transaction->reparentChildren(ctrl, newParent->getHandle());
+    transaction->reparentChildren(ctrl, newParent);
 }
 
 static void nativeReparent(JNIEnv* env, jclass clazz, jlong transactionObj,
@@ -1360,7 +1404,7 @@ static void nativeReparent(JNIEnv* env, jclass clazz, jlong transactionObj,
     auto ctrl = reinterpret_cast<SurfaceControl *>(nativeObject);
     auto newParent = reinterpret_cast<SurfaceControl *>(newParentObject);
     auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
-    transaction->reparent(ctrl, newParent != NULL ? newParent->getHandle() : NULL);
+    transaction->reparent(ctrl, newParent);
 }
 
 static void nativeSeverChildren(JNIEnv* env, jclass clazz, jlong transactionObj,
@@ -1369,15 +1413,6 @@ static void nativeSeverChildren(JNIEnv* env, jclass clazz, jlong transactionObj,
 
     auto ctrl = reinterpret_cast<SurfaceControl *>(nativeObject);
     transaction->detachChildren(ctrl);
-}
-
-static void nativeSetOverrideScalingMode(JNIEnv* env, jclass clazz, jlong transactionObj,
-        jlong nativeObject,
-        jint scalingMode) {
-    auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
-
-    auto ctrl = reinterpret_cast<SurfaceControl *>(nativeObject);
-    transaction->setOverrideScalingMode(ctrl, scalingMode);
 }
 
 static jobject nativeGetHdrCapabilities(JNIEnv* env, jclass clazz, jobject tokenObject) {
@@ -1434,7 +1469,8 @@ static jlong nativeReadFromParcel(JNIEnv* env, jclass clazz, jobject parcelObj) 
         doThrowNPE(env);
         return 0;
     }
-    sp<SurfaceControl> surface = SurfaceControl::readFromParcel(parcel);
+    sp<SurfaceControl> surface;
+    SurfaceControl::readFromParcel(*parcel, &surface);
     if (surface == nullptr) {
         return 0;
     }
@@ -1462,7 +1498,7 @@ static void nativeWriteToParcel(JNIEnv* env, jclass clazz,
     }
     SurfaceControl* const self = reinterpret_cast<SurfaceControl *>(nativeObject);
     if (self != nullptr) {
-        self->writeToParcel(parcel);
+        self->writeToParcel(*parcel);
     }
 }
 
@@ -1557,6 +1593,13 @@ static void nativeSetFocusedWindow(JNIEnv* env, jclass clazz, jlong transactionO
                                   displayId);
 }
 
+static void nativeSetFrameTimelineVsync(JNIEnv* env, jclass clazz, jlong transactionObj,
+                                        jlong frameTimelineVsyncId) {
+    auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
+
+    transaction->setFrameTimelineVsync(frameTimelineVsyncId);
+}
+
 // ----------------------------------------------------------------------------
 
 static const JNINativeMethod sSurfaceControlMethods[] = {
@@ -1621,6 +1664,8 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
             (void*)nativeSetBackgroundBlurRadius },
     {"nativeSetLayerStack", "(JJI)V",
             (void*)nativeSetLayerStack },
+    {"nativeSetBlurRegions", "(JJ[[FI)V",
+            (void*)nativeSetBlurRegions },
     {"nativeSetShadowRadius", "(JJF)V",
             (void*)nativeSetShadowRadius },
     {"nativeSetFrameRate", "(JJFI)V",
@@ -1691,16 +1736,12 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
             (void*)nativeGetProtectedContentSupport },
     {"nativeDeferTransactionUntil", "(JJJJ)V",
             (void*)nativeDeferTransactionUntil },
-    {"nativeDeferTransactionUntilSurface", "(JJJJ)V",
-            (void*)nativeDeferTransactionUntilSurface },
     {"nativeReparentChildren", "(JJJ)V",
             (void*)nativeReparentChildren } ,
     {"nativeReparent", "(JJJ)V",
             (void*)nativeReparent },
     {"nativeSeverChildren", "(JJ)V",
             (void*)nativeSeverChildren } ,
-    {"nativeSetOverrideScalingMode", "(JJI)V",
-            (void*)nativeSetOverrideScalingMode },
     {"nativeCaptureDisplay",
             "(Landroid/view/SurfaceControl$DisplayCaptureArgs;Landroid/view/SurfaceControl$ScreenCaptureListener;)I",
             (void*)nativeCaptureDisplay },
@@ -1741,6 +1782,8 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
             (void*)nativeSetFixedTransformHint},
     {"nativeSetFocusedWindow", "(JLandroid/os/IBinder;Landroid/os/IBinder;I)V",
             (void*)nativeSetFocusedWindow},
+    {"nativeSetFrameTimelineVsync", "(JJ)V",
+            (void*)nativeSetFrameTimelineVsync },
         // clang-format on
 };
 
@@ -1871,9 +1914,11 @@ int register_android_view_SurfaceControl(JNIEnv* env)
     gDesiredDisplayConfigSpecsClassInfo.clazz =
             MakeGlobalRefOrDie(env, desiredDisplayConfigSpecsClazz);
     gDesiredDisplayConfigSpecsClassInfo.ctor =
-            GetMethodIDOrDie(env, gDesiredDisplayConfigSpecsClassInfo.clazz, "<init>", "(IFFFF)V");
+            GetMethodIDOrDie(env, gDesiredDisplayConfigSpecsClassInfo.clazz, "<init>", "(IZFFFF)V");
     gDesiredDisplayConfigSpecsClassInfo.defaultConfig =
             GetFieldIDOrDie(env, desiredDisplayConfigSpecsClazz, "defaultConfig", "I");
+    gDesiredDisplayConfigSpecsClassInfo.allowGroupSwitching =
+            GetFieldIDOrDie(env, desiredDisplayConfigSpecsClazz, "allowGroupSwitching", "Z");
     gDesiredDisplayConfigSpecsClassInfo.primaryRefreshRateMin =
             GetFieldIDOrDie(env, desiredDisplayConfigSpecsClazz, "primaryRefreshRateMin", "F");
     gDesiredDisplayConfigSpecsClassInfo.primaryRefreshRateMax =
@@ -1890,6 +1935,9 @@ int register_android_view_SurfaceControl(JNIEnv* env)
     gCaptureArgsClassInfo.frameScale = GetFieldIDOrDie(env, captureArgsClazz, "mFrameScale", "F");
     gCaptureArgsClassInfo.captureSecureLayers =
             GetFieldIDOrDie(env, captureArgsClazz, "mCaptureSecureLayers", "Z");
+    gCaptureArgsClassInfo.allowProtected =
+            GetFieldIDOrDie(env, captureArgsClazz, "mAllowProtected", "Z");
+    gCaptureArgsClassInfo.uid = GetFieldIDOrDie(env, captureArgsClazz, "mUid", "J");
 
     jclass displayCaptureArgsClazz =
             FindClassOrDie(env, "android/view/SurfaceControl$DisplayCaptureArgs");

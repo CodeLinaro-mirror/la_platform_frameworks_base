@@ -20,11 +20,12 @@ import static org.testng.Assert.assertThrows;
 
 import android.content.ContentResolver;
 import android.content.Context;
+import android.media.ApplicationMediaCapabilities;
 import android.media.MediaFormat;
 import android.media.MediaTranscodeManager;
-import android.media.MediaTranscodeManager.TranscodingJob;
 import android.media.MediaTranscodeManager.TranscodingRequest;
 import android.media.MediaTranscodeManager.TranscodingRequest.MediaFormatResolver;
+import android.media.MediaTranscodeManager.TranscodingSession;
 import android.media.TranscodingTestConfig;
 import android.net.Uri;
 import android.os.Bundle;
@@ -141,7 +142,7 @@ public class MediaTranscodeManagerTest
     }
 
     private MediaTranscodeManager getManager() {
-        for (int count = 1;  count <= CONNECT_SERVICE_RETRY_COUNT; count++) {
+        for (int count = 1; count <= CONNECT_SERVICE_RETRY_COUNT; count++) {
             Log.d(TAG, "Trying to connect to service. Try count: " + count);
             MediaTranscodeManager manager = mContext.getSystemService(MediaTranscodeManager.class);
             if (manager != null) {
@@ -197,6 +198,42 @@ public class MediaTranscodeManagerTest
                             .setDestinationUri(null)
                             .setType(MediaTranscodeManager.TRANSCODING_TYPE_VIDEO)
                             .setPriority(MediaTranscodeManager.PRIORITY_REALTIME)
+                            .setVideoTrackFormat(createMediaFormat())
+                            .build();
+        });
+    }
+
+    /**
+     * Verify that setting invalid pid will throw exception.
+     */
+    @Test
+    public void testCreateTranscodingWithInvalidClientPid() throws Exception {
+        assertThrows(IllegalArgumentException.class, () -> {
+            TranscodingRequest request =
+                    new TranscodingRequest.Builder()
+                            .setSourceUri(mSourceHEVCVideoUri)
+                            .setDestinationUri(mDestinationUri)
+                            .setType(MediaTranscodeManager.TRANSCODING_TYPE_VIDEO)
+                            .setPriority(MediaTranscodeManager.PRIORITY_REALTIME)
+                            .setClientPid(-1)
+                            .setVideoTrackFormat(createMediaFormat())
+                            .build();
+        });
+    }
+
+    /**
+     * Verify that setting invalid uid will throw exception.
+     */
+    @Test
+    public void testCreateTranscodingWithInvalidClientUid() throws Exception {
+        assertThrows(IllegalArgumentException.class, () -> {
+            TranscodingRequest request =
+                    new TranscodingRequest.Builder()
+                            .setSourceUri(mSourceHEVCVideoUri)
+                            .setDestinationUri(mDestinationUri)
+                            .setType(MediaTranscodeManager.TRANSCODING_TYPE_VIDEO)
+                            .setPriority(MediaTranscodeManager.PRIORITY_REALTIME)
+                            .setClientUid(-1)
                             .setVideoTrackFormat(createMediaFormat())
                             .build();
         });
@@ -301,23 +338,25 @@ public class MediaTranscodeManagerTest
                         .build();
         Executor listenerExecutor = Executors.newSingleThreadExecutor();
 
-        TranscodingJob job = mMediaTranscodeManager.enqueueRequest(request, listenerExecutor,
-                transcodingJob -> {
-                    Log.d(TAG, "Transcoding completed with result: " + transcodingJob.getResult());
+        TranscodingSession session = mMediaTranscodeManager.enqueueRequest(request,
+                listenerExecutor,
+                TranscodingSession -> {
+                    Log.d(TAG,
+                            "Transcoding completed with result: " + TranscodingSession.getResult());
                     assertTrue("Transcoding should failed.",
-                            transcodingJob.getResult() == expectedResult);
+                            TranscodingSession.getResult() == expectedResult);
                     transcodeCompleteSemaphore.release();
                 });
-        assertNotNull(job);
+        assertNotNull(session);
 
-        if (job != null) {
+        if (session != null) {
             Log.d(TAG, "testMediaTranscodeManager - Waiting for transcode to complete.");
             boolean finishedOnTime = transcodeCompleteSemaphore.tryAcquire(
                     TRANSCODE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             assertTrue("Transcode failed to complete in time.", finishedOnTime);
         }
 
-        if (expectedResult == TranscodingJob.RESULT_SUCCESS) {
+        if (expectedResult == TranscodingSession.RESULT_SUCCESS) {
             // Checks the destination file get generated.
             File file = new File(dstUri.getPath());
             assertTrue("Failed to create destination file", file.exists());
@@ -343,7 +382,8 @@ public class MediaTranscodeManagerTest
                 + mContext.getPackageName() + "/temp.mp4");
         Log.d(TAG, "Transcoding to destination: " + destinationUri);
 
-        testTranscodingWithExpectResult(invalidSrcUri, destinationUri, TranscodingJob.RESULT_ERROR);
+        testTranscodingWithExpectResult(invalidSrcUri, destinationUri,
+                TranscodingSession.RESULT_ERROR);
     }
 
     // Tests transcoding to a uri in res folder and expects failure as we could not write to res
@@ -360,7 +400,7 @@ public class MediaTranscodeManagerTest
         Log.d(TAG, "Transcoding to destination: " + destinationUri);
 
         testTranscodingWithExpectResult(mSourceHEVCVideoUri, destinationUri,
-                TranscodingJob.RESULT_ERROR);
+                TranscodingSession.RESULT_ERROR);
     }
 
     // Tests transcoding to a uri in internal storage folder and expects success.
@@ -375,7 +415,7 @@ public class MediaTranscodeManagerTest
                 + mContext.getCacheDir().getAbsolutePath() + "/temp.mp4");
 
         testTranscodingWithExpectResult(mSourceHEVCVideoUri, destinationUri,
-                TranscodingJob.RESULT_SUCCESS);
+                TranscodingSession.RESULT_SUCCESS);
     }
 
     // Tests transcoding to a uri in internal files directory and expects success.
@@ -389,7 +429,7 @@ public class MediaTranscodeManagerTest
         Log.i(TAG, "Transcoding to files dir: " + destinationUri);
 
         testTranscodingWithExpectResult(mSourceHEVCVideoUri, destinationUri,
-                TranscodingJob.RESULT_SUCCESS);
+                TranscodingSession.RESULT_SUCCESS);
     }
 
     // Tests transcoding to a uri in external files directory and expects success.
@@ -402,7 +442,7 @@ public class MediaTranscodeManagerTest
         Log.i(TAG, "Transcoding to files dir: " + destinationUri);
 
         testTranscodingWithExpectResult(mSourceHEVCVideoUri, destinationUri,
-                TranscodingJob.RESULT_SUCCESS);
+                TranscodingSession.RESULT_SUCCESS);
     }
 
     @Test
@@ -415,8 +455,8 @@ public class MediaTranscodeManagerTest
         Uri destinationUri = Uri.parse(ContentResolver.SCHEME_FILE + "://"
                 + mContext.getCacheDir().getAbsolutePath() + "/HevcTranscode.mp4");
 
-        Bundle clientCaps = new Bundle();
-        clientCaps.putBoolean(MediaFormatResolver.CAPS_SUPPORTS_HEVC, false);
+        ApplicationMediaCapabilities clientCaps =
+                new ApplicationMediaCapabilities.Builder().build();
         MediaFormatResolver resolver = new MediaFormatResolver()
                 .setSourceVideoFormatHint(MediaFormat.createVideoFormat(
                         MediaFormat.MIMETYPE_VIDEO_HEVC, WIDTH, HEIGHT))
@@ -425,27 +465,37 @@ public class MediaTranscodeManagerTest
         MediaFormat videoTrackFormat = resolver.resolveVideoFormat();
         assertNotNull(videoTrackFormat);
 
+        int pid = android.os.Process.myPid();
+        int uid = android.os.Process.myUid();
+
         TranscodingRequest request =
                 new TranscodingRequest.Builder()
                         .setSourceUri(mSourceHEVCVideoUri)
                         .setDestinationUri(destinationUri)
                         .setType(MediaTranscodeManager.TRANSCODING_TYPE_VIDEO)
+                        .setClientPid(pid)
+                        .setClientUid(uid)
                         .setPriority(MediaTranscodeManager.PRIORITY_REALTIME)
                         .setVideoTrackFormat(videoTrackFormat)
                         .build();
         Executor listenerExecutor = Executors.newSingleThreadExecutor();
 
+        assertEquals(pid, request.getClientPid());
+        assertEquals(uid, request.getClientUid());
+
         Log.i(TAG, "transcoding to " + videoTrackFormat);
 
-        TranscodingJob job = mMediaTranscodeManager.enqueueRequest(request, listenerExecutor,
-                transcodingJob -> {
-                    Log.d(TAG, "Transcoding completed with result: " + transcodingJob.getResult());
-                    assertEquals(transcodingJob.getResult(), TranscodingJob.RESULT_SUCCESS);
+        TranscodingSession session = mMediaTranscodeManager.enqueueRequest(request,
+                listenerExecutor,
+                TranscodingSession -> {
+                    Log.d(TAG,
+                            "Transcoding completed with result: " + TranscodingSession.getResult());
+                    assertEquals(TranscodingSession.getResult(), TranscodingSession.RESULT_SUCCESS);
                     transcodeCompleteSemaphore.release();
                 });
-        assertNotNull(job);
+        assertNotNull(session);
 
-        if (job != null) {
+        if (session != null) {
             Log.d(TAG, "testMediaTranscodeManager - Waiting for transcode to cancel.");
             boolean finishedOnTime = transcodeCompleteSemaphore.tryAcquire(
                     TRANSCODE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -483,18 +533,21 @@ public class MediaTranscodeManagerTest
                         .build();
         Executor listenerExecutor = Executors.newSingleThreadExecutor();
 
-        TranscodingJob job = mMediaTranscodeManager.enqueueRequest(request, listenerExecutor,
-                transcodingJob -> {
-                    Log.d(TAG, "Transcoding completed with result: " + transcodingJob.getResult());
-                    assertEquals(transcodingJob.getResult(), TranscodingJob.RESULT_CANCELED);
+        TranscodingSession session = mMediaTranscodeManager.enqueueRequest(request,
+                listenerExecutor,
+                TranscodingSession -> {
+                    Log.d(TAG,
+                            "Transcoding completed with result: " + TranscodingSession.getResult());
+                    assertEquals(TranscodingSession.getResult(),
+                            TranscodingSession.RESULT_CANCELED);
                     transcodeCompleteSemaphore.release();
                 });
-        assertNotNull(job);
+        assertNotNull(session);
 
         // TODO(hkuang): Wait for progress update before calling cancel to make sure transcoding is
         // started.
 
-        job.cancel();
+        session.cancel();
         Log.d(TAG, "testMediaTranscodeManager - Waiting for transcode to cancel.");
         boolean finishedOnTime = transcodeCompleteSemaphore.tryAcquire(
                 30, TimeUnit.MILLISECONDS);
@@ -527,23 +580,25 @@ public class MediaTranscodeManagerTest
 
         Log.i(TAG, "transcoding to " + createMediaFormat());
 
-        TranscodingJob job = mMediaTranscodeManager.enqueueRequest(request, listenerExecutor,
-                transcodingJob -> {
-                    Log.d(TAG, "Transcoding completed with result: " + transcodingJob.getResult());
-                    assertEquals(transcodingJob.getResult(), TranscodingJob.RESULT_SUCCESS);
+        TranscodingSession session = mMediaTranscodeManager.enqueueRequest(request,
+                listenerExecutor,
+                TranscodingSession -> {
+                    Log.d(TAG,
+                            "Transcoding completed with result: " + TranscodingSession.getResult());
+                    assertEquals(TranscodingSession.getResult(), TranscodingSession.RESULT_SUCCESS);
                     transcodeCompleteSemaphore.release();
                 });
-        assertNotNull(job);
+        assertNotNull(session);
 
         AtomicInteger progressUpdateCount = new AtomicInteger(0);
 
         // Set progress update executor and use the same executor as result listener.
-        job.setOnProgressUpdateListener(listenerExecutor,
-                new TranscodingJob.OnProgressUpdateListener() {
+        session.setOnProgressUpdateListener(listenerExecutor,
+                new TranscodingSession.OnProgressUpdateListener() {
                     int mPreviousProgress = 0;
 
                     @Override
-                    public void onProgressUpdate(TranscodingJob job, int newProgress) {
+                    public void onProgressUpdate(TranscodingSession session, int newProgress) {
                         assertTrue("Invalid proress update", newProgress > mPreviousProgress);
                         assertTrue("Invalid proress update", newProgress <= 100);
                         if (newProgress > 0) {
@@ -558,8 +613,9 @@ public class MediaTranscodeManagerTest
         try {
             statusLatch.await();
             // The transcoding should not be finished yet as the clip is long.
-            assertTrue("Invalid status", job.getStatus() == TranscodingJob.STATUS_RUNNING);
-        } catch (InterruptedException e) { }
+            assertTrue("Invalid status", session.getStatus() == TranscodingSession.STATUS_RUNNING);
+        } catch (InterruptedException e) {
+        }
 
         Log.d(TAG, "testMediaTranscodeManager - Waiting for transcode to cancel.");
         boolean finishedOnTime = transcodeCompleteSemaphore.tryAcquire(

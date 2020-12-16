@@ -40,6 +40,7 @@ import com.android.systemui.statusbar.phone.StatusBar
 import com.android.systemui.statusbar.policy.DeviceProvisionedController
 import com.android.systemui.statusbar.policy.HeadsUpManager
 import com.android.systemui.statusbar.policy.RemoteInputUriController
+import com.android.wm.shell.bubbles.Bubbles
 import dagger.Lazy
 import java.io.FileDescriptor
 import java.io.PrintWriter
@@ -75,6 +76,7 @@ class NotificationsControllerImpl @Inject constructor(
 
     override fun initialize(
         statusBar: StatusBar,
+        bubblesOptional: Optional<Bubbles>,
         presenter: NotificationPresenter,
         listContainer: NotificationListContainer,
         notificationActivityStarter: NotificationActivityStarter,
@@ -90,7 +92,8 @@ class NotificationsControllerImpl @Inject constructor(
         listController.bind()
 
         notificationRowBinder.setNotificationClicker(
-                clickerBuilder.build(Optional.of(statusBar), notificationActivityStarter))
+                clickerBuilder.build(
+                        Optional.of(statusBar), bubblesOptional, notificationActivityStarter))
         notificationRowBinder.setUpWithPresenter(
                 presenter,
                 listContainer,

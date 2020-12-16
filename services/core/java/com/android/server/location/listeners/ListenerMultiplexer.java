@@ -57,6 +57,8 @@ import java.util.function.Predicate;
  * <li>{@link #onRegister()}</li>
  * <li>{@link ListenerRegistration#onRegister(Object)}</li>
  * <li>{@link #onRegistrationAdded(Object, ListenerRegistration)}</li>
+ * <li>{@link #onRegistrationReplaced(Object, ListenerRegistration, ListenerRegistration)} (only
+ * invoked if this registration is replacing a prior registration)</li>
  * <li>{@link #onActive()}</li>
  * <li>{@link ListenerRegistration#onActive()}</li>
  * <li>{@link ListenerRegistration#onInactive()}</li>
@@ -73,14 +75,11 @@ import java.util.function.Predicate;
  *
  * @param <TKey>                key type
  * @param <TListener>           listener type
- * @param <TListenerOperation>  listener operation type
  * @param <TRegistration>       registration type
  * @param <TMergedRegistration> merged registration type
  */
 public abstract class ListenerMultiplexer<TKey, TListener,
-        TListenerOperation extends ListenerOperation<TListener>,
-        TRegistration extends ListenerRegistration<TListener, TListenerOperation>,
-        TMergedRegistration> {
+        TRegistration extends ListenerRegistration<TListener>, TMergedRegistration> {
 
     @GuardedBy("mRegistrations")
     private final ArrayMap<TKey, TRegistration> mRegistrations = new ArrayMap<>();
@@ -183,6 +182,17 @@ public abstract class ListenerMultiplexer<TKey, TListener,
     protected void onRegistrationAdded(@NonNull TKey key, @NonNull TRegistration registration) {}
 
     /**
+     * Invoked instead of {@link #onRegistrationAdded(Object, ListenerRegistration)} if a
+     * registration is replacing an old registration. The old registration will have already been
+     * unregistered. Invoked while holding the multiplexer's internal lock. The default behavior is
+     * simply to call into {@link #onRegistrationAdded(Object, ListenerRegistration)}.
+     */
+    protected void onRegistrationReplaced(@NonNull TKey key, @NonNull TRegistration oldRegistration,
+            @NonNull TRegistration newRegistration) {
+        onRegistrationAdded(key, newRegistration);
+    }
+
+    /**
      * Invoked when a registration is removed. Invoked while holding the multiplexer's internal
      * lock.
      */
@@ -205,16 +215,35 @@ public abstract class ListenerMultiplexer<TKey, TListener,
     protected void onInactive() {}
 
     /**
-     * Adds a new registration with the given key. This method cannot be called to add a
-     * registration re-entrantly.
+     * Puts a new registration with the given key, replacing any previous registration under the
+     * same key. This method cannot be called to put a registration re-entrantly.
      */
-    protected final void addRegistration(@NonNull TKey key, @NonNull TRegistration registration) {
+    protected final void putRegistration(@NonNull TKey key, @NonNull TRegistration registration) {
+        replaceRegistration(key, key, registration);
+    }
+
+    /**
+     * Atomically removes the registration with the old key and adds a new registration with the
+     * given key. If there was a registration for the old key,
+     * {@link #onRegistrationReplaced(Object, ListenerRegistration, ListenerRegistration)} will be
+     * invoked for the new registration and key instead of
+     * {@link #onRegistrationAdded(Object, ListenerRegistration)}, even though they may not share
+     * the same key. The old key may be the same value as the new key, in which case this function
+     * is equivalent to {@link #putRegistration(Object, ListenerRegistration)}. This method cannot
+     * be called to add a registration re-entrantly.
+     */
+    protected final void replaceRegistration(@NonNull TKey oldKey, @NonNull TKey key,
+            @NonNull TRegistration registration) {
+        Objects.requireNonNull(oldKey);
         Objects.requireNonNull(key);
         Objects.requireNonNull(registration);
 
         synchronized (mRegistrations) {
             // adding listeners reentrantly is not supported
             Preconditions.checkState(!mReentrancyGuard.isReentrant());
+
+            // new key may only have a prior registration if the oldKey is the same as the key
+            Preconditions.checkArgument(oldKey == key || !mRegistrations.containsKey(key));
 
             // since adding a registration can invoke a variety of callbacks, we need to ensure
             // those callbacks themselves do not re-enter, as this could lead to out-of-order
@@ -227,9 +256,12 @@ public abstract class ListenerMultiplexer<TKey, TListener,
 
                 boolean wasEmpty = mRegistrations.isEmpty();
 
-                int index = mRegistrations.indexOfKey(key);
+                TRegistration oldRegistration = null;
+                int index = mRegistrations.indexOfKey(oldKey);
                 if (index >= 0) {
-                    removeRegistration(index, false);
+                    oldRegistration = removeRegistration(index, oldKey != key);
+                }
+                if (oldKey == key && index >= 0) {
                     mRegistrations.setValueAt(index, registration);
                 } else {
                     mRegistrations.put(key, registration);
@@ -239,7 +271,11 @@ public abstract class ListenerMultiplexer<TKey, TListener,
                     onRegister();
                 }
                 registration.onRegister(key);
-                onRegistrationAdded(key, registration);
+                if (oldRegistration == null) {
+                    onRegistrationAdded(key, registration);
+                } else {
+                    onRegistrationReplaced(key, oldRegistration, registration);
+                }
                 onRegistrationActiveChanged(registration);
             }
         }
@@ -298,7 +334,7 @@ public abstract class ListenerMultiplexer<TKey, TListener,
      * re-entrancy, and may be called to remove a registration re-entrantly.
      */
     protected final void removeRegistration(@NonNull Object key,
-            @NonNull ListenerRegistration<?, ?> registration) {
+            @NonNull ListenerRegistration<?> registration) {
         synchronized (mRegistrations) {
             int index = mRegistrations.indexOfKey(key);
             if (index < 0) {
@@ -320,7 +356,7 @@ public abstract class ListenerMultiplexer<TKey, TListener,
     }
 
     @GuardedBy("mRegistrations")
-    private void removeRegistration(int index, boolean removeEntry) {
+    private TRegistration removeRegistration(int index, boolean removeEntry) {
         if (Build.IS_DEBUGGABLE) {
             Preconditions.checkState(Thread.holdsLock(mRegistrations));
         }
@@ -347,6 +383,8 @@ public abstract class ListenerMultiplexer<TKey, TListener,
                 }
             }
         }
+
+        return registration;
     }
 
     /**
@@ -445,6 +483,38 @@ public abstract class ListenerMultiplexer<TKey, TListener,
         }
     }
 
+    /**
+     * Evaluates the predicate on a registration with the given key. The predicate should return
+     * true if the active state of the registration may have changed as a result. If the active
+     * state of the registration has changed, {@link #updateService()} will automatically be invoked
+     * to handle the resulting changes. Returns true if there is a registration with the given key
+     * (and thus the predicate was invoked), and false otherwise.
+     */
+    protected final boolean updateRegistration(@NonNull Object key,
+            @NonNull Predicate<TRegistration> predicate) {
+        synchronized (mRegistrations) {
+            // since updating a registration can invoke a variety of callbacks, we need to ensure
+            // those callbacks themselves do not re-enter, as this could lead to out-of-order
+            // callbacks. note that try-with-resources ordering is meaningful here as well. we want
+            // to close the reentrancy guard first, as this may generate additional service updates,
+            // then close the update service buffer.
+            try (UpdateServiceBuffer ignored1 = mUpdateServiceBuffer.acquire();
+                 ReentrancyGuard ignored2 = mReentrancyGuard.acquire()) {
+
+                int index = mRegistrations.indexOfKey(key);
+                if (index < 0) {
+                    return false;
+                }
+
+                TRegistration registration = mRegistrations.valueAt(index);
+                if (predicate.test(registration)) {
+                    onRegistrationActiveChanged(registration);
+                }
+                return true;
+            }
+        }
+    }
+
     @GuardedBy("mRegistrations")
     private void onRegistrationActiveChanged(TRegistration registration) {
         if (Build.IS_DEBUGGABLE) {
@@ -458,15 +528,9 @@ public abstract class ListenerMultiplexer<TKey, TListener,
                 if (++mActiveRegistrationsCount == 1) {
                     onActive();
                 }
-                TListenerOperation operation = registration.onActive();
-                if (operation != null) {
-                    execute(registration, operation);
-                }
+                registration.onActive();
             } else {
-                TListenerOperation operation = registration.onInactive();
-                if (operation != null) {
-                    execute(registration, operation);
-                }
+                registration.onInactive();
                 if (--mActiveRegistrationsCount == 0) {
                     onInactive();
                 }
@@ -482,16 +546,16 @@ public abstract class ListenerMultiplexer<TKey, TListener,
      * change the active state of the registration.
      */
     protected final void deliverToListeners(
-            @NonNull Function<TRegistration, TListenerOperation> function) {
+            @NonNull Function<TRegistration, ListenerOperation<TListener>> function) {
         synchronized (mRegistrations) {
             try (ReentrancyGuard ignored = mReentrancyGuard.acquire()) {
                 final int size = mRegistrations.size();
                 for (int i = 0; i < size; i++) {
                     TRegistration registration = mRegistrations.valueAt(i);
                     if (registration.isActive()) {
-                        TListenerOperation operation = function.apply(registration);
+                        ListenerOperation<TListener> operation = function.apply(registration);
                         if (operation != null) {
-                            execute(registration, operation);
+                            registration.executeOperation(operation);
                         }
                     }
                 }
@@ -506,14 +570,14 @@ public abstract class ListenerMultiplexer<TKey, TListener,
      * deliverToListeners(registration -> operation);
      * </pre>
      */
-    protected final void deliverToListeners(@NonNull TListenerOperation operation) {
+    protected final void deliverToListeners(@NonNull ListenerOperation<TListener> operation) {
         synchronized (mRegistrations) {
             try (ReentrancyGuard ignored = mReentrancyGuard.acquire()) {
                 final int size = mRegistrations.size();
                 for (int i = 0; i < size; i++) {
                     TRegistration registration = mRegistrations.valueAt(i);
                     if (registration.isActive()) {
-                        execute(registration, operation);
+                        registration.executeOperation(operation);
                     }
                 }
             }
@@ -525,17 +589,13 @@ public abstract class ListenerMultiplexer<TKey, TListener,
         onRegistrationActiveChanged(registration);
     }
 
-    private void execute(TRegistration registration, TListenerOperation operation) {
-        registration.executeInternal(operation);
-    }
-
     /**
      * Dumps debug information.
      */
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         synchronized (mRegistrations) {
             pw.print("service: ");
-            dumpServiceState(pw);
+            pw.print(getServiceState());
             pw.println();
 
             if (!mRegistrations.isEmpty()) {
@@ -558,18 +618,17 @@ public abstract class ListenerMultiplexer<TKey, TListener,
 
     /**
      * May be overridden to provide additional details on service state when dumping the manager
-     * state.
+     * state. Invoked while holding the multiplexer's internal lock.
      */
-    protected void dumpServiceState(PrintWriter pw) {
+    protected String getServiceState() {
         if (mServiceRegistered) {
-            pw.print("registered");
             if (mMerged != null) {
-                pw.print(" [");
-                pw.print(mMerged);
-                pw.print("]");
+                return mMerged.toString();
+            } else {
+                return "registered";
             }
         } else {
-            pw.print("unregistered");
+            return "unregistered";
         }
     }
 
@@ -587,7 +646,7 @@ public abstract class ListenerMultiplexer<TKey, TListener,
         @GuardedBy("mRegistrations")
         private int mGuardCount;
         @GuardedBy("mRegistrations")
-        private @Nullable ArraySet<Entry<Object, ListenerRegistration<?, ?>>> mScheduledRemovals;
+        private @Nullable ArraySet<Entry<Object, ListenerRegistration<?>>> mScheduledRemovals;
 
         ReentrancyGuard() {
             mGuardCount = 0;
@@ -603,7 +662,7 @@ public abstract class ListenerMultiplexer<TKey, TListener,
         }
 
         @GuardedBy("mRegistrations")
-        void markForRemoval(Object key, ListenerRegistration<?, ?> registration) {
+        void markForRemoval(Object key, ListenerRegistration<?> registration) {
             if (Build.IS_DEBUGGABLE) {
                 Preconditions.checkState(Thread.holdsLock(mRegistrations));
             }
@@ -622,7 +681,7 @@ public abstract class ListenerMultiplexer<TKey, TListener,
 
         @Override
         public void close() {
-            ArraySet<Entry<Object, ListenerRegistration<?, ?>>> scheduledRemovals = null;
+            ArraySet<Entry<Object, ListenerRegistration<?>>> scheduledRemovals = null;
 
             Preconditions.checkState(mGuardCount > 0);
             if (--mGuardCount == 0) {
@@ -637,7 +696,7 @@ public abstract class ListenerMultiplexer<TKey, TListener,
             try (UpdateServiceBuffer ignored = mUpdateServiceBuffer.acquire()) {
                 final int size = scheduledRemovals.size();
                 for (int i = 0; i < size; i++) {
-                    Entry<Object, ListenerRegistration<?, ?>> entry = scheduledRemovals.valueAt(i);
+                    Entry<Object, ListenerRegistration<?>> entry = scheduledRemovals.valueAt(i);
                     removeRegistration(entry.getKey(), entry.getValue());
                 }
             }

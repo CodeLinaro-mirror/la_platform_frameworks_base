@@ -24,15 +24,18 @@ import android.app.ActivityThread;
 import android.app.ITransientNotificationCallback;
 import android.app.Notification;
 import android.app.StatusBarManager;
+import android.app.compat.CompatChanges;
+import android.compat.annotation.ChangeId;
+import android.compat.annotation.EnabledSince;
 import android.content.ComponentName;
 import android.content.Context;
-import android.hardware.biometrics.BiometricAuthenticator;
 import android.hardware.biometrics.IBiometricSysuiReceiver;
 import android.hardware.biometrics.PromptInfo;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.DisplayManager.DisplayListener;
 import android.net.Uri;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -56,6 +59,7 @@ import android.view.WindowInsetsController.Appearance;
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.inputmethod.SoftInputShowHideReason;
+import com.android.internal.os.TransferPipe;
 import com.android.internal.statusbar.IStatusBar;
 import com.android.internal.statusbar.IStatusBarService;
 import com.android.internal.statusbar.NotificationVisibility;
@@ -82,6 +86,18 @@ import java.util.ArrayList;
 public class StatusBarManagerService extends IStatusBarService.Stub implements DisplayListener {
     private static final String TAG = "StatusBarManagerService";
     private static final boolean SPEW = false;
+
+    /**
+     * Apps targeting {@code Build.VERSION_CODES.S} or higher need {@link
+     * android.Manifest.permission#STATUS_BAR} permission to collapse the status bar panels due to
+     * security reasons.
+     *
+     * This was being exploited by malware to prevent the user from accessing critical
+     * notifications.
+     */
+    @ChangeId
+    @EnabledSince(targetSdkVersion = Build.VERSION_CODES.S)
+    private static final long LOCK_DOWN_COLLAPSE_STATUS_BAR = 173031413L;
 
     private final Context mContext;
 
@@ -259,6 +275,23 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 try {
                     mBar.onCameraLaunchGestureDetected(source);
                 } catch (RemoteException e) {
+                }
+            }
+        }
+
+        /**
+         * Notifies the status bar that a Emergency Action launch gesture has been detected.
+         *
+         * TODO (b/169175022) Update method name and docs when feature name is locked.
+         */
+        @Override
+        public void onEmergencyActionLaunchGestureDetected() {
+            if (SPEW) Slog.d(TAG, "Launching emergency action");
+            if (mBar != null) {
+                try {
+                    mBar.onEmergencyActionLaunchGestureDetected();
+                } catch (RemoteException e) {
+                    if (SPEW) Slog.d(TAG, "Failed to launch emergency action");
                 }
             }
         }
@@ -587,7 +620,11 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
 
     @Override
     public void collapsePanels() {
-        enforceExpandStatusBar();
+        if (CompatChanges.isChangeEnabled(LOCK_DOWN_COLLAPSE_STATUS_BAR, Binder.getCallingUid())) {
+            enforceStatusBar();
+        } else {
+            enforceExpandStatusBar();
+        }
 
         if (mBar != null) {
             try {
@@ -688,12 +725,12 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
 
     @Override
     public void showAuthenticationDialog(PromptInfo promptInfo, IBiometricSysuiReceiver receiver,
-            @BiometricAuthenticator.Modality int biometricModality, boolean requireConfirmation,
+            int[] sensorIds, boolean credentialAllowed, boolean requireConfirmation,
             int userId, String opPackageName, long operationId) {
         enforceBiometricDialog();
         if (mBar != null) {
             try {
-                mBar.showAuthenticationDialog(promptInfo, receiver, biometricModality,
+                mBar.showAuthenticationDialog(promptInfo, receiver, sensorIds, credentialAllowed,
                         requireConfirmation, userId, opPackageName, operationId);
             } catch (RemoteException ex) {
             }
@@ -1157,7 +1194,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     @Override
     public void onPanelRevealed(boolean clearNotificationEffects, int numItems) {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onPanelRevealed(clearNotificationEffects, numItems);
         } finally {
@@ -1168,7 +1205,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     @Override
     public void clearNotificationEffects() throws RemoteException {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.clearEffects();
         } finally {
@@ -1179,7 +1216,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     @Override
     public void onPanelHidden() throws RemoteException {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onPanelHidden();
         } finally {
@@ -1195,7 +1232,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         enforceStatusBarService();
         String reason = PowerManager.SHUTDOWN_USER_REQUESTED;
         ShutdownCheckPoints.recordCheckPoint(Binder.getCallingPid(), reason);
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.prepareForPossibleShutdown();
             // ShutdownThread displays UI, so give it a UI context.
@@ -1216,7 +1253,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 ? PowerManager.REBOOT_SAFE_MODE
                 : PowerManager.SHUTDOWN_USER_REQUESTED;
         ShutdownCheckPoints.recordCheckPoint(Binder.getCallingPid(), reason);
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.prepareForPossibleShutdown();
             mHandler.post(() -> {
@@ -1235,7 +1272,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     @Override
     public void onGlobalActionsShown() {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             if (mGlobalActionListener == null) return;
             mGlobalActionListener.onGlobalActionsShown();
@@ -1247,7 +1284,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     @Override
     public void onGlobalActionsHidden() {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             if (mGlobalActionListener == null) return;
             mGlobalActionListener.onGlobalActionsDismissed();
@@ -1261,7 +1298,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         enforceStatusBarService();
         final int callingUid = Binder.getCallingUid();
         final int callingPid = Binder.getCallingPid();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onNotificationClick(callingUid, callingPid, key, nv);
         } finally {
@@ -1276,7 +1313,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         enforceStatusBarService();
         final int callingUid = Binder.getCallingUid();
         final int callingPid = Binder.getCallingPid();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onNotificationActionClick(callingUid, callingPid, key,
                     actionIndex, action, nv, generatedByAssistant);
@@ -1291,7 +1328,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         enforceStatusBarService();
         final int callingUid = Binder.getCallingUid();
         final int callingPid = Binder.getCallingPid();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             // WARNING: this will call back into us to do the remove.  Don't hold any locks.
             mNotificationDelegate.onNotificationError(callingUid, callingPid,
@@ -1309,7 +1346,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         enforceStatusBarService();
         final int callingUid = Binder.getCallingUid();
         final int callingPid = Binder.getCallingPid();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onNotificationClear(callingUid, callingPid, pkg, tag, id, userId,
                     key, dismissalSurface, dismissalSentiment, nv);
@@ -1323,7 +1360,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
             NotificationVisibility[] newlyVisibleKeys, NotificationVisibility[] noLongerVisibleKeys)
             throws RemoteException {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onNotificationVisibilityChanged(
                     newlyVisibleKeys, noLongerVisibleKeys);
@@ -1336,7 +1373,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     public void onNotificationExpansionChanged(String key, boolean userAction, boolean expanded,
             int location) throws RemoteException {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onNotificationExpansionChanged(
                     key, userAction, expanded, location);
@@ -1348,7 +1385,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     @Override
     public void onNotificationDirectReplied(String key) throws RemoteException {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onNotificationDirectReplied(key);
         } finally {
@@ -1360,7 +1397,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     public void onNotificationSmartSuggestionsAdded(String key, int smartReplyCount,
             int smartActionCount, boolean generatedByAssistant, boolean editBeforeSending) {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onNotificationSmartSuggestionsAdded(key, smartReplyCount,
                     smartActionCount, generatedByAssistant, editBeforeSending);
@@ -1374,7 +1411,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
             String key, int replyIndex, CharSequence reply, int notificationLocation,
             boolean modifiedBeforeSending) throws RemoteException {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onNotificationSmartReplySent(key, replyIndex, reply,
                     notificationLocation, modifiedBeforeSending);
@@ -1386,7 +1423,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     @Override
     public void onNotificationSettingsViewed(String key) throws RemoteException {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onNotificationSettingsViewed(key);
         } finally {
@@ -1399,7 +1436,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         enforceStatusBarService();
         final int callingUid = Binder.getCallingUid();
         final int callingPid = Binder.getCallingPid();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onClearAll(callingUid, callingPid, userId);
         } finally {
@@ -1410,7 +1447,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     @Override
     public void onNotificationBubbleChanged(String key, boolean isBubble, int flags) {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onNotificationBubbleChanged(key, isBubble, flags);
         } finally {
@@ -1421,7 +1458,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     @Override
     public void onBubbleNotificationSuppressionChanged(String key, boolean isNotifSuppressed) {
         enforceStatusBarService();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.onBubbleNotificationSuppressionChanged(key, isNotifSuppressed);
         } finally {
@@ -1445,7 +1482,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
             String packageName) {
         enforceStatusBarService();
         int callingUid = Binder.getCallingUid();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.grantInlineReplyUriPermission(key, uri, user, packageName,
                     callingUid);
@@ -1458,7 +1495,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     public void clearInlineReplyUriPermissions(String key) {
         enforceStatusBarService();
         int callingUid = Binder.getCallingUid();
-        long identity = Binder.clearCallingIdentity();
+        final long identity = Binder.clearCallingIdentity();
         try {
             mNotificationDelegate.clearInlineReplyUriPermissions(key, callingUid);
         } finally {
@@ -1508,6 +1545,23 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
 
     public String[] getStatusBarIcons() {
         return mContext.getResources().getStringArray(R.array.config_statusBarIcons);
+    }
+
+    /** @hide */
+    public void passThroughShellCommand(String[] args, FileDescriptor fd) {
+        enforceStatusBarOrShell();
+        if (mBar == null)  return;
+
+        try (TransferPipe tp = new TransferPipe()) {
+            // Sending the command to the remote, which needs to execute async to avoid blocking
+            // See Binder#dumpAsync() for inspiration
+            tp.setBufferPrefix("  ");
+            mBar.passThroughShellCommand(args, tp.getWriteFd());
+            // Times out after 5s
+            tp.go(fd);
+        } catch (Throwable t) {
+            Slog.e(TAG, "Error sending command to IStatusBar", t);
+        }
     }
 
     // ================================================================================
