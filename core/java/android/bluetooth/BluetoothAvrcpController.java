@@ -12,6 +12,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Changes from Qualcomm Technologies, Inc. are provided under the following license:
+ *
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear.
  */
 
 package android.bluetooth;
@@ -341,6 +346,36 @@ public final class BluetoothAvrcpController implements BluetoothProfile {
        }
        if (service == null) Log.w(TAG, "Proxy not attached to service");
        return 0;
+    }
+
+    /**
+     * Informs AvrcpControllerService to start fetching Album Art.
+     * Fetching will start only after this api is called.
+     * @device Bluetooth device
+     * @type Image type
+     * @scheme Image scheme
+     * @mimeType Image mime Type
+     * @height Image height
+     * @width Image width
+     * @maxSize Image maximum size
+     * if input parameters are null, 0, 0, 0: image in native encoding will be fetched.
+     * @hide
+     */
+    public void startFetchingAlbumArt(BluetoothDevice device, String type, String scheme,
+            String mimeType, int height, int width, int maxSize) {
+        if (DBG) Log.d(TAG, "startFetchingAlbumArt");
+        final IBluetoothAvrcpController service =
+                getService();
+        if (service != null && isEnabled()) {
+            try {
+                service.startFetchingAlbumArt(device, type, scheme, mimeType, height, width, maxSize, mAttributionSource);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error talking to BT service in startFetchingAlbumArt() " + e);
+                return;
+            }
+        }
+        if (service == null) Log.w(TAG, "Proxy not attached to service");
+        return ;
     }
 
     private boolean isEnabled() {
