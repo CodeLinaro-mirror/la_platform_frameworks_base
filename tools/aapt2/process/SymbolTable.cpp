@@ -227,8 +227,7 @@ bool AssetManagerSymbolSource::AddAssetPath(const StringPiece& path) {
       apk_assets.push_back(apk_asset.get());
     }
 
-    asset_manager_.SetApkAssets(apk_assets, true /* invalidate_caches */,
-                                false /* filter_incompatible_configs */);
+    asset_manager_.SetApkAssets(apk_assets);
     return true;
   }
   return false;
@@ -393,7 +392,6 @@ std::unique_ptr<SymbolTable::Symbol> AssetManagerSymbolSource::FindById(
   if (!maybe_name) {
     return {};
   }
-
 
   uint32_t type_spec_flags = 0;
   if (!asset_manager_.GetResourceFlags(id.id, &type_spec_flags)) {

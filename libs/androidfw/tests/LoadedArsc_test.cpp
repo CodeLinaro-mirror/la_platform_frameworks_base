@@ -64,11 +64,10 @@ TEST(LoadedArscTest, LoadSinglePackageArsc) {
 
   const TypeSpec* type_spec = package->GetTypeSpecByTypeIndex(type_index);
   ASSERT_THAT(type_spec, NotNull());
-  ASSERT_THAT(type_spec->type_count, Ge(1u));
+  ASSERT_THAT(type_spec->type_entries.size(), Ge(1u));
 
-  const ResTable_type* type = type_spec->types[0];
-  ASSERT_THAT(type, NotNull());
-  ASSERT_THAT(LoadedPackage::GetEntry(type, entry_index), NotNull());
+  auto type = type_spec->type_entries[0];
+  ASSERT_THAT(LoadedPackage::GetEntry(type.type, entry_index), NotNull());
 }
 
 TEST(LoadedArscTest, LoadSparseEntryApp) {
@@ -88,11 +87,10 @@ TEST(LoadedArscTest, LoadSparseEntryApp) {
 
   const TypeSpec* type_spec = package->GetTypeSpecByTypeIndex(type_index);
   ASSERT_THAT(type_spec, NotNull());
-  ASSERT_THAT(type_spec->type_count, Ge(1u));
+  ASSERT_THAT(type_spec->type_entries.size(), Ge(1u));
 
-  const ResTable_type* type = type_spec->types[0];
-  ASSERT_THAT(type, NotNull());
-  ASSERT_THAT(LoadedPackage::GetEntry(type, entry_index), NotNull());
+  auto type = type_spec->type_entries[0];
+  ASSERT_THAT(LoadedPackage::GetEntry(type.type, entry_index), NotNull());
 }
 
 TEST(LoadedArscTest, LoadSharedLibrary) {
@@ -171,8 +169,7 @@ TEST(LoadedArscTest, LoadFeatureSplit) {
 
   const TypeSpec* type_spec = package->GetTypeSpecByTypeIndex(type_index);
   ASSERT_THAT(type_spec, NotNull());
-  ASSERT_THAT(type_spec->type_count, Ge(1u));
-  ASSERT_THAT(type_spec->types[0], NotNull());
+  ASSERT_THAT(type_spec->type_entries.size(), Ge(1u));
 
   size_t len;
   const char16_t* type_name16 =
@@ -180,7 +177,7 @@ TEST(LoadedArscTest, LoadFeatureSplit) {
   ASSERT_THAT(type_name16, NotNull());
   EXPECT_THAT(util::Utf16ToUtf8(StringPiece16(type_name16, len)), StrEq("string"));
 
-  ASSERT_THAT(LoadedPackage::GetEntry(type_spec->types[0], entry_index), NotNull());
+  ASSERT_THAT(LoadedPackage::GetEntry(type_spec->type_entries[0].type, entry_index), NotNull());
 }
 
 // AAPT(2) generates resource tables with chunks in a certain order. The rule is that
@@ -214,13 +211,11 @@ TEST(LoadedArscTest, LoadOutOfOrderTypeSpecs) {
 
   const TypeSpec* type_spec = package->GetTypeSpecByTypeIndex(0);
   ASSERT_THAT(type_spec, NotNull());
-  ASSERT_THAT(type_spec->type_count, Ge(1u));
-  ASSERT_THAT(type_spec->types[0], NotNull());
+  ASSERT_THAT(type_spec->type_entries.size(), Ge(1u));
 
   type_spec = package->GetTypeSpecByTypeIndex(1);
   ASSERT_THAT(type_spec, NotNull());
-  ASSERT_THAT(type_spec->type_count, Ge(1u));
-  ASSERT_THAT(type_spec->types[0], NotNull());
+  ASSERT_THAT(type_spec->type_entries.size(), Ge(1u));
 }
 
 TEST(LoadedArscTest, LoadOverlayable) {
@@ -359,11 +354,10 @@ TEST(LoadedArscTest, LoadCustomLoader) {
 
   const TypeSpec* type_spec = package->GetTypeSpecByTypeIndex(type_index);
   ASSERT_THAT(type_spec, NotNull());
-  ASSERT_THAT(type_spec->type_count, Ge(1u));
+  ASSERT_THAT(type_spec->type_entries.size(), Ge(1u));
 
-  const ResTable_type* type = type_spec->types[0];
-  ASSERT_THAT(type, NotNull());
-  ASSERT_THAT(LoadedPackage::GetEntry(type, entry_index), NotNull());
+  auto type = type_spec->type_entries[0];
+  ASSERT_THAT(LoadedPackage::GetEntry(type.type, entry_index), NotNull());
 }
 
 // structs with size fields (like Res_value, ResTable_entry) should be
