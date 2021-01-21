@@ -336,11 +336,23 @@ public final class BluetoothHeadset implements BluetoothProfile {
                     if (DBG) Log.d(TAG, "onBluetoothStateChange: up=" + up);
                     if (!up) {
                         doUnbind();
+                        unregisterStateChangeCallback();
                     } else {
                         doBind();
                     }
                 }
             };
+
+    private void unregisterStateChangeCallback () {
+        IBluetoothManager mgr = mAdapter.getBluetoothManager();
+        if (mgr != null) {
+            try {
+                mgr.unregisterStateChangeCallback(mBluetoothStateChangeCallback);
+            } catch (RemoteException e) {
+                Log.e(TAG, "", e);
+            }
+        }
+    }
 
     /**
      * Create a BluetoothHeadset proxy object.
@@ -358,8 +370,11 @@ public final class BluetoothHeadset implements BluetoothProfile {
                 Log.e(TAG, "", e);
             }
         }
-
-        doBind();
+        // Unregister the callback while bind fails otherwise leakage
+        // generated in Bluetooth turning off
+        if (!doBind()) {
+            unregisterStateChangeCallback();
+        }
     }
 
     private boolean doBind() {
@@ -402,14 +417,7 @@ public final class BluetoothHeadset implements BluetoothProfile {
     /*package*/ void close() {
         if (VDBG) log("close()");
 
-        IBluetoothManager mgr = mAdapter.getBluetoothManager();
-        if (mgr != null) {
-            try {
-                mgr.unregisterStateChangeCallback(mBluetoothStateChangeCallback);
-            } catch (RemoteException re) {
-                Log.e(TAG, "", re);
-            }
-        }
+        unregisterStateChangeCallback();
         mServiceListener = null;
         doUnbind();
     }
