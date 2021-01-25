@@ -117,6 +117,9 @@
     <integer-array translatable="false" name="config_tether_upstream_types">
     </integer-array>
 
+    <!-- Tell tethering that dun is always required no matter dun APN is available or not. -->
+    <bool translatable="false" name="config_tether_enable_dun_preferred"></bool>
+
     <!-- When true, the tethering upstream network follows the current default
          Internet network (except when the current default network is mobile,
          in which case a DUN network will be used if required).

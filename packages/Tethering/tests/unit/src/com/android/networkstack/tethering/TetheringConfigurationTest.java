@@ -224,6 +224,28 @@ public class TetheringConfigurationTest {
     }
 
     @Test
+    public void testDunRequiredWhenConfigureDunPreferred() throws Exception {
+        // Dun not required: no dun APN, dunPreferred is default false.
+        when(mTelephonyManager.isTetheringApnRequired()).thenReturn(false);
+        final TetheringConfiguration defaultCfg = new TetheringConfiguration(
+                mMockContext, mLog, INVALID_SUBSCRIPTION_ID);
+        assertFalse(defaultCfg.isDunRequired);
+
+        // Dun required: no dun APN, dunPreferred is true.
+        when(mResources.getBoolean(R.bool.config_tether_enable_dun_preferred))
+                .thenReturn(true);
+        final TetheringConfiguration dunPreferredCfg = new TetheringConfiguration(
+                mMockContext, mLog, INVALID_SUBSCRIPTION_ID);
+        assertTrue(dunPreferredCfg.isDunRequired);
+
+        // Dun required: has dun APN, dunPreferred is true.
+        when(mTelephonyManager.isTetheringApnRequired()).thenReturn(true);
+        final TetheringConfiguration dunCfg = new TetheringConfiguration(
+                mMockContext, mLog, INVALID_SUBSCRIPTION_ID);
+        assertTrue(dunCfg.isDunRequired);
+    }
+
+    @Test
     public void testNoDefinedUpstreamTypesAddsEthernet() {
         when(mResources.getIntArray(R.array.config_tether_upstream_types)).thenReturn(new int[]{});
         when(mTelephonyManager.isTetheringApnRequired()).thenReturn(false);
