@@ -78,7 +78,8 @@ public final class TetheringInterfaceUtils {
                 // Minimal amount of IPv6 provisioning:
                 && ns.linkProperties.hasGlobalIpv6Address()
                 // Temporary approximation of "dedicated prefix":
-                && ns.networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR);
+                && (ns.networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+                    || ns.networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET));
 
         return canTether
                 ? getInterfaceForDestination(ns.linkProperties, IN6ADDR_ANY)
