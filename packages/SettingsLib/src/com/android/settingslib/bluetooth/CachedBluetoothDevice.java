@@ -18,17 +18,23 @@ package com.android.settingslib.bluetooth;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothClass;
+import android.bluetooth.IBluetoothGatt;
+import android.bluetooth.IBluetoothManager;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothHearingAid;
 import android.bluetooth.BluetoothProfile;
 import android.bluetooth.BluetoothUuid;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Binder;
+import android.os.IBinder;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.ParcelUuid;
+import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.ServiceManager;
 import android.text.TextUtils;
 import android.util.EventLog;
 import android.util.Log;
@@ -59,6 +65,9 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
     private static final long MAX_HEARING_AIDS_DELAY_FOR_AUTO_CONNECT = 15000;
     private static final long MAX_HOGP_DELAY_FOR_AUTO_CONNECT = 30000;
     private static final long MAX_MEDIA_PROFILE_CONNECT_DELAY = 60000;
+
+    // Invalid Gatt Id
+    private static final int INVALID_GATT_ID = -1;
 
     private final Context mContext;
     private final BluetoothAdapter mLocalAdapter;
@@ -147,6 +156,18 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
         }
 
         return sb.toString();
+    }
+
+    private void disconnectGATT(String address) {
+        // set serverIf as INVALID_GATT_ID for specific gatt server created in stack.
+        IBinder b = ServiceManager.getService(BluetoothAdapter.BLUETOOTH_MANAGER_SERVICE);
+        IBluetoothManager managerService = IBluetoothManager.Stub.asInterface(b);
+        try {
+            IBluetoothGatt iGatt = managerService.getBluetoothGatt();
+            iGatt.serverDisconnect(INVALID_GATT_ID , address);
+        } catch (RemoteException e) {
+            Log.e(TAG, "", e);
+        }
     }
 
     void onProfileStateChanged(LocalBluetoothProfile profile, int newProfileState) {
@@ -251,6 +272,9 @@ public class CachedBluetoothDevice implements Comparable<CachedBluetoothDevice> 
         {
             PbapProfile.setEnabled(mDevice, false);
         }
+
+        // disconnect gatt server over BR/EDR
+        disconnectGATT(mDevice.getAddress());
     }
 
     public void disconnect(LocalBluetoothProfile profile) {
