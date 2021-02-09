@@ -83,6 +83,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -114,6 +115,9 @@ public final class FileUtils {
     @UnsupportedAppUsage
     private FileUtils() {
     }
+
+    private static final String CAMERA_DIR_LOWER_CASE = "/storage/emulated/" + UserHandle.myUserId()
+            + "/dcim/camera";
 
     /** Regular expression for safe filenames: no spaces or metacharacters.
       *
@@ -1432,27 +1436,36 @@ public final class FileUtils {
         }
     }
 
+    // TODO(b/170488060): Consider better approach
     /** {@hide} */
+    @VisibleForTesting
     public static FileDescriptor convertToModernFd(FileDescriptor fd) {
         try {
             Context context = AppGlobals.getInitialApplication();
-            if (!SystemProperties.getBoolean("persist.sys.fuse.transcode", false)
-                    || !SystemProperties.getBoolean("persist.sys.fuse.transcode_optimize", true)
-                    || UserHandle.getAppId(Process.myUid()) == getMediaProviderAppId(context)) {
-                // If transcode is enabled we optimize by default, unless explicitly disabled.
-                // Never convert modern fd for MediaProvider, because this requires
+            // /mnt/user paths are not accessible directly so convert to a /storage path
+            String filePath = Os.readlink("/proc/self/fd/" + fd.getInt$()).replace(
+                    "/mnt/user/" + UserHandle.myUserId(), "/storage");
+            File realFile = new File(filePath);
+            String fileName = realFile.getName();
+            boolean isCameraVideo = !fileName.startsWith(".") && fileName.endsWith(".mp4")
+                    && contains(CAMERA_DIR_LOWER_CASE, filePath.toLowerCase(Locale.ROOT));
+
+            if (!SystemProperties.getBoolean("sys.fuse.transcode_enabled", false)
+                    || UserHandle.getAppId(Process.myUid()) == getMediaProviderAppId(context)
+                    || !isCameraVideo) {
+                // 1. If transcode is enabled we optimize by default, unless explicitly disabled.
+                // 2. Never convert modern fd for MediaProvider, because this requires
                 // MediaStore#scanFile and can cause infinite loops when MediaProvider scans
+                // 3. Only convert published mp4 videos in the DCIM/Camera dir
                 return null;
             }
-            File realFile = ParcelFileDescriptor.getFile(fd);
             Log.i(TAG, "Changing to modern format dataSource for: " + realFile);
             ContentResolver resolver = context.getContentResolver();
 
             Uri uri = MediaStore.scanFile(resolver, realFile);
             if (uri != null) {
                 Bundle opts = new Bundle();
-                // TODO(b/158465539): Use API constant
-                opts.putBoolean("android.provider.extra.ACCEPT_ORIGINAL_MEDIA_FORMAT", true);
+                opts.putBoolean(MediaStore.EXTRA_ACCEPT_ORIGINAL_MEDIA_FORMAT, true);
                 AssetFileDescriptor afd = resolver.openTypedAssetFileDescriptor(uri, "*/*", opts);
                 Log.i(TAG, "Changed to modern format dataSource for: " + realFile);
                 return afd.getFileDescriptor();
@@ -1460,7 +1473,7 @@ public final class FileUtils {
                 Log.i(TAG, "Failed to change to modern format dataSource for: " + realFile);
             }
         } catch (Exception e) {
-            Log.w(TAG, "Failed to change to modern format dataSource");
+            Log.w(TAG, "Failed to change to modern format dataSource", e);
         }
         return null;
     }

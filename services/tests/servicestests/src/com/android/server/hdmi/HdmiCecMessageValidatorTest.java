@@ -56,6 +56,30 @@ public class HdmiCecMessageValidatorTest {
     }
 
     @Test
+    public void isValid_unregisteredSource() {
+        // Message invokes a broadcast response
+        //   <Get Menu Language>
+        assertMessageValidity("F4:91").isEqualTo(OK);
+        //   <Request Active Source>
+        assertMessageValidity("FF:85").isEqualTo(OK);
+
+        // Message by CEC Switch
+        //   <Routing Change>
+        assertMessageValidity("FF:80:00:00:10:00").isEqualTo(OK);
+
+        //   <Routing Information>
+        assertMessageValidity("FF:81:10:00").isEqualTo(OK);
+
+        // Standby
+        assertMessageValidity("F4:36").isEqualTo(OK);
+        assertMessageValidity("FF:36").isEqualTo(OK);
+
+        // <Report Physical Address> / <Active Source>
+        assertMessageValidity("FF:84:10:00:04").isEqualTo(OK);
+        assertMessageValidity("FF:82:10:00").isEqualTo(OK);
+    }
+
+    @Test
     public void isValid_giveDevicePowerStatus() {
         assertMessageValidity("04:8F").isEqualTo(OK);
 
@@ -67,8 +91,8 @@ public class HdmiCecMessageValidatorTest {
     public void isValid_reportPowerStatus() {
         assertMessageValidity("04:90:00").isEqualTo(OK);
         assertMessageValidity("04:90:03:05").isEqualTo(OK);
+        assertMessageValidity("0F:90:00").isEqualTo(OK);
 
-        assertMessageValidity("0F:90:00").isEqualTo(ERROR_DESTINATION);
         assertMessageValidity("F0:90").isEqualTo(ERROR_SOURCE);
         assertMessageValidity("04:90").isEqualTo(ERROR_PARAMETER_SHORT);
         assertMessageValidity("04:90:04").isEqualTo(ERROR_PARAMETER);
@@ -94,6 +118,16 @@ public class HdmiCecMessageValidatorTest {
         assertMessageValidity("F0:8E").isEqualTo(ERROR_SOURCE);
         assertMessageValidity("40:8E").isEqualTo(ERROR_PARAMETER_SHORT);
         assertMessageValidity("40:8E:02").isEqualTo(ERROR_PARAMETER);
+    }
+
+    @Test
+    public void isValid_systemAudioModeRequest() {
+        assertMessageValidity("40:70:00:00").isEqualTo(OK);
+        assertMessageValidity("40:70").isEqualTo(OK);
+
+        assertMessageValidity("F0:70").isEqualTo(ERROR_SOURCE);
+        // Invalid physical address
+        assertMessageValidity("40:70:10:10").isEqualTo(ERROR_PARAMETER);
     }
 
     @Test
@@ -316,6 +350,8 @@ public class HdmiCecMessageValidatorTest {
         assertMessageValidity("40:A2:14:09:12:28:4B:19:10:08:10:00").isEqualTo(ERROR_PARAMETER);
         // Invalid External PLug
         assertMessageValidity("04:A1:0C:08:15:05:04:1E:02:04:00").isEqualTo(ERROR_PARAMETER);
+        // Invalid Physical Address
+        assertMessageValidity("40:A2:14:09:12:28:4B:19:10:05:10:10").isEqualTo(ERROR_PARAMETER);
     }
 
     @Test
@@ -470,6 +506,51 @@ public class HdmiCecMessageValidatorTest {
     }
 
     @Test
+    public void isValid_tunerDeviceStatus() {
+        // Displaying digital tuner
+        assertMessageValidity("40:07:00:00:11:CE:90:0F:00:78").isEqualTo(OK);
+        assertMessageValidity("40:07:80:10:13:0B:34:38").isEqualTo(OK);
+        assertMessageValidity("40:07:00:9A:06:F9:D3:E6").isEqualTo(OK);
+        assertMessageValidity("40:07:00:91:09:F4:40:C8").isEqualTo(OK);
+        // Not displaying tuner
+        assertMessageValidity("40:07:01").isEqualTo(OK);
+        assertMessageValidity("40:07:81:07:64:B9:02").isEqualTo(OK);
+        // Displaying analogue tuner
+        assertMessageValidity("40:07:02:00:13:0F:00:96").isEqualTo(OK);
+        assertMessageValidity("40:07:82:02:EA:60:1F").isEqualTo(OK);
+
+        assertMessageValidity("4F:07:00:00:11:CE:90:0F:00:78").isEqualTo(ERROR_DESTINATION);
+        assertMessageValidity("F0:07:82:02:EA:60:1F").isEqualTo(ERROR_SOURCE);
+        assertMessageValidity("40:07").isEqualTo(ERROR_PARAMETER_SHORT);
+
+        // Invalid display info
+        assertMessageValidity("40:07:09:A1:8C:17:51").isEqualTo(ERROR_PARAMETER);
+        assertMessageValidity("40:07:A7:0C:29").isEqualTo(ERROR_PARAMETER);
+        // Invalid Digital Broadcast System
+        assertMessageValidity("40:07:00:14:11:CE:90:0F:00:78").isEqualTo(ERROR_PARAMETER);
+        // Invalid Digital Broadcast System
+        assertMessageValidity("40:07:80:A0:07:95:F1").isEqualTo(ERROR_PARAMETER);
+        // Insufficient data for ARIB Broadcast system
+        assertMessageValidity("40:07:00:00:11:CE:90:0F:00").isEqualTo(ERROR_PARAMETER);
+        // Insufficient data for ATSC Broadcast system
+        assertMessageValidity("40:07:80:10:13:0B:34").isEqualTo(ERROR_PARAMETER);
+        // Insufficient data for DVB Broadcast system
+        assertMessageValidity("40:07:00:18:BE:77:00:7D:01").isEqualTo(ERROR_PARAMETER);
+        // Invalid channel number format
+        assertMessageValidity("40:07:80:9A:10:F9:D3").isEqualTo(ERROR_PARAMETER);
+        // Insufficient data for 1 part channel number
+        assertMessageValidity("40:07:00:90:04:F7").isEqualTo(ERROR_PARAMETER);
+        // Insufficient data for 2 part channel number
+        assertMessageValidity("40:07:80:91:09:F4:40").isEqualTo(ERROR_PARAMETER);
+        // Invalid Analogue Broadcast type
+        assertMessageValidity("40:07:02:03:EA:60:1F").isEqualTo(ERROR_PARAMETER);
+        // Invalid Analogue Frequency
+        assertMessageValidity("40:07:82:00:FF:FF:00").isEqualTo(ERROR_PARAMETER);
+        // Invalid Broadcast system
+        assertMessageValidity("40:07:02:02:EA:60:20").isEqualTo(ERROR_PARAMETER);
+    }
+
+    @Test
     public void isValid_UserControlPressed() {
         assertMessageValidity("40:44:07").isEqualTo(OK);
         assertMessageValidity("40:44:52:A7").isEqualTo(OK);
@@ -512,24 +593,60 @@ public class HdmiCecMessageValidatorTest {
         assertMessageValidity("40:44:57:40").isEqualTo(ERROR_PARAMETER);
     }
 
-    private IntegerSubject assertMessageValidity(String message) {
-        return assertThat(mHdmiCecMessageValidator.isValid(buildMessage(message)));
+    @Test
+    public void isValid_physicalAddress() {
+        assertMessageValidity("4F:82:10:00").isEqualTo(OK);
+        assertMessageValidity("4F:82:12:34").isEqualTo(OK);
+        assertMessageValidity("0F:82:00:00").isEqualTo(OK);
+        assertMessageValidity("40:9D:14:00").isEqualTo(OK);
+        assertMessageValidity("40:9D:10:00").isEqualTo(OK);
+        assertMessageValidity("0F:81:44:20").isEqualTo(OK);
+        assertMessageValidity("4F:81:13:10").isEqualTo(OK);
+        assertMessageValidity("4F:86:14:14").isEqualTo(OK);
+        assertMessageValidity("0F:86:15:24").isEqualTo(OK);
+
+        assertMessageValidity("4F:82:10").isEqualTo(ERROR_PARAMETER_SHORT);
+        assertMessageValidity("40:9D:14").isEqualTo(ERROR_PARAMETER_SHORT);
+        assertMessageValidity("0F:81:44").isEqualTo(ERROR_PARAMETER_SHORT);
+        assertMessageValidity("0F:86:15").isEqualTo(ERROR_PARAMETER_SHORT);
+
+        assertMessageValidity("4F:82:10:10").isEqualTo(ERROR_PARAMETER);
+        assertMessageValidity("4F:82:10:06").isEqualTo(ERROR_PARAMETER);
+        assertMessageValidity("40:9D:14:04").isEqualTo(ERROR_PARAMETER);
+        assertMessageValidity("40:9D:10:01").isEqualTo(ERROR_PARAMETER);
+        assertMessageValidity("0F:81:44:02").isEqualTo(ERROR_PARAMETER);
+        assertMessageValidity("4F:81:13:05").isEqualTo(ERROR_PARAMETER);
+        assertMessageValidity("4F:86:10:14").isEqualTo(ERROR_PARAMETER);
+        assertMessageValidity("0F:86:10:24").isEqualTo(ERROR_PARAMETER);
     }
 
-    /**
-     * Build a CEC message from a hex byte string with bytes separated by {@code :}.
-     *
-     * <p>This format is used by both cec-client and www.cec-o-matic.com
-     */
-    private static HdmiCecMessage buildMessage(String message) {
-        String[] parts = message.split(":");
-        int src = Integer.parseInt(parts[0].substring(0, 1), 16);
-        int dest = Integer.parseInt(parts[0].substring(1, 2), 16);
-        int opcode = Integer.parseInt(parts[1], 16);
-        byte[] params = new byte[parts.length - 2];
-        for (int i = 0; i < params.length; i++) {
-            params[i] = (byte) Integer.parseInt(parts[i + 2], 16);
-        }
-        return new HdmiCecMessage(src, dest, opcode, params);
+    @Test
+    public void isValid_reportPhysicalAddress() {
+        assertMessageValidity("4F:84:10:00:04").isEqualTo(OK);
+        assertMessageValidity("0F:84:00:00:00").isEqualTo(OK);
+
+        assertMessageValidity("4F:84:10:00").isEqualTo(ERROR_PARAMETER_SHORT);
+        assertMessageValidity("0F:84:00").isEqualTo(ERROR_PARAMETER_SHORT);
+        assertMessageValidity("40:84:10:00:04").isEqualTo(ERROR_DESTINATION);
+        // Invalid Physical Address
+        assertMessageValidity("4F:84:10:10:04").isEqualTo(ERROR_PARAMETER);
+        assertMessageValidity("0F:84:00:30:00").isEqualTo(ERROR_PARAMETER);
+        // Invalid Device Type
+        assertMessageValidity("4F:84:12:34:08").isEqualTo(ERROR_PARAMETER);
+    }
+
+    @Test
+    public void isValid_routingChange() {
+        assertMessageValidity("0F:80:10:00:40:00").isEqualTo(OK);
+        assertMessageValidity("4F:80:12:00:50:00").isEqualTo(OK);
+
+        assertMessageValidity("0F:80:10:00:40").isEqualTo(ERROR_PARAMETER_SHORT);
+        assertMessageValidity("40:80:12:00:50:00").isEqualTo(ERROR_DESTINATION);
+        assertMessageValidity("0F:80:10:01:40:00").isEqualTo(ERROR_PARAMETER);
+        assertMessageValidity("4F:80:12:00:50:50").isEqualTo(ERROR_PARAMETER);
+    }
+
+    private IntegerSubject assertMessageValidity(String message) {
+        return assertThat(mHdmiCecMessageValidator.isValid(HdmiUtils.buildMessage(message)));
     }
 }

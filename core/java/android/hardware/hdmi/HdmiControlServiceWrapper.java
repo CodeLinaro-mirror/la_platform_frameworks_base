@@ -67,6 +67,16 @@ public final class HdmiControlServiceWrapper {
         }
 
         @Override
+        public void toggleAndFollowTvPower() {
+            HdmiControlServiceWrapper.this.toggleAndFollowTvPower();
+        }
+
+        @Override
+        public boolean shouldHandleTvPowerKey() {
+            return HdmiControlServiceWrapper.this.shouldHandleTvPowerKey();
+        }
+
+        @Override
         public void queryDisplayStatus(IHdmiControlCallback callback) {
             HdmiControlServiceWrapper.this.queryDisplayStatus(callback);
         }
@@ -296,6 +306,18 @@ public final class HdmiControlServiceWrapper {
         }
 
         @Override
+        public void addCecSettingChangeListener(String name,
+                IHdmiCecSettingChangeListener listener) {
+            HdmiControlServiceWrapper.this.addCecSettingChangeListener(name, listener);
+        }
+
+        @Override
+        public void removeCecSettingChangeListener(String name,
+                IHdmiCecSettingChangeListener listener) {
+            HdmiControlServiceWrapper.this.removeCecSettingChangeListener(name, listener);
+        }
+
+        @Override
         public List<String> getUserCecSettings() {
             return HdmiControlServiceWrapper.this.getUserCecSettings();
         }
@@ -358,6 +380,14 @@ public final class HdmiControlServiceWrapper {
 
     /** @hide */
     public void oneTouchPlay(IHdmiControlCallback callback) {}
+
+    /** @hide */
+    public void toggleAndFollowTvPower() {}
+
+    /** @hide */
+    public boolean shouldHandleTvPowerKey() {
+        return true;
+    }
 
     /** @hide */
     public void queryDisplayStatus(IHdmiControlCallback callback) {}
@@ -502,6 +532,14 @@ public final class HdmiControlServiceWrapper {
     /** @hide */
     public void removeHdmiCecVolumeControlFeatureListener(
             IHdmiCecVolumeControlFeatureListener listener) {}
+
+    /** @hide */
+    public void addCecSettingChangeListener(String name,
+            IHdmiCecSettingChangeListener listener) {}
+
+    /** @hide */
+    public void removeCecSettingChangeListener(String name,
+            IHdmiCecSettingChangeListener listener) {}
 
     /** @hide */
     public List<String> getUserCecSettings() {

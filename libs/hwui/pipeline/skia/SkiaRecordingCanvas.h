@@ -43,7 +43,7 @@ public:
         initDisplayList(renderNode, width, height);
     }
 
-    virtual uirenderer::DisplayList* finishRecording() override;
+    virtual uirenderer::DisplayList finishRecording() override;
 
     virtual void drawBitmap(Bitmap& bitmap, float left, float top, const Paint* paint) override;
     virtual void drawBitmap(Bitmap& bitmap, const SkMatrix& matrix, const Paint* paint) override;
@@ -66,6 +66,12 @@ public:
                             uirenderer::CanvasPropertyPrimitive* y,
                             uirenderer::CanvasPropertyPrimitive* radius,
                             uirenderer::CanvasPropertyPaint* paint) override;
+    virtual void drawRipple(uirenderer::CanvasPropertyPrimitive* x,
+                            uirenderer::CanvasPropertyPrimitive* y,
+                            uirenderer::CanvasPropertyPrimitive* radius,
+                            uirenderer::CanvasPropertyPaint* paint,
+                            uirenderer::CanvasPropertyPrimitive* progress,
+                            const SkRuntimeShaderBuilder& effectBuilder) override;
 
     virtual void drawVectorDrawable(VectorDrawableRoot* vectorDrawable) override;
 

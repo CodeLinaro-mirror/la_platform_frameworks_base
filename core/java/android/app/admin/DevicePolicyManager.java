@@ -53,7 +53,6 @@ import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.ParceledListSlice;
 import android.content.pm.UserInfo;
 import android.graphics.Bitmap;
-import android.net.NetworkUtils;
 import android.net.PrivateDnsConnectivityChecker;
 import android.net.ProxyInfo;
 import android.net.Uri;
@@ -87,9 +86,11 @@ import android.service.restrictions.RestrictionsReceiver;
 import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
 import android.util.ArraySet;
+import android.util.DebugUtils;
 import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.net.NetworkUtilsInternal;
 import com.android.internal.os.BackgroundThread;
 import com.android.internal.util.Preconditions;
 import com.android.org.conscrypt.TrustedCertificateStore;
@@ -304,7 +305,13 @@ public class DevicePolicyManager {
      * of the provisioning flow was successful, although this doesn't guarantee the full flow will
      * succeed. Conversely a result code of {@link android.app.Activity#RESULT_CANCELED} implies
      * that the user backed-out of provisioning, or some precondition for provisioning wasn't met.
+     *
+     * @deprecated admin apps must now implement activities with intent filters for the {@link
+     * #ACTION_GET_PROVISIONING_MODE} and {@link #ACTION_ADMIN_POLICY_COMPLIANCE} intent actions;
+     * using {@link #ACTION_PROVISION_MANAGED_DEVICE} to start provisioning will cause the
+     * provisioning to fail.
      */
+    @Deprecated
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_PROVISION_MANAGED_DEVICE
         = "android.app.action.PROVISION_MANAGED_DEVICE";
@@ -596,6 +603,12 @@ public class DevicePolicyManager {
      * properties will be converted into a {@link android.os.PersistableBundle} and passed to the
      * management application after provisioning.
      *
+     * <p>Admin apps will receive this extra in their {@link #ACTION_GET_PROVISIONING_MODE} and
+     * {@link #ACTION_ADMIN_POLICY_COMPLIANCE} intent handlers. Additionally, {@link
+     * #ACTION_GET_PROVISIONING_MODE} may also return this extra which will then be sent over to
+     * {@link #ACTION_ADMIN_POLICY_COMPLIANCE}, alongside the original values that were passed to
+     * {@link #ACTION_GET_PROVISIONING_MODE}.
+     *
      * <p>
      * In both cases the application receives the data in
      * {@link DeviceAdminReceiver#onProfileProvisioningComplete} via an intent with the action
@@ -653,7 +666,9 @@ public class DevicePolicyManager {
      * profile provisioning. If the account supplied is present in the primary user, it will be
      * copied, along with its credentials to the managed profile and removed from the primary user.
      *
-     * Use with {@link #ACTION_PROVISION_MANAGED_PROFILE}.
+     * Use with {@link #ACTION_PROVISION_MANAGED_PROFILE}, with managed account provisioning, or
+     * return as an extra to the intent result from the {@link #ACTION_GET_PROVISIONING_MODE}
+     * activity.
      */
 
     public static final String EXTRA_PROVISIONING_ACCOUNT_TO_MIGRATE
@@ -667,8 +682,10 @@ public class DevicePolicyManager {
      *
      * <p> Defaults to {@code false}
      *
-     * <p> Use with {@link #ACTION_PROVISION_MANAGED_PROFILE} and
-     * {@link #EXTRA_PROVISIONING_ACCOUNT_TO_MIGRATE}
+     * <p> Use with {@link #ACTION_PROVISION_MANAGED_PROFILE} or set as an extra to the
+     * intent result of the {@link #ACTION_GET_PROVISIONING_MODE} activity.
+     *
+     * @see #EXTRA_PROVISIONING_ACCOUNT_TO_MIGRATE
      */
     public static final String EXTRA_PROVISIONING_KEEP_ACCOUNT_ON_MIGRATION
             = "android.app.extra.PROVISIONING_KEEP_ACCOUNT_ON_MIGRATION";
@@ -695,8 +712,9 @@ public class DevicePolicyManager {
      * A Boolean extra that can be used by the mobile device management application to skip the
      * disabling of system apps during provisioning when set to {@code true}.
      *
-     * <p>Use in an NFC record with {@link #MIME_TYPE_PROVISIONING_NFC} or an intent with action
-     * {@link #ACTION_PROVISION_MANAGED_DEVICE} that starts device owner provisioning.
+     * <p>Use in an NFC record with {@link #MIME_TYPE_PROVISIONING_NFC}, an intent with action
+     * {@link #ACTION_PROVISION_MANAGED_PROFILE} that starts profile owner provisioning or
+     * set as an extra to the intent result of the {@link #ACTION_GET_PROVISIONING_MODE} activity.
      */
     public static final String EXTRA_PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED =
             "android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED";
@@ -1173,27 +1191,15 @@ public class DevicePolicyManager {
             "android.app.extra.PROVISIONING_DISCLAIMER_CONTENT";
 
     /**
-     * A boolean extra indicating if user setup should be skipped, for when provisioning is started
-     * during setup-wizard.
-     *
-     * <p>If unspecified, defaults to {@code true} to match the behavior in
-     * {@link android.os.Build.VERSION_CODES#M} and earlier.
-     *
-     * <p>Use in an intent with action {@link #ACTION_PROVISION_MANAGED_DEVICE} or
-     * {@link #ACTION_PROVISION_MANAGED_USER}.
-     *
-     * @hide
-     */
-    public static final String EXTRA_PROVISIONING_SKIP_USER_SETUP =
-            "android.app.extra.PROVISIONING_SKIP_USER_SETUP";
-
-    /**
      * A boolean extra indicating if the user consent steps from the provisioning flow should be
      * skipped. If unspecified, defaults to {@code false}.
      *
      * It can only be used by an existing device owner trying to create a managed profile via
      * {@link #ACTION_PROVISION_MANAGED_PROFILE}. Otherwise it is ignored.
+     *
+     * @deprecated this extra is no longer relevant as device owners cannot create managed profiles
      */
+    @Deprecated
     public static final String EXTRA_PROVISIONING_SKIP_USER_CONSENT =
             "android.app.extra.PROVISIONING_SKIP_USER_CONSENT";
 
@@ -1205,7 +1211,7 @@ public class DevicePolicyManager {
      * <ul>
      * <li>By the admin app when performing the admin-integrated
      * provisioning flow as a result of the {@link #ACTION_GET_PROVISIONING_MODE} activity</li>
-     * <li>With intent action {@link #ACTION_PROVISION_MANAGED_DEVICE}</li>
+     * <li>For managed account enrollment</li>
      * </ul>
      *
      * <p>If the education screens are skipped, it is the admin application's responsibility
@@ -1228,9 +1234,38 @@ public class DevicePolicyManager {
             "android.app.extra.PROVISIONING_USE_MOBILE_DATA";
 
     /**
+     * Possible values for {@link #EXTRA_PROVISIONING_TRIGGER}.
+     *
+     * @hide
+     */
+    @IntDef(prefix = { "PROVISIONING_TRIGGER_" }, value = {
+            PROVISIONING_TRIGGER_UNSPECIFIED,
+            PROVISIONING_TRIGGER_CLOUD_ENROLLMENT,
+            PROVISIONING_TRIGGER_QR_CODE,
+            PROVISIONING_TRIGGER_PERSISTENT_DEVICE_OWNER,
+            PROVISIONING_TRIGGER_MANAGED_ACCOUNT
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface ProvisioningTrigger {}
+
+    /**
+     * Possible values for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES}.
+     *
+     * @hide
+     */
+    @IntDef(prefix = { "SUPPORTED_MODES_" }, value = {
+            SUPPORTED_MODES_ORGANIZATION_OWNED,
+            SUPPORTED_MODES_PERSONALLY_OWNED,
+            SUPPORTED_MODES_ORGANIZATION_AND_PERSONALLY_OWNED,
+            SUPPORTED_MODES_DEVICE_OWNER
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface ProvisioningConfiguration {}
+
+    /**
      * A String extra holding the provisioning trigger. It could be one of
      * {@link #PROVISIONING_TRIGGER_CLOUD_ENROLLMENT}, {@link #PROVISIONING_TRIGGER_QR_CODE},
-     * {@link #PROVISIONING_TRIGGER_PERSISTENT_DEVICE_OWNER} or {@link
+     * {@link #PROVISIONING_TRIGGER_MANAGED_ACCOUNT} or {@link
      * #PROVISIONING_TRIGGER_UNSPECIFIED}.
      *
      * <p>Use in an intent with action {@link
@@ -1246,7 +1281,7 @@ public class DevicePolicyManager {
      * trigger has not been specified.
      * @see #PROVISIONING_TRIGGER_CLOUD_ENROLLMENT
      * @see #PROVISIONING_TRIGGER_QR_CODE
-     * @see #PROVISIONING_TRIGGER_PERSISTENT_DEVICE_OWNER
+     * @see #PROVISIONING_TRIGGER_MANAGED_ACCOUNT
      * @hide
      */
     @SystemApi
@@ -1256,7 +1291,7 @@ public class DevicePolicyManager {
      * A value for {@link #EXTRA_PROVISIONING_TRIGGER} indicating that the provisioning
      * trigger is cloud enrollment.
      * @see #PROVISIONING_TRIGGER_QR_CODE
-     * @see #PROVISIONING_TRIGGER_PERSISTENT_DEVICE_OWNER
+     * @see #PROVISIONING_TRIGGER_MANAGED_ACCOUNT
      * @see #PROVISIONING_TRIGGER_UNSPECIFIED
      * @hide
      */
@@ -1267,7 +1302,7 @@ public class DevicePolicyManager {
      * A value for {@link #EXTRA_PROVISIONING_TRIGGER} indicating that the provisioning
      * trigger is the QR code scanner.
      * @see #PROVISIONING_TRIGGER_CLOUD_ENROLLMENT
-     * @see #PROVISIONING_TRIGGER_PERSISTENT_DEVICE_OWNER
+     * @see #PROVISIONING_TRIGGER_MANAGED_ACCOUNT
      * @see #PROVISIONING_TRIGGER_UNSPECIFIED
      * @hide
      */
@@ -1277,13 +1312,85 @@ public class DevicePolicyManager {
     /**
      * A value for {@link #EXTRA_PROVISIONING_TRIGGER} indicating that the provisioning
      * trigger is persistent device owner enrollment.
+     * @deprecated Use the broader {@link #PROVISIONING_TRIGGER_MANAGED_ACCOUNT} instead
      * @see #PROVISIONING_TRIGGER_CLOUD_ENROLLMENT
      * @see #PROVISIONING_TRIGGER_QR_CODE
      * @see #PROVISIONING_TRIGGER_UNSPECIFIED
      * @hide
      */
     @SystemApi
+    @Deprecated
     public static final int PROVISIONING_TRIGGER_PERSISTENT_DEVICE_OWNER = 3;
+
+    /**
+     * A value for {@link #EXTRA_PROVISIONING_TRIGGER} indicating that the provisioning
+     * trigger is managed account enrollment.
+     * @see #PROVISIONING_TRIGGER_CLOUD_ENROLLMENT
+     * @see #PROVISIONING_TRIGGER_QR_CODE
+     * @see #PROVISIONING_TRIGGER_UNSPECIFIED
+     * @hide
+     */
+    @SystemApi
+    public static final int PROVISIONING_TRIGGER_MANAGED_ACCOUNT = 4;
+
+    /**
+     * A value for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES} indicating that provisioning is
+     * organization-owned.
+     *
+     * <p>Using this value will cause the admin app's {@link #ACTION_GET_PROVISIONING_MODE}
+     * activity to have the {@link #EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES} array extra
+     * contain {@link #PROVISIONING_MODE_MANAGED_PROFILE} and {@link
+     * #PROVISIONING_MODE_FULLY_MANAGED_DEVICE}.
+     *
+     * <p>Also, if this value is set, the admin app's {@link #ACTION_GET_PROVISIONING_MODE} activity
+     * will not receive the {@link #EXTRA_PROVISIONING_IMEI} and {@link
+     * #EXTRA_PROVISIONING_SERIAL_NUMBER} extras.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final int SUPPORTED_MODES_ORGANIZATION_OWNED = 1;
+
+    /**
+     * A value for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES} indicating that provisioning is
+     * personally-owned.
+     *
+     * <p>Using this value will cause the admin app's {@link #ACTION_GET_PROVISIONING_MODE}
+     * activity to have the {@link #EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES} array extra
+     * contain only {@link #PROVISIONING_MODE_MANAGED_PROFILE}.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final int SUPPORTED_MODES_PERSONALLY_OWNED = 2;
+
+    /**
+     * A value for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES} indicating that provisioning could
+     * be organization-owned or personally-owned.
+     *
+     * <p>Using this value will cause the admin app's {@link #ACTION_GET_PROVISIONING_MODE}
+     * activity to have the {@link #EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES} array extra
+     * contain {@link
+     * #PROVISIONING_MODE_MANAGED_PROFILE}, {@link #PROVISIONING_MODE_FULLY_MANAGED_DEVICE} and
+     * {@link #PROVISIONING_MODE_MANAGED_PROFILE_ON_PERSONAL_DEVICE}.
+     *
+     * <p>Also, if this value is set, the admin app's {@link #ACTION_GET_PROVISIONING_MODE} activity
+     * will not receive the {@link #EXTRA_PROVISIONING_IMEI} and {@link
+     * #EXTRA_PROVISIONING_SERIAL_NUMBER} extras.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final int SUPPORTED_MODES_ORGANIZATION_AND_PERSONALLY_OWNED = 3;
+
+    /**
+     * A value for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES} indicating that the only supported
+     * provisioning mode is device owner.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final int SUPPORTED_MODES_DEVICE_OWNER = 4;
 
     /**
      * This MIME type is used for starting the device owner provisioning.
@@ -1963,7 +2070,9 @@ public class DevicePolicyManager {
     /**
      * Result code for {@link #checkProvisioningPreCondition}.
      *
-     * <p>Returned for {@link #ACTION_PROVISION_MANAGED_USER} if the user is a system user.
+     * <p>Returned for {@link #ACTION_PROVISION_MANAGED_USER} if the user is a system user and
+     * for {@link #ACTION_PROVISION_MANAGED_DEVICE} on devices running headless system user mode
+     * and the user is a system user.
      *
      * @hide
      */
@@ -2361,6 +2470,16 @@ public class DevicePolicyManager {
      * <p>The target activity may also return the account that needs to be migrated from primary
      * user to managed profile in case of a profile owner provisioning in
      * {@link #EXTRA_PROVISIONING_ACCOUNT_TO_MIGRATE} as result.
+     *
+     * <p>The target activity may also include the {@link #EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE}
+     * extra in the intent result. The values of this {@link android.os.PersistableBundle} will be
+     * sent as an intent extra of the same name to the {@link #ACTION_ADMIN_POLICY_COMPLIANCE}
+     * activity, along with the values of the {@link #EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE} extra
+     * that are already supplied to this activity.
+     *
+     * @see #EXTRA_PROVISIONING_KEEP_ACCOUNT_ON_MIGRATION
+     * @see #EXTRA_PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED
+     * @see #ACTION_ADMIN_POLICY_COMPLIANCE
      */
     public static final String ACTION_GET_PROVISIONING_MODE =
             "android.app.action.GET_PROVISIONING_MODE";
@@ -2378,14 +2497,72 @@ public class DevicePolicyManager {
 
     /**
      * An intent extra holding the provisioning mode returned by the administrator.
-     * The value for this extra should be one of the following:
-     * <ul>
-     *     <li>{@link #PROVISIONING_MODE_FULLY_MANAGED_DEVICE}</li>
-     *     <li>{@link #PROVISIONING_MODE_MANAGED_PROFILE}</li>
-     * </ul>
+     * The value of this extra must be one of the values provided in {@link
+     * #EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES}, which is provided as an intent extra to
+     * the admin app's {@link #ACTION_GET_PROVISIONING_MODE} activity.
+     *
+     * @see #PROVISIONING_MODE_FULLY_MANAGED_DEVICE
+     * @see #PROVISIONING_MODE_MANAGED_PROFILE
      */
     public static final String EXTRA_PROVISIONING_MODE =
             "android.app.extra.PROVISIONING_MODE";
+
+    /**
+     * An integer extra indication what provisioning modes should be available for the admin app
+     * to pick.
+     *
+     * <p>The default value is {@link #SUPPORTED_MODES_ORGANIZATION_OWNED}.
+     *
+     * <p>The value of this extra will determine the contents of the {@link
+     * #EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES} array that is passed to the admin app as an
+     * extra to its {@link #ACTION_GET_PROVISIONING_MODE} activity.
+     *
+     * <p>If one of the possible admin app choices is a personally-owned work profile, then the
+     * IMEI and serial number will not be passed to the admin app's {@link
+     * #ACTION_GET_PROVISIONING_MODE} activity via the {@link #EXTRA_PROVISIONING_IMEI} and {@link
+     * #EXTRA_PROVISIONING_SERIAL_NUMBER} respectively.
+     *
+     * <p>This extra is only respected when provided alongside the {@link
+     * #ACTION_PROVISION_MANAGED_DEVICE_FROM_TRUSTED_SOURCE} intent action.
+     *
+     * @see #SUPPORTED_MODES_ORGANIZATION_OWNED
+     * @see #SUPPORTED_MODES_PERSONALLY_OWNED
+     * @see #SUPPORTED_MODES_ORGANIZATION_AND_PERSONALLY_OWNED
+     * @see #SUPPORTED_MODES_DEVICE_OWNER
+     * @hide
+     */
+    @SystemApi
+    public static final String EXTRA_PROVISIONING_SUPPORTED_MODES =
+            "android.app.extra.PROVISIONING_SUPPORTED_MODES";
+
+    /**
+     * A boolean extra which determines whether to skip the ownership disclaimer screen during the
+     * provisioning flow. The default value is {@code false}.
+     *
+     * If the value is {@code true}, it is the responsibility of the provisioning initiator to
+     * show the relevant disclaimer.
+     *
+     * <p>This extra is only respected when provided alongside the {@link
+     * #ACTION_PROVISION_MANAGED_DEVICE_FROM_TRUSTED_SOURCE} intent action.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String EXTRA_PROVISIONING_SKIP_OWNERSHIP_DISCLAIMER =
+            "android.app.extra.PROVISIONING_SKIP_OWNERSHIP_DISCLAIMER";
+
+    /**
+     * An {@link ArrayList} of {@link Integer} extra specifying the allowed provisioning modes.
+     * <p>This extra will be passed to the admin app's {@link #ACTION_GET_PROVISIONING_MODE}
+     * activity, whose result intent must contain {@link #EXTRA_PROVISIONING_MODE} set to one of
+     * the values in this array.
+     * <p>If the value set to {@link #EXTRA_PROVISIONING_MODE} is not in the array,
+     * provisioning will fail.
+     * @see #PROVISIONING_MODE_MANAGED_PROFILE
+     * @see #PROVISIONING_MODE_FULLY_MANAGED_DEVICE
+     */
+    public static final String EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES =
+            "android.app.extra.PROVISIONING_ALLOWED_PROVISIONING_MODES";
 
     /**
      * The provisioning mode for fully managed device.
@@ -2398,12 +2575,46 @@ public class DevicePolicyManager {
     public static final int PROVISIONING_MODE_MANAGED_PROFILE = 2;
 
     /**
+     * The provisioning mode for a work profile on a personal device.
+     */
+    public static final int PROVISIONING_MODE_MANAGED_PROFILE_ON_PERSONAL_DEVICE = 3;
+
+    /**
+     * A {@code boolean} flag that indicates whether the provisioning flow should return before
+     * starting the admin app's {@link #ACTION_ADMIN_POLICY_COMPLIANCE} handler. The default value
+     * is {@code true}.
+     *
+     * <p>If this extra is set to {@code true}, then when the provisioning flow returns back to the
+     * provisioning initiator, provisioning will not be complete. The provisioning initiator can
+     * use this opportunity to do its own preparatory steps prior to the launch of the admin app's
+     * {@link #ACTION_ADMIN_POLICY_COMPLIANCE} handler. It is the responsibility of the
+     * provisioning initiator to ensure that the provisioning flow is then resumed and completed.
+     *
+     * <p>If this extra is set to {@code false}, then when the provisioning flow returns back to
+     * the provisioning initiator, provisioning will be complete. Note that device owner
+     * provisioning is not currently supported for the this scenario.
+     *
+     * <p>This extra is only respected when provided alongside the {@link
+     * #ACTION_PROVISION_MANAGED_DEVICE_FROM_TRUSTED_SOURCE} intent action.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String EXTRA_PROVISIONING_RETURN_BEFORE_POLICY_COMPLIANCE =
+            "android.app.extra.PROVISIONING_RETURN_BEFORE_POLICY_COMPLIANCE";
+
+    /**
      * Activity action: Starts the administrator to show policy compliance for the provisioning.
      * This action is used any time that the administrator has an opportunity to show policy
      * compliance before the end of setup wizard. This could happen as part of the admin-integrated
      * provisioning flow (in which case this gets sent after {@link #ACTION_GET_PROVISIONING_MODE}),
      * or it could happen during provisioning finalization if the administrator supports
      * finalization during setup wizard.
+     *
+     * <p>Intents with this action may also be supplied with the {@link
+     * #EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE} extra.
+     *
+     * @see #ACTION_GET_PROVISIONING_MODE
      */
     public static final String ACTION_ADMIN_POLICY_COMPLIANCE =
             "android.app.action.ADMIN_POLICY_COMPLIANCE";
@@ -2456,14 +2667,189 @@ public class DevicePolicyManager {
     /** @hide */
     @TestApi
     public static final int OPERATION_LOCK_NOW = 1;
-
-    // TODO(b/172376923) - add all operations
     /** @hide */
-    @IntDef(prefix = "OPERATION_", value = {
+    @TestApi
+    public static final int OPERATION_SWITCH_USER = 2;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_START_USER_IN_BACKGROUND = 3;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_STOP_USER = 4;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_CREATE_AND_MANAGE_USER = 5;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_REMOVE_USER = 6;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_REBOOT = 7;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_WIPE_DATA = 8;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_LOGOUT_USER = 9;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_USER_RESTRICTION = 10;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_SYSTEM_SETTING = 11;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_KEYGUARD_DISABLED = 12;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_STATUS_BAR_DISABLED = 13;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_SYSTEM_UPDATE_POLICY = 14;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_APPLICATION_HIDDEN = 15;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_APPLICATION_RESTRICTIONS = 16;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_KEEP_UNINSTALLED_PACKAGES = 17;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_LOCK_TASK_FEATURES = 18;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_LOCK_TASK_PACKAGES = 19;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_PACKAGES_SUSPENDED = 20;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_TRUST_AGENT_CONFIGURATION = 21;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_USER_CONTROL_DISABLED_PACKAGES = 22;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_CLEAR_APPLICATION_USER_DATA = 23;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_INSTALL_CA_CERT = 24;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_INSTALL_KEY_PAIR = 25;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_INSTALL_SYSTEM_UPDATE = 26;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_REMOVE_ACTIVE_ADMIN = 27;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_REMOVE_KEY_PAIR = 28;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_REQUEST_BUGREPORT = 29;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_ALWAYS_ON_VPN_PACKAGE = 30;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_CAMERA_DISABLED = 31;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_FACTORY_RESET_PROTECTION_POLICY = 32;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_GLOBAL_PRIVATE_DNS = 33;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_LOGOUT_ENABLED = 34;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_MASTER_VOLUME_MUTED = 35;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_OVERRIDE_APNS_ENABLED = 36;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_PERMISSION_GRANT_STATE = 37;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_PERMISSION_POLICY = 38;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_SET_RESTRICTIONS_PROVIDER = 39;
+    /** @hide */
+    @TestApi
+    public static final int OPERATION_UNINSTALL_CA_CERT = 40;
+
+    private static final String PREFIX_OPERATION = "OPERATION_";
+
+    /** @hide */
+    @IntDef(prefix = PREFIX_OPERATION, value = {
             OPERATION_LOCK_NOW,
+            OPERATION_SWITCH_USER,
+            OPERATION_START_USER_IN_BACKGROUND,
+            OPERATION_STOP_USER,
+            OPERATION_CREATE_AND_MANAGE_USER,
+            OPERATION_REMOVE_USER,
+            OPERATION_REBOOT,
+            OPERATION_WIPE_DATA,
+            OPERATION_LOGOUT_USER,
+            OPERATION_SET_USER_RESTRICTION,
+            OPERATION_SET_SYSTEM_SETTING,
+            OPERATION_SET_KEYGUARD_DISABLED,
+            OPERATION_SET_STATUS_BAR_DISABLED,
+            OPERATION_SET_SYSTEM_UPDATE_POLICY,
+            OPERATION_SET_APPLICATION_HIDDEN,
+            OPERATION_SET_APPLICATION_RESTRICTIONS,
+            OPERATION_SET_KEEP_UNINSTALLED_PACKAGES,
+            OPERATION_SET_LOCK_TASK_FEATURES,
+            OPERATION_SET_LOCK_TASK_PACKAGES,
+            OPERATION_SET_PACKAGES_SUSPENDED,
+            OPERATION_SET_TRUST_AGENT_CONFIGURATION,
+            OPERATION_SET_USER_CONTROL_DISABLED_PACKAGES,
+            OPERATION_CLEAR_APPLICATION_USER_DATA,
+            OPERATION_INSTALL_CA_CERT,
+            OPERATION_INSTALL_KEY_PAIR,
+            OPERATION_INSTALL_SYSTEM_UPDATE,
+            OPERATION_REMOVE_ACTIVE_ADMIN,
+            OPERATION_REMOVE_KEY_PAIR,
+            OPERATION_REQUEST_BUGREPORT,
+            OPERATION_SET_ALWAYS_ON_VPN_PACKAGE,
+            OPERATION_SET_CAMERA_DISABLED,
+            OPERATION_SET_FACTORY_RESET_PROTECTION_POLICY,
+            OPERATION_SET_GLOBAL_PRIVATE_DNS,
+            OPERATION_SET_LOGOUT_ENABLED,
+            OPERATION_SET_MASTER_VOLUME_MUTED,
+            OPERATION_SET_OVERRIDE_APNS_ENABLED,
+            OPERATION_SET_PERMISSION_GRANT_STATE,
+            OPERATION_SET_PERMISSION_POLICY,
+            OPERATION_SET_RESTRICTIONS_PROVIDER,
+            OPERATION_UNINSTALL_CA_CERT
     })
     @Retention(RetentionPolicy.SOURCE)
     public static @interface DevicePolicyOperation {
+    }
+
+    /** @hide */
+    @TestApi
+    @NonNull
+    public static String operationToString(@DevicePolicyOperation int operation) {
+        return DebugUtils.constantToString(DevicePolicyManager.class, PREFIX_OPERATION, operation);
+    }
+
+    /** @hide */
+    public void resetNewUserDisclaimer() {
+        if (mService != null) {
+            try {
+                mService.resetNewUserDisclaimer();
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+        }
     }
 
     /**
@@ -2748,22 +3134,45 @@ public class DevicePolicyManager {
      * {@link DeviceAdminInfo#USES_POLICY_LIMIT_PASSWORD} to be able to call this method; if it has
      * not, a security exception will be thrown.
      * <p>
-     * This method can be called on the {@link DevicePolicyManager} instance returned by
+     * Apps targeting {@link android.os.Build.VERSION_CODES#R} and below can call this method on the
+     * {@link DevicePolicyManager} instance returned by
      * {@link #getParentProfileInstance(ComponentName)} in order to set restrictions on the parent
-     * profile.
+     * profile. Apps targeting {@link android.os.Build.VERSION_CODES#S} and above, with the
+     * exception of a profile owner on an organization-owned device (as can be identified by
+     * {@link #isOrganizationOwnedDeviceWithManagedProfile}), will get a
+     * {@code IllegalArgumentException} when calling this method on the parent
+     * {@link DevicePolicyManager} instance.
      *
      * <p><strong>Note:</strong> Specifying password requirements using this method clears the
      * password complexity requirements set using {@link #setRequiredPasswordComplexity(int)}.
+     * If this method is called on the {@link DevicePolicyManager} instance returned by
+     * {@link #getParentProfileInstance(ComponentName)}, then password complexity requirements
+     * set on the primary {@link DevicePolicyManager} must be cleared first by calling
+     * {@link #setRequiredPasswordComplexity} with {@link #PASSWORD_COMPLEXITY_NONE) first.
      *
+     * @deprecated Prefer using {@link #setRequiredPasswordComplexity(int)}, to require a password
+     * that satisfies a complexity level defined by the platform, rather than specifying custom
+     * password requirement.
+     * Setting custom, overly-complicated password requirements leads to passwords that are hard
+     * for users to remember and may not provide any security benefits given as Android uses
+     * hardware-backed throttling to thwart online and offline brute-forcing of the device's
+     * screen lock.
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with.
      * @param quality The new desired quality. One of {@link #PASSWORD_QUALITY_UNSPECIFIED},
      *            {@link #PASSWORD_QUALITY_BIOMETRIC_WEAK},
      *            {@link #PASSWORD_QUALITY_SOMETHING}, {@link #PASSWORD_QUALITY_NUMERIC},
      *            {@link #PASSWORD_QUALITY_NUMERIC_COMPLEX}, {@link #PASSWORD_QUALITY_ALPHABETIC},
      *            {@link #PASSWORD_QUALITY_ALPHANUMERIC} or {@link #PASSWORD_QUALITY_COMPLEX}.
-     * @throws SecurityException if {@code admin} is not an active administrator or if {@code admin}
-     *             does not use {@link DeviceAdminInfo#USES_POLICY_LIMIT_PASSWORD}
+     * @throws SecurityException if {@code admin} is not an active administrator, if {@code admin}
+     *             does not use {@link DeviceAdminInfo#USES_POLICY_LIMIT_PASSWORD} or if the
+     *             calling app is targeting {@link android.os.Build.VERSION_CODES#S} and above,
+     *             and is calling the method the {@link DevicePolicyManager} instance returned by
+     *             {@link #getParentProfileInstance(ComponentName)}.
+     * @throws IllegalStateException if the caller is trying to set password quality on the parent
+     *             {@link DevicePolicyManager} instance while password complexity was set on the
+     *             primary {@link DevicePolicyManager} instance.
      */
+    @Deprecated
     public void setPasswordQuality(@NonNull ComponentName admin, int quality) {
         if (mService != null) {
             try {
@@ -2786,9 +3195,12 @@ public class DevicePolicyManager {
      * <p>Note: on devices not supporting {@link PackageManager#FEATURE_SECURE_LOCK_SCREEN} feature,
      * the password is always treated as empty.
      *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
+     *
      * @param admin The name of the admin component to check, or {@code null} to aggregate
      * all admins.
      */
+    @Deprecated
     public int getPasswordQuality(@Nullable ComponentName admin) {
         return getPasswordQuality(admin, myUserId());
     }
@@ -2828,9 +3240,13 @@ public class DevicePolicyManager {
      * {@link DeviceAdminInfo#USES_POLICY_LIMIT_PASSWORD} to be able to call this method; if it has
      * not, a security exception will be thrown.
      * <p>
-     * This method can be called on the {@link DevicePolicyManager} instance returned by
+     *
+     * Apps targeting {@link android.os.Build.VERSION_CODES#R} and below can call this method on the
+     * {@link DevicePolicyManager} instance returned by
      * {@link #getParentProfileInstance(ComponentName)} in order to set restrictions on the parent
      * profile.
+     *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with.
      * @param length The new desired minimum password length. A value of 0 means there is no
@@ -2841,6 +3257,7 @@ public class DevicePolicyManager {
      *     {@link android.os.Build.VERSION_CODES#R} and above and didn't set a sufficient password
      *     quality requirement prior to calling this method.
      */
+    @Deprecated
     public void setPasswordMinimumLength(@NonNull ComponentName admin, int length) {
         if (mService != null) {
             try {
@@ -2863,9 +3280,12 @@ public class DevicePolicyManager {
      * returned by {@link #getParentProfileInstance(ComponentName)} in order to retrieve
      * restrictions on the parent profile.
      *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
+     *
      * @param admin The name of the admin component to check, or {@code null} to aggregate
      * all admins.
      */
+    @Deprecated
     public int getPasswordMinimumLength(@Nullable ComponentName admin) {
         return getPasswordMinimumLength(admin, myUserId());
     }
@@ -2903,9 +3323,13 @@ public class DevicePolicyManager {
      * {@link DeviceAdminInfo#USES_POLICY_LIMIT_PASSWORD} to be able to call this method; if it has
      * not, a security exception will be thrown.
      * <p>
-     * This method can be called on the {@link DevicePolicyManager} instance returned by
+     *
+     * Apps targeting {@link android.os.Build.VERSION_CODES#R} and below can call this method on the
+     * {@link DevicePolicyManager} instance returned by
      * {@link #getParentProfileInstance(ComponentName)} in order to set restrictions on the parent
      * profile.
+     *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with.
      * @param length The new desired minimum number of upper case letters required in the password.
@@ -2916,6 +3340,7 @@ public class DevicePolicyManager {
      *     {@link android.os.Build.VERSION_CODES#R} and above and didn't set a sufficient password
      *     quality requirement prior to calling this method.
      */
+    @Deprecated
     public void setPasswordMinimumUpperCase(@NonNull ComponentName admin, int length) {
         if (mService != null) {
             try {
@@ -2943,11 +3368,14 @@ public class DevicePolicyManager {
      * returned by {@link #getParentProfileInstance(ComponentName)} in order to retrieve
      * restrictions on the parent profile.
      *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
+     *
      * @param admin The name of the admin component to check, or {@code null} to
      *            aggregate all admins.
      * @return The minimum number of upper case letters required in the
      *         password.
      */
+    @Deprecated
     public int getPasswordMinimumUpperCase(@Nullable ComponentName admin) {
         return getPasswordMinimumUpperCase(admin, myUserId());
     }
@@ -2985,9 +3413,13 @@ public class DevicePolicyManager {
      * {@link DeviceAdminInfo#USES_POLICY_LIMIT_PASSWORD} to be able to call this method; if it has
      * not, a security exception will be thrown.
      * <p>
-     * This method can be called on the {@link DevicePolicyManager} instance returned by
+     *
+     * Apps targeting {@link android.os.Build.VERSION_CODES#R} and below can call this method on the
+     * {@link DevicePolicyManager} instance returned by
      * {@link #getParentProfileInstance(ComponentName)} in order to set restrictions on the parent
      * profile.
+     *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with.
      * @param length The new desired minimum number of lower case letters required in the password.
@@ -2998,6 +3430,7 @@ public class DevicePolicyManager {
      *     {@link android.os.Build.VERSION_CODES#R} and above and didn't set a sufficient password
      *     quality requirement prior to calling this method.
      */
+    @Deprecated
     public void setPasswordMinimumLowerCase(@NonNull ComponentName admin, int length) {
         if (mService != null) {
             try {
@@ -3025,11 +3458,14 @@ public class DevicePolicyManager {
      * returned by {@link #getParentProfileInstance(ComponentName)} in order to retrieve
      * restrictions on the parent profile.
      *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
+     *
      * @param admin The name of the admin component to check, or {@code null} to
      *            aggregate all admins.
      * @return The minimum number of lower case letters required in the
      *         password.
      */
+    @Deprecated
     public int getPasswordMinimumLowerCase(@Nullable ComponentName admin) {
         return getPasswordMinimumLowerCase(admin, myUserId());
     }
@@ -3067,9 +3503,13 @@ public class DevicePolicyManager {
      * {@link DeviceAdminInfo#USES_POLICY_LIMIT_PASSWORD} to be able to call this method; if it has
      * not, a security exception will be thrown.
      * <p>
-     * This method can be called on the {@link DevicePolicyManager} instance returned by
+     *
+     * Apps targeting {@link android.os.Build.VERSION_CODES#R} and below can call this method on the
+     * {@link DevicePolicyManager} instance returned by
      * {@link #getParentProfileInstance(ComponentName)} in order to set restrictions on the parent
      * profile.
+     *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with.
      * @param length The new desired minimum number of letters required in the password. A value of
@@ -3080,6 +3520,7 @@ public class DevicePolicyManager {
      *     {@link android.os.Build.VERSION_CODES#R} and above and didn't set a sufficient password
      *     quality requirement prior to calling this method.
      */
+    @Deprecated
     public void setPasswordMinimumLetters(@NonNull ComponentName admin, int length) {
         if (mService != null) {
             try {
@@ -3107,10 +3548,13 @@ public class DevicePolicyManager {
      * returned by {@link #getParentProfileInstance(ComponentName)} in order to retrieve
      * restrictions on the parent profile.
      *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
+     *
      * @param admin The name of the admin component to check, or {@code null} to
      *            aggregate all admins.
      * @return The minimum number of letters required in the password.
      */
+    @Deprecated
     public int getPasswordMinimumLetters(@Nullable ComponentName admin) {
         return getPasswordMinimumLetters(admin, myUserId());
     }
@@ -3148,9 +3592,13 @@ public class DevicePolicyManager {
      * {@link DeviceAdminInfo#USES_POLICY_LIMIT_PASSWORD} to be able to call this method; if it has
      * not, a security exception will be thrown.
      * <p>
-     * This method can be called on the {@link DevicePolicyManager} instance returned by
+     *
+     * Apps targeting {@link android.os.Build.VERSION_CODES#R} and below can call this method on the
+     * {@link DevicePolicyManager} instance returned by
      * {@link #getParentProfileInstance(ComponentName)} in order to set restrictions on the parent
      * profile.
+     *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with.
      * @param length The new desired minimum number of numerical digits required in the password. A
@@ -3161,6 +3609,7 @@ public class DevicePolicyManager {
      *     {@link android.os.Build.VERSION_CODES#R} and above and didn't set a sufficient password
      *     quality requirement prior to calling this method.
      */
+    @Deprecated
     public void setPasswordMinimumNumeric(@NonNull ComponentName admin, int length) {
         if (mService != null) {
             try {
@@ -3188,10 +3637,13 @@ public class DevicePolicyManager {
      * returned by {@link #getParentProfileInstance(ComponentName)} in order to retrieve
      * restrictions on the parent profile.
      *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
+     *
      * @param admin The name of the admin component to check, or {@code null} to
      *            aggregate all admins.
      * @return The minimum number of numerical digits required in the password.
      */
+    @Deprecated
     public int getPasswordMinimumNumeric(@Nullable ComponentName admin) {
         return getPasswordMinimumNumeric(admin, myUserId());
     }
@@ -3229,9 +3681,13 @@ public class DevicePolicyManager {
      * {@link DeviceAdminInfo#USES_POLICY_LIMIT_PASSWORD} to be able to call this method; if it has
      * not, a security exception will be thrown.
      * <p>
-     * This method can be called on the {@link DevicePolicyManager} instance returned by
+     *
+     * Apps targeting {@link android.os.Build.VERSION_CODES#R} and below can call this method on the
+     * {@link DevicePolicyManager} instance returned by
      * {@link #getParentProfileInstance(ComponentName)} in order to set restrictions on the parent
      * profile.
+     *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with.
      * @param length The new desired minimum number of symbols required in the password. A value of
@@ -3242,6 +3698,7 @@ public class DevicePolicyManager {
      *     {@link android.os.Build.VERSION_CODES#R} and above and didn't set a sufficient password
      *     quality requirement prior to calling this method.
      */
+    @Deprecated
     public void setPasswordMinimumSymbols(@NonNull ComponentName admin, int length) {
         if (mService != null) {
             try {
@@ -3268,10 +3725,13 @@ public class DevicePolicyManager {
      * returned by {@link #getParentProfileInstance(ComponentName)} in order to retrieve
      * restrictions on the parent profile.
      *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
+     *
      * @param admin The name of the admin component to check, or {@code null} to
      *            aggregate all admins.
      * @return The minimum number of symbols required in the password.
      */
+    @Deprecated
     public int getPasswordMinimumSymbols(@Nullable ComponentName admin) {
         return getPasswordMinimumSymbols(admin, myUserId());
     }
@@ -3309,9 +3769,13 @@ public class DevicePolicyManager {
      * {@link DeviceAdminInfo#USES_POLICY_LIMIT_PASSWORD} to be able to call this method; if it has
      * not, a security exception will be thrown.
      * <p>
-     * This method can be called on the {@link DevicePolicyManager} instance returned by
+     *
+     * Apps targeting {@link android.os.Build.VERSION_CODES#R} and below can call this method on the
+     * {@link DevicePolicyManager} instance returned by
      * {@link #getParentProfileInstance(ComponentName)} in order to set restrictions on the parent
      * profile.
+     *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with.
      * @param length The new desired minimum number of letters required in the password. A value of
@@ -3322,6 +3786,7 @@ public class DevicePolicyManager {
      *     {@link android.os.Build.VERSION_CODES#R} and above and didn't set a sufficient password
      *     quality requirement prior to calling this method.
      */
+    @Deprecated
     public void setPasswordMinimumNonLetter(@NonNull ComponentName admin, int length) {
         if (mService != null) {
             try {
@@ -3349,10 +3814,13 @@ public class DevicePolicyManager {
      * returned by {@link #getParentProfileInstance(ComponentName)} in order to retrieve
      * restrictions on the parent profile.
      *
+     * @deprecated see {@link #setPasswordQuality(ComponentName, int)} for details.
+     *
      * @param admin The name of the admin component to check, or {@code null} to
      *            aggregate all admins.
      * @return The minimum number of letters required in the password.
      */
+    @Deprecated
     public int getPasswordMinimumNonLetter(@Nullable ComponentName admin) {
         return getPasswordMinimumNonLetter(admin, myUserId());
     }
@@ -3628,6 +4096,51 @@ public class DevicePolicyManager {
     }
 
     /**
+     * Called by profile owner of a managed profile to determine whether the current device password
+     * meets policy requirements set explicitly device-wide.
+     * <p> This API is similar to {@link #isActivePasswordSufficient()}, with two notable
+     * differences:
+     * <ul>
+     * <li>this API always targets the device password. As a result it should always be called on
+     *   the {@link #getParentProfileInstance(ComponentName)} instance.</li>
+     * <li>password policy requirement set on the managed profile is not taken into consideration
+     *   by this API, even if the device currently does not have a separate work challenge set.</li>
+     * </ul>
+     *
+     * <p>This API is designed to facilite progressive password enrollment flows when the DPC
+     * imposes both device and profile password policies. DPC applies profile password policy by
+     * calling {@link #setPasswordQuality(ComponentName, int)} or
+     * {@link #setRequiredPasswordComplexity} on the regular {@link DevicePolicyManager} instance,
+     * while it applies device-wide policy by calling {@link #setRequiredPasswordComplexity} on the
+     * {@link #getParentProfileInstance(ComponentName)} instance. The DPC can utilize this check to
+     * guide the user to set a device password first taking into consideration the device-wide
+     * policy only, and then prompt the user to either upgrade it to be fully compliant, or enroll a
+     * separate work challenge to satisfy the profile password policy only.
+     *
+     * <p>The device user must be unlocked (@link {@link UserManager#isUserUnlocked(UserHandle)})
+     * to perform this check.
+     *
+     * @return {@code true} if the device password meets explicit requirement set on it,
+     *   {@code false} otherwise.
+     * @throws SecurityException if the calling application is not a profile owner of a managed
+     *   profile, or if this API is not called on the parent DevicePolicyManager instance.
+     * @throws IllegalStateException if the user isn't unlocked
+     */
+    public boolean isActivePasswordSufficientForDeviceRequirement() {
+        if (!mParentInstance) {
+            throw new SecurityException("only callable on the parent instance");
+        }
+        if (mService != null) {
+            try {
+                return mService.isActivePasswordSufficientForDeviceRequirement();
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+        }
+        return false;
+    }
+
+    /**
      * Returns how complex the current user's screen lock is.
      *
      * <p>Note that when called from a profile which uses an unified challenge with its parent, the
@@ -3674,10 +4187,18 @@ public class DevicePolicyManager {
      * <p><strong>Note:</strong> Specifying password requirements using this method clears any
      * password requirements set using the obsolete {@link #setPasswordQuality(ComponentName, int)}
      * and any of its associated methods.
+     * Additionally, if there are password requirements set using the obsolete
+     * {@link #setPasswordQuality(ComponentName, int)} on the parent {@code DevicePolicyManager}
+     * instance, they must be cleared by calling {@link #setPasswordQuality(ComponentName, int)}
+     * with {@link #PASSWORD_QUALITY_UNSPECIFIED} on that instance prior to setting complexity
+     * requirement for the managed profile.
      *
      * @throws SecurityException if the calling application is not a device owner or a profile
      * owner.
      * @throws IllegalArgumentException if the complexity level is not one of the four above.
+     * @throws IllegalStateException if the caller is trying to set password complexity while there
+     * are password requirements specified using {@link #setPasswordQuality(ComponentName, int)}
+     * on the parent {@code DevicePolicyManager} instance.
      */
     public void setRequiredPasswordComplexity(@PasswordComplexity int passwordComplexity) {
         if (mService == null) {
@@ -3719,6 +4240,27 @@ public class DevicePolicyManager {
             throw e.rethrowFromSystemServer();
         }
     }
+
+    /**
+     * Returns the password complexity that applies to this user, aggregated from other users if
+     * necessary (for example, if the DPC has set password complexity requirements on the parent
+     * profile DPM instance of a managed profile user, they would apply to the primary user on the
+     * device).
+     * @hide
+     */
+    @PasswordComplexity
+    public int getAggregatedPasswordComplexityForUser(int userId) {
+        if (mService == null) {
+            return PASSWORD_COMPLEXITY_NONE;
+        }
+
+        try {
+            return mService.getAggregatedPasswordComplexityForUser(userId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
 
     /**
      * When called by a profile owner of a managed profile returns true if the profile uses unified
@@ -4789,6 +5331,16 @@ public class DevicePolicyManager {
             "android.app.action.MANAGED_USER_CREATED";
 
     /**
+     * Broadcast action: notify system that a new (Android) user was added when the device is
+     * managed by a device owner, so receivers can show the proper disclaimer to the (human) user.
+     *
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_SHOW_NEW_USER_DISCLAIMER =
+            "android.app.action.ACTION_SHOW_NEW_USER_DISCLAIMER";
+
+    /**
      * Widgets are enabled in keyguard
      */
     public static final int KEYGUARD_DISABLE_FEATURES_NONE = 0;
@@ -5192,9 +5744,22 @@ public class DevicePolicyManager {
     }
 
     /**
-     * Called by a device or profile owner, or delegated certificate installer, to install a
-     * certificate and corresponding private key. All apps within the profile will be able to access
-     * the certificate and use the private key, given direct user approval.
+     * This API can be called by the following to install a certificate and corresponding
+     * private key:
+     * <ul>
+     *    <li>Device owner</li>
+     *    <li>Profile owner</li>
+     *    <li>Delegated certificate installer</li>
+     *    <li>Credential management app</li>
+     * </ul>
+     * All apps within the profile will be able to access the certificate and use the private key,
+     * given direct user approval.
+     *
+     * <p>From Android {@link android.os.Build.VERSION_CODES#S}, the credential management app
+     * can call this API. However, this API sets the key pair as user selectable by default,
+     * which is not permitted when called by the credential management app. Instead,
+     * {@link #installKeyPair(ComponentName, PrivateKey, Certificate[], String, int)} should be
+     * called with {@link #INSTALLKEY_SET_USER_SELECTABLE} not set as a flag.
      *
      * <p>Access to the installed credentials will not be granted to the caller of this API without
      * direct user approval. This is for security - should a certificate installer become
@@ -5225,10 +5790,23 @@ public class DevicePolicyManager {
     }
 
     /**
-     * Called by a device or profile owner, or delegated certificate installer, to install a
-     * certificate chain and corresponding private key for the leaf certificate. All apps within the
-     * profile will be able to access the certificate chain and use the private key, given direct
-     * user approval.
+     * This API can be called by the following to install a certificate chain and corresponding
+     * private key for the leaf certificate:
+     * <ul>
+     *    <li>Device owner</li>
+     *    <li>Profile owner</li>
+     *    <li>Delegated certificate installer</li>
+     *    <li>Credential management app</li>
+     * </ul>
+     * All apps within the profile will be able to access the certificate chain and use the private
+     * key, given direct user approval.
+     *
+     * <p>From Android {@link android.os.Build.VERSION_CODES#S}, the credential management app
+     * can call this API. However, this API sets the key pair as user selectable by default,
+     * which is not permitted when called by the credential management app. Instead,
+     * {@link #installKeyPair(ComponentName, PrivateKey, Certificate[], String, int)} should be
+     * called with {@link #INSTALLKEY_SET_USER_SELECTABLE} not set as a flag.
+     * Note, there can only be a credential management app on an unmanaged device.
      *
      * <p>The caller of this API may grant itself access to the certificate and private key
      * immediately, without user approval. It is a best practice not to request this unless strictly
@@ -5266,10 +5844,26 @@ public class DevicePolicyManager {
     }
 
     /**
-     * Called by a device or profile owner, or delegated certificate installer, to install a
-     * certificate chain and corresponding private key for the leaf certificate. All apps within the
-     * profile will be able to access the certificate chain and use the private key, given direct
-     * user approval (if the user is allowed to select the private key).
+     * This API can be called by the following to install a certificate chain and corresponding
+     * private key for the leaf certificate:
+     * <ul>
+     *    <li>Device owner</li>
+     *    <li>Profile owner</li>
+     *    <li>Delegated certificate installer</li>
+     *    <li>Credential management app</li>
+     * </ul>
+     * All apps within the profile will be able to access the certificate chain and use the
+     * private key, given direct user approval (if the user is allowed to select the private key).
+     *
+     * <p>From Android {@link android.os.Build.VERSION_CODES#S}, the credential management app
+     * can call this API. If called by the credential management app:
+     * <ul>
+     *    <li>The componentName must be {@code null}r</li>
+     *    <li>The alias must exist in the credential management app's
+     *    {@link android.security.AppUriAuthenticationPolicy}</li>
+     *    <li>The key pair must not be user selectable</li>
+     * </ul>
+     * Note, there can only be a credential management app on an unmanaged device.
      *
      * <p>The caller of this API may grant itself access to the certificate and private key
      * immediately, without user approval. It is a best practice not to request this unless strictly
@@ -5295,7 +5889,8 @@ public class DevicePolicyManager {
      *        {@link #INSTALLKEY_REQUEST_CREDENTIALS_ACCESS}.
      * @return {@code true} if the keys were installed, {@code false} otherwise.
      * @throws SecurityException if {@code admin} is not {@code null} and not a device or profile
-     *         owner.
+     *         owner, or {@code admin} is null but the calling application is not a delegated
+     *         certificate installer or credential management app.
      * @see android.security.KeyChain#getCertificateChain
      * @see #setDelegatedScopes
      * @see #DELEGATION_CERT_INSTALL
@@ -5328,15 +5923,26 @@ public class DevicePolicyManager {
     }
 
     /**
-     * Called by a device or profile owner, or delegated certificate installer, to remove a
-     * certificate and private key pair installed under a given alias.
+     * This API can be called by the following to remove a certificate and private key pair
+     * installed under a given alias:
+     * <ul>
+     *    <li>Device owner</li>
+     *    <li>Profile owner</li>
+     *    <li>Delegated certificate installer</li>
+     *    <li>Credential management app</li>
+     * </ul>
+     *
+     * <p>From Android {@link android.os.Build.VERSION_CODES#S}, the credential management app
+     * can call this API. If called by the credential management app, the componentName must be
+     * {@code null}. Note, there can only be a credential management app on an unmanaged device.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with, or
      *        {@code null} if calling from a delegated certificate installer.
      * @param alias The private key alias under which the certificate is installed.
      * @return {@code true} if the private key alias no longer exists, {@code false} otherwise.
      * @throws SecurityException if {@code admin} is not {@code null} and not a device or profile
-     *         owner.
+     *         owner, or {@code admin} is null but the calling application is not a delegated
+     *         certificate installer or credential management app.
      * @see #setDelegatedScopes
      * @see #DELEGATION_CERT_INSTALL
      */
@@ -5349,11 +5955,42 @@ public class DevicePolicyManager {
         }
     }
 
+    // STOPSHIP(b/174298501): clarify the expected return value following generateKeyPair call.
     /**
-     * Called by a device or profile owner, or delegated certificate installer, to generate a
-     * new private/public key pair. If the device supports key generation via secure hardware,
-     * this method is useful for creating a key in KeyChain that never left the secure hardware.
-     * Access to the key is controlled the same way as in {@link #installKeyPair}.
+     * Called by a device or profile owner, or delegated certificate installer, to query whether a
+     * certificate and private key are installed under a given alias.
+     *
+     * @param alias The alias under which the key pair is installed.
+     * @return {@code true} if a key pair with this alias exists, {@code false} otherwise.
+     * @throws SecurityException if the caller is not a device or profile owner or a delegated
+     *         certificate installer.
+     * @see #setDelegatedScopes
+     * @see #DELEGATION_CERT_INSTALL
+     */
+    public boolean hasKeyPair(@NonNull String alias) {
+        throwIfParentInstance("hasKeyPair");
+        try {
+            return mService.hasKeyPair(mContext.getPackageName(), alias);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * This API can be called by the following to generate a new private/public key pair:
+     * <ul>
+     *    <li>Device owner</li>
+     *    <li>Profile owner</li>
+     *    <li>Delegated certificate installer</li>
+     *    <li>Credential management app</li>
+     * </ul>
+     * If the device supports key generation via secure hardware, this method is useful for
+     * creating a key in KeyChain that never left the secure hardware. Access to the key is
+     * controlled the same way as in {@link #installKeyPair}.
+     *
+     * <p>From Android {@link android.os.Build.VERSION_CODES#S}, the credential management app
+     * can call this API. If called by the credential management app, the componentName must be
+     * {@code null}. Note, there can only be a credential management app on an unmanaged device.
      *
      * <p>Because this method might take several seconds to complete, it should only be called from
      * a worker thread. This method returns {@code null} when called from the main thread.
@@ -5376,9 +6013,10 @@ public class DevicePolicyManager {
      * supports these features, refer to {@link #isDeviceIdAttestationSupported()} and
      * {@link #isUniqueDeviceAttestationSupported()}.
      *
-     * <p>Device owner, profile owner and their delegated certificate installer can use
-     * {@link #ID_TYPE_BASE_INFO} to request inclusion of the general device information
-     * including manufacturer, model, brand, device and product in the attestation record.
+     * <p>Device owner, profile owner, their delegated certificate installer and the credential
+     * management app can use {@link #ID_TYPE_BASE_INFO} to request inclusion of the general device
+     * information including manufacturer, model, brand, device and product in the attestation
+     * record.
      * Only device owner, profile owner on an organization-owned device and their delegated
      * certificate installers can use {@link #ID_TYPE_SERIAL}, {@link #ID_TYPE_IMEI} and
      * {@link #ID_TYPE_MEID} to request unique device identifiers to be attested (the serial number,
@@ -5413,9 +6051,11 @@ public class DevicePolicyManager {
      *        {@code keySpec}.
      * @return A non-null {@code AttestedKeyPair} if the key generation succeeded, null otherwise.
      * @throws SecurityException if {@code admin} is not {@code null} and not a device or profile
-     *         owner. If Device ID attestation is requested (using {@link #ID_TYPE_SERIAL},
-     *         {@link #ID_TYPE_IMEI} or {@link #ID_TYPE_MEID}), the caller must be the Device Owner
-     *         or the Certificate Installer delegate.
+     *         owner, or {@code admin} is null but the calling application is not a delegated
+     *         certificate installer or credential management app. If Device ID attestation is
+     *         requested (using {@link #ID_TYPE_SERIAL}, {@link #ID_TYPE_IMEI} or
+     *         {@link #ID_TYPE_MEID}), the caller must be the Device Owner or the Certificate
+     *         Installer delegate.
      * @throws IllegalArgumentException in the following cases:
      *         <p>
      *         <ul>
@@ -5482,7 +6122,6 @@ public class DevicePolicyManager {
         return null;
     }
 
-
     /**
      * Called by a device or profile owner, or delegated certificate chooser (an app that has been
      * delegated the {@link #DELEGATION_CERT_SELECTION} privilege), to grant an application access
@@ -5516,6 +6155,51 @@ public class DevicePolicyManager {
             e.rethrowFromSystemServer();
         }
         return false;
+    }
+
+    /**
+     * Called by a device or profile owner, or delegated certificate chooser (an app that has been
+     * delegated the {@link #DELEGATION_CERT_SELECTION} privilege), to query which apps have access
+     * to a given KeyChain key.
+     *
+     * Key are granted on a per-UID basis, so if several apps share the same UID, granting access to
+     * one of them automatically grants it to others. This method returns a set of sets of package
+     * names, where each internal set contains all packages sharing the same UID. Grantee packages
+     * that don't share UID with other packages are represented by singleton sets.
+     *
+     * @param alias The alias of the key to grant access to.
+     * @return package names of apps that have access to a given key, grouped by UIDs
+     *
+     * @throws SecurityException if the caller is not a device owner, a profile owner or
+     *         delegated certificate chooser.
+     * @throws IllegalArgumentException if {@code alias} doesn't correspond to an existing key.
+     *
+     * @see #grantKeyPairToApp(ComponentName, String, String)
+     */
+    public @NonNull Set<Set<String>> getKeyPairGrants(@NonNull String alias) {
+        throwIfParentInstance("getKeyPairGrants");
+        try {
+            // Set of sets is flattened into a null-separated list.
+            final List<String> flattened =
+                    mService.getKeyPairGrants(mContext.getPackageName(), alias);
+            final Set<Set<String>> result = new HashSet<>();
+            Set<String> pkgsForOneUid = new HashSet<>();
+            for (final String pkg : flattened) {
+                if (pkg == null) {
+                    result.add(pkgsForOneUid);
+                    pkgsForOneUid = new HashSet<>();
+                } else {
+                    pkgsForOneUid.add(pkg);
+                }
+            }
+            if (!pkgsForOneUid.isEmpty()) {
+                result.add(pkgsForOneUid);
+            }
+            return result;
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+        return null;
     }
 
     /**
@@ -5578,10 +6262,19 @@ public class DevicePolicyManager {
     }
 
     /**
-     * Called by a device or profile owner, or delegated certificate installer, to associate
-     * certificates with a key pair that was generated using {@link #generateKeyPair}, and
-     * set whether the key is available for the user to choose in the certificate selection
-     * prompt.
+     * This API can be called by the following to associate certificates with a key pair that was
+     * generated using {@link #generateKeyPair}, and set whether the key is available for the user
+     * to choose in the certificate selection prompt:
+     * <ul>
+     *    <li>Device owner</li>
+     *    <li>Profile owner</li>
+     *    <li>Delegated certificate installer</li>
+     *    <li>Credential management app</li>
+     * </ul>
+     *
+     * <p>From Android {@link android.os.Build.VERSION_CODES#S}, the credential management app
+     * can call this API. If called by the credential management app, the componentName must be
+     * {@code null}. Note, there can only be a credential management app on an unmanaged device.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with, or
      *            {@code null} if calling from a delegated certificate installer.
@@ -5599,7 +6292,7 @@ public class DevicePolicyManager {
      *        successfully associated with it, {@code false} otherwise.
      * @throws SecurityException if {@code admin} is not {@code null} and not a device or profile
      *         owner, or {@code admin} is null but the calling application is not a delegated
-     *         certificate installer.
+     *         certificate installer or credential management app.
      */
     public boolean setKeyPairCertificate(@Nullable ComponentName admin,
             @NonNull String alias, @NonNull List<Certificate> certs, boolean isUserSelectable) {
@@ -6436,6 +7129,8 @@ public class DevicePolicyManager {
     }
 
     /**
+     * Called by a privileged caller holding {@code BIND_DEVICE_ADMIN} permission to retrieve
+     * the remove warning for the given device admin.
      * @hide
      */
     public void getRemoveWarning(@Nullable ComponentName admin, RemoteCallback result) {
@@ -8505,6 +9200,8 @@ public class DevicePolicyManager {
      * it previously set with {@link #addUserRestriction(ComponentName, String)}.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with.
+     * @return a {@link Bundle} whose keys are the user restrictions, and the values a
+     * {@code boolean} indicating whether the restriction is set.
      * @throws SecurityException if {@code admin} is not a device or profile owner.
      */
     public @NonNull Bundle getUserRestrictions(@NonNull ComponentName admin) {
@@ -9238,7 +9935,7 @@ public class DevicePolicyManager {
      * Designates a specific service component as the provider for making permission requests of a
      * local or remote administrator of the user.
      * <p/>
-     * Only a profile owner can designate the restrictions provider.
+     * Only a device owner or profile owner can designate the restrictions provider.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with.
      * @param provider The component name of the service that implements
@@ -10724,6 +11421,7 @@ public class DevicePolicyManager {
      *         {@code android.Manifest.permission.MANAGE_PROFILE_AND_DEVICE_OWNERS} or the caller is
      *         not {@link UserHandle#SYSTEM_USER}
      */
+    @TestApi
     public void forceUpdateUserSetupComplete() {
         try {
             mService.forceUpdateUserSetupComplete();
@@ -11561,7 +12259,7 @@ public class DevicePolicyManager {
             return PRIVATE_DNS_SET_ERROR_FAILURE_SETTING;
         }
 
-        if (NetworkUtils.isWeaklyValidatedHostname(privateDnsHost)) {
+        if (NetworkUtilsInternal.isWeaklyValidatedHostname(privateDnsHost)) {
             if (!PrivateDnsConnectivityChecker.canConnectToPrivateDnsServer(privateDnsHost)) {
                 return PRIVATE_DNS_SET_ERROR_HOST_NOT_SERVING;
             }
@@ -12247,5 +12945,86 @@ public class DevicePolicyManager {
             }
         }
         return false;
+    }
+
+    /**
+     * Used by CTS to set the result of the next safety operation check.
+     *
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(android.Manifest.permission.MANAGE_DEVICE_ADMINS)
+    public void setNextOperationSafety(@DevicePolicyOperation int operation, boolean safe) {
+        if (mService != null) {
+            try {
+                mService.setNextOperationSafety(operation, safe);
+            } catch (RemoteException re) {
+                throw re.rethrowFromSystemServer();
+            }
+        }
+    }
+
+    /**
+     * Returns an enrollment-specific identifier of this device, which is guaranteed to be the same
+     * value for the same device, enrolled into the same organization by the same managing app.
+     * This identifier is high-entropy, useful for uniquely identifying individual devices within
+     * the same organisation.
+     * It is available both in a work profile and on a fully-managed device.
+     * The identifier would be consistent even if the work profile is removed and enrolled again
+     * (to the same organization), or the device is factory reset and re-enrolled.
+
+     * Can only be called by the Profile Owner or Device Owner, if the
+     * {@link #setOrganizationId(String)} was previously called.
+     * If {@link #setOrganizationId(String)} was not called, then the returned value will be an
+     * empty string.
+     *
+     * @return A stable, enrollment-specific identifier.
+     * @throws SecurityException if the caller is not a profile owner or device owner.
+     */
+    @NonNull public String getEnrollmentSpecificId() {
+        throwIfParentInstance("getEnrollmentSpecificId");
+        if (mService == null) {
+            return "";
+        }
+
+        try {
+            return mService.getEnrollmentSpecificId(mContext.getPackageName());
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Sets the Enterprise ID for the work profile or managed device. This is a requirement for
+     * generating an enrollment-specific ID for the device, see {@link #getEnrollmentSpecificId()}.
+     *
+     * It is recommended that the Enterprise ID is at least 6 characters long, and no more than
+     * 64 characters.
+     *
+     * @param enterpriseId An identifier of the organization this work profile or device is
+     *                     enrolled into.
+     */
+    public void setOrganizationId(@NonNull String enterpriseId) {
+        throwIfParentInstance("setOrganizationId");
+        setOrganizationIdForUser(mContext.getPackageName(), enterpriseId, myUserId());
+    }
+
+    /**
+     * Sets the Enterprise ID for the work profile or managed device. This is a requirement for
+     * generating an enrollment-specific ID for the device, see
+     * {@link #getEnrollmentSpecificId()}.
+     *
+     * @hide
+     */
+    public void setOrganizationIdForUser(@NonNull String packageName,
+            @NonNull String enterpriseId, @UserIdInt int userId) {
+        if (mService == null) {
+            return;
+        }
+        try {
+            mService.setOrganizationIdForUser(packageName, enterpriseId, userId);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
     }
 }

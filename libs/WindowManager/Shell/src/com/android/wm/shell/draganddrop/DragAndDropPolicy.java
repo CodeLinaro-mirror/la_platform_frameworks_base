@@ -18,12 +18,10 @@ package com.android.wm.shell.draganddrop;
 
 import static android.app.ActivityTaskManager.INVALID_TASK_ID;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD;
-import static android.app.WindowConfiguration.ACTIVITY_TYPE_UNDEFINED;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.content.ClipDescription.EXTRA_ACTIVITY_OPTIONS;
 import static android.content.ClipDescription.EXTRA_PENDING_INTENT;
-import static android.content.ClipDescription.MIMETYPE_APPLICATION_ACTIVITY;
 import static android.content.ClipDescription.MIMETYPE_APPLICATION_SHORTCUT;
 import static android.content.ClipDescription.MIMETYPE_APPLICATION_TASK;
 import static android.content.Intent.EXTRA_PACKAGE_NAME;
@@ -39,7 +37,6 @@ import static com.android.wm.shell.draganddrop.DragAndDropPolicy.Target.TYPE_SPL
 
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
-import android.app.IActivityTaskManager;
 import android.app.PendingIntent;
 import android.app.WindowConfiguration;
 import android.content.ActivityNotFoundException;
@@ -62,7 +59,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import com.android.wm.shell.common.DisplayLayout;
-import com.android.wm.shell.splitscreen.SplitScreen;
+import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -78,24 +75,24 @@ public class DragAndDropPolicy {
     private static final String TAG = DragAndDropPolicy.class.getSimpleName();
 
     private final Context mContext;
-    private final IActivityTaskManager mIActivityTaskManager;
+    private final ActivityTaskManager mActivityTaskManager;
     private final Starter mStarter;
-    private final SplitScreen mSplitScreen;
+    private final LegacySplitScreen mLegacySplitScreen;
     private final ArrayList<DragAndDropPolicy.Target> mTargets = new ArrayList<>();
 
     private DragSession mSession;
 
-    public DragAndDropPolicy(Context context, SplitScreen splitScreen) {
-        this(context, ActivityTaskManager.getService(), splitScreen,
-                new DefaultStarter(context, splitScreen));
+    public DragAndDropPolicy(Context context, LegacySplitScreen legacySplitScreen) {
+        this(context, ActivityTaskManager.getInstance(), legacySplitScreen,
+                new DefaultStarter(context, legacySplitScreen));
     }
 
     @VisibleForTesting
-    DragAndDropPolicy(Context context, IActivityTaskManager activityTaskManager,
-            SplitScreen splitScreen, Starter starter) {
+    DragAndDropPolicy(Context context, ActivityTaskManager activityTaskManager,
+            LegacySplitScreen legacySplitScreen, Starter starter) {
         mContext = context;
-        mIActivityTaskManager = activityTaskManager;
-        mSplitScreen = splitScreen;
+        mActivityTaskManager = activityTaskManager;
+        mLegacySplitScreen = legacySplitScreen;
         mStarter = starter;
     }
 
@@ -103,7 +100,7 @@ public class DragAndDropPolicy {
      * Starts a new drag session with the given initial drag data.
      */
     void start(DisplayLayout displayLayout, ClipData data) {
-        mSession = new DragSession(mContext, mIActivityTaskManager, displayLayout, data);
+        mSession = new DragSession(mContext, mActivityTaskManager, displayLayout, data);
         // TODO(b/169894807): Also update the session data with task stack changes
         mSession.update();
     }
@@ -153,13 +150,13 @@ public class DragAndDropPolicy {
                         new Rect(w / 2, 0, w, h)));
             }
         } else if (mSession.dragItemSupportsSplitscreen
-                && mSplitScreen != null
-                && mSplitScreen.isDividerVisible()) {
+                && mLegacySplitScreen != null
+                && mLegacySplitScreen.isDividerVisible()) {
             // Already split, allow replacing existing split task
             // TODO(b/169894807): For now, only allow replacing the non-primary task until we have
             //                    split pairs
             final Rect secondarySplitRawBounds =
-                    mSplitScreen.getDividerView().getNonMinimizedSplitScreenSecondaryBounds();
+                    mLegacySplitScreen.getDividerView().getNonMinimizedSplitScreenSecondaryBounds();
             final Rect secondarySplitBounds = new Rect(secondarySplitRawBounds);
             secondarySplitBounds.intersect(new Rect(l, t, l + iw, t + ih));
             if (isVerticalSplit) {
@@ -214,14 +211,14 @@ public class DragAndDropPolicy {
 
         boolean deferAppLaunchUntilSplit = false;
         if (target.type == TYPE_FULLSCREEN) {
-            if (mSplitScreen != null && mSplitScreen.isDividerVisible()) {
+            if (mLegacySplitScreen != null && mLegacySplitScreen.isDividerVisible()) {
                 // If in split, remove split and launch fullscreen
                 mStarter.exitSplitScreen(mSession.runningTaskId);
             } else {
                 // Not in split, fall through to launch
             }
         } else {
-            if (mSplitScreen != null && mSplitScreen.isDividerVisible()) {
+            if (mLegacySplitScreen != null && mLegacySplitScreen.isDividerVisible()) {
                 // Split is already visible, just replace the task
                 // TODO(b/169894807): Since we only allow replacing the non-primary target above
                 //                    just fall through and start the activity
@@ -252,12 +249,12 @@ public class DragAndDropPolicy {
             // into split, and we should wait for home and other tasks to be moved to
             // split-secondary before trying to launch the new secondary task.  This can be removed
             // once we have app-pairs.
-            mSplitScreen.registerInSplitScreenListener(new Consumer<Boolean>() {
+            mLegacySplitScreen.registerInSplitScreenListener(new Consumer<Boolean>() {
                 @Override
                 public void accept(Boolean inSplit) {
                     if (inSplit) {
                         startAppRunnable.run();
-                        mSplitScreen.unregisterInSplitScreenListener(this);
+                        mLegacySplitScreen.unregisterInSplitScreenListener(this);
                     }
                 }
             });
@@ -271,7 +268,7 @@ public class DragAndDropPolicy {
      */
     private static class DragSession {
         private final Context mContext;
-        private final IActivityTaskManager mIActivityTaskManager;
+        private final ActivityTaskManager mActivityTaskManager;
         private final ClipData mInitialDragData;
 
         final DisplayLayout displayLayout;
@@ -285,10 +282,10 @@ public class DragAndDropPolicy {
         boolean dragItemSupportsSplitscreen;
         boolean isPhone;
 
-        DragSession(Context context, IActivityTaskManager activityTaskManager,
+        DragSession(Context context, ActivityTaskManager activityTaskManager,
                 DisplayLayout dispLayout, ClipData data) {
             mContext = context;
-            mIActivityTaskManager = activityTaskManager;
+            mActivityTaskManager = activityTaskManager;
             mInitialDragData = data;
             displayLayout = dispLayout;
         }
@@ -298,19 +295,14 @@ public class DragAndDropPolicy {
          */
         void update() {
 
-            try {
-                List<ActivityManager.RunningTaskInfo> tasks =
-                        mIActivityTaskManager.getFilteredTasks(1,
-                                false /* filterOnlyVisibleRecents */);
-                if (!tasks.isEmpty()) {
-                    final ActivityManager.RunningTaskInfo task = tasks.get(0);
-                    runningTaskWinMode = task.getWindowingMode();
-                    runningTaskActType = task.getActivityType();
-                    runningTaskId = task.taskId;
-                    runningTaskIsResizeable = task.isResizeable;
-                }
-            } catch (RemoteException e) {
-                // Fall through
+            List<ActivityManager.RunningTaskInfo> tasks =
+                    mActivityTaskManager.getTasks(1, false /* filterOnlyVisibleRecents */);
+            if (!tasks.isEmpty()) {
+                final ActivityManager.RunningTaskInfo task = tasks.get(0);
+                runningTaskWinMode = task.getWindowingMode();
+                runningTaskActType = task.getActivityType();
+                runningTaskId = task.taskId;
+                runningTaskIsResizeable = task.isResizeable;
             }
 
             final ActivityInfo info = mInitialDragData.getItemAt(0).getActivityInfo();
@@ -340,11 +332,11 @@ public class DragAndDropPolicy {
      */
     private static class DefaultStarter implements Starter {
         private final Context mContext;
-        private final SplitScreen mSplitScreen;
+        private final LegacySplitScreen mLegacySplitScreen;
 
-        public DefaultStarter(Context context, SplitScreen splitScreen) {
+        public DefaultStarter(Context context, LegacySplitScreen legacySplitScreen) {
             mContext = context;
-            mSplitScreen = splitScreen;
+            mLegacySplitScreen = legacySplitScreen;
         }
 
         @Override
@@ -380,12 +372,12 @@ public class DragAndDropPolicy {
 
         @Override
         public void enterSplitScreen(int taskId, boolean leftOrTop) {
-            mSplitScreen.splitPrimaryTask();
+            mLegacySplitScreen.splitPrimaryTask();
         }
 
         @Override
         public void exitSplitScreen(int taskId) {
-            mSplitScreen.dismissSplitToPrimaryTask();
+            mLegacySplitScreen.dismissSplitToPrimaryTask();
         }
     }
 

@@ -83,8 +83,9 @@
     <string name="screenshot_saved_title" msgid="8893267638659083153">"Capture d\'écran enregistrée"</string>
     <string name="screenshot_saved_text" msgid="7778833104901642442">"Touchez pour afficher votre capture d\'écran"</string>
     <string name="screenshot_failed_title" msgid="3259148215671936891">"Impossible d\'enregistrer la capture d\'écran"</string>
+    <string name="screenshot_failed_to_save_user_locked_text" msgid="6156607948256936920">"L\'appareil doit être déverrouillé avant qu\'une capture d\'écran puisse être enregistrée"</string>
     <string name="screenshot_failed_to_save_unknown_text" msgid="1506621600548684129">"Essayez de faire une autre capture d\'écran"</string>
-    <string name="screenshot_failed_to_save_text" msgid="8344173457344027501">"Impossible d\'enregistrer la capture d\'écran, car l\'espace de stockage est limité"</string>
+    <string name="screenshot_failed_to_save_text" msgid="7232739948999195960">"Impossible d\'enregistrer la capture d\'écran"</string>
     <string name="screenshot_failed_to_capture_text" msgid="7818288545874407451">"L\'application ou votre organisation n\'autorise pas les saisies d\'écran"</string>
     <string name="screenshot_edit_label" msgid="8754981973544133050">"Modifier"</string>
     <string name="screenshot_edit_description" msgid="3333092254706788906">"Modifier la capture d\'écran"</string>
@@ -186,16 +187,6 @@
     <string name="accessibility_battery_three_bars" msgid="118341923832368291">"Niveau de batterie : bon"</string>
     <string name="accessibility_battery_full" msgid="1480463938961288494">"Batterie pleine"</string>
     <string name="accessibility_battery_unknown" msgid="1807789554617976440">"Pourcentage de la pile inconnu."</string>
-    <string name="accessibility_no_phone" msgid="8828412144430247025">"Aucun signal"</string>
-    <string name="accessibility_phone_one_bar" msgid="8786055123727785588">"Signal : faible"</string>
-    <string name="accessibility_phone_two_bars" msgid="3316909612598670674">"Signal : moyen"</string>
-    <string name="accessibility_phone_three_bars" msgid="5670937367300884534">"Signal : bon"</string>
-    <string name="accessibility_phone_signal_full" msgid="1103449569988869971">"Signal excellent"</string>
-    <string name="accessibility_no_data" msgid="2124768255213392359">"Aucun signal"</string>
-    <string name="accessibility_data_one_bar" msgid="3226985124149387055">"Signal faible"</string>
-    <string name="accessibility_data_two_bars" msgid="4576231688545173059">"Signal moyen"</string>
-    <string name="accessibility_data_three_bars" msgid="3036562180893930325">"Signal bon"</string>
-    <string name="accessibility_data_signal_full" msgid="283507058258113551">"Signal excellent"</string>
     <string name="accessibility_wifi_name" msgid="4863440268606851734">"Connecté à : <xliff:g id="WIFI">%s</xliff:g>"</string>
     <string name="accessibility_bluetooth_name" msgid="7300973230214067678">"Connecté à : <xliff:g id="BLUETOOTH">%s</xliff:g>"</string>
     <string name="accessibility_cast_name" msgid="7344437925388773685">"Connecté à <xliff:g id="CAST">%s</xliff:g>."</string>
@@ -204,8 +195,6 @@
     <string name="accessibility_wimax_two_bars" msgid="7335485192390018939">"Signal WiMAX : moyen"</string>
     <string name="accessibility_wimax_three_bars" msgid="2773714362377629938">"Signal WiMAX : bon"</string>
     <string name="accessibility_wimax_signal_full" msgid="3101861561730624315">"Signal WiMAX : excellent"</string>
-    <string name="accessibility_ethernet_disconnected" msgid="2097190491174968655">"Ethernet déconnecté."</string>
-    <string name="accessibility_ethernet_connected" msgid="3988347636883115213">"Ethernet connecté."</string>
     <string name="accessibility_no_signal" msgid="1115622734914921920">"Aucun signal"</string>
     <string name="accessibility_not_connected" msgid="4061305616351042142">"Non connecté"</string>
     <string name="accessibility_zero_bars" msgid="1364823964848784827">"Aucun signal"</string>
@@ -217,30 +206,17 @@
     <string name="accessibility_desc_off" msgid="8055389500285421408">"Désactivé"</string>
     <string name="accessibility_desc_connected" msgid="3082590384032624233">"Connecté"</string>
     <string name="accessibility_desc_connecting" msgid="8011433412112903614">"Connexion."</string>
-    <string name="data_connection_gprs" msgid="2752584037409568435">"GPRS"</string>
     <string name="data_connection_hspa" msgid="6096234094857660873">"HSPA"</string>
-    <string name="data_connection_3g" msgid="1215807817895516914">"3G"</string>
-    <string name="data_connection_3_5g" msgid="4097346596394846450">"H"</string>
-    <string name="data_connection_3_5g_plus" msgid="8938598386721354697">"H+"</string>
-    <string name="data_connection_4g" msgid="5770196771037980730">"4G"</string>
-    <string name="data_connection_4g_plus" msgid="780615287092000279">"4G+"</string>
-    <string name="data_connection_lte" msgid="557021044282539923">"LTE"</string>
-    <string name="data_connection_lte_plus" msgid="4799302403782283178">"LTE+"</string>
-    <string name="data_connection_cdma" msgid="7678457855627313518">"1X"</string>
     <string name="data_connection_roaming" msgid="375650836665414797">"Itinérance"</string>
-    <string name="data_connection_edge" msgid="6316755666481405762">"EDGE"</string>
     <string name="accessibility_data_connection_wifi" msgid="4422160347472742434">"Wi-Fi"</string>
     <string name="accessibility_no_sim" msgid="1140839832913084973">"Aucune carte SIM"</string>
     <string name="accessibility_cell_data" msgid="172950885786007392">"Données cellulaires"</string>
     <string name="accessibility_cell_data_on" msgid="691666434519443162">"Données cellulaires activées"</string>
-    <string name="cell_data_off_content_description" msgid="9165555931499878044">"Désactivées"</string>
-    <string name="not_default_data_content_description" msgid="6757881730711522517">"Non configuré pour l\'utilisation des données cellulaires"</string>
     <string name="cell_data_off" msgid="4886198950247099526">"Désactivé"</string>
     <string name="accessibility_bluetooth_tether" msgid="6327291292208790599">"Partage de connexion Bluetooth"</string>
     <string name="accessibility_airplane_mode" msgid="1899529214045998505">"Mode Avion"</string>
     <string name="accessibility_vpn_on" msgid="8037549696057288731">"RPV activé."</string>
     <string name="accessibility_no_sims" msgid="5711270400476534667">"Aucune carte SIM."</string>
-    <string name="carrier_network_change_mode" msgid="5174141476991149918">"Changer de réseau de fournisseur de services"</string>
     <string name="accessibility_battery_details" msgid="6184390274150865789">"Ouvrir les détails de la pile"</string>
     <string name="accessibility_battery_level" msgid="5143715405241138822">"Pile : <xliff:g id="NUMBER">%d</xliff:g> pour cent"</string>
     <string name="accessibility_battery_level_with_estimate" msgid="4843119982547599452">"Pile chargée à <xliff:g id="PERCENTAGE">%1$s</xliff:g> pour cent (environ <xliff:g id="TIME">%2$s</xliff:g> d\'autonomie en fonction de votre usage)"</string>
@@ -368,6 +344,10 @@
     <string name="quick_settings_ime_label" msgid="3351174938144332051">"Mode de saisie"</string>
     <string name="quick_settings_location_label" msgid="2621868789013389163">"Position"</string>
     <string name="quick_settings_location_off_label" msgid="7923929131443915919">"Localisation désactivée"</string>
+    <!-- no translation found for quick_settings_camera_label (1367149596242401934) -->
+    <skip />
+    <!-- no translation found for quick_settings_mic_label (8245831073612564953) -->
+    <skip />
     <string name="quick_settings_media_device_label" msgid="8034019242363789941">"Appareil multimédia"</string>
     <string name="quick_settings_rssi_label" msgid="3397615415140356701">"RSSI"</string>
     <string name="quick_settings_rssi_emergency_only" msgid="7499207215265078598">"Appels d\'urgence uniquement"</string>
@@ -377,6 +357,10 @@
     <string name="quick_settings_user_title" msgid="8673045967216204537">"Utilisateur"</string>
     <string name="quick_settings_user_new_user" msgid="3347905871336069666">"Nouvel utilisateur"</string>
     <string name="quick_settings_wifi_label" msgid="2879507532983487244">"Wi-Fi"</string>
+    <string name="quick_settings_internet_label" msgid="6603068555872455463">"Internet"</string>
+    <string name="quick_settings_airplane_safe_label" msgid="2665758539772645899">"Sécuritaire pour les avions"</string>
+    <string name="quick_settings_networks_available" msgid="1875138606855420438">"Réseaux accessibles"</string>
+    <string name="quick_settings_networks_unavailable" msgid="1167847013337940082">"Aucun réseau accessible"</string>
     <string name="quick_settings_wifi_not_connected" msgid="4071097522427039160">"Non connecté"</string>
     <string name="quick_settings_wifi_no_network" msgid="6003178398713839313">"Aucun réseau"</string>
     <string name="quick_settings_wifi_off_label" msgid="4003379736176547594">"Wi-Fi désactivé"</string>
@@ -463,7 +447,7 @@
     <string name="camera_hint" msgid="4519495795000658637">"Balayez à partir de l\'icône pour accéder à l\'appareil photo"</string>
     <string name="interruption_level_none_with_warning" msgid="8394434073508145437">"Aucune interruption : le son des lecteurs d\'écran sera également désactivé."</string>
     <string name="interruption_level_none" msgid="219484038314193379">"Aucune interruption"</string>
-    <string name="interruption_level_priority" msgid="661294280016622209">"Priorités seulement"</string>
+    <string name="interruption_level_priority" msgid="661294280016622209">"Prioritaires seulement"</string>
     <string name="interruption_level_alarms" msgid="2457850481335846959">"Alarmes seulement"</string>
     <string name="interruption_level_none_twoline" msgid="8579382742855486372">"Aucune\ninterruption"</string>
     <string name="interruption_level_priority_twoline" msgid="8523482736582498083">"Priorités\nuniquement"</string>
@@ -478,9 +462,9 @@
     <string name="accessibility_multi_user_switch_quick_contact" msgid="4504508915324898576">"Afficher le profil"</string>
     <string name="user_add_user" msgid="4336657383006913022">"Ajouter un utilisateur"</string>
     <string name="user_new_user_name" msgid="2019166282704195789">"Nouvel utilisateur"</string>
-    <string name="guest_exit_guest_dialog_title" msgid="5015697561580641422">"Supprimer l\'invité?"</string>
+    <string name="guest_exit_guest_dialog_title" msgid="2034481024623462357">"Mettre fin à la session d\'invité?"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"Toutes les applications et les données de cette session seront supprimées."</string>
-    <string name="guest_exit_guest_dialog_remove" msgid="7505817591242703757">"Supprimer"</string>
+    <string name="guest_exit_guest_dialog_remove" msgid="8533184512885775423">"Fermer la session"</string>
     <string name="guest_wipe_session_title" msgid="7147965814683990944">"Bienvenue à nouveau dans la session Invité"</string>
     <string name="guest_wipe_session_message" msgid="3393823610257065457">"Voulez-vous poursuivre la session?"</string>
     <string name="guest_wipe_session_wipe" msgid="8056836584445473309">"Recommencer"</string>
@@ -722,9 +706,13 @@
     <string name="notification_channel_summary_default_with_bubbles" msgid="1782419896613644568">"Peut sonner ou vibrer, selon les paramètres du téléphone. Conversations des bulles de <xliff:g id="APP_NAME">%1$s</xliff:g> par défaut."</string>
     <string name="notification_channel_summary_bubble" msgid="7235935211580860537">"Garde votre attention à l\'aide d\'un raccourci flottant vers ce contenu."</string>
     <string name="notification_channel_summary_automatic" msgid="5813109268050235275">"Faire en sorte que le système détermine si cette notification devrait émettre un son ou vibrer"</string>
+    <string name="notification_channel_summary_automatic_alerted" msgid="954166812246932240">"&lt;b&gt;État :&lt;/b&gt; élevé à la catégorie Par défaut"</string>
+    <string name="notification_channel_summary_automatic_silenced" msgid="7403004439649872047">"&lt;b&gt;État :&lt;/b&gt; abaissé à la catégorie Silencieux"</string>
+    <string name="notification_channel_summary_automatic_promoted" msgid="1301710305149590426">"&lt;b&gt;État :&lt;/b&gt; élevé d\'un niveau"</string>
+    <string name="notification_channel_summary_automatic_demoted" msgid="1831303964660807700">"&lt;b&gt;État :&lt;/b&gt; abaissé d\'un niveau"</string>
     <string name="notification_channel_summary_priority" msgid="7952654515769021553">"S\'affiche en haut de la section des conversations sous forme de bulle flottante et affiche la photo du profil sur l\'écran de verrouillage"</string>
     <string name="notification_conversation_channel_settings" msgid="2409977688430606835">"Paramètres"</string>
-    <string name="notification_priority_title" msgid="2079708866333537093">"Priorité"</string>
+    <string name="notification_priority_title" msgid="2079708866333537093">"Prioritaire"</string>
     <string name="no_shortcut" msgid="8257177117568230126">"<xliff:g id="APP_NAME">%1$s</xliff:g> ne prend pas en charge les fonctionnalités de conversation"</string>
     <string name="notification_unblockable_desc" msgid="2073030886006190804">"Ces notifications ne peuvent pas être modifiées"</string>
     <string name="notification_multichannel_desc" msgid="7414593090056236179">"Ce groupe de notifications ne peut pas être configuré ici"</string>
@@ -740,9 +728,10 @@
     <string name="appops_camera_mic_overlay" msgid="5584311236445644095">"Cette application superpose du contenu par-dessus d\'autres applications à l\'écran et utilise le microphone et l\'appareil photo."</string>
     <string name="notification_appops_settings" msgid="5208974858340445174">"Paramètres"</string>
     <string name="notification_appops_ok" msgid="2177609375872784124">"OK"</string>
-    <string name="feedback_silenced" msgid="5382212321253328247">"Cette notification a été désactivée par le système."</string>
-    <string name="feedback_promoted" msgid="8075757485407091976">"Cette notification a été promue par le système."</string>
-    <string name="feedback_demoted" msgid="5848066008939031913">"Cette notification a été rétrogradée par le système."</string>
+    <string name="feedback_alerted" msgid="5192459808484271208">"La notification a été automatiquement &lt;b&gt;élevée à la catégorie Par défaut&lt;/b&gt; par le système."</string>
+    <string name="feedback_silenced" msgid="9116540317466126457">"La notification a été automatiquement &lt;b&gt;abaissée à la catégorie Silencieux&lt;/b&gt; par le système."</string>
+    <string name="feedback_promoted" msgid="2125562787759780807">"La notification a été automatiquement &lt;b&gt;élevée d\'un niveau&lt;/b&gt; dans votre volet."</string>
+    <string name="feedback_demoted" msgid="951884763467110604">"La notification a été automatiquement &lt;b&gt;abaissée d\'un niveau&lt;/b&gt; dans votre volet."</string>
     <string name="feedback_prompt" msgid="2278631214125128281">"Était-ce correct?"</string>
     <string name="feedback_response" msgid="4671729244976641339">"Merci de vos commentaires!"</string>
     <string name="feedback_ok" msgid="6481426753298857144">"OK"</string>
@@ -939,7 +928,7 @@
     <string name="instant_apps_title" msgid="8942706782103036910">"<xliff:g id="APP">%1$s</xliff:g> en cours d\'exécution"</string>
     <string name="instant_apps_message" msgid="6112428971833011754">"Application ouverte sans avoir été installée."</string>
     <string name="instant_apps_message_with_help" msgid="1816952263531203932">"Application ouverte sans avoir été installée. Touchez ici pour en savoir plus."</string>
-    <string name="app_info" msgid="5153758994129963243">"Détails de l\'applic."</string>
+    <string name="app_info" msgid="5153758994129963243">"Détails de l\'appli"</string>
     <string name="go_to_web" msgid="636673528981366511">"Ouvrir le navigateur"</string>
     <string name="mobile_data" msgid="4564407557775397216">"Données cellulaires"</string>
     <string name="mobile_data_text_format" msgid="6806501540022589786">"<xliff:g id="ID_1">%1$s</xliff:g> : <xliff:g id="ID_2">%2$s</xliff:g>"</string>

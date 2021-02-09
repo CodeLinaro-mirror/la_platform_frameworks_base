@@ -63,7 +63,6 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.UserHandle;
-import android.os.UserManagerInternal;
 import android.os.WorkSource;
 import android.provider.DeviceConfig;
 import android.text.format.DateUtils;
@@ -104,6 +103,7 @@ import com.android.server.job.controllers.StorageController;
 import com.android.server.job.controllers.TimeController;
 import com.android.server.job.restrictions.JobRestriction;
 import com.android.server.job.restrictions.ThermalStatusRestriction;
+import com.android.server.pm.UserManagerInternal;
 import com.android.server.usage.AppStandbyInternal;
 import com.android.server.usage.AppStandbyInternal.AppIdleStateChangeListener;
 import com.android.server.utils.quota.Categorizer;
@@ -834,6 +834,14 @@ public class JobSchedulerService extends com.android.server.SystemService
             // Higher override state (OVERRIDE_FULL) should be before lower state (OVERRIDE_SOFT)
             return o2.overrideState - o1.overrideState;
         }
+        if (o1.getSourceUid() == o2.getSourceUid()) {
+            final boolean o1FGJ = o1.isRequestedExpeditedJob();
+            if (o1FGJ != o2.isRequestedExpeditedJob()) {
+                // Attempt to run requested expedited jobs ahead of regular jobs, regardless of
+                // expedited job quota.
+                return o1FGJ ? -1 : 1;
+            }
+        }
         if (o1.enqueueTime < o2.enqueueTime) {
             return -1;
         }
@@ -1054,6 +1062,7 @@ public class JobSchedulerService extends com.android.server.SystemService
 
     public int scheduleAsPackage(JobInfo job, JobWorkItem work, int uId, String packageName,
             int userId, String tag) {
+        // Rate limit excessive schedule() calls.
         final String servicePkg = job.getService().getPackageName();
         if (job.isPersisted() && (packageName == null || packageName.equals(servicePkg))) {
             // Only limit schedule calls for persisted jobs scheduled by the app itself.
@@ -1134,6 +1143,12 @@ public class JobSchedulerService extends com.android.server.SystemService
             }
 
             JobStatus jobStatus = JobStatus.createFromJobInfo(job, uId, packageName, userId, tag);
+
+            // Return failure early if expedited job quota used up.
+            if (jobStatus.isRequestedExpeditedJob()
+                    && !mQuotaController.isWithinEJQuotaLocked(jobStatus)) {
+                return JobScheduler.RESULT_FAILURE;
+            }
 
             // Give exemption if the source is in the foreground just now.
             // Note if it's a sync job, this method is called on the handler so it's not exactly
@@ -1358,8 +1373,7 @@ public class JobSchedulerService extends com.android.server.SystemService
                 for (int i=0; i<mActiveServices.size(); i++) {
                     JobServiceContext jsc = mActiveServices.get(i);
                     final JobStatus executing = jsc.getRunningJobLocked();
-                    if (executing != null
-                            && (executing.getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) == 0) {
+                    if (executing != null && !executing.canRunInDoze()) {
                         jsc.cancelExecutingJobLocked(JobParameters.REASON_DEVICE_IDLE,
                                 "cancelled due to doze");
                     }
@@ -1411,7 +1425,7 @@ public class JobSchedulerService extends com.android.server.SystemService
                 final JobServiceContext jsc = mActiveServices.get(i);
                 final JobStatus job = jsc.getRunningJobLocked();
                 if (job != null
-                        && (job.getJob().getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) == 0
+                        && !job.canRunInDoze()
                         && !job.dozeWhitelisted
                         && !job.uidActive) {
                     // We will report active if we have a job running and it is not an exception
@@ -1488,11 +1502,14 @@ public class JobSchedulerService extends com.android.server.SystemService
         mControllers.add(mBatteryController);
         mStorageController = new StorageController(this);
         mControllers.add(mStorageController);
-        mControllers.add(new BackgroundJobsController(this));
+        final BackgroundJobsController backgroundJobsController =
+                new BackgroundJobsController(this);
+        mControllers.add(backgroundJobsController);
         mControllers.add(new ContentObserverController(this));
         mDeviceIdleJobsController = new DeviceIdleJobsController(this);
         mControllers.add(mDeviceIdleJobsController);
-        mQuotaController = new QuotaController(this);
+        mQuotaController =
+                new QuotaController(this, backgroundJobsController, connectivityController);
         mControllers.add(mQuotaController);
         mControllers.add(new ComponentController(this));
 
@@ -1791,9 +1808,9 @@ public class JobSchedulerService extends com.android.server.SystemService
      * time of the job to be the time of completion (i.e. the time at which this function is
      * called).
      * <p>This could be inaccurate b/c the job can run for as long as
-     * {@link com.android.server.job.JobServiceContext#EXECUTING_TIMESLICE_MILLIS}, but will lead
-     * to underscheduling at least, rather than if we had taken the last execution time to be the
-     * start of the execution.
+     * {@link com.android.server.job.JobServiceContext#DEFAULT_EXECUTING_TIMESLICE_MILLIS}, but
+     * will lead to underscheduling at least, rather than if we had taken the last execution time
+     * to be the start of the execution.
      *
      * @return A new job representing the execution criteria for this instantiation of the
      * recurring job.
@@ -1884,6 +1901,10 @@ public class JobSchedulerService extends com.android.server.SystemService
             Slog.d(TAG, "Completed " + jobStatus + ", reschedule=" + needsReschedule);
         }
 
+        // Intentionally not checking expedited job quota here. An app can't find out if it's run
+        // out of quota when it asks JS to reschedule an expedited job. Instead, the rescheduled
+        // EJ will just be demoted to a regular job if the app has no EJ quota left.
+
         // If the job wants to be rescheduled, we first need to make the next upcoming
         // job so we can transfer any appropriate state over from the previous job when
         // we stop it.
@@ -1957,9 +1978,12 @@ public class JobSchedulerService extends com.android.server.SystemService
                         JobStatus runNow = (JobStatus) message.obj;
                         // runNow can be null, which is a controller's way of indicating that its
                         // state is such that all ready jobs should be run immediately.
-                        if (runNow != null && isReadyToBeExecutedLocked(runNow)) {
-                            mJobPackageTracker.notePending(runNow);
-                            addOrderedItem(mPendingJobs, runNow, sPendingJobComparator);
+                        if (runNow != null) {
+                            if (!isCurrentlyActiveLocked(runNow)
+                                    && isReadyToBeExecutedLocked(runNow)) {
+                                mJobPackageTracker.notePending(runNow);
+                                addOrderedItem(mPendingJobs, runNow, sPendingJobComparator);
+                            }
                         } else {
                             queueReadyJobsForExecutionLocked();
                         }
@@ -2027,7 +2051,6 @@ public class JobSchedulerService extends com.android.server.SystemService
 
                 }
                 maybeRunPendingJobsLocked();
-                // Don't remove JOB_EXPIRED in case one came along while processing the queue.
             }
         }
     }
@@ -2093,6 +2116,15 @@ public class JobSchedulerService extends com.android.server.SystemService
      * as many as we can.
      */
     private void queueReadyJobsForExecutionLocked() {
+        // This method will check and capture all ready jobs, so we don't need to keep any messages
+        // in the queue.
+        mHandler.removeMessages(MSG_CHECK_JOB_GREEDY);
+        // MSG_CHECK_JOB is a weaker form of _GREEDY. Since we're checking and queueing all ready
+        // jobs, we don't need to keep any MSG_CHECK_JOB messages in the queue.
+        mHandler.removeMessages(MSG_CHECK_JOB);
+        // This method will capture all expired jobs that are ready, so there's no need to keep
+        // the _EXPIRED messages in the queue.
+        mHandler.removeMessages(MSG_JOB_EXPIRED);
         if (DEBUG) {
             Slog.d(TAG, "queuing all ready jobs for execution:");
         }
@@ -2367,7 +2399,12 @@ public class JobSchedulerService extends com.android.server.SystemService
             return false;
         }
 
-        if (checkIfRestricted(job) != null) {
+        final JobRestriction restriction = checkIfRestricted(job);
+        if (restriction != null) {
+            if (DEBUG) {
+                Slog.v(TAG, "areComponentsInPlaceLocked: " + job.toShortString()
+                        + " restricted due to " + restriction.getReason());
+            }
             return false;
         }
 
@@ -2382,7 +2419,7 @@ public class JobSchedulerService extends com.android.server.SystemService
     public long getMaxJobExecutionTimeMs(JobStatus job) {
         synchronized (mLock) {
             return Math.min(mQuotaController.getMaxJobExecutionTimeMsLocked(job),
-                    JobServiceContext.EXECUTING_TIMESLICE_MILLIS);
+                    JobServiceContext.DEFAULT_EXECUTING_TIMESLICE_MILLIS);
         }
     }
 
@@ -2648,6 +2685,7 @@ public class JobSchedulerService extends com.android.server.SystemService
         }
 
         private void validateJobFlags(JobInfo job, int callingUid) {
+            job.enforceValidity();
             if ((job.getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) != 0) {
                 getContext().enforceCallingOrSelfPermission(
                         android.Manifest.permission.CONNECTIVITY_INTERNAL, TAG);

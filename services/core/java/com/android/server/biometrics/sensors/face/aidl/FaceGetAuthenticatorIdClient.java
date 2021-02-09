@@ -23,11 +23,11 @@ import android.hardware.biometrics.face.ISession;
 import android.os.RemoteException;
 import android.util.Slog;
 
-import com.android.server.biometrics.sensors.ClientMonitor;
+import com.android.server.biometrics.sensors.HalClientMonitor;
 
 import java.util.Map;
 
-class FaceGetAuthenticatorIdClient extends ClientMonitor<ISession> {
+class FaceGetAuthenticatorIdClient extends HalClientMonitor<ISession> {
 
     private static final String TAG = "FaceGetAuthenticatorIdClient";
 
@@ -45,6 +45,11 @@ class FaceGetAuthenticatorIdClient extends ClientMonitor<ISession> {
     @Override
     public void unableToStart() {
         // Nothing to do here
+    }
+
+    public void start(@NonNull Callback callback) {
+        super.start(callback);
+        startHalOperation();
     }
 
     @Override

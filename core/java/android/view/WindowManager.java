@@ -104,6 +104,7 @@ import android.os.Parcelable;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.proto.ProtoOutputStream;
+import android.view.Gravity.GravityFlags;
 import android.view.View.OnApplyWindowInsetsListener;
 import android.view.WindowInsets.Side;
 import android.view.WindowInsets.Side.InsetsSide;
@@ -342,24 +343,59 @@ public interface WindowManager extends ViewManager {
 
     /** @hide */
     int TRANSIT_NONE = 0;
-    /** @hide */
+    /**
+     * A window that didn't exist before has been created and made visible.
+     * @hide
+     */
     int TRANSIT_OPEN = 1;
-    /** @hide */
+    /**
+     * A window that was visible no-longer exists (was finished or destroyed).
+     * @hide
+     */
     int TRANSIT_CLOSE = 2;
-    /** @hide */
+    /**
+     * A window that already existed but was not visible is made visible.
+     * @hide
+     */
     int TRANSIT_TO_FRONT = 3;
-    /** @hide */
+    /**
+     * A window that was visible is made invisible but still exists.
+     * @hide
+     */
     int TRANSIT_TO_BACK = 4;
     /** @hide */
     int TRANSIT_RELAUNCH = 5;
-    /** @hide */
-    int TRANSIT_CHANGE_WINDOWING_MODE = 6;
-    /** @hide */
+    /**
+     * A window is visible before and after but changes in some way (eg. it resizes or changes
+     * windowing-mode).
+     * @hide
+     */
+    int TRANSIT_CHANGE = 6;
+    /**
+     * The keyguard was visible and has been dismissed.
+     * @hide
+     */
     int TRANSIT_KEYGUARD_GOING_AWAY = 7;
-    /** @hide */
+    /**
+     * A window is appearing above a locked keyguard.
+     * @hide
+     */
     int TRANSIT_KEYGUARD_OCCLUDE = 8;
-    /** @hide */
+    /**
+     * A window is made invisible revealing a locked keyguard.
+     * @hide
+     */
     int TRANSIT_KEYGUARD_UNOCCLUDE = 9;
+    /**
+     * The first slot for custom transition types. Callers (like Shell) can make use of custom
+     * transition types for dealing with special cases. These types are effectively ignored by
+     * Core and will just be passed along as part of TransitionInfo objects. An example is
+     * split-screen using a custom type for it's snap-to-dismiss action. By using a custom type,
+     * Shell can properly dispatch the results of that transition to the split-screen
+     * implementation.
+     * @hide
+     */
+    int TRANSIT_FIRST_CUSTOM = 10;
 
     /**
      * @hide
@@ -371,10 +407,11 @@ public interface WindowManager extends ViewManager {
             TRANSIT_TO_FRONT,
             TRANSIT_TO_BACK,
             TRANSIT_RELAUNCH,
-            TRANSIT_CHANGE_WINDOWING_MODE,
+            TRANSIT_CHANGE,
             TRANSIT_KEYGUARD_GOING_AWAY,
             TRANSIT_KEYGUARD_OCCLUDE,
             TRANSIT_KEYGUARD_UNOCCLUDE,
+            TRANSIT_FIRST_CUSTOM
     })
     @Retention(RetentionPolicy.SOURCE)
     @interface TransitionType {}
@@ -410,6 +447,19 @@ public interface WindowManager extends ViewManager {
     int TRANSIT_FLAG_APP_CRASHED = 0x10;
 
     /**
+     * Transition flag: A window in a new task is being opened behind an existing one in another
+     * activity's task.
+     * @hide
+     */
+    int TRANSIT_FLAG_OPEN_BEHIND = 0x20;
+
+    /**
+     * Transition flag: The keyguard is locked throughout the whole transition.
+     * @hide
+     */
+    int TRANSIT_FLAG_KEYGUARD_LOCKED = 0x40;
+
+    /**
      * @hide
      */
     @IntDef(flag = true, prefix = { "TRANSIT_FLAG_" }, value = {
@@ -417,7 +467,9 @@ public interface WindowManager extends ViewManager {
             TRANSIT_FLAG_KEYGUARD_GOING_AWAY_NO_ANIMATION,
             TRANSIT_FLAG_KEYGUARD_GOING_AWAY_WITH_WALLPAPER,
             TRANSIT_FLAG_KEYGUARD_GOING_AWAY_SUBTLE_ANIMATION,
-            TRANSIT_FLAG_APP_CRASHED
+            TRANSIT_FLAG_APP_CRASHED,
+            TRANSIT_FLAG_OPEN_BEHIND,
+            TRANSIT_FLAG_KEYGUARD_LOCKED
     })
     @Retention(RetentionPolicy.SOURCE)
     @interface TransitionFlags {}
@@ -451,6 +503,40 @@ public interface WindowManager extends ViewManager {
             REMOVE_CONTENT_MODE_DESTROY,
     })
     @interface RemoveContentMode {}
+
+    /**
+     * Display IME Policy: The IME should appear on the local display.
+     * @hide
+     */
+    @TestApi
+    int DISPLAY_IME_POLICY_LOCAL = 0;
+
+    /**
+     * Display IME Policy: The IME should appear on the fallback display.
+     * @hide
+     */
+    @TestApi
+    int DISPLAY_IME_POLICY_FALLBACK_DISPLAY = 1;
+
+    /**
+     * Display IME Policy: The IME should be hidden.
+     *
+     * Setting this policy will prevent the IME from making a connection. This
+     * will prevent any IME from receiving metadata about input.
+     * @hide
+     */
+    @TestApi
+    int DISPLAY_IME_POLICY_HIDE = 2;
+
+    /**
+     * @hide
+     */
+    @IntDef({
+            DISPLAY_IME_POLICY_LOCAL,
+            DISPLAY_IME_POLICY_FALLBACK_DISPLAY,
+            DISPLAY_IME_POLICY_HIDE,
+    })
+    @interface DisplayImePolicy {}
 
     /**
      * Exception that is thrown when trying to add view whose
@@ -577,22 +663,32 @@ public interface WindowManager extends ViewManager {
     }
 
     /**
-     * Message for taking fullscreen screenshot
+     * Invoke screenshot flow to capture a full-screen image.
      * @hide
      */
     int TAKE_SCREENSHOT_FULLSCREEN = 1;
 
     /**
-     * Message for taking screenshot of selected region.
+     * Invoke screenshot flow allowing the user to select a region.
      * @hide
      */
     int TAKE_SCREENSHOT_SELECTED_REGION = 2;
 
     /**
-     * Message for handling a screenshot flow with an image provided by the caller.
+     * Invoke screenshot flow with an image provided by the caller.
      * @hide
      */
     int TAKE_SCREENSHOT_PROVIDED_IMAGE = 3;
+
+    /**
+     * Enum listing the types of screenshot requests available.
+     *
+     * @hide
+     */
+    @IntDef({TAKE_SCREENSHOT_FULLSCREEN,
+            TAKE_SCREENSHOT_SELECTED_REGION,
+            TAKE_SCREENSHOT_PROVIDED_IMAGE})
+    @interface ScreenshotType {}
 
     /**
      * Enum listing the possible sources from which a screenshot was originated. Used for logging.
@@ -687,27 +783,26 @@ public interface WindowManager extends ViewManager {
     }
 
     /**
-     * Sets that the display should show IME.
+     * Sets the policy for how the display should show IME.
      *
      * @param displayId Display ID.
-     * @param shouldShow Indicates that the display should show IME.
+     * @param imePolicy Indicates the policy for how the display should show IME.
      * @hide
      */
     @TestApi
-    default void setShouldShowIme(int displayId, boolean shouldShow) {
+    default void setDisplayImePolicy(int displayId, @DisplayImePolicy int imePolicy) {
     }
 
     /**
-     * Indicates that the display should show IME.
+     * Indicates the policy for how the display should show IME.
      *
      * @param displayId The id of the display.
-     * @return {@code true} if the display should show IME when an input field becomes
-     * focused on it.
+     * @return The policy for how the display should show IME.
      * @hide
      */
     @TestApi
-    default boolean shouldShowIme(int displayId) {
-        return false;
+    default @DisplayImePolicy int getDisplayImePolicy(int displayId) {
+        return DISPLAY_IME_POLICY_FALLBACK_DISPLAY;
     }
 
     public static class LayoutParams extends ViewGroup.LayoutParams implements Parcelable {
@@ -1433,7 +1528,54 @@ public interface WindowManager extends ViewManager {
          * can use {@link #FLAG_ALT_FOCUSABLE_IM} to modify this behavior. */
         public static final int FLAG_NOT_FOCUSABLE      = 0x00000008;
 
-        /** Window flag: this window can never receive touch events. */
+        /**
+         * Window flag: this window can never receive touch events.
+         *
+         * <p>The intention of this flag is to leave the touch to be handled by some window below
+         * this window (in Z order).
+         *
+         * <p>Starting from Android {@link Build.VERSION_CODES#S}, for security reasons, touch
+         * events that pass through windows containing this flag (ie. are within the bounds of the
+         * window) will only be delivered to the touch-consuming window if one (or more) of the
+         * items below are true:
+         * <ol>
+         *   <li><b>Same UID</b>: This window belongs to the same UID that owns the touch-consuming
+         *   window.
+         *   <li><b>Trusted windows</b>: This window is trusted. Trusted windows include (but are
+         *   not limited to) accessibility windows ({@link #TYPE_ACCESSIBILITY_OVERLAY}), the IME
+         *   ({@link #TYPE_INPUT_METHOD}) and assistant windows (TYPE_VOICE_INTERACTION). Windows of
+         *   type {@link #TYPE_APPLICATION_OVERLAY} are <b>not</b> trusted, see below.
+         *   <li><b>Invisible windows</b>: This window is {@link View#GONE} or
+         *   {@link View#INVISIBLE}.
+         *   <li><b>Fully transparent windows</b>: This window has {@link LayoutParams#alpha} equal
+         *   to 0.
+         *   <li><b>One SAW window with enough transparency</b>: This window is of type {@link
+         *   #TYPE_APPLICATION_OVERLAY}, has {@link LayoutParams#alpha} below or equal to <b>0.8</b>
+         *   and it's the <b>only</b> window of type {@link #TYPE_APPLICATION_OVERLAY} from this UID
+         *   in the touch path.
+         *   <li><b>Multiple SAW windows with enough transparency</b>: The multiple overlapping
+         *   {@link #TYPE_APPLICATION_OVERLAY} windows in the
+         *   touch path from this UID have a <b>combined obscuring opacity</b> below or equal to
+         *   <b>0.8</b>. See section below on how to compute this value.
+         * </ol>
+         * <p>If none of these cases hold, the touch will not be delivered and a message will be
+         * logged to logcat.</p>
+         *
+         * <a name="ObscuringOpacity"></a>
+         * <h3>Combined obscuring opacity</h3>
+         *
+         * <p>The <b>combined obscuring opacity</b> of a set of windows is obtained by combining the
+         * opacity values of all windows in the set using the associative and commutative operation
+         * defined as:
+         * <pre>
+         * opacity({A,B}) = 1 - (1 - opacity(A))*(1 - opacity(B))
+         * </pre>
+         * <p>where {@code opacity(X)} is the {@link LayoutParams#alpha} of window X. So, for a set
+         * of windows {@code {W1, .., Wn}}, the combined obscuring opacity will be:
+         * <pre>
+         * opacity({W1, .., Wn}) = 1 - (1 - opacity(W1)) * ... * (1 - opacity(Wn))
+         * </pre>
+         */
         public static final int FLAG_NOT_TOUCHABLE      = 0x00000010;
 
         /** Window flag: even when this window is focusable (its
@@ -1999,6 +2141,16 @@ public interface WindowManager extends ViewManager {
          */
         public static final int PRIVATE_FLAG_WANTS_OFFSET_NOTIFICATIONS = 0x00000004;
 
+        /**
+         * When set {@link LayoutParams#TYPE_APPLICATION_OVERLAY} windows will stay visible, even if
+         * {@link LayoutParams#SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS} is set for another
+         * visible window.
+         * @hide
+         */
+        @SystemApi
+        @RequiresPermission(permission.SYSTEM_APPLICATION_OVERLAY)
+        public static final int SYSTEM_FLAG_SYSTEM_APPLICATION_OVERLAY = 0x00000008;
+
         /** In a multiuser system if this flag is set and the owner is a system process then this
          * window will appear on all user screens. This overrides the default behavior of window
          * types that normally only appear on the owning user's screen. Refer to each window type
@@ -2116,15 +2268,6 @@ public interface WindowManager extends ViewManager {
         public static final int PRIVATE_FLAG_IS_ROUNDED_CORNERS_OVERLAY = 0x00100000;
 
         /**
-         * Flag to indicate that this window should be considered a screen decoration similar to the
-         * nav bar and status bar. This will cause this window to affect the window insets reported
-         * to other windows when it is visible.
-         * @hide
-         */
-        @RequiresPermission(permission.STATUS_BAR_SERVICE)
-        public static final int PRIVATE_FLAG_IS_SCREEN_DECOR = 0x00400000;
-
-        /**
          * Flag to indicate that the status bar window is in a state such that it forces showing
          * the navigation bar unless the navigation bar window is explicitly set to
          * {@link View#GONE}.
@@ -2205,6 +2348,7 @@ public interface WindowManager extends ViewManager {
         @IntDef(flag = true, prefix = { "SYSTEM_FLAG_" }, value = {
                 SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS,
                 SYSTEM_FLAG_SHOW_FOR_ALL_USERS,
+                SYSTEM_FLAG_SYSTEM_APPLICATION_OVERLAY,
         })
         public @interface SystemFlags {}
 
@@ -2229,7 +2373,6 @@ public interface WindowManager extends ViewManager {
                 PRIVATE_FLAG_SUSTAINED_PERFORMANCE_MODE,
                 SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS,
                 PRIVATE_FLAG_IS_ROUNDED_CORNERS_OVERLAY,
-                PRIVATE_FLAG_IS_SCREEN_DECOR,
                 PRIVATE_FLAG_STATUS_FORCE_SHOW_NAVIGATION,
                 PRIVATE_FLAG_COLOR_SPACE_AGNOSTIC,
                 PRIVATE_FLAG_USE_BLAST,
@@ -2239,6 +2382,7 @@ public interface WindowManager extends ViewManager {
                 PRIVATE_FLAG_TRUSTED_OVERLAY,
                 PRIVATE_FLAG_INSET_PARENT_FRAME_BY_IME,
                 PRIVATE_FLAG_INTERCEPT_GLOBAL_DRAG_AND_DROP,
+                SYSTEM_FLAG_SYSTEM_APPLICATION_OVERLAY,
         })
         public @interface PrivateFlags {}
 
@@ -2317,10 +2461,6 @@ public interface WindowManager extends ViewManager {
                         equals = PRIVATE_FLAG_IS_ROUNDED_CORNERS_OVERLAY,
                         name = "IS_ROUNDED_CORNERS_OVERLAY"),
                 @ViewDebug.FlagToString(
-                        mask = PRIVATE_FLAG_IS_SCREEN_DECOR,
-                        equals = PRIVATE_FLAG_IS_SCREEN_DECOR,
-                        name = "IS_SCREEN_DECOR"),
-                @ViewDebug.FlagToString(
                         mask = PRIVATE_FLAG_STATUS_FORCE_SHOW_NAVIGATION,
                         equals = PRIVATE_FLAG_STATUS_FORCE_SHOW_NAVIGATION,
                         name = "STATUS_FORCE_SHOW_NAVIGATION"),
@@ -2355,7 +2495,11 @@ public interface WindowManager extends ViewManager {
                 @ViewDebug.FlagToString(
                         mask = PRIVATE_FLAG_INTERCEPT_GLOBAL_DRAG_AND_DROP,
                         equals = PRIVATE_FLAG_INTERCEPT_GLOBAL_DRAG_AND_DROP,
-                        name = "INTERCEPT_GLOBAL_DRAG_AND_DROP")
+                        name = "INTERCEPT_GLOBAL_DRAG_AND_DROP"),
+                @ViewDebug.FlagToString(
+                        mask = SYSTEM_FLAG_SYSTEM_APPLICATION_OVERLAY,
+                        equals = SYSTEM_FLAG_SYSTEM_APPLICATION_OVERLAY,
+                        name = "SYSTEM_FLAG_SYSTEM_APPLICATION_OVERLAY")
         })
         @PrivateFlags
         @TestApi
@@ -2545,6 +2689,7 @@ public interface WindowManager extends ViewManager {
          *
          * @see Gravity
          */
+        @GravityFlags
         public int gravity;
 
         /**
@@ -2818,7 +2963,6 @@ public interface WindowManager extends ViewManager {
         /** @hide */
         @Retention(RetentionPolicy.SOURCE)
         @IntDef(
-                flag = true,
                 value = {LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT,
                         LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES,
                         LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER,

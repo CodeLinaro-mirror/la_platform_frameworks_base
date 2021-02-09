@@ -53,9 +53,9 @@ public:
         LOG_ALWAYS_FATAL("SkiaCanvas cannot be reset as a recording canvas");
     }
 
-    virtual uirenderer::DisplayList* finishRecording() override {
+    virtual uirenderer::DisplayList finishRecording() override {
         LOG_ALWAYS_FATAL("SkiaCanvas does not produce a DisplayList");
-        return nullptr;
+        return uirenderer::DisplayList();
     }
     virtual void enableZ(bool enableZ) override {
         LOG_ALWAYS_FATAL("SkiaCanvas does not support enableZ");
@@ -73,10 +73,8 @@ public:
     virtual void restoreToCount(int saveCount) override;
     virtual void restoreUnclippedLayer(int saveCount, const SkPaint& paint) override;
 
-    virtual int saveLayer(float left, float top, float right, float bottom, const SkPaint* paint,
-                          SaveFlags::Flags flags) override;
-    virtual int saveLayerAlpha(float left, float top, float right, float bottom, int alpha,
-                               SaveFlags::Flags flags) override;
+    virtual int saveLayer(float left, float top, float right, float bottom, const SkPaint* paint) override;
+    virtual int saveLayerAlpha(float left, float top, float right, float bottom, int alpha) override;
     virtual int saveUnclippedLayer(int left, int top, int right, int bottom) override;
 
     virtual void getMatrix(SkMatrix* outMatrix) const override;
@@ -149,6 +147,12 @@ public:
                             uirenderer::CanvasPropertyPrimitive* y,
                             uirenderer::CanvasPropertyPrimitive* radius,
                             uirenderer::CanvasPropertyPaint* paint) override;
+    virtual void drawRipple(uirenderer::CanvasPropertyPrimitive* x,
+                            uirenderer::CanvasPropertyPrimitive* y,
+                            uirenderer::CanvasPropertyPrimitive* radius,
+                            uirenderer::CanvasPropertyPaint* paint,
+                            uirenderer::CanvasPropertyPrimitive* progress,
+                            const SkRuntimeShaderBuilder& effectBuilder) override;
 
     virtual void drawLayer(uirenderer::DeferredLayerUpdater* layerHandle) override;
     virtual void drawRenderNode(uirenderer::RenderNode* renderNode) override;
@@ -192,7 +196,6 @@ protected:
         }
         operator const SkPaint*() const { return mPtr; }
         const SkPaint* operator->() const { assert(mPtr); return mPtr; }
-        const SkPaint& operator*() const { assert(mPtr); return *mPtr; }
         explicit operator bool() { return mPtr != nullptr; }
     private:
         const SkPaint* mPtr;

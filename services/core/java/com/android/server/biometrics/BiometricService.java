@@ -19,6 +19,9 @@ package com.android.server.biometrics;
 import static android.Manifest.permission.USE_BIOMETRIC_INTERNAL;
 import static android.hardware.biometrics.BiometricManager.Authenticators;
 
+import static com.android.server.biometrics.BiometricServiceStateProto.STATE_AUTH_IDLE;
+
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.IActivityManager;
@@ -27,6 +30,7 @@ import android.app.admin.DevicePolicyManager;
 import android.app.trust.ITrustManager;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.database.ContentObserver;
 import android.hardware.biometrics.BiometricAuthenticator;
 import android.hardware.biometrics.BiometricConstants;
@@ -38,7 +42,10 @@ import android.hardware.biometrics.IBiometricSensorReceiver;
 import android.hardware.biometrics.IBiometricService;
 import android.hardware.biometrics.IBiometricServiceReceiver;
 import android.hardware.biometrics.IBiometricSysuiReceiver;
+import android.hardware.biometrics.IInvalidationCallback;
+import android.hardware.biometrics.ITestSession;
 import android.hardware.biometrics.PromptInfo;
+import android.hardware.biometrics.SensorPropertiesInternal;
 import android.hardware.fingerprint.FingerprintManager;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
 import android.net.Uri;
@@ -54,8 +61,10 @@ import android.os.UserHandle;
 import android.provider.Settings;
 import android.security.KeyStore;
 import android.text.TextUtils;
+import android.util.ArraySet;
 import android.util.Pair;
 import android.util.Slog;
+import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
@@ -71,6 +80,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 /**
  * System service that arbitrates the modality for BiometricPrompt to use.
@@ -185,10 +195,7 @@ public class BiometricService extends SystemService {
                             args.argi1 /* userid */,
                             (IBiometricServiceReceiver) args.arg3 /* receiver */,
                             (String) args.arg4 /* opPackageName */,
-                            (PromptInfo) args.arg5 /* promptInfo */,
-                            args.argi2 /* callingUid */,
-                            args.argi3 /* callingPid */,
-                            args.argi4 /* callingUserId */);
+                            (PromptInfo) args.arg5 /* promptInfo */);
                     args.recycle();
                     break;
                 }
@@ -235,6 +242,93 @@ public class BiometricService extends SystemService {
             }
         }
     };
+
+    /**
+     * Tracks authenticatorId invalidation. For more details, see
+     * {@link com.android.server.biometrics.sensors.InvalidationRequesterClient}.
+     */
+    @VisibleForTesting
+    static class InvalidationTracker {
+        @NonNull private final IInvalidationCallback mClientCallback;
+        @NonNull private final Set<Integer> mSensorsPendingInvalidation;
+
+        public static InvalidationTracker start(@NonNull Context context,
+                @NonNull ArrayList<BiometricSensor> sensors,
+                int userId, int fromSensorId, @NonNull IInvalidationCallback clientCallback) {
+            return new InvalidationTracker(context, sensors, userId, fromSensorId, clientCallback);
+        }
+
+        private InvalidationTracker(@NonNull Context context,
+                @NonNull ArrayList<BiometricSensor> sensors, int userId,
+                int fromSensorId, @NonNull IInvalidationCallback clientCallback) {
+            mClientCallback = clientCallback;
+            mSensorsPendingInvalidation = new ArraySet<>();
+
+            for (BiometricSensor sensor : sensors) {
+                if (sensor.id == fromSensorId) {
+                    continue;
+                }
+
+                if (!Utils.isAtLeastStrength(sensor.oemStrength, Authenticators.BIOMETRIC_STRONG)) {
+                    continue;
+                }
+
+                try {
+                    if (!sensor.impl.hasEnrolledTemplates(userId, context.getOpPackageName())) {
+                        continue;
+                    }
+                } catch (RemoteException e) {
+                    Slog.e(TAG, "Remote Exception", e);
+                }
+
+                Slog.d(TAG, "Requesting authenticatorId invalidation for sensor: " + sensor.id);
+
+                synchronized (this) {
+                    mSensorsPendingInvalidation.add(sensor.id);
+                }
+
+                try {
+                    sensor.impl.invalidateAuthenticatorId(userId, new IInvalidationCallback.Stub() {
+                        @Override
+                        public void onCompleted() {
+                            onInvalidated(sensor.id);
+                        }
+                    });
+                } catch (RemoteException e) {
+                    Slog.d(TAG, "RemoteException", e);
+                }
+            }
+
+            synchronized (this) {
+                if (mSensorsPendingInvalidation.isEmpty()) {
+                    try {
+                        Slog.d(TAG, "No sensors require invalidation");
+                        mClientCallback.onCompleted();
+                    } catch (RemoteException e) {
+                        Slog.e(TAG, "Remote Exception", e);
+                    }
+                }
+            }
+        }
+
+        @VisibleForTesting
+        void onInvalidated(int sensorId) {
+            synchronized (this) {
+                mSensorsPendingInvalidation.remove(sensorId);
+
+                Slog.d(TAG, "Sensor " + sensorId + " invalidated, remaining size: "
+                        + mSensorsPendingInvalidation.size());
+
+                if (mSensorsPendingInvalidation.isEmpty()) {
+                    try {
+                        mClientCallback.onCompleted();
+                    } catch (RemoteException e) {
+                        Slog.e(TAG, "Remote Exception", e);
+                    }
+                }
+            }
+        }
+    }
 
     @VisibleForTesting
     public static class SettingObserver extends ContentObserver {
@@ -476,6 +570,38 @@ public class BiometricService extends SystemService {
      */
     private final class BiometricServiceWrapper extends IBiometricService.Stub {
         @Override // Binder call
+        public ITestSession createTestSession(int sensorId, @NonNull String opPackageName)
+                throws RemoteException {
+            checkInternalPermission();
+
+            for (BiometricSensor sensor : mSensors) {
+                if (sensor.id == sensorId) {
+                    return sensor.impl.createTestSession(opPackageName);
+                }
+            }
+
+            Slog.e(TAG, "Unknown sensor for createTestSession: " + sensorId);
+            return null;
+        }
+
+        @Override // Binder call
+        public List<SensorPropertiesInternal> getSensorProperties(String opPackageName)
+                throws RemoteException {
+            checkInternalPermission();
+
+            final List<SensorPropertiesInternal> sensors = new ArrayList<>();
+            for (BiometricSensor sensor : mSensors) {
+                // Explicitly re-create as the super class, since AIDL doesn't play nicely with
+                // "List<? extends SensorPropertiesInternal> ...
+                final SensorPropertiesInternal prop = SensorPropertiesInternal
+                        .from(sensor.impl.getSensorProperties(opPackageName));
+                sensors.add(prop);
+            }
+
+            return sensors;
+        }
+
+        @Override // Binder call
         public void onReadyForAuthentication(int cookie) {
             checkInternalPermission();
 
@@ -486,8 +612,7 @@ public class BiometricService extends SystemService {
 
         @Override // Binder call
         public void authenticate(IBinder token, long operationId, int userId,
-                IBiometricServiceReceiver receiver, String opPackageName, PromptInfo promptInfo,
-                int callingUid, int callingPid, int callingUserId) {
+                IBiometricServiceReceiver receiver, String opPackageName, PromptInfo promptInfo) {
             checkInternalPermission();
 
             if (token == null || receiver == null || opPackageName == null || promptInfo == null) {
@@ -516,16 +641,12 @@ public class BiometricService extends SystemService {
             args.arg3 = receiver;
             args.arg4 = opPackageName;
             args.arg5 = promptInfo;
-            args.argi2 = callingUid;
-            args.argi3 = callingPid;
-            args.argi4 = callingUserId;
 
             mHandler.obtainMessage(MSG_AUTHENTICATE, args).sendToTarget();
         }
 
         @Override // Binder call
-        public void cancelAuthentication(IBinder token, String opPackageName,
-                int callingUid, int callingPid, int callingUserId) {
+        public void cancelAuthentication(IBinder token, String opPackageName) {
             checkInternalPermission();
 
             mHandler.obtainMessage(MSG_CANCEL_AUTHENTICATION).sendToTarget();
@@ -577,8 +698,9 @@ public class BiometricService extends SystemService {
         }
 
         @Override
-        public void registerAuthenticator(int id, int modality, int strength,
-                IBiometricAuthenticator authenticator) {
+        public synchronized void registerAuthenticator(int id, int modality,
+                @Authenticators.Types int strength,
+                @NonNull IBiometricAuthenticator authenticator) {
             checkInternalPermission();
 
             Slog.d(TAG, "Registering ID: " + id
@@ -636,6 +758,14 @@ public class BiometricService extends SystemService {
             }
         }
 
+        @Override
+        public void invalidateAuthenticatorIds(int userId, int fromSensorId,
+                IInvalidationCallback callback) {
+            checkInternalPermission();
+
+            InvalidationTracker.start(getContext(), mSensors, userId, fromSensorId, callback);
+        }
+
         @Override // Binder call
         public long[] getAuthenticatorIds(int callingUserId) {
             checkInternalPermission();
@@ -677,14 +807,28 @@ public class BiometricService extends SystemService {
         }
 
         @Override
-        protected void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        protected void dump(@NonNull FileDescriptor fd, @NonNull PrintWriter pw, String[] args) {
             if (!DumpUtils.checkDumpPermission(getContext(), TAG, pw)) {
                 return;
             }
 
             final long ident = Binder.clearCallingIdentity();
             try {
-                dumpInternal(pw);
+                if (args.length > 0 && "--proto".equals(args[0])) {
+                    final ProtoOutputStream proto = new ProtoOutputStream(fd);
+                    proto.write(BiometricServiceStateProto.AUTH_SESSION_STATE,
+                            mCurrentAuthSession != null ? mCurrentAuthSession.getState()
+                                    : STATE_AUTH_IDLE);
+                    for (BiometricSensor sensor : mSensors) {
+                        byte[] serviceState = sensor.impl.dumpSensorServiceStateProto();
+                        proto.write(BiometricServiceStateProto.SENSOR_SERVICE_STATES, serviceState);
+                    }
+                    proto.flush();
+                } else {
+                    dumpInternal(pw);
+                }
+            } catch (RemoteException e) {
+                Slog.e(TAG, "Remote exception", e);
             } finally {
                 Binder.restoreCallingIdentity(ident);
             }
@@ -765,12 +909,13 @@ public class BiometricService extends SystemService {
 
         public List<FingerprintSensorPropertiesInternal> getFingerprintSensorProperties(
                 Context context) {
-            final FingerprintManager fpm = context.getSystemService(FingerprintManager.class);
-            if (fpm != null) {
-                return fpm.getSensorPropertiesInternal();
-            } else {
-                return new ArrayList<>();
+            if (context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_FINGERPRINT)) {
+                final FingerprintManager fpm = context.getSystemService(FingerprintManager.class);
+                if (fpm != null) {
+                    return fpm.getSensorPropertiesInternal();
+                }
             }
+            return new ArrayList<>();
         }
     }
 
@@ -992,8 +1137,7 @@ public class BiometricService extends SystemService {
     }
 
     private void handleAuthenticate(IBinder token, long operationId, int userId,
-            IBiometricServiceReceiver receiver, String opPackageName, PromptInfo promptInfo,
-            int callingUid, int callingPid, int callingUserId) {
+            IBiometricServiceReceiver receiver, String opPackageName, PromptInfo promptInfo) {
 
         mHandler.post(() -> {
             try {
@@ -1004,7 +1148,7 @@ public class BiometricService extends SystemService {
                 final Pair<Integer, Integer> preAuthStatus = preAuthInfo.getPreAuthenticateStatus();
 
                 Slog.d(TAG, "handleAuthenticate: modality(" + preAuthStatus.first
-                        + "), status(" + preAuthStatus.second + ")");
+                        + "), status(" + preAuthStatus.second + "), preAuthInfo: " + preAuthInfo);
 
                 if (preAuthStatus.second == BiometricConstants.BIOMETRIC_SUCCESS) {
                     // If BIOMETRIC_WEAK or BIOMETRIC_STRONG are allowed, but not enrolled, but
@@ -1017,7 +1161,7 @@ public class BiometricService extends SystemService {
                     }
 
                     authenticateInternal(token, operationId, userId, receiver, opPackageName,
-                            promptInfo, callingUid, callingPid, callingUserId, preAuthInfo);
+                            promptInfo, preAuthInfo);
                 } else {
                     receiver.onError(preAuthStatus.first /* modality */,
                             preAuthStatus.second /* errorCode */,
@@ -1040,7 +1184,7 @@ public class BiometricService extends SystemService {
      */
     private void authenticateInternal(IBinder token, long operationId, int userId,
             IBiometricServiceReceiver receiver, String opPackageName, PromptInfo promptInfo,
-            int callingUid, int callingPid, int callingUserId, PreAuthInfo preAuthInfo) {
+            PreAuthInfo preAuthInfo) {
         Slog.d(TAG, "Creating authSession with authRequest: " + preAuthInfo);
 
         // No need to dismiss dialog / send error yet if we're continuing authentication, e.g.
@@ -1057,8 +1201,7 @@ public class BiometricService extends SystemService {
         final boolean debugEnabled = mInjector.isDebugEnabled(getContext(), userId);
         mCurrentAuthSession = new AuthSession(getContext(), mStatusBarService, mSysuiReceiver,
                 mKeyStore, mRandom, mClientDeathReceiver, preAuthInfo, token, operationId, userId,
-                mBiometricSensorReceiver, receiver, opPackageName, promptInfo, callingUid,
-                callingPid, callingUserId, debugEnabled,
+                mBiometricSensorReceiver, receiver, opPackageName, promptInfo, debugEnabled,
                 mInjector.getFingerprintSensorProperties(getContext()));
         try {
             mCurrentAuthSession.goToInitialState();

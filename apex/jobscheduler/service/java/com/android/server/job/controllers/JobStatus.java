@@ -85,6 +85,7 @@ public final class JobStatus {
     static final int CONSTRAINT_CONTENT_TRIGGER = 1<<26;
     static final int CONSTRAINT_DEVICE_NOT_DOZING = 1 << 25; // Implicit constraint
     static final int CONSTRAINT_WITHIN_QUOTA = 1 << 24;      // Implicit constraint
+    static final int CONSTRAINT_WITHIN_EXPEDITED_QUOTA = 1 << 23;    // Implicit constraint
     static final int CONSTRAINT_BACKGROUND_NOT_RESTRICTED = 1 << 22; // Implicit constraint
 
     /**
@@ -362,8 +363,8 @@ public final class JobStatus {
     private boolean mReadyDeadlineSatisfied;
 
     /**
-     * The device isn't Dozing or this job will be in the foreground. This implicit constraint must
-     * be satisfied.
+     * The device isn't Dozing or this job is exempt from Dozing (eg. it will be in the foreground
+     * or will run as an expedited job). This implicit constraint must be satisfied.
      */
     private boolean mReadyNotDozing;
 
@@ -375,6 +376,9 @@ public final class JobStatus {
 
     /** The job is within its quota based on its standby bucket. */
     private boolean mReadyWithinQuota;
+
+    /** The job is an expedited job with sufficient quota to run as an expedited job. */
+    private boolean mReadyWithinExpeditedQuota;
 
     /** The job's dynamic requirements have been satisfied. */
     private boolean mReadyDynamicSatisfied;
@@ -470,7 +474,7 @@ public final class JobStatus {
         }
         this.requiredConstraints = requiredConstraints;
         mRequiredConstraintsOfInterest = requiredConstraints & CONSTRAINTS_OF_INTEREST;
-        mReadyNotDozing = (job.getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) != 0;
+        mReadyNotDozing = canRunInDoze();
         if (standbyBucket == RESTRICTED_INDEX) {
             addDynamicConstraints(DYNAMIC_RESTRICTED_CONSTRAINTS);
         } else {
@@ -1036,6 +1040,36 @@ public final class JobStatus {
         mPersistedUtcTimes = null;
     }
 
+    /** @return true if the app has requested that this run as an expedited job. */
+    public boolean isRequestedExpeditedJob() {
+        return (getFlags() & JobInfo.FLAG_EXPEDITED) != 0;
+    }
+
+    /**
+     * @return true if all expedited job requirements are satisfied and therefore this should be
+     * treated as an expedited job.
+     */
+    public boolean shouldTreatAsExpeditedJob() {
+        return mReadyWithinExpeditedQuota && isRequestedExpeditedJob();
+    }
+
+    /**
+     * @return true if the job is exempted from Doze restrictions and therefore allowed to run
+     * in Doze.
+     */
+    public boolean canRunInDoze() {
+        return (getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) != 0 || shouldTreatAsExpeditedJob();
+    }
+
+    boolean canRunInBatterySaver() {
+        return (getInternalFlags() & INTERNAL_FLAG_HAS_FOREGROUND_EXEMPTION) != 0
+                || shouldTreatAsExpeditedJob();
+    }
+
+    boolean shouldIgnoreNetworkBlocking() {
+        return (getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) != 0 || shouldTreatAsExpeditedJob();
+    }
+
     /** @return true if the constraint was changed, false otherwise. */
     boolean setChargingConstraintSatisfied(boolean state) {
         return setConstraintSatisfied(CONSTRAINT_CHARGING, state);
@@ -1086,7 +1120,7 @@ public final class JobStatus {
         dozeWhitelisted = whitelisted;
         if (setConstraintSatisfied(CONSTRAINT_DEVICE_NOT_DOZING, state)) {
             // The constraint was changed. Update the ready flag.
-            mReadyNotDozing = state || (job.getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) != 0;
+            mReadyNotDozing = state || canRunInDoze();
             return true;
         }
         return false;
@@ -1107,6 +1141,21 @@ public final class JobStatus {
         if (setConstraintSatisfied(CONSTRAINT_WITHIN_QUOTA, state)) {
             // The constraint was changed. Update the ready flag.
             mReadyWithinQuota = state;
+            return true;
+        }
+        return false;
+    }
+
+    /** @return true if the constraint was changed, false otherwise. */
+    boolean setExpeditedJobQuotaConstraintSatisfied(boolean state) {
+        if (setConstraintSatisfied(CONSTRAINT_WITHIN_EXPEDITED_QUOTA, state)) {
+            // The constraint was changed. Update the ready flag.
+            mReadyWithinExpeditedQuota = state;
+            // DeviceIdleJobsController currently only tracks jobs with the WILL_BE_FOREGROUND flag.
+            // Making it also track requested-expedited jobs would add unnecessary hops since the
+            // controller would then defer to canRunInDoze. Avoid the hops and just update
+            // mReadyNotDozing directly.
+            mReadyNotDozing = isConstraintSatisfied(CONSTRAINT_DEVICE_NOT_DOZING) || canRunInDoze();
             return true;
         }
         return false;
@@ -1241,6 +1290,10 @@ public final class JobStatus {
                 oldValue = mReadyWithinQuota;
                 mReadyWithinQuota = true;
                 break;
+            case CONSTRAINT_WITHIN_EXPEDITED_QUOTA:
+                oldValue = mReadyWithinExpeditedQuota;
+                mReadyWithinExpeditedQuota = true;
+                break;
             default:
                 satisfied |= constraint;
                 mReadyDynamicSatisfied = mDynamicConstraints != 0
@@ -1263,6 +1316,9 @@ public final class JobStatus {
             case CONSTRAINT_WITHIN_QUOTA:
                 mReadyWithinQuota = oldValue;
                 break;
+            case CONSTRAINT_WITHIN_EXPEDITED_QUOTA:
+                mReadyWithinExpeditedQuota = oldValue;
+                break;
             default:
                 mReadyDynamicSatisfied = mDynamicConstraints != 0
                         && mDynamicConstraints == (satisfiedConstraints & mDynamicConstraints);
@@ -1277,7 +1333,7 @@ public final class JobStatus {
         // sessions (exempt from dynamic restrictions), we need the additional check to ensure
         // that NEVER jobs don't run.
         // TODO: cleanup quota and standby bucket management so we don't need the additional checks
-        if ((!mReadyWithinQuota && !mReadyDynamicSatisfied)
+        if ((!mReadyWithinQuota && !mReadyDynamicSatisfied && !shouldTreatAsExpeditedJob())
                 || getEffectiveStandbyBucket() == NEVER_INDEX) {
             return false;
         }
@@ -1490,6 +1546,9 @@ public final class JobStatus {
         if ((constraints & CONSTRAINT_WITHIN_QUOTA) != 0) {
             pw.print(" WITHIN_QUOTA");
         }
+        if ((constraints & CONSTRAINT_WITHIN_EXPEDITED_QUOTA) != 0) {
+            pw.print(" WITHIN_EXPEDITED_QUOTA");
+        }
         if (constraints != 0) {
             pw.print(" [0x");
             pw.print(Integer.toHexString(constraints));
@@ -1561,6 +1620,9 @@ public final class JobStatus {
         }
         if ((constraints & CONSTRAINT_BACKGROUND_NOT_RESTRICTED) != 0) {
             proto.write(fieldId, JobServerProtoEnums.CONSTRAINT_BACKGROUND_NOT_RESTRICTED);
+        }
+        if ((constraints & CONSTRAINT_WITHIN_EXPEDITED_QUOTA) != 0) {
+            proto.write(fieldId, JobServerProtoEnums.CONSTRAINT_WITHIN_EXPEDITED_JOB_QUOTA);
         }
     }
 
@@ -1771,12 +1833,19 @@ public final class JobStatus {
             pw.print(prefix); pw.print("  readyDeadlineSatisfied: ");
             pw.println(mReadyDeadlineSatisfied);
         }
-        pw.print(prefix);
-        pw.print("  readyDynamicSatisfied: ");
-        pw.println(mReadyDynamicSatisfied);
+        if (mDynamicConstraints != 0) {
+            pw.print(prefix);
+            pw.print("  readyDynamicSatisfied: ");
+            pw.println(mReadyDynamicSatisfied);
+        }
         pw.print(prefix);
         pw.print("  readyComponentEnabled: ");
         pw.println(serviceInfo != null);
+        if ((getFlags() & JobInfo.FLAG_EXPEDITED) != 0) {
+            pw.print(prefix);
+            pw.print("  mReadyWithinExpeditedQuota: ");
+            pw.println(mReadyWithinExpeditedQuota);
+        }
 
         if (changedAuthorities != null) {
             pw.print(prefix); pw.println("Changed authorities:");

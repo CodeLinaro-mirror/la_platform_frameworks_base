@@ -118,7 +118,6 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -1842,9 +1841,11 @@ final class ActivityManagerShellCommand extends ShellCommand {
     }
 
     int runGetCurrentUser(PrintWriter pw) throws RemoteException {
-        UserInfo currentUser = Objects.requireNonNull(mInterface.getCurrentUser(),
-                "Current user not set");
-        pw.println(currentUser.id);
+        int userId = mInterface.getCurrentUserId();
+        if (userId == UserHandle.USER_NULL) {
+            throw new IllegalStateException("Current user not set");
+        }
+        pw.println(userId);
         return 0;
     }
 
@@ -2595,8 +2596,6 @@ final class ActivityManagerShellCommand extends ShellCommand {
                 return runStackList(pw);
             case "info":
                 return runRootTaskInfo(pw);
-            case "move-top-activity-to-pinned-stack":
-                return runMoveTopActivityToPinnedRootTask(pw);
             case "remove":
                 return runRootTaskRemove(pw);
             default:
@@ -2684,41 +2683,6 @@ final class ActivityManagerShellCommand extends ShellCommand {
         int taskId = Integer.parseInt(taskIdStr);
         mTaskInterface.removeTask(taskId);
         return 0;
-    }
-
-    int runMoveTopActivityToPinnedRootTask(PrintWriter pw) throws RemoteException {
-        int rootTaskId = Integer.parseInt(getNextArgRequired());
-        final Rect bounds = getBounds();
-        if (bounds == null) {
-            getErrPrintWriter().println("Error: invalid input bounds");
-            return -1;
-        }
-
-        if (!mTaskInterface.moveTopActivityToPinnedRootTask(rootTaskId, bounds)) {
-            getErrPrintWriter().println("Didn't move top activity to pinned stack.");
-            return -1;
-        }
-        return 0;
-    }
-
-    void setBoundsSide(Rect bounds, String side, int value) {
-        switch (side) {
-            case "l":
-                bounds.left = value;
-                break;
-            case "r":
-                bounds.right = value;
-                break;
-            case "t":
-                bounds.top = value;
-                break;
-            case "b":
-                bounds.bottom = value;
-                break;
-            default:
-                getErrPrintWriter().println("Unknown set side: " + side);
-                break;
-        }
     }
 
     int runTask(PrintWriter pw) throws RemoteException {
@@ -2927,6 +2891,7 @@ final class ActivityManagerShellCommand extends ShellCommand {
         final PlatformCompat platformCompat = (PlatformCompat)
                 ServiceManager.getService(Context.PLATFORM_COMPAT_SERVICE);
         String toggleValue = getNextArgRequired();
+        boolean killPackage = !"--no-kill".equals(getNextOption());
         boolean toggleAll = false;
         int targetSdkVersion = -1;
         long changeId = -1;
@@ -2978,7 +2943,11 @@ final class ActivityManagerShellCommand extends ShellCommand {
                         CompatibilityChangeConfig overrides =
                                 new CompatibilityChangeConfig(
                                         new Compatibility.ChangeConfig(enabled, disabled));
-                        platformCompat.setOverrides(overrides, packageName);
+                        if (killPackage) {
+                            platformCompat.setOverrides(overrides, packageName);
+                        } else {
+                            platformCompat.setOverridesForTest(overrides, packageName);
+                        }
                         pw.println("Enabled change " + changeId + " for " + packageName + ".");
                     }
                     return 0;
@@ -2997,13 +2966,21 @@ final class ActivityManagerShellCommand extends ShellCommand {
                         CompatibilityChangeConfig overrides =
                                 new CompatibilityChangeConfig(
                                         new Compatibility.ChangeConfig(enabled, disabled));
-                        platformCompat.setOverrides(overrides, packageName);
+                        if (killPackage) {
+                            platformCompat.setOverrides(overrides, packageName);
+                        } else {
+                            platformCompat.setOverridesForTest(overrides, packageName);
+                        }
                         pw.println("Disabled change " + changeId + " for " + packageName + ".");
                     }
                     return 0;
                 case "reset":
                     if (toggleAll) {
-                        platformCompat.clearOverrides(packageName);
+                        if (killPackage) {
+                            platformCompat.clearOverrides(packageName);
+                        } else {
+                            platformCompat.clearOverridesForTest(packageName);
+                        }
                         pw.println("Reset all changes for " + packageName + " to default value.");
                         return 0;
                     }
@@ -3372,16 +3349,6 @@ final class ActivityManagerShellCommand extends ShellCommand {
             pw.println("       move-task <TASK_ID> <STACK_ID> [true|false]");
             pw.println("           Move <TASK_ID> from its current stack to the top (true) or");
             pw.println("           bottom (false) of <STACK_ID>.");
-            pw.println("       resize-docked-stack <LEFT,TOP,RIGHT,BOTTOM> [<TASK_LEFT,TASK_TOP,TASK_RIGHT,TASK_BOTTOM>]");
-            pw.println("           Change docked stack to <LEFT,TOP,RIGHT,BOTTOM>");
-            pw.println("           and supplying temporary different task bounds indicated by");
-            pw.println("           <TASK_LEFT,TOP,RIGHT,BOTTOM>");
-            pw.println("       move-top-activity-to-pinned-stack: <STACK_ID> <LEFT,TOP,RIGHT,BOTTOM>");
-            pw.println("           Moves the top activity from");
-            pw.println("           <STACK_ID> to the pinned stack using <LEFT,TOP,RIGHT,BOTTOM> for the");
-            pw.println("           bounds of the pinned stack.");
-            pw.println("       positiontask <TASK_ID> <STACK_ID> <POSITION>");
-            pw.println("           Place <TASK_ID> in <STACK_ID> at <POSITION>");
             pw.println("       list");
             pw.println("           List all of the activity stacks and their sizes.");
             pw.println("       info <WINDOWING_MODE> <ACTIVITY_TYPE>");
@@ -3409,15 +3376,18 @@ final class ActivityManagerShellCommand extends ShellCommand {
             pw.println("  write");
             pw.println("      Write all pending state to storage.");
             pw.println("  compat [COMMAND] [...]: sub-commands for toggling app-compat changes.");
-            pw.println("         enable|disable|reset <CHANGE_ID|CHANGE_NAME> <PACKAGE_NAME>");
+            pw.println("         enable|disable [--no-kill] <CHANGE_ID|CHANGE_NAME> <PACKAGE_NAME>");
+            pw.println("            Toggles a change either by id or by name for <PACKAGE_NAME>.");
+            pw.println("            It kills <PACKAGE_NAME> (to allow the toggle to take effect) unless --no-kill is provided.");
+            pw.println("         reset <CHANGE_ID|CHANGE_NAME> <PACKAGE_NAME>");
             pw.println("            Toggles a change either by id or by name for <PACKAGE_NAME>.");
             pw.println("            It kills <PACKAGE_NAME> (to allow the toggle to take effect).");
-            pw.println("         enable-all|disable-all <targetSdkVersion> <PACKAGE_NAME");
+            pw.println("         enable-all|disable-all <targetSdkVersion> <PACKAGE_NAME>");
             pw.println("            Toggles all changes that are gated by <targetSdkVersion>.");
-            pw.println("         reset-all <PACKAGE_NAME>");
+            pw.println("         reset-all [--no-kill] <PACKAGE_NAME>");
             pw.println("            Removes all existing overrides for all changes for ");
             pw.println("            <PACKAGE_NAME> (back to default behaviour).");
-            pw.println("            It kills <PACKAGE_NAME> (to allow the toggle to take effect).");
+            pw.println("            It kills <PACKAGE_NAME> (to allow the toggle to take effect) unless --no-kill is provided.");
             pw.println("  memory-factor [command] [...]: sub-commands for overriding memory pressure factor");
             pw.println("         set <NORMAL|MODERATE|LOW|CRITICAL>");
             pw.println("            Overrides memory pressure factor. May also supply a raw int level");

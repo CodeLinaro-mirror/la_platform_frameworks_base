@@ -19,12 +19,15 @@ package com.android.server.pm;
 import android.annotation.NonNull;
 import android.content.IntentFilter;
 
-import java.io.PrintWriter;
+import com.android.server.WatchableIntentResolver;
+import com.android.server.utils.Snappable;
 
-import com.android.server.IntentResolver;
+import java.io.PrintWriter;
+import java.util.ArrayList;
 
 public class PreferredIntentResolver
-        extends IntentResolver<PreferredActivity, PreferredActivity> {
+        extends WatchableIntentResolver<PreferredActivity, PreferredActivity>
+        implements Snappable {
     @Override
     protected PreferredActivity[] newArray(int size) {
         return new PreferredActivity[size];
@@ -44,5 +47,36 @@ public class PreferredIntentResolver
     @Override
     protected IntentFilter getIntentFilter(@NonNull PreferredActivity input) {
         return input;
+    }
+
+    public boolean shouldAddPreferredActivity(PreferredActivity pa) {
+        ArrayList<PreferredActivity> pal = findFilters(pa);
+        if (pal == null || pal.isEmpty()) {
+            return true;
+        }
+        if (!pa.mPref.mAlways) {
+            return false;
+        }
+        final int activityCount = pal.size();
+        for (int i = 0; i < activityCount; i++) {
+            PreferredActivity cur = pal.get(i);
+            if (cur.mPref.mAlways
+                    && cur.mPref.mMatch == (pa.mPref.mMatch & IntentFilter.MATCH_CATEGORY_MASK)
+                    && cur.mPref.sameSet(pa.mPref)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Return a snapshot of the current object.  The snapshot is a read-only copy suitable
+     * for read-only methods.
+     * @return A snapshot of the current object.
+     */
+    public PreferredIntentResolver snapshot() {
+        PreferredIntentResolver result = new PreferredIntentResolver();
+        result.copyFrom(this);
+        return result;
     }
 }

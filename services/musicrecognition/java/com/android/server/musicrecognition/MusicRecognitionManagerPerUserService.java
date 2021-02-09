@@ -16,6 +16,7 @@
 
 package com.android.server.musicrecognition;
 
+import static android.media.musicrecognition.MusicRecognitionManager.RECOGNITION_FAILED_AUDIO_UNAVAILABLE;
 import static android.media.musicrecognition.MusicRecognitionManager.RECOGNITION_FAILED_SERVICE_KILLED;
 import static android.media.musicrecognition.MusicRecognitionManager.RECOGNITION_FAILED_SERVICE_UNAVAILABLE;
 import static android.media.musicrecognition.MusicRecognitionManager.RecognitionFailureCode;
@@ -64,10 +65,6 @@ public final class MusicRecognitionManagerPerUserService extends
     @GuardedBy("mLock")
     private RemoteMusicRecognitionService mRemoteService;
 
-    private MusicRecognitionServiceCallback mRemoteServiceCallback =
-            new MusicRecognitionServiceCallback();
-    private IMusicRecognitionManagerCallback mCallback;
-
     MusicRecognitionManagerPerUserService(
             @NonNull MusicRecognitionManagerService primary,
             @NonNull Object lock, int userId) {
@@ -100,7 +97,8 @@ public final class MusicRecognitionManagerPerUserService extends
 
     @GuardedBy("mLock")
     @Nullable
-    private RemoteMusicRecognitionService ensureRemoteServiceLocked() {
+    private RemoteMusicRecognitionService ensureRemoteServiceLocked(
+            IMusicRecognitionManagerCallback clientCallback) {
         if (mRemoteService == null) {
             final String serviceName = getComponentNameLocked();
             if (serviceName == null) {
@@ -113,7 +111,9 @@ public final class MusicRecognitionManagerPerUserService extends
 
             mRemoteService = new RemoteMusicRecognitionService(getContext(),
                     serviceComponent, mUserId, this,
-                    mRemoteServiceCallback, mMaster.isBindInstantServiceAllowed(), mMaster.verbose);
+                    new MusicRecognitionServiceCallback(clientCallback),
+                    mMaster.isBindInstantServiceAllowed(),
+                    mMaster.verbose);
         }
 
         return mRemoteService;
@@ -129,13 +129,14 @@ public final class MusicRecognitionManagerPerUserService extends
             @NonNull IBinder callback) {
         int maxAudioLengthSeconds = Math.min(recognitionRequest.getMaxAudioLengthSeconds(),
                 MAX_STREAMING_SECONDS);
-        mCallback = IMusicRecognitionManagerCallback.Stub.asInterface(callback);
+        IMusicRecognitionManagerCallback clientCallback =
+                IMusicRecognitionManagerCallback.Stub.asInterface(callback);
         AudioRecord audioRecord = createAudioRecord(recognitionRequest, maxAudioLengthSeconds);
 
-        mRemoteService = ensureRemoteServiceLocked();
+        mRemoteService = ensureRemoteServiceLocked(clientCallback);
         if (mRemoteService == null) {
             try {
-                mCallback.onRecognitionFailed(
+                clientCallback.onRecognitionFailed(
                         RECOGNITION_FAILED_SERVICE_UNAVAILABLE);
             } catch (RemoteException e) {
                 // Ignored.
@@ -146,7 +147,8 @@ public final class MusicRecognitionManagerPerUserService extends
         Pair<ParcelFileDescriptor, ParcelFileDescriptor> clientPipe = createPipe();
         if (clientPipe == null) {
             try {
-                mCallback.onAudioStreamClosed();
+                clientCallback.onRecognitionFailed(
+                        RECOGNITION_FAILED_AUDIO_UNAVAILABLE);
             } catch (RemoteException ignored) {
                 // Ignored.
             }
@@ -167,7 +169,8 @@ public final class MusicRecognitionManagerPerUserService extends
                         recognitionRequest.getIgnoreBeginningFrames() * BYTES_PER_SAMPLE;
                 audioRecord.startRecording();
                 while (bytesRead >= 0 && totalBytesRead
-                        < audioRecord.getBufferSizeInFrames() * BYTES_PER_SAMPLE) {
+                        < audioRecord.getBufferSizeInFrames() * BYTES_PER_SAMPLE
+                        && mRemoteService != null) {
                     bytesRead = audioRecord.read(byteBuffer, 0, byteBuffer.length);
                     if (bytesRead > 0) {
                         totalBytesRead += bytesRead;
@@ -190,11 +193,10 @@ public final class MusicRecognitionManagerPerUserService extends
             } finally {
                 audioRecord.release();
                 try {
-                    mCallback.onAudioStreamClosed();
+                    clientCallback.onAudioStreamClosed();
                 } catch (RemoteException ignored) {
                     // Ignored.
                 }
-
             }
         });
         // Send the pipe down to the lookup service while we write to it asynchronously.
@@ -205,36 +207,61 @@ public final class MusicRecognitionManagerPerUserService extends
      * Callback invoked by {@link android.service.musicrecognition.MusicRecognitionService} to pass
      * back the music search result.
      */
-    private final class MusicRecognitionServiceCallback extends
+    final class MusicRecognitionServiceCallback extends
             IMusicRecognitionServiceCallback.Stub {
+
+        private final IMusicRecognitionManagerCallback mClientCallback;
+
+        private MusicRecognitionServiceCallback(IMusicRecognitionManagerCallback clientCallback) {
+            mClientCallback = clientCallback;
+        }
+
         @Override
         public void onRecognitionSucceeded(MediaMetadata result, Bundle extras) {
             try {
                 sanitizeBundle(extras);
-                mCallback.onRecognitionSucceeded(result, extras);
+                mClientCallback.onRecognitionSucceeded(result, extras);
             } catch (RemoteException ignored) {
                 // Ignored.
             }
+            destroyService();
         }
 
         @Override
         public void onRecognitionFailed(@RecognitionFailureCode int failureCode) {
             try {
-                mCallback.onRecognitionFailed(failureCode);
+                mClientCallback.onRecognitionFailed(failureCode);
             } catch (RemoteException ignored) {
                 // Ignored.
             }
+            destroyService();
+        }
+
+        private IMusicRecognitionManagerCallback getClientCallback() {
+            return mClientCallback;
         }
     }
 
     @Override
     public void onServiceDied(@NonNull RemoteMusicRecognitionService service) {
         try {
-            mCallback.onRecognitionFailed(RECOGNITION_FAILED_SERVICE_KILLED);
+            service.getServerCallback().getClientCallback().onRecognitionFailed(
+                    RECOGNITION_FAILED_SERVICE_KILLED);
         } catch (RemoteException e) {
             // Ignored.
         }
         Slog.w(TAG, "remote service died: " + service);
+        destroyService();
+    }
+
+    @GuardedBy("mLock")
+    private void destroyService() {
+        synchronized (mLock) {
+            if (mRemoteService != null) {
+                mRemoteService.destroy();
+                mRemoteService = null;
+            }
+        }
     }
 
     /** Establishes an audio stream from the DSP audio source. */

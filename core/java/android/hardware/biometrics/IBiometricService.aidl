@@ -19,22 +19,29 @@ package android.hardware.biometrics;
 import android.hardware.biometrics.IBiometricEnabledOnKeyguardCallback;
 import android.hardware.biometrics.IBiometricServiceReceiver;
 import android.hardware.biometrics.IBiometricAuthenticator;
+import android.hardware.biometrics.IInvalidationCallback;
+import android.hardware.biometrics.ITestSession;
 import android.hardware.biometrics.PromptInfo;
+import android.hardware.biometrics.SensorPropertiesInternal;
 
 /**
  * Communication channel from AuthService to BiometricService.
  * @hide
  */
 interface IBiometricService {
+    // Creates a test session with the specified sensorId
+    ITestSession createTestSession(int sensorId, String opPackageName);
+
+    // Retrieve static sensor properties for all biometric sensors
+    List<SensorPropertiesInternal> getSensorProperties(String opPackageName);
+
     // Requests authentication. The service choose the appropriate biometric to use, and show
     // the corresponding BiometricDialog.
     void authenticate(IBinder token, long operationId, int userId,
-            IBiometricServiceReceiver receiver, String opPackageName, in PromptInfo promptInfo,
-            int callingUid, int callingPid, int callingUserId);
+            IBiometricServiceReceiver receiver, String opPackageName, in PromptInfo promptInfo);
 
     // Cancel authentication for the given session.
-    void cancelAuthentication(IBinder token, String opPackageName, int callingUid, int callingPid,
-            int callingUserId);
+    void cancelAuthentication(IBinder token, String opPackageName);
 
     // Checks if biometrics can be used.
     int canAuthenticate(String opPackageName, int userId, int callingUserId, int authenticators);
@@ -55,6 +62,11 @@ interface IBiometricService {
     // Notify BiometricService when <Biometric>Service is ready to start the prepared client.
     // Client lifecycle is still managed in <Biometric>Service.
     void onReadyForAuthentication(int cookie);
+
+    // Requests all BIOMETRIC_STRONG sensors to have their authenticatorId invalidated for the
+    // specified user. This happens when enrollments have been added on devices with multiple
+    // biometric sensors.
+    void invalidateAuthenticatorIds(int userId, int fromSensorId, IInvalidationCallback callback);
 
     // Get a list of AuthenticatorIDs for authenticators which have enrolled templates and meet
     // the requirements for integrating with Keystore. The AuthenticatorID are known in Keystore

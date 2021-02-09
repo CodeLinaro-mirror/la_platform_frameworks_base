@@ -19,16 +19,19 @@ package com.android.systemui.people.widget;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.LauncherApps;
-import android.content.pm.ShortcutInfo;
 import android.os.Bundle;
+import android.os.UserHandle;
 import android.util.Log;
 
+import com.android.internal.logging.UiEventLogger;
+import com.android.internal.logging.UiEventLoggerImpl;
 import com.android.systemui.people.PeopleSpaceUtils;
 
 /** Proxy activity to launch ShortcutInfo's conversation. */
 public class LaunchConversationActivity extends Activity {
     private static final String TAG = "PeopleSpaceLaunchConv";
     private static final boolean DEBUG = PeopleSpaceUtils.DEBUG;
+    private UiEventLogger mUiEventLogger = new UiEventLoggerImpl();
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -36,18 +39,20 @@ public class LaunchConversationActivity extends Activity {
         if (DEBUG) Log.d(TAG, "onCreate called");
 
         Intent intent = getIntent();
-        ShortcutInfo shortcutInfo = (ShortcutInfo) intent.getParcelableExtra(
-                PeopleSpaceWidgetProvider.EXTRA_SHORTCUT_INFO
-        );
-        if (shortcutInfo != null) {
+        String tileId = intent.getStringExtra(PeopleSpaceWidgetProvider.EXTRA_TILE_ID);
+        String packageName = intent.getStringExtra(PeopleSpaceWidgetProvider.EXTRA_PACKAGE_NAME);
+        int uid = intent.getIntExtra(PeopleSpaceWidgetProvider.EXTRA_UID, 0);
+
+        if (tileId != null && !tileId.isEmpty()) {
             if (DEBUG) {
-                Log.d(TAG, "Launching conversation with shortcutInfo id " + shortcutInfo.getId());
+                Log.d(TAG, "Launching conversation with shortcutInfo id " + tileId);
             }
+            mUiEventLogger.log(PeopleSpaceUtils.PeopleSpaceWidgetEvent.PEOPLE_SPACE_WIDGET_CLICKED);
             try {
                 LauncherApps launcherApps =
                         getApplicationContext().getSystemService(LauncherApps.class);
                 launcherApps.startShortcut(
-                        shortcutInfo, null, null);
+                        packageName, tileId, null, null, UserHandle.getUserHandleForUid(uid));
             } catch (Exception e) {
                 Log.e(TAG, "Exception starting shortcut:" + e);
             }

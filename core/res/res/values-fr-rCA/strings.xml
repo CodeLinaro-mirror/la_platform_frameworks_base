@@ -57,7 +57,8 @@
     <string name="imei" msgid="2157082351232630390">"Code IIEM"</string>
     <string name="meid" msgid="3291227361605924674">"MEID"</string>
     <string name="ClipMmi" msgid="4110549342447630629">"Numéro de l\'appelant (entrant)"</string>
-    <string name="ClirMmi" msgid="4702929460236547156">"Numéro de l\'appelant (sortant)"</string>
+    <!-- no translation found for ClirMmi (6752346475055446417) -->
+    <skip />
     <string name="ColpMmi" msgid="4736462893284419302">"Identifiant de la ligne connectée"</string>
     <string name="ColrMmi" msgid="5889782479745764278">"Restriction d\'identifiant de la ligne connectée"</string>
     <string name="CfMmi" msgid="8390012691099787178">"Transfert d\'appel"</string>
@@ -146,6 +147,9 @@
     <string name="wfc_mode_wifi_preferred_summary" msgid="1035175836270943089">"Appels par Wi-Fi"</string>
     <string name="wfc_mode_cellular_preferred_summary" msgid="4958965609212575619">"Appels sur réseau cellulaire"</string>
     <string name="wfc_mode_wifi_only_summary" msgid="104951993894678665">"Wi-Fi seulement"</string>
+    <!-- no translation found for crossSimFormat_spn (9125246077491634262) -->
+    <skip />
+    <string name="crossSimFormat_spn_cross_sim_calling" msgid="779976494687695991">"Appels multiSIM avec <xliff:g id="SPN">%s</xliff:g>"</string>
     <string name="cfTemplateNotForwarded" msgid="862202427794270501">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g> : non transféré"</string>
     <string name="cfTemplateForwarded" msgid="9132506315842157860">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g> : <xliff:g id="DIALING_NUMBER">{1}</xliff:g>"</string>
     <string name="cfTemplateForwardedTime" msgid="735042369233323609">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g> : <xliff:g id="DIALING_NUMBER">{1}</xliff:g> au bout de <xliff:g id="TIME_DELAY">{2}</xliff:g> secondes"</string>
@@ -199,6 +203,7 @@
     <string name="gnss_service" msgid="8907781262179951385">"Service GNSS"</string>
     <string name="sensor_notification_service" msgid="7474531979178682676">"Service de notification de capteur"</string>
     <string name="twilight_service" msgid="8964898045693187224">"Service de crépuscule"</string>
+    <string name="offline_location_time_zone_detection_service_attribution" msgid="303754195048744816">"Détecteur de fuseau horaire (aucune connectivité)"</string>
     <string name="factory_reset_warning" msgid="6858705527798047809">"Le contenu de votre appareil sera effacé"</string>
     <string name="factory_reset_message" msgid="2657049595153992213">"Impossible d\'utiliser l\'application d\'administration. Les données de votre appareil vont maintenant être effacées.\n\nSi vous avez des questions, communiquez avec l\'administrateur de votre organisation."</string>
     <string name="printing_disabled_by" msgid="3517499806528864633">"Impression désactivée par <xliff:g id="OWNER_APP">%s</xliff:g>."</string>
@@ -287,6 +292,7 @@
     <string name="notification_channel_usb" msgid="1528280969406244896">"Connexion USB"</string>
     <string name="notification_channel_heavy_weight_app" msgid="17455756500828043">"Application en cours d\'exécution"</string>
     <string name="notification_channel_foreground_service" msgid="7102189948158885178">"Applications qui sollicitent la pile"</string>
+    <string name="notification_channel_accessibility_magnification" msgid="1707913872219798098">"Agrandissement"</string>
     <string name="foreground_service_app_in_background" msgid="1439289699671273555">"<xliff:g id="APP_NAME">%1$s</xliff:g> sollicite la pile"</string>
     <string name="foreground_service_apps_in_background" msgid="7340037176412387863">"<xliff:g id="NUMBER">%1$d</xliff:g> applications sollicitent la pile"</string>
     <string name="foreground_service_tap_for_details" msgid="9078123626015586751">"Touchez pour afficher des détails sur l\'utilisation de la pile et des données"</string>
@@ -351,6 +357,8 @@
     <string name="permdesc_receiveMms" msgid="958102423732219710">"Permet à l\'application de recevoir et de traiter les messages multimédias. Cette autorisation lui donne la possibilité de surveiller ou de supprimer les messages envoyés à votre appareil sans vous les montrer."</string>
     <string name="permlab_bindCellBroadcastService" msgid="586746677002040651">"Transférer les messages de diffusion cellulaire"</string>
     <string name="permdesc_bindCellBroadcastService" msgid="6540910200973641606">"Permet à l\'application d\'établir un lien avec le module de diffusion cellulaire afin de transférer les messages de diffusion cellulaire à mesure de leur réception. Dans certaines régions, des alertes de diffusion cellulaire sont envoyées afin de vous avertir de situations d\'urgence. Des applications malveillantes peuvent interférer avec les performances ou le fonctionnement de votre appareil lors de la réception d\'une alerte d\'urgence par diffusion cellulaire."</string>
+    <string name="permlab_manageOngoingCalls" msgid="281244770664231782">"Gérer les appels en cours"</string>
+    <string name="permdesc_manageOngoingCalls" msgid="7003138133829915265">"Autorise une application à afficher les renseignements concernant les appels en cours sur votre appareil et à les gérer."</string>
     <string name="permlab_readCellBroadcasts" msgid="5869884450872137693">"lire les messages de diffusion cellulaire"</string>
     <string name="permdesc_readCellBroadcasts" msgid="672513437331980168">"Permet à l\'application de lire les messages de diffusion cellulaire que votre appareil reçoit. Dans certaines zones géographiques, des alertes vous sont envoyées afin de vous prévenir en cas de situation d\'urgence. Des applications malveillantes peuvent venir perturber les performances ou le fonctionnement de votre appareil lors de la réception d\'un message de diffusion cellulaire."</string>
     <string name="permlab_subscribedFeedsRead" msgid="217624769238425461">"lire les flux auxquels vous êtes abonné"</string>
@@ -690,9 +698,9 @@
     <string name="policylab_forceLock" msgid="7360335502968476434">"Verrouiller l\'écran"</string>
     <string name="policydesc_forceLock" msgid="1008844760853899693">"Gérer le mode et les conditions de verrouillage de l\'écran"</string>
     <string name="policylab_wipeData" msgid="1359485247727537311">"Effacer toutes les données"</string>
-    <string name="policydesc_wipeData" product="tablet" msgid="7245372676261947507">"Effacer les données de la tablette sans avertissement, en rétablissant la configuration d\'usine"</string>
+    <string name="policydesc_wipeData" product="tablet" msgid="7245372676261947507">"Effacer les données de la tablette sans avertissement, en rétablissant les paramètres par défaut"</string>
     <string name="policydesc_wipeData" product="tv" msgid="513862488950801261">"Effacez les données de votre appareil Android TV sans avertissement en effectuant une réinitialisation des paramètres d\'usine."</string>
-    <string name="policydesc_wipeData" product="default" msgid="8036084184768379022">"Effacer les données du téléphone sans avertissement, en rétablissant la configuration d\'usine"</string>
+    <string name="policydesc_wipeData" product="default" msgid="8036084184768379022">"Effacer les données du téléphone sans avertissement en rétablissant les paramètres par défaut"</string>
     <string name="policylab_wipeData_secondaryUser" msgid="413813645323433166">"Effacer les données de l\'utilisateur"</string>
     <string name="policydesc_wipeData_secondaryUser" product="tablet" msgid="2336676480090926470">"Effacer les données de l\'utilisateur sur cette tablette sans avertissement."</string>
     <string name="policydesc_wipeData_secondaryUser" product="tv" msgid="2293713284515865200">"Effacez les données de cet utilisateur sur cet appareil Android TV sans avertissement."</string>
@@ -870,12 +878,12 @@
     <string name="lockscreen_failed_attempts_almost_glogin" product="tablet" msgid="3069635524964070596">"Vous avez dessiné un schéma de déverrouillage incorrect à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. Au bout de <xliff:g id="NUMBER_1">%2$d</xliff:g> échecs supplémentaires, vous devrez déverrouiller votre tablette à l\'aide de votre identifiant Google.\n\nVeuillez réessayer dans <xliff:g id="NUMBER_2">%3$d</xliff:g> secondes."</string>
     <string name="lockscreen_failed_attempts_almost_glogin" product="tv" msgid="6399092175942158529">"Vous avez dessiné votre schéma de déverrouillage incorrectement à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprise(s). Après <xliff:g id="NUMBER_1">%2$d</xliff:g> autre(s) tentative(s) incorrecte(s), vous devrez déverrouiller votre appareil Android TV en vous connectant à votre compte Google.\n\n Réessayez dans <xliff:g id="NUMBER_2">%3$d</xliff:g> secondes."</string>
     <string name="lockscreen_failed_attempts_almost_glogin" product="default" msgid="5691623136957148335">"Vous avez dessiné un schéma de déverrouillage incorrect à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. Au bout de <xliff:g id="NUMBER_1">%2$d</xliff:g> échecs supplémentaires, vous devrez déverrouiller votre téléphone à l\'aide de votre identifiant Google.\n\nVeuillez réessayer dans <xliff:g id="NUMBER_2">%3$d</xliff:g> secondes."</string>
-    <string name="lockscreen_failed_attempts_almost_at_wipe" product="tablet" msgid="7914445759242151426">"Vous avez tenté de déverrouiller la tablette de façon incorrecte à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. Si vous échouez encore <xliff:g id="NUMBER_1">%2$d</xliff:g> fois, sa configuration d\'usine sera rétablie, et toutes les données utilisateur seront perdues."</string>
+    <string name="lockscreen_failed_attempts_almost_at_wipe" product="tablet" msgid="7914445759242151426">"Vous avez tenté de déverrouiller la tablette de façon incorrecte à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. Si vous échouez encore <xliff:g id="NUMBER_1">%2$d</xliff:g> fois, ses paramètres par défaut seront rétablis, et toutes les données d\'utilisateur seront perdues."</string>
     <string name="lockscreen_failed_attempts_almost_at_wipe" product="tv" msgid="4275591249631864248">"Vous avez tenté de déverrouiller votre appareil Android TV incorrectement à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprise(s). Après <xliff:g id="NUMBER_1">%2$d</xliff:g> autre(s) tentative(s) incorrecte(s), votre appareil Android TV sera réinitialisé à ses valeurs d\'usine et toutes les données personnelles seront supprimées."</string>
-    <string name="lockscreen_failed_attempts_almost_at_wipe" product="default" msgid="1166532464798446579">"Vous avez tenté de déverrouiller le téléphone de façon incorrecte à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. Si vous échouez encore <xliff:g id="NUMBER_1">%2$d</xliff:g> fois, sa configuration d\'usine sera rétablie, et toutes les données utilisateur seront perdues."</string>
-    <string name="lockscreen_failed_attempts_now_wiping" product="tablet" msgid="8682445539263683414">"Vous avez tenté de déverrouiller la tablette de façon incorrecte à <xliff:g id="NUMBER">%d</xliff:g> reprises. Sa configuration d\'usine va être rétablie."</string>
+    <string name="lockscreen_failed_attempts_almost_at_wipe" product="default" msgid="1166532464798446579">"Vous avez tenté de déverrouiller le téléphone de façon incorrecte à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. Si vous échouez encore <xliff:g id="NUMBER_1">%2$d</xliff:g> fois, ses paramètres par défaut seront rétablis, et toutes les données d\'utilisateur seront perdues."</string>
+    <string name="lockscreen_failed_attempts_now_wiping" product="tablet" msgid="8682445539263683414">"Vous avez tenté de déverrouiller la tablette de façon incorrecte à <xliff:g id="NUMBER">%d</xliff:g> reprises. Ses paramètres par défaut vont être rétablis."</string>
     <string name="lockscreen_failed_attempts_now_wiping" product="tv" msgid="2205435033340091883">"Vous avez tenté de déverrouiller votre appareil Android TV incorrectement à <xliff:g id="NUMBER">%d</xliff:g> reprise(s). Votre appareil Android TV sera maintenant réinitialisé à ses valeurs d\'usine."</string>
-    <string name="lockscreen_failed_attempts_now_wiping" product="default" msgid="2203704707679895487">"Vous avez tenté de déverrouiller le téléphone de façon incorrecte à <xliff:g id="NUMBER">%d</xliff:g> reprises. Sa configuration d\'usine va être rétablie."</string>
+    <string name="lockscreen_failed_attempts_now_wiping" product="default" msgid="2203704707679895487">"Vous avez tenté de déverrouiller le téléphone de façon incorrecte à <xliff:g id="NUMBER">%d</xliff:g> reprises. Ses paramètres par défaut vont être rétablis."</string>
     <string name="lockscreen_too_many_failed_attempts_countdown" msgid="6807200118164539589">"Veuillez réessayer dans <xliff:g id="NUMBER">%d</xliff:g> secondes."</string>
     <string name="lockscreen_forgot_pattern_button_text" msgid="8362442730606839031">"Schéma oublié?"</string>
     <string name="lockscreen_glogin_forgot_pattern" msgid="9218940117797602518">"Déverrouillage du compte"</string>
@@ -1614,12 +1622,12 @@
     <string name="kg_too_many_failed_pin_attempts_dialog_message" msgid="23741434207544038">"Vous avez saisi un NIP incorrect à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. \n\nVeuillez réessayer dans <xliff:g id="NUMBER_1">%2$d</xliff:g> secondes."</string>
     <string name="kg_too_many_failed_password_attempts_dialog_message" msgid="3328686432962224215">"Vous avez saisi un mot de passe incorrect à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. \n\nVeuillez réessayer dans <xliff:g id="NUMBER_1">%2$d</xliff:g> secondes."</string>
     <string name="kg_too_many_failed_pattern_attempts_dialog_message" msgid="7357404233979139075">"Vous avez dessiné un schéma de déverrouillage incorrect à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises.\n\nVeuillez réessayer dans <xliff:g id="NUMBER_1">%2$d</xliff:g> secondes."</string>
-    <string name="kg_failed_attempts_almost_at_wipe" product="tablet" msgid="3479940221343361587">"Vous avez tenté de déverrouiller la tablette de façon incorrecte à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. Si vous échouez encore <xliff:g id="NUMBER_1">%2$d</xliff:g> fois, sa configuration d\'usine sera rétablie, et toutes les données utilisateur seront perdues."</string>
+    <string name="kg_failed_attempts_almost_at_wipe" product="tablet" msgid="3479940221343361587">"Vous avez tenté de déverrouiller la tablette de façon incorrecte à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. Si vous échouez encore <xliff:g id="NUMBER_1">%2$d</xliff:g> fois, ses paramètres par défaut seront rétablis, et toutes les données d\'utilisateur seront perdues."</string>
     <string name="kg_failed_attempts_almost_at_wipe" product="tv" msgid="9064457748587850217">"Vous avez tenté de déverrouiller votre appareil Android TV incorrectement à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprise(s). Après <xliff:g id="NUMBER_1">%2$d</xliff:g> autre(s) tentative(s) incorrecte(s), votre appareil Android TV sera réinitialisé à ses valeurs d\'usine et toutes les données personnelles seront supprimées."</string>
-    <string name="kg_failed_attempts_almost_at_wipe" product="default" msgid="5955398963754432548">"Vous avez tenté de déverrouiller le téléphone de façon incorrecte à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. Si vous échouez encore <xliff:g id="NUMBER_1">%2$d</xliff:g> fois, sa configuration d\'usine sera rétablie, et toutes les données utilisateur seront perdues."</string>
-    <string name="kg_failed_attempts_now_wiping" product="tablet" msgid="2299099385175083308">"Vous avez tenté de déverrouiller la tablette de façon incorrecte à <xliff:g id="NUMBER">%d</xliff:g> reprises. Sa configuration d\'usine va être rétablie."</string>
+    <string name="kg_failed_attempts_almost_at_wipe" product="default" msgid="5955398963754432548">"Vous avez tenté de déverrouiller le téléphone de façon incorrecte à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. Si vous échouez encore <xliff:g id="NUMBER_1">%2$d</xliff:g> fois, ses paramètres par défaut seront rétablis, et toutes les données d\'utilisateur seront perdues."</string>
+    <string name="kg_failed_attempts_now_wiping" product="tablet" msgid="2299099385175083308">"Vous avez tenté de déverrouiller la tablette de façon incorrecte à <xliff:g id="NUMBER">%d</xliff:g> reprises. Ses paramètres par défaut vont être rétablis."</string>
     <string name="kg_failed_attempts_now_wiping" product="tv" msgid="5045460916106267585">"Vous avez tenté de déverrouiller votre appareil Android TV incorrectement à <xliff:g id="NUMBER">%d</xliff:g> reprise(s). Votre appareil Android TV sera maintenant réinitialisé à ses valeurs d\'usine."</string>
-    <string name="kg_failed_attempts_now_wiping" product="default" msgid="5043730590446071189">"Vous avez tenté de déverrouiller le téléphone de façon incorrecte à <xliff:g id="NUMBER">%d</xliff:g> reprises. Sa configuration d\'usine va être rétablie."</string>
+    <string name="kg_failed_attempts_now_wiping" product="default" msgid="5043730590446071189">"Vous avez tenté de déverrouiller le téléphone de façon incorrecte à <xliff:g id="NUMBER">%d</xliff:g> reprises. Ses paramètres par défaut vont être rétablis."</string>
     <string name="kg_failed_attempts_almost_at_login" product="tablet" msgid="7086799295109717623">"Vous avez dessiné un schéma de déverrouillage incorrect à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. Si vous échouez encore <xliff:g id="NUMBER_1">%2$d</xliff:g> fois, vous devrez déverrouiller votre tablette à l\'aide d\'un compte de messagerie électronique.\n\n Veuillez réessayer dans <xliff:g id="NUMBER_2">%3$d</xliff:g> secondes."</string>
     <string name="kg_failed_attempts_almost_at_login" product="tv" msgid="4670840383567106114">"Vous avez dessiné votre schéma de déverrouillage incorrectement à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprise(s). Après <xliff:g id="NUMBER_1">%2$d</xliff:g> autre(s) tentative(s) incorrecte(s), vous devrez déverrouiller votre appareil Android TV à l\'aide d\'un compte de courriel.\n\nVeuillez réessayer dans <xliff:g id="NUMBER_2">%3$d</xliff:g> secondes."</string>
     <string name="kg_failed_attempts_almost_at_login" product="default" msgid="5270861875006378092">"Vous avez dessiné un schéma de déverrouillage incorrect à <xliff:g id="NUMBER_0">%1$d</xliff:g> reprises. Si vous échouez encore <xliff:g id="NUMBER_1">%2$d</xliff:g> fois, vous devrez déverrouiller votre téléphone à l\'aide d\'un compte de messagerie électronique.\n\n Veuillez réessayer dans <xliff:g id="NUMBER_2">%3$d</xliff:g> secondes."</string>
@@ -1849,7 +1857,7 @@
     <string name="zen_mode_default_events_name" msgid="2280682960128512257">"Événement"</string>
     <string name="zen_mode_default_every_night_name" msgid="1467765312174275823">"Sommeil"</string>
     <string name="muted_by" msgid="91464083490094950">"<xliff:g id="THIRD_PARTY">%1$s</xliff:g> désactive certains sons"</string>
-    <string name="system_error_wipe_data" msgid="5910572292172208493">"Un problème interne est survenu avec votre appareil. Il se peut qu\'il soit instable jusqu\'à ce que vous le réinitialisiez à sa configuration d\'usine."</string>
+    <string name="system_error_wipe_data" msgid="5910572292172208493">"Un problème interne est survenu avec votre appareil. Il se peut qu\'il soit instable jusqu\'à ce que vous le réinitialisiez à ses paramètres par défaut."</string>
     <string name="system_error_manufacturer" msgid="703545241070116315">"Un problème interne est survenu avec votre appareil. Communiquez avec le fabricant pour obtenir plus de détails."</string>
     <string name="stk_cc_ussd_to_dial" msgid="3139884150741157610">"La demande USSD a été remplacée par une demande d\'appel régulier"</string>
     <string name="stk_cc_ussd_to_ss" msgid="4826846653052609738">"La demande USSD a été remplacée par une demande SS"</string>
@@ -2005,6 +2013,10 @@
     <string name="notification_appops_microphone_active" msgid="581333393214739332">"Microphone"</string>
     <string name="notification_appops_overlay_active" msgid="5571732753262836481">"superpose du contenu par-dessus d\'autres applications à l\'écran"</string>
     <string name="notification_feedback_indicator" msgid="663476517711323016">"Envoyer des commentaires"</string>
+    <string name="notification_feedback_indicator_alerted" msgid="6552871804121942099">"La notification a été automatiquement élevée à la catégorie Par défaut. Touchez pour envoyer des commentaires."</string>
+    <string name="notification_feedback_indicator_silenced" msgid="3799442124723177262">"Cette notification a été rétrogradée à Silencieuse. Touchez pour envoyer des commentaires."</string>
+    <string name="notification_feedback_indicator_promoted" msgid="9030204303764698640">"Cette notification a été élevée d\'un niveau. Touchez pour envoyer des commentaires."</string>
+    <string name="notification_feedback_indicator_demoted" msgid="8880309924296450875">"Cette notification a été abaissée d\'un niveau. Touchez pour envoyer des commentaires."</string>
     <string name="dynamic_mode_notification_channel_name" msgid="2986926422100223328">"Notification d\'information du mode Routine"</string>
     <string name="dynamic_mode_notification_title" msgid="9205715501274608016">"La pile pourrait s\'épuiser avant la charge habituelle"</string>
     <string name="dynamic_mode_notification_summary" msgid="4141614604437372157">"Le mode Économiseur de pile est activé afin de prolonger l\'autonomie"</string>
@@ -2188,4 +2200,8 @@
     <string name="config_pdp_reject_user_authentication_failed" msgid="4531693033885744689"></string>
     <string name="config_pdp_reject_service_not_subscribed" msgid="8190338397128671588"></string>
     <string name="config_pdp_reject_multi_conn_to_same_pdn_not_allowed" msgid="6024904218067254186"></string>
+    <string name="window_magnification_prompt_title" msgid="8197528399699536320">"Nouveauté : Loupe de fenêtre"</string>
+    <string name="window_magnification_prompt_content" msgid="4166711383253283838">"Vous pouvez agrandir une partie ou la totalité de votre écran"</string>
+    <string name="turn_on_magnification_settings_action" msgid="8521433346684847700">"Activer dans les paramètres"</string>
+    <string name="dismiss_action" msgid="1728820550388704784">"Fermer"</string>
 </resources>

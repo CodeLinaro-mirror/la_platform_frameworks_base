@@ -59,7 +59,6 @@ import com.android.internal.policy.ScreenDecorationsUtils;
 import com.android.wm.shell.R;
 import com.android.wm.shell.TaskView;
 import com.android.wm.shell.common.AlphaOptimizedButton;
-import com.android.wm.shell.common.HandlerExecutor;
 import com.android.wm.shell.common.TriangleShape;
 
 import java.io.FileDescriptor;
@@ -304,11 +303,6 @@ public class BubbleExpandedView extends LinearLayout {
         setLayoutDirection(LAYOUT_DIRECTION_LOCALE);
     }
 
-    @Override
-    protected void onAttachedToWindow() {
-        super.onAttachedToWindow();
-        mTaskView.setExecutor(new HandlerExecutor(getHandler()));
-    }
     /**
      * Initialize {@link BubbleController} and {@link BubbleStackView} here, this method must need
      * to be called after view inflate.
@@ -320,7 +314,7 @@ public class BubbleExpandedView extends LinearLayout {
         mTaskView = new TaskView(mContext, mController.getTaskOrganizer());
         mExpandedViewContainer.addView(mTaskView);
         bringChildToFront(mTaskView);
-        mTaskView.setListener(mTaskViewListener);
+        mTaskView.setListener(mContext.getMainExecutor(), mTaskViewListener);
         mPositioner = mController.getPositioner();
     }
 
@@ -396,7 +390,7 @@ public class BubbleExpandedView extends LinearLayout {
     /** Return a GraphicBuffer with the contents of the task view surface. */
     @Nullable
     SurfaceControl.ScreenshotHardwareBuffer snapshotActivitySurface() {
-        if (mTaskView == null) {
+        if (mTaskView == null || mTaskView.getSurfaceControl() == null) {
             return null;
         }
         return SurfaceControl.captureLayers(
@@ -477,11 +471,12 @@ public class BubbleExpandedView extends LinearLayout {
         mIsOverflow = overflow;
 
         Intent target = new Intent(mContext, BubbleOverflowActivity.class);
+        target.addFlags(FLAG_ACTIVITY_NEW_DOCUMENT | FLAG_ACTIVITY_MULTIPLE_TASK);
         Bundle extras = new Bundle();
         extras.putBinder(EXTRA_BUBBLE_CONTROLLER, ObjectWrapper.wrap(mController));
         target.putExtras(extras);
         mPendingIntent = PendingIntent.getActivity(mContext, 0 /* requestCode */,
-                target, PendingIntent.FLAG_UPDATE_CURRENT);
+                target, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         mSettingsIcon.setVisibility(GONE);
     }
 

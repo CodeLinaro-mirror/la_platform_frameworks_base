@@ -18,6 +18,7 @@ package com.android.server.timedetector;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.timedetector.GnssTimeSuggestion;
 import android.app.timedetector.ITimeDetectorService;
 import android.app.timedetector.ManualTimeSuggestion;
 import android.app.timedetector.NetworkTimeSuggestion;
@@ -71,9 +72,8 @@ public final class TimeDetectorService extends ITimeDetectorService.Stub {
     @NonNull private final TimeDetectorStrategy mTimeDetectorStrategy;
 
     private static TimeDetectorService create(@NonNull Context context) {
-        TimeDetectorStrategy timeDetectorStrategy = new TimeDetectorStrategyImpl();
-        TimeDetectorStrategyCallbackImpl callback = new TimeDetectorStrategyCallbackImpl(context);
-        timeDetectorStrategy.initialize(callback);
+        TimeDetectorStrategyImpl.Callback callback = new TimeDetectorStrategyCallbackImpl(context);
+        TimeDetectorStrategy timeDetectorStrategy = new TimeDetectorStrategyImpl(callback);
 
         Handler handler = FgThread.getHandler();
         TimeDetectorService timeDetectorService =
@@ -130,10 +130,18 @@ public final class TimeDetectorService extends ITimeDetectorService.Stub {
         mHandler.post(() -> mTimeDetectorStrategy.suggestNetworkTime(timeSignal));
     }
 
+    @Override
+    public void suggestGnssTime(@NonNull GnssTimeSuggestion timeSignal) {
+        enforceSuggestGnssTimePermission();
+        Objects.requireNonNull(timeSignal);
+
+        mHandler.post(() -> mTimeDetectorStrategy.suggestGnssTime(timeSignal));
+    }
+
     /** Internal method for handling the auto time setting being changed. */
     @VisibleForTesting
     public void handleAutoTimeDetectionChanged() {
-        mHandler.post(mTimeDetectorStrategy::handleAutoTimeDetectionChanged);
+        mHandler.post(mTimeDetectorStrategy::handleAutoTimeConfigChanged);
     }
 
     @Override
@@ -162,5 +170,11 @@ public final class TimeDetectorService extends ITimeDetectorService.Stub {
         mContext.enforceCallingOrSelfPermission(
                 android.Manifest.permission.SET_TIME,
                 "set time");
+    }
+
+    private void enforceSuggestGnssTimePermission() {
+        mContext.enforceCallingOrSelfPermission(
+                android.Manifest.permission.SET_TIME,
+                "suggest gnss time");
     }
 }

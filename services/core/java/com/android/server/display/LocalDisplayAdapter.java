@@ -177,14 +177,15 @@ final class LocalDisplayAdapter extends DisplayAdapter {
 
     private final class LocalDisplayDevice extends DisplayDevice {
         private final long mPhysicalDisplayId;
-        private final LogicalLight mBacklight;
         private final SparseArray<DisplayModeRecord> mSupportedModes = new SparseArray<>();
         private final ArrayList<Integer> mSupportedColorModes = new ArrayList<>();
         private final boolean mIsDefaultDisplay;
+        private final BacklightAdapter mBacklightAdapter;
 
         private DisplayDeviceInfo mInfo;
         private boolean mHavePendingChanges;
         private int mState = Display.STATE_UNKNOWN;
+        // This is only set in the runnable returned from requestDisplayStateLocked.
         private float mBrightnessState = PowerManager.BRIGHTNESS_INVALID_FLOAT;
         private int mDefaultModeId;
         private int mDefaultConfigGroup;
@@ -205,8 +206,10 @@ final class LocalDisplayAdapter extends DisplayAdapter {
         private SurfaceControl.DisplayConfig[] mDisplayConfigs;
         private Spline mSystemBrightnessToNits;
         private Spline mNitsToHalBrightness;
-
         private DisplayDeviceConfig mDisplayDeviceConfig;
+
+        private DisplayEventReceiver.FrameRateOverride[] mFrameRateOverrides =
+                new DisplayEventReceiver.FrameRateOverride[0];
 
         LocalDisplayDevice(IBinder displayToken, long physicalDisplayId,
                 SurfaceControl.DisplayInfo info, SurfaceControl.DisplayConfig[] configs,
@@ -219,18 +222,13 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             updateDisplayPropertiesLocked(info, configs, activeConfigId, configSpecs, colorModes,
                     activeColorMode, hdrCapabilities);
             mSidekickInternal = LocalServices.getService(SidekickInternal.class);
-            if (mIsDefaultDisplay) {
-                LightsManager lights = LocalServices.getService(LightsManager.class);
-                mBacklight = lights.getLight(LightsManager.LIGHT_ID_BACKLIGHT);
-            } else {
-                mBacklight = null;
-            }
+            mBacklightAdapter = new BacklightAdapter(displayToken, isDefaultDisplay);
             mAllmSupported = SurfaceControl.getAutoLowLatencyModeSupport(displayToken);
             mGameContentTypeSupported = SurfaceControl.getGameContentTypeSupport(displayToken);
             mDisplayDeviceConfig = null;
             // Defer configuration file loading
             BackgroundThread.getHandler().sendMessage(PooledLambda.obtainMessage(
-                    LocalDisplayDevice::loadDisplayConfigurationBrightnessMapping, this));
+                    LocalDisplayDevice::loadDisplayConfiguration, this));
         }
 
         @Override
@@ -412,15 +410,20 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             return mDisplayDeviceConfig;
         }
 
-        private void loadDisplayConfigurationBrightnessMapping() {
+        private void loadDisplayConfiguration() {
             Spline nitsToHal = null;
             Spline sysToNits = null;
 
             // Load the mapping from nits to HAL brightness range (display-device-config.xml)
-            mDisplayDeviceConfig = DisplayDeviceConfig.create(mPhysicalDisplayId);
+            final Context context = getOverlayContext();
+            mDisplayDeviceConfig = DisplayDeviceConfig.create(context, mPhysicalDisplayId,
+                    mIsDefaultDisplay);
             if (mDisplayDeviceConfig == null) {
                 return;
             }
+
+            mBacklightAdapter.setForceSurfaceControl(mDisplayDeviceConfig.hasQuirk(
+                    DisplayDeviceConfig.QUIRK_CAN_SET_BRIGHTNESS_VIA_HWC));
 
             final float[] halNits = mDisplayDeviceConfig.getNits();
             final float[] halBrightness = mDisplayDeviceConfig.getBrightness();
@@ -430,9 +433,9 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             nitsToHal = Spline.createSpline(halNits, halBrightness);
 
             // Load the mapping from system brightness range to nits (config.xml)
-            final Resources res = getOverlayContext().getResources();
+            final Resources res = context.getResources();
             final float[] sysNits = BrightnessMappingStrategy.getFloatArray(res.obtainTypedArray(
-                            com.android.internal.R.array.config_screenBrightnessNits));
+                    com.android.internal.R.array.config_screenBrightnessNits));
             final int[] sysBrightness = res.getIntArray(
                     com.android.internal.R.array.config_screenBrightnessBacklight);
             if (sysNits.length == 0 || sysBrightness.length != sysNits.length) {
@@ -625,8 +628,19 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                     mInfo.name = getContext().getResources().getString(
                             com.android.internal.R.string.display_manager_hdmi_display_name);
                 }
+                mInfo.frameRateOverrides = mFrameRateOverrides;
+
                 // The display is trusted since it is created by system.
                 mInfo.flags |= DisplayDeviceInfo.FLAG_TRUSTED;
+                if (mDisplayDeviceConfig != null) {
+                    mInfo.brightnessMinimum = mDisplayDeviceConfig.getBrightnessMinimum();
+                    mInfo.brightnessMaximum = mDisplayDeviceConfig.getBrightnessMaximum();
+                    mInfo.brightnessDefault = mDisplayDeviceConfig.getBrightnessDefault();
+                } else {
+                    mInfo.brightnessMinimum = PowerManager.BRIGHTNESS_MIN;
+                    mInfo.brightnessMaximum = PowerManager.BRIGHTNESS_MAX;
+                    mInfo.brightnessDefault = 0.5f;
+                }
             }
             return mInfo;
         }
@@ -638,8 +652,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                     brightnessState, PowerManager.BRIGHTNESS_OFF_FLOAT);
             final boolean stateChanged = (mState != state);
             final boolean brightnessChanged = (!BrightnessSynchronizer.floatEquals(
-                    mBrightnessState, brightnessState))
-                    && mBacklight != null;
+                    mBrightnessState, brightnessState));
             if (stateChanged || brightnessChanged) {
                 final long physicalDisplayId = mPhysicalDisplayId;
                 final IBinder token = getDisplayTokenLocked();
@@ -648,10 +661,6 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 if (stateChanged) {
                     mState = state;
                     updateDeviceInfoLocked();
-                }
-
-                if (brightnessChanged) {
-                    mBrightnessState = brightnessState;
                 }
 
                 // Defer actually setting the display state until after we have exited
@@ -693,6 +702,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                         // Apply brightness changes given that we are in a non-suspended state.
                         if (brightnessChanged || vrModeChange) {
                             setDisplayBrightness(brightnessState);
+                            mBrightnessState = brightnessState;
                         }
 
                         // Enter the final desired state, possibly suspended.
@@ -707,9 +717,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                                     + "id=" + physicalDisplayId
                                     + ", state=" + Display.stateToString(state) + ")");
                         }
-                        if (mBacklight != null) {
-                            mBacklight.setVrMode(isVrEnabled);
-                        }
+                        mBacklightAdapter.setVrMode(isVrEnabled);
                     }
 
                     private void setDisplayState(int state) {
@@ -765,13 +773,8 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                         Trace.traceBegin(Trace.TRACE_TAG_POWER, "setDisplayBrightness("
                                 + "id=" + physicalDisplayId + ", brightness=" + brightness + ")");
                         try {
-                            if (isHalBrightnessRangeSpecified()) {
-                                brightness = displayBrightnessToHalBrightness(
-                                        BrightnessSynchronizer.brightnessFloatToIntRange(brightness));
-                            }
-                            if (mBacklight != null) {
-                                mBacklight.setBrightness(brightness);
-                            }
+                            brightness = displayBrightnessToHalBrightness(brightness);
+                            mBacklightAdapter.setBrightness(brightness);
                             Trace.traceCounter(Trace.TRACE_TAG_POWER,
                                     "ScreenBrightness",
                                     BrightnessSynchronizer.brightnessFloatToInt(brightness));
@@ -780,26 +783,33 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                         }
                     }
 
-                    private boolean isHalBrightnessRangeSpecified() {
-                        return !(mSystemBrightnessToNits == null || mNitsToHalBrightness == null);
-                    }
-
                     /**
                      * Converts brightness range from the framework's brightness space to the
                      * Hal brightness space if the HAL brightness space has been provided via
                      * a display device configuration file.
                      */
                     private float displayBrightnessToHalBrightness(float brightness) {
-                        if (!isHalBrightnessRangeSpecified()) {
-                            return PowerManager.BRIGHTNESS_INVALID_FLOAT;
+                        // TODO: b/171380847 - This needs to be deprecated. The nits-to-brightness
+                        // relationship should be specified in display-config OR config.xml, but not
+                        // both, and no nits-space conversion should be necessary.
+                        //
+                        // Only do a conversion if there exists a unique system brightness and a
+                        // unique HAL brightness-to-nits range defined.
+                        if (mSystemBrightnessToNits == null || mNitsToHalBrightness == null) {
+                            return brightness;
                         }
 
+                        // Sys brightness in this conversion is always specified in the old 1-255
+                        // range, so convert that here before the translation.
+                        final float brightnessInt =
+                                BrightnessSynchronizer.brightnessFloatToIntRange(brightness);
+
                         if (BrightnessSynchronizer.floatEquals(
-                                brightness, PowerManager.BRIGHTNESS_OFF)) {
+                                brightnessInt, PowerManager.BRIGHTNESS_OFF)) {
                             return PowerManager.BRIGHTNESS_OFF_FLOAT;
                         }
 
-                        final float nits = mSystemBrightnessToNits.interpolate(brightness);
+                        final float nits = mSystemBrightnessToNits.interpolate(brightnessInt);
                         final float halBrightness = mNitsToHalBrightness.interpolate(nits);
                         return halBrightness;
                     }
@@ -882,6 +892,13 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             }
         }
 
+        public void onFrameRateOverridesChanged(
+                DisplayEventReceiver.FrameRateOverride[] overrides) {
+            if (updateFrameRateOverridesLocked(overrides)) {
+                updateDeviceInfoLocked();
+            }
+        }
+
         public boolean updateActiveModeLocked(int activeConfigId) {
             if (mActiveConfigId == activeConfigId) {
                 return false;
@@ -892,6 +909,16 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 Slog.w(TAG, "In unknown mode after setting allowed configs"
                         + ", activeConfigId=" + mActiveConfigId);
             }
+            return true;
+        }
+
+        public boolean updateFrameRateOverridesLocked(
+                DisplayEventReceiver.FrameRateOverride[] overrides) {
+            if (overrides.equals(mFrameRateOverrides)) {
+                return false;
+            }
+
+            mFrameRateOverrides = overrides;
             return true;
         }
 
@@ -966,7 +993,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             pw.println("mDefaultModeId=" + mDefaultModeId);
             pw.println("mState=" + Display.stateToString(mState));
             pw.println("mBrightnessState=" + mBrightnessState);
-            pw.println("mBacklight=" + mBacklight);
+            pw.println("mBacklightAdapter=" + mBacklightAdapter);
             pw.println("mAllmSupported=" + mAllmSupported);
             pw.println("mAllmRequested=" + mAllmRequested);
             pw.println("mGameContentTypeSupported=" + mGameContentTypeSupported);
@@ -981,7 +1008,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 pw.println("  " + mSupportedModes.valueAt(i));
             }
             pw.println("mSupportedColorModes=" + mSupportedColorModes.toString());
-            pw.print("mDisplayDeviceConfig=" + mDisplayDeviceConfig);
+            pw.println("mDisplayDeviceConfig=" + mDisplayDeviceConfig);
         }
 
         private int findDisplayConfigIdLocked(int modeId, int configGroup) {
@@ -1102,23 +1129,39 @@ final class LocalDisplayAdapter extends DisplayAdapter {
     public interface DisplayEventListener {
         void onHotplug(long timestampNanos, long physicalDisplayId, boolean connected);
         void onConfigChanged(long timestampNanos, long physicalDisplayId, int configId);
+        void onFrameRateOverridesChanged(long timestampNanos, long physicalDisplayId,
+                DisplayEventReceiver.FrameRateOverride[] overrides);
+
     }
 
     public static final class ProxyDisplayEventReceiver extends DisplayEventReceiver {
         private final DisplayEventListener mListener;
         ProxyDisplayEventReceiver(Looper looper, DisplayEventListener listener) {
-            super(looper, VSYNC_SOURCE_APP, CONFIG_CHANGED_EVENT_DISPATCH);
+            super(looper, VSYNC_SOURCE_APP,
+                    EVENT_REGISTRATION_CONFIG_CHANGED_FLAG
+                            | EVENT_REGISTRATION_FRAME_RATE_OVERRIDE_FLAG);
             mListener = listener;
         }
+
+        @Override
         public void onHotplug(long timestampNanos, long physicalDisplayId, boolean connected) {
             mListener.onHotplug(timestampNanos, physicalDisplayId, connected);
         }
+
+        @Override
         public void onConfigChanged(long timestampNanos, long physicalDisplayId, int configId) {
             mListener.onConfigChanged(timestampNanos, physicalDisplayId, configId);
+        }
+
+        @Override
+        public void onFrameRateOverridesChanged(long timestampNanos, long physicalDisplayId,
+                DisplayEventReceiver.FrameRateOverride[] overrides) {
+            mListener.onFrameRateOverridesChanged(timestampNanos, physicalDisplayId, overrides);
         }
     }
 
     private final class LocalDisplayEventListener implements DisplayEventListener {
+        @Override
         public void onHotplug(long timestampNanos, long physicalDisplayId, boolean connected) {
             synchronized (getSyncRoot()) {
                 if (connected) {
@@ -1128,6 +1171,8 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 }
             }
         }
+
+        @Override
         public void onConfigChanged(long timestampNanos, long physicalDisplayId, int configId) {
             if (DEBUG) {
                 Slog.d(TAG, "onConfigChanged("
@@ -1146,6 +1191,80 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 }
                 device.onActiveDisplayConfigChangedLocked(configId);
             }
+        }
+
+        @Override
+        public void onFrameRateOverridesChanged(long timestampNanos, long physicalDisplayId,
+                DisplayEventReceiver.FrameRateOverride[] overrides) {
+            if (DEBUG) {
+                Slog.d(TAG, "onFrameRateOverrideChanged(timestampNanos=" + timestampNanos
+                        + ", physicalDisplayId=" + physicalDisplayId + " overrides="
+                        + Arrays.toString(overrides) + ")");
+            }
+            synchronized (getSyncRoot()) {
+                LocalDisplayDevice device = mDevices.get(physicalDisplayId);
+                if (device == null) {
+                    if (DEBUG) {
+                        Slog.d(TAG, "Received frame rate override event for unhandled physical"
+                                + " display: physicalDisplayId=" + physicalDisplayId);
+                    }
+                    return;
+                }
+                device.onFrameRateOverridesChanged(overrides);
+            }
+        }
+    }
+
+    static class BacklightAdapter {
+        private final IBinder mDisplayToken;
+        private final LogicalLight mBacklight;
+        private final boolean mUseSurfaceControlBrightness;
+
+        private boolean mForceSurfaceControl = false;
+
+        /**
+         * @param displayToken Token for display associated with this backlight.
+         * @param isDefaultDisplay {@code true} if it is the default display.
+         * @param forceSurfaceControl {@code true} if brightness should always be
+         *                            set via SurfaceControl API.
+         */
+        BacklightAdapter(IBinder displayToken, boolean isDefaultDisplay) {
+            mDisplayToken = displayToken;
+
+            mUseSurfaceControlBrightness =
+                    SurfaceControl.getDisplayBrightnessSupport(mDisplayToken);
+
+            if (!mUseSurfaceControlBrightness && isDefaultDisplay) {
+                LightsManager lights = LocalServices.getService(LightsManager.class);
+                mBacklight = lights.getLight(LightsManager.LIGHT_ID_BACKLIGHT);
+            } else {
+                mBacklight = null;
+            }
+        }
+
+        void setBrightness(float brightness) {
+            if (mUseSurfaceControlBrightness || mForceSurfaceControl) {
+                SurfaceControl.setDisplayBrightness(mDisplayToken, brightness);
+            } else if (mBacklight != null) {
+                mBacklight.setBrightness(brightness);
+            }
+        }
+
+        void setVrMode(boolean isVrModeEnabled) {
+            if (mBacklight != null) {
+                mBacklight.setVrMode(isVrModeEnabled);
+            }
+        }
+
+        void setForceSurfaceControl(boolean forceSurfaceControl) {
+            mForceSurfaceControl = forceSurfaceControl;
+        }
+
+        @Override
+        public String toString() {
+            return "BacklightAdapter [useSurfaceControl=" + mUseSurfaceControlBrightness
+                    + " (force_anyway? " + mForceSurfaceControl + ")"
+                    + ", backlight=" + mBacklight + "]";
         }
     }
 }

@@ -16,6 +16,7 @@
 
 package com.android.keyguard;
 
+import android.annotation.CallSuper;
 import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.telephony.TelephonyManager;
@@ -24,6 +25,8 @@ import android.view.inputmethod.InputMethodManager;
 import com.android.internal.util.LatencyTracker;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardSecurityModel.SecurityMode;
+import com.android.systemui.R;
+import com.android.systemui.classifier.FalsingCollector;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.util.ViewController;
 import com.android.systemui.util.concurrency.DelayableExecutor;
@@ -37,6 +40,7 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
 
     private final SecurityMode mSecurityMode;
     private final KeyguardSecurityCallback mKeyguardSecurityCallback;
+    private final EmergencyButton mEmergencyButton;
     private boolean mPaused;
 
 
@@ -68,6 +72,7 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
         super(view);
         mSecurityMode = securityMode;
         mKeyguardSecurityCallback = keyguardSecurityCallback;
+        mEmergencyButton = view == null ? null : view.findViewById(R.id.emergency_call_button);
     }
 
     @Override
@@ -112,6 +117,16 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
     public void showMessage(CharSequence message, ColorStateList colorState) {
     }
 
+    /**
+     * Reload colors from resources.
+     **/
+    @CallSuper
+    public void reloadColors() {
+        if (mEmergencyButton != null) {
+            mEmergencyButton.reloadColors();
+        }
+    }
+
     public void startAppearAnimation() {
         mView.startAppearAnimation();
     }
@@ -141,6 +156,7 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
         private final Resources mResources;
         private LiftToActivateListener mLiftToActivateListener;
         private TelephonyManager mTelephonyManager;
+        private final FalsingCollector mFalsingCollector;
 
         @Inject
         public Factory(KeyguardUpdateMonitor keyguardUpdateMonitor,
@@ -149,7 +165,7 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
                 KeyguardMessageAreaController.Factory messageAreaControllerFactory,
                 InputMethodManager inputMethodManager, @Main DelayableExecutor mainExecutor,
                 @Main Resources resources, LiftToActivateListener liftToActivateListener,
-                TelephonyManager telephonyManager) {
+                TelephonyManager telephonyManager, FalsingCollector falsingCollector) {
             mKeyguardUpdateMonitor = keyguardUpdateMonitor;
             mLockPatternUtils = lockPatternUtils;
             mLatencyTracker = latencyTracker;
@@ -159,6 +175,7 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
             mResources = resources;
             mLiftToActivateListener = liftToActivateListener;
             mTelephonyManager = telephonyManager;
+            mFalsingCollector = falsingCollector;
         }
 
         /** Create a new {@link KeyguardInputViewController}. */
@@ -177,17 +194,17 @@ public abstract class KeyguardInputViewController<T extends KeyguardInputView>
                 return new KeyguardPinViewController((KeyguardPINView) keyguardInputView,
                         mKeyguardUpdateMonitor, securityMode, mLockPatternUtils,
                         keyguardSecurityCallback, mMessageAreaControllerFactory, mLatencyTracker,
-                        mLiftToActivateListener);
+                        mLiftToActivateListener, mFalsingCollector);
             } else if (keyguardInputView instanceof KeyguardSimPinView) {
                 return new KeyguardSimPinViewController((KeyguardSimPinView) keyguardInputView,
                         mKeyguardUpdateMonitor, securityMode, mLockPatternUtils,
                         keyguardSecurityCallback, mMessageAreaControllerFactory, mLatencyTracker,
-                        mLiftToActivateListener, mTelephonyManager);
+                        mLiftToActivateListener, mTelephonyManager, mFalsingCollector);
             } else if (keyguardInputView instanceof KeyguardSimPukView) {
                 return new KeyguardSimPukViewController((KeyguardSimPukView) keyguardInputView,
                         mKeyguardUpdateMonitor, securityMode, mLockPatternUtils,
                         keyguardSecurityCallback, mMessageAreaControllerFactory, mLatencyTracker,
-                        mLiftToActivateListener, mTelephonyManager);
+                        mLiftToActivateListener, mTelephonyManager, mFalsingCollector);
             }
 
             throw new RuntimeException("Unable to find controller for " + keyguardInputView);

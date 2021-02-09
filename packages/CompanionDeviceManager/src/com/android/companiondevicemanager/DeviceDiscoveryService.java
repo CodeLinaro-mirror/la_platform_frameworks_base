@@ -64,7 +64,7 @@ import android.util.SparseArray;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ArrayAdapter;
+import android.widget.BaseAdapter;
 import android.widget.TextView;
 
 import com.android.internal.infra.AndroidFuture;
@@ -321,7 +321,8 @@ public class DeviceDiscoveryService extends Service {
     }
 
     void onDeviceSelected(String callingPackage, String deviceAddress) {
-        mServiceCallback.complete(new Association(getUserId(), deviceAddress, callingPackage));
+        mServiceCallback.complete(new Association(
+                getUserId(), deviceAddress, callingPackage, mRequest.getDeviceProfile(), false));
     }
 
     void onCancel() {
@@ -329,7 +330,7 @@ public class DeviceDiscoveryService extends Service {
         mServiceCallback.cancel(true);
     }
 
-    class DevicesAdapter extends ArrayAdapter<DeviceFilterPair> {
+    class DevicesAdapter extends BaseAdapter {
         private Drawable BLUETOOTH_ICON = icon(android.R.drawable.stat_sys_data_bluetooth);
         private Drawable WIFI_ICON = icon(com.android.internal.R.drawable.ic_wifi_signal_3);
 
@@ -339,10 +340,6 @@ public class DeviceDiscoveryService extends Service {
             Drawable icon = getResources().getDrawable(drawableRes, null);
             icon.setTint(Color.DKGRAY);
             return icon;
-        }
-
-        public DevicesAdapter() {
-            super(DeviceDiscoveryService.this, 0, mDevicesFound);
         }
 
         @Override
@@ -390,6 +387,21 @@ public class DeviceDiscoveryService extends Service {
             a.recycle();
             mColors.put(colorAttr, result);
             return result;
+        }
+
+        @Override
+        public int getCount() {
+            return mDevicesFound.size();
+        }
+
+        @Override
+        public DeviceFilterPair getItem(int position) {
+            return mDevicesFound.get(position);
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return position;
         }
     }
 

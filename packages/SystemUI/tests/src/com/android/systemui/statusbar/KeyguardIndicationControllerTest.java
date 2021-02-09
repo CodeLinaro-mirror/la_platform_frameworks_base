@@ -74,6 +74,7 @@ import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.util.wakelock.WakeLockFake;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -82,6 +83,7 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.text.NumberFormat;
 import java.util.Collections;
 
 @SmallTest
@@ -130,6 +132,7 @@ public class KeyguardIndicationControllerTest extends SysuiTestCase {
         MockitoAnnotations.initMocks(this);
         mInstrumentation = InstrumentationRegistry.getInstrumentation();
         mTextView = new KeyguardIndicationTextView(mContext);
+        mTextView.setAnimationsEnabled(false);
 
         mContext.addMockSystemService(Context.DEVICE_POLICY_SERVICE, mDevicePolicyManager);
         mContext.addMockSystemService(UserManager.class, mUserManager);
@@ -150,6 +153,11 @@ public class KeyguardIndicationControllerTest extends SysuiTestCase {
         mWakeLock = new WakeLockFake();
         mWakeLockBuilder = new WakeLockFake.Builder(mContext);
         mWakeLockBuilder.setWakeLock(mWakeLock);
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        mTextView.setAnimationsEnabled(true);
     }
 
     private void createController() {
@@ -545,5 +553,69 @@ public class KeyguardIndicationControllerTest extends SysuiTestCase {
                 R.string.keyguard_indication_trust_unlocked_plugged_in,
                 pluggedIndication, powerIndication);
         assertThat(mTextView.getText()).isEqualTo(pluggedIndication);
+    }
+
+    @Test
+    public void onRefreshBatteryInfo_chargingWithOverheat_presentChargingLimited() {
+        createController();
+        BatteryStatus status = new BatteryStatus(BatteryManager.BATTERY_STATUS_CHARGING,
+                80 /* level */, BatteryManager.BATTERY_PLUGGED_AC,
+                BatteryManager.BATTERY_HEALTH_OVERHEAT, 0 /* maxChargingWattage */,
+                true /* present */);
+
+        mController.getKeyguardCallback().onRefreshBatteryInfo(status);
+        mController.setVisible(true);
+
+        String percentage = NumberFormat.getPercentInstance().format(80 / 100f);
+        String pluggedIndication = mContext.getString(
+                R.string.keyguard_plugged_in_charging_limited, percentage);
+        assertThat(mTextView.getText()).isEqualTo(pluggedIndication);
+    }
+
+    @Test
+    public void onRefreshBatteryInfo_pluggedWithOverheat_presentChargingLimited() {
+        createController();
+        BatteryStatus status = new BatteryStatus(BatteryManager.BATTERY_STATUS_DISCHARGING,
+                80 /* level */, BatteryManager.BATTERY_PLUGGED_AC,
+                BatteryManager.BATTERY_HEALTH_OVERHEAT, 0 /* maxChargingWattage */,
+                true /* present */);
+
+        mController.getKeyguardCallback().onRefreshBatteryInfo(status);
+        mController.setVisible(true);
+
+        String percentage = NumberFormat.getPercentInstance().format(80 / 100f);
+        String pluggedIndication = mContext.getString(
+                R.string.keyguard_plugged_in_charging_limited, percentage);
+        assertThat(mTextView.getText()).isEqualTo(pluggedIndication);
+    }
+
+    @Test
+    public void onRefreshBatteryInfo_fullChargedWithOverheat_presentCharged() {
+        createController();
+        BatteryStatus status = new BatteryStatus(BatteryManager.BATTERY_STATUS_CHARGING,
+                100 /* level */, BatteryManager.BATTERY_PLUGGED_AC,
+                BatteryManager.BATTERY_HEALTH_OVERHEAT, 0 /* maxChargingWattage */,
+                true /* present */);
+
+        mController.getKeyguardCallback().onRefreshBatteryInfo(status);
+        mController.setVisible(true);
+
+        String chargedIndication = mContext.getString(R.string.keyguard_charged);
+        assertThat(mTextView.getText()).isEqualTo(chargedIndication);
+    }
+
+    @Test
+    public void onRefreshBatteryInfo_dischargingWithOverheat_presentBatteryPercentage() {
+        createController();
+        BatteryStatus status = new BatteryStatus(BatteryManager.BATTERY_STATUS_DISCHARGING,
+                90 /* level */, 0 /* plugged */, BatteryManager.BATTERY_HEALTH_OVERHEAT,
+                0 /* maxChargingWattage */, true /* present */);
+
+        mController.getKeyguardCallback().onRefreshBatteryInfo(status);
+        mController.setDozing(true);
+        mController.setVisible(true);
+
+        String percentage = NumberFormat.getPercentInstance().format(90 / 100f);
+        assertThat(mTextView.getText()).isEqualTo(percentage);
     }
 }

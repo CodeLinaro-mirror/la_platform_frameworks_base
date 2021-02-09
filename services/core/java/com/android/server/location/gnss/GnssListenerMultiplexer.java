@@ -34,14 +34,14 @@ import android.util.ArraySet;
 
 import com.android.internal.util.Preconditions;
 import com.android.server.LocalServices;
+import com.android.server.location.injector.AppForegroundHelper;
+import com.android.server.location.injector.Injector;
+import com.android.server.location.injector.LocationPermissionsHelper;
+import com.android.server.location.injector.SettingsHelper;
+import com.android.server.location.injector.UserInfoHelper;
+import com.android.server.location.injector.UserInfoHelper.UserListener;
 import com.android.server.location.listeners.BinderListenerRegistration;
 import com.android.server.location.listeners.ListenerMultiplexer;
-import com.android.server.location.util.AppForegroundHelper;
-import com.android.server.location.util.Injector;
-import com.android.server.location.util.LocationPermissionsHelper;
-import com.android.server.location.util.SettingsHelper;
-import com.android.server.location.util.UserInfoHelper;
-import com.android.server.location.util.UserInfoHelper.UserListener;
 
 import java.util.Collection;
 import java.util.Objects;
@@ -96,11 +96,28 @@ public abstract class GnssListenerMultiplexer<TRequest, TListener extends IInter
         }
 
         @Override
-        protected void onBinderListenerRegister() {
+        protected final void onBinderListenerRegister() {
             mPermitted = mLocationPermissionsHelper.hasLocationPermissions(PERMISSION_FINE,
                     getIdentity());
             mForeground = mAppForegroundHelper.isAppForeground(getIdentity().getUid());
+
+            onGnssListenerRegister();
         }
+
+        @Override
+        protected final void onBinderListenerUnregister() {
+            onGnssListenerUnregister();
+        }
+
+        /**
+         * May be overridden in place of {@link #onBinderListenerRegister()}.
+         */
+        protected void onGnssListenerRegister() {}
+
+        /**
+         * May be overridden in place of {@link #onBinderListenerUnregister()}.
+         */
+        protected void onGnssListenerUnregister() {}
 
         boolean onLocationPermissionsChanged(String packageName) {
             if (getIdentity().getPackageName().equals(packageName)) {
@@ -266,11 +283,30 @@ public abstract class GnssListenerMultiplexer<TRequest, TListener extends IInter
         CallerIdentity identity = registration.getIdentity();
         return registration.isPermitted()
                 && (registration.isForeground() || isBackgroundRestrictionExempt(identity))
-                && (identity.isSystem() || mUserInfoHelper.isCurrentUserId(identity.getUserId()))
-                && mLocationManagerInternal.isProviderEnabledForUser(GPS_PROVIDER,
-                identity.getUserId())
-                && !mSettingsHelper.isLocationPackageBlacklisted(identity.getUserId(),
-                identity.getPackageName());
+                && isActive(identity);
+    }
+
+    private boolean isActive(CallerIdentity identity) {
+        if (identity.isSystemServer()) {
+            if (!mLocationManagerInternal.isProviderEnabledForUser(GPS_PROVIDER,
+                    mUserInfoHelper.getCurrentUserId())) {
+                return false;
+            }
+        } else {
+            if (!mLocationManagerInternal.isProviderEnabledForUser(GPS_PROVIDER,
+                    identity.getUserId())) {
+                return false;
+            }
+            if (!mUserInfoHelper.isCurrentUserId(identity.getUserId())) {
+                return false;
+            }
+            if (mSettingsHelper.isLocationPackageBlacklisted(identity.getUserId(),
+                    identity.getPackageName())) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private boolean isBackgroundRestrictionExempt(CallerIdentity identity) {

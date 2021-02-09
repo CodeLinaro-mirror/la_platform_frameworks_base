@@ -1946,7 +1946,13 @@ public final class Debug
      */
     public static final int MEMINFO_KRECLAIMABLE = 15;
     /** @hide */
-    public static final int MEMINFO_COUNT = 16;
+    public static final int MEMINFO_ACTIVE = 16;
+    /** @hide */
+    public static final int MEMINFO_INACTIVE = 17;
+    /** @hide */
+    public static final int MEMINFO_UNEVICTABLE = 18;
+    /** @hide */
+    public static final int MEMINFO_COUNT = 19;
 
     /**
      * Retrieves /proc/meminfo.  outSizes is filled with fields
@@ -2574,6 +2580,13 @@ public final class Debug
      * @hide
      */
     public static native long getIonMappedSizeKb();
+
+    /**
+     * Return memory size in kilobytes used by GPU.
+     *
+     * @hide
+     */
+    public static native long getGpuTotalUsageKb();
 
     /**
      * Return whether virtually-mapped kernel stacks are enabled (CONFIG_VMAP_STACK).

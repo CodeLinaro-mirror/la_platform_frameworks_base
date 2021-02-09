@@ -264,6 +264,8 @@ TEST(RenderNode, releasedCallback) {
     TestUtils::runOnRenderThreadUnmanaged([&] (RenderThread&) {
         TestUtils::syncHierarchyPropertiesAndDisplayList(node);
     });
+    // Fence on any remaining post'd work
+    TestUtils::runOnRenderThreadUnmanaged([] (RenderThread&) {});
     EXPECT_EQ(2, counts.sync);
     EXPECT_EQ(1, counts.destroyed);
 }
@@ -324,7 +326,7 @@ RENDERTHREAD_TEST(DISABLED_RenderNode, prepareTree_HwLayer_AVD_enqueueDamage) {
 
     // Check that the VD is in the dislay list, and the layer update queue contains the correct
     // damage rect.
-    EXPECT_TRUE(rootNode->getDisplayList()->hasVectorDrawables());
+    EXPECT_TRUE(rootNode->getDisplayList().hasVectorDrawables());
     ASSERT_FALSE(info.layerUpdateQueue->entries().empty());
     EXPECT_EQ(rootNode.get(), info.layerUpdateQueue->entries().at(0).renderNode.get());
     EXPECT_EQ(uirenderer::Rect(0, 0, 200, 400), info.layerUpdateQueue->entries().at(0).damage);

@@ -23,10 +23,8 @@ import android.telephony.ims.SipMessage;
  * {@hide}
  */
 oneway interface ISipDelegate {
-    void sendMessage(in SipMessage sipMessage, int configVersion);
+    void sendMessage(in SipMessage sipMessage, long configVersion);
     void notifyMessageReceived(in String viaTransactionId);
     void notifyMessageReceiveError(in String viaTransactionId, int reason);
-
-    // only used by SipDelegate.
     void closeDialog(in String callId);
 }

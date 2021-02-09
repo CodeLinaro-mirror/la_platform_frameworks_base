@@ -58,6 +58,7 @@
         <item><xliff:g id="id">@string/status_bar_hotspot</xliff:g></item>
         <item><xliff:g id="id">@string/status_bar_mobile</xliff:g></item>
         <item><xliff:g id="id">@string/status_bar_airplane</xliff:g></item>
+        <item><xliff:g id="id">@string/status_bar_no_calling</xliff:g></item>
         <item><xliff:g id="id">@string/status_bar_battery</xliff:g></item>
         <item><xliff:g id="id">@string/status_bar_sensors_off</xliff:g></item>
     </string-array>
@@ -94,6 +95,7 @@
     <string translatable="false" name="status_bar_microphone">microphone</string>
     <string translatable="false" name="status_bar_camera">camera</string>
     <string translatable="false" name="status_bar_airplane">airplane</string>
+    <string translatable="false" name="status_bar_no_calling">no_calling</string>
     <string translatable="false" name="status_bar_sensors_off">sensors_off</string>
     <string translatable="false" name="status_bar_screen_record">screen_record</string>
 
@@ -450,6 +452,10 @@
         -->
     </string-array>
 
+    <!-- Whether the internal vehicle network should remain active even when no
+         apps requested it. -->
+    <bool name="config_vehicleInternalNetworkAlwaysRequested">false</bool>
+
     <!-- Configuration of network interfaces that support WakeOnLAN -->
     <string-array translatable="false" name="config_wakeonlan_supported_interfaces">
         <!--
@@ -654,10 +660,9 @@
          The default is false. -->
     <bool name="config_lidControlsSleep">false</bool>
 
-    <!-- Indicate whether closing the lid causes the device to enter the folded state which means
-         to get a smaller screen and opening the lid causes the device to enter the unfolded state
-         which means to get a larger screen. -->
-    <bool name="config_lidControlsDisplayFold">false</bool>
+    <!-- The device state (supplied by DeviceStateManager) that should be treated as folded by the
+         display fold controller. Default is DeviceStateManager.INVALID_DEVICE_STATE. -->
+    <integer name="config_foldedDeviceState">-1</integer>
 
     <!-- Indicate the display area rect for foldable devices in folded state. -->
     <string name="config_foldedArea"></string>
@@ -987,6 +992,11 @@
 
     <!-- Time to wait while a button is pressed before triggering a very long press. -->
     <integer name="config_veryLongPressTimeout">3500</integer>
+
+    <!-- Time to wait before sending a HOME intent when waking up from power/home button.
+         (0 - do not send HOME intent on wakeup)
+    -->
+    <integer name="config_wakeUpToLastStateTimeoutMillis">0</integer>
 
     <!-- Package name for default keyguard appwidget [DO NOT TRANSLATE] -->
     <string name="widget_default_package_name" translatable="false"></string>
@@ -1559,6 +1569,14 @@
     <!-- Class name of WallpaperManagerService. -->
     <string name="config_wallpaperManagerServiceName" translatable="false">com.android.server.wallpaper.WallpaperManagerService</string>
 
+    <!-- Specifies priority of automatic time sources. Suggestions from higher entries in the list
+         take precedence over lower ones.
+         See com.android.server.timedetector.TimeDetectorStrategy for available sources. -->
+    <string-array name="config_autoTimeSourcesPriority">
+        <item>telephony</item>
+        <item>network</item>
+    </string-array>
+
     <!-- Enables the TimeZoneRuleManager service. This is the global switch for the updateable time
          zone update mechanism. -->
     <bool name="config_enableUpdateableTimeZoneRules">false</bool>
@@ -1603,27 +1621,39 @@
     <integer name="config_timeZoneRulesCheckRetryCount">5</integer>
 
     <!-- Whether the geolocation time zone detection feature is enabled. -->
-    <bool name="config_enableGeolocationTimeZoneDetection" translatable="false">false</bool>
+    <bool name="config_enableGeolocationTimeZoneDetection" translatable="false">true</bool>
 
-    <!-- Whether to enable primary location time zone provider overlay which allows the primary
-         location time zone provider to be replaced by an app at run-time. When disabled, only the
+    <!-- Whether the primary LocationTimeZoneProvider is enabled device.
+         Ignored if config_enableGeolocationTimeZoneDetection is false -->
+    <bool name="config_enablePrimaryLocationTimeZoneProvider" translatable="false">false</bool>
+    <!-- Used when enablePrimaryLocationTimeZoneProvider is true. Controls whether to enable primary
+         location time zone provider overlay which allows the primary location time zone provider to
+         be replaced by an app at run-time. When disabled, only the
          config_primaryLocationTimeZoneProviderPackageName package will be searched for the primary
          location time zone provider, otherwise any system package is eligible. Anyone who wants to
-         disable the overlay mechanism can set it to false. -->
+         disable the runtime overlay mechanism can set it to false. -->
     <bool name="config_enablePrimaryLocationTimeZoneOverlay" translatable="false">false</bool>
     <!-- Package name providing the primary location time zone provider. Used only when
          config_enablePrimaryLocationTimeZoneOverlay is false. -->
     <string name="config_primaryLocationTimeZoneProviderPackageName" translatable="false">@null</string>
 
-    <!-- Whether to enable secondary location time zone provider overlay which allows the secondary
-         location time zone provider to be replaced by an app at run-time. When disabled, only the
-         config_secondaryLocationTimeZoneProviderPackageName package will be searched for the
-         secondary location time zone provider, otherwise any system package is eligible. Anyone who
-         wants to disable the overlay mechanism can set it to false. -->
+    <!-- Whether the secondary LocationTimeZoneProvider is enabled device.
+         Ignored if config_enableGeolocationTimeZoneDetection is false -->
+    <bool name="config_enableSecondaryLocationTimeZoneProvider" translatable="false">true</bool>
+    <!-- Used when enableSecondaryLocationTimeZoneProvider is true. Controls whether to enable
+         secondary location time zone provider overlay which allows the primary location time zone
+         provider to config_secondaryLocationTimeZoneProviderPackageName package will be searched
+         for the secondary location time zone provider, otherwise any system package is eligible.
+         Anyone who wants to disable the runtime overlay mechanism can set it to false. -->
     <bool name="config_enableSecondaryLocationTimeZoneOverlay" translatable="false">false</bool>
     <!-- Package name providing the secondary location time zone provider. Used only when
-         config_enableSecondaryLocationTimeZoneOverlay is false. -->
-    <string name="config_secondaryLocationTimeZoneProviderPackageName" translatable="false">@null</string>
+         config_enableSecondaryLocationTimeZoneOverlay is false.
+
+         By default, set to "android" to pick up the default LocationTimeZoneProvider configured in
+         the system server's AndroidManifest.xml. See the
+         com.android.location.timezone.service.v1.SecondaryLocationTimeZoneProvider intent-filter
+         definition there for more information. -->
+    <string name="config_secondaryLocationTimeZoneProviderPackageName" translatable="false">android</string>
 
     <!-- Whether to enable network location overlay which allows network location provider to be
          replaced by an app at run-time. When disabled, only the
@@ -3283,6 +3313,10 @@
          is non-interactive. -->
     <bool name="config_cameraDoubleTapPowerGestureEnabled">true</bool>
 
+    <!-- Allow the gesture to quick tap the power button multiple times to start the emergency sos
+         experience while the device is non-interactive. -->
+    <bool name="config_emergencyGestureEnabled">true</bool>
+
     <!-- Allow the gesture power + volume up to change the ringer mode while the device
          is interactive. -->
     <bool name="config_volumeHushGestureEnabled">true</bool>
@@ -3701,6 +3735,14 @@
     -->
     <string name="config_defaultAugmentedAutofillService" translatable="false"></string>
 
+    <!-- The package name for the system's translation service.
+     This service must be trusted, as it can be activated without explicit consent of the user.
+     If no service with the specified name exists on the device, translation wil be
+     disabled.
+     Example: "com.android.translation/.TranslationService"
+-->
+    <string name="config_defaultTranslationService" translatable="false"></string>
+
     <!-- The package name for the system's app prediction service.
          This service must be trusted, as it can be activated without explicit consent of the user.
          Example: "com.android.intelligence/.AppPredictionService"
@@ -3717,6 +3759,16 @@
          Example: "com.android.contentsuggestions/.ContentSuggestionsService"
     -->
     <string name="config_defaultContentSuggestionsService" translatable="false"></string>
+
+    <!-- The package name for the system's search ui service.
+     This service returns search results when provided with an input string.
+
+     This service must be trusted, as it can be activated without explicit consent of the user.
+     If no service with the specified name exists on the device, on device search wil be
+     disabled.
+     Example: "com.android.intelliegence/.SearchUiService"
+-->
+    <string name="config_defaultSearchUiService" translatable="false"></string>
 
     <string name="config_defaultMusicRecognitionService" translatable="false"></string>
 
@@ -4234,6 +4286,35 @@
          If non-positive, then the refresh rate is unchanged even if thresholds are configured. -->
     <integer name="config_defaultRefreshRateInZone">0</integer>
 
+    <!-- The display uses different gamma curves for different refresh rates. It's hard for panel
+         vendor to tune the curves to have exact same brightness for different refresh rate. So
+         flicker could be observed at switch time. The issue can be observed on the screen with
+         even full white content at the high brightness. To prevent flickering, we support fixed
+         refresh rates if the display and ambient brightness are equal to or above the provided
+         thresholds. You can define multiple threshold levels as higher brightness environments
+         may have lower display brightness requirements for the flickering is visible. And the
+         high brightness environment could have higher threshold.
+         For example, fixed refresh rate if
+             display brightness >= disp0 && ambient brightness >= amb0
+             || display brightness >= disp1 && ambient brightness >= amb1 -->
+    <integer-array translatable="false" name="config_highDisplayBrightnessThresholdsOfFixedRefreshRate">
+         <!--
+           <item>disp0</item>
+           <item>disp1</item>
+        -->
+    </integer-array>
+
+    <integer-array translatable="false" name="config_highAmbientBrightnessThresholdsOfFixedRefreshRate">
+         <!--
+           <item>amb0</item>
+           <item>amb1</item>
+        -->
+    </integer-array>
+
+    <!-- Default refresh rate in the high zone defined by brightness and ambient thresholds.
+         If non-positive, then the refresh rate is unchanged even if thresholds are configured. -->
+    <integer name="config_fixedRefreshRateInHighZone">0</integer>
+
     <!-- The type of the light sensor to be used by the display framework for things like
          auto-brightness. If unset, then it just gets the default sensor of type TYPE_LIGHT. -->
     <string name="config_displayLightSensorType" translatable="false" />
@@ -4267,6 +4348,7 @@
     <!-- Which binder services to include in incident reports containing restricted images. -->
     <string-array name="config_restrictedImagesServices" translatable="false"/>
 
+    <string name="config_biometric_prompt_ui_package">com.android.systemui</string>
     <!-- List of biometric sensors on the device, in decreasing strength. Consumed by AuthService
          when registering authenticators with BiometricService. Format must be ID:Modality:Strength,
          where: IDs are unique per device, Modality as defined in BiometricAuthenticator.java,
@@ -4472,7 +4554,7 @@
     <integer name="config_pdp_reject_retry_delay_ms">-1</integer>
 
     <!-- Whether or not to enable the binder heavy hitter watcher by default -->
-    <bool name="config_defaultBinderHeavyHitterWatcherEnabled">true</bool>
+    <bool name="config_defaultBinderHeavyHitterWatcherEnabled">false</bool>
 
     <!-- The default batch size for the binder heavy hitter watcher -->
     <integer name="config_defaultBinderHeavyHitterWatcherBatchSize">2000</integer>
@@ -4483,7 +4565,7 @@
     </item>
 
     <!-- Whether or not to enable the binder heavy hitter auto sampler by default -->
-    <bool name="config_defaultBinderHeavyHitterAutoSamplerEnabled">true</bool>
+    <bool name="config_defaultBinderHeavyHitterAutoSamplerEnabled">false</bool>
 
     <!-- The default batch size for the binder heavy hitter auto sampler -->
     <integer name="config_defaultBinderHeavyHitterAutoSamplerBatchSize">400</integer>
@@ -4516,4 +4598,28 @@
 
     <!-- If true, hide the display cutout with display area -->
     <bool name="config_hideDisplayCutoutWithDisplayArea">false</bool>
+
+    <!-- Indicates that default fitness tracker app needs to request sensor and location permissions. -->
+    <bool name="config_trackerAppNeedsPermissions">false</bool>
+
+    <!-- Package with global data query permissions for AppSearch -->
+    <string name="config_globalAppSearchDataQuerierPackage" translatable="false"></string>
+
+    <!-- If true, attach the navigation bar to the app during app transition -->
+    <bool name="config_attachNavBarToAppDuringTransition">false</bool>
+
+    <!-- Flag indicating that the media framework should play a back sound when a back-transition
+         happens that doesn't result in bringing the home task to the front.
+         This is currently only used on TV. -->
+    <bool name="config_enableBackSound">false</bool>
+
+    <!-- Chooser image editing activity.  Must handle ACTION_EDIT image/png intents.
+         If omitted, image editing will not be offered via Chooser.
+         This name is in the ComponentName flattened format (package/class) [DO NOT TRANSLATE]  -->
+    <string name="config_systemImageEditor" translatable="false"></string>
+
+    <!-- Whether to force WindowOrientationListener to keep listening to its sensor, even when
+         dreaming. This allows the AoD to rotate on devices without a wake device_orientation
+         sensor. Note that this flag should only be enabled for development/testing use. -->
+    <bool name="config_forceOrientationListenerEnabledWhileDreaming">false</bool>
 </resources>

@@ -93,8 +93,8 @@ import android.app.AppOpsManagerInternal.CheckOpsDelegate;
 import android.app.AsyncNotedAppOp;
 import android.app.RuntimeAppOpAccessMessage;
 import android.app.SyncNotedAppOp;
+import android.app.admin.DevicePolicyManagerInternal;
 import android.content.BroadcastReceiver;
-import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
@@ -125,7 +125,6 @@ import android.os.ShellCommand;
 import android.os.SystemClock;
 import android.os.UserHandle;
 import android.os.UserManager;
-import android.os.storage.StorageManager;
 import android.os.storage.StorageManagerInternal;
 import android.provider.Settings;
 import android.util.ArrayMap;
@@ -156,10 +155,8 @@ import com.android.internal.app.IAppOpsService;
 import com.android.internal.app.IAppOpsStartedCallback;
 import com.android.internal.app.MessageSamplingConfig;
 import com.android.internal.compat.IPlatformCompat;
-import com.android.internal.os.Zygote;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.DumpUtils;
-import com.android.internal.util.FastXmlSerializer;
 import com.android.internal.util.Preconditions;
 import com.android.internal.util.XmlUtils;
 import com.android.internal.util.function.pooled.PooledLambda;
@@ -176,7 +173,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlSerializer;
 
 import java.io.File;
 import java.io.FileDescriptor;
@@ -186,7 +182,6 @@ import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -279,6 +274,8 @@ public class AppOpsService extends IAppOpsService.Stub {
 
     private final AppOpsManagerInternalImpl mAppOpsManagerInternal
             = new AppOpsManagerInternalImpl();
+    @Nullable private final DevicePolicyManagerInternal dpmi =
+            LocalServices.getService(DevicePolicyManagerInternal.class);
 
     private final IPlatformCompat mPlatformCompat = IPlatformCompat.Stub.asInterface(
             ServiceManager.getService(Context.PLATFORM_COMPAT_SERVICE));
@@ -1058,18 +1055,19 @@ public class AppOpsService extends IAppOpsService.Stub {
             }
 
             int numInProgressEvents = mInProgressEvents.size();
+            List<IBinder> binders = new ArrayList<>(mInProgressEvents.keySet());
             for (int i = 0; i < numInProgressEvents; i++) {
-                InProgressStartOpEvent event = mInProgressEvents.valueAt(i);
+                InProgressStartOpEvent event = mInProgressEvents.get(binders.get(i));
 
-                if (event.getUidState() != newState) {
+                if (event != null && event.getUidState() != newState) {
                     try {
                         // Remove all but one unfinished start count and then call finished() to
                         // remove start event object
                         int numPreviousUnfinishedStarts = event.numUnfinishedStarts;
                         event.numUnfinishedStarts = 1;
-                        finished(event.getClientId(), false);
-
                         OpEventProxyInfo proxy = event.getProxy();
+
+                        finished(event.getClientId(), false);
 
                         // Call started() to add a new start event object and then add the
                         // previously removed unfinished start counts back
@@ -1080,7 +1078,11 @@ public class AppOpsService extends IAppOpsService.Stub {
                             started(event.getClientId(), Process.INVALID_UID, null, null, newState,
                                     OP_FLAG_SELF, false);
                         }
-                        event.numUnfinishedStarts += numPreviousUnfinishedStarts - 1;
+
+                        InProgressStartOpEvent newEvent = mInProgressEvents.get(binders.get(i));
+                        if (newEvent != null) {
+                            newEvent.numUnfinishedStarts += numPreviousUnfinishedStarts - 1;
+                        }
                     } catch (RemoteException e) {
                         if (DEBUG) Slog.e(TAG, "Cannot switch to new uidState " + newState);
                     }
@@ -1765,26 +1767,6 @@ public class AppOpsService extends IAppOpsService.Stub {
                     }
                 });
 
-        if (!StorageManager.hasIsolatedStorage()) {
-            StorageManagerInternal storageManagerInternal = LocalServices.getService(
-                    StorageManagerInternal.class);
-            storageManagerInternal.addExternalStoragePolicy(
-                    new StorageManagerInternal.ExternalStorageMountPolicy() {
-                        @Override
-                        public int getMountMode(int uid, String packageName) {
-                            if (Process.isIsolated(uid)) {
-                                return Zygote.MOUNT_EXTERNAL_NONE;
-                            }
-                            return Zygote.MOUNT_EXTERNAL_DEFAULT;
-                        }
-
-                        @Override
-                        public boolean hasExternalStorage(int uid, String packageName) {
-                            final int mountMode = getMountMode(uid, packageName);
-                            return mountMode != Zygote.MOUNT_EXTERNAL_NONE;
-                        }
-                    });
-        }
         mActivityManagerInternal = LocalServices.getService(ActivityManagerInternal.class);
     }
 
@@ -2711,6 +2693,10 @@ public class AppOpsService extends IAppOpsService.Stub {
                     Ops pkgOps = ent.getValue();
                     for (int j=pkgOps.size()-1; j>=0; j--) {
                         Op curOp = pkgOps.valueAt(j);
+                        if (shouldDeferResetOpToDpm(curOp.op)) {
+                            deferResetOpToDpm(curOp.op, reqPackageName, reqUserId);
+                            continue;
+                        }
                         if (AppOpsManager.opAllowsReset(curOp.op)
                                 && curOp.mode != AppOpsManager.opToDefaultMode(curOp.op)) {
                             int previousMode = curOp.mode;
@@ -2760,14 +2746,25 @@ public class AppOpsService extends IAppOpsService.Stub {
             }
         }
 
-        if (allChanges != null) {
-            int numChanges = allChanges.size();
-            for (int i = 0; i < numChanges; i++) {
-                ChangeRec change = allChanges.get(i);
-                notifyOpChangedSync(change.op, change.uid, change.pkg,
-                        AppOpsManager.opToDefaultMode(change.op), change.previous_mode);
-            }
+        int numChanges = allChanges.size();
+        for (int i = 0; i < numChanges; i++) {
+            ChangeRec change = allChanges.get(i);
+            notifyOpChangedSync(change.op, change.uid, change.pkg,
+                    AppOpsManager.opToDefaultMode(change.op), change.previous_mode);
         }
+    }
+
+    private boolean shouldDeferResetOpToDpm(int op) {
+        // TODO(b/174582385): avoid special-casing app-op resets by migrating app-op permission
+        //  pre-grants to a role-based mechanism or another general-purpose mechanism.
+        return dpmi != null && dpmi.supportsResetOp(op);
+    }
+
+    /** Assumes {@link #shouldDeferResetOpToDpm(int)} is true. */
+    private void deferResetOpToDpm(int op, String packageName, @UserIdInt int userId) {
+        // TODO(b/174582385): avoid special-casing app-op resets by migrating app-op permission
+        //  pre-grants to a role-based mechanism or another general-purpose mechanism.
+        dpmi.resetOp(op, packageName, userId);
     }
 
     private void evalAllForegroundOpsLocked() {
@@ -3018,28 +3015,6 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
     }
 
-    private boolean isTrustedVoiceServiceProxy(String packageName, int code) {
-        if (code != OP_RECORD_AUDIO) {
-            return false;
-        }
-        final String voiceRecognitionComponent = Settings.Secure.getString(
-                mContext.getContentResolver(), Settings.Secure.VOICE_RECOGNITION_SERVICE);
-        final String voiceInteractionComponent = Settings.Secure.getString(
-                mContext.getContentResolver(), Settings.Secure.VOICE_INTERACTION_SERVICE);
-
-        final String voiceRecognitionServicePackageName =
-                getComponentPackageNameFromString(voiceRecognitionComponent);
-        final String voiceInteractionServicePackageName =
-                getComponentPackageNameFromString(voiceInteractionComponent);
-        return Objects.equals(packageName, voiceRecognitionServicePackageName) && Objects.equals(
-                voiceRecognitionServicePackageName, voiceInteractionServicePackageName);
-    }
-
-    private String getComponentPackageNameFromString(String from) {
-        ComponentName componentName = from != null ? ComponentName.unflattenFromString(from) : null;
-        return componentName != null ? componentName.getPackageName() : "";
-    }
-
     @Override
     public int noteProxyOperation(int code, int proxiedUid, String proxiedPackageName,
             String proxiedAttributionTag, int proxyUid, String proxyPackageName,
@@ -3057,10 +3032,12 @@ public class AppOpsService extends IAppOpsService.Stub {
 
         // This is a workaround for R QPR, new API change is not allowed. We only allow the current
         // voice recognizer is also the voice interactor to noteproxy op.
-        final boolean isTrustVoiceServiceProxy = isTrustedVoiceServiceProxy(proxyPackageName, code);
+        final boolean isTrustVoiceServiceProxy = AppOpsManager.isTrustedVoiceServiceProxy(mContext,
+                proxyPackageName, code, UserHandle.getUserId(proxyUid));
+        final boolean isSelfBlame = Binder.getCallingUid() == proxiedUid;
         final boolean isProxyTrusted = mContext.checkPermission(
                 Manifest.permission.UPDATE_APP_OPS_STATS, -1, proxyUid)
-                == PackageManager.PERMISSION_GRANTED || isTrustVoiceServiceProxy;
+                == PackageManager.PERMISSION_GRANTED || isTrustVoiceServiceProxy || isSelfBlame;
 
         final int proxyFlags = isProxyTrusted ? AppOpsManager.OP_FLAG_TRUSTED_PROXY
                 : AppOpsManager.OP_FLAG_UNTRUSTED_PROXY;
@@ -3131,7 +3108,7 @@ public class AppOpsService extends IAppOpsService.Stub {
             final Ops ops = getOpsLocked(uid, packageName, attributionTag, bypass,
                     true /* edit */);
             if (ops == null) {
-                scheduleOpNotedIfNeededLocked(code, uid, packageName,
+                scheduleOpNotedIfNeededLocked(code, uid, packageName, flags,
                         AppOpsManager.MODE_IGNORED);
                 if (DEBUG) Slog.d(TAG, "noteOperation: no op for code " + code + " uid " + uid
                         + " package " + packageName);
@@ -3139,7 +3116,7 @@ public class AppOpsService extends IAppOpsService.Stub {
             }
             final Op op = getOpLocked(ops, code, uid, true);
             if (isOpRestrictedLocked(uid, code, packageName, bypass)) {
-                scheduleOpNotedIfNeededLocked(code, uid, packageName,
+                scheduleOpNotedIfNeededLocked(code, uid, packageName, flags,
                         AppOpsManager.MODE_IGNORED);
                 return AppOpsManager.MODE_IGNORED;
             }
@@ -3161,7 +3138,7 @@ public class AppOpsService extends IAppOpsService.Stub {
                             + switchCode + " (" + code + ") uid " + uid + " package "
                             + packageName);
                     attributedOp.rejected(uidState.state, flags);
-                    scheduleOpNotedIfNeededLocked(code, uid, packageName, uidMode);
+                    scheduleOpNotedIfNeededLocked(code, uid, packageName, flags, uidMode);
                     return uidMode;
                 }
             } else {
@@ -3173,7 +3150,7 @@ public class AppOpsService extends IAppOpsService.Stub {
                             + switchCode + " (" + code + ") uid " + uid + " package "
                             + packageName);
                     attributedOp.rejected(uidState.state, flags);
-                    scheduleOpNotedIfNeededLocked(code, uid, packageName, mode);
+                    scheduleOpNotedIfNeededLocked(code, uid, packageName, flags, mode);
                     return mode;
                 }
             }
@@ -3183,7 +3160,8 @@ public class AppOpsService extends IAppOpsService.Stub {
                                 + packageName + (attributionTag == null ? ""
                                 : "." + attributionTag));
             }
-            scheduleOpNotedIfNeededLocked(code, uid, packageName, AppOpsManager.MODE_ALLOWED);
+            scheduleOpNotedIfNeededLocked(code, uid, packageName, flags,
+                    AppOpsManager.MODE_ALLOWED);
             attributedOp.accessed(proxyUid, proxyPackageName, proxyAttributionTag, uidState.state,
                     flags);
 
@@ -3524,10 +3502,12 @@ public class AppOpsService extends IAppOpsService.Stub {
 
         // This is a workaround for R QPR, new API change is not allowed. We only allow the current
         // voice recognizer is also the voice interactor to noteproxy op.
-        final boolean isTrustVoiceServiceProxy = isTrustedVoiceServiceProxy(proxyPackageName, code);
+        final boolean isTrustVoiceServiceProxy = AppOpsManager.isTrustedVoiceServiceProxy(mContext,
+                proxyPackageName, code, UserHandle.getUserId(proxyUid));
+        final boolean isSelfBlame = Binder.getCallingUid() == proxiedUid;
         final boolean isProxyTrusted = mContext.checkPermission(
                 Manifest.permission.UPDATE_APP_OPS_STATS, -1, proxyUid)
-                == PackageManager.PERMISSION_GRANTED || isTrustVoiceServiceProxy;
+                == PackageManager.PERMISSION_GRANTED || isTrustVoiceServiceProxy || isSelfBlame;
 
         final int proxyFlags = isProxyTrusted ? AppOpsManager.OP_FLAG_TRUSTED_PROXY
                 : AppOpsManager.OP_FLAG_UNTRUSTED_PROXY;
@@ -3584,7 +3564,7 @@ public class AppOpsService extends IAppOpsService.Stub {
             if (ops == null) {
                 if (!dryRun) {
                     scheduleOpStartedIfNeededLocked(code, uid, packageName,
-                            AppOpsManager.MODE_IGNORED);
+                            flags, AppOpsManager.MODE_IGNORED);
                 }
                 if (DEBUG) Slog.d(TAG, "startOperation: no op for code " + code + " uid " + uid
                         + " package " + packageName);
@@ -3594,7 +3574,7 @@ public class AppOpsService extends IAppOpsService.Stub {
             if (isOpRestrictedLocked(uid, code, packageName, bypass)) {
                 if (!dryRun) {
                     scheduleOpStartedIfNeededLocked(code, uid, packageName,
-                            AppOpsManager.MODE_IGNORED);
+                            flags, AppOpsManager.MODE_IGNORED);
                 }
                 return AppOpsManager.MODE_IGNORED;
             }
@@ -3614,7 +3594,7 @@ public class AppOpsService extends IAppOpsService.Stub {
                     }
                     if (!dryRun) {
                         attributedOp.rejected(uidState.state, flags);
-                        scheduleOpStartedIfNeededLocked(code, uid, packageName, uidMode);
+                        scheduleOpStartedIfNeededLocked(code, uid, packageName, flags, uidMode);
                     }
                     return uidMode;
                 }
@@ -3629,7 +3609,7 @@ public class AppOpsService extends IAppOpsService.Stub {
                             + packageName);
                     if (!dryRun) {
                         attributedOp.rejected(uidState.state, flags);
-                        scheduleOpStartedIfNeededLocked(code, uid, packageName, mode);
+                        scheduleOpStartedIfNeededLocked(code, uid, packageName, flags, mode);
                     }
                     return mode;
                 }
@@ -3637,7 +3617,8 @@ public class AppOpsService extends IAppOpsService.Stub {
             if (DEBUG) Slog.d(TAG, "startOperation: allowing code " + code + " uid " + uid
                     + " package " + packageName);
             if (!dryRun) {
-                scheduleOpStartedIfNeededLocked(code, uid, packageName, AppOpsManager.MODE_ALLOWED);
+                scheduleOpStartedIfNeededLocked(code, uid, packageName, flags,
+                        AppOpsManager.MODE_ALLOWED);
                 try {
                     attributedOp.started(clientId, proxyUid, proxyPackageName, proxyAttributionTag,
                             uidState.state, flags);
@@ -3775,7 +3756,8 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
     }
 
-    private void scheduleOpStartedIfNeededLocked(int code, int uid, String pkgName, int result) {
+    private void scheduleOpStartedIfNeededLocked(int code, int uid, String pkgName,
+            @OpFlags int flags, @Mode int result) {
         ArraySet<StartedCallback> dispatchedCallbacks = null;
         final int callbackListCount = mStartedWatchers.size();
         for (int i = 0; i < callbackListCount; i++) {
@@ -3800,18 +3782,18 @@ public class AppOpsService extends IAppOpsService.Stub {
 
         mHandler.sendMessage(PooledLambda.obtainMessage(
                 AppOpsService::notifyOpStarted,
-                this, dispatchedCallbacks, code, uid, pkgName, result));
+                this, dispatchedCallbacks, code, uid, pkgName, flags, result));
     }
 
     private void notifyOpStarted(ArraySet<StartedCallback> callbacks,
-            int code, int uid, String packageName, int result) {
+            int code, int uid, String packageName, @OpFlags int flags, @Mode int result) {
         final long identity = Binder.clearCallingIdentity();
         try {
             final int callbackCount = callbacks.size();
             for (int i = 0; i < callbackCount; i++) {
                 final StartedCallback callback = callbacks.valueAt(i);
                 try {
-                    callback.mCallback.opStarted(code, uid, packageName, result);
+                    callback.mCallback.opStarted(code, uid, packageName, flags, result);
                 } catch (RemoteException e) {
                     /* do nothing */
                 }
@@ -3822,7 +3804,7 @@ public class AppOpsService extends IAppOpsService.Stub {
     }
 
     private void scheduleOpNotedIfNeededLocked(int code, int uid, String packageName,
-            int result) {
+            @OpFlags int flags, @Mode int result) {
         ArraySet<NotedCallback> dispatchedCallbacks = null;
         final int callbackListCount = mNotedWatchers.size();
         for (int i = 0; i < callbackListCount; i++) {
@@ -3843,11 +3825,11 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
         mHandler.sendMessage(PooledLambda.obtainMessage(
                 AppOpsService::notifyOpChecked,
-                this, dispatchedCallbacks, code, uid, packageName, result));
+                this, dispatchedCallbacks, code, uid, packageName, flags, result));
     }
 
     private void notifyOpChecked(ArraySet<NotedCallback> callbacks,
-            int code, int uid, String packageName, int result) {
+            int code, int uid, String packageName, @OpFlags int flags, @Mode int result) {
         // There are features watching for checks in our process. The callbacks in
         // these features may require permissions our remote caller does not have.
         final long identity = Binder.clearCallingIdentity();
@@ -3856,7 +3838,7 @@ public class AppOpsService extends IAppOpsService.Stub {
             for (int i = 0; i < callbackCount; i++) {
                 final NotedCallback callback = callbacks.valueAt(i);
                 try {
-                    callback.mCallback.opNoted(code, uid, packageName, result);
+                    callback.mCallback.opNoted(code, uid, packageName, flags, result);
                 } catch (RemoteException e) {
                     /* do nothing */
                 }
@@ -4304,10 +4286,7 @@ public class AppOpsService extends IAppOpsService.Stub {
                         throw new IllegalStateException("no start tag found");
                     }
 
-                    final String versionString = parser.getAttributeValue(null, "v");
-                    if (versionString != null) {
-                        oldVersion = Integer.parseInt(versionString);
-                    }
+                    oldVersion = parser.getAttributeInt(null, "v", NO_VERSION);
 
                     int outerDepth = parser.getDepth();
                     while ((type = parser.next()) != XmlPullParser.END_DOCUMENT
@@ -4407,9 +4386,9 @@ public class AppOpsService extends IAppOpsService.Stub {
         scheduleFastWriteLocked();
     }
 
-    private void readUidOps(XmlPullParser parser) throws NumberFormatException,
+    private void readUidOps(TypedXmlPullParser parser) throws NumberFormatException,
             XmlPullParserException, IOException {
-        final int uid = Integer.parseInt(parser.getAttributeValue(null, "n"));
+        final int uid = parser.getAttributeInt(null, "n");
         int outerDepth = parser.getDepth();
         int type;
         while ((type = parser.next()) != XmlPullParser.END_DOCUMENT
@@ -4420,8 +4399,8 @@ public class AppOpsService extends IAppOpsService.Stub {
 
             String tagName = parser.getName();
             if (tagName.equals("op")) {
-                final int code = Integer.parseInt(parser.getAttributeValue(null, "n"));
-                final int mode = Integer.parseInt(parser.getAttributeValue(null, "m"));
+                final int code = parser.getAttributeInt(null, "n");
+                final int mode = parser.getAttributeInt(null, "m");
                 setUidMode(code, uid, mode);
             } else {
                 Slog.w(TAG, "Unknown element under <uid-ops>: "
@@ -4431,7 +4410,7 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
     }
 
-    private void readPackage(XmlPullParser parser)
+    private void readPackage(TypedXmlPullParser parser)
             throws NumberFormatException, XmlPullParserException, IOException {
         String pkgName = parser.getAttributeValue(null, "n");
         int outerDepth = parser.getDepth();
@@ -4453,9 +4432,9 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
     }
 
-    private void readUid(XmlPullParser parser, String pkgName)
+    private void readUid(TypedXmlPullParser parser, String pkgName)
             throws NumberFormatException, XmlPullParserException, IOException {
-        int uid = Integer.parseInt(parser.getAttributeValue(null, "n"));
+        int uid = parser.getAttributeInt(null, "n");
         final UidState uidState = getUidStateLocked(uid, true);
         int outerDepth = parser.getDepth();
         int type;
@@ -4476,19 +4455,20 @@ public class AppOpsService extends IAppOpsService.Stub {
         uidState.evalForegroundOps(mOpModeWatchers);
     }
 
-    private void readAttributionOp(XmlPullParser parser, @NonNull Op parent,
-            @Nullable String attribution) throws NumberFormatException, IOException {
+    private void readAttributionOp(TypedXmlPullParser parser, @NonNull Op parent,
+            @Nullable String attribution)
+            throws NumberFormatException, IOException, XmlPullParserException {
         final AttributedOp attributedOp = parent.getOrCreateAttribution(parent, attribution);
 
-        final long key = XmlUtils.readLongAttribute(parser, "n");
+        final long key = parser.getAttributeLong(null, "n");
         final int uidState = extractUidStateFromKey(key);
         final int opFlags = extractFlagsFromKey(key);
 
-        final long accessTime = XmlUtils.readLongAttribute(parser, "t", 0);
-        final long rejectTime = XmlUtils.readLongAttribute(parser, "r", 0);
-        final long accessDuration = XmlUtils.readLongAttribute(parser, "d", -1);
+        final long accessTime = parser.getAttributeLong(null, "t", 0);
+        final long rejectTime = parser.getAttributeLong(null, "r", 0);
+        final long accessDuration = parser.getAttributeLong(null, "d", -1);
         final String proxyPkg = XmlUtils.readStringAttribute(parser, "pp");
-        final int proxyUid = XmlUtils.readIntAttribute(parser, "pu", Process.INVALID_UID);
+        final int proxyUid = parser.getAttributeInt(null, "pu", Process.INVALID_UID);
         final String proxyAttributionTag = XmlUtils.readStringAttribute(parser, "pc");
 
         if (accessTime > 0) {
@@ -4500,14 +4480,13 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
     }
 
-    private void readOp(XmlPullParser parser, @NonNull UidState uidState, @NonNull String pkgName)
-            throws NumberFormatException,
-        XmlPullParserException, IOException {
-        int opCode = Integer.parseInt(parser.getAttributeValue(null, "n"));
+    private void readOp(TypedXmlPullParser parser,
+            @NonNull UidState uidState, @NonNull String pkgName)
+            throws NumberFormatException, XmlPullParserException, IOException {
+        int opCode = parser.getAttributeInt(null, "n");
         Op op = new Op(uidState, pkgName, opCode, uidState.uid);
 
-        final int mode = XmlUtils.readIntAttribute(parser, "m",
-                AppOpsManager.opToDefaultMode(op.op));
+        final int mode = parser.getAttributeInt(null, "m", AppOpsManager.opToDefaultMode(op.op));
         op.mode = mode;
 
         int outerDepth = parser.getDepth();
@@ -4554,7 +4533,7 @@ public class AppOpsService extends IAppOpsService.Stub {
                 TypedXmlSerializer out = Xml.resolveSerializer(stream);
                 out.startDocument(null, true);
                 out.startTag(null, "app-ops");
-                out.attribute(null, "v", String.valueOf(CURRENT_VERSION));
+                out.attributeInt(null, "v", CURRENT_VERSION);
 
                 SparseArray<SparseIntArray> uidStatesClone;
                 synchronized (this) {
@@ -4584,15 +4563,14 @@ public class AppOpsService extends IAppOpsService.Stub {
                     SparseIntArray opModes = uidStatesClone.valueAt(uidStateNum);
                     if (opModes != null && opModes.size() > 0) {
                         out.startTag(null, "uid");
-                        out.attribute(null, "n",
-                                Integer.toString(uidStatesClone.keyAt(uidStateNum)));
+                        out.attributeInt(null, "n", uidStatesClone.keyAt(uidStateNum));
                         final int opCount = opModes.size();
                         for (int opCountNum = 0; opCountNum < opCount; opCountNum++) {
                             final int op = opModes.keyAt(opCountNum);
                             final int mode = opModes.valueAt(opCountNum);
                             out.startTag(null, "op");
-                            out.attribute(null, "n", Integer.toString(op));
-                            out.attribute(null, "m", Integer.toString(mode));
+                            out.attributeInt(null, "n", op);
+                            out.attributeInt(null, "m", mode);
                             out.endTag(null, "op");
                         }
                         out.endTag(null, "uid");
@@ -4612,14 +4590,14 @@ public class AppOpsService extends IAppOpsService.Stub {
                             out.attribute(null, "n", lastPkg);
                         }
                         out.startTag(null, "uid");
-                        out.attribute(null, "n", Integer.toString(pkg.getUid()));
+                        out.attributeInt(null, "n", pkg.getUid());
                         List<AppOpsManager.OpEntry> ops = pkg.getOps();
                         for (int j=0; j<ops.size(); j++) {
                             AppOpsManager.OpEntry op = ops.get(j);
                             out.startTag(null, "op");
-                            out.attribute(null, "n", Integer.toString(op.getOp()));
+                            out.attributeInt(null, "n", op.getOp());
                             if (op.getMode() != AppOpsManager.opToDefaultMode(op.getOp())) {
-                                out.attribute(null, "m", Integer.toString(op.getMode()));
+                                out.attributeInt(null, "m", op.getMode());
                             }
 
                             for (String attributionTag : op.getAttributedOpEntries().keySet()) {
@@ -4663,15 +4641,15 @@ public class AppOpsService extends IAppOpsService.Stub {
                                     if (attributionTag != null) {
                                         out.attribute(null, "id", attributionTag);
                                     }
-                                    out.attribute(null, "n", Long.toString(key));
+                                    out.attributeLong(null, "n", key);
                                     if (accessTime > 0) {
-                                        out.attribute(null, "t", Long.toString(accessTime));
+                                        out.attributeLong(null, "t", accessTime);
                                     }
                                     if (rejectTime > 0) {
-                                        out.attribute(null, "r", Long.toString(rejectTime));
+                                        out.attributeLong(null, "r", rejectTime);
                                     }
                                     if (accessDuration > 0) {
-                                        out.attribute(null, "d", Long.toString(accessDuration));
+                                        out.attributeLong(null, "d", accessDuration);
                                     }
                                     if (proxyPkg != null) {
                                         out.attribute(null, "pp", proxyPkg);
@@ -4680,7 +4658,7 @@ public class AppOpsService extends IAppOpsService.Stub {
                                         out.attribute(null, "pc", proxyAttributionTag);
                                     }
                                     if (proxyUid >= 0) {
-                                        out.attribute(null, "pu", Integer.toString(proxyUid));
+                                        out.attributeInt(null, "pu", proxyUid);
                                     }
                                     out.endTag(null, "st");
                                 }
@@ -6165,6 +6143,12 @@ public class AppOpsService extends IAppOpsService.Stub {
     /** Pulls current AppOps access report and resamples package and app op to watch */
     @Override
     public @Nullable RuntimeAppOpAccessMessage collectRuntimeAppOpAccessMessage() {
+        ActivityManagerInternal ami = LocalServices.getService(ActivityManagerInternal.class);
+        boolean isCallerInstrumented = ami.isUidCurrentlyInstrumented(Binder.getCallingUid());
+        boolean isCallerSystem = Binder.getCallingPid() == Process.myPid();
+        if (!isCallerSystem && !isCallerInstrumented) {
+            return null;
+        }
         mContext.enforcePermission(android.Manifest.permission.GET_APP_OPS_STATS,
                 Binder.getCallingPid(), Binder.getCallingUid(), null);
         RuntimeAppOpAccessMessage result;

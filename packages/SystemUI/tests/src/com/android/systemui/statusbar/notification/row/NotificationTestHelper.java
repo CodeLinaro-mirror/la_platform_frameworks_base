@@ -45,9 +45,9 @@ import android.widget.RemoteViews;
 
 import com.android.systemui.R;
 import com.android.systemui.TestableDependency;
+import com.android.systemui.classifier.FalsingCollectorFake;
 import com.android.systemui.media.MediaFeatureFlag;
 import com.android.systemui.media.dialog.MediaOutputDialogFactory;
-import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.NotificationMediaManager;
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
@@ -428,7 +428,7 @@ public class NotificationTestHelper {
                 mock(OnExpandClickListener.class),
                 mock(NotificationMediaManager.class),
                 mock(ExpandableNotificationRow.CoordinateOnClickListener.class),
-                mock(FalsingManager.class),
+                new FalsingCollectorFake(),
                 mStatusBarStateController,
                 mPeopleNotificationIdentifier,
                 mock(OnUserInteractionCallback.class),
@@ -455,7 +455,8 @@ public class NotificationTestHelper {
 
     private BubbleMetadata makeBubbleMetadata(PendingIntent deleteIntent) {
         Intent target = new Intent(mContext, BubblesTestActivity.class);
-        PendingIntent bubbleIntent = PendingIntent.getActivity(mContext, 0, target, 0);
+        PendingIntent bubbleIntent = PendingIntent.getActivity(mContext, 0, target,
+                PendingIntent.FLAG_MUTABLE);
 
         return new BubbleMetadata.Builder(bubbleIntent,
                         Icon.createWithResource(mContext, R.drawable.android))

@@ -19,6 +19,7 @@ package com.android.server.wm;
 import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER;
 import static android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION;
+import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR;
 import static android.view.WindowManager.LayoutParams.TYPE_WALLPAPER;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.atLeast;
@@ -49,7 +50,6 @@ import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 
-import android.app.ActivityManager.TaskSnapshot;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.os.Binder;
@@ -59,6 +59,7 @@ import android.platform.test.annotations.Presubmit;
 import android.util.SparseBooleanArray;
 import android.view.IRecentsAnimationRunner;
 import android.view.SurfaceControl;
+import android.window.TaskSnapshot;
 
 import androidx.test.filters.SmallTest;
 
@@ -99,6 +100,7 @@ public class RecentsAnimationControllerTest extends WindowTestsBase {
         when(mMockRunner.asBinder()).thenReturn(new Binder());
         mController = spy(new RecentsAnimationController(mWm, mMockRunner, mAnimationCallbacks,
                 DEFAULT_DISPLAY));
+        mController.mShouldAttachNavBarToAppDuringTransition = false;
         mRootHomeTask = mDefaultDisplay.getDefaultTaskDisplayArea().getRootHomeTask();
         assertNotNull(mRootHomeTask);
     }
@@ -252,7 +254,7 @@ public class RecentsAnimationControllerTest extends WindowTestsBase {
         assertNull(mController.mRecentScreenshotAnimator);
 
         // Simulate the app transition finishing
-        mController.mAppTransitionListener.onAppTransitionStartingLocked(0, 0, 0, 0);
+        mController.mAppTransitionListener.onAppTransitionStartingLocked(false, 0, 0, 0);
         verify(mAnimationCallbacks).onAnimationFinished(REORDER_KEEP_IN_PLACE, false);
     }
 
@@ -322,7 +324,7 @@ public class RecentsAnimationControllerTest extends WindowTestsBase {
         assertEquals(landActivity.findMainWindow(), win1);
 
         // Ensure that the display is in Landscape
-        landActivity.onDescendantOrientationChanged(landActivity.token, landActivity);
+        landActivity.onDescendantOrientationChanged(landActivity);
         assertEquals(Configuration.ORIENTATION_LANDSCAPE,
                 mDefaultDisplay.getConfiguration().orientation);
 
@@ -378,23 +380,25 @@ public class RecentsAnimationControllerTest extends WindowTestsBase {
         // Simulate giving up the swipe up gesture to keep the original activity as top.
         mController.cleanupAnimation(REORDER_MOVE_TO_ORIGINAL_POSITION);
         // The rotation transform should be cleared after updating orientation with display.
-        assertFalse(activity.hasFixedRotationTransform());
-        assertFalse(mDefaultDisplay.hasTopFixedRotationLaunchingApp());
+        assertTopFixedRotationLaunchingAppCleared(activity);
 
         // Simulate swiping up recents (home) in different rotation.
         final ActivityRecord home = mDefaultDisplay.getDefaultTaskDisplayArea().getHomeActivity();
-        mDefaultDisplay.setFixedRotationLaunchingApp(home, (mDefaultDisplay.getRotation() + 1) % 4);
-        mController = new RecentsAnimationController(mWm, mMockRunner, mAnimationCallbacks,
-                mDefaultDisplay.getDisplayId());
-        initializeRecentsAnimationController(mController, home);
-        assertTrue(home.hasFixedRotationTransform());
+        startRecentsInDifferentRotation(home);
 
+        // If the recents activity becomes the top running activity (e.g. the original top activity
+        // is either finishing or moved to back during recents animation), the display orientation
+        // will be determined by it so the fixed rotation must be cleared.
+        activity.finishing = true;
+        mController.cleanupAnimation(REORDER_MOVE_TO_ORIGINAL_POSITION);
+        assertTopFixedRotationLaunchingAppCleared(home);
+
+        startRecentsInDifferentRotation(home);
         // Assume recents activity becomes invisible for some reason (e.g. screen off).
         home.setVisible(false);
         mController.cleanupAnimation(REORDER_MOVE_TO_ORIGINAL_POSITION);
         // Although there won't be a transition finish callback, the fixed rotation must be cleared.
-        assertFalse(home.hasFixedRotationTransform());
-        assertFalse(mDefaultDisplay.hasTopFixedRotationLaunchingApp());
+        assertTopFixedRotationLaunchingAppCleared(home);
     }
 
     @Test
@@ -423,6 +427,7 @@ public class RecentsAnimationControllerTest extends WindowTestsBase {
 
         final WindowState homeWindow = createWindow(null, TYPE_BASE_APPLICATION, homeActivity,
                 "homeWindow");
+        makeWindowVisible(homeWindow);
         homeActivity.addWindow(homeWindow);
         homeWindow.getAttrs().flags |= FLAG_SHOW_WALLPAPER;
 
@@ -496,6 +501,48 @@ public class RecentsAnimationControllerTest extends WindowTestsBase {
         assertTrue(childTask.isAnimatingByRecents());
     }
 
+    @Test
+    public void testRestoreNavBarWhenEnteringRecents_expectAnimation() {
+        setupForShouldAttachNavBarDuringTransition();
+        final ActivityRecord activity = createActivityRecord(mDefaultDisplay);
+        final ActivityRecord homeActivity = createHomeActivity();
+        initializeRecentsAnimationController(mController, homeActivity);
+
+        final WindowToken navToken = mDefaultDisplay.getDisplayPolicy().getNavigationBar().mToken;
+        final SurfaceControl.Transaction transaction = navToken.getPendingTransaction();
+
+        verify(transaction).reparent(navToken.getSurfaceControl(), activity.getSurfaceControl());
+
+        final WindowContainer parent = navToken.getParent();
+        final NavBarFadeAnimationController navBarFadeAnimationController =
+                mDefaultDisplay.getDisplayPolicy().getNavBarFadeAnimationController();
+
+        mController.cleanupAnimation(REORDER_MOVE_TO_TOP);
+        verify(transaction).reparent(navToken.getSurfaceControl(), parent.getSurfaceControl());
+        verify(navBarFadeAnimationController).fadeWindowToken(true);
+    }
+
+    @Test
+    public void testRestoreNavBarWhenBackToApp_expectNoAnimation() {
+        setupForShouldAttachNavBarDuringTransition();
+        final ActivityRecord activity = createActivityRecord(mDefaultDisplay);
+        final ActivityRecord homeActivity = createHomeActivity();
+        initializeRecentsAnimationController(mController, homeActivity);
+
+        final WindowToken navToken = mDefaultDisplay.getDisplayPolicy().getNavigationBar().mToken;
+        final SurfaceControl.Transaction transaction = navToken.getPendingTransaction();
+
+        verify(transaction).reparent(navToken.getSurfaceControl(), activity.getSurfaceControl());
+
+        final WindowContainer parent = navToken.getParent();
+        final NavBarFadeAnimationController navBarFadeAnimationController =
+                mDefaultDisplay.getDisplayPolicy().getNavBarFadeAnimationController();
+
+        mController.cleanupAnimation(REORDER_MOVE_TO_ORIGINAL_POSITION);
+        verify(transaction).reparent(navToken.getSurfaceControl(), parent.getSurfaceControl());
+        verify(navBarFadeAnimationController, never()).fadeWindowToken(anyBoolean());
+    }
+
     private ActivityRecord createHomeActivity() {
         final ActivityRecord homeActivity = new ActivityBuilder(mWm.mAtmService)
                 .setParentTask(mRootHomeTask)
@@ -505,6 +552,34 @@ public class RecentsAnimationControllerTest extends WindowTestsBase {
         // returning null when calling {@link RecentsAnimationController#createAppAnimations}.
         homeActivity.setVisibility(true);
         return homeActivity;
+    }
+
+    private void startRecentsInDifferentRotation(ActivityRecord recentsActivity) {
+        final DisplayContent displayContent = recentsActivity.mDisplayContent;
+        displayContent.setFixedRotationLaunchingApp(recentsActivity,
+                (displayContent.getRotation() + 1) % 4);
+        mController = new RecentsAnimationController(mWm, mMockRunner, mAnimationCallbacks,
+                displayContent.getDisplayId());
+        initializeRecentsAnimationController(mController, recentsActivity);
+        assertTrue(recentsActivity.hasFixedRotationTransform());
+    }
+
+    private static void assertTopFixedRotationLaunchingAppCleared(ActivityRecord activity) {
+        assertFalse(activity.hasFixedRotationTransform());
+        assertFalse(activity.mDisplayContent.hasTopFixedRotationLaunchingApp());
+    }
+
+    private void setupForShouldAttachNavBarDuringTransition() {
+        mController.mShouldAttachNavBarToAppDuringTransition = true;
+        final WindowState navBar = createWindow(null, TYPE_NAVIGATION_BAR, "NavigationBar");
+        mDefaultDisplay.getDisplayPolicy().addWindowLw(navBar, navBar.mAttrs);
+        mWm.setRecentsAnimationController(mController);
+        final NavBarFadeAnimationController mockNavBarFadeAnimationController =
+                mock(NavBarFadeAnimationController.class);
+        final DisplayPolicy displayPolicy = spy(mDefaultDisplay.getDisplayPolicy());
+        doReturn(displayPolicy).when(mDefaultDisplay).getDisplayPolicy();
+        doReturn(mockNavBarFadeAnimationController).when(displayPolicy)
+                .getNavBarFadeAnimationController();
     }
 
     private static void initializeRecentsAnimationController(RecentsAnimationController controller,

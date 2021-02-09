@@ -17,6 +17,7 @@
 package com.android.systemui.statusbar.phone;
 
 import static com.android.systemui.doze.util.BurnInHelperKt.getBurnInOffset;
+import static com.android.systemui.doze.util.BurnInHelperKt.getBurnInScale;
 import static com.android.systemui.statusbar.notification.NotificationUtils.interpolate;
 
 import android.content.res.Resources;
@@ -111,9 +112,19 @@ public class KeyguardClockPositionAlgorithm {
     private int mBurnInPreventionOffsetY;
 
     /**
+     * Burn-in prevention y translation for large clock layouts.
+     */
+    private int mBurnInPreventionOffsetYLargeClock;
+
+    /**
      * Doze/AOD transition amount.
      */
     private float mDarkAmount;
+
+    /**
+     * How visible the quick settings panel is.
+     */
+    private float mQsExpansion;
 
     private float mEmptyDragAmount;
 
@@ -150,6 +161,8 @@ public class KeyguardClockPositionAlgorithm {
                 R.dimen.burn_in_prevention_offset_x);
         mBurnInPreventionOffsetY = res.getDimensionPixelSize(
                 R.dimen.burn_in_prevention_offset_y);
+        mBurnInPreventionOffsetYLargeClock = res.getDimensionPixelSize(
+                R.dimen.burn_in_prevention_offset_y_large_clock);
     }
 
     /**
@@ -158,9 +171,10 @@ public class KeyguardClockPositionAlgorithm {
     public void setup(int statusBarMinHeight, int maxShadeBottom, int notificationStackHeight,
             float panelExpansion, int parentHeight, int keyguardStatusHeight, int clockPreferredY,
             boolean hasCustomClock, boolean hasVisibleNotifs, float dark, float emptyDragAmount,
-            boolean bypassEnabled, int unlockedStackScrollerPadding, boolean udfpsEnrolled) {
-        mMinTopMargin = statusBarMinHeight + (udfpsEnrolled ? mContainerTopPaddingWithoutLockIcon :
-                mContainerTopPaddingWithLockIcon);
+            boolean bypassEnabled, int unlockedStackScrollerPadding, boolean showLockIcon,
+            float qsExpansion) {
+        mMinTopMargin = statusBarMinHeight + (showLockIcon
+                ? mContainerTopPaddingWithLockIcon : mContainerTopPaddingWithoutLockIcon);
         mMaxShadeBottom = maxShadeBottom;
         mNotificationStackHeight = notificationStackHeight;
         mPanelExpansion = panelExpansion;
@@ -173,6 +187,7 @@ public class KeyguardClockPositionAlgorithm {
         mEmptyDragAmount = emptyDragAmount;
         mBypassEnabled = bypassEnabled;
         mUnlockedStackScrollerPadding = unlockedStackScrollerPadding;
+        mQsExpansion = qsExpansion;
     }
 
     public void run(Result result) {
@@ -184,6 +199,7 @@ public class KeyguardClockPositionAlgorithm {
         result.stackScrollerPaddingExpanded = mBypassEnabled ? mUnlockedStackScrollerPadding
                 : getClockY(1.0f) + mKeyguardStatusHeight;
         result.clockX = (int) interpolate(0, burnInPreventionOffsetX(), mDarkAmount);
+        result.clockScale = interpolate(getBurnInScale(), 1.0f, 1.0f - mDarkAmount);
     }
 
     /**
@@ -256,10 +272,9 @@ public class KeyguardClockPositionAlgorithm {
 
         // TODO(b/12836565) - prototyping only adjustment
         if (mLockScreenMode != KeyguardUpdateMonitor.LOCK_SCREEN_MODE_NORMAL) {
-            // This will keep the clock at the top for AOD
-            return (int) (clockY + burnInPreventionOffsetY() + mEmptyDragAmount);
+            // This will keep the clock at the top
+            clockYDark = (int) (clockY + burnInPreventionOffsetY());
         }
-
         return (int) (MathUtils.lerp(clockY, clockYDark, darkAmount) + mEmptyDragAmount);
     }
 
@@ -273,13 +288,18 @@ public class KeyguardClockPositionAlgorithm {
      */
     private float getClockAlpha(int y) {
         float alphaKeyguard = Math.max(0, y / Math.max(1f, getClockY(1f)));
+        alphaKeyguard *= (1f - mQsExpansion);
         alphaKeyguard = Interpolators.ACCELERATE.getInterpolation(alphaKeyguard);
         return MathUtils.lerp(alphaKeyguard, 1f, mDarkAmount);
     }
 
     private float burnInPreventionOffsetY() {
-        return getBurnInOffset(mBurnInPreventionOffsetY * 2, false /* xAxis */)
-                - mBurnInPreventionOffsetY;
+        int offset = mBurnInPreventionOffsetY;
+        if (mLockScreenMode != KeyguardUpdateMonitor.LOCK_SCREEN_MODE_NORMAL) {
+            offset = mBurnInPreventionOffsetYLargeClock;
+        }
+
+        return getBurnInOffset(offset * 2, false /* xAxis */) - offset;
     }
 
     private float burnInPreventionOffsetX() {
@@ -303,6 +323,11 @@ public class KeyguardClockPositionAlgorithm {
          * The alpha value of the clock.
          */
         public float clockAlpha;
+
+        /**
+         * Amount to scale the large clock (0.0 - 1.0)
+         */
+        public float clockScale;
 
         /**
          * The top padding of the stack scroller, in pixels.

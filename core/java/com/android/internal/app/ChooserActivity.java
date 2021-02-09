@@ -28,6 +28,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.SharedElementCallback;
 import android.app.prediction.AppPredictionContext;
 import android.app.prediction.AppPredictionManager;
 import android.app.prediction.AppPredictor;
@@ -162,6 +163,9 @@ public class ChooserActivity extends ResolverActivity implements
     private AppPredictor mWorkAppPredictor;
     private boolean mShouldDisplayLandscape;
 
+    private static final int MAX_TARGETS_PER_ROW_PORTRAIT = 4;
+    private static final int MAX_TARGETS_PER_ROW_LANDSCAPE = 8;
+
     @UnsupportedAppUsage
     public ChooserActivity() {
     }
@@ -172,6 +176,13 @@ public class ChooserActivity extends ResolverActivity implements
      */
     public static final String EXTRA_PRIVATE_RETAIN_IN_ON_STOP
             = "com.android.internal.app.ChooserActivity.EXTRA_PRIVATE_RETAIN_IN_ON_STOP";
+
+    /**
+     * Transition name for the first image preview.
+     * To be used for shared element transition into this activity.
+     * @hide
+     */
+    public static final String FIRST_IMAGE_PREVIEW_TRANSITION_NAME = "screenshot_preview_image";
 
     private static final String PREF_NUM_SHEET_EXPANSIONS = "pref_num_sheet_expansions";
 
@@ -207,6 +218,7 @@ public class ChooserActivity extends ResolverActivity implements
     public static final int SELECTION_TYPE_STANDARD = 3;
     public static final int SELECTION_TYPE_COPY = 4;
     public static final int SELECTION_TYPE_NEARBY = 5;
+    public static final int SELECTION_TYPE_EDIT = 6;
 
     private static final int SCROLL_STATUS_IDLE = 0;
     private static final int SCROLL_STATUS_SCROLLING_VERTICAL = 1;
@@ -304,6 +316,8 @@ public class ChooserActivity extends ResolverActivity implements
     @VisibleForTesting
     protected ChooserMultiProfilePagerAdapter mChooserMultiProfilePagerAdapter;
 
+    private boolean mRemoveSharedElements = false;
+
     private class ContentPreviewCoordinator {
         private static final int IMAGE_FADE_IN_MILLIS = 150;
         private static final int IMAGE_LOAD_TIMEOUT = 1;
@@ -367,9 +381,28 @@ public class ChooserActivity extends ResolverActivity implements
                         if (task.mExtraCount > 0) {
                             imageView.setExtraImageCount(task.mExtraCount);
                         }
+
+                        setupPreDrawForSharedElementTransition(imageView);
                 }
             }
         };
+
+        private void setupPreDrawForSharedElementTransition(View v) {
+            v.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    v.getViewTreeObserver().removeOnPreDrawListener(this);
+
+                    if (!mRemoveSharedElements && isActivityTransitionRunning()) {
+                        // Disable the window animations as it interferes with the
+                        // transition animation.
+                        getWindow().setWindowAnimations(0);
+                    }
+                    startPostponedEnterTransition();
+                    return true;
+                }
+            });
+        }
 
         ContentPreviewCoordinator(View parentView, boolean hideParentOnFail) {
             super();
@@ -399,16 +432,21 @@ public class ChooserActivity extends ResolverActivity implements
         }
 
         private void maybeHideContentPreview() {
-            if (!mAtLeastOneLoaded && mHideParentOnFail) {
-                Log.i(TAG, "Hiding image preview area. Timed out waiting for preview to load"
-                        + " within " + mImageLoadTimeoutMillis + "ms.");
-                collapseParentView();
-                if (shouldShowTabs()) {
-                    hideStickyContentPreview();
-                } else if (mChooserMultiProfilePagerAdapter.getCurrentRootAdapter() != null) {
-                    mChooserMultiProfilePagerAdapter.getCurrentRootAdapter().hideContentPreview();
+            if (!mAtLeastOneLoaded) {
+                if (mHideParentOnFail) {
+                    Log.i(TAG, "Hiding image preview area. Timed out waiting for preview to load"
+                            + " within " + mImageLoadTimeoutMillis + "ms.");
+                    collapseParentView();
+                    if (shouldShowTabs()) {
+                        hideStickyContentPreview();
+                    } else if (mChooserMultiProfilePagerAdapter.getCurrentRootAdapter() != null) {
+                        mChooserMultiProfilePagerAdapter.getCurrentRootAdapter()
+                                .hideContentPreview();
+                    }
+                    mHideParentOnFail = false;
                 }
-                mHideParentOnFail = false;
+                mRemoveSharedElements = true;
+                startPostponedEnterTransition();
             }
         }
 
@@ -791,6 +829,19 @@ public class ChooserActivity extends ResolverActivity implements
         );
         mDirectShareShortcutInfoCache = new HashMap<>();
         mChooserTargetComponentNameCache = new HashMap<>();
+
+        setEnterSharedElementCallback(new SharedElementCallback() {
+            @Override
+            public void onMapSharedElements(List<String> names, Map<String, View> sharedElements) {
+                if (mRemoveSharedElements) {
+                    names.remove(FIRST_IMAGE_PREVIEW_TRANSITION_NAME);
+                    sharedElements.remove(FIRST_IMAGE_PREVIEW_TRANSITION_NAME);
+                }
+                super.onMapSharedElements(names, sharedElements);
+                mRemoveSharedElements = false;
+            }
+        });
+        postponeEnterTransition();
     }
 
     @Override
@@ -824,8 +875,6 @@ public class ChooserActivity extends ResolverActivity implements
                 queryDirectShareTargets(chooserListAdapter, true);
                 return;
             }
-            final List<DisplayResolveInfo> driList =
-                    getDisplayResolveInfos(chooserListAdapter);
             final List<ShortcutManager.ShareShortcutInfo> shareShortcutInfos =
                     new ArrayList<>();
 
@@ -853,7 +902,7 @@ public class ChooserActivity extends ResolverActivity implements
                         new ComponentName(
                                 appTarget.getPackageName(), appTarget.getClassName())));
             }
-            sendShareShortcutInfoList(shareShortcutInfos, driList, resultList,
+            sendShareShortcutInfoList(shareShortcutInfos, chooserListAdapter, resultList,
                     chooserListAdapter.getUserHandle());
         };
     }
@@ -905,7 +954,7 @@ public class ChooserActivity extends ResolverActivity implements
                 adapter,
                 getPersonalProfileUserHandle(),
                 /* workProfileUserHandle= */ null,
-                isSendAction(getTargetIntent()));
+                isSendAction(getTargetIntent()), getMaxTargetsPerRow());
     }
 
     private ChooserMultiProfilePagerAdapter createChooserMultiProfilePagerAdapterForTwoProfiles(
@@ -934,7 +983,7 @@ public class ChooserActivity extends ResolverActivity implements
                 selectedProfile,
                 getPersonalProfileUserHandle(),
                 getWorkProfileUserHandle(),
-                isSendAction(getTargetIntent()));
+                isSendAction(getTargetIntent()), getMaxTargetsPerRow());
     }
 
     private int findSelectedProfile() {
@@ -1149,6 +1198,37 @@ public class ChooserActivity extends ResolverActivity implements
     }
 
     @VisibleForTesting
+    protected @Nullable ComponentName getEditSharingComponent() {
+        String editorPackage = getApplicationContext().getString(R.string.config_systemImageEditor);
+        if (editorPackage == null || TextUtils.isEmpty(editorPackage)) {
+            return null;
+        }
+        return ComponentName.unflattenFromString(editorPackage);
+    }
+
+    @VisibleForTesting
+    protected TargetInfo getEditSharingTarget(Intent originalIntent) {
+        final ComponentName cn = getEditSharingComponent();
+
+        final Intent resolveIntent = new Intent(originalIntent);
+        resolveIntent.setComponent(cn);
+        resolveIntent.setAction(Intent.ACTION_EDIT);
+        final ResolveInfo ri = getPackageManager().resolveActivity(
+                resolveIntent, PackageManager.GET_META_DATA);
+        if (ri == null || ri.activityInfo == null) {
+            Log.e(TAG, "Device-specified image edit component (" + cn
+                    + ") not available");
+            return null;
+        }
+
+        final DisplayResolveInfo dri = new DisplayResolveInfo(
+                originalIntent, ri, getString(R.string.screenshot_edit), "", resolveIntent, null);
+        dri.setDisplayIcon(getDrawable(R.drawable.ic_menu_edit));
+        return dri;
+    }
+
+
+    @VisibleForTesting
     protected TargetInfo getNearbySharingTarget(Intent originalIntent) {
         final ComponentName cn = getNearbySharingComponent();
         if (cn == null) return null;
@@ -1231,6 +1311,27 @@ public class ChooserActivity extends ResolverActivity implements
                 }
         );
         b.setId(R.id.chooser_nearby_button);
+        return b;
+    }
+
+    private @Nullable Button createEditButton(Intent originalIntent) {
+        final TargetInfo ti = getEditSharingTarget(originalIntent);
+        if (ti == null) return null;
+
+        final Button b = createActionButton(
+                ti.getDisplayIcon(this),
+                ti.getDisplayLabel(),
+                (View unused) -> {
+                    // Log share completion via edit
+                    getChooserActivityLogger().logShareTargetSelected(
+                            SELECTION_TYPE_EDIT,
+                            "",
+                            -1);
+                    safelyStartActivity(ti);
+                    finish();
+                }
+        );
+        b.setId(R.id.chooser_edit_button);
         return b;
     }
 
@@ -1330,12 +1431,15 @@ public class ChooserActivity extends ResolverActivity implements
                 (ViewGroup) contentPreviewLayout.findViewById(R.id.chooser_action_row);
         //TODO: addActionButton(actionRow, createCopyButton());
         addActionButton(actionRow, createNearbyButton(targetIntent));
+        addActionButton(actionRow, createEditButton(targetIntent));
 
         mPreviewCoord = new ContentPreviewCoordinator(contentPreviewLayout, false);
 
         String action = targetIntent.getAction();
         if (Intent.ACTION_SEND.equals(action)) {
             Uri uri = targetIntent.getParcelableExtra(Intent.EXTRA_STREAM);
+            imagePreview.findViewById(R.id.content_preview_image_1_large)
+                    .setTransitionName(ChooserActivity.FIRST_IMAGE_PREVIEW_TRANSITION_NAME);
             mPreviewCoord.loadUriIntoView(R.id.content_preview_image_1_large, uri, 0);
         } else {
             ContentResolver resolver = getContentResolver();
@@ -1355,6 +1459,8 @@ public class ChooserActivity extends ResolverActivity implements
                 return contentPreviewLayout;
             }
 
+            imagePreview.findViewById(R.id.content_preview_image_1_large)
+                    .setTransitionName(ChooserActivity.FIRST_IMAGE_PREVIEW_TRANSITION_NAME);
             mPreviewCoord.loadUriIntoView(R.id.content_preview_image_1_large, imageUris.get(0), 0);
 
             if (imageUris.size() == 2) {
@@ -1992,32 +2098,6 @@ public class ChooserActivity extends ResolverActivity implements
         }
     }
 
-    private List<DisplayResolveInfo> getDisplayResolveInfos(ChooserListAdapter adapter) {
-        // Need to keep the original DisplayResolveInfos to be able to reconstruct ServiceResultInfo
-        // and use the old code path. This Ugliness should go away when Sharesheet is refactored.
-        List<DisplayResolveInfo> driList = new ArrayList<>();
-        int targetsToQuery = 0;
-        for (int i = 0, n = adapter.getDisplayResolveInfoCount(); i < n; i++) {
-            final DisplayResolveInfo dri = adapter.getDisplayResolveInfo(i);
-            if (adapter.getScore(dri) == 0) {
-                // A score of 0 means the app hasn't been used in some time;
-                // don't query it as it's not likely to be relevant.
-                continue;
-            }
-            driList.add(dri);
-            targetsToQuery++;
-            // TODO(b/121287224): Do we need this here? (similar to queryTargetServices)
-            if (targetsToQuery >= SHARE_TARGET_QUERY_PACKAGE_LIMIT) {
-                if (DEBUG) {
-                    Log.d(TAG, "queryTargets hit query target limit "
-                            + SHARE_TARGET_QUERY_PACKAGE_LIMIT);
-                }
-                break;
-            }
-        }
-        return driList;
-    }
-
     @VisibleForTesting
     protected void queryDirectShareTargets(
                 ChooserListAdapter adapter, boolean skipAppPredictionService) {
@@ -2035,14 +2115,13 @@ public class ChooserActivity extends ResolverActivity implements
         if (filter == null) {
             return;
         }
-        final List<DisplayResolveInfo> driList = getDisplayResolveInfos(adapter);
 
         AsyncTask.execute(() -> {
             Context selectedProfileContext = createContextAsUser(userHandle, 0 /* flags */);
             ShortcutManager sm = (ShortcutManager) selectedProfileContext
                     .getSystemService(Context.SHORTCUT_SERVICE);
             List<ShortcutManager.ShareShortcutInfo> resultList = sm.getShareTargets(filter);
-            sendShareShortcutInfoList(resultList, driList, null, userHandle);
+            sendShareShortcutInfoList(resultList, adapter, null, userHandle);
         });
     }
 
@@ -2079,7 +2158,7 @@ public class ChooserActivity extends ResolverActivity implements
 
     private void sendShareShortcutInfoList(
                 List<ShortcutManager.ShareShortcutInfo> resultList,
-                List<DisplayResolveInfo> driList,
+                ChooserListAdapter chooserListAdapter,
                 @Nullable List<AppTarget> appTargets, UserHandle userHandle) {
         if (appTargets != null && appTargets.size() != resultList.size()) {
             throw new RuntimeException("resultList and appTargets must have the same size."
@@ -2105,10 +2184,10 @@ public class ChooserActivity extends ResolverActivity implements
         // for direct share targets. After ShareSheet is refactored we should use the
         // ShareShortcutInfos directly.
         boolean resultMessageSent = false;
-        for (int i = 0; i < driList.size(); i++) {
+        for (int i = 0; i < chooserListAdapter.getDisplayResolveInfoCount(); i++) {
             List<ShortcutManager.ShareShortcutInfo> matchingShortcuts = new ArrayList<>();
             for (int j = 0; j < resultList.size(); j++) {
-                if (driList.get(i).getResolvedComponentName().equals(
+                if (chooserListAdapter.getDisplayResolveInfo(i).getResolvedComponentName().equals(
                             resultList.get(j).getTargetComponent())) {
                     matchingShortcuts.add(resultList.get(j));
                 }
@@ -2123,7 +2202,8 @@ public class ChooserActivity extends ResolverActivity implements
 
             final Message msg = Message.obtain();
             msg.what = ChooserHandler.SHORTCUT_MANAGER_SHARE_TARGET_RESULT;
-            msg.obj = new ServiceResultInfo(driList.get(i), chooserTargets, null, userHandle);
+            msg.obj = new ServiceResultInfo(chooserListAdapter.getDisplayResolveInfo(i),
+                    chooserTargets, null, userHandle);
             msg.arg1 = shortcutType;
             mChooserHandler.sendMessage(msg);
             resultMessageSent = true;
@@ -2683,7 +2763,7 @@ public class ChooserActivity extends ResolverActivity implements
                 // and b/150936654
                 recyclerView.setAdapter(gridAdapter);
                 ((GridLayoutManager) recyclerView.getLayoutManager()).setSpanCount(
-                        gridAdapter.getMaxTargetsPerRow());
+                        getMaxTargetsPerRow());
             }
 
             UserHandle currentUserHandle = mChooserMultiProfilePagerAdapter.getCurrentUserHandle();
@@ -2848,9 +2928,7 @@ public class ChooserActivity extends ResolverActivity implements
 
     @Override // ChooserListCommunicator
     public int getMaxRankedTargets() {
-        return mChooserMultiProfilePagerAdapter.getCurrentRootAdapter() == null
-                ? ChooserGridAdapter.MAX_TARGETS_PER_ROW_PORTRAIT
-                : mChooserMultiProfilePagerAdapter.getCurrentRootAdapter().getMaxTargetsPerRow();
+        return getMaxTargetsPerRow();
     }
 
     @Override // ChooserListCommunicator
@@ -3198,6 +3276,13 @@ public class ChooserActivity extends ResolverActivity implements
         }
     }
 
+    int getMaxTargetsPerRow() {
+        int maxTargets = MAX_TARGETS_PER_ROW_PORTRAIT;
+        if (mShouldDisplayLandscape) {
+            maxTargets = MAX_TARGETS_PER_ROW_LANDSCAPE;
+        }
+        return maxTargets;
+    }
     /**
      * Adapter for all types of items and targets in ShareSheet.
      * Note that ranked sections like Direct Share - while appearing grid-like - are handled on the
@@ -3225,9 +3310,6 @@ public class ChooserActivity extends ResolverActivity implements
         private static final int VIEW_TYPE_AZ_LABEL = 4;
         private static final int VIEW_TYPE_CALLER_AND_RANK = 5;
         private static final int VIEW_TYPE_FOOTER = 6;
-
-        private static final int MAX_TARGETS_PER_ROW_PORTRAIT = 4;
-        private static final int MAX_TARGETS_PER_ROW_LANDSCAPE = 8;
 
         private static final int NUM_EXPANSIONS_TO_HIDE_AZ_LABEL = 20;
 
@@ -3275,14 +3357,6 @@ public class ChooserActivity extends ResolverActivity implements
             }
 
             return false;
-        }
-
-        int getMaxTargetsPerRow() {
-            int maxTargets = MAX_TARGETS_PER_ROW_PORTRAIT;
-            if (mShouldDisplayLandscape) {
-                maxTargets = MAX_TARGETS_PER_ROW_LANDSCAPE;
-            }
-            return maxTargets;
         }
 
         /**
@@ -3654,8 +3728,7 @@ public class ChooserActivity extends ResolverActivity implements
             position -= getSystemRowCount() + getProfileRowCount();
 
             final int serviceCount = mChooserListAdapter.getServiceTargetCount();
-            final int serviceRows = (int) Math.ceil((float) serviceCount
-                    / ChooserListAdapter.MAX_SERVICE_TARGETS);
+            final int serviceRows = (int) Math.ceil((float) serviceCount / getMaxRankedTargets());
             if (position < serviceRows) {
                 return position * getMaxTargetsPerRow();
             }

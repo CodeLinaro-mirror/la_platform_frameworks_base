@@ -53,7 +53,6 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.pm.permission.SplitPermissionInfoParcelable;
 import android.content.pm.split.DefaultSplitAssetLoader;
 import android.content.pm.split.SplitAssetDependencyLoader;
 import android.content.pm.split.SplitAssetLoader;
@@ -74,6 +73,7 @@ import android.os.SystemProperties;
 import android.os.Trace;
 import android.os.UserHandle;
 import android.os.storage.StorageManager;
+import android.permission.PermissionManager;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
@@ -406,9 +406,15 @@ public class PackageParser {
         public final boolean extractNativeLibs;
         public final boolean isolatedSplits;
 
-        public PackageLite(String codePath, ApkLite baseApk, String[] splitNames,
-                boolean[] isFeatureSplits, String[] usesSplitNames, String[] configForSplit,
-                String[] splitCodePaths, int[] splitRevisionCodes) {
+        // This does not represent the actual manifest structure since the 'profilable' tag
+        // could be used with attributes other than 'shell'. Extend if necessary.
+        public final boolean profilableByShell;
+        public final boolean isSplitRequired;
+        public final boolean useEmbeddedDex;
+
+        public PackageLite(String codePath, String baseCodePath, ApkLite baseApk,
+                String[] splitNames, boolean[] isFeatureSplits, String[] usesSplitNames,
+                String[] configForSplit, String[] splitCodePaths, int[] splitRevisionCodes) {
             this.packageName = baseApk.packageName;
             this.versionCode = baseApk.versionCode;
             this.versionCodeMajor = baseApk.versionCodeMajor;
@@ -418,8 +424,10 @@ public class PackageParser {
             this.isFeatureSplits = isFeatureSplits;
             this.usesSplitNames = usesSplitNames;
             this.configForSplit = configForSplit;
+            // The following paths may be different from the path in ApkLite because we
+            // move or rename the APK files. Use parameters to indicate the correct paths.
             this.codePath = codePath;
-            this.baseCodePath = baseApk.codePath;
+            this.baseCodePath = baseCodePath;
             this.splitCodePaths = splitCodePaths;
             this.baseRevisionCode = baseApk.revisionCode;
             this.splitRevisionCodes = splitRevisionCodes;
@@ -429,6 +437,9 @@ public class PackageParser {
             this.use32bitAbi = baseApk.use32bitAbi;
             this.extractNativeLibs = baseApk.extractNativeLibs;
             this.isolatedSplits = baseApk.isolatedSplits;
+            this.useEmbeddedDex = baseApk.useEmbeddedDex;
+            this.isSplitRequired = baseApk.isSplitRequired;
+            this.profilableByShell = baseApk.profilableByShell;
         }
 
         public List<String> getAllCodePaths() {
@@ -438,6 +449,10 @@ public class PackageParser {
                 Collections.addAll(paths, splitCodePaths);
             }
             return paths;
+        }
+
+        public long getLongVersionCode() {
+            return PackageInfo.composeLongVersionCode(versionCodeMajor, versionCode);
         }
     }
 
@@ -941,7 +956,8 @@ public class PackageParser {
         final ApkLite baseApk = parseApkLite(packageFile, flags);
         final String packagePath = packageFile.getAbsolutePath();
         Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
-        return new PackageLite(packagePath, baseApk, null, null, null, null, null, null);
+        return new PackageLite(packagePath, baseApk.codePath, baseApk, null, null, null, null, null,
+                null);
     }
 
     static PackageLite parseClusterPackageLite(File packageDir, int flags)
@@ -1031,8 +1047,8 @@ public class PackageParser {
         }
 
         final String codePath = packageDir.getAbsolutePath();
-        return new PackageLite(codePath, baseApk, splitNames, isFeatureSplits, usesSplitNames,
-                configForSplits, splitCodePaths, splitRevisionCodes);
+        return new PackageLite(codePath, baseApk.codePath, baseApk, splitNames, isFeatureSplits,
+                usesSplitNames, configForSplits, splitCodePaths, splitRevisionCodes);
     }
 
     /**
@@ -2378,17 +2394,13 @@ public class PackageParser {
             Slog.i(TAG, newPermsMsg.toString());
         }
 
-        List<SplitPermissionInfoParcelable> splitPermissions;
-
-        try {
-            splitPermissions = ActivityThread.getPermissionManager().getSplitPermissions();
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
+        final List<PermissionManager.SplitPermissionInfo> splitPermissions =
+                ActivityThread.currentApplication().getSystemService(PermissionManager.class)
+                        .getSplitPermissions();
 
         final int listSize = splitPermissions.size();
         for (int is = 0; is < listSize; is++) {
-            final SplitPermissionInfoParcelable spi = splitPermissions.get(is);
+            final PermissionManager.SplitPermissionInfo spi = splitPermissions.get(is);
             if (pkg.applicationInfo.targetSdkVersion >= spi.getTargetSdk()
                     || !pkg.requestedPermissions.contains(spi.getSplitPermission())) {
                 continue;
@@ -5626,10 +5638,23 @@ public class PackageParser {
             return null;
         }
 
+        try {
+            return parsePublicKey(Base64.decode(encodedPublicKey, Base64.DEFAULT));
+        } catch (IllegalArgumentException e) {
+            Slog.w(TAG, "Could not parse verifier public key; invalid Base64");
+            return null;
+        }
+    }
+
+    public static final PublicKey parsePublicKey(final byte[] publicKey) {
+        if (publicKey == null) {
+            Slog.w(TAG, "Could not parse null public key");
+            return null;
+        }
+
         EncodedKeySpec keySpec;
         try {
-            final byte[] encoded = Base64.decode(encodedPublicKey, Base64.DEFAULT);
-            keySpec = new X509EncodedKeySpec(encoded);
+            keySpec = new X509EncodedKeySpec(publicKey);
         } catch (IllegalArgumentException e) {
             Slog.w(TAG, "Could not parse verifier public key; invalid Base64");
             return null;

@@ -35,6 +35,8 @@ import android.util.ArraySet;
 import android.util.AtomicFile;
 import android.util.Log;
 import android.util.Slog;
+import android.util.TypedXmlPullParser;
+import android.util.TypedXmlSerializer;
 import android.util.Xml;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -52,15 +54,12 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlSerializer;
 
-import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -738,7 +737,7 @@ class ShortcutPackage extends ShortcutPackageItem {
                     || ((pinnedByCallerSet != null) && pinnedByCallerSet.contains(si.getId()));
 
             if (!getPinnedByAnyLauncher) {
-                if (si.isFloating()) {
+                if (si.isFloating() && !si.isCached()) {
                     if (!isPinnedByCaller) {
                         continue;
                     }
@@ -1050,6 +1049,7 @@ class ShortcutPackage extends ShortcutPackageItem {
                             }
                         }
 
+                        // TODO: update resource strings in AppSearch
                         // If this shortcut is not from a manifest, then update all resource IDs
                         // from resource names.  (We don't allow resource strings for
                         // non-manifest at the moment, but icons can still be resources.)
@@ -1341,6 +1341,7 @@ class ShortcutPackage extends ShortcutPackageItem {
      * For all the text fields, refresh the string values if they're from resources.
      */
     public void resolveResourceStrings() {
+        // TODO: update resource strings in AppSearch
         final ShortcutService s = mShortcutUser.mService;
 
         List<ShortcutInfo> changedShortcuts = null;
@@ -1571,7 +1572,7 @@ class ShortcutPackage extends ShortcutPackageItem {
     }
 
     @Override
-    public void saveToXml(@NonNull XmlSerializer out, boolean forBackup)
+    public void saveToXml(@NonNull TypedXmlSerializer out, boolean forBackup)
             throws IOException, XmlPullParserException {
         final int size = mShortcuts.size();
         final int shareTargetSize = mShareTargets.size();
@@ -1601,7 +1602,7 @@ class ShortcutPackage extends ShortcutPackageItem {
         out.endTag(null, TAG_ROOT);
     }
 
-    private void saveShortcut(XmlSerializer out, ShortcutInfo si, boolean forBackup,
+    private void saveShortcut(TypedXmlSerializer out, ShortcutInfo si, boolean forBackup,
             boolean appSupportsBackup)
             throws IOException, XmlPullParserException {
 
@@ -1683,7 +1684,7 @@ class ShortcutPackage extends ShortcutPackageItem {
                 if (cat != null && cat.size() > 0) {
                     out.startTag(null, TAG_CATEGORIES);
                     XmlUtils.writeStringArrayXml(cat.toArray(new String[cat.size()]),
-                            NAME_CATEGORIES, out);
+                            NAME_CATEGORIES, XmlUtils.makeTyped(out));
                     out.endTag(null, TAG_CATEGORIES);
                 }
             }
@@ -1734,11 +1735,8 @@ class ShortcutPackage extends ShortcutPackageItem {
         }
 
         try {
-            final BufferedInputStream bis = new BufferedInputStream(in);
-
             ShortcutPackage ret = null;
-            XmlPullParser parser = Xml.newPullParser();
-            parser.setInput(bis, StandardCharsets.UTF_8.name());
+            TypedXmlPullParser parser = Xml.resolvePullParser(in);
 
             int type;
             while ((type = parser.next()) != XmlPullParser.END_DOCUMENT) {
@@ -1767,7 +1765,7 @@ class ShortcutPackage extends ShortcutPackageItem {
     }
 
     public static ShortcutPackage loadFromXml(ShortcutService s, ShortcutUser shortcutUser,
-            XmlPullParser parser, boolean fromBackup)
+            TypedXmlPullParser parser, boolean fromBackup)
             throws IOException, XmlPullParserException {
 
         final String packageName = ShortcutService.parseStringAttribute(parser,
@@ -1814,7 +1812,7 @@ class ShortcutPackage extends ShortcutPackageItem {
         return ret;
     }
 
-    private static ShortcutInfo parseShortcut(XmlPullParser parser, String packageName,
+    private static ShortcutInfo parseShortcut(TypedXmlPullParser parser, String packageName,
             @UserIdInt int userId, boolean fromBackup)
             throws IOException, XmlPullParserException {
         String id;
@@ -1904,7 +1902,7 @@ class ShortcutPackage extends ShortcutPackageItem {
                     if (NAME_CATEGORIES.equals(ShortcutService.parseStringAttribute(parser,
                             ATTR_NAME_XMLUTILS))) {
                         final String[] ar = XmlUtils.readThisStringArrayXml(
-                                parser, TAG_STRING_ARRAY_XMLUTILS, null);
+                                XmlUtils.makeTyped(parser), TAG_STRING_ARRAY_XMLUTILS, null);
                         categories = new ArraySet<>(ar.length);
                         for (int i = 0; i < ar.length; i++) {
                             categories.add(ar[i]);
@@ -1948,7 +1946,7 @@ class ShortcutPackage extends ShortcutPackageItem {
                 disabledReason, persons.toArray(new Person[persons.size()]), locusId);
     }
 
-    private static Intent parseIntent(XmlPullParser parser)
+    private static Intent parseIntent(TypedXmlPullParser parser)
             throws IOException, XmlPullParserException {
 
         Intent intent = ShortcutService.parseIntentAttribute(parser,
@@ -1978,7 +1976,7 @@ class ShortcutPackage extends ShortcutPackageItem {
         return intent;
     }
 
-    private static Person parsePerson(XmlPullParser parser)
+    private static Person parsePerson(TypedXmlPullParser parser)
             throws IOException, XmlPullParserException {
         CharSequence name = ShortcutService.parseStringAttribute(parser, ATTR_PERSON_NAME);
         String uri = ShortcutService.parseStringAttribute(parser, ATTR_PERSON_URI);

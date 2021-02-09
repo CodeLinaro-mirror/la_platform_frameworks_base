@@ -19,6 +19,7 @@ package android.app;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.TestApi;
 import android.compat.Compatibility;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledAfter;
@@ -179,6 +180,12 @@ public final class PendingIntent implements Parcelable {
      * extras change, and don't care that any entities that received your
      * previous PendingIntent will be able to launch it with your new
      * extras even if they are not explicitly given to it.
+     *
+     * <p>{@link #FLAG_UPDATE_CURRENT} still works even if {@link
+     * #FLAG_IMMUTABLE} is set - the creator of the PendingIntent can always
+     * update the PendingIntent itself. The IMMUTABLE flag only limits the
+     * ability to alter the semantics of the intent that is sent by {@link
+     * #send} by the invoker of {@link #send}.
      */
     public static final int FLAG_UPDATE_CURRENT = 1<<27;
 
@@ -187,6 +194,11 @@ public final class PendingIntent implements Parcelable {
      * This means that the additional intent argument passed to the send
      * methods to fill in unpopulated properties of this intent will be
      * ignored.
+     *
+     * <p>{@link #FLAG_IMMUTABLE} only limits the ability to alter the
+     * semantics of the intent that is sent by {@link #send} by the invoker of
+     * {@link #send}. The creator of the PendingIntent can always update the
+     * PendingIntent itself via {@link #FLAG_UPDATE_CURRENT}.
      */
     public static final int FLAG_IMMUTABLE = 1<<26;
 
@@ -210,6 +222,7 @@ public final class PendingIntent implements Parcelable {
      * @hide
      */
     @Deprecated
+    @TestApi
     public static final int FLAG_MUTABLE_UNAUDITED = FLAG_MUTABLE;
 
     /**

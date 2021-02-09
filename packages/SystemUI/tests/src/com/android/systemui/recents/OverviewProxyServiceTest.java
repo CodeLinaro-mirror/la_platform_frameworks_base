@@ -40,8 +40,9 @@ import com.android.systemui.shared.recents.IPinnedStackAnimationListener;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.phone.StatusBar;
+import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
 import com.android.wm.shell.pip.Pip;
-import com.android.wm.shell.splitscreen.SplitScreen;
+import com.android.wm.shell.transition.Transitions;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -70,11 +71,12 @@ public class OverviewProxyServiceTest extends SysuiTestCase {
     @Mock private NavigationModeController mMockNavModeController;
     @Mock private NotificationShadeWindowController mMockStatusBarWinController;
     @Mock private Optional<Pip> mMockPipOptional;
-    @Mock private Optional<SplitScreen> mMockSplitScreenOptional;
+    @Mock private Optional<LegacySplitScreen> mMockSplitScreenOptional;
     @Mock private Optional<Lazy<StatusBar>> mMockStatusBarOptionalLazy;
     @Mock private Optional<com.android.wm.shell.onehanded.OneHanded> mMockOneHandedOptional;
     @Mock private PackageManager mPackageManager;
     @Mock private SysUiState mMockSysUiState;
+    @Mock private Transitions mMockTransitions;
 
     @Before
     public void setUp() throws RemoteException {
@@ -89,7 +91,7 @@ public class OverviewProxyServiceTest extends SysuiTestCase {
                 mMockNavBarControllerLazy, mMockNavModeController, mMockStatusBarWinController,
                 mMockSysUiState, mMockPipOptional, mMockSplitScreenOptional,
                 mMockStatusBarOptionalLazy, mMockOneHandedOptional,
-                mMockBroadcastDispatcher));
+                mMockBroadcastDispatcher, mMockTransitions));
     }
 
     @Test

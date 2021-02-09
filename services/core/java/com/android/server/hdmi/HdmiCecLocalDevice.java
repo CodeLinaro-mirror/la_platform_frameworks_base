@@ -18,6 +18,7 @@ package com.android.server.hdmi;
 
 import android.annotation.CallSuper;
 import android.annotation.Nullable;
+import android.hardware.hdmi.HdmiControlManager;
 import android.hardware.hdmi.HdmiDeviceInfo;
 import android.hardware.hdmi.IHdmiControlCallback;
 import android.hardware.input.InputManager;
@@ -281,6 +282,8 @@ abstract class HdmiCecLocalDevice {
                 return handleGiveOsdName(message);
             case Constants.MESSAGE_GIVE_DEVICE_VENDOR_ID:
                 return handleGiveDeviceVendorId(null);
+            case Constants.MESSAGE_CEC_VERSION:
+                return handleCecVersion();
             case Constants.MESSAGE_GET_CEC_VERSION:
                 return handleGetCecVersion(message);
             case Constants.MESSAGE_REPORT_PHYSICAL_ADDRESS:
@@ -401,6 +404,14 @@ abstract class HdmiCecLocalDevice {
                 HdmiCecMessageBuilder.buildCecVersion(
                         message.getDestination(), message.getSource(), version);
         mService.sendCecCommand(cecMessage);
+        return true;
+    }
+
+    @ServiceThreadOnly
+    private boolean handleCecVersion() {
+        assertRunOnServiceThread();
+
+        // Return true to avoid <Feature Abort> responses. Cec Version is tracked in HdmiCecNetwork.
         return true;
     }
 
@@ -553,6 +564,7 @@ abstract class HdmiCecLocalDevice {
         return false;
     }
 
+    @Constants.RcProfile
     protected abstract int getRcProfile();
 
     protected abstract List<Integer> getRcFeatures();
@@ -560,10 +572,15 @@ abstract class HdmiCecLocalDevice {
     protected abstract List<Integer> getDeviceFeatures();
 
     protected boolean handleGiveFeatures(HdmiCecMessage message) {
-        if (mService.getCecVersion() < Constants.VERSION_2_0) {
+        if (mService.getCecVersion() < HdmiControlManager.HDMI_CEC_VERSION_2_0) {
             return false;
         }
 
+        reportFeatures();
+        return true;
+    }
+
+    protected void reportFeatures() {
         List<Integer> localDeviceTypes = new ArrayList<>();
         for (HdmiCecLocalDevice localDevice : mService.getAllLocalDevices()) {
             localDeviceTypes.add(localDevice.mDeviceType);
@@ -577,7 +594,6 @@ abstract class HdmiCecLocalDevice {
         mService.sendCecCommand(
                 HdmiCecMessageBuilder.buildReportFeatures(mAddress, mService.getCecVersion(),
                         localDeviceTypes, rcProfile, rcFeatures, deviceFeatures));
-        return true;
     }
 
     @ServiceThreadOnly
@@ -605,6 +621,14 @@ abstract class HdmiCecLocalDevice {
             return true;
         } else if (!mService.isHdmiCecVolumeControlEnabled() && isVolumeOrMuteCommand(message)) {
             return false;
+        }
+
+        if (isPowerOffOrToggleCommand(message) || isPowerOnOrToggleCommand(message)) {
+            // Power commands should already be handled above. Don't continue and convert the CEC
+            // keycode to Android keycode.
+            // Do not <Feature Abort> as the local device should already be in the correct power
+            // state.
+            return true;
         }
 
         final long downTime = SystemClock.uptimeMillis();
@@ -728,8 +752,8 @@ abstract class HdmiCecLocalDevice {
                 message.getParams(),
                 false)) {
             // Vendor command listener may not have been registered yet. Respond with
-            // <Feature Abort> [NOT_IN_CORRECT_MODE] so that the sender can try again later.
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_NOT_IN_CORRECT_MODE);
+            // <Feature Abort> [Refused] so that the sender can try again later.
+            mService.maySendFeatureAbortCommand(message, Constants.ABORT_REFUSED);
         }
         return true;
     }
@@ -740,7 +764,7 @@ abstract class HdmiCecLocalDevice {
         if (vendorId == mService.getVendorId()) {
             if (!mService.invokeVendorCommandListenersOnReceived(
                     mDeviceType, message.getSource(), message.getDestination(), params, true)) {
-                mService.maySendFeatureAbortCommand(message, Constants.ABORT_NOT_IN_CORRECT_MODE);
+                mService.maySendFeatureAbortCommand(message, Constants.ABORT_REFUSED);
             }
         } else if (message.getDestination() != Constants.ADDR_BROADCAST
                 && message.getSource() != Constants.ADDR_UNREGISTERED) {
@@ -789,6 +813,9 @@ abstract class HdmiCecLocalDevice {
     final void handleAddressAllocated(int logicalAddress, int reason) {
         assertRunOnServiceThread();
         mAddress = mPreferredAddress = logicalAddress;
+        if (mService.getCecVersion() >= HdmiControlManager.HDMI_CEC_VERSION_2_0) {
+            reportFeatures();
+        }
         onAddressAllocated(logicalAddress, reason);
         setPreferredAddress(logicalAddress);
     }

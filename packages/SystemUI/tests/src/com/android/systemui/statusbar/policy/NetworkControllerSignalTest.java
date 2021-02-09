@@ -38,6 +38,7 @@ import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper.RunWithLooper;
 
 import com.android.settingslib.graph.SignalDrawable;
+import com.android.settingslib.mobile.TelephonyIcons;
 import com.android.settingslib.net.DataUsageController;
 import com.android.systemui.R;
 
@@ -261,7 +262,7 @@ public class NetworkControllerSignalTest extends NetworkControllerBaseTest {
         setConnectivityViaBroadcast(mMobileSignalController.mTransportType, false, false);
         setConnectivityViaBroadcast(NetworkCapabilities.TRANSPORT_WIFI, true, true);
 
-        verifyLastMobileDataIndicators(true, DEFAULT_LEVEL, 0);
+        verifyLastMobileDataIndicators(false, DEFAULT_LEVEL, 0);
     }
 
     // Some tests of actual NetworkController code, just internals not display stuff

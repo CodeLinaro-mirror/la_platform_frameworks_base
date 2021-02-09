@@ -38,6 +38,7 @@ import android.content.pm.InstrumentationInfo;
 import android.content.pm.KeySet;
 import android.content.pm.ModuleInfo;
 import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.content.pm.ParceledListSlice;
 import android.content.pm.ProviderInfo;
 import android.content.pm.PermissionGroupInfo;
@@ -64,7 +65,7 @@ import android.content.IntentSender;
  */
 interface IPackageManager {
     void checkPackageStartable(String packageName, int userId);
-    @UnsupportedAppUsage(maxTargetSdk = 30, trackingBug = 170729553)
+    @UnsupportedAppUsage(trackingBug = 171933273)
     boolean isPackageAvailable(String packageName, int userId);
     @UnsupportedAppUsage
     PackageInfo getPackageInfo(String packageName, int flags, int userId);
@@ -797,4 +798,7 @@ interface IPackageManager {
     IBinder getHoldLockToken();
 
     void holdLock(in IBinder token, in int durationMs);
+
+    PackageManager.Property getProperty(String propertyName, String packageName, String className);
+    ParceledListSlice queryProperty(String propertyName, int componentType);
 }

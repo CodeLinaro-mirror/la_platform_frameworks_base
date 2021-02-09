@@ -121,7 +121,7 @@ class BiometricTestSessionImpl extends ITestSession.Stub {
         Utils.checkPermission(mContext, TEST_BIOMETRIC);
 
         mProvider.scheduleEnroll(mSensorId, new Binder(), new byte[69], userId, mReceiver,
-                mContext.getOpPackageName());
+                mContext.getOpPackageName(), true /* shouldLogMetrics */);
     }
 
     @Override
@@ -143,7 +143,7 @@ class BiometricTestSessionImpl extends ITestSession.Stub {
         Utils.checkPermission(mContext, TEST_BIOMETRIC);
 
         // Fake authentication with any of the existing fingers
-        List<Fingerprint> fingerprints = FingerprintUtils.getInstance()
+        List<Fingerprint> fingerprints = FingerprintUtils.getInstance(mSensorId)
                 .getBiometricsForUser(mContext, userId);
         if (fingerprints.isEmpty()) {
             Slog.w(TAG, "No fingerprints, returning");

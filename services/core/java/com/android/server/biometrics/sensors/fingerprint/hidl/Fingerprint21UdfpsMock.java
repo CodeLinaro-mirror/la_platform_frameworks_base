@@ -40,8 +40,8 @@ import android.util.SparseBooleanArray;
 import com.android.internal.R;
 import com.android.server.biometrics.Utils;
 import com.android.server.biometrics.sensors.AuthenticationConsumer;
+import com.android.server.biometrics.sensors.BaseClientMonitor;
 import com.android.server.biometrics.sensors.BiometricScheduler;
-import com.android.server.biometrics.sensors.ClientMonitor;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.LockoutResetDispatcher;
 import com.android.server.biometrics.sensors.fingerprint.GestureAvailabilityDispatcher;
@@ -146,14 +146,14 @@ public class Fingerprint21UdfpsMock extends Fingerprint21 implements TrustManage
 
         class TestableInternalCallback extends InternalCallback {
             @Override
-            public void onClientStarted(ClientMonitor<?> clientMonitor) {
+            public void onClientStarted(BaseClientMonitor clientMonitor) {
                 super.onClientStarted(clientMonitor);
                 Slog.d(TAG, "Client started: " + clientMonitor);
                 mFingerprint21.setDebugMessage("Started: " + clientMonitor);
             }
 
             @Override
-            public void onClientFinished(ClientMonitor<?> clientMonitor, boolean success) {
+            public void onClientFinished(BaseClientMonitor clientMonitor, boolean success) {
                 super.onClientFinished(clientMonitor, success);
                 Slog.d(TAG, "Client finished: " + clientMonitor);
                 mFingerprint21.setDebugMessage("Finished: " + clientMonitor);
@@ -175,7 +175,7 @@ public class Fingerprint21UdfpsMock extends Fingerprint21 implements TrustManage
 
     /**
      * All of the mocking/testing should happen in here. This way we don't need to modify the
-     * {@link com.android.server.biometrics.sensors.ClientMonitor} implementations and can run the
+     * {@link BaseClientMonitor} implementations and can run the
      * real path there.
      */
     private static class MockHalResultController extends HalResultController {
@@ -210,9 +210,9 @@ public class Fingerprint21UdfpsMock extends Fingerprint21 implements TrustManage
         @NonNull private Fingerprint21UdfpsMock mFingerprint21;
         @Nullable private LastAuthArgs mLastAuthArgs;
 
-        MockHalResultController(@NonNull Context context, @NonNull Handler handler,
+        MockHalResultController(int sensorId, @NonNull Context context, @NonNull Handler handler,
                 @NonNull BiometricScheduler scheduler) {
-            super(context, handler, scheduler);
+            super(sensorId, context, handler, scheduler);
         }
 
         void init(@NonNull RestartAuthRunnable restartAuthRunnable,
@@ -233,7 +233,7 @@ public class Fingerprint21UdfpsMock extends Fingerprint21 implements TrustManage
         public void onAuthenticated(long deviceId, int fingerId, int groupId,
                 ArrayList<Byte> token) {
             mHandler.post(() -> {
-                final ClientMonitor<?> client = mScheduler.getCurrentClient();
+                final BaseClientMonitor client = mScheduler.getCurrentClient();
                 if (!(client instanceof AuthenticationConsumer)) {
                     Slog.e(TAG, "Non authentication consumer: " + client);
                     return;
@@ -280,7 +280,7 @@ public class Fingerprint21UdfpsMock extends Fingerprint21 implements TrustManage
         final TestableBiometricScheduler scheduler =
                 new TestableBiometricScheduler(TAG, gestureAvailabilityDispatcher);
         final MockHalResultController controller =
-                new MockHalResultController(context, handler, scheduler);
+                new MockHalResultController(sensorId, context, handler, scheduler);
         return new Fingerprint21UdfpsMock(context, scheduler, handler, sensorId, strength,
                 lockoutResetDispatcher, controller);
     }
@@ -360,7 +360,7 @@ public class Fingerprint21UdfpsMock extends Fingerprint21 implements TrustManage
 
         @Override
         public void run() {
-            final ClientMonitor<?> client = mScheduler.getCurrentClient();
+            final BaseClientMonitor client = mScheduler.getCurrentClient();
 
             // We don't care about FingerprintDetectClient, since accept/rejects are both OK. UDFPS
             // rejects will just simulate the path where non-enrolled fingers are presented.
@@ -466,7 +466,7 @@ public class Fingerprint21UdfpsMock extends Fingerprint21 implements TrustManage
             Slog.d(TAG, "onFingerDown");
             final AuthenticationConsumer lastAuthenticatedConsumer =
                     mMockHalResultController.getLastAuthenticatedClient();
-            final ClientMonitor<?> currentScheduledClient = mScheduler.getCurrentClient();
+            final BaseClientMonitor currentScheduledClient = mScheduler.getCurrentClient();
 
             if (currentScheduledClient == null) {
                 Slog.d(TAG, "Not authenticating");

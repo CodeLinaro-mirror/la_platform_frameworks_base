@@ -19,9 +19,10 @@ package com.android.server.wm;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD;
 import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
 import static android.app.WindowConfiguration.WINDOWING_MODE_SPLIT_SCREEN_PRIMARY;
-import static android.hardware.camera2.params.OutputConfiguration.ROTATION_90;
 import static android.view.InsetsState.ITYPE_STATUS_BAR;
 import static android.view.Surface.ROTATION_0;
+import static android.view.Surface.ROTATION_270;
+import static android.view.Surface.ROTATION_90;
 import static android.view.WindowManager.LayoutParams.FIRST_SUB_WINDOW;
 import static android.view.WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
 import static android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
@@ -35,6 +36,7 @@ import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_STARTING;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_SUB_PANEL;
 import static android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION;
 import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD;
+import static android.view.WindowManager.LayoutParams.TYPE_TOAST;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doNothing;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
@@ -65,22 +67,17 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.when;
 
-import android.graphics.Insets;
 import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.platform.test.annotations.Presubmit;
-import android.util.Size;
-import android.view.DisplayCutout;
 import android.view.InputWindowHandle;
 import android.view.InsetsState;
 import android.view.SurfaceControl;
 import android.view.WindowManager;
 
 import androidx.test.filters.SmallTest;
-
-import com.android.server.wm.utils.WmDisplayCutout;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -451,6 +448,26 @@ public class WindowStateTests extends WindowTestsBase {
     }
 
     @Test
+    public void testDeferredRemovalByAnimating() {
+        final WindowState appWindow = createWindow(null, TYPE_APPLICATION, "appWindow");
+        makeWindowVisible(appWindow);
+        spyOn(appWindow.mWinAnimator);
+        doReturn(true).when(appWindow.mWinAnimator).getShown();
+        final AnimationAdapter animation = mock(AnimationAdapter.class);
+        final ActivityRecord activity = appWindow.mActivityRecord;
+        activity.startAnimation(appWindow.getPendingTransaction(),
+                animation, false /* hidden */, SurfaceAnimator.ANIMATION_TYPE_APP_TRANSITION);
+
+        appWindow.removeIfPossible();
+        assertTrue(appWindow.mAnimatingExit);
+        assertFalse(appWindow.mRemoved);
+
+        activity.cancelAnimation();
+        assertFalse(appWindow.mAnimatingExit);
+        assertTrue(appWindow.mRemoved);
+    }
+
+    @Test
     public void testLayoutSeqResetOnReparent() {
         final WindowState app = createWindow(null, TYPE_APPLICATION, "app");
         app.mLayoutSeq = 1;
@@ -479,51 +496,49 @@ public class WindowStateTests extends WindowTestsBase {
         final WindowState app = createWindow(null, TYPE_APPLICATION, "app");
         final SurfaceControl.Transaction t = spy(StubTransaction.class);
 
-        app.mHasSurface = true;
+        makeWindowVisible(app);
         app.mSurfaceControl = mock(SurfaceControl.class);
-        try {
-            app.getFrame().set(10, 20, 60, 80);
-            app.updateSurfacePosition(t);
+        final Rect frame = app.getFrame();
+        frame.set(10, 20, 60, 80);
+        app.updateSurfacePosition(t);
+        assertTrue(app.mLastSurfacePosition.equals(frame.left, frame.top));
+        app.seamlesslyRotateIfAllowed(t, ROTATION_0, ROTATION_90, true /* requested */);
+        assertTrue(app.mSeamlesslyRotated);
 
-            app.seamlesslyRotateIfAllowed(t, ROTATION_0, ROTATION_90, true);
+        // Verify we un-rotate the window state surface.
+        final Matrix matrix = new Matrix();
+        // Un-rotate 90 deg.
+        matrix.setRotate(270);
+        // Translate it back to origin.
+        matrix.postTranslate(0, mDisplayInfo.logicalWidth);
+        verify(t).setMatrix(eq(app.mSurfaceControl), eq(matrix), any(float[].class));
 
-            assertTrue(app.mSeamlesslyRotated);
+        // Verify we update the position as well.
+        final float[] curSurfacePos = {app.mLastSurfacePosition.x, app.mLastSurfacePosition.y};
+        matrix.mapPoints(curSurfacePos);
+        verify(t).setPosition(eq(app.mSurfaceControl), eq(curSurfacePos[0]), eq(curSurfacePos[1]));
 
-            // Verify we un-rotate the window state surface.
-            Matrix matrix = new Matrix();
-            // Un-rotate 90 deg
-            matrix.setRotate(270);
-            // Translate it back to origin
-            matrix.postTranslate(0, mDisplayInfo.logicalWidth);
-            verify(t).setMatrix(eq(app.mSurfaceControl), eq(matrix), any(float[].class));
+        app.finishSeamlessRotation(false /* timeout */);
+        assertFalse(app.mSeamlesslyRotated);
+        assertNull(app.mPendingSeamlessRotate);
 
-            // Verify we update the position as well.
-            float[] currentSurfacePos = {app.mLastSurfacePosition.x, app.mLastSurfacePosition.y};
-            matrix.mapPoints(currentSurfacePos);
-            verify(t).setPosition(eq(app.mSurfaceControl), eq(currentSurfacePos[0]),
-                    eq(currentSurfacePos[1]));
-        } finally {
-            app.mSurfaceControl = null;
-            app.mHasSurface = false;
-        }
-    }
+        // Simulate the case with deferred layout and animation.
+        app.resetSurfacePositionForAnimationLeash(t);
+        clearInvocations(t);
+        mWm.mWindowPlacerLocked.deferLayout();
+        app.updateSurfacePosition(t);
+        // Because layout is deferred, the position should keep the reset value.
+        assertTrue(app.mLastSurfacePosition.equals(0, 0));
 
-    @Test
-    public void testDisplayCutoutIsCalculatedRelativeToFrame() {
-        final WindowState app = createWindow(null, TYPE_APPLICATION, "app");
-        WindowFrames wf = app.getWindowFrames();
-        wf.mParentFrame.set(7, 10, 185, 380);
-        wf.mDisplayFrame.set(wf.mParentFrame);
-        final DisplayCutout cutout = new DisplayCutout(
-                Insets.of(0, 15, 0, 22) /* safeInset */,
-                null /* boundLeft */,
-                new Rect(95, 0, 105, 15),
-                null /* boundRight */,
-                new Rect(95, 378, 105, 400));
-        wf.setDisplayCutout(new WmDisplayCutout(cutout, new Size(200, 400)));
-
-        app.computeFrame();
-        assertThat(app.getWmDisplayCutout().getDisplayCutout(), is(cutout.inset(7, 10, 5, 20)));
+        app.seamlesslyRotateIfAllowed(t, ROTATION_0, ROTATION_270, true /* requested */);
+        // The last position must be updated so the surface can be unrotated properly.
+        assertTrue(app.mLastSurfacePosition.equals(frame.left, frame.top));
+        matrix.setRotate(90);
+        matrix.postTranslate(mDisplayInfo.logicalHeight, 0);
+        curSurfacePos[0] = frame.left;
+        curSurfacePos[1] = frame.top;
+        matrix.mapPoints(curSurfacePos);
+        verify(t).setPosition(eq(app.mSurfaceControl), eq(curSurfacePos[0]), eq(curSurfacePos[1]));
     }
 
     @Test
@@ -647,6 +662,8 @@ public class WindowStateTests extends WindowTestsBase {
         win1.mSurfaceControl = mock(SurfaceControl.class);
         win1.mAttrs.surfaceInsets.set(1, 2, 3, 4);
         win1.getFrame().offsetTo(WINDOW_OFFSET, 0);
+        // Simulate layout
+        win1.mRelayoutCalled = true;
         win1.updateSurfacePosition(t);
         win1.getTransformationMatrix(values, matrix);
 
@@ -676,8 +693,8 @@ public class WindowStateTests extends WindowTestsBase {
     @Test
     public void testCantReceiveTouchWhenNotFocusable() {
         final WindowState win0 = createWindow(null, TYPE_APPLICATION, "win0");
-        win0.mActivityRecord.getStack().setWindowingMode(WINDOWING_MODE_SPLIT_SCREEN_PRIMARY);
-        win0.mActivityRecord.getStack().setFocusable(false);
+        win0.mActivityRecord.getRootTask().setWindowingMode(WINDOWING_MODE_SPLIT_SCREEN_PRIMARY);
+        win0.mActivityRecord.getRootTask().setFocusable(false);
         assertFalse(win0.canReceiveTouchInput());
     }
 
@@ -719,6 +736,12 @@ public class WindowStateTests extends WindowTestsBase {
         InputMonitor.setInputWindowInfoIfNeeded(transaction, sc, handleWrapper);
         verify(transaction, never()).setInputWindowInfo(any(), any());
 
+        // The rotated bounds have higher priority as the touchable region.
+        final Rect rotatedBounds = new Rect(0, 0, 123, 456);
+        doReturn(rotatedBounds).when(win.mToken).getFixedRotationTransformDisplayBounds();
+        mDisplayContent.getInputMonitor().populateInputWindowHandle(handleWrapper, win);
+        assertEquals(rotatedBounds, handle.touchableRegion.getBounds());
+
         // Populate as an overlay to disable the input of window.
         InputMonitor.populateOverlayInputInfo(handleWrapper, false /* isVisible */);
         // The overlay attributes should be set.
@@ -731,13 +754,46 @@ public class WindowStateTests extends WindowTestsBase {
                 handle.inputFeatures);
     }
 
+    @Test
+    public void testHasActiveVisibleWindow() {
+        final int uid = ActivityBuilder.DEFAULT_FAKE_UID;
+        mAtm.mActiveUids.onUidActive(uid, 0 /* any proc state */);
+
+        final WindowState app = createWindow(null, TYPE_APPLICATION, "app", uid);
+        app.mActivityRecord.setVisible(false);
+        app.mActivityRecord.setVisibility(false /* visible */, false /* deferHidingClient */);
+        assertFalse(mAtm.hasActiveVisibleWindow(uid));
+
+        app.mActivityRecord.setVisibility(true /* visible */, false /* deferHidingClient */);
+        assertTrue(mAtm.hasActiveVisibleWindow(uid));
+
+        // Make the activity invisible and add a visible toast. The uid should have no active
+        // visible window because toast can be misused by legacy app to bypass background check.
+        app.mActivityRecord.setVisibility(false /* visible */, false /* deferHidingClient */);
+        final WindowState overlay = createWindow(null, TYPE_APPLICATION_OVERLAY, "overlay", uid);
+        final WindowState toast = createWindow(null, TYPE_TOAST, app.mToken, "toast", uid);
+        toast.onSurfaceShownChanged(true);
+        assertFalse(mAtm.hasActiveVisibleWindow(uid));
+
+        // Though starting window should belong to system. Make sure it is ignored to avoid being
+        // allow-list unexpectedly, see b/129563343.
+        final WindowState starting =
+                createWindow(null, TYPE_APPLICATION_STARTING, app.mToken, "starting", uid);
+        starting.onSurfaceShownChanged(true);
+        assertFalse(mAtm.hasActiveVisibleWindow(uid));
+
+        // Make the application overlay window visible. It should be a valid active visible window.
+        overlay.onSurfaceShownChanged(true);
+        assertTrue(mAtm.hasActiveVisibleWindow(uid));
+    }
+
     @UseTestDisplay(addWindows = W_ACTIVITY)
     @Test
     public void testNeedsRelativeLayeringToIme_notAttached() {
         WindowState sameTokenWindow = createWindow(null, TYPE_BASE_APPLICATION, mAppWindow.mToken,
                 "SameTokenWindow");
-        mDisplayContent.mInputMethodTarget = mAppWindow;
-        sameTokenWindow.mActivityRecord.getStack().setWindowingMode(
+        mDisplayContent.setImeLayeringTarget(mAppWindow);
+        sameTokenWindow.mActivityRecord.getRootTask().setWindowingMode(
                 WINDOWING_MODE_SPLIT_SCREEN_PRIMARY);
         assertTrue(sameTokenWindow.needsRelativeLayeringToIme());
         sameTokenWindow.removeImmediately();
@@ -749,8 +805,8 @@ public class WindowStateTests extends WindowTestsBase {
     public void testNeedsRelativeLayeringToIme_startingWindow() {
         WindowState sameTokenWindow = createWindow(null, TYPE_APPLICATION_STARTING,
                 mAppWindow.mToken, "SameTokenWindow");
-        mDisplayContent.mInputMethodTarget = mAppWindow;
-        sameTokenWindow.mActivityRecord.getStack().setWindowingMode(
+        mDisplayContent.setImeLayeringTarget(mAppWindow);
+        sameTokenWindow.mActivityRecord.getRootTask().setWindowingMode(
                 WINDOWING_MODE_SPLIT_SCREEN_PRIMARY);
         assertFalse(sameTokenWindow.needsRelativeLayeringToIme());
     }

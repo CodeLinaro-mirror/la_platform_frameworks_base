@@ -391,4 +391,32 @@ class AccessibilityServiceConnection extends AbstractAccessibilityServiceConnect
             }
         }
     }
+
+    @Override
+    public void setFocusAppearance(int strokeWidth, int color) {
+        AccessibilityUserState userState = mUserStateWeakReference.get();
+        if (userState == null) {
+            return;
+        }
+
+        synchronized (mLock) {
+            if (!hasRightsToCurrentUserLocked()) {
+                return;
+            }
+
+            if (!mSecurityPolicy.checkAccessibilityAccess(this)) {
+                return;
+            }
+
+            if (userState.getFocusStrokeWidthLocked() == strokeWidth
+                    && userState.getFocusColorLocked() == color) {
+                return;
+            }
+
+            // Sets the appearance data in the A11yUserState.
+            userState.setFocusAppearanceLocked(strokeWidth, color);
+            // Updates the appearance data in the A11yManager.
+            mSystemSupport.onClientChangeLocked(false);
+        }
+    }
 }

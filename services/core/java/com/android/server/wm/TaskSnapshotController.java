@@ -16,9 +16,7 @@
 
 package com.android.server.wm;
 
-import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.view.WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER;
-import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION;
 
 import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_SCREENSHOT;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
@@ -26,7 +24,6 @@ import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.app.ActivityManager.TaskSnapshot;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
@@ -39,13 +36,13 @@ import android.os.Environment;
 import android.os.Handler;
 import android.util.ArraySet;
 import android.util.Slog;
-import android.view.InsetsSource;
 import android.view.InsetsState;
-import android.view.InsetsState.InternalInsetsType;
 import android.view.SurfaceControl;
 import android.view.ThreadedRenderer;
-import android.view.WindowInsets;
+import android.view.WindowInsets.Type;
+import android.view.WindowInsetsController.Appearance;
 import android.view.WindowManager.LayoutParams;
+import android.window.TaskSnapshot;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.graphics.ColorUtils;
@@ -222,7 +219,8 @@ class TaskSnapshotController {
      * Retrieves a snapshot. If {@param restoreFromDisk} equals {@code true}, DO NOT HOLD THE WINDOW
      * MANAGER LOCK WHEN CALLING THIS METHOD!
      */
-    @Nullable TaskSnapshot getSnapshot(int taskId, int userId, boolean restoreFromDisk,
+    @Nullable
+    TaskSnapshot getSnapshot(int taskId, int userId, boolean restoreFromDisk,
             boolean isLowResolution) {
         return mCache.getSnapshot(taskId, userId, restoreFromDisk, isLowResolution
                 && mPersister.enableLowResSnapshots());
@@ -310,9 +308,13 @@ class TaskSnapshotController {
             return false;
         }
 
+        final Rect contentInsets = getSystemBarInsets(task.getBounds(),
+                mainWindow.getInsetsStateWithVisibilityOverride());
+        InsetUtils.addInsets(contentInsets, activity.getLetterboxInsets());
+
         builder.setIsRealSnapshot(true);
         builder.setId(System.currentTimeMillis());
-        builder.setContentInsets(getInsets(mainWindow));
+        builder.setContentInsets(contentInsets);
 
         final boolean isWindowTranslucent = mainWindow.getAttrs().format != PixelFormat.OPAQUE;
         final boolean isShowWallpaper = (mainWindow.getAttrs().flags & FLAG_SHOW_WALLPAPER) != 0;
@@ -333,7 +335,7 @@ class TaskSnapshotController {
         builder.setOrientation(activity.getTask().getConfiguration().orientation);
         builder.setRotation(activity.getTask().getDisplayContent().getRotation());
         builder.setWindowingMode(task.getWindowingMode());
-        builder.setSystemUiVisibility(getSystemUiVisibility(task));
+        builder.setAppearance(getAppearance(task));
         return true;
     }
 
@@ -342,20 +344,20 @@ class TaskSnapshotController {
             TaskSnapshot.Builder builder) {
         Point taskSize = new Point();
         final SurfaceControl.ScreenshotHardwareBuffer taskSnapshot = createTaskSnapshot(task,
-                mHighResTaskSnapshotScale, builder.getPixelFormat(), taskSize);
+                mHighResTaskSnapshotScale, builder.getPixelFormat(), taskSize, builder);
         builder.setTaskSize(taskSize);
         return taskSnapshot;
     }
 
     @Nullable
     SurfaceControl.ScreenshotHardwareBuffer createTaskSnapshot(@NonNull Task task,
-            float scaleFraction) {
-        return createTaskSnapshot(task, scaleFraction, PixelFormat.RGBA_8888, null);
+            float scaleFraction, TaskSnapshot.Builder builder) {
+        return createTaskSnapshot(task, scaleFraction, PixelFormat.RGBA_8888, null, builder);
     }
 
     @Nullable
     SurfaceControl.ScreenshotHardwareBuffer createTaskSnapshot(@NonNull Task task,
-            float scaleFraction, int pixelFormat, Point outTaskSize) {
+            float scaleFraction, int pixelFormat, Point outTaskSize, TaskSnapshot.Builder builder) {
         if (task.getSurfaceControl() == null) {
             if (DEBUG_SCREENSHOT) {
                 Slog.w(TAG_WM, "Failed to take screenshot. No surface control for " + task);
@@ -368,12 +370,26 @@ class TaskSnapshotController {
         SurfaceControl[] excludeLayers;
         final WindowState imeWindow = task.getDisplayContent().mInputMethodWindow;
         // Exclude IME window snapshot when IME isn't proper to attach to app.
-        if (imeWindow != null && !task.getDisplayContent().isImeAttachedToApp()) {
-            excludeLayers = new SurfaceControl[1];
+        final boolean excludeIme = imeWindow != null && imeWindow.getSurfaceControl() != null
+                && !task.getDisplayContent().isImeAttachedToApp();
+        final WindowState navWindow =
+                task.getDisplayContent().getDisplayPolicy().getNavigationBar();
+        // If config_attachNavBarToAppDuringTransition is true, the nav bar will be reparent to the
+        // the swiped app when entering recent app, therefore the task will contain the navigation
+        // bar and we should exclude it from snapshot.
+        final boolean excludeNavBar = navWindow != null;
+        if (excludeIme && excludeNavBar) {
+            excludeLayers = new SurfaceControl[2];
             excludeLayers[0] = imeWindow.getSurfaceControl();
+            excludeLayers[1] = navWindow.getSurfaceControl();
+        } else if (excludeIme || excludeNavBar) {
+            excludeLayers = new SurfaceControl[1];
+            excludeLayers[0] =
+                    excludeIme ? imeWindow.getSurfaceControl() : navWindow.getSurfaceControl();
         } else {
             excludeLayers = new SurfaceControl[0];
         }
+        builder.setHasImeSurface(!excludeIme && imeWindow != null && imeWindow.isDrawn());
         final SurfaceControl.ScreenshotHardwareBuffer screenshotBuffer =
                 SurfaceControl.captureLayersExcluding(
                         task.getSurfaceControl(), mTmpRect, scaleFraction,
@@ -418,21 +434,6 @@ class TaskSnapshotController {
 
     private boolean shouldDisableSnapshots() {
         return mIsRunningOnWear || mIsRunningOnTv || mIsRunningOnIoT;
-    }
-
-    private Rect getInsets(WindowState state) {
-        // XXX(b/72757033): These are insets relative to the window frame, but we're really
-        // interested in the insets relative to the task bounds.
-        final Rect insets = minRect(state.getContentInsets(), state.getStableInsets());
-        InsetUtils.addInsets(insets, state.mActivityRecord.getLetterboxInsets());
-        return insets;
-    }
-
-    private Rect minRect(Rect rect1, Rect rect2) {
-        return new Rect(Math.min(rect1.left, rect2.left),
-                Math.min(rect1.top, rect2.top),
-                Math.min(rect1.right, rect2.right),
-                Math.min(rect1.bottom, rect2.bottom));
     }
 
     /**
@@ -488,13 +489,14 @@ class TaskSnapshotController {
         final int color = ColorUtils.setAlphaComponent(
                 task.getTaskDescription().getBackgroundColor(), 255);
         final LayoutParams attrs = mainWindow.getAttrs();
-        final InsetsState insetsState = getInsetsStateWithVisibilityOverride(mainWindow);
-        final Rect systemBarInsets = getSystemBarInsets(mainWindow.getFrame(), insetsState);
+        final Rect taskBounds = task.getBounds();
+        final InsetsState insetsState = mainWindow.getInsetsStateWithVisibilityOverride();
+        final Rect systemBarInsets = getSystemBarInsets(taskBounds, insetsState);
         final SystemBarBackgroundPainter decorPainter = new SystemBarBackgroundPainter(attrs.flags,
                 attrs.privateFlags, attrs.insetsFlags.appearance, task.getTaskDescription(),
                 mHighResTaskSnapshotScale, insetsState);
-        final int taskWidth = task.getBounds().width();
-        final int taskHeight = task.getBounds().height();
+        final int taskWidth = taskBounds.width();
+        final int taskHeight = taskBounds.height();
         final int width = (int) (taskWidth * mHighResTaskSnapshotScale);
         final int height = (int) (taskHeight * mHighResTaskSnapshotScale);
 
@@ -510,6 +512,8 @@ class TaskSnapshotController {
         if (hwBitmap == null) {
             return null;
         }
+        final Rect contentInsets = new Rect(systemBarInsets);
+        InsetUtils.addInsets(contentInsets, topChild.getLetterboxInsets());
 
         // Note, the app theme snapshot is never translucent because we enforce a non-translucent
         // color above
@@ -518,9 +522,9 @@ class TaskSnapshotController {
                 topChild.mActivityComponent, hwBitmap.getHardwareBuffer(),
                 hwBitmap.getColorSpace(), mainWindow.getConfiguration().orientation,
                 mainWindow.getWindowConfiguration().getRotation(), new Point(taskWidth, taskHeight),
-                getInsets(mainWindow), false /* isLowResolution */,
-                false /* isRealSnapshot */, task.getWindowingMode(),
-                getSystemUiVisibility(task), false);
+                contentInsets, false /* isLowResolution */, false /* isRealSnapshot */,
+                task.getWindowingMode(), getAppearance(task), false /* isTranslucent */,
+                false /* hasImeSurface */);
     }
 
     /**
@@ -597,40 +601,22 @@ class TaskSnapshotController {
     }
 
     /**
-     * @return The SystemUI visibility flags for the top fullscreen opaque window in the given
+     * @return The {@link Appearance} flags for the top fullscreen opaque window in the given
      *         {@param task}.
      */
-    private int getSystemUiVisibility(Task task) {
+    private @Appearance int getAppearance(Task task) {
         final ActivityRecord topFullscreenActivity = task.getTopFullscreenActivity();
         final WindowState topFullscreenOpaqueWindow = topFullscreenActivity != null
                 ? topFullscreenActivity.getTopFullscreenOpaqueWindow()
                 : null;
         if (topFullscreenOpaqueWindow != null) {
-            return topFullscreenOpaqueWindow.getSystemUiVisibility();
+            return topFullscreenOpaqueWindow.mAttrs.insetsFlags.appearance;
         }
         return 0;
     }
 
-    static InsetsState getInsetsStateWithVisibilityOverride(WindowState win) {
-        final InsetsState state = new InsetsState(win.getInsetsState());
-        for (@InternalInsetsType int type = 0; type < InsetsState.SIZE; type++) {
-            final boolean requestedVisible = win.getRequestedVisibility(type);
-            InsetsSource source = state.peekSource(type);
-            if (source != null && source.isVisible() != requestedVisible) {
-                source = new InsetsSource(source);
-                source.setVisible(requestedVisible);
-                state.addSource(source);
-            }
-        }
-        return state;
-    }
-
     static Rect getSystemBarInsets(Rect frame, InsetsState state) {
-        return state.calculateInsets(frame, null /* ignoringVisibilityState */,
-                false /* isScreenRound */, false /* alwaysConsumeSystemBars */,
-                null /* displayCutout */, 0 /* legacySoftInputMode */, 0 /* legacyWindowFlags */,
-                0 /* legacySystemUiFlags */, TYPE_APPLICATION, WINDOWING_MODE_UNDEFINED,
-                null /* typeSideMap */).getInsets(WindowInsets.Type.systemBars()).toRect();
+        return state.calculateInsets(frame, Type.systemBars(), false /* ignoreVisibility */);
     }
 
     void dump(PrintWriter pw, String prefix) {

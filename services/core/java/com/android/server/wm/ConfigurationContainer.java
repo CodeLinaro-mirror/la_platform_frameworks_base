@@ -182,6 +182,11 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
         // writing to proto (which has significant cost if we write a lot of empty configurations).
         mHasOverrideConfiguration = !Configuration.EMPTY.equals(overrideConfiguration);
         mRequestedOverrideConfiguration.setTo(overrideConfiguration);
+        final Rect newBounds = mRequestedOverrideConfiguration.windowConfiguration.getBounds();
+        if (mHasOverrideConfiguration && providesMaxBounds()
+                && diffRequestedOverrideMaxBounds(newBounds) != BOUNDS_CHANGE_NONE) {
+            mRequestedOverrideConfiguration.windowConfiguration.setMaxBounds(newBounds);
+        }
         // Update full configuration of this container and all its children.
         final ConfigurationContainer parent = getParent();
         onConfigurationChanged(parent != null ? parent.getConfiguration() : Configuration.EMPTY);
@@ -341,9 +346,6 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
 
         mRequestsTmpConfig.setTo(getRequestedOverrideConfiguration());
         mRequestsTmpConfig.windowConfiguration.setBounds(bounds);
-        if (overrideMaxBounds) {
-            mRequestsTmpConfig.windowConfiguration.setMaxBounds(bounds);
-        }
         onRequestedOverrideConfigurationChanged(mRequestsTmpConfig);
 
         return boundsChange;
@@ -545,19 +547,16 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
         return activityType == ACTIVITY_TYPE_STANDARD || activityType == ACTIVITY_TYPE_UNDEFINED;
     }
 
-    public boolean hasCompatibleActivityType(ConfigurationContainer other) {
-        /*@WindowConfiguration.ActivityType*/ int thisType = getActivityType();
-        /*@WindowConfiguration.ActivityType*/ int otherType = other.getActivityType();
-
-        if (thisType == otherType) {
+    public static boolean isCompatibleActivityType(int currentType, int otherType) {
+        if (currentType == otherType) {
             return true;
         }
-        if (thisType == ACTIVITY_TYPE_ASSISTANT) {
+        if (currentType == ACTIVITY_TYPE_ASSISTANT) {
             // Assistant activities are only compatible with themselves...
             return false;
         }
         // Otherwise we are compatible if us or other is not currently defined.
-        return thisType == ACTIVITY_TYPE_UNDEFINED || otherType == ACTIVITY_TYPE_UNDEFINED;
+        return currentType == ACTIVITY_TYPE_UNDEFINED || otherType == ACTIVITY_TYPE_UNDEFINED;
     }
 
     /**

@@ -32,9 +32,13 @@ import android.os.Parcelable;
 import android.provider.Settings;
 import android.service.notification.NotificationListenerService;
 import android.text.TextUtils;
+import android.util.Slog;
+import android.util.TypedXmlPullParser;
+import android.util.TypedXmlSerializer;
 import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.util.Preconditions;
+import com.android.internal.util.XmlUtils;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -108,6 +112,7 @@ public final class NotificationChannel implements Parcelable {
     private static final String ATT_CONVERSATION_ID = "conv_id";
     private static final String ATT_IMP_CONVERSATION = "imp_conv";
     private static final String ATT_DEMOTE = "dem";
+    private static final String ATT_DELETED_TIME_MS = "del_time";
     private static final String DELIMITER = ",";
 
     /**
@@ -180,6 +185,7 @@ public final class NotificationChannel implements Parcelable {
             NotificationManager.IMPORTANCE_UNSPECIFIED;
     private static final boolean DEFAULT_DELETED = false;
     private static final boolean DEFAULT_SHOW_BADGE = true;
+    private static final long DEFAULT_DELETION_TIME_MS = -1;
 
     @UnsupportedAppUsage
     private String mId;
@@ -211,6 +217,7 @@ public final class NotificationChannel implements Parcelable {
     private String mConversationId = null;
     private boolean mDemoted = false;
     private boolean mImportantConvo = false;
+    private long mDeletedTime = DEFAULT_DELETION_TIME_MS;
 
     /**
      * Creates a notification channel.
@@ -279,6 +286,7 @@ public final class NotificationChannel implements Parcelable {
         mConversationId = in.readString();
         mDemoted = in.readBoolean();
         mImportantConvo = in.readBoolean();
+        mDeletedTime = in.readLong();
     }
 
     @Override
@@ -338,6 +346,7 @@ public final class NotificationChannel implements Parcelable {
         dest.writeString(mConversationId);
         dest.writeBoolean(mDemoted);
         dest.writeBoolean(mImportantConvo);
+        dest.writeLong(mDeletedTime);
     }
 
     /**
@@ -369,6 +378,14 @@ public final class NotificationChannel implements Parcelable {
     @TestApi
     public void setDeleted(boolean deleted) {
         mDeleted = deleted;
+    }
+
+    /**
+     * @hide
+     */
+    @TestApi
+    public void setDeletedTimeMs(long time) {
+        mDeletedTime = time;
     }
 
     /**
@@ -763,6 +780,13 @@ public final class NotificationChannel implements Parcelable {
     /**
      * @hide
      */
+    public long getDeletedTimeMs() {
+        return mDeletedTime;
+    }
+
+    /**
+     * @hide
+     */
     @SystemApi
     public int getUserLockedFields() {
         return mUserLockedFields;
@@ -869,7 +893,7 @@ public final class NotificationChannel implements Parcelable {
      * @hide
      */
     public void populateFromXmlForRestore(XmlPullParser parser, Context context) {
-        populateFromXml(parser, true, context);
+        populateFromXml(XmlUtils.makeTyped(parser), true, context);
     }
 
     /**
@@ -877,13 +901,13 @@ public final class NotificationChannel implements Parcelable {
      */
     @SystemApi
     public void populateFromXml(XmlPullParser parser) {
-        populateFromXml(parser, false, null);
+        populateFromXml(XmlUtils.makeTyped(parser), false, null);
     }
 
     /**
      * If {@param forRestore} is true, {@param Context} MUST be non-null.
      */
-    private void populateFromXml(XmlPullParser parser, boolean forRestore,
+    private void populateFromXml(TypedXmlPullParser parser, boolean forRestore,
             @Nullable Context context) {
         Preconditions.checkArgument(!forRestore || context != null,
                 "forRestore is true but got null context");
@@ -903,6 +927,8 @@ public final class NotificationChannel implements Parcelable {
         enableVibration(safeBool(parser, ATT_VIBRATION_ENABLED, false));
         setShowBadge(safeBool(parser, ATT_SHOW_BADGE, false));
         setDeleted(safeBool(parser, ATT_DELETED, false));
+        setDeletedTimeMs(XmlUtils.readLongAttribute(
+                parser, ATT_DELETED_TIME_MS, DEFAULT_DELETION_TIME_MS));
         setGroup(parser.getAttributeValue(null, ATT_GROUP));
         lockFields(safeInt(parser, ATT_USER_LOCKED, 0));
         setFgServiceShown(safeBool(parser, ATT_FG_SERVICE_SHOWN, false));
@@ -941,14 +967,14 @@ public final class NotificationChannel implements Parcelable {
      */
     @SystemApi
     public void writeXml(XmlSerializer out) throws IOException {
-        writeXml(out, false, null);
+        writeXml(XmlUtils.makeTyped(out), false, null);
     }
 
     /**
      * @hide
      */
     public void writeXmlForBackup(XmlSerializer out, Context context) throws IOException {
-        writeXml(out, true, context);
+        writeXml(XmlUtils.makeTyped(out), true, context);
     }
 
     private Uri getSoundForBackup(Context context) {
@@ -967,7 +993,7 @@ public final class NotificationChannel implements Parcelable {
     /**
      * If {@param forBackup} is true, {@param Context} MUST be non-null.
      */
-    private void writeXml(XmlSerializer out, boolean forBackup, @Nullable Context context)
+    private void writeXml(TypedXmlSerializer out, boolean forBackup, @Nullable Context context)
             throws IOException {
         Preconditions.checkArgument(!forBackup || context != null,
                 "forBackup is true but got null context");
@@ -980,62 +1006,61 @@ public final class NotificationChannel implements Parcelable {
             out.attribute(null, ATT_DESC, getDescription());
         }
         if (getImportance() != DEFAULT_IMPORTANCE) {
-            out.attribute(
-                    null, ATT_IMPORTANCE, Integer.toString(getImportance()));
+            out.attributeInt(null, ATT_IMPORTANCE, getImportance());
         }
         if (canBypassDnd()) {
-            out.attribute(
-                    null, ATT_PRIORITY, Integer.toString(Notification.PRIORITY_MAX));
+            out.attributeInt(null, ATT_PRIORITY, Notification.PRIORITY_MAX);
         }
         if (getLockscreenVisibility() != DEFAULT_VISIBILITY) {
-            out.attribute(null, ATT_VISIBILITY,
-                    Integer.toString(getLockscreenVisibility()));
+            out.attributeInt(null, ATT_VISIBILITY, getLockscreenVisibility());
         }
         Uri sound = forBackup ? getSoundForBackup(context) : getSound();
         if (sound != null) {
             out.attribute(null, ATT_SOUND, sound.toString());
         }
         if (getAudioAttributes() != null) {
-            out.attribute(null, ATT_USAGE, Integer.toString(getAudioAttributes().getUsage()));
-            out.attribute(null, ATT_CONTENT_TYPE,
-                    Integer.toString(getAudioAttributes().getContentType()));
-            out.attribute(null, ATT_FLAGS, Integer.toString(getAudioAttributes().getFlags()));
+            out.attributeInt(null, ATT_USAGE, getAudioAttributes().getUsage());
+            out.attributeInt(null, ATT_CONTENT_TYPE, getAudioAttributes().getContentType());
+            out.attributeInt(null, ATT_FLAGS, getAudioAttributes().getFlags());
         }
         if (shouldShowLights()) {
-            out.attribute(null, ATT_LIGHTS, Boolean.toString(shouldShowLights()));
+            out.attributeBoolean(null, ATT_LIGHTS, shouldShowLights());
         }
         if (getLightColor() != DEFAULT_LIGHT_COLOR) {
-            out.attribute(null, ATT_LIGHT_COLOR, Integer.toString(getLightColor()));
+            out.attributeInt(null, ATT_LIGHT_COLOR, getLightColor());
         }
         if (shouldVibrate()) {
-            out.attribute(null, ATT_VIBRATION_ENABLED, Boolean.toString(shouldVibrate()));
+            out.attributeBoolean(null, ATT_VIBRATION_ENABLED, shouldVibrate());
         }
         if (getVibrationPattern() != null) {
             out.attribute(null, ATT_VIBRATION, longArrayToString(getVibrationPattern()));
         }
         if (getUserLockedFields() != 0) {
-            out.attribute(null, ATT_USER_LOCKED, Integer.toString(getUserLockedFields()));
+            out.attributeInt(null, ATT_USER_LOCKED, getUserLockedFields());
         }
         if (isFgServiceShown()) {
-            out.attribute(null, ATT_FG_SERVICE_SHOWN, Boolean.toString(isFgServiceShown()));
+            out.attributeBoolean(null, ATT_FG_SERVICE_SHOWN, isFgServiceShown());
         }
         if (canShowBadge()) {
-            out.attribute(null, ATT_SHOW_BADGE, Boolean.toString(canShowBadge()));
+            out.attributeBoolean(null, ATT_SHOW_BADGE, canShowBadge());
         }
         if (isDeleted()) {
-            out.attribute(null, ATT_DELETED, Boolean.toString(isDeleted()));
+            out.attributeBoolean(null, ATT_DELETED, isDeleted());
+        }
+        if (getDeletedTimeMs() >= 0) {
+            out.attributeLong(null, ATT_DELETED_TIME_MS, getDeletedTimeMs());
         }
         if (getGroup() != null) {
             out.attribute(null, ATT_GROUP, getGroup());
         }
         if (isBlockable()) {
-            out.attribute(null, ATT_BLOCKABLE_SYSTEM, Boolean.toString(isBlockable()));
+            out.attributeBoolean(null, ATT_BLOCKABLE_SYSTEM, isBlockable());
         }
         if (getAllowBubbles() != DEFAULT_ALLOW_BUBBLE) {
-            out.attribute(null, ATT_ALLOW_BUBBLE, Integer.toString(getAllowBubbles()));
+            out.attributeInt(null, ATT_ALLOW_BUBBLE, getAllowBubbles());
         }
         if (getOriginalImportance() != DEFAULT_IMPORTANCE) {
-            out.attribute(null, ATT_ORIG_IMP, Integer.toString(getOriginalImportance()));
+            out.attributeInt(null, ATT_ORIG_IMP, getOriginalImportance());
         }
         if (getParentChannelId() != null) {
             out.attribute(null, ATT_PARENT_CHANNEL, getParentChannelId());
@@ -1044,10 +1069,10 @@ public final class NotificationChannel implements Parcelable {
             out.attribute(null, ATT_CONVERSATION_ID, getConversationId());
         }
         if (isDemoted()) {
-            out.attribute(null, ATT_DEMOTE, Boolean.toString(isDemoted()));
+            out.attributeBoolean(null, ATT_DEMOTE, isDemoted());
         }
         if (isImportantConversation()) {
-            out.attribute(null, ATT_IMP_CONVERSATION, Boolean.toString(isImportantConversation()));
+            out.attributeBoolean(null, ATT_IMP_CONVERSATION, isImportantConversation());
         }
 
         // mImportanceLockedDefaultApp and mImportanceLockedByOEM have a different source of
@@ -1092,6 +1117,7 @@ public final class NotificationChannel implements Parcelable {
         record.put(ATT_VIBRATION, longArrayToString(getVibrationPattern()));
         record.put(ATT_SHOW_BADGE, Boolean.toString(canShowBadge()));
         record.put(ATT_DELETED, Boolean.toString(isDeleted()));
+        record.put(ATT_DELETED_TIME_MS, Long.toString(getDeletedTimeMs()));
         record.put(ATT_GROUP, getGroup());
         record.put(ATT_BLOCKABLE_SYSTEM, isBlockable());
         record.put(ATT_ALLOW_BUBBLE, getAllowBubbles());
@@ -1099,7 +1125,7 @@ public final class NotificationChannel implements Parcelable {
         return record;
     }
 
-    private static AudioAttributes safeAudioAttributes(XmlPullParser parser) {
+    private static AudioAttributes safeAudioAttributes(TypedXmlPullParser parser) {
         int usage = safeInt(parser, ATT_USAGE, AudioAttributes.USAGE_NOTIFICATION);
         int contentType = safeInt(parser, ATT_CONTENT_TYPE,
                 AudioAttributes.CONTENT_TYPE_SONIFICATION);
@@ -1111,32 +1137,20 @@ public final class NotificationChannel implements Parcelable {
                 .build();
     }
 
-    private static Uri safeUri(XmlPullParser parser, String att) {
+    private static Uri safeUri(TypedXmlPullParser parser, String att) {
         final String val = parser.getAttributeValue(null, att);
         return val == null ? null : Uri.parse(val);
     }
 
-    private static int safeInt(XmlPullParser parser, String att, int defValue) {
-        final String val = parser.getAttributeValue(null, att);
-        return tryParseInt(val, defValue);
+    private static int safeInt(TypedXmlPullParser parser, String att, int defValue) {
+        return parser.getAttributeInt(null, att, defValue);
     }
 
-    private static int tryParseInt(String value, int defValue) {
-        if (TextUtils.isEmpty(value)) return defValue;
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException e) {
-            return defValue;
-        }
+    private static boolean safeBool(TypedXmlPullParser parser, String att, boolean defValue) {
+        return parser.getAttributeBoolean(null, att, defValue);
     }
 
-    private static boolean safeBool(XmlPullParser parser, String att, boolean defValue) {
-        final String value = parser.getAttributeValue(null, att);
-        if (TextUtils.isEmpty(value)) return defValue;
-        return Boolean.parseBoolean(value);
-    }
-
-    private static long[] safeLongArray(XmlPullParser parser, String att, long[] defValue) {
+    private static long[] safeLongArray(TypedXmlPullParser parser, String att, long[] defValue) {
         final String attributeValue = parser.getAttributeValue(null, att);
         if (TextUtils.isEmpty(attributeValue)) return defValue;
         String[] values = attributeValue.split(DELIMITER);
@@ -1195,6 +1209,7 @@ public final class NotificationChannel implements Parcelable {
                 && mVibrationEnabled == that.mVibrationEnabled
                 && mShowBadge == that.mShowBadge
                 && isDeleted() == that.isDeleted()
+                && getDeletedTimeMs() == that.getDeletedTimeMs()
                 && isBlockable() == that.isBlockable()
                 && mAllowBubbles == that.mAllowBubbles
                 && Objects.equals(getId(), that.getId())
@@ -1218,8 +1233,8 @@ public final class NotificationChannel implements Parcelable {
         int result = Objects.hash(getId(), getName(), mDesc, getImportance(), mBypassDnd,
                 getLockscreenVisibility(), getSound(), mLights, getLightColor(),
                 getUserLockedFields(),
-                isFgServiceShown(), mVibrationEnabled, mShowBadge, isDeleted(), getGroup(),
-                getAudioAttributes(), isBlockable(), mAllowBubbles,
+                isFgServiceShown(), mVibrationEnabled, mShowBadge, isDeleted(), getDeletedTimeMs(),
+                getGroup(), getAudioAttributes(), isBlockable(), mAllowBubbles,
                 mImportanceLockedByOEM, mImportanceLockedDefaultApp, mOriginalImportance,
                 mParentId, mConversationId, mDemoted, mImportantConvo);
         result = 31 * result + Arrays.hashCode(mVibration);
@@ -1260,6 +1275,7 @@ public final class NotificationChannel implements Parcelable {
                 + ", mVibrationEnabled=" + mVibrationEnabled
                 + ", mShowBadge=" + mShowBadge
                 + ", mDeleted=" + mDeleted
+                + ", mDeletedTimeMs=" + mDeletedTime
                 + ", mGroup='" + mGroup + '\''
                 + ", mAudioAttributes=" + mAudioAttributes
                 + ", mBlockableSystem=" + mBlockableSystem

@@ -208,7 +208,17 @@ public class BiometricManager {
     @NonNull
     @RequiresPermission(TEST_BIOMETRIC)
     public List<SensorProperties> getSensorProperties() {
-        return new ArrayList<>(); // TODO(169459906)
+        try {
+            final List<SensorPropertiesInternal> internalProperties =
+                    mService.getSensorProperties(mContext.getOpPackageName());
+            final List<SensorProperties> properties = new ArrayList<>();
+            for (SensorPropertiesInternal internalProp : internalProperties) {
+                properties.add(SensorProperties.from(internalProp));
+            }
+            return properties;
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
     }
 
     /**
@@ -219,7 +229,27 @@ public class BiometricManager {
     @NonNull
     @RequiresPermission(TEST_BIOMETRIC)
     public BiometricTestSession createTestSession(int sensorId) {
-        return null; // TODO(169459906)
+        try {
+            return new BiometricTestSession(mContext,
+                    mService.createTestSession(sensorId, mContext.getOpPackageName()));
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Retrieves the package where BiometricPrompt's UI is implemented.
+     * @hide
+     */
+    @TestApi
+    @NonNull
+    @RequiresPermission(TEST_BIOMETRIC)
+    public String getUiPackage() {
+        try {
+            return mService.getUiPackage();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
     }
 
     /**
@@ -324,6 +354,27 @@ public class BiometricManager {
             }
         } else {
             Slog.w(TAG, "registerEnabledOnKeyguardCallback(): Service not connected");
+        }
+    }
+
+    /**
+     * Requests all {@link Authenticators.Types#BIOMETRIC_STRONG} sensors to have their
+     * authenticatorId invalidated for the specified user. This happens when enrollments have been
+     * added on devices with multiple biometric sensors.
+     *
+     * @param userId userId that the authenticatorId should be invalidated for
+     * @param fromSensorId sensor that triggered the invalidation request
+     * @hide
+     */
+    @RequiresPermission(USE_BIOMETRIC_INTERNAL)
+    public void invalidateAuthenticatorIds(int userId, int fromSensorId,
+            @NonNull IInvalidationCallback callback) {
+        if (mService != null) {
+            try {
+                mService.invalidateAuthenticatorIds(userId, fromSensorId, callback);
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
         }
     }
 

@@ -17,12 +17,13 @@
 package com.android.wm.shell.pip;
 
 import android.annotation.Nullable;
-import android.app.ActivityManager;
 import android.app.PictureInPictureParams;
 import android.content.ComponentName;
 import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.graphics.Rect;
 
+import com.android.wm.shell.common.annotations.ExternalThread;
 import com.android.wm.shell.pip.phone.PipTouchHandler;
 
 import java.io.PrintWriter;
@@ -31,6 +32,7 @@ import java.util.function.Consumer;
 /**
  * Interface to engage picture in picture feature.
  */
+@ExternalThread
 public interface Pip {
     /**
      * Closes PIP (PIPed activity and PIP system UI).
@@ -78,6 +80,12 @@ public interface Pip {
      * Moves the PIPed activity to the fullscreen and closes PIP system UI.
      */
     default void movePipToFullscreen() {
+    }
+
+    /**
+     * Called when configuration is changed.
+     */
+    default void onConfigurationChanged(Configuration newConfig) {
     }
 
     /**

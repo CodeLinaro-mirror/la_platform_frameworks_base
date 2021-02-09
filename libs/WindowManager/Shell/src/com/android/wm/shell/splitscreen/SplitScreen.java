@@ -16,67 +16,53 @@
 
 package com.android.wm.shell.splitscreen;
 
-import android.graphics.Rect;
-import android.window.WindowContainerToken;
+import android.annotation.IntDef;
+import android.app.ActivityManager;
+
+import androidx.annotation.NonNull;
+
+import com.android.wm.shell.common.annotations.ExternalThread;
 
 import java.io.PrintWriter;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 /**
- * Interface to engage split screen feature.
+ * Interface to engage split-screen feature.
  */
+@ExternalThread
 public interface SplitScreen {
-    /** Called when keyguard showing state changed. */
-    void onKeyguardVisibilityChanged(boolean isShowing);
-
-    /** Returns {@link DividerView}. */
-    DividerView getDividerView();
-
-    /** Returns {@code true} if one of the split screen is in minimized mode. */
-    boolean isMinimized();
-
-    /** Returns {@code true} if the home stack is resizable. */
-    boolean isHomeStackResizable();
-
-    /** Returns {@code true} if the divider is visible. */
-    boolean isDividerVisible();
-
-    /** Switch to minimized state if appropriate. */
-    void setMinimized(boolean minimized);
-
-    /** Called when there's a task undocking. */
-    void onUndockingTask();
-
-    /** Called when app transition finished. */
-    void onAppTransitionFinished();
-
-    /** Dumps current status of Split Screen. */
-    void dump(PrintWriter pw);
-
-    /** Registers listener that gets called whenever the existence of the divider changes. */
-    void registerInSplitScreenListener(Consumer<Boolean> listener);
-
-    /** Unregisters listener that gets called whenever the existence of the divider changes. */
-    void unregisterInSplitScreenListener(Consumer<Boolean> listener);
-
-    /** Registers listener that gets called whenever the split screen bounds changes. */
-    void registerBoundsChangeListener(BiConsumer<Rect, Rect> listener);
-
-    /** @return the container token for the secondary split root task. */
-    WindowContainerToken getSecondaryRoot();
+    /**
+     * Specifies that the side-stage is positioned at the top half of the screen if
+     * in portrait mode or at the left half of the screen if in landscape mode.
+     */
+    int SIDE_STAGE_POSITION_TOP_OR_LEFT = 0;
 
     /**
-     * Splits the primary task if feasible, this is to preserve legacy way to toggle split screen.
-     * Like triggering split screen through long pressing recents app button or through
-     * {@link android.accessibilityservice.AccessibilityService#GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN}.
-     *
-     * @return {@code true} if it successes to split the primary task.
+     * Specifies that the side-stage is positioned at the bottom half of the screen if
+     * in portrait mode or at the right half of the screen if in landscape mode.
      */
-    boolean splitPrimaryTask();
+    int SIDE_STAGE_POSITION_BOTTOM_OR_RIGHT = 1;
 
-    /**
-     * Exits the split to make the primary task fullscreen.
-     */
-    void dismissSplitToPrimaryTask();
+    @IntDef(prefix = { "SIDE_STAGE_POSITION_" }, value = {
+            SIDE_STAGE_POSITION_TOP_OR_LEFT,
+            SIDE_STAGE_POSITION_BOTTOM_OR_RIGHT
+    })
+    @interface SideStagePosition {}
+
+    /** @return {@code true} if split-screen is currently visible. */
+    boolean isSplitScreenVisible();
+    /** Moves a task in the side-stage of split-screen. */
+    boolean moveToSideStage(int taskId, @SideStagePosition int sideStagePosition);
+    /** Moves a task in the side-stage of split-screen. */
+    boolean moveToSideStage(ActivityManager.RunningTaskInfo task,
+            @SideStagePosition int sideStagePosition);
+    /** Removes a task from the side-stage of split-screen. */
+    boolean removeFromSideStage(int taskId);
+    /** Sets the position of the side-stage. */
+    void setSideStagePosition(@SideStagePosition int sideStagePosition);
+    /** Hides the side-stage if it is currently visible. */
+    void setSideStageVisibility(boolean visible);
+    /** Dumps current status of split-screen. */
+    void dump(@NonNull PrintWriter pw, String prefix);
+    /** Called when the shell organizer has been registered. */
+    void onOrganizerRegistered();
 }

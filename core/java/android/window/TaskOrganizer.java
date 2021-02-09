@@ -89,19 +89,19 @@ public class TaskOrganizer extends WindowOrganizer {
      * application is starting. The client is responsible to add/remove the starting window if it
      * has create a starting window for the Task.
      *
-     * @param taskInfo The information about the Task that's available
+     * @param info The information about the Task that's available
      * @param appToken Token of the application being started.
      *        context to for resources
      */
     @BinderThread
-    public void addStartingWindow(@NonNull ActivityManager.RunningTaskInfo taskInfo,
+    public void addStartingWindow(@NonNull StartingWindowInfo info,
             @NonNull IBinder appToken) {}
 
     /**
      * Called when the Task want to remove the starting window.
      */
     @BinderThread
-    public void removeStartingWindow(@NonNull ActivityManager.RunningTaskInfo taskInfo) {}
+    public void removeStartingWindow(int taskId) {}
 
     /**
      * Called when a task with the registered windowing mode can be controlled by this task
@@ -184,19 +184,6 @@ public class TaskOrganizer extends WindowOrganizer {
     }
 
     /**
-     * Set's the root task to launch new tasks into on a display. {@code null} means no launch
-     * root and thus new tasks just end up directly on the display.
-     */
-    @RequiresPermission(android.Manifest.permission.MANAGE_ACTIVITY_TASKS)
-    public void setLaunchRoot(int displayId, @NonNull WindowContainerToken root) {
-        try {
-            mTaskOrganizerController.setLaunchRoot(displayId, root);
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
-    }
-
-    /**
      * Requests that the given task organizer is notified when back is pressed on the root activity
      * of one of its controlled tasks.
      */
@@ -210,15 +197,26 @@ public class TaskOrganizer extends WindowOrganizer {
         }
     }
 
+    /**
+     * Gets the executor to run callbacks on.
+     * @hide
+     */
+    @NonNull
+    public Executor getExecutor() {
+        return mExecutor;
+    }
+
     private final ITaskOrganizer mInterface = new ITaskOrganizer.Stub() {
         @Override
-        public void addStartingWindow(ActivityManager.RunningTaskInfo taskInfo, IBinder appToken) {
-            TaskOrganizer.this.addStartingWindow(taskInfo, appToken);
+
+        public void addStartingWindow(StartingWindowInfo windowInfo,
+                IBinder appToken) {
+            mExecutor.execute(() -> TaskOrganizer.this.addStartingWindow(windowInfo, appToken));
         }
 
         @Override
-        public void removeStartingWindow(ActivityManager.RunningTaskInfo taskInfo) {
-            TaskOrganizer.this.removeStartingWindow(taskInfo);
+        public void removeStartingWindow(int taskId) {
+            mExecutor.execute(() -> TaskOrganizer.this.removeStartingWindow(taskId));
         }
 
         @Override

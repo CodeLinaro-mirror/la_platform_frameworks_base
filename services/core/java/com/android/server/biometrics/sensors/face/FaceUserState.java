@@ -16,22 +16,18 @@
 
 package com.android.server.biometrics.sensors.face;
 
+import android.annotation.NonNull;
 import android.content.Context;
 import android.hardware.face.Face;
-import android.util.AtomicFile;
-import android.util.Slog;
-import android.util.Xml;
+import android.util.TypedXmlPullParser;
+import android.util.TypedXmlSerializer;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.server.biometrics.sensors.BiometricUserState;
 
-import libcore.io.IoUtils;
-
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlSerializer;
 
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 
@@ -74,52 +70,31 @@ public class FaceUserState extends BiometricUserState<Face> {
     }
 
     @Override
-    protected void doWriteState() {
-        AtomicFile destination = new AtomicFile(mFile);
-
-        ArrayList<Face> faces;
+    protected void doWriteState(@NonNull TypedXmlSerializer serializer) throws Exception {
+        final ArrayList<Face> faces;
 
         synchronized (this) {
             faces = getCopy(mBiometrics);
         }
 
-        FileOutputStream out = null;
-        try {
-            out = destination.startWrite();
+        serializer.startTag(null, TAG_FACES);
 
-            XmlSerializer serializer = Xml.newSerializer();
-            serializer.setOutput(out, "utf-8");
-            serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
-            serializer.startDocument(null, true);
-            serializer.startTag(null, TAG_FACES);
-
-            final int count = faces.size();
-            for (int i = 0; i < count; i++) {
-                Face f = faces.get(i);
-                serializer.startTag(null, TAG_FACE);
-                serializer.attribute(null, ATTR_FACE_ID, Integer.toString(f.getBiometricId()));
-                serializer.attribute(null, ATTR_NAME, f.getName().toString());
-                serializer.attribute(null, ATTR_DEVICE_ID, Long.toString(f.getDeviceId()));
-                serializer.endTag(null, TAG_FACE);
-            }
-
-            serializer.endTag(null, TAG_FACES);
-            serializer.endDocument();
-            destination.finishWrite(out);
-
-            // Any error while writing is fatal.
-        } catch (Throwable t) {
-            Slog.wtf(TAG, "Failed to write settings, restoring backup", t);
-            destination.failWrite(out);
-            throw new IllegalStateException("Failed to write faces", t);
-        } finally {
-            IoUtils.closeQuietly(out);
+        final int count = faces.size();
+        for (int i = 0; i < count; i++) {
+            Face f = faces.get(i);
+            serializer.startTag(null, TAG_FACE);
+            serializer.attributeInt(null, ATTR_FACE_ID, f.getBiometricId());
+            serializer.attribute(null, ATTR_NAME, f.getName().toString());
+            serializer.attributeLong(null, ATTR_DEVICE_ID, f.getDeviceId());
+            serializer.endTag(null, TAG_FACE);
         }
+
+        serializer.endTag(null, TAG_FACES);
     }
 
     @GuardedBy("this")
     @Override
-    protected void parseBiometricsLocked(XmlPullParser parser)
+    protected void parseBiometricsLocked(TypedXmlPullParser parser)
             throws IOException, XmlPullParserException {
         final int outerDepth = parser.getDepth();
         int type;
@@ -132,9 +107,9 @@ public class FaceUserState extends BiometricUserState<Face> {
             String tagName = parser.getName();
             if (tagName.equals(TAG_FACE)) {
                 String name = parser.getAttributeValue(null, ATTR_NAME);
-                String faceId = parser.getAttributeValue(null, ATTR_FACE_ID);
-                String deviceId = parser.getAttributeValue(null, ATTR_DEVICE_ID);
-                mBiometrics.add(new Face(name, Integer.parseInt(faceId), Integer.parseInt(deviceId)));
+                int faceId = parser.getAttributeInt(null, ATTR_FACE_ID);
+                long deviceId = parser.getAttributeLong(null, ATTR_DEVICE_ID);
+                mBiometrics.add(new Face(name, faceId, deviceId));
             }
         }
     }

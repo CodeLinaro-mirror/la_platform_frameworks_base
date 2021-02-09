@@ -24,6 +24,7 @@ import android.os.RemoteException;
 import android.view.SurfaceControl;
 
 import java.util.List;
+import java.util.concurrent.Executor;
 
 /**
  * Interface for WindowManager to delegate control of display areas.
@@ -84,6 +85,21 @@ public class DisplayAreaOrganizer extends WindowOrganizer {
     public static final int FEATURE_HIDE_DISPLAY_CUTOUT = FEATURE_SYSTEM_FIRST + 6;
 
     /**
+     * Display area that the IME container can be placed in. Should be enabled on every root
+     * hierarchy if IME container may be reparented to that hierarchy when the IME target changed.
+     * @hide
+     */
+    public static final int FEATURE_IME_PLACEHOLDER = FEATURE_SYSTEM_FIRST + 7;
+
+    /**
+     * Display area for one handed background layer, which preventing when user
+     * turning the Dark theme on, they can not clearly identify the screen has entered
+     * one handed mode.
+     * @hide
+     */
+    public static final int FEATURE_ONE_HANDED_BACKGROUND_PANEL = FEATURE_SYSTEM_FIRST + 8;
+
+    /**
      * The last boundary of display area for system features
      */
     public static final int FEATURE_SYSTEM_LAST = 10_000;
@@ -92,6 +108,37 @@ public class DisplayAreaOrganizer extends WindowOrganizer {
      * Vendor specific display area definition can start with this value.
      */
     public static final int FEATURE_VENDOR_FIRST = FEATURE_SYSTEM_LAST + 1;
+
+    /**
+     * Last possible vendor specific display area id.
+     * @hide
+     */
+    public static final int FEATURE_VENDOR_LAST = FEATURE_VENDOR_FIRST + 10_000;
+
+    /**
+     * Task display areas that can be created at runtime start with this value.
+     * @see #createTaskDisplayArea(int, int, String)
+     * @hide
+     */
+    public static final int FEATURE_RUNTIME_TASK_CONTAINER_FIRST = FEATURE_VENDOR_LAST + 1;
+
+    // Callbacks WM Core are posted on this executor if it isn't null, otherwise direct calls are
+    // made on the incoming binder call.
+    private final Executor mExecutor;
+
+    /** @hide */
+    public DisplayAreaOrganizer(@NonNull Executor executor) {
+        mExecutor = executor;
+    }
+
+    /**
+     * Gets the executor to run callbacks on.
+     * @hide
+     */
+    @NonNull
+    public Executor getExecutor() {
+        return mExecutor;
+    }
 
     /**
      * Registers a DisplayAreaOrganizer to manage display areas for a given feature. A feature can
@@ -125,6 +172,54 @@ public class DisplayAreaOrganizer extends WindowOrganizer {
     }
 
     /**
+     * Creates a persistent {@link com.android.server.wm.TaskDisplayArea}.
+     *
+     * The new created TDA is organized by the organizer, and will be deleted on calling
+     * {@link #deleteTaskDisplayArea(WindowContainerToken)} or {@link #unregisterOrganizer()}.
+     *
+     * @param displayId the display to create the new TDA in.
+     * @param parentFeatureId the parent to create the new TDA in. If it is a
+     *                        {@link com.android.server.wm.RootDisplayArea}, the new TDA will be
+     *                        placed as the topmost TDA. If it is another TDA, the new TDA will be
+     *                        placed as the topmost child.
+     *                        Caller can use {@link #FEATURE_ROOT} as the root of the logical
+     *                        display, or {@link #FEATURE_DEFAULT_TASK_CONTAINER} as the default
+     *                        TDA.
+     * @param name the name for the new task display area.
+     * @return the new created task display area.
+     * @throws IllegalArgumentException if failed to create a new task display area.
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.MANAGE_ACTIVITY_TASKS)
+    @CallSuper
+    @NonNull
+    public DisplayAreaAppearedInfo createTaskDisplayArea(int displayId, int parentFeatureId,
+            @NonNull String name) {
+        try {
+            return getController().createTaskDisplayArea(
+                    mInterface, displayId, parentFeatureId, name);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Deletes a persistent task display area. It can only be one that created by an organizer.
+     *
+     * @throws IllegalArgumentException if failed to delete the task display area.
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.MANAGE_ACTIVITY_TASKS)
+    @CallSuper
+    public void deleteTaskDisplayArea(@NonNull WindowContainerToken taskDisplayArea) {
+        try {
+            getController().deleteTaskDisplayArea(taskDisplayArea);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Called when a DisplayArea of the registered window type can be controlled by this organizer.
      * It will not be called for the DisplayAreas that exist when {@link #registerOrganizer(int)} is
      * called.
@@ -144,17 +239,20 @@ public class DisplayAreaOrganizer extends WindowOrganizer {
         @Override
         public void onDisplayAreaAppeared(@NonNull DisplayAreaInfo displayAreaInfo,
                 @NonNull SurfaceControl leash) {
-            DisplayAreaOrganizer.this.onDisplayAreaAppeared(displayAreaInfo, leash);
+            mExecutor.execute(
+                    () -> DisplayAreaOrganizer.this.onDisplayAreaAppeared(displayAreaInfo, leash));
         }
 
         @Override
         public void onDisplayAreaVanished(@NonNull DisplayAreaInfo displayAreaInfo) {
-            DisplayAreaOrganizer.this.onDisplayAreaVanished(displayAreaInfo);
+            mExecutor.execute(
+                    () -> DisplayAreaOrganizer.this.onDisplayAreaVanished(displayAreaInfo));
         }
 
         @Override
         public void onDisplayAreaInfoChanged(@NonNull DisplayAreaInfo displayAreaInfo) {
-            DisplayAreaOrganizer.this.onDisplayAreaInfoChanged(displayAreaInfo);
+            mExecutor.execute(
+                    () -> DisplayAreaOrganizer.this.onDisplayAreaInfoChanged(displayAreaInfo));
         }
     };
 

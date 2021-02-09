@@ -30,7 +30,6 @@ import android.view.View;
 import com.android.internal.util.ArrayUtils;
 
 import dalvik.annotation.optimization.CriticalNative;
-import dalvik.annotation.optimization.FastNative;
 
 import libcore.util.NativeAllocationRegistry;
 
@@ -406,8 +405,7 @@ public final class RenderNode {
         }
         RecordingCanvas canvas = mCurrentRecordingCanvas;
         mCurrentRecordingCanvas = null;
-        long displayList = canvas.finishRecording();
-        nSetDisplayList(mNativeRenderNode, displayList);
+        canvas.finishRecording(this);
         canvas.recycle();
     }
 
@@ -438,7 +436,7 @@ public final class RenderNode {
      * obsolete resources after related resources are gone.
      */
     public void discardDisplayList() {
-        nSetDisplayList(mNativeRenderNode, 0);
+        nDiscardDisplayList(mNativeRenderNode);
     }
 
     /**
@@ -858,9 +856,10 @@ public final class RenderNode {
      * be blurred when this RenderNode is drawn into the destination.
      * @param renderEffect to be applied to the RenderNode. Passing null clears all previously
      *          configured RenderEffects
+     * @return True if the value changed, false if the new value was the same as the previous value.
      */
-    public void setRenderEffect(@Nullable RenderEffect renderEffect) {
-        nSetRenderEffect(mNativeRenderNode,
+    public boolean setRenderEffect(@Nullable RenderEffect renderEffect) {
+        return nSetRenderEffect(mNativeRenderNode,
                 renderEffect != null ? renderEffect.getNativeInstance() : 0);
     }
 
@@ -1527,18 +1526,12 @@ public final class RenderNode {
 
     private static native void nEndAllAnimators(long renderNode);
 
-
-    ///////////////////////////////////////////////////////////////////////////
-    // @FastNative methods
-    ///////////////////////////////////////////////////////////////////////////
-
-    @FastNative
-    private static native void nSetDisplayList(long renderNode, long newData);
-
-
     ///////////////////////////////////////////////////////////////////////////
     // @CriticalNative methods
     ///////////////////////////////////////////////////////////////////////////
+
+    @CriticalNative
+    private static native void nDiscardDisplayList(long renderNode);
 
     @CriticalNative
     private static native boolean nIsValid(long renderNode);
@@ -1670,7 +1663,7 @@ public final class RenderNode {
     private static native boolean nSetAlpha(long renderNode, float alpha);
 
     @CriticalNative
-    private static native void nSetRenderEffect(long renderNode, long renderEffect);
+    private static native boolean nSetRenderEffect(long renderNode, long renderEffect);
 
     @CriticalNative
     private static native boolean nSetHasOverlappingRendering(long renderNode,

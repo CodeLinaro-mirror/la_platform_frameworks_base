@@ -45,6 +45,7 @@ import java.io.File;
 import java.util.Comparator;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * Information about a storage volume that may be mounted. A volume may be a
@@ -198,6 +199,21 @@ public class VolumeInfo implements Parcelable {
         fsLabel = parcel.readString8();
         path = parcel.readString8();
         internalPath = parcel.readString8();
+    }
+
+    public VolumeInfo(VolumeInfo volumeInfo) {
+        this.id = volumeInfo.id;
+        this.type = volumeInfo.type;
+        this.disk = volumeInfo.disk;
+        this.partGuid = volumeInfo.partGuid;
+        this.mountFlags = volumeInfo.mountFlags;
+        this.mountUserId = volumeInfo.mountUserId;
+        this.state = volumeInfo.state;
+        this.fsType = volumeInfo.fsType;
+        this.fsUuid = volumeInfo.fsUuid;
+        this.fsLabel = volumeInfo.fsLabel;
+        this.path = volumeInfo.path;
+        this.internalPath = volumeInfo.internalPath;
     }
 
     @UnsupportedAppUsage
@@ -386,6 +402,7 @@ public class VolumeInfo implements Parcelable {
         }
 
         String description = null;
+        UUID uuid = null;
         String derivedFsUuid = fsUuid;
         long maxFileSize = 0;
 
@@ -395,7 +412,10 @@ public class VolumeInfo implements Parcelable {
             final VolumeInfo privateVol = storage.findPrivateForEmulated(this);
             if (privateVol != null) {
                 description = storage.getBestVolumeDescription(privateVol);
+                uuid = StorageManager.convert(privateVol.fsUuid);
                 derivedFsUuid = privateVol.fsUuid;
+            } else {
+                uuid = StorageManager.UUID_DEFAULT;
             }
 
             if (isPrimaryEmulatedForUser(userId)) {
@@ -424,7 +444,7 @@ public class VolumeInfo implements Parcelable {
 
         return new StorageVolume(id, userPath, internalPath, description, isPrimary(), removable,
                 emulated, allowMassStorage, maxFileSize, new UserHandle(userId),
-                derivedFsUuid, envState);
+                uuid, derivedFsUuid, envState);
     }
 
     @UnsupportedAppUsage

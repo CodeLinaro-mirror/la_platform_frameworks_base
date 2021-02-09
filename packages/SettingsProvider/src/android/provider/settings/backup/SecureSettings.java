@@ -60,7 +60,7 @@ public class SecureSettings {
         Settings.Secure.ACCESSIBILITY_CAPTIONING_TYPEFACE,
         Settings.Secure.ACCESSIBILITY_CAPTIONING_FONT_SCALE,
         Settings.Secure.ACCESSIBILITY_CAPTIONING_WINDOW_COLOR,
-        Settings.Secure.FORCE_BOLD_TEXT,
+        Settings.Secure.FONT_WEIGHT_ADJUSTMENT,
         Settings.Secure.REDUCE_BRIGHT_COLORS_LEVEL,
         Settings.Secure.REDUCE_BRIGHT_COLORS_PERSIST_ACROSS_REBOOTS,
         Settings.Secure.TTS_DEFAULT_RATE,
@@ -180,6 +180,10 @@ public class SecureSettings {
         Settings.Secure.EMERGENCY_GESTURE_SOUND_ENABLED,
         Settings.Secure.ADAPTIVE_CONNECTIVITY_ENABLED,
         Settings.Secure.ASSIST_HANDLES_LEARNING_TIME_ELAPSED_MILLIS,
-        Settings.Secure.ASSIST_HANDLES_LEARNING_EVENT_COUNT
+        Settings.Secure.ASSIST_HANDLES_LEARNING_EVENT_COUNT,
+        Settings.Secure.ACCESSIBILITY_BUTTON_MODE,
+        Settings.Secure.ACCESSIBILITY_FLOATING_MENU_SIZE,
+        Settings.Secure.ACCESSIBILITY_FLOATING_MENU_ICON_TYPE,
+        Settings.Secure.ACCESSIBILITY_FLOATING_MENU_OPACITY
     };
 }

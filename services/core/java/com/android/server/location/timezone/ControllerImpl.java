@@ -16,22 +16,23 @@
 
 package com.android.server.location.timezone;
 
-import static android.location.timezone.LocationTimeZoneEvent.EVENT_TYPE_PERMANENT_FAILURE;
-import static android.location.timezone.LocationTimeZoneEvent.EVENT_TYPE_SUCCESS;
-import static android.location.timezone.LocationTimeZoneEvent.EVENT_TYPE_UNCERTAIN;
-
 import static com.android.server.location.timezone.LocationTimeZoneManagerService.debugLog;
 import static com.android.server.location.timezone.LocationTimeZoneManagerService.warnLog;
 import static com.android.server.location.timezone.LocationTimeZoneProvider.ProviderState;
-import static com.android.server.location.timezone.LocationTimeZoneProvider.ProviderState.PROVIDER_STATE_DISABLED;
-import static com.android.server.location.timezone.LocationTimeZoneProvider.ProviderState.PROVIDER_STATE_ENABLED_CERTAIN;
-import static com.android.server.location.timezone.LocationTimeZoneProvider.ProviderState.PROVIDER_STATE_ENABLED_INITIALIZING;
-import static com.android.server.location.timezone.LocationTimeZoneProvider.ProviderState.PROVIDER_STATE_ENABLED_UNCERTAIN;
+import static com.android.server.location.timezone.LocationTimeZoneProvider.ProviderState.PROVIDER_STATE_DESTROYED;
 import static com.android.server.location.timezone.LocationTimeZoneProvider.ProviderState.PROVIDER_STATE_PERM_FAILED;
+import static com.android.server.location.timezone.LocationTimeZoneProvider.ProviderState.PROVIDER_STATE_STARTED_CERTAIN;
+import static com.android.server.location.timezone.LocationTimeZoneProvider.ProviderState.PROVIDER_STATE_STARTED_INITIALIZING;
+import static com.android.server.location.timezone.LocationTimeZoneProvider.ProviderState.PROVIDER_STATE_STARTED_UNCERTAIN;
+import static com.android.server.location.timezone.LocationTimeZoneProvider.ProviderState.PROVIDER_STATE_STOPPED;
+import static com.android.server.location.timezone.TimeZoneProviderEvent.EVENT_TYPE_PERMANENT_FAILURE;
+import static com.android.server.location.timezone.TimeZoneProviderEvent.EVENT_TYPE_SUGGESTION;
+import static com.android.server.location.timezone.TimeZoneProviderEvent.EVENT_TYPE_UNCERTAIN;
 
+import android.annotation.DurationMillisLong;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.location.timezone.LocationTimeZoneEvent;
+import android.os.RemoteCallback;
 import android.util.IndentingPrintWriter;
 
 import com.android.internal.annotations.GuardedBy;
@@ -47,9 +48,9 @@ import java.util.Objects;
  * A real implementation of {@link LocationTimeZoneProviderController} that supports a primary and a
  * secondary {@link LocationTimeZoneProvider}.
  *
- * <p>The primary is used until it fails or becomes uncertain. The secondary will then be enabled.
+ * <p>The primary is used until it fails or becomes uncertain. The secondary will then be started.
  * The controller will immediately make suggestions based on "certain" {@link
- * LocationTimeZoneEvent}s, i.e. events that demonstrate the provider is certain what the time zone
+ * TimeZoneProviderEvent}s, i.e. events that demonstrate the provider is certain what the time zone
  * is. The controller will not make immediate suggestions based on "uncertain" events, giving
  * providers time to change their mind. This also gives the secondary provider time to initialize
  * when the primary becomes uncertain.
@@ -71,6 +72,10 @@ class ControllerImpl extends LocationTimeZoneProviderController {
     @GuardedBy("mSharedLock")
     // Non-null after initialize()
     private Callback mCallback;
+
+    /** Indicates both providers have completed initialization. */
+    @GuardedBy("mSharedLock")
+    private boolean mProvidersInitialized;
 
     /**
      * Used for scheduling uncertainty timeouts, i.e after a provider has reported uncertainty.
@@ -107,8 +112,9 @@ class ControllerImpl extends LocationTimeZoneProviderController {
                     ControllerImpl.this::onProviderStateChange;
             mPrimaryProvider.initialize(providerListener);
             mSecondaryProvider.initialize(providerListener);
+            mProvidersInitialized = true;
 
-            alterProvidersEnabledStateIfRequired(
+            alterProvidersStartedStateIfRequired(
                     null /* oldConfiguration */, mCurrentUserConfiguration);
         }
     }
@@ -118,7 +124,7 @@ class ControllerImpl extends LocationTimeZoneProviderController {
         mThreadingDomain.assertCurrentThread();
 
         synchronized (mSharedLock) {
-            debugLog("onEnvironmentConfigChanged()");
+            debugLog("onConfigChanged()");
 
             ConfigurationInternal oldConfig = mCurrentUserConfiguration;
             ConfigurationInternal newConfig = mEnvironment.getCurrentUserConfigurationInternal();
@@ -126,15 +132,15 @@ class ControllerImpl extends LocationTimeZoneProviderController {
 
             if (!newConfig.equals(oldConfig)) {
                 if (newConfig.getUserId() != oldConfig.getUserId()) {
-                    // If the user changed, disable the providers if needed. They may be re-enabled
+                    // If the user changed, stop the providers if needed. They may be re-started
                     // for the new user immediately afterwards if their settings allow.
                     debugLog("User changed. old=" + oldConfig.getUserId()
-                            + ", new=" + newConfig.getUserId() + ": Disabling providers");
-                    disableProviders();
+                            + ", new=" + newConfig.getUserId() + ": Stopping providers");
+                    stopProviders();
 
-                    alterProvidersEnabledStateIfRequired(null /* oldConfiguration */, newConfig);
+                    alterProvidersStartedStateIfRequired(null /* oldConfiguration */, newConfig);
                 } else {
-                    alterProvidersEnabledStateIfRequired(oldConfig, newConfig);
+                    alterProvidersStartedStateIfRequired(oldConfig, newConfig);
                 }
             }
         }
@@ -146,43 +152,62 @@ class ControllerImpl extends LocationTimeZoneProviderController {
     }
 
     @Override
+    @DurationMillisLong
     long getUncertaintyTimeoutDelayMillis() {
         return mUncertaintyTimeoutQueue.getQueuedDelayMillis();
     }
 
-    @GuardedBy("mSharedLock")
-    private void disableProviders() {
-        disableProviderIfEnabled(mPrimaryProvider);
-        disableProviderIfEnabled(mSecondaryProvider);
+    @Override
+    void destroy() {
+        mThreadingDomain.assertCurrentThread();
 
-        // By definition, if both providers are disabled, the controller is uncertain.
-        cancelUncertaintyTimeout();
-    }
+        synchronized (mSharedLock) {
+            stopProviders();
+            mPrimaryProvider.destroy();
+            mSecondaryProvider.destroy();
 
-    @GuardedBy("mSharedLock")
-    private void disableProviderIfEnabled(@NonNull LocationTimeZoneProvider provider) {
-        if (provider.getCurrentState().isEnabled()) {
-            disableProvider(provider);
+            // If the controller has made a "certain" suggestion, it should make an uncertain
+            // suggestion to cancel it.
+            if (mLastSuggestion != null && mLastSuggestion.getZoneIds() != null) {
+                makeSuggestion(createUncertainSuggestion("Controller is destroyed"));
+            }
         }
     }
 
     @GuardedBy("mSharedLock")
-    private void disableProvider(@NonNull LocationTimeZoneProvider provider) {
+    private void stopProviders() {
+        stopProviderIfStarted(mPrimaryProvider);
+        stopProviderIfStarted(mSecondaryProvider);
+
+        // By definition, if both providers are stopped, the controller is uncertain.
+        cancelUncertaintyTimeout();
+    }
+
+    @GuardedBy("mSharedLock")
+    private void stopProviderIfStarted(@NonNull LocationTimeZoneProvider provider) {
+        if (provider.getCurrentState().isStarted()) {
+            stopProvider(provider);
+        }
+    }
+
+    @GuardedBy("mSharedLock")
+    private void stopProvider(@NonNull LocationTimeZoneProvider provider) {
         ProviderState providerState = provider.getCurrentState();
         switch (providerState.stateEnum) {
-            case PROVIDER_STATE_DISABLED: {
-                debugLog("No need to disable " + provider + ": already disabled");
+            case PROVIDER_STATE_STOPPED: {
+                debugLog("No need to stop " + provider + ": already stopped");
                 break;
             }
-            case PROVIDER_STATE_ENABLED_INITIALIZING:
-            case PROVIDER_STATE_ENABLED_CERTAIN:
-            case PROVIDER_STATE_ENABLED_UNCERTAIN: {
-                debugLog("Disabling " + provider);
-                provider.disable();
+            case PROVIDER_STATE_STARTED_INITIALIZING:
+            case PROVIDER_STATE_STARTED_CERTAIN:
+            case PROVIDER_STATE_STARTED_UNCERTAIN: {
+                debugLog("Stopping " + provider);
+                provider.stopUpdates();
                 break;
             }
-            case PROVIDER_STATE_PERM_FAILED: {
-                debugLog("Unable to disable " + provider + ": it is perm failed");
+            case PROVIDER_STATE_PERM_FAILED:
+            case PROVIDER_STATE_DESTROYED: {
+                debugLog("Unable to stop " + provider + ": it is terminated.");
                 break;
             }
             default: {
@@ -193,20 +218,20 @@ class ControllerImpl extends LocationTimeZoneProviderController {
     }
 
     /**
-     * Sets the providers into the correct enabled/disabled state for the {@code newConfiguration}
+     * Sets the providers into the correct started/stopped state for the {@code newConfiguration}
      * and, if there is a provider state change, makes any suggestions required to inform the
      * downstream time zone detection code.
      *
      * <p>This is a utility method that exists to avoid duplicated logic for the various cases when
-     * provider enabled / disabled state may need to be set or changed, e.g. during initialization
+     * provider started / stopped state may need to be set or changed, e.g. during initialization
      * or when a new configuration has been received.
      */
     @GuardedBy("mSharedLock")
-    private void alterProvidersEnabledStateIfRequired(
+    private void alterProvidersStartedStateIfRequired(
             @Nullable ConfigurationInternal oldConfiguration,
             @NonNull ConfigurationInternal newConfiguration) {
 
-        // Provider enabled / disabled states only need to be changed if geoDetectionEnabled has
+        // Provider started / stopped states only need to be changed if geoDetectionEnabled has
         // changed.
         boolean oldGeoDetectionEnabled = oldConfiguration != null
                 && oldConfiguration.getGeoDetectionEnabledBehavior();
@@ -216,28 +241,28 @@ class ControllerImpl extends LocationTimeZoneProviderController {
         }
 
         // The check above ensures that the logic below only executes if providers are going from
-        // {enabled *} -> {disabled}, or {disabled} -> {enabled initializing}. If this changes in
-        // future and there could be {enabled *} -> {enabled *} cases, or cases where the provider
-        // can't be assumed to go straight to the {enabled initializing} state, then the logic below
+        // {started *} -> {stopped}, or {stopped} -> {started initializing}. If this changes in
+        // future and there could be {started *} -> {started *} cases, or cases where the provider
+        // can't be assumed to go straight to the {started initializing} state, then the logic below
         // would need to cover extra conditions, for example:
-        // 1) If the primary is in {enabled uncertain}, the secondary should be enabled.
+        // 1) If the primary is in {started uncertain}, the secondary should be started.
         // 2) If (1), and the secondary instantly enters the {perm failed} state, the uncertainty
-        //    timeout started when the primary entered {enabled uncertain} should be cancelled.
+        //    timeout started when the primary entered {started uncertain} should be cancelled.
 
         if (newGeoDetectionEnabled) {
-            // Try to enable the primary provider.
-            tryEnableProvider(mPrimaryProvider, newConfiguration);
+            // Try to start the primary provider.
+            tryStartProvider(mPrimaryProvider, newConfiguration);
 
-            // The secondary should only ever be enabled if the primary now isn't enabled (i.e. it
-            // couldn't become {enabled initializing} because it is {perm failed}).
+            // The secondary should only ever be started if the primary now isn't started (i.e. it
+            // couldn't become {started initializing} because it is {perm failed}).
             ProviderState newPrimaryState = mPrimaryProvider.getCurrentState();
-            if (!newPrimaryState.isEnabled()) {
-                // If the primary provider is {perm failed} then the controller must try to enable
+            if (!newPrimaryState.isStarted()) {
+                // If the primary provider is {perm failed} then the controller must try to start
                 // the secondary.
-                tryEnableProvider(mSecondaryProvider, newConfiguration);
+                tryStartProvider(mSecondaryProvider, newConfiguration);
 
                 ProviderState newSecondaryState = mSecondaryProvider.getCurrentState();
-                if (!newSecondaryState.isEnabled()) {
+                if (!newSecondaryState.isStarted()) {
                     // If both providers are {perm failed} then the controller immediately
                     // becomes uncertain.
                     GeolocationTimeZoneSuggestion suggestion = createUncertainSuggestion(
@@ -248,7 +273,7 @@ class ControllerImpl extends LocationTimeZoneProviderController {
                 }
             }
         } else {
-            disableProviders();
+            stopProviders();
 
             // There can be an uncertainty timeout set if the controller most recently received
             // an uncertain event. This is a no-op if there isn't a timeout set.
@@ -257,34 +282,36 @@ class ControllerImpl extends LocationTimeZoneProviderController {
             // If a previous "certain" suggestion has been made, then a new "uncertain"
             // suggestion must now be made to indicate the controller {does not / no longer has}
             // an opinion and will not be sending further updates (until at least the config
-            // changes again and providers are re-enabled).
+            // changes again and providers are re-started).
             if (mLastSuggestion != null && mLastSuggestion.getZoneIds() != null) {
                 GeolocationTimeZoneSuggestion suggestion = createUncertainSuggestion(
-                        "Provider is disabled:"
+                        "Provider is stopped:"
                                 + " primary=" + mPrimaryProvider.getCurrentState());
                 makeSuggestion(suggestion);
             }
         }
     }
 
-    private void tryEnableProvider(@NonNull LocationTimeZoneProvider provider,
+    private void tryStartProvider(@NonNull LocationTimeZoneProvider provider,
             @NonNull ConfigurationInternal configuration) {
         ProviderState providerState = provider.getCurrentState();
         switch (providerState.stateEnum) {
-            case PROVIDER_STATE_DISABLED: {
+            case PROVIDER_STATE_STOPPED: {
                 debugLog("Enabling " + provider);
-                provider.enable(configuration, mEnvironment.getProviderInitializationTimeout(),
+                provider.startUpdates(configuration,
+                        mEnvironment.getProviderInitializationTimeout(),
                         mEnvironment.getProviderInitializationTimeoutFuzz());
                 break;
             }
-            case PROVIDER_STATE_ENABLED_INITIALIZING:
-            case PROVIDER_STATE_ENABLED_CERTAIN:
-            case PROVIDER_STATE_ENABLED_UNCERTAIN: {
-                debugLog("No need to enable " + provider + ": already enabled");
+            case PROVIDER_STATE_STARTED_INITIALIZING:
+            case PROVIDER_STATE_STARTED_CERTAIN:
+            case PROVIDER_STATE_STARTED_UNCERTAIN: {
+                debugLog("No need to start " + provider + ": already started");
                 break;
             }
-            case PROVIDER_STATE_PERM_FAILED: {
-                debugLog("Unable to enable " + provider + ": it is perm failed");
+            case PROVIDER_STATE_PERM_FAILED:
+            case PROVIDER_STATE_DESTROYED: {
+                debugLog("Unable to start " + provider + ": it is terminated");
                 break;
             }
             default: {
@@ -300,21 +327,34 @@ class ControllerImpl extends LocationTimeZoneProviderController {
         assertProviderKnown(provider);
 
         synchronized (mSharedLock) {
+            // Ignore provider state changes during initialization. e.g. if the primary provider
+            // moves to PROVIDER_STATE_PERM_FAILED during initialization, the secondary will not
+            // be ready to take over yet.
+            if (!mProvidersInitialized) {
+                warnLog("onProviderStateChange: Ignoring provider state change because both"
+                        + " providers have not yet completed initialization."
+                        + " providerState=" + providerState);
+                return;
+            }
+
             switch (providerState.stateEnum) {
-                case PROVIDER_STATE_DISABLED: {
-                    // This should never happen: entering disabled does not trigger a state change.
-                    warnLog("onProviderStateChange: Unexpected state change for disabled provider,"
+                case PROVIDER_STATE_STARTED_INITIALIZING:
+                case PROVIDER_STATE_STOPPED:
+                case PROVIDER_STATE_DESTROYED: {
+                    // This should never happen: entering initializing, stopped or destroyed are
+                    // triggered by the controller so and should not trigger a state change
+                    // callback.
+                    warnLog("onProviderStateChange: Unexpected state change for provider,"
                             + " provider=" + provider);
                     break;
                 }
-                case PROVIDER_STATE_ENABLED_INITIALIZING:
-                case PROVIDER_STATE_ENABLED_CERTAIN:
-                case PROVIDER_STATE_ENABLED_UNCERTAIN: {
-                    // Entering enabled does not trigger a state change, so this only happens if an
-                    // event is received while the provider is enabled.
+                case PROVIDER_STATE_STARTED_CERTAIN:
+                case PROVIDER_STATE_STARTED_UNCERTAIN: {
+                    // These are valid and only happen if an event is received while the provider is
+                    // started.
                     debugLog("onProviderStateChange: Received notification of a state change while"
-                            + " enabled, provider=" + provider);
-                    handleProviderEnabledStateChange(providerState);
+                            + " started, provider=" + provider);
+                    handleProviderStartedStateChange(providerState);
                     break;
                 }
                 case PROVIDER_STATE_PERM_FAILED: {
@@ -345,19 +385,20 @@ class ControllerImpl extends LocationTimeZoneProviderController {
         ProviderState primaryCurrentState = mPrimaryProvider.getCurrentState();
         ProviderState secondaryCurrentState = mSecondaryProvider.getCurrentState();
 
-        // If a provider has failed, the other may need to be enabled.
+        // If a provider has failed, the other may need to be started.
         if (failedProvider == mPrimaryProvider) {
-            if (secondaryCurrentState.stateEnum != PROVIDER_STATE_PERM_FAILED) {
-                // The primary must have failed. Try to enable the secondary. This does nothing if
-                // the provider is already enabled, and will leave the provider in
-                // {enabled initializing} if the provider is disabled.
-                tryEnableProvider(mSecondaryProvider, mCurrentUserConfiguration);
+            if (!secondaryCurrentState.isTerminated()) {
+                // Try to start the secondary. This does nothing if the provider is already
+                // started, and will leave the provider in {started initializing} if the provider is
+                // stopped.
+                tryStartProvider(mSecondaryProvider, mCurrentUserConfiguration);
             }
         } else if (failedProvider == mSecondaryProvider) {
-            // No-op: The secondary will only be active if the primary is uncertain or is failed.
-            // So, there the primary should not need to be enabled when the secondary fails.
-            if (primaryCurrentState.stateEnum != PROVIDER_STATE_ENABLED_UNCERTAIN
-                    && primaryCurrentState.stateEnum != PROVIDER_STATE_PERM_FAILED) {
+            // No-op: The secondary will only be active if the primary is uncertain or is
+            // terminated. So, there the primary should not need to be started when the secondary
+            // fails.
+            if (primaryCurrentState.stateEnum != PROVIDER_STATE_STARTED_UNCERTAIN
+                    && !primaryCurrentState.isTerminated()) {
                 warnLog("Secondary provider unexpected reported a failure:"
                         + " failed provider=" + failedProvider.getName()
                         + ", primary provider=" + mPrimaryProvider
@@ -365,19 +406,18 @@ class ControllerImpl extends LocationTimeZoneProviderController {
             }
         }
 
-        // If both providers are now failed, the controller needs to tell the next component in the
-        // time zone detection process.
-        if (primaryCurrentState.stateEnum == PROVIDER_STATE_PERM_FAILED
-                && secondaryCurrentState.stateEnum == PROVIDER_STATE_PERM_FAILED) {
+        // If both providers are now terminated, the controller needs to tell the next component in
+        // the time zone detection process.
+        if (primaryCurrentState.isTerminated() && secondaryCurrentState.isTerminated()) {
 
-            // If both providers are newly failed then the controller is uncertain by definition
+            // If both providers are newly terminated then the controller is uncertain by definition
             // and it will never recover so it can send a suggestion immediately.
             cancelUncertaintyTimeout();
 
-            // If both providers are now failed, then a suggestion must be sent informing the time
-            // zone detector that there are no further updates coming in future.
+            // If both providers are now terminated, then a suggestion must be sent informing the
+            // time zone detector that there are no further updates coming in future.
             GeolocationTimeZoneSuggestion suggestion = createUncertainSuggestion(
-                    "Both providers are permanently failed:"
+                    "Both providers are terminated:"
                             + " primary=" + primaryCurrentState.provider
                             + ", secondary=" + secondaryCurrentState.provider);
             makeSuggestion(suggestion);
@@ -385,16 +425,16 @@ class ControllerImpl extends LocationTimeZoneProviderController {
     }
 
     /**
-     * Called when a provider has changed state but just moved from one enabled state to another
-     * enabled state, usually as a result of a new {@link LocationTimeZoneEvent} being received.
+     * Called when a provider has changed state but just moved from one started state to another
+     * started state, usually as a result of a new {@link TimeZoneProviderEvent} being received.
      * However, there are rare cases where the event can also be null.
      */
     @GuardedBy("mSharedLock")
-    private void handleProviderEnabledStateChange(@NonNull ProviderState providerState) {
+    private void handleProviderStartedStateChange(@NonNull ProviderState providerState) {
         LocationTimeZoneProvider provider = providerState.provider;
-        LocationTimeZoneEvent event = providerState.event;
+        TimeZoneProviderEvent event = providerState.event;
         if (event == null) {
-            // Implicit uncertainty, i.e. where the provider is enabled, but a problem has been
+            // Implicit uncertainty, i.e. where the provider is started, but a problem has been
             // detected without having received an event. For example, if the process has detected
             // the loss of a binder-based provider, or initialization took too long. This is treated
             // the same as explicit uncertainty, i.e. where the provider has explicitly told this
@@ -405,18 +445,18 @@ class ControllerImpl extends LocationTimeZoneProviderController {
         }
 
         if (!mCurrentUserConfiguration.getGeoDetectionEnabledBehavior()) {
-            // This should not happen: the provider should not be in an enabled state if the user
+            // This should not happen: the provider should not be in an started state if the user
             // does not have geodetection enabled.
-            warnLog("Provider=" + provider + " is enabled, but"
+            warnLog("Provider=" + provider + " is started, but"
                     + " currentUserConfiguration=" + mCurrentUserConfiguration
                     + " suggests it shouldn't be.");
         }
 
-        switch (event.getEventType()) {
+        switch (event.getType()) {
             case EVENT_TYPE_PERMANENT_FAILURE: {
-                // This shouldn't happen. A provider cannot be enabled and have this event type.
+                // This shouldn't happen. A provider cannot be started and have this event type.
                 warnLog("Provider=" + provider
-                        + " is enabled, but event suggests it shouldn't be");
+                        + " is started, but event suggests it shouldn't be");
                 break;
             }
             case EVENT_TYPE_UNCERTAIN: {
@@ -424,13 +464,13 @@ class ControllerImpl extends LocationTimeZoneProviderController {
                         + ", explicit uncertainty. event=" + event);
                 break;
             }
-            case EVENT_TYPE_SUCCESS: {
-                handleProviderCertainty(provider, event.getTimeZoneIds(),
+            case EVENT_TYPE_SUGGESTION: {
+                handleProviderSuggestion(provider, event.getSuggestion().getTimeZoneIds(),
                         "Event received provider=" + provider + ", event=" + event);
                 break;
             }
             default: {
-                warnLog("Unknown eventType=" + event.getEventType());
+                warnLog("Unknown eventType=" + event.getType());
                 break;
             }
         }
@@ -440,7 +480,7 @@ class ControllerImpl extends LocationTimeZoneProviderController {
      * Called when a provider has become "certain" about the time zone(s).
      */
     @GuardedBy("mSharedLock")
-    private void handleProviderCertainty(
+    private void handleProviderSuggestion(
             @NonNull LocationTimeZoneProvider provider,
             @Nullable List<String> timeZoneIds,
             @NonNull String reason) {
@@ -448,11 +488,10 @@ class ControllerImpl extends LocationTimeZoneProviderController {
         cancelUncertaintyTimeout();
 
         if (provider == mPrimaryProvider) {
-            disableProviderIfEnabled(mSecondaryProvider);
+            stopProviderIfStarted(mSecondaryProvider);
         }
 
-        GeolocationTimeZoneSuggestion suggestion =
-                new GeolocationTimeZoneSuggestion(timeZoneIds);
+        GeolocationTimeZoneSuggestion suggestion = new GeolocationTimeZoneSuggestion(timeZoneIds);
         suggestion.addDebugInfo(reason);
         // Rely on the receiver to dedupe suggestions. It is better to over-communicate.
         makeSuggestion(suggestion);
@@ -504,7 +543,7 @@ class ControllerImpl extends LocationTimeZoneProviderController {
      * Called when a provider has become "uncertain" about the time zone.
      *
      * <p>A provider is expected to report its uncertainty as soon as it becomes uncertain, as
-     * this enables the most flexibility for the controller to enable other providers when there are
+     * this enables the most flexibility for the controller to start other providers when there are
      * multiple ones available. The controller is therefore responsible for deciding when to make a
      * "uncertain" suggestion to the downstream time zone detector.
      *
@@ -533,11 +572,11 @@ class ControllerImpl extends LocationTimeZoneProviderController {
         }
 
         if (provider == mPrimaryProvider) {
-            // (Try to) enable the secondary. It could already be enabled, or enabling might not
+            // (Try to) start the secondary. It could already be started, or enabling might not
             // succeed if the provider has previously reported it is perm failed. The uncertainty
             // timeout (set above) is used to ensure that an uncertain suggestion will be made if
             // the secondary cannot generate a success event in time.
-            tryEnableProvider(mSecondaryProvider, mCurrentUserConfiguration);
+            tryStartProvider(mSecondaryProvider, mCurrentUserConfiguration);
         }
     }
 
@@ -553,6 +592,7 @@ class ControllerImpl extends LocationTimeZoneProviderController {
         }
     }
 
+    @NonNull
     private static GeolocationTimeZoneSuggestion createUncertainSuggestion(@NonNull String reason) {
         GeolocationTimeZoneSuggestion suggestion = new GeolocationTimeZoneSuggestion(null);
         suggestion.addDebugInfo(reason);
@@ -560,30 +600,74 @@ class ControllerImpl extends LocationTimeZoneProviderController {
     }
 
     /**
-     * Passes a {@link SimulatedBinderProviderEvent] to the appropriate provider.
-     * If the provider name does not match a known provider, then the event is logged and discarded.
+     * Passes a test command to the specified provider. If the provider name does not match a
+     * known provider, then the command is logged and discarded.
      */
-    void simulateBinderProviderEvent(@NonNull SimulatedBinderProviderEvent event) {
+    void handleProviderTestCommand(
+            @NonNull String providerName, @NonNull TestCommand testCommand,
+            @Nullable RemoteCallback callback) {
         mThreadingDomain.assertCurrentThread();
 
-        String targetProviderName = event.getProviderName();
+        LocationTimeZoneProvider targetProvider = getLocationTimeZoneProvider(providerName);
+        if (targetProvider == null) {
+            warnLog("Unable to process test command:"
+                    + " providerName=" + providerName + ", testCommand=" + testCommand);
+            return;
+        }
+
+        synchronized (mSharedLock) {
+            try {
+                targetProvider.handleTestCommand(testCommand, callback);
+            } catch (Exception e) {
+                warnLog("Unable to process test command:"
+                        + " providerName=" + providerName + ", testCommand=" + testCommand, e);
+            }
+        }
+    }
+
+    /**
+     * Sets whether the controller should record provider state changes for later dumping via
+     * {@link #getStateForTests()}.
+     */
+    void setProviderStateRecordingEnabled(boolean enabled) {
+        mThreadingDomain.assertCurrentThread();
+
+        synchronized (mSharedLock) {
+            mPrimaryProvider.setStateChangeRecordingEnabled(enabled);
+            mSecondaryProvider.setStateChangeRecordingEnabled(enabled);
+        }
+    }
+
+    /**
+     * Returns a snapshot of the current controller state for tests.
+     */
+    @NonNull
+    LocationTimeZoneManagerServiceState getStateForTests() {
+        mThreadingDomain.assertCurrentThread();
+
+        synchronized (mSharedLock) {
+            LocationTimeZoneManagerServiceState.Builder builder =
+                    new LocationTimeZoneManagerServiceState.Builder();
+            if (mLastSuggestion != null) {
+                builder.setLastSuggestion(mLastSuggestion);
+            }
+            builder.setPrimaryProviderStateChanges(mPrimaryProvider.getRecordedStates())
+                    .setSecondaryProviderStateChanges(mSecondaryProvider.getRecordedStates());
+            return builder.build();
+        }
+    }
+
+    @Nullable
+    private LocationTimeZoneProvider getLocationTimeZoneProvider(@NonNull String providerName) {
         LocationTimeZoneProvider targetProvider;
-        if (Objects.equals(mPrimaryProvider.getName(), targetProviderName)) {
+        if (Objects.equals(mPrimaryProvider.getName(), providerName)) {
             targetProvider = mPrimaryProvider;
-        } else if (Objects.equals(mSecondaryProvider.getName(), targetProviderName)) {
+        } else if (Objects.equals(mSecondaryProvider.getName(), providerName)) {
             targetProvider = mSecondaryProvider;
         } else {
-            warnLog("Unable to process simulated binder provider event,"
-                    + " unknown providerName in event=" + event);
-            return;
+            warnLog("Bad providerName=" + providerName);
+            targetProvider = null;
         }
-        if (!(targetProvider instanceof BinderLocationTimeZoneProvider)) {
-            warnLog("Unable to process simulated binder provider event,"
-                    + " provider=" + targetProvider
-                    + " is not a " + BinderLocationTimeZoneProvider.class
-                    + ", event=" + event);
-            return;
-        }
-        ((BinderLocationTimeZoneProvider) targetProvider).simulateBinderProviderEvent(event);
+        return targetProvider;
     }
 }

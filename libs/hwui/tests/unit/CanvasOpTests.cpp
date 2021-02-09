@@ -16,6 +16,7 @@
 
 #include <gtest/gtest.h>
 
+#include <canvas/CanvasFrontend.h>
 #include <canvas/CanvasOpBuffer.h>
 #include <canvas/CanvasOps.h>
 #include <canvas/CanvasOpRasterizer.h>
@@ -26,6 +27,7 @@
 #include "SkColor.h"
 #include "SkLatticeIter.h"
 #include "pipeline/skia/AnimatedDrawables.h"
+#include <SkNoDrawCanvas.h>
 
 using namespace android;
 using namespace android::uirenderer;
@@ -34,49 +36,20 @@ using namespace android::uirenderer::test;
 // We lazy
 using Op = CanvasOpType;
 
-enum MockTypes {
-    Lifecycle,
-    COUNT
-};
-
-template<MockTypes T>
-struct MockOp;
-
-template<MockTypes T>
-struct MockOpContainer {
-    OpBufferItemHeader<MockTypes> header;
-    MockOp<T> impl;
-};
-
-struct LifecycleTracker {
-    int ctor_count = 0;
-    int dtor_count = 0;
-
-    int alive() { return ctor_count - dtor_count; }
-};
-
-template<>
-struct MockOp<MockTypes::Lifecycle> {
-    MockOp() = delete;
-    void operator=(const MockOp&) = delete;
-
-    MockOp(LifecycleTracker* tracker) : tracker(tracker) {
-        tracker->ctor_count += 1;
+class CanvasOpCountingReceiver {
+public:
+    template <CanvasOpType T>
+    void push_container(CanvasOpContainer<T>&& op) {
+        mOpCounts[static_cast<size_t>(T)] += 1;
     }
 
-    MockOp(const MockOp& other) {
-        tracker = other.tracker;
-        tracker->ctor_count += 1;
+    int operator[](CanvasOpType op) const {
+        return mOpCounts[static_cast<size_t>(op)];
     }
 
-    ~MockOp() {
-        tracker->dtor_count += 1;
-    }
-
-    LifecycleTracker* tracker = nullptr;
+private:
+    std::array<int, static_cast<size_t>(CanvasOpType::COUNT)> mOpCounts;
 };
-
-using MockBuffer = OpBuffer<MockTypes, MockOpContainer>;
 
 template<typename T>
 static int countItems(const T& t) {
@@ -85,62 +58,6 @@ static int countItems(const T& t) {
         count++;
     });
     return count;
-}
-
-TEST(CanvasOp, lifecycleCheck) {
-    LifecycleTracker tracker;
-    {
-        MockBuffer buffer;
-        buffer.push_container(MockOpContainer<MockTypes::Lifecycle> {
-            .impl = MockOp<MockTypes::Lifecycle>{&tracker}
-        });
-        EXPECT_EQ(tracker.alive(), 1);
-        buffer.clear();
-        EXPECT_EQ(tracker.alive(), 0);
-    }
-    EXPECT_EQ(tracker.alive(), 0);
-}
-
-TEST(CanvasOp, lifecycleCheckMove) {
-    LifecycleTracker tracker;
-    {
-        MockBuffer buffer;
-        buffer.push_container(MockOpContainer<MockTypes::Lifecycle> {
-            .impl = MockOp<MockTypes::Lifecycle>{&tracker}
-        });
-        EXPECT_EQ(tracker.alive(), 1);
-        {
-            MockBuffer other(std::move(buffer));
-            EXPECT_EQ(tracker.alive(), 1);
-            EXPECT_EQ(buffer.size(), 0);
-            EXPECT_GT(other.size(), 0);
-            EXPECT_EQ(1, countItems(other));
-            EXPECT_EQ(0, countItems(buffer));
-
-            other.push_container(MockOpContainer<MockTypes::Lifecycle> {
-                .impl = MockOp<MockTypes::Lifecycle>{&tracker}
-            });
-
-            EXPECT_EQ(2, countItems(other));
-            EXPECT_EQ(2, tracker.alive());
-
-            buffer.push_container(MockOpContainer<MockTypes::Lifecycle> {
-                .impl = MockOp<MockTypes::Lifecycle>{&tracker}
-            });
-            EXPECT_EQ(1, countItems(buffer));
-            EXPECT_EQ(3, tracker.alive());
-
-            buffer = std::move(other);
-            EXPECT_EQ(2, countItems(buffer));
-            EXPECT_EQ(2, tracker.alive());
-        }
-        EXPECT_EQ(2, countItems(buffer));
-        EXPECT_EQ(2, tracker.alive());
-        buffer.clear();
-        EXPECT_EQ(0, countItems(buffer));
-        EXPECT_EQ(0, tracker.alive());
-    }
-    EXPECT_EQ(tracker.alive(), 0);
 }
 
 TEST(CanvasOp, verifyConst) {
@@ -228,6 +145,31 @@ TEST(CanvasOp, simpleDrawPoint) {
     EXPECT_EQ(1, canvas.sumTotalDrawCalls());
 }
 
+TEST(CanvasOp, simpleDrawPoints) {
+    CanvasOpBuffer buffer;
+    EXPECT_EQ(buffer.size(), 0);
+    size_t numPts = 3;
+    auto pts = sk_ref_sp(
+          new Points({
+              {32, 16},
+              {48, 48},
+              {16, 32}
+          })
+    );
+
+    buffer.push(CanvasOp<Op::DrawPoints> {
+        .count = numPts,
+        .paint = SkPaint{},
+        .points = pts
+    });
+
+    CallCountingCanvas canvas;
+    EXPECT_EQ(0, canvas.sumTotalDrawCalls());
+    rasterizeCanvasBuffer(buffer, &canvas);
+    EXPECT_EQ(1, canvas.drawPoints);
+    EXPECT_EQ(1, canvas.sumTotalDrawCalls());
+}
+
 TEST(CanvasOp, simpleDrawLine) {
     CanvasOpBuffer buffer;
     EXPECT_EQ(buffer.size(), 0);
@@ -237,6 +179,30 @@ TEST(CanvasOp, simpleDrawLine) {
         .endX = 12,
         .endY = 30,
         .paint = SkPaint{}
+    });
+
+    CallCountingCanvas canvas;
+    EXPECT_EQ(0, canvas.sumTotalDrawCalls());
+    rasterizeCanvasBuffer(buffer, &canvas);
+    EXPECT_EQ(1, canvas.drawPoints);
+    EXPECT_EQ(1, canvas.sumTotalDrawCalls());
+}
+
+TEST(CanvasOp, simpleDrawLines) {
+    CanvasOpBuffer buffer;
+    EXPECT_EQ(buffer.size(), 0);
+    size_t numPts = 3;
+    auto pts = sk_ref_sp(
+        new Points({
+               {32, 16},
+               {48, 48},
+               {16, 32}
+          })
+        );
+    buffer.push(CanvasOp<Op::DrawLines> {
+        .count = numPts,
+        .paint = SkPaint{},
+        .points = pts
     });
 
     CallCountingCanvas canvas;
@@ -614,4 +580,31 @@ TEST(CanvasOp, immediateRendering) {
     rasterizer.draw(op);
     EXPECT_EQ(1, canvas->drawRectCount);
     EXPECT_EQ(1, canvas->sumTotalDrawCalls());
+}
+
+TEST(CanvasOp, frontendSaveCount) {
+    SkNoDrawCanvas skiaCanvas(100, 100);
+    CanvasFrontend<CanvasOpCountingReceiver> opCanvas(100, 100);
+    const auto& receiver = opCanvas.receiver();
+
+    EXPECT_EQ(1, skiaCanvas.getSaveCount());
+    EXPECT_EQ(1, opCanvas.saveCount());
+
+    skiaCanvas.save();
+    opCanvas.save(SaveFlags::MatrixClip);
+    EXPECT_EQ(2, skiaCanvas.getSaveCount());
+    EXPECT_EQ(2, opCanvas.saveCount());
+
+    skiaCanvas.restore();
+    opCanvas.restore();
+    EXPECT_EQ(1, skiaCanvas.getSaveCount());
+    EXPECT_EQ(1, opCanvas.saveCount());
+
+    skiaCanvas.restore();
+    opCanvas.restore();
+    EXPECT_EQ(1, skiaCanvas.getSaveCount());
+    EXPECT_EQ(1, opCanvas.saveCount());
+
+    EXPECT_EQ(1, receiver[Op::Save]);
+    EXPECT_EQ(1, receiver[Op::Restore]);
 }

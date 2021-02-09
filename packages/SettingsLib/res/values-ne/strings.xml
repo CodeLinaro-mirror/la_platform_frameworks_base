@@ -112,7 +112,7 @@
     <string name="bluetooth_opp_profile_summary_use_for" msgid="461981154387015457">"फाइल ट्रान्सफरका लागि प्रयोग गर्नुहोस्"</string>
     <string name="bluetooth_hid_profile_summary_use_for" msgid="4289460627406490952">"इनपुटको लागि प्रयोग गर्नुहोस्"</string>
     <string name="bluetooth_hearing_aid_profile_summary_use_for" msgid="7689393730163320483">"श्रवण यन्त्रहरूका लागि प्रयोग गर्नुहोस्"</string>
-    <string name="bluetooth_pairing_accept" msgid="2054232610815498004">"जोडी"</string>
+    <string name="bluetooth_pairing_accept" msgid="2054232610815498004">"जोडा बनाउनुहोस्"</string>
     <string name="bluetooth_pairing_accept_all_caps" msgid="2734383073450506220">"जोडी"</string>
     <string name="bluetooth_pairing_decline" msgid="6483118841204885890">"रद्द गर्नुहोस्"</string>
     <string name="bluetooth_pairing_will_share_phonebook" msgid="3064334458659165176">"जब जडान हुन्छ जोडी अनुदानले तपाईँको सम्पर्कहरू पहुँच गर्छ र इतिहास सम्झाउँछ।"</string>
@@ -305,7 +305,7 @@
     <string name="adbwifi_warning_message" msgid="8005936574322702388">"वायरलेस डिबगिङ डिभलपमेन्ट प्रयोजनका लागि मात्रै हो। यसलाई आफ्ना कम्प्युटर र उपकरणका बिच डेटा प्रतिलिपि गर्न, सूचना नदिई आफ्नो उपकरणमा एपहरू स्थापना गर्न र लग डेटा पढ्न प्रयोग गर्नुहोस्।"</string>
     <string name="adb_keys_warning_message" msgid="2968555274488101220">"तपाईं पहिले नै अधिकृत गर्नुभएका सबै कम्प्यूटरबाट USB डिबग गर्नको लागि पहुँच रद्द गर्ने हो?"</string>
     <string name="dev_settings_warning_title" msgid="8251234890169074553">"विकास सेटिङहरू अनुमति दिने हो?"</string>
-    <string name="dev_settings_warning_message" msgid="37741686486073668">"यी सेटिङहरू केवल विकास प्रयोगको लागि विचार गरिएको हो। तिनीहरूले तपाईंको उपकरण र अनुप्रयोगहरूलाई विच्छेदन गर्न वा दुर्व्यवहार गर्न सक्दछ।"</string>
+    <string name="dev_settings_warning_message" msgid="37741686486073668">"यी सेटिङहरू केवल विकास प्रयोगको लागि विचार गरिएको हो। तिनीहरूले तपाईंको उपकरण र एपहरूलाई विच्छेदन गर्न वा दुर्व्यवहार गर्न सक्दछ।"</string>
     <string name="verify_apps_over_usb_title" msgid="6031809675604442636">"USB मा एपहरू रुजु गर्नुहोस्"</string>
     <string name="verify_apps_over_usb_summary" msgid="1317933737581167839">"हानिकारक व्यवहारको लागि ADB/ADT को माध्यमबाट स्थापित अनुप्रयोगहरूको जाँच गर्नुहोस्।"</string>
     <string name="bluetooth_show_devices_without_names_summary" msgid="780964354377854507">"नामकरण नगरिएका ब्लुटुथ यन्त्रहरू (MAC ठेगाना भएका मात्र) देखाइनेछ"</string>
@@ -399,12 +399,10 @@
     <string name="inactive_app_inactive_summary" msgid="3161222402614236260">"निष्क्रिय। टगल गर्न ट्याप गर्नुहोस्।"</string>
     <string name="inactive_app_active_summary" msgid="8047630990208722344">"सक्रिय। टगल गर्न ट्याप गर्नुहोस्।"</string>
     <string name="standby_bucket_summary" msgid="5128193447550429600">"एपको स्ट्यान्डबाई अवस्था:<xliff:g id="BUCKET"> %s</xliff:g>"</string>
-    <!-- no translation found for transcode_settings_title (6700974145733932357) -->
-    <skip />
-    <!-- no translation found for transcode_enable_all (4719796495995795404) -->
-    <skip />
-    <!-- no translation found for transcode_skip_apps (5680997722349545778) -->
-    <skip />
+    <string name="transcode_settings_title" msgid="2581975870429850549">"मिडिया ट्रान्सकोडिङ सेटिङ"</string>
+    <string name="transcode_user_control" msgid="6176368544817731314">"ट्रान्सकोडिङसम्बन्धी पूर्वनिर्धारित सेटिङ परिवर्तन गर्नुहोस्"</string>
+    <string name="transcode_enable_all" msgid="2411165920039166710">"ट्रान्सकोडिङ अन गर्नुहोस्"</string>
+    <string name="transcode_default" msgid="3784803084573509491">"एपहरूमा आधुनिक फर्म्याट प्रयोग गर्न मिल्छ भनी मान्नुहोस्"</string>
     <string name="runningservices_settings_title" msgid="6460099290493086515">"चलिरहेका सेवाहरू"</string>
     <string name="runningservices_settings_summary" msgid="1046080643262665743">"हाल चालु भइरहेका सेवाहरू हेर्नुहोस् र नियन्त्रण गर्नुहोस्"</string>
     <string name="select_webview_provider_title" msgid="3917815648099445503">"WebView कार्यान्वयन"</string>
@@ -452,6 +450,7 @@
     <string name="power_charging" msgid="6727132649743436802">"<xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="STATE">%2$s</xliff:g>"</string>
     <string name="power_remaining_charging_duration_only" msgid="7415639699283965818">"पूर्ण चार्ज हुन <xliff:g id="TIME">%1$s</xliff:g> बाँकी"</string>
     <string name="power_charging_duration" msgid="5005740040558984057">"पूर्ण चार्ज हुन <xliff:g id="LEVEL">%1$s</xliff:g> - <xliff:g id="TIME">%2$s</xliff:g> लाग्छ"</string>
+    <string name="power_charging_limited" msgid="1956874810658999681">"<xliff:g id="LEVEL">%1$s</xliff:g> - ब्याट्री लामो समयसम्म टिक्ने बनाउन अप्टिमाइज गरिँदै छ"</string>
     <string name="battery_info_status_unknown" msgid="268625384868401114">"अज्ञात"</string>
     <string name="battery_info_status_charging" msgid="4279958015430387405">"चार्ज हुँदै"</string>
     <string name="battery_info_status_charging_fast" msgid="8027559755902954885">"द्रुत गतिमा चार्ज गरिँदै"</string>
@@ -554,7 +553,7 @@
     <string name="creating_new_user_dialog_message" msgid="7232880257538970375">"नयाँ प्रयोगकर्ता बनाउँदै…"</string>
     <string name="user_nickname" msgid="262624187455825083">"उपनाम"</string>
     <string name="guest_new_guest" msgid="3482026122932643557">"अतिथि थप्नुहोस्"</string>
-    <string name="guest_exit_guest" msgid="5908239569510734136">"अतिथि हटाउनुहोस्"</string>
+    <string name="guest_exit_guest" msgid="4754204715192830850">"अतिथिको सत्र अन्त्य गर्नुहोस्"</string>
     <string name="guest_nickname" msgid="6332276931583337261">"अतिथि"</string>
     <string name="user_image_take_photo" msgid="467512954561638530">"फोटो खिच्नुहोस्"</string>
     <string name="user_image_choose_photo" msgid="1363820919146782908">"कुनै फोटो छनौट गर्नुहोस्"</string>
@@ -566,4 +565,30 @@
     <string name="media_transfer_wired_usb_device_name" msgid="7699141088423210903">"तारसहितको हेडफोन"</string>
     <string name="wifi_hotspot_switch_on_text" msgid="9212273118217786155">"अन छ"</string>
     <string name="wifi_hotspot_switch_off_text" msgid="7245567251496959764">"अफ छ"</string>
+    <string name="carrier_network_change_mode" msgid="4257621815706644026">"सेवा प्रदायकको नेटवर्क परिवर्तन गर्ने आइकन"</string>
+    <string name="data_connection_3g" msgid="931852552688157407">"3G"</string>
+    <string name="data_connection_edge" msgid="4625509456544797637">"EDGE"</string>
+    <string name="data_connection_cdma" msgid="9098161966701934334">"1X"</string>
+    <string name="data_connection_gprs" msgid="1251945769006770189">"GPRS"</string>
+    <string name="data_connection_3_5g" msgid="4298721462047921400">"H"</string>
+    <string name="data_connection_3_5g_plus" msgid="6683055858295918170">"H+"</string>
+    <string name="data_connection_4g" msgid="2581705503356752044">"4G"</string>
+    <string name="data_connection_4g_plus" msgid="5194902328408751020">"4G+"</string>
+    <string name="data_connection_lte" msgid="7675461204366364124">"LTE"</string>
+    <string name="data_connection_lte_plus" msgid="6643158654804916653">"LTE+"</string>
+    <string name="data_connection_carrier_wifi" msgid="2250268321065848954">"CWF"</string>
+    <string name="cell_data_off_content_description" msgid="2280700839891636498">"मोबाइल डेटा निष्क्रिय छ"</string>
+    <string name="not_default_data_content_description" msgid="6517068332106592887">"डेटा प्रयोग गर्ने गरी सेट गरिएन"</string>
+    <string name="accessibility_no_phone" msgid="2687419663127582503">"फोन छैन्।"</string>
+    <string name="accessibility_phone_one_bar" msgid="5719721147018970063">"फोन एउटा पट्टि।"</string>
+    <string name="accessibility_phone_two_bars" msgid="2531458337458953263">"फोन दुई पट्टि।"</string>
+    <string name="accessibility_phone_three_bars" msgid="1523967995996696619">"फोन तिन पट्टिहरू।"</string>
+    <string name="accessibility_phone_signal_full" msgid="4302338883816077134">"फोन सङ्केत भरिएको।"</string>
+    <string name="accessibility_no_data" msgid="4563181886936931008">"डेटा छैन।"</string>
+    <string name="accessibility_data_one_bar" msgid="6892888138070752480">"डेटाको एउटा पट्टि।"</string>
+    <string name="accessibility_data_two_bars" msgid="9202641507241802499">"डेटा दुई बाधाहरू।"</string>
+    <string name="accessibility_data_three_bars" msgid="2813876214466722413">"डेटा तिन बाधाहरू।"</string>
+    <string name="accessibility_data_signal_full" msgid="1808301899314382337">"डेटा संकेत पूर्ण।"</string>
+    <string name="accessibility_ethernet_disconnected" msgid="2832501530856497489">"इथरनेट विच्छेद भयो।"</string>
+    <string name="accessibility_ethernet_connected" msgid="2093872142317190618">"इथरनेट जोडियो।"</string>
 </resources>

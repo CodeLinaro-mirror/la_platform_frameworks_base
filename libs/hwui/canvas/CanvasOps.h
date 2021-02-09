@@ -23,11 +23,14 @@
 #include <SkVertices.h>
 #include <SkImage.h>
 #include <SkPicture.h>
+#include <SkRuntimeEffect.h>
 #include <hwui/Bitmap.h>
 #include <log/log.h>
 #include "CanvasProperty.h"
+#include "Points.h"
 
 #include "CanvasOpTypes.h"
+#include "Layer.h"
 
 #include <experimental/type_traits>
 #include <utility>
@@ -140,6 +143,42 @@ struct CanvasOp<CanvasOpType::DrawCircleProperty> {
     ASSERT_DRAWABLE()
 };
 
+template<>
+struct CanvasOp<CanvasOpType::DrawRippleProperty> {
+    sp<uirenderer::CanvasPropertyPrimitive> x;
+    sp<uirenderer::CanvasPropertyPrimitive> y;
+    sp<uirenderer::CanvasPropertyPrimitive> radius;
+    sp<uirenderer::CanvasPropertyPaint> paint;
+    sp<uirenderer::CanvasPropertyPrimitive> progress;
+    sk_sp<SkRuntimeEffect> effect;
+
+    void draw(SkCanvas* canvas) const {
+        SkRuntimeShaderBuilder runtimeEffectBuilder(effect);
+
+        SkRuntimeShaderBuilder::BuilderUniform center = runtimeEffectBuilder.uniform("in_origin");
+        if (center.fVar != nullptr) {
+            center = SkV2{x->value, y->value};
+        }
+
+        SkRuntimeShaderBuilder::BuilderUniform radiusU =
+                runtimeEffectBuilder.uniform("in_radius");
+        if (radiusU.fVar != nullptr) {
+            radiusU = radius->value;
+        }
+
+        SkRuntimeShaderBuilder::BuilderUniform progressU =
+                runtimeEffectBuilder.uniform("in_progress");
+        if (progressU.fVar != nullptr) {
+            progressU = progress->value;
+        }
+
+        SkPaint paintMod = paint->value;
+        paintMod.setShader(runtimeEffectBuilder.makeShader(nullptr, false));
+        canvas->drawCircle(x->value, y->value, radius->value, paintMod);
+    }
+    ASSERT_DRAWABLE()
+};
+
 template <>
 struct CanvasOp<CanvasOpType::DrawColor> {
     SkColor4f color;
@@ -161,6 +200,22 @@ struct CanvasOp<CanvasOpType::DrawPoint> {
     float y;
     SkPaint paint;
     void draw(SkCanvas* canvas) const { canvas->drawPoint(x, y, paint); }
+    ASSERT_DRAWABLE()
+};
+
+template <>
+struct CanvasOp<CanvasOpType::DrawPoints> {
+    size_t count;
+    SkPaint paint;
+    sk_sp<Points> points;
+    void draw(SkCanvas* canvas) const {
+        canvas->drawPoints(
+            SkCanvas::kPoints_PointMode,
+            count,
+            points->data(),
+            paint
+        );
+    }
     ASSERT_DRAWABLE()
 };
 
@@ -263,6 +318,22 @@ struct CanvasOp<CanvasOpType::DrawLine> {
 };
 
 template<>
+struct CanvasOp<CanvasOpType::DrawLines> {
+    size_t count;
+    SkPaint paint;
+    sk_sp<Points> points;
+    void draw(SkCanvas* canvas) const {
+        canvas->drawPoints(
+            SkCanvas::kLines_PointMode,
+            count,
+            points->data(),
+            paint
+        );
+    }
+    ASSERT_DRAWABLE()
+};
+
+template<>
 struct CanvasOp<CanvasOpType::DrawVertices> {
     sk_sp<SkVertices> vertices;
     SkBlendMode mode;
@@ -276,7 +347,7 @@ struct CanvasOp<CanvasOpType::DrawVertices> {
 template<>
 struct CanvasOp<CanvasOpType::DrawImage> {
 
-    CanvasOp<CanvasOpType::DrawImageRect>(
+    CanvasOp(
         const sk_sp<Bitmap>& bitmap,
         float left,
         float top,
@@ -302,7 +373,7 @@ struct CanvasOp<CanvasOpType::DrawImage> {
 template<>
 struct CanvasOp<CanvasOpType::DrawImageRect> {
 
-    CanvasOp<CanvasOpType::DrawImageRect>(
+    CanvasOp(
         const sk_sp<Bitmap>& bitmap,
         SkRect src,
         SkRect dst,
@@ -333,7 +404,7 @@ struct CanvasOp<CanvasOpType::DrawImageRect> {
 template<>
 struct CanvasOp<CanvasOpType::DrawImageLattice> {
 
-    CanvasOp<CanvasOpType::DrawImageLattice>(
+    CanvasOp(
         const sk_sp<Bitmap>& bitmap,
         SkRect dst,
         SkCanvas::Lattice lattice,
@@ -362,6 +433,11 @@ struct CanvasOp<CanvasOpType::DrawPicture> {
     void draw(SkCanvas* canvas) const {
         picture->playback(canvas);
     }
+};
+
+template<>
+struct CanvasOp<CanvasOpType::DrawLayer> {
+    sp<Layer> layer;
 };
 
 // cleanup our macros

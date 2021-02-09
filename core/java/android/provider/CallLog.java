@@ -17,7 +17,14 @@
 
 package android.provider;
 
+import android.Manifest;
+import android.annotation.CallbackExecutor;
+import android.annotation.IntDef;
 import android.annotation.LongDef;
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.annotation.RequiresPermission;
+import android.annotation.SystemApi;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ContentProvider;
 import android.content.ContentResolver;
@@ -30,6 +37,9 @@ import android.location.Country;
 import android.location.CountryDetector;
 import android.net.Uri;
 import android.os.Build;
+import android.os.OutcomeReceiver;
+import android.os.ParcelFileDescriptor;
+import android.os.ParcelableException;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.ContactsContract.CommonDataKinds.Callable;
@@ -44,9 +54,16 @@ import android.telephony.PhoneNumberUtils;
 import android.text.TextUtils;
 import android.util.Log;
 
+import java.io.ByteArrayOutputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.Executor;
 
 /**
  * The CallLog provider contains information about placed and received calls.
@@ -63,6 +80,12 @@ public class CallLog {
     public static final Uri CONTENT_URI =
         Uri.parse("content://" + AUTHORITY);
 
+    /** @hide */
+    public static final String CALL_COMPOSER_SEGMENT = "call_composer";
+
+    /** @hide */
+    public static final Uri CALL_COMPOSER_PICTURE_URI =
+            CONTENT_URI.buildUpon().appendPath(CALL_COMPOSER_SEGMENT).build();
 
     /**
      * The "shadow" provider stores calllog when the real calllog provider is encrypted.  The
@@ -73,6 +96,296 @@ public class CallLog {
      * @hide
      */
     public static final String SHADOW_AUTHORITY = "call_log_shadow";
+
+    /** @hide */
+    public static final Uri SHADOW_CALL_COMPOSER_PICTURE_URI = CALL_COMPOSER_PICTURE_URI.buildUpon()
+            .authority(SHADOW_AUTHORITY).build();
+
+    /**
+     * Describes an error encountered while storing a call composer picture in the call log.
+     * @hide
+     */
+    @SystemApi
+    public static class CallComposerLoggingException extends Throwable {
+        /**
+         * Indicates an unknown error.
+         */
+        public static final int ERROR_UNKNOWN = 0;
+
+        /**
+         * Indicates that the process hosting the call log died or otherwise encountered an
+         * unrecoverable error while storing the picture.
+         *
+         * The caller should retry if this error is encountered.
+         */
+        public static final int ERROR_REMOTE_END_CLOSED = 1;
+
+        /**
+         * Indicates that the device has insufficient space to store this picture.
+         *
+         * The caller should not retry if this error is encountered.
+         */
+        public static final int ERROR_STORAGE_FULL = 2;
+
+        /**
+         * Indicates that the {@link InputStream} passed to {@link #storeCallComposerPictureAsUser}
+         * was closed.
+         *
+         * The caller should retry if this error is encountered, and be sure to not close the stream
+         * before the callback is called this time.
+         */
+        public static final int ERROR_INPUT_CLOSED = 3;
+
+        /** @hide */
+        @IntDef(prefix = {"ERROR_"}, value = {
+                ERROR_UNKNOWN,
+                ERROR_REMOTE_END_CLOSED,
+                ERROR_STORAGE_FULL,
+                ERROR_INPUT_CLOSED,
+        })
+        @Retention(RetentionPolicy.SOURCE)
+        public @interface CallComposerLoggingError { }
+
+        private final int mErrorCode;
+
+        public CallComposerLoggingException(@CallComposerLoggingError int errorCode) {
+            mErrorCode = errorCode;
+        }
+
+        /**
+         * @return The error code for this exception.
+         */
+        public @CallComposerLoggingError int getErrorCode() {
+            return mErrorCode;
+        }
+
+        @Override
+        public String toString() {
+            String errorString;
+            switch (mErrorCode) {
+                case ERROR_UNKNOWN:
+                    errorString = "UNKNOWN";
+                    break;
+                case ERROR_REMOTE_END_CLOSED:
+                    errorString = "REMOTE_END_CLOSED";
+                    break;
+                case ERROR_STORAGE_FULL:
+                    errorString = "STORAGE_FULL";
+                    break;
+                case ERROR_INPUT_CLOSED:
+                    errorString = "INPUT_CLOSED";
+                    break;
+                default:
+                    errorString = "[[" + mErrorCode + "]]";
+                    break;
+            }
+            return "CallComposerLoggingException: " + errorString;
+        }
+    }
+
+    /**
+     * Supplies a call composer picture to the call log for persistent storage.
+     *
+     * This method is used by Telephony to store pictures selected by the user or sent from the
+     * remote party as part of a voice call with call composer. The {@link Uri} supplied in the
+     * callback can be used to retrieve the image via {@link ContentResolver#openFile} or stored in
+     * the {@link Calls} table in the TODO: link column name.
+     *
+     * The caller is responsible for closing the {@link InputStream} after the callback indicating
+     * success or failure.
+     *
+     * @param context An instance of {@link Context}.
+     * @param user The user for whom the picture is stored. If {@code null}, the picture will be
+     *             stored for all users.
+     * @param input An input stream from which the picture to store should be read. The input data
+     *              must be decodeable as either a JPEG, PNG, or GIF image.
+     * @param executor The {@link Executor} on which to perform the file transfer operation and
+     *                 call the supplied callback.
+     * @param callback Callback that's called after the picture is successfully stored or when an
+     *                 error occurs.
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(allOf = {
+            Manifest.permission.WRITE_CALL_LOG,
+            Manifest.permission.INTERACT_ACROSS_USERS
+    })
+    public static void storeCallComposerPictureAsUser(@NonNull Context context,
+            @Nullable UserHandle user,
+            @NonNull InputStream input,
+            @CallbackExecutor @NonNull Executor executor,
+            @NonNull OutcomeReceiver<Uri, CallComposerLoggingException> callback) {
+        Objects.requireNonNull(context);
+        Objects.requireNonNull(input);
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(callback);
+
+        executor.execute(() -> {
+            ByteArrayOutputStream tmpOut = new ByteArrayOutputStream();
+
+            // Read the entire input into memory first in case we have to write multiple times and
+            // the input isn't resettable.
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+            while (true) {
+                try {
+                    bytesRead = input.read(buffer);
+                } catch (IOException e) {
+                    Log.e(LOG_TAG, "IOException while reading call composer pic from input: "
+                            + e);
+                    callback.onError(new CallComposerLoggingException(
+                            CallComposerLoggingException.ERROR_INPUT_CLOSED));
+                    return;
+                }
+                if (bytesRead < 0) {
+                    break;
+                }
+                tmpOut.write(buffer, 0, bytesRead);
+            }
+            byte[] picData = tmpOut.toByteArray();
+
+            UserManager userManager = context.getSystemService(UserManager.class);
+            // Nasty casework for the shadow calllog begins...
+            // First see if we're just inserting for one user. If so, insert into the shadow
+            // based on whether that user is unlocked.
+            if (user != null) {
+                Uri baseUri = userManager.isUserUnlocked(user) ? CALL_COMPOSER_PICTURE_URI
+                        : SHADOW_CALL_COMPOSER_PICTURE_URI;
+                Uri pictureInsertionUri = ContentProvider.maybeAddUserId(baseUri,
+                        user.getIdentifier());
+                Log.i(LOG_TAG, "Inserting call composer for single user at "
+                        + pictureInsertionUri);
+
+                try {
+                    Uri result = storeCallComposerPictureAtUri(
+                            context, pictureInsertionUri, false, picData);
+                    callback.onResult(result);
+                } catch (CallComposerLoggingException e) {
+                    callback.onError(e);
+                }
+                return;
+            }
+
+            // Next, see if the system user is locked. If so, only insert to the system shadow
+            if (!userManager.isUserUnlocked(UserHandle.SYSTEM)) {
+                Uri pictureInsertionUri = ContentProvider.maybeAddUserId(
+                        SHADOW_CALL_COMPOSER_PICTURE_URI,
+                        UserHandle.SYSTEM.getIdentifier());
+                Log.i(LOG_TAG, "Inserting call composer for all users, but system locked at "
+                        + pictureInsertionUri);
+                try {
+                    Uri result =
+                            storeCallComposerPictureAtUri(context, pictureInsertionUri,
+                                    true, picData);
+                    callback.onResult(result);
+                } catch (CallComposerLoggingException e) {
+                    callback.onError(e);
+                }
+                return;
+            }
+
+            // If we're inserting to all users and the system user is unlocked, then insert to all
+            // running users. Non running/still locked users will copy from the system when they
+            // start.
+            // First, insert to the system calllog to get the basename to use for the rest of the
+            // users.
+            Uri systemPictureInsertionUri = ContentProvider.maybeAddUserId(
+                    CALL_COMPOSER_PICTURE_URI,
+                    UserHandle.SYSTEM.getIdentifier());
+            Uri systemInsertedPicture;
+            try {
+                systemInsertedPicture =
+                        storeCallComposerPictureAtUri(context, systemPictureInsertionUri,
+                                true, picData);
+                Log.i(LOG_TAG, "Inserting call composer for all users, succeeded with system,"
+                        + " result is " + systemInsertedPicture);
+            } catch (CallComposerLoggingException e) {
+                callback.onError(e);
+                return;
+            }
+
+            // Next, insert into all users that have call log access AND are running AND are
+            // decrypted.
+            Uri strippedInsertionUri = ContentProvider.getUriWithoutUserId(systemInsertedPicture);
+            for (UserInfo u : userManager.getAliveUsers()) {
+                UserHandle userHandle = u.getUserHandle();
+                if (userHandle.isSystem()) {
+                    // Already written.
+                    continue;
+                }
+
+                if (!Calls.shouldHaveSharedCallLogEntries(
+                        context, userManager, userHandle.getIdentifier())) {
+                    // Shouldn't have calllog entries.
+                    continue;
+                }
+
+                if (userManager.isUserRunning(userHandle)
+                        && userManager.isUserUnlocked(userHandle)) {
+                    Uri insertionUri = ContentProvider.maybeAddUserId(strippedInsertionUri,
+                            userHandle.getIdentifier());
+                    Log.i(LOG_TAG, "Inserting call composer for all users, now on user "
+                            + userHandle + " inserting at " + insertionUri);
+                    try {
+                        storeCallComposerPictureAtUri(context, insertionUri, false, picData);
+                    } catch (CallComposerLoggingException e) {
+                        Log.e(LOG_TAG, "Error writing for user " + userHandle.getIdentifier()
+                                + ": " + e);
+                        // If one or more users failed but the system user succeeded, don't return
+                        // an error -- the image is still around somewhere, and we'll be able to
+                        // find it in the system user's call log if needed.
+                    }
+                }
+            }
+            callback.onResult(strippedInsertionUri);
+        });
+    }
+
+    private static Uri storeCallComposerPictureAtUri(
+            Context context, Uri insertionUri,
+            boolean forAllUsers, byte[] picData) throws CallComposerLoggingException {
+        Uri pictureFileUri;
+        try {
+            ContentValues cv = new ContentValues();
+            cv.put(Calls.ADD_FOR_ALL_USERS, forAllUsers ? 1 : 0);
+            pictureFileUri = context.getContentResolver().insert(insertionUri, cv);
+        } catch (ParcelableException e) {
+            // Most likely an IOException. We don't have a good way of distinguishing them so
+            // just return an unknown error.
+            throw new CallComposerLoggingException(CallComposerLoggingException.ERROR_UNKNOWN);
+        }
+        if (pictureFileUri == null) {
+            // If the call log provider returns null, it means that there's not enough space
+            // left to store the maximum-sized call composer image.
+            throw new CallComposerLoggingException(CallComposerLoggingException.ERROR_STORAGE_FULL);
+        }
+
+        try (ParcelFileDescriptor pfd =
+                     context.getContentResolver().openFileDescriptor(pictureFileUri, "w")) {
+            FileOutputStream output = new FileOutputStream(pfd.getFileDescriptor());
+            try {
+                output.write(picData);
+            } catch (IOException e) {
+                Log.e(LOG_TAG, "Got IOException writing to remote end: " + e);
+                // Clean up our mess if we didn't successfully write the file.
+                context.getContentResolver().delete(pictureFileUri, null);
+                throw new CallComposerLoggingException(
+                        CallComposerLoggingException.ERROR_REMOTE_END_CLOSED);
+            }
+        } catch (FileNotFoundException e) {
+            throw new CallComposerLoggingException(CallComposerLoggingException.ERROR_UNKNOWN);
+        } catch (IOException e) {
+            // Ignore, this is only thrown upon closing.
+            Log.e(LOG_TAG, "Got IOException closing remote descriptor: " + e);
+        }
+        return pictureFileUri;
+    }
+
+    // Only call on the correct executor.
+    private static void sendCallComposerError(OutcomeReceiver<?, CallComposerLoggingException> cb,
+            int error) {
+        cb.onError(new CallComposerLoggingException(error));
+    }
 
     /**
      * Contains the recent calls.

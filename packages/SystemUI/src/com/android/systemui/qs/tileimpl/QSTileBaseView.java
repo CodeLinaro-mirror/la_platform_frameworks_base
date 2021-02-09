@@ -56,20 +56,20 @@ public class QSTileBaseView extends com.android.systemui.plugins.qs.QSTileView {
 
     private static final String TAG = "QSTileBaseView";
     private static final int ICON_MASK_ID = com.android.internal.R.string.config_icon_mask;
-    private final H mHandler = new H();
+    protected final Handler mHandler = new H();
     private final int[] mLocInScreen = new int[2];
     private final FrameLayout mIconFrame;
     protected QSIconView mIcon;
     protected RippleDrawable mRipple;
-    private Drawable mTileBackground;
+    protected Drawable mTileBackground;
     private String mAccessibilityClass;
     private boolean mTileState;
     private boolean mCollapsedView;
-    private boolean mShowRippleEffect = true;
+    protected boolean mShowRippleEffect = true;
     private float mStrokeWidthActive;
     private float mStrokeWidthInactive;
 
-    private final ImageView mBg;
+    protected final ImageView mBg;
     private final int mColorActive;
     private final int mColorInactive;
     private final int mColorDisabled;
@@ -133,7 +133,7 @@ public class QSTileBaseView extends com.android.systemui.plugins.qs.QSTileView {
 
         mColorActive = Utils.getColorAttrDefaultColor(context, android.R.attr.colorAccent);
         mColorDisabled = Utils.getDisabled(context,
-                Utils.getColorAttrDefaultColor(context, android.R.attr.textColorTertiary));
+                Utils.getColorAttrDefaultColor(context, android.R.attr.colorControlActivated));
         mColorInactive = Utils.getColorAttrDefaultColor(context, android.R.attr.textColorSecondary);
 
         setPadding(0, 0, 0, 0);
@@ -162,7 +162,7 @@ public class QSTileBaseView extends com.android.systemui.plugins.qs.QSTileView {
         }
     }
 
-    private void updateRippleSize() {
+    protected void updateRippleSize() {
         // center the touch feedback on the center of the icon, and dial it down a bit
         final int cx = mIconFrame.getMeasuredWidth() / 2 + mIconFrame.getLeft();
         final int cy = mIconFrame.getMeasuredHeight() / 2 + mIconFrame.getTop();
@@ -311,7 +311,7 @@ public class QSTileBaseView extends com.android.systemui.plugins.qs.QSTileView {
         return mLocInScreen[1] >= -getHeight();
     }
 
-    private int getCircleColor(int state) {
+    protected int getCircleColor(int state) {
         switch (state) {
             case Tile.STATE_ACTIVE:
                 return mColorActive;

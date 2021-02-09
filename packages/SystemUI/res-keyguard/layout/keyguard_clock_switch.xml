@@ -51,7 +51,6 @@
              android:layout_height="wrap_content"
              android:layout_gravity="bottom|center_horizontal"
              android:gravity="center_horizontal"
-             android:letterSpacing="0.03"
              android:textColor="?attr/wallpaperTextColor"
              android:singleLine="true"
              style="@style/widget_title_bold"
@@ -67,21 +66,43 @@
         android:layout_height="wrap_content"
         android:layout_alignParentEnd="true"
         android:layout_alignParentTop="true"
-        android:layout_marginBottom="24dp"
         android:visibility="gone">
-        <com.android.keyguard.GradientTextClock
-            android:id="@+id/gradient_clock_view"
+        <com.android.keyguard.AnimatableClockView
+            android:id="@+id/animatable_clock_view"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textSize="80dp"
-            android:letterSpacing="0.02"
-            android:lineSpacingMultiplier=".8"
+            android:layout_gravity="center_horizontal"
+            android:gravity="center_horizontal"
+            android:textSize="100dp"
             android:includeFontPadding="false"
             android:fontFamily="@font/clock"
+            android:lineSpacingMultiplier=".65"
             android:typeface="monospace"
-            android:format12Hour="hh\nmm"
-            android:format24Hour="HH\nmm"
             android:elegantTextHeight="false"
+            dozeWeight="200"
+            lockScreenWeight="300"
+        />
+    </FrameLayout>
+    <FrameLayout
+        android:id="@+id/new_lockscreen_clock_view_large"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/keyguard_status_area"
+        android:visibility="gone">
+        <com.android.keyguard.AnimatableClockView
+            android:id="@+id/animatable_clock_view_large"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:gravity="center_horizontal"
+            android:textSize="@dimen/large_clock_text_size"
+            android:includeFontPadding="false"
+            android:lineSpacingMultiplier=".65"
+            android:fontFamily="@font/clock"
+            android:typeface="monospace"
+            android:elegantTextHeight="false"
+            dozeWeight="100"
+            lockScreenWeight="400"
         />
     </FrameLayout>
     <include layout="@layout/keyguard_status_area"

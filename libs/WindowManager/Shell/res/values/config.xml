@@ -30,10 +30,22 @@
     <!-- Animation duration when using long press on recents to dock -->
     <integer name="long_press_dock_anim_duration">250</integer>
 
+    <!-- Animation duration for translating of one handed when trigger / dismiss. -->
+    <integer name="config_one_handed_translate_animation_duration">300</integer>
+
+    <!-- One handed mode default offset % of display size -->
+    <fraction name="config_one_handed_offset">40%</fraction>
+
     <!-- Allow one handed to enable round corner -->
     <bool name="config_one_handed_enable_round_corner">true</bool>
 
     <!-- Bounds [left top right bottom] on screen for picture-in-picture (PIP) windows,
      when the PIP menu is shown in center. -->
     <string translatable="false" name="pip_menu_bounds">"596 280 1324 690"</string>
+
+    <!-- one handed background panel default color RGB -->
+    <item name="config_one_handed_background_rgb" format="float" type="dimen">0.5</item>
+
+    <!-- one handed background panel default alpha -->
+    <item name="config_one_handed_background_alpha" format="float" type="dimen">0.5</item>
 </resources>

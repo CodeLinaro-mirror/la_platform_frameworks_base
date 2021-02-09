@@ -22,6 +22,7 @@ import android.animation.RectEvaluator;
 import android.animation.ValueAnimator;
 import android.annotation.IntDef;
 import android.graphics.Rect;
+import android.view.Choreographer;
 import android.view.SurfaceControl;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -54,6 +55,7 @@ public class PipAnimationController {
     public static final int TRANSITION_DIRECTION_LEAVE_PIP = 3;
     public static final int TRANSITION_DIRECTION_LEAVE_PIP_TO_SPLIT_SCREEN = 4;
     public static final int TRANSITION_DIRECTION_REMOVE_STACK = 5;
+    public static final int TRANSITION_DIRECTION_SNAP_AFTER_RESIZE = 6;
 
     @IntDef(prefix = { "TRANSITION_DIRECTION_" }, value = {
             TRANSITION_DIRECTION_NONE,
@@ -61,7 +63,8 @@ public class PipAnimationController {
             TRANSITION_DIRECTION_TO_PIP,
             TRANSITION_DIRECTION_LEAVE_PIP,
             TRANSITION_DIRECTION_LEAVE_PIP_TO_SPLIT_SCREEN,
-            TRANSITION_DIRECTION_REMOVE_STACK
+            TRANSITION_DIRECTION_REMOVE_STACK,
+            TRANSITION_DIRECTION_SNAP_AFTER_RESIZE
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface TransitionDirection {}
@@ -109,13 +112,27 @@ public class PipAnimationController {
     }
 
     @SuppressWarnings("unchecked")
+    /**
+     * Construct and return an animator that animates from the {@param startBounds} to the
+     * {@param endBounds} with the given {@param direction}. If {@param direction} is type
+     * {@link ANIM_TYPE_BOUNDS}, then {@param sourceHintRect} will be used to animate
+     * in a better, more smooth manner.
+     *
+     * In the case where one wants to start animation during an intermediate animation (for example,
+     * if the user is currently doing a pinch-resize, and upon letting go now PiP needs to animate
+     * to the correct snap fraction region), then provide the base bounds, which is current PiP
+     * leash bounds before transformation/any animation. This is so when we try to construct
+     * the different transformation matrices for the animation, we are constructing this based off
+     * the PiP original bounds, rather than the {@param startBounds}, which is post-transformed.
+     */
     @VisibleForTesting
-    public PipTransitionAnimator getAnimator(SurfaceControl leash, Rect startBounds, Rect endBounds,
-            Rect sourceHintRect, @PipAnimationController.TransitionDirection int direction) {
+    public PipTransitionAnimator getAnimator(SurfaceControl leash, Rect baseBounds,
+            Rect startBounds, Rect endBounds, Rect sourceHintRect,
+            @PipAnimationController.TransitionDirection int direction) {
         if (mCurrentAnimator == null) {
             mCurrentAnimator = setupPipTransitionAnimator(
-                    PipTransitionAnimator.ofBounds(leash, startBounds, endBounds, sourceHintRect,
-                            direction));
+                    PipTransitionAnimator.ofBounds(leash, startBounds, startBounds, endBounds,
+                            sourceHintRect, direction));
         } else if (mCurrentAnimator.getAnimationType() == ANIM_TYPE_ALPHA
                 && mCurrentAnimator.isRunning()) {
             // If we are still animating the fade into pip, then just move the surface and ensure
@@ -130,8 +147,8 @@ public class PipAnimationController {
         } else {
             mCurrentAnimator.cancel();
             mCurrentAnimator = setupPipTransitionAnimator(
-                    PipTransitionAnimator.ofBounds(leash, startBounds, endBounds, sourceHintRect,
-                            direction));
+                    PipTransitionAnimator.ofBounds(leash, baseBounds, startBounds, endBounds,
+                            sourceHintRect, direction));
         }
         return mCurrentAnimator;
     }
@@ -180,6 +197,7 @@ public class PipAnimationController {
         private final @AnimationType int mAnimationType;
         private final Rect mDestinationBounds = new Rect();
 
+        private T mBaseValue;
         protected T mCurrentValue;
         protected T mStartValue;
         private T mEndValue;
@@ -190,10 +208,11 @@ public class PipAnimationController {
         private @TransitionDirection int mTransitionDirection;
 
         private PipTransitionAnimator(SurfaceControl leash, @AnimationType int animationType,
-                Rect destinationBounds, T startValue, T endValue) {
+                Rect destinationBounds, T baseValue, T startValue, T endValue) {
             mLeash = leash;
             mAnimationType = animationType;
             mDestinationBounds.set(destinationBounds);
+            mBaseValue = baseValue;
             mStartValue = startValue;
             mEndValue = endValue;
             addListener(this);
@@ -263,6 +282,10 @@ public class PipAnimationController {
             return mStartValue;
         }
 
+        T getBaseValue() {
+            return mBaseValue;
+        }
+
         @VisibleForTesting
         public T getEndValue() {
             return mEndValue;
@@ -305,8 +328,14 @@ public class PipAnimationController {
             mEndValue = endValue;
         }
 
-        SurfaceControl.Transaction newSurfaceControlTransaction() {
-            return mSurfaceControlTransactionFactory.getTransaction();
+        /**
+         * @return {@link SurfaceControl.Transaction} instance with vsync-id.
+         */
+        protected SurfaceControl.Transaction newSurfaceControlTransaction() {
+            final SurfaceControl.Transaction tx =
+                    mSurfaceControlTransactionFactory.getTransaction();
+            tx.setFrameTimelineVsync(Choreographer.getSfInstance().getVsyncId());
+            return tx;
         }
 
         @VisibleForTesting
@@ -334,7 +363,7 @@ public class PipAnimationController {
         static PipTransitionAnimator<Float> ofAlpha(SurfaceControl leash,
                 Rect destinationBounds, float startValue, float endValue) {
             return new PipTransitionAnimator<Float>(leash, ANIM_TYPE_ALPHA,
-                    destinationBounds, startValue, endValue) {
+                    destinationBounds, startValue, startValue, endValue) {
                 @Override
                 void applySurfaceControlTransaction(SurfaceControl leash,
                         SurfaceControl.Transaction tx, float fraction) {
@@ -367,7 +396,7 @@ public class PipAnimationController {
         }
 
         static PipTransitionAnimator<Rect> ofBounds(SurfaceControl leash,
-                Rect startValue, Rect endValue, Rect sourceHintRect,
+                Rect baseValue, Rect startValue, Rect endValue, Rect sourceHintRect,
                 @PipAnimationController.TransitionDirection int direction) {
             // Just for simplicity we'll interpolate between the source rect hint insets and empty
             // insets to calculate the window crop
@@ -375,7 +404,7 @@ public class PipAnimationController {
             if (isOutPipDirection(direction)) {
                 initialSourceValue = new Rect(endValue);
             } else {
-                initialSourceValue = new Rect(startValue);
+                initialSourceValue = new Rect(baseValue);
             }
 
             final Rect sourceHintRectInsets;
@@ -391,22 +420,24 @@ public class PipAnimationController {
 
             // construct new Rect instances in case they are recycled
             return new PipTransitionAnimator<Rect>(leash, ANIM_TYPE_BOUNDS,
-                    endValue, new Rect(startValue), new Rect(endValue)) {
+                    endValue, new Rect(baseValue), new Rect(startValue), new Rect(endValue)) {
                 private final RectEvaluator mRectEvaluator = new RectEvaluator(new Rect());
                 private final RectEvaluator mInsetsEvaluator = new RectEvaluator(new Rect());
 
                 @Override
                 void applySurfaceControlTransaction(SurfaceControl leash,
                         SurfaceControl.Transaction tx, float fraction) {
+                    final Rect base = getBaseValue();
                     final Rect start = getStartValue();
                     final Rect end = getEndValue();
                     Rect bounds = mRectEvaluator.evaluate(fraction, start, end);
                     setCurrentValue(bounds);
                     if (inScaleTransition() || sourceHintRect == null) {
+
                         if (isOutPipDirection(direction)) {
                             getSurfaceTransactionHelper().scale(tx, leash, end, bounds);
                         } else {
-                            getSurfaceTransactionHelper().scale(tx, leash, start, bounds);
+                            getSurfaceTransactionHelper().scale(tx, leash, base, bounds);
                         }
                     } else {
                         final Rect insets;

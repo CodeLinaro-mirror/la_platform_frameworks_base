@@ -28,7 +28,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
-import android.app.ActivityManager.TaskSnapshot;
+import android.window.TaskSnapshot;
 import android.content.ComponentName;
 import android.content.ContextWrapper;
 import android.content.res.Resources;
@@ -41,10 +41,10 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.hardware.HardwareBuffer;
 import android.os.UserManager;
-import android.os.UserManagerInternal;
 import android.view.Surface;
 
 import com.android.server.LocalServices;
+import com.android.server.pm.UserManagerInternal;
 
 import org.junit.After;
 import org.junit.AfterClass;
@@ -207,7 +207,8 @@ class TaskSnapshotPersisterTestBase extends WindowTestsBase {
                     // is always false. Low-res snapshots are only created when loading from
                     // disk.
                     false /* isLowResolution */,
-                    mIsRealSnapshot, mWindowingMode, mSystemUiVisibility, mIsTranslucent);
+                    mIsRealSnapshot, mWindowingMode, mSystemUiVisibility, mIsTranslucent,
+                    false /* hasImeSurface */);
         }
     }
 }

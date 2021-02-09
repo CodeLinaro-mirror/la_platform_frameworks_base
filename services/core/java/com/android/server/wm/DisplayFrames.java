@@ -16,15 +16,17 @@
 
 package com.android.server.wm;
 
-import static com.android.server.wm.DisplayFramesProto.CURRENT;
-import static com.android.server.wm.DisplayFramesProto.DOCK;
-import static com.android.server.wm.DisplayFramesProto.STABLE_BOUNDS;
+import static android.view.InsetsState.ITYPE_BOTTOM_DISPLAY_CUTOUT;
+import static android.view.InsetsState.ITYPE_LEFT_DISPLAY_CUTOUT;
+import static android.view.InsetsState.ITYPE_RIGHT_DISPLAY_CUTOUT;
+import static android.view.InsetsState.ITYPE_TOP_DISPLAY_CUTOUT;
 
 import android.annotation.NonNull;
 import android.graphics.Rect;
 import android.util.proto.ProtoOutputStream;
 import android.view.DisplayCutout;
 import android.view.DisplayInfo;
+import android.view.InsetsState;
 
 import com.android.server.wm.utils.WmDisplayCutout;
 
@@ -42,51 +44,6 @@ public class DisplayFrames {
      * be hidden but not extending into the overscan area.
      */
     public final Rect mUnrestricted = new Rect();
-
-    /**
-     * The current size of the screen; these may be different than (0,0)-(dw,dh) if the status bar
-     * can't be hidden; in that case it effectively carves out that area of the display from all
-     * other windows.
-     */
-    public final Rect mRestricted = new Rect();
-
-    /**
-     * During layout, the current screen borders accounting for any currently visible system UI
-     * elements.
-     */
-    public final Rect mSystem = new Rect();
-
-    /** For applications requesting stable content insets, these are them. */
-    public final Rect mStable = new Rect();
-
-    /**
-     * For applications requesting stable content insets but have also set the fullscreen window
-     * flag, these are the stable dimensions without the status bar.
-     */
-    public final Rect mStableFullscreen = new Rect();
-
-    /**
-     * During layout, the current screen borders with all outer decoration (status bar, input method
-     * dock) accounted for.
-     */
-    public final Rect mCurrent = new Rect();
-
-    /**
-     * During layout, the frame in which content should be displayed to the user, accounting for all
-     * screen decoration except for any space they deem as available for other content. This is
-     * usually the same as mCurrent*, but may be larger if the screen decor has supplied content
-     * insets.
-     */
-    public final Rect mContent = new Rect();
-
-    /**
-     * During layout, the frame in which voice content should be displayed to the user, accounting
-     * for all screen decoration except for any space they deem as available for other content.
-     */
-    public final Rect mVoiceContent = new Rect();
-
-    /** During layout, the current screen borders along which input method windows are placed. */
-    public final Rect mDock = new Rect();
 
     /** The display cutout used for layout (after rotation) */
     @NonNull public WmDisplayCutout mDisplayCutout = WmDisplayCutout.NO_CUTOUT;
@@ -116,46 +73,46 @@ public class DisplayFrames {
         mDisplayInfoCutout = displayCutout != null ? displayCutout : WmDisplayCutout.NO_CUTOUT;
     }
 
-    public void onBeginLayout() {
-        mUnrestricted.set(0, 0, mDisplayWidth, mDisplayHeight);
-        mRestricted.set(mUnrestricted);
-        mSystem.set(mUnrestricted);
-        mDock.set(mUnrestricted);
-        mContent.set(mUnrestricted);
-        mVoiceContent.set(mUnrestricted);
-        mStable.set(mUnrestricted);
-        mStableFullscreen.set(mUnrestricted);
-        mCurrent.set(mUnrestricted);
-
+    public void onBeginLayout(InsetsState state) {
         mDisplayCutout = mDisplayInfoCutout;
-        mDisplayCutoutSafe.set(Integer.MIN_VALUE, Integer.MIN_VALUE,
-                Integer.MAX_VALUE, Integer.MAX_VALUE);
-        if (!mDisplayCutout.getDisplayCutout().isEmpty()) {
-            final DisplayCutout c = mDisplayCutout.getDisplayCutout();
-            if (c.getSafeInsetLeft() > 0) {
-                mDisplayCutoutSafe.left = mUnrestricted.left + c.getSafeInsetLeft();
+        final Rect unrestricted = mUnrestricted;
+        final Rect safe = mDisplayCutoutSafe;
+        final DisplayCutout cutout = mDisplayCutout.getDisplayCutout();
+        unrestricted.set(0, 0, mDisplayWidth, mDisplayHeight);
+        safe.set(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE);
+        state.setDisplayFrame(unrestricted);
+        state.setDisplayCutout(cutout);
+        if (!cutout.isEmpty()) {
+            if (cutout.getSafeInsetLeft() > 0) {
+                safe.left = unrestricted.left + cutout.getSafeInsetLeft();
             }
-            if (c.getSafeInsetTop() > 0) {
-                mDisplayCutoutSafe.top = mUnrestricted.top + c.getSafeInsetTop();
+            if (cutout.getSafeInsetTop() > 0) {
+                safe.top = unrestricted.top + cutout.getSafeInsetTop();
             }
-            if (c.getSafeInsetRight() > 0) {
-                mDisplayCutoutSafe.right = mUnrestricted.right - c.getSafeInsetRight();
+            if (cutout.getSafeInsetRight() > 0) {
+                safe.right = unrestricted.right - cutout.getSafeInsetRight();
             }
-            if (c.getSafeInsetBottom() > 0) {
-                mDisplayCutoutSafe.bottom = mUnrestricted.bottom - c.getSafeInsetBottom();
+            if (cutout.getSafeInsetBottom() > 0) {
+                safe.bottom = unrestricted.bottom - cutout.getSafeInsetBottom();
             }
+            state.getSource(ITYPE_LEFT_DISPLAY_CUTOUT).setFrame(
+                    unrestricted.left, unrestricted.top, safe.left, unrestricted.bottom);
+            state.getSource(ITYPE_TOP_DISPLAY_CUTOUT).setFrame(
+                    unrestricted.left, unrestricted.top, unrestricted.right, safe.top);
+            state.getSource(ITYPE_RIGHT_DISPLAY_CUTOUT).setFrame(
+                    safe.right, unrestricted.top, unrestricted.right, unrestricted.bottom);
+            state.getSource(ITYPE_BOTTOM_DISPLAY_CUTOUT).setFrame(
+                    unrestricted.left, safe.bottom, unrestricted.right, unrestricted.bottom);
+        } else {
+            state.removeSource(ITYPE_LEFT_DISPLAY_CUTOUT);
+            state.removeSource(ITYPE_TOP_DISPLAY_CUTOUT);
+            state.removeSource(ITYPE_RIGHT_DISPLAY_CUTOUT);
+            state.removeSource(ITYPE_BOTTOM_DISPLAY_CUTOUT);
         }
-    }
-
-    public int getInputMethodWindowVisibleHeight() {
-        return mDock.bottom - mCurrent.bottom;
     }
 
     public void dumpDebug(ProtoOutputStream proto, long fieldId) {
         final long token = proto.start(fieldId);
-        mStable.dumpDebug(proto, STABLE_BOUNDS);
-        mDock.dumpDebug(proto, DOCK);
-        mCurrent.dumpDebug(proto, CURRENT);
         proto.end(token);
     }
 
@@ -163,14 +120,6 @@ public class DisplayFrames {
         pw.println(prefix + "DisplayFrames w=" + mDisplayWidth + " h=" + mDisplayHeight
                 + " r=" + mRotation);
         final String myPrefix = prefix + "  ";
-        dumpFrame(mStable, "mStable", myPrefix, pw);
-        dumpFrame(mStableFullscreen, "mStableFullscreen", myPrefix, pw);
-        dumpFrame(mDock, "mDock", myPrefix, pw);
-        dumpFrame(mCurrent, "mCurrent", myPrefix, pw);
-        dumpFrame(mSystem, "mSystem", myPrefix, pw);
-        dumpFrame(mContent, "mContent", myPrefix, pw);
-        dumpFrame(mVoiceContent, "mVoiceContent", myPrefix, pw);
-        dumpFrame(mRestricted, "mRestricted", myPrefix, pw);
         dumpFrame(mUnrestricted, "mUnrestricted", myPrefix, pw);
         pw.println(myPrefix + "mDisplayCutout=" + mDisplayCutout);
     }

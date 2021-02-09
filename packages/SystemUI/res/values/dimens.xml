@@ -133,17 +133,23 @@
     <!-- Height of a small notification in the status bar which was used before android P -->
     <dimen name="notification_min_height_before_p">92dp</dimen>
 
+    <!-- Height of a small notification in the status bar which was used before android S -->
+    <dimen name="notification_min_height_before_s">106dp</dimen>
+
     <!-- Height of a large notification in the status bar -->
     <dimen name="notification_max_height">294dp</dimen>
 
     <!-- Height of a heads up notification in the status bar for legacy custom views -->
     <dimen name="notification_max_heads_up_height_legacy">128dp</dimen>
 
-    <!-- Height of a heads up notification in the status bar for custom views before andoid P -->
+    <!-- Height of a heads up notification in the status bar for custom views before android P -->
     <dimen name="notification_max_heads_up_height_before_p">148dp</dimen>
 
+    <!-- Height of a heads up notification in the status bar for custom views before android S -->
+    <dimen name="notification_max_heads_up_height_before_s">162dp</dimen>
+
     <!-- Height of a heads up notification in the status bar -->
-    <dimen name="notification_max_heads_up_height">162dp</dimen>
+    <dimen name="notification_max_heads_up_height">132dp</dimen>
 
     <!-- Height of a heads up notification in the status bar -->
     <dimen name="notification_max_heads_up_height_increased">188dp</dimen>
@@ -170,8 +176,8 @@
     <!-- Minimum height of a notification to be interactable -->
     <dimen name="notification_min_interaction_height">40dp</dimen>
 
-    <!-- New radius for notifications. -->
-    <dimen name="notification_corner_radius">20dp</dimen>
+    <!-- Radius for notifications corners without adjacent notifications -->
+    <dimen name="notification_corner_radius">28dp</dimen>
 
     <!-- the padding of the shelf icon container -->
     <dimen name="shelf_icon_container_padding">13dp</dimen>
@@ -513,6 +519,7 @@
          Scaled @dimen/qs_page_indicator-width by .4f.
     -->
     <dimen name="qs_page_indicator_dot_width">6.4dp</dimen>
+    <dimen name="qs_tile_side_label_padding">6dp</dimen>
     <dimen name="qs_tile_icon_size">24dp</dimen>
     <dimen name="qs_tile_text_size">12sp</dimen>
     <dimen name="qs_tile_divider_height">1dp</dimen>
@@ -612,7 +619,7 @@
     <dimen name="z_distance_between_notifications">0.5dp</dimen>
 
     <!-- The height of the divider between the individual notifications. -->
-    <dimen name="notification_divider_height">4dp</dimen>
+    <dimen name="notification_divider_height">2dp</dimen>
 
     <!-- The corner radius of the shadow behind the notification. -->
     <dimen name="notification_shadow_radius">0dp</dimen>
@@ -671,6 +678,8 @@
     <dimen name="keyguard_clock_top_margin">36dp</dimen>
     <!-- The margin between top of clock and bottom of lock icon. -->
     <dimen name="keyguard_clock_lock_margin">16dp</dimen>
+    <!-- The amount to shift the clocks during a small/large transition -->
+    <dimen name="keyguard_clock_switch_y_shift">10dp</dimen>
 
     <item name="scrim_behind_alpha" format="float" type="dimen">0.62</item>
 
@@ -999,6 +1008,7 @@
     <dimen name="global_actions_grid_vertical_padding">3dp</dimen>
     <dimen name="global_actions_grid_horizontal_padding">3dp</dimen>
 
+    <dimen name="global_actions_grid_item_layout_height">98dp</dimen>
     <dimen name="global_actions_grid_item_side_margin">5dp</dimen>
     <dimen name="global_actions_grid_item_vertical_margin">4dp</dimen>
     <dimen name="global_actions_grid_item_width">64dp</dimen>
@@ -1031,6 +1041,13 @@
     <!-- The maximum offset in either direction that elements are moved vertically to prevent
          burn-in on AOD. -->
     <dimen name="burn_in_prevention_offset_y">50dp</dimen>
+
+    <!-- The maximum offset in either direction that elements are moved vertically to prevent
+         burn-in on AOD. -->
+    <dimen name="burn_in_prevention_offset_y_large_clock">42dp</dimen>
+
+    <!-- Large clock maximum font size (dp is intentional, to prevent any further scaling) -->
+    <dimen name="large_clock_text_size">150dp</dimen>
 
     <!-- The maximum offset in either direction that icons move to prevent burn-in on AOD. -->
     <dimen name="default_burn_in_prevention_offset">15dp</dimen>
@@ -1163,10 +1180,9 @@
     <dimen name="new_qs_vertical_margin">8dp</dimen>
 
     <!-- Size of media cards in the QSPanel carousel -->
-    <dimen name="qs_media_width">350dp</dimen>
     <dimen name="qs_media_padding">16dp</dimen>
     <dimen name="qs_media_panel_outer_padding">16dp</dimen>
-    <dimen name="qs_media_album_size">52dp</dimen>
+    <dimen name="qs_media_album_size">120dp</dimen>
     <dimen name="qs_media_icon_size">16dp</dimen>
     <dimen name="qs_center_guideline_padding">10dp</dimen>
     <dimen name="qs_seamless_icon_size">@dimen/qs_media_icon_size</dimen>
@@ -1188,8 +1204,8 @@
     <dimen name="magnification_frame_move_long">25dp</dimen>
     <dimen name="magnification_drag_view_size">38dp</dimen>
     <dimen name="magnification_controls_size">90dp</dimen>
-    <dimen name="magnification_switch_button_size">32dp</dimen>
-    <dimen name="magnification_switch_button_padding">8dp</dimen>
+    <dimen name="magnification_switch_button_size">60dp</dimen>
+    <dimen name="magnification_switch_button_padding">12dp</dimen>
     <dimen name="magnifier_left_right_controls_width">35dp</dimen>
     <dimen name="magnifier_left_right_controls_height">45dp</dimen>
     <dimen name="magnifier_up_down_controls_width">45dp</dimen>
@@ -1263,6 +1279,10 @@
     <dimen name="controls_app_divider_height">2dp</dimen>
     <dimen name="controls_app_divider_side_margin">32dp</dimen>
 
+    <item name="controls_thumbnail_shadow_x" type="dimen" format="float">2.0</item>
+    <item name="controls_thumbnail_shadow_y" type="dimen" format="float">2.0</item>
+    <item name="controls_thumbnail_shadow_radius" type="dimen" format="float">2.0</item>
+
     <dimen name="controls_card_margin">@dimen/control_base_item_margin</dimen>
     <item name="control_card_elevation" type="dimen" format="float">15</item>
 
@@ -1296,4 +1316,8 @@
     <dimen name="media_output_dialog_header_icon_padding">16dp</dimen>
     <dimen name="media_output_dialog_icon_corner_radius">16dp</dimen>
     <dimen name="media_output_dialog_title_anim_y_delta">12.5dp</dimen>
+
+    <dimen name="people_space_widget_radius">24dp</dimen>
+    <dimen name="people_space_widget_round_radius">100dp</dimen>
+    <dimen name="people_space_widget_background_padding">6dp</dimen>
 </resources>

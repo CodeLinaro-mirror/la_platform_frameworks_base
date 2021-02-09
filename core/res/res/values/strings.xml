@@ -110,7 +110,7 @@
     <!-- Displayed as the title for a success/failure report enabling/disabling caller ID. -->
     <string name="ClipMmi">Incoming Caller ID</string>
     <!-- Displayed as the title for a success/failure report enabling/disabling caller ID. -->
-    <string name="ClirMmi">Outgoing Caller ID</string>
+    <string name="ClirMmi">Hide Outgoing Caller ID</string>
     <!-- Displayed as the title for a success/failure report enabling/disabling connected line ID. -->
     <string name="ColpMmi">Connected Line ID</string>
     <!-- Displayed as the title for a success/failure report enabling/disabling connected line ID restriction. -->
@@ -292,6 +292,17 @@
     <!-- WFC, summary for Wi-Fi Only -->
     <string name="wfc_mode_wifi_only_summary">Wi-Fi only</string>
 
+    <!-- Template for showing mobile network operator name while Cross SIM calling is active -->
+    <string-array name="crossSimSpnFormats" translatable="false">
+        <item>@string/crossSimFormat_spn</item>
+        <item>@string/crossSimFormat_spn_cross_sim_calling</item>
+    </string-array>
+
+    <!-- Spn during Cross-SIM Calling: "<operator> " [CHAR LIMIT=NONE] -->
+    <string name="crossSimFormat_spn"><xliff:g id="spn" example="Operator">%s</xliff:g></string>
+    <!-- Spn during Cross SIM Calling: "<operator> Cross-SIM Calling" [CHAR LIMIT=NONE] -->
+    <string name="crossSimFormat_spn_cross_sim_calling"><xliff:g id="spn" example="Operator">%s</xliff:g> Cross-SIM Calling</string>
+
     <!--
         {0} is one of "bearerServiceCode*"
         {1} is dialing number
@@ -433,6 +444,12 @@
     <string name="sensor_notification_service">Sensor Notification Service</string>
     <!-- Attribution for Twilight service. [CHAR LIMIT=NONE]-->
     <string name="twilight_service">Twilight Service</string>
+    <!-- Attribution for the Offline LocationTimeZoneProvider service, i.e. the service capable of
+         performing time zone detection using time zone geospatial information held on the device.
+         This text is shown in UIs related to an application name to help users and developers to
+         understand which sub-unit of an application is requesting permissions and using power.
+         [CHAR LIMIT=NONE]-->
+    <string name="offline_location_time_zone_detection_service_attribution">Time Zone Detector (No connectivity)</string>
 
     <!-- Factory reset warning dialog strings--> <skip />
     <!-- Shows up in the dialog's title to warn about an impeding factory reset. [CHAR LIMIT=NONE] -->
@@ -717,6 +734,10 @@
         [CHAR LIMIT=NONE BACKUP_MESSAGE_ID=6665375982962336520] -->
     <string name="notification_channel_foreground_service">Apps consuming battery</string>
 
+    <!-- Text shown when viewing channel settings for notifications related to accessibility
+         magnification. [CHAR_LIMIT=NONE]-->
+    <string name="notification_channel_accessibility_magnification">Magnification</string>
+
     <!-- Label for foreground service notification when one app is running.
     [CHAR LIMIT=NONE BACKUP_MESSAGE_ID=6826789589341671842] -->
     <string name="foreground_service_app_in_background"><xliff:g id="app_name">%1$s</xliff:g> is
@@ -917,6 +938,15 @@
         locations to warn you of emergency situations. Malicious apps may
         interfere with the performance or operation of your device when an
         emergency cell broadcast is received.</string>
+
+    <!-- Title for an application which grants an app the ability to see and manage calls on
+         the user's device. Usually reserved for apps associated with wearable devices that
+         can show information about calls. -->
+    <string name="permlab_manageOngoingCalls">Manage ongoing calls</string>
+    <!-- Description of an application permission, listed so the user can choose whether they
+         want to allow the application to do this. -->
+    <string name="permdesc_manageOngoingCalls">Allows an app to see details about ongoing calls
+         on your device and to control these calls.</string>
 
     <!-- Title of an application permission, listed so the user can choose whether they want to allow the application to do this. -->
     <string name="permlab_readCellBroadcasts">read cell broadcast messages</string>
@@ -5347,6 +5377,14 @@
     <!-- Feedback Indicator -->
     <!-- Content description of the feedback icon in the notification. [CHAR LIMIT=NONE] -->
     <string name="notification_feedback_indicator">Provide Feedback</string>
+    <!-- Content description of the alerted feedback icon in the notification. [CHAR LIMIT=NONE] -->
+    <string name="notification_feedback_indicator_alerted">This notification was promoted to Default. Tap to provide feedback.</string>
+    <!-- Content description of the silenced feedback icon in the notification. [CHAR LIMIT=NONE] -->
+    <string name="notification_feedback_indicator_silenced">This notification was demoted to Silent. Tap to provide feedback.</string>
+    <!-- Content description of the promoted feedback icon in the notification. [CHAR LIMIT=NONE] -->
+    <string name="notification_feedback_indicator_promoted">This notification was ranked higher. Tap to provide feedback.</string>
+    <!-- Content description of the demoted feedback icon in the notification. [CHAR LIMIT=NONE] -->
+    <string name="notification_feedback_indicator_demoted">This notification was ranked lower. Tap to provide feedback.</string>
 
     <!-- Dynamic mode battery saver strings -->
     <!-- The user visible name of the notification channel for the routine mode battery saver fyi notification [CHAR_LIMIT=80]-->
@@ -5767,4 +5805,16 @@ ul.</string>
     <string name="config_pdp_reject_service_not_subscribed"></string>
     <!-- pdp data reject dialog string for cause 55 (MULTI_CONN_TO_SAME_PDN_NOT_ALLOWED) [CHAR LIMIT=100] -->
     <string name="config_pdp_reject_multi_conn_to_same_pdn_not_allowed"></string>
+
+    <!-- Window magnification prompt related string. -->
+
+    <!-- Notification title to prompt the user that new magnification feature is available. [CHAR LIMIT=50] -->
+    <string name="window_magnification_prompt_title">New: Window Magnifier</string>
+    <!-- Notification content to prompt the user that new magnification feature is available. [CHAR LIMIT=50] -->
+    <string name="window_magnification_prompt_content">You can now magnify some or all of your screen</string>
+    <!-- Notification action to bring the user to magnification settings page. [CHAR LIMIT=50] -->
+    <string name="turn_on_magnification_settings_action">Turn on in Settings</string>
+    <!-- Notification action to dismiss. [CHAR LIMIT=50] -->
+    <string name="dismiss_action">Dismiss</string>
+
 </resources>

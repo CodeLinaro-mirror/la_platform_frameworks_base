@@ -24,6 +24,7 @@ import static android.Manifest.permission.USE_BIOMETRIC;
 import static android.Manifest.permission.USE_BIOMETRIC_INTERNAL;
 import static android.Manifest.permission.USE_FINGERPRINT;
 
+import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresFeature;
@@ -55,6 +56,8 @@ import android.security.identity.IdentityCredential;
 import android.util.Slog;
 import android.view.Surface;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.security.Signature;
 import java.util.ArrayList;
 import java.util.List;
@@ -86,6 +89,19 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     private static final int MSG_REMOVED = 105;
     private static final int MSG_CHALLENGE_GENERATED = 106;
     private static final int MSG_FINGERPRINT_DETECTED = 107;
+
+    /**
+     * Request authentication with any single sensor.
+     * @hide
+     */
+    public static final int SENSOR_ID_ANY = -1;
+
+    /**
+     * @hide
+     */
+    @IntDef({SENSOR_ID_ANY})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface SensorId {}
 
     private IFingerprintService mService;
     private Context mContext;
@@ -461,15 +477,23 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     }
 
     /**
-     * Per-user version, see {@link FingerprintManager#authenticate(CryptoObject,
-     * CancellationSignal, int, AuthenticationCallback, Handler)}. This version does not
-     * display the BiometricPrompt.
-     * @param userId the user ID that the fingerprint hardware will authenticate for.
+     * Per-user version of authenticate.
      * @hide
      */
     @RequiresPermission(anyOf = {USE_BIOMETRIC, USE_FINGERPRINT})
     public void authenticate(@Nullable CryptoObject crypto, @Nullable CancellationSignal cancel,
             @NonNull AuthenticationCallback callback, Handler handler, int userId) {
+        authenticate(crypto, cancel, callback, handler, SENSOR_ID_ANY, userId);
+    }
+
+    /**
+     * Per-user and per-sensor version of authenticate.
+     * @hide
+     */
+    @RequiresPermission(anyOf = {USE_BIOMETRIC, USE_FINGERPRINT})
+    public void authenticate(@Nullable CryptoObject crypto, @Nullable CancellationSignal cancel,
+            @NonNull AuthenticationCallback callback, Handler handler, @SensorId int sensorId,
+            int userId) {
         if (callback == null) {
             throw new IllegalArgumentException("Must supply an authentication callback");
         }
@@ -489,7 +513,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
                 mAuthenticationCallback = callback;
                 mCryptoObject = crypto;
                 final long operationId = crypto != null ? crypto.getOpId() : 0;
-                mService.authenticate(mToken, operationId, userId, mServiceReceiver,
+                mService.authenticate(mToken, operationId, sensorId, userId, mServiceReceiver,
                         mContext.getOpPackageName());
             } catch (RemoteException e) {
                 Slog.w(TAG, "Remote exception while authenticating: ", e);
@@ -544,11 +568,13 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
      * @param cancel an object that can be used to cancel enrollment
      * @param userId the user to whom this fingerprint will belong to
      * @param callback an object to receive enrollment events
+     * @param shouldLogMetrics a flag that indicates if enrollment failure/success metrics
+     * should be logged.
      * @hide
      */
     @RequiresPermission(MANAGE_FINGERPRINT)
     public void enroll(byte [] hardwareAuthToken, CancellationSignal cancel, int userId,
-            EnrollmentCallback callback) {
+            EnrollmentCallback callback, boolean shouldLogMetrics) {
         if (userId == UserHandle.USER_CURRENT) {
             userId = getCurrentUserId();
         }
@@ -569,7 +595,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
             try {
                 mEnrollmentCallback = callback;
                 mService.enroll(mToken, hardwareAuthToken, userId, mServiceReceiver,
-                        mContext.getOpPackageName());
+                        mContext.getOpPackageName(), shouldLogMetrics);
             } catch (RemoteException e) {
                 Slog.w(TAG, "Remote exception in enroll: ", e);
                 // Though this may not be a hardware issue, it will cause apps to give up or try

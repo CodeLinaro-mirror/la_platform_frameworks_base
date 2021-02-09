@@ -26,6 +26,7 @@ import android.util.Size;
 import android.view.DisplayInfo;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.util.function.TriConsumer;
 import com.android.wm.shell.R;
 import com.android.wm.shell.common.DisplayLayout;
 
@@ -33,7 +34,6 @@ import java.io.PrintWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Objects;
-import java.util.function.BiConsumer;
 
 /**
  * Singleton source of truth for the current state of PIP bounds.
@@ -59,42 +59,41 @@ public final class PipBoundsState {
     private final @NonNull Rect mExpandedBounds = new Rect();
     private final @NonNull Rect mNormalMovementBounds = new Rect();
     private final @NonNull Rect mExpandedMovementBounds = new Rect();
-    private final Context mContext;
+    private final @NonNull Context mContext;
     private float mAspectRatio;
     private int mStashedState = STASH_TYPE_NONE;
     private int mStashOffset;
-    private PipReentryState mPipReentryState;
-    private ComponentName mLastPipComponentName;
-    private final DisplayInfo mDisplayInfo = new DisplayInfo();
-    private final DisplayLayout mDisplayLayout = new DisplayLayout();
+    private @Nullable PipReentryState mPipReentryState;
+    private @Nullable ComponentName mLastPipComponentName;
+    private final @NonNull DisplayInfo mDisplayInfo = new DisplayInfo();
+    private final @NonNull DisplayLayout mDisplayLayout = new DisplayLayout();
     /** The current minimum edge size of PIP. */
     private int mMinEdgeSize;
     /** The preferred minimum (and default) size specified by apps. */
-    private Size mOverrideMinSize;
-    private final @NonNull AnimatingBoundsState mAnimatingBoundsState = new AnimatingBoundsState();
+    private @Nullable Size mOverrideMinSize;
+    private final @NonNull MotionBoundsState mMotionBoundsState = new MotionBoundsState();
     private boolean mIsImeShowing;
     private int mImeHeight;
     private boolean mIsShelfShowing;
     private int mShelfHeight;
+    /** Whether the user has resized the PIP manually. */
+    private boolean mHasUserResizedPip;
 
-    private Runnable mOnMinimalSizeChangeCallback;
-    private BiConsumer<Boolean, Integer> mOnShelfVisibilityChangeCallback;
+    private @Nullable Runnable mOnMinimalSizeChangeCallback;
+    private @Nullable TriConsumer<Boolean, Integer, Boolean> mOnShelfVisibilityChangeCallback;
 
-    public PipBoundsState(Context context) {
+    public PipBoundsState(@NonNull Context context) {
         mContext = context;
         reloadResources();
     }
 
-    /**
-     * Reloads the resources.
-     */
+    /** Reloads the resources. */
     public void onConfigurationChanged() {
         reloadResources();
     }
 
     private void reloadResources() {
-        mStashOffset = mContext.getResources()
-                .getDimensionPixelSize(R.dimen.pip_stash_offset);
+        mStashOffset = mContext.getResources().getDimensionPixelSize(R.dimen.pip_stash_offset);
     }
 
     /** Set the current PIP bounds. */
@@ -102,12 +101,14 @@ public final class PipBoundsState {
         mBounds.set(bounds);
     }
 
+    /** Get the current PIP bounds. */
     @NonNull
     public Rect getBounds() {
         return new Rect(mBounds);
     }
 
     /** Returns the current movement bounds. */
+    @NonNull
     public Rect getMovementBounds() {
         return mMovementBounds;
     }
@@ -135,28 +136,28 @@ public final class PipBoundsState {
     }
 
     /** Set the normal movement bounds. */
-    public void setNormalMovementBounds(Rect bounds) {
+    public void setNormalMovementBounds(@NonNull Rect bounds) {
         mNormalMovementBounds.set(bounds);
     }
 
     /** Returns the normal movement bounds. */
+    @NonNull
     public Rect getNormalMovementBounds() {
         return mNormalMovementBounds;
     }
 
     /** Set the expanded movement bounds. */
-    public void setExpandedMovementBounds(Rect bounds) {
+    public void setExpandedMovementBounds(@NonNull Rect bounds) {
         mExpandedMovementBounds.set(bounds);
     }
 
     /** Returns the expanded movement bounds. */
+    @NonNull
     public Rect getExpandedMovementBounds() {
         return mExpandedMovementBounds;
     }
 
-    /**
-     * Dictate where PiP currently should be stashed, if at all.
-     */
+    /** Dictate where PiP currently should be stashed, if at all. */
     public void setStashed(@StashType int stashedState) {
         mStashedState = stashedState;
     }
@@ -169,92 +170,81 @@ public final class PipBoundsState {
         return mStashedState;
     }
 
-    /**
-     * Whether PiP is stashed or not.
-     */
+    /** Whether PiP is stashed or not. */
     public boolean isStashed() {
         return mStashedState != STASH_TYPE_NONE;
     }
 
-    /**
-     * Returns the offset from the edge of the screen for PiP stash.
-     */
+    /** Returns the offset from the edge of the screen for PiP stash. */
     public int getStashOffset() {
         return mStashOffset;
     }
 
+    /** Set the PIP aspect ratio. */
     public void setAspectRatio(float aspectRatio) {
         mAspectRatio = aspectRatio;
     }
 
+    /** Get the PIP aspect ratio. */
     public float getAspectRatio() {
         return mAspectRatio;
     }
 
-    /**
-     * Save the reentry state to restore to when re-entering PIP mode.
-     *
-     * TODO(b/169373982): consider refactoring this so that this class alone can use mBounds and
-     * calculate the snap fraction to save for re-entry.
-     */
-    public void saveReentryState(@NonNull Rect bounds, float fraction) {
-        mPipReentryState = new PipReentryState(new Size(bounds.width(), bounds.height()), fraction);
+    /** Save the reentry state to restore to when re-entering PIP mode. */
+    public void saveReentryState(Size size, float fraction) {
+        mPipReentryState = new PipReentryState(size, fraction);
     }
 
-    /**
-     * Returns the saved reentry state.
-     */
+    /** Returns the saved reentry state. */
     @Nullable
     public PipReentryState getReentryState() {
         return mPipReentryState;
     }
 
-    /**
-     * Set the last {@link ComponentName} to enter PIP mode.
-     */
-    public void setLastPipComponentName(ComponentName lastPipComponentName) {
+    /** Set the last {@link ComponentName} to enter PIP mode. */
+    public void setLastPipComponentName(@Nullable ComponentName lastPipComponentName) {
         final boolean changed = !Objects.equals(mLastPipComponentName, lastPipComponentName);
         mLastPipComponentName = lastPipComponentName;
         if (changed) {
             clearReentryState();
+            setHasUserResizedPip(false);
         }
     }
 
+    /** Get the last PIP component name, if any. */
+    @Nullable
     public ComponentName getLastPipComponentName() {
         return mLastPipComponentName;
     }
 
+    /** Get the current display info. */
     @NonNull
     public DisplayInfo getDisplayInfo() {
         return mDisplayInfo;
     }
 
-    /**
-     * Update the display info.
-     */
+    /** Update the display info. */
     public void setDisplayInfo(@NonNull DisplayInfo displayInfo) {
         mDisplayInfo.copyFrom(displayInfo);
     }
 
+    /** Set the rotation of the display. */
     public void setDisplayRotation(int rotation) {
         mDisplayInfo.rotation = rotation;
     }
 
-    /**
-     * Returns the display's bound.
-     */
+    /** Returns the display's bounds. */
     @NonNull
     public Rect getDisplayBounds() {
         return new Rect(0, 0, mDisplayInfo.logicalWidth, mDisplayInfo.logicalHeight);
     }
 
-    /**
-     * Update the display layout.
-     */
+    /** Update the display layout. */
     public void setDisplayLayout(@NonNull DisplayLayout displayLayout) {
         mDisplayLayout.set(displayLayout);
     }
 
+    /** Get the display layout. */
     @NonNull
     public DisplayLayout getDisplayLayout() {
         return mDisplayLayout;
@@ -275,10 +265,8 @@ public final class PipBoundsState {
         return mMinEdgeSize;
     }
 
-    /**
-     * Sets the preferred size of PIP as specified by the activity in PIP mode.
-     */
-    public void setOverrideMinSize(Size overrideMinSize) {
+    /** Sets the preferred size of PIP as specified by the activity in PIP mode. */
+    public void setOverrideMinSize(@Nullable Size overrideMinSize) {
         final boolean changed = !Objects.equals(overrideMinSize, mOverrideMinSize);
         mOverrideMinSize = overrideMinSize;
         if (changed && mOnMinimalSizeChangeCallback != null) {
@@ -287,6 +275,7 @@ public final class PipBoundsState {
     }
 
     /** Returns the preferred minimal size specified by the activity in PIP. */
+    @Nullable
     public Size getOverrideMinSize() {
         return mOverrideMinSize;
     }
@@ -297,8 +286,10 @@ public final class PipBoundsState {
         return Math.min(mOverrideMinSize.getWidth(), mOverrideMinSize.getHeight());
     }
 
-    public AnimatingBoundsState getAnimatingBoundsState() {
-        return mAnimatingBoundsState;
+    /** Get the state of the bounds in motion. */
+    @NonNull
+    public MotionBoundsState getMotionBoundsState() {
+        return mMotionBoundsState;
     }
 
     /** Set whether the IME is currently showing and its height. */
@@ -319,6 +310,11 @@ public final class PipBoundsState {
 
     /** Set whether the shelf is showing and its height. */
     public void setShelfVisibility(boolean showing, int height) {
+        setShelfVisibility(showing, height, true);
+    }
+
+    /** Set whether the shelf is showing and its height. */
+    public void setShelfVisibility(boolean showing, int height, boolean updateMovementBounds) {
         final boolean shelfShowing = showing && height > 0;
         if (shelfShowing == mIsShelfShowing && height == mShelfHeight) {
             return;
@@ -327,7 +323,8 @@ public final class PipBoundsState {
         mIsShelfShowing = showing;
         mShelfHeight = height;
         if (mOnShelfVisibilityChangeCallback != null) {
-            mOnShelfVisibilityChangeCallback.accept(mIsShelfShowing, mShelfHeight);
+            mOnShelfVisibilityChangeCallback.accept(mIsShelfShowing, mShelfHeight,
+                    updateMovementBounds);
         }
     }
 
@@ -341,44 +338,54 @@ public final class PipBoundsState {
         return mShelfHeight;
     }
 
+    /** Returns whether the user has resized the PIP. */
+    public boolean hasUserResizedPip() {
+        return mHasUserResizedPip;
+    }
+
+    /** Set whether the user has resized the PIP. */
+    public void setHasUserResizedPip(boolean hasUserResizedPip) {
+        mHasUserResizedPip = hasUserResizedPip;
+    }
+
     /**
      * Registers a callback when the minimal size of PIP that is set by the app changes.
      */
-    public void setOnMinimalSizeChangeCallback(Runnable onMinimalSizeChangeCallback) {
+    public void setOnMinimalSizeChangeCallback(@Nullable Runnable onMinimalSizeChangeCallback) {
         mOnMinimalSizeChangeCallback = onMinimalSizeChangeCallback;
     }
 
     /** Set a callback to be notified when the shelf visibility changes. */
     public void setOnShelfVisibilityChangeCallback(
-            BiConsumer<Boolean, Integer> onShelfVisibilityChangeCallback) {
+            @Nullable TriConsumer<Boolean, Integer, Boolean> onShelfVisibilityChangeCallback) {
         mOnShelfVisibilityChangeCallback = onShelfVisibilityChangeCallback;
     }
 
-    /** Source of truth for the current animation bounds of PIP. */
-    public static class AnimatingBoundsState {
-        /** The bounds used when PIP is being dragged or animated. */
-        private final Rect mTemporaryBounds = new Rect();
+    /** Source of truth for the current bounds of PIP that may be in motion. */
+    public static class MotionBoundsState {
+        /** The bounds used when PIP is in motion (e.g. during a drag or animation) */
+        private final @NonNull Rect mBoundsInMotion = new Rect();
         /** The destination bounds to which PIP is animating. */
-        private final Rect mAnimatingToBounds = new Rect();
+        private final @NonNull Rect mAnimatingToBounds = new Rect();
 
         /** Whether PIP is being dragged or animated (e.g. resizing, in fling, etc). */
-        public boolean isAnimating() {
-            return !mTemporaryBounds.isEmpty();
+        public boolean isInMotion() {
+            return !mBoundsInMotion.isEmpty();
         }
 
         /** Set the temporary bounds used to represent the drag or animation bounds of PIP. */
-        public void setTemporaryBounds(Rect bounds) {
-            mTemporaryBounds.set(bounds);
+        public void setBoundsInMotion(@NonNull Rect bounds) {
+            mBoundsInMotion.set(bounds);
         }
 
         /** Set the bounds to which PIP is animating. */
-        public void setAnimatingToBounds(Rect bounds) {
+        public void setAnimatingToBounds(@NonNull Rect bounds) {
             mAnimatingToBounds.set(bounds);
         }
 
-        /** Called when all ongoing dragging and animation operations have ended. */
+        /** Called when all ongoing motion operations have ended. */
         public void onAllAnimationsEnded() {
-            mTemporaryBounds.setEmpty();
+            mBoundsInMotion.setEmpty();
         }
 
         /** Called when an ongoing physics animation has ended. */
@@ -386,20 +393,22 @@ public final class PipBoundsState {
             mAnimatingToBounds.setEmpty();
         }
 
-        /** Returns the temporary animation bounds. */
-        public Rect getTemporaryBounds() {
-            return mTemporaryBounds;
+        /** Returns the motion bounds. */
+        @NonNull
+        public Rect getBoundsInMotion() {
+            return mBoundsInMotion;
         }
 
         /** Returns the destination bounds to which PIP is currently animating. */
+        @NonNull
         public Rect getAnimatingToBounds() {
             return mAnimatingToBounds;
         }
 
         void dump(PrintWriter pw, String prefix) {
             final String innerPrefix = prefix + "  ";
-            pw.println(prefix + AnimatingBoundsState.class.getSimpleName());
-            pw.println(innerPrefix + "mTemporaryBounds=" + mTemporaryBounds);
+            pw.println(prefix + MotionBoundsState.class.getSimpleName());
+            pw.println(innerPrefix + "mBoundsInMotion=" + mBoundsInMotion);
             pw.println(innerPrefix + "mAnimatingToBounds=" + mAnimatingToBounds);
         }
     }
@@ -407,15 +416,15 @@ public final class PipBoundsState {
     static final class PipReentryState {
         private static final String TAG = PipReentryState.class.getSimpleName();
 
-        private final @NonNull Size mSize;
+        private final @Nullable Size mSize;
         private final float mSnapFraction;
 
-        PipReentryState(@NonNull Size size, float snapFraction) {
+        PipReentryState(@Nullable Size size, float snapFraction) {
             mSize = size;
             mSnapFraction = snapFraction;
         }
 
-        @NonNull
+        @Nullable
         Size getSize() {
             return mSize;
         }
@@ -432,9 +441,7 @@ public final class PipBoundsState {
         }
     }
 
-    /**
-     * Dumps internal state.
-     */
+    /** Dumps internal state. */
     public void dump(PrintWriter pw, String prefix) {
         final String innerPrefix = prefix + "  ";
         pw.println(prefix + TAG);
@@ -461,6 +468,6 @@ public final class PipBoundsState {
         } else {
             mPipReentryState.dump(pw, innerPrefix);
         }
-        mAnimatingBoundsState.dump(pw, innerPrefix);
+        mMotionBoundsState.dump(pw, innerPrefix);
     }
 }

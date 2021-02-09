@@ -24,10 +24,6 @@
          certain GPU's and thus can be turned off with only minimal visual impact. -->
     <bool name="config_notifications_round_rect_clipping">true</bool>
 
-    <!-- Control whether status bar should distinguish HSPA data icon form UMTS
-    data icon on devices -->
-    <bool name="config_hspa_data_distinguishable">false</bool>
-
     <!-- Component to be used as the status bar service.  Must implement the IStatusBar
      interface.  This name is in the ComponentName flattened format (package/class)  -->
     <string name="config_statusBarComponent" translatable="false">com.android.systemui.statusbar.phone.StatusBar</string>
@@ -55,9 +51,6 @@
 
     <!-- Show phone (voice) signal strength instead of data in mobile RSSI. -->
     <bool name="config_showPhoneRSSIForData">false</bool>
-
-    <!-- When true, show 1/2G networks as 3G. -->
-    <bool name="config_showMin3G">false</bool>
 
     <!-- Show rotation lock toggle in System UI-->
     <bool name="config_showRotationLock">true</bool>
@@ -114,7 +107,7 @@
 
     <!-- Tiles native to System UI. Order should match "quick_settings_tiles_default" -->
     <string name="quick_settings_tiles_stock" translatable="false">
-        wifi,cell,battery,dnd,flashlight,rotation,bt,airplane,location,hotspot,inversion,saver,dark,work,cast,night,screenrecord,reverse,reduce_brightness
+        wifi,cell,battery,dnd,flashlight,rotation,bt,airplane,location,hotspot,inversion,saver,dark,work,cast,night,screenrecord,reverse,reduce_brightness,cameratoggle,mictoggle
     </string>
 
     <!-- The tiles to display in QuickSettings -->
@@ -160,9 +153,6 @@
 
     <!-- The number of milliseconds to extend ambient pulse by when prompted (e.g. on touch) -->
     <integer name="ambient_notification_extension_time">10000</integer>
-
-    <!-- Whether to enable KeyguardService or not -->
-    <bool name="config_enableKeyguardService">true</bool>
 
     <!-- The maximum count of notifications on Keyguard. The rest will be collapsed in an overflow
      card. -->
@@ -361,7 +351,7 @@
     <bool name="config_showNotificationGear">true</bool>
 
     <!-- Whether or not a background should be drawn behind a notification. -->
-    <bool name="config_drawNotificationBackground">true</bool>
+    <bool name="config_drawNotificationBackground">false</bool>
 
     <!-- Whether or the notifications can be shown and dismissed with a drag. -->
     <bool name="config_enableNotificationShadeDrag">true</bool>
@@ -573,4 +563,7 @@
     <bool name="config_showNotificationForUnknownBatteryState">false</bool>
     <!-- content URL in a notification when ACTION_BATTERY_CHANGED.EXTRA_PRESENT field is false -->
     <string translatable="false" name="config_batteryStateUnknownUrl"></string>
+
+    <!-- Whether wallet view is shown in landscape / seascape orientations -->
+    <bool name="global_actions_show_landscape_wallet_view">false</bool>
 </resources>

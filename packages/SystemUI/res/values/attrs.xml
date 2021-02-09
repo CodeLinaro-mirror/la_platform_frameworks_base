@@ -161,5 +161,15 @@
         <attr name="sensorPressureCoefficient" format="float"/>
         <attr name="sensorTouchAreaCoefficient" format="float"/>
     </declare-styleable>
+
+    <declare-styleable name="AlphaTintDrawableWrapper">
+        <attr name="android:tint" />
+        <attr name="android:drawable" />
+        <attr name="android:alpha" />
+    </declare-styleable>
+
+    <declare-styleable name="PagedTileLayout">
+        <attr name="sideLabels" format="boolean"/>
+    </declare-styleable>
 </resources>
 

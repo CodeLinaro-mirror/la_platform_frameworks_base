@@ -1174,7 +1174,7 @@ public final class BluetoothAdapter {
      * @return true to indicate adapter shutdown has begun, or false on immediate error
      * @hide
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage(trackingBug = 171933273)
     public boolean disable(boolean persist) {
 
         try {
@@ -2967,6 +2967,16 @@ public final class BluetoothAdapter {
                             }
                         });
                     }
+                    synchronized (mBluetoothConnectionCallbackExecutorMap) {
+                        if (!mBluetoothConnectionCallbackExecutorMap.isEmpty()) {
+                            try {
+                                mService.registerBluetoothConnectionCallback(mConnectionCallback);
+                            } catch (RemoteException e) {
+                                Log.e(TAG, "onBluetoothServiceUp: Failed to register bluetooth"
+                                        + "connection callback", e);
+                            }
+                        }
+                    }
                 }
 
                 public void onBluetoothServiceDown() {
@@ -3616,25 +3626,25 @@ public final class BluetoothAdapter {
             return false;
         }
 
-        // If the callback map is empty, we register the service-to-app callback
-        if (mBluetoothConnectionCallbackExecutorMap.isEmpty()) {
-            try {
-                mServiceLock.readLock().lock();
-                if (mService != null) {
-                    if (!mService.registerBluetoothConnectionCallback(mConnectionCallback)) {
-                        return false;
-                    }
-                }
-            } catch (RemoteException e) {
-                Log.e(TAG, "", e);
-                mBluetoothConnectionCallbackExecutorMap.remove(callback);
-            } finally {
-                mServiceLock.readLock().unlock();
-            }
-        }
-
-        // Adds the passed in callback to our map of callbacks to executors
         synchronized (mBluetoothConnectionCallbackExecutorMap) {
+            // If the callback map is empty, we register the service-to-app callback
+            if (mBluetoothConnectionCallbackExecutorMap.isEmpty()) {
+                try {
+                    mServiceLock.readLock().lock();
+                    if (mService != null) {
+                        if (!mService.registerBluetoothConnectionCallback(mConnectionCallback)) {
+                            return false;
+                        }
+                    }
+                } catch (RemoteException e) {
+                    Log.e(TAG, "", e);
+                    mBluetoothConnectionCallbackExecutorMap.remove(callback);
+                } finally {
+                    mServiceLock.readLock().unlock();
+                }
+            }
+
+            // Adds the passed in callback to our map of callbacks to executors
             if (mBluetoothConnectionCallbackExecutorMap.containsKey(callback)) {
                 throw new IllegalArgumentException("This callback has already been registered");
             }
@@ -3689,7 +3699,7 @@ public final class BluetoothAdapter {
      *
      * @hide
      */
-    public abstract class BluetoothConnectionCallback {
+    public abstract static class BluetoothConnectionCallback {
         /**
          * Callback triggered when a bluetooth device (classic or BLE) is connected
          * @param device is the connected bluetooth device

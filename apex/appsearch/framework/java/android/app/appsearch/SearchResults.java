@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 The Android Open Source Project
+ * Copyright 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,63 +16,139 @@
 
 package android.app.appsearch;
 
+import android.annotation.CallbackExecutor;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.annotation.UserIdInt;
 import android.os.Bundle;
-import android.os.Parcel;
-import android.os.Parcelable;
+import android.os.RemoteException;
+import android.util.Log;
 
-import java.util.ArrayList;
+import com.android.internal.util.Preconditions;
+
+import java.io.Closeable;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 /**
- * Structure for transmitting a page of search results across binder.
- * @hide
+ * SearchResults are a returned object from a query API.
+ *
+ * <p>Each {@link SearchResult} contains a document and may contain other fields like snippets
+ * based on request.
+ *
+ * <p>Should close this object after finish fetching results.
+ *
+ * <p>This class is not thread safe.
  */
-public final class SearchResults implements Parcelable {
-    final List<SearchResult> mResults;
-    final long mNextPageToken;
+public class SearchResults implements Closeable {
+    private static final String TAG = "SearchResults";
 
-    public SearchResults(@NonNull List<SearchResult> results, long nextPageToken) {
-        mResults = results;
-        mNextPageToken = nextPageToken;
+    private final IAppSearchManager mService;
+
+    // The database name to search over. If null, this will search over all database names.
+    @Nullable
+    private final String mDatabaseName;
+
+    private final String mQueryExpression;
+
+    private final SearchSpec mSearchSpec;
+
+    @UserIdInt
+    private final int mUserId;
+
+    private final Executor mExecutor;
+
+    private long mNextPageToken;
+
+    private boolean mIsFirstLoad = true;
+
+    private boolean mIsClosed = false;
+
+    SearchResults(
+            @NonNull IAppSearchManager service,
+            @Nullable String databaseName,
+            @NonNull String queryExpression,
+            @NonNull SearchSpec searchSpec,
+            @UserIdInt int userId,
+            @NonNull @CallbackExecutor Executor executor) {
+        mService = Objects.requireNonNull(service);
+        mDatabaseName = databaseName;
+        mQueryExpression = Objects.requireNonNull(queryExpression);
+        mSearchSpec = Objects.requireNonNull(searchSpec);
+        mUserId = userId;
+        mExecutor = Objects.requireNonNull(executor);
     }
 
-    private SearchResults(@NonNull Parcel in) {
-        List<Bundle> resultBundles = in.readArrayList(/*loader=*/ null);
-        mResults = new ArrayList<>(resultBundles.size());
-        for (int i = 0; i < resultBundles.size(); i++) {
-            SearchResult searchResult = new SearchResult(resultBundles.get(i));
-            mResults.add(searchResult);
+    /**
+     * Gets a whole page of {@link SearchResult}s.
+     *
+     * <p>Re-call this method to get next page of {@link SearchResult}, until it returns an
+     * empty list.
+     *
+     * <p>The page size is set by {@link SearchSpec.Builder#setResultCountPerPage}.
+     *
+     * @param callback Callback to receive the pending result of performing this operation.
+     */
+    public void getNextPage(@NonNull Consumer<AppSearchResult<List<SearchResult>>> callback) {
+        Preconditions.checkState(!mIsClosed, "SearchResults has already been closed");
+        try {
+            if (mIsFirstLoad) {
+                mIsFirstLoad = false;
+                if (mDatabaseName == null) {
+                    // Global query, there's no one package-database combination to check.
+                    mService.globalQuery(mQueryExpression, mSearchSpec.getBundle(), mUserId,
+                            wrapCallback(callback));
+                } else {
+                    // Normal local query, pass in specified database.
+                    mService.query(
+                            mDatabaseName, mQueryExpression, mSearchSpec.getBundle(), mUserId,
+                            wrapCallback(callback));
+                }
+            } else {
+                mService.getNextPage(mNextPageToken, mUserId, wrapCallback(callback));
+            }
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
         }
-        mNextPageToken = in.readLong();
     }
 
     @Override
-    public void writeToParcel(@NonNull Parcel dest, int flags) {
-        List<Bundle> resultBundles = new ArrayList<>(mResults.size());
-        for (int i = 0; i < mResults.size(); i++) {
-            resultBundles.add(mResults.get(i).getBundle());
+    public void close() {
+        if (!mIsClosed) {
+            try {
+                mService.invalidateNextPageToken(mNextPageToken, mUserId);
+                mIsClosed = true;
+            } catch (RemoteException e) {
+                Log.e(TAG, "Unable to close the SearchResults", e);
+            }
         }
-        dest.writeList(resultBundles);
-        dest.writeLong(mNextPageToken);
     }
 
-    @Override
-    public int describeContents() {
-        return 0;
+    private IAppSearchResultCallback wrapCallback(
+            @NonNull Consumer<AppSearchResult<List<SearchResult>>> callback) {
+        return new IAppSearchResultCallback.Stub() {
+            public void onResult(AppSearchResult result) {
+                mExecutor.execute(() -> invokeCallback(result, callback));
+            }
+        };
     }
 
-    public static final Creator<SearchResults> CREATOR = new Creator<SearchResults>() {
-        @NonNull
-        @Override
-        public SearchResults createFromParcel(@NonNull Parcel in) {
-            return new SearchResults(in);
+    private void invokeCallback(AppSearchResult result,
+            @NonNull Consumer<AppSearchResult<List<SearchResult>>> callback) {
+        if (result.isSuccess()) {
+            try {
+                SearchResultPage searchResultPage =
+                        new SearchResultPage((Bundle) result.getResultValue());
+                mNextPageToken = searchResultPage.getNextPageToken();
+                callback.accept(AppSearchResult.newSuccessfulResult(
+                        searchResultPage.getResults()));
+            } catch (Throwable t) {
+                callback.accept(AppSearchResult.throwableToFailedResult(t));
+            }
+        } else {
+            callback.accept(result);
         }
-
-        @NonNull
-        @Override
-        public SearchResults[] newArray(int size) {
-            return new SearchResults[size];
-        }
-    };
+    }
 }

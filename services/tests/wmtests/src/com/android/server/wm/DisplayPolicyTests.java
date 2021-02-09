@@ -236,8 +236,7 @@ public class DisplayPolicyTests extends WindowTestsBase {
         final WindowState activity = createBaseApplicationWindow();
         activity.mAttrs.privateFlags |= PRIVATE_FLAG_FORCE_DRAW_BAR_BACKGROUNDS;
 
-        policy.adjustWindowParamsLw(activity, activity.mAttrs, 0 /* callingPid */,
-                0 /* callingUid */);
+        policy.adjustWindowParamsLw(activity, activity.mAttrs);
     }
 
     private WindowState createApplicationWindow() {
@@ -347,6 +346,8 @@ public class DisplayPolicyTests extends WindowTestsBase {
 
         displayPolicy.addWindowLw(mNavBarWindow, mNavBarWindow.mAttrs);
         mNavBarWindow.getControllableInsetProvider().setServerVisible(true);
+        final InsetsState state = mDisplayContent.getInsetsStateController().getRawInsetsState();
+        mImeWindow.mAboveInsetsState = state;
 
         mDisplayContent.setInputMethodWindowLocked(mImeWindow);
         mImeWindow.mAttrs.setFitInsetsSides(Side.all() & ~Side.BOTTOM);
@@ -356,7 +357,6 @@ public class DisplayPolicyTests extends WindowTestsBase {
         displayPolicy.beginLayoutLw(mDisplayContent.mDisplayFrames, 0 /* UI mode */);
         displayPolicy.layoutWindowLw(mImeWindow, null, mDisplayContent.mDisplayFrames);
 
-        final InsetsState state = mDisplayContent.getInsetsStateController().getRawInsetsState();
         final InsetsSource imeSource = state.peekSource(ITYPE_IME);
         final InsetsSource navBarSource = state.peekSource(ITYPE_NAVIGATION_BAR);
 

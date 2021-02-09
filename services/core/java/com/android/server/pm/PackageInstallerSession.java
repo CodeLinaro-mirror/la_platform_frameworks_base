@@ -30,23 +30,17 @@ import static android.content.pm.PackageManager.INSTALL_FAILED_MISSING_SPLIT;
 import static android.content.pm.PackageManager.INSTALL_PARSE_FAILED_CERTIFICATE_ENCODING;
 import static android.content.pm.PackageManager.INSTALL_STAGED;
 import static android.content.pm.PackageManager.INSTALL_SUCCEEDED;
-import static android.content.pm.PackageParser.APEX_FILE_EXTENSION;
-import static android.content.pm.PackageParser.APK_FILE_EXTENSION;
 import static android.system.OsConstants.O_CREAT;
 import static android.system.OsConstants.O_RDONLY;
 import static android.system.OsConstants.O_WRONLY;
 
+import static com.android.internal.annotations.VisibleForTesting.Visibility.PACKAGE;
 import static com.android.internal.util.XmlUtils.readBitmapAttribute;
-import static com.android.internal.util.XmlUtils.readBooleanAttribute;
 import static com.android.internal.util.XmlUtils.readByteArrayAttribute;
-import static com.android.internal.util.XmlUtils.readIntAttribute;
-import static com.android.internal.util.XmlUtils.readLongAttribute;
 import static com.android.internal.util.XmlUtils.readStringAttribute;
 import static com.android.internal.util.XmlUtils.readUriAttribute;
 import static com.android.internal.util.XmlUtils.writeBooleanAttribute;
 import static com.android.internal.util.XmlUtils.writeByteArrayAttribute;
-import static com.android.internal.util.XmlUtils.writeIntAttribute;
-import static com.android.internal.util.XmlUtils.writeLongAttribute;
 import static com.android.internal.util.XmlUtils.writeStringAttribute;
 import static com.android.internal.util.XmlUtils.writeUriAttribute;
 import static com.android.server.pm.PackageInstallerService.prepareStageDir;
@@ -77,6 +71,7 @@ import android.content.pm.IDataLoaderStatusListener;
 import android.content.pm.IPackageInstallObserver2;
 import android.content.pm.IPackageInstallerSession;
 import android.content.pm.IPackageInstallerSessionFileSystemConnector;
+import android.content.pm.IPackageLoadingProgressCallback;
 import android.content.pm.InstallationFile;
 import android.content.pm.InstallationFileParcel;
 import android.content.pm.PackageInfo;
@@ -90,7 +85,6 @@ import android.content.pm.PackageParser;
 import android.content.pm.PackageParser.ApkLite;
 import android.content.pm.PackageParser.PackageLite;
 import android.content.pm.PackageParser.PackageParserException;
-import android.content.pm.Signature;
 import android.content.pm.dex.DexMetadataHelper;
 import android.content.pm.parsing.ApkLiteParseUtils;
 import android.content.pm.parsing.result.ParseResult;
@@ -110,11 +104,13 @@ import android.os.ParcelableException;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.RevocableFileDescriptor;
+import android.os.SELinux;
 import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.incremental.IStorageHealthListener;
 import android.os.incremental.IncrementalFileStorages;
 import android.os.incremental.IncrementalManager;
+import android.os.incremental.PerUidReadTimeouts;
 import android.os.incremental.StorageHealthCheckParams;
 import android.os.storage.StorageManager;
 import android.provider.Settings.Secure;
@@ -137,6 +133,7 @@ import android.util.apk.ApkSignatureVerifier;
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.content.NativeLibraryHelper;
 import com.android.internal.content.PackageHelper;
 import com.android.internal.messages.nano.SystemMessageProto;
@@ -156,7 +153,6 @@ import libcore.util.EmptyArray;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlSerializer;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -207,6 +203,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             "installOriginatingPackageName";
     private static final String ATTR_CREATED_MILLIS = "createdMillis";
     private static final String ATTR_UPDATED_MILLIS = "updatedMillis";
+    private static final String ATTR_COMMITTED_MILLIS = "committedMillis";
     private static final String ATTR_SESSION_STAGE_DIR = "sessionStageDir";
     private static final String ATTR_SESSION_STAGE_CID = "sessionStageCid";
     private static final String ATTR_PREPARED = "prepared";
@@ -247,8 +244,6 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     private static final String ATTR_SIGNATURE = "signature";
     private static final String ATTR_CHECKSUM_KIND = "checksumKind";
     private static final String ATTR_CHECKSUM_VALUE = "checksumValue";
-    private static final String ATTR_CHECKSUM_PACKAGE = "checksumPackage";
-    private static final String ATTR_CHECKSUM_CERTIFICATE = "checksumCertificate";
 
     private static final String PROPERTY_NAME_INHERIT_NATIVE = "pi.inherit_native_on_dont_kill";
     private static final int[] EMPTY_CHILD_SESSION_ARRAY = EmptyArray.INT;
@@ -256,6 +251,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     private static final ApkChecksum[] EMPTY_FILE_CHECKSUM_ARRAY = {};
 
     private static final String SYSTEM_DATA_LOADER_PACKAGE = "android";
+    private static final String APEX_FILE_EXTENSION = ".apex";
 
     private static final int INCREMENTAL_STORAGE_BLOCKED_TIMEOUT_MS = 2000;
     private static final int INCREMENTAL_STORAGE_UNHEALTHY_TIMEOUT_MS = 7000;
@@ -297,6 +293,10 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     @GuardedBy("mLock")
     private long updatedMillis;
 
+    /** Timestamp of the time this session is committed  */
+    @GuardedBy("mLock")
+    private long committedMillis;
+
     /** Uid of the creator of this session. */
     private final int mOriginalInstallerUid;
 
@@ -320,6 +320,8 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     private float mProgress = 0;
     @GuardedBy("mLock")
     private float mReportedProgress = -1;
+    @GuardedBy("mLock")
+    private float mIncrementalProgress = 0;
 
     /** State of the session. */
     @GuardedBy("mLock")
@@ -332,8 +334,6 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     private boolean mCommitted = false;
     @GuardedBy("mLock")
     private boolean mRelinquished = false;
-    @GuardedBy("mLock")
-    private boolean mDestroyed = false;
 
     /** Permissions have been accepted by the user (see {@link #setPermissionsResult}) */
     @GuardedBy("mLock")
@@ -400,58 +400,344 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     @GuardedBy("mLock")
     private ArraySet<FileEntry> mFiles = new ArraySet<>();
 
-    static class CertifiedChecksum {
-        final @NonNull Checksum mChecksum;
-        final @NonNull String mPackageName;
-        final @NonNull byte[] mCertificate;
+    @GuardedBy("mLock")
+    private ArrayMap<String, Checksum[]> mChecksums = new ArrayMap<>();
 
-        CertifiedChecksum(@NonNull Checksum checksum, @NonNull String packageName,
-                @NonNull byte[] certificate) {
-            mChecksum = checksum;
-            mPackageName = packageName;
-            mCertificate = certificate;
+    @Nullable
+    final StagedSession mStagedSession;
+
+    @VisibleForTesting
+    public class StagedSession implements StagingManager.StagedSession {
+        @GuardedBy("mLock")
+        private boolean mSessionApplied;
+        @GuardedBy("mLock")
+        private boolean mSessionReady;
+        @GuardedBy("mLock")
+        private boolean mSessionFailed;
+        @GuardedBy("mLock")
+        private int mSessionErrorCode = SessionInfo.STAGED_SESSION_NO_ERROR;
+        @GuardedBy("mLock")
+        private String mSessionErrorMessage;
+
+        /**
+         * The callback to run when pre-reboot verification has ended. Used by {@link #abandon()}
+         * to delay session clean-up until it is safe to do so.
+         */
+        @GuardedBy("mLock")
+        @Nullable
+        private Runnable mPendingAbandonCallback;
+        /**
+         * {@code true} if pre-reboot verification is ongoing which means it is not safe for
+         * {@link #abandon()} to clean up staging directories.
+         */
+        @GuardedBy("mLock")
+        private boolean mInPreRebootVerification;
+
+        StagedSession(boolean isReady, boolean isApplied, boolean isFailed, int errorCode,
+                String errorMessage) {
+            mSessionReady = isReady;
+            mSessionApplied = isApplied;
+            mSessionFailed = isFailed;
+            mSessionErrorCode = errorCode;
+            mSessionErrorMessage = errorMessage != null ? errorMessage : "";
         }
 
-        Checksum getChecksum() {
-            return mChecksum;
+        @Override
+        public List<StagingManager.StagedSession> getChildSessions() {
+            if (!params.isMultiPackage) {
+                return Collections.EMPTY_LIST;
+            }
+            synchronized (mLock) {
+                int size = mChildSessions.size();
+                List<StagingManager.StagedSession> childSessions = new ArrayList<>(size);
+                for (int i = 0; i < size; ++i) {
+                    childSessions.add(mChildSessions.valueAt(i).mStagedSession);
+                }
+                return childSessions;
+            }
         }
 
-        String getPackageName() {
-            return mPackageName;
+        @Override
+        public SessionParams sessionParams() {
+            return params;
         }
 
-        byte[] getCertificate() {
-            return mCertificate;
+        @Override
+        public boolean isMultiPackage() {
+            return params.isMultiPackage;
+        }
+
+        @Override
+        public boolean isApexSession() {
+            return (params.installFlags & PackageManager.INSTALL_APEX) != 0;
+        }
+
+        @Override
+        public int sessionId() {
+            return sessionId;
+        }
+
+        @Override
+        public boolean containsApexSession() {
+            return sessionContains((s) -> s.isApexSession());
+        }
+
+        @Override
+        public String getPackageName() {
+            return PackageInstallerSession.this.getPackageName();
+        }
+
+        @Override
+        public void setSessionReady() {
+            synchronized (mLock) {
+                // Do not allow destroyed/failed staged session to change state
+                if (mDestroyed || mSessionFailed) return;
+                mSessionReady = true;
+                mSessionApplied = false;
+                mSessionFailed = false;
+                mSessionErrorCode = SessionInfo.STAGED_SESSION_NO_ERROR;
+                mSessionErrorMessage = "";
+            }
+            mCallback.onStagedSessionChanged(PackageInstallerSession.this);
+        }
+
+        @Override
+        public void setSessionFailed(int errorCode, String errorMessage) {
+            List<PackageInstallerSession> childSessions;
+            synchronized (mLock) {
+                // Do not allow destroyed/failed staged session to change state
+                if (mDestroyed || mSessionFailed) return;
+                mSessionReady = false;
+                mSessionApplied = false;
+                mSessionFailed = true;
+                mSessionErrorCode = errorCode;
+                mSessionErrorMessage = errorMessage;
+                Slog.d(TAG, "Marking session " + sessionId + " as failed: " + errorMessage);
+                childSessions = getChildSessionsLocked();
+            }
+            cleanStageDir(childSessions);
+            mCallback.onStagedSessionChanged(PackageInstallerSession.this);
+        }
+
+        @Override
+        public void setSessionApplied() {
+            List<PackageInstallerSession> childSessions;
+            synchronized (mLock) {
+                // Do not allow destroyed/failed staged session to change state
+                if (mDestroyed || mSessionFailed) return;
+                mSessionReady = false;
+                mSessionApplied = true;
+                mSessionFailed = false;
+                mSessionErrorCode = SessionInfo.STAGED_SESSION_NO_ERROR;
+                mSessionErrorMessage = "";
+                Slog.d(TAG, "Marking session " + sessionId + " as applied");
+                childSessions = getChildSessionsLocked();
+            }
+            cleanStageDir(childSessions);
+            mCallback.onStagedSessionChanged(PackageInstallerSession.this);
+        }
+
+        @Override
+        public boolean containsApkSession() {
+            return PackageInstallerSession.this.containsApkSession();
+        }
+
+        /**
+         * Installs apks of staged session while skipping the verification process for a committed
+         * and ready session.
+         */
+        @Override
+        public void installSession(IntentSender statusReceiver) {
+            assertCallerIsOwnerOrRootOrSystemLocked();
+            assertNotChildLocked("StagedSession#installSession");
+            Preconditions.checkArgument(isCommitted() && isSessionReady());
+
+            // Since staged sessions are installed during boot, the original reference to status
+            // receiver from the owner has already been lost. We can safely replace it with a
+            // status receiver from the system without effecting the flow.
+            updateRemoteStatusReceiver(statusReceiver);
+            install();
+        }
+
+        private void updateRemoteStatusReceiver(IntentSender remoteStatusReceiver) {
+            synchronized (mLock) {
+                mRemoteStatusReceiver = remoteStatusReceiver;
+                if (isMultiPackage()) {
+                    final IntentSender childIntentSender = new ChildStatusIntentReceiver(
+                            mChildSessions.clone(), remoteStatusReceiver).getIntentSender();
+                    for (int i = mChildSessions.size() - 1; i >= 0; --i) {
+                        mChildSessions.valueAt(i).mRemoteStatusReceiver = childIntentSender;
+                    }
+                }
+            }
+        }
+
+        @Override
+        public boolean hasParentSessionId() {
+            return PackageInstallerSession.this.hasParentSessionId();
+        }
+
+        @Override
+        public int getParentSessionId() {
+            return PackageInstallerSession.this.getParentSessionId();
+        }
+
+        @Override
+        public boolean isCommitted() {
+            return PackageInstallerSession.this.isCommitted();
+        }
+
+        @Override
+        public boolean isInTerminalState() {
+            synchronized (mLock) {
+                return mSessionApplied || mSessionFailed;
+            }
+        }
+
+        @Override
+        public boolean isDestroyed() {
+            return PackageInstallerSession.this.isDestroyed();
+        }
+
+        @Override
+        public long getCommittedMillis() {
+            return PackageInstallerSession.this.getCommittedMillis();
+        }
+
+        @Override
+        public boolean sessionContains(Predicate<StagingManager.StagedSession> filter) {
+            return PackageInstallerSession.this.sessionContains(s -> filter.test(s.mStagedSession));
+        }
+
+        @Override
+        public boolean isSessionReady() {
+            synchronized (mLock) {
+                return mSessionReady;
+            }
+        }
+
+        @Override
+        public boolean isSessionApplied() {
+            synchronized (mLock) {
+                return mSessionApplied;
+            }
+        }
+
+        @Override
+        public boolean isSessionFailed() {
+            synchronized (mLock) {
+                return mSessionFailed;
+            }
+        }
+
+        @StagedSessionErrorCode int getSessionErrorCode() {
+            synchronized (mLock) {
+                return mSessionErrorCode;
+            }
+        }
+
+        String getSessionErrorMessage() {
+            synchronized (mLock) {
+                return mSessionErrorMessage;
+            }
+        }
+
+        @Override
+        public void abandon() {
+            final Runnable r;
+            synchronized (mLock) {
+                assertNotChildLocked("StagedSession#abandon");
+                assertCallerIsOwnerOrRootLocked();
+                if (isInTerminalState()) {
+                    // We keep the session in the database if it's in a finalized state. It will be
+                    // removed by PackageInstallerService when the last update time is old enough.
+                    // Also, in such cases cleanStageDir() has already been executed so no need to
+                    // do it now.
+                    return;
+                }
+                mDestroyed = true;
+                boolean isCommitted = mCommitted;
+                List<PackageInstallerSession> childSessions = getChildSessionsLocked();
+                r = () -> {
+                    assertNotLocked("abandonStaged");
+                    if (isCommitted) {
+                        mStagingManager.abortCommittedSession(this);
+                    }
+                    cleanStageDir(childSessions);
+                    destroyInternal();
+                    dispatchSessionFinished(INSTALL_FAILED_ABORTED, "Session was abandoned", null);
+                    maybeCleanUpChildSessions();
+                };
+                if (mInPreRebootVerification) {
+                    // Pre-reboot verification is ongoing, not safe to clean up the session yet.
+                    mPendingAbandonCallback = r;
+                    mCallback.onStagedSessionChanged(PackageInstallerSession.this);
+                    return;
+                }
+            }
+            r.run();
+        }
+
+        /**
+         * Notified by the staging manager that pre-reboot verification is about to start. The
+         * return value should be checked to decide whether it is OK to start pre-reboot
+         * verification. In the case of a destroyed session, {@code false} is returned and there is
+         * no need to start pre-reboot verification.
+         */
+        @Override
+        public boolean notifyStartPreRebootVerification() {
+            synchronized (mLock) {
+                if (mInPreRebootVerification) {
+                    throw new IllegalStateException("Pre-reboot verification has started");
+                }
+                if (mDestroyed) {
+                    return false;
+                }
+                mInPreRebootVerification = true;
+                return true;
+            }
+        }
+
+        /**
+         * Notified by the staging manager that pre-reboot verification has ended. Now it is safe to
+         * clean up the session if {@link #abandon()} has been called previously.
+         */
+        @Override
+        public void notifyEndPreRebootVerification() {
+            synchronized (mLock) {
+                if (!mInPreRebootVerification) {
+                    throw new IllegalStateException("Pre-reboot verification not started");
+                }
+                mInPreRebootVerification = false;
+            }
+            dispatchPendingAbandonCallback();
+        }
+
+        /**
+         * Resumes verification process for non-final committed staged session.
+         *
+         * Useful if a device gets rebooted before verification is complete and we need to restart
+         * the verification.
+         */
+        @Override
+        public void verifySession() {
+            assertCallerIsOwnerOrRootOrSystemLocked();
+            Preconditions.checkArgument(isCommitted());
+            Preconditions.checkArgument(!mSessionApplied && !mSessionFailed);
+            verify();
+        }
+
+        private void dispatchPendingAbandonCallback() {
+            final Runnable callback;
+            synchronized (mLock) {
+                callback = mPendingAbandonCallback;
+                mPendingAbandonCallback = null;
+            }
+            if (callback != null) {
+                callback.run();
+            }
         }
     }
-
-    @GuardedBy("mLock")
-    private ArrayMap<String, List<CertifiedChecksum>> mChecksums = new ArrayMap<>();
-
-    @GuardedBy("mLock")
-    private boolean mStagedSessionApplied;
-    @GuardedBy("mLock")
-    private boolean mStagedSessionReady;
-    @GuardedBy("mLock")
-    private boolean mStagedSessionFailed;
-    @GuardedBy("mLock")
-    private int mStagedSessionErrorCode = SessionInfo.STAGED_SESSION_NO_ERROR;
-    @GuardedBy("mLock")
-    private String mStagedSessionErrorMessage;
-
-    /**
-     * The callback to run when pre-reboot verification has ended. Used by {@link #abandonStaged()}
-     * to delay session clean-up until it is safe to do so.
-     */
-    @GuardedBy("mLock")
-    @Nullable
-    private Runnable mPendingAbandonCallback;
-    /**
-     * {@code true} if pre-reboot verification is ongoing which means it is not safe for
-     * {@link #abandon()} to clean up staging directories.
-     */
-    @GuardedBy("mLock")
-    private boolean mInPreRebootVerification;
 
     /**
      * Path to the validated base APK for this session, which may point at an
@@ -477,11 +763,19 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     @GuardedBy("mLock")
     private boolean mVerityFound;
 
-    @GuardedBy("mLock")
-    private boolean mDataLoaderFinished = false;
+    /**
+     * Both flags should be guarded with mLock whenever changes need to be in lockstep.
+     * Ok to check without mLock in case the proper check is done later, e.g. status callbacks
+     * for DataLoaders with deferred processing.
+     */
+    private volatile boolean mDestroyed = false;
+    private volatile boolean mDataLoaderFinished = false;
 
     @GuardedBy("mLock")
     private IncrementalFileStorages mIncrementalFileStorages;
+
+    @GuardedBy("mLock")
+    private PackageLite mPackageLite;
 
     private static final FileFilter sAddedApkFilter = new FileFilter() {
         @Override
@@ -628,9 +922,9 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             Context context, PackageManagerService pm,
             PackageSessionProvider sessionProvider, Looper looper, StagingManager stagingManager,
             int sessionId, int userId, int installerUid, @NonNull InstallSource installSource,
-            SessionParams params, long createdMillis,
+            SessionParams params, long createdMillis, long committedMillis,
             File stageDir, String stageCid, InstallationFile[] files,
-            ArrayMap<String, List<CertifiedChecksum>> checksums,
+            ArrayMap<String, List<Checksum>> checksums,
             boolean prepared, boolean committed, boolean destroyed, boolean sealed,
             @Nullable int[] childSessionIds, int parentSessionId, boolean isReady,
             boolean isFailed, boolean isApplied, int stagedSessionErrorCode,
@@ -651,6 +945,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         this.params = params;
         this.createdMillis = createdMillis;
         this.updatedMillis = createdMillis;
+        this.committedMillis = committedMillis;
         this.stageDir = stageDir;
         this.stageCid = stageCid;
         this.mShouldBeSealed = sealed;
@@ -675,7 +970,11 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         }
 
         if (checksums != null) {
-            mChecksums.putAll(checksums);
+            for (int i = 0, isize = checksums.size(); i < isize; ++i) {
+                final String fileName = checksums.keyAt(i);
+                final List<Checksum> fileChecksums = checksums.valueAt(i);
+                mChecksums.put(fileName, fileChecksums.toArray(new Checksum[fileChecksums.size()]));
+            }
         }
 
         if (!params.isMultiPackage && (stageDir == null) == (stageCid == null)) {
@@ -686,12 +985,8 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         mPrepared = prepared;
         mCommitted = committed;
         mDestroyed = destroyed;
-        mStagedSessionReady = isReady;
-        mStagedSessionFailed = isFailed;
-        mStagedSessionApplied = isApplied;
-        mStagedSessionErrorCode = stagedSessionErrorCode;
-        mStagedSessionErrorMessage =
-                stagedSessionErrorMessage != null ? stagedSessionErrorMessage : "";
+        mStagedSession = params.isStaged ? new StagedSession(isReady, isApplied, isFailed,
+                stagedSessionErrorCode, stagedSessionErrorMessage) : null;
 
         if (isDataLoaderInstallation()) {
             if (isApexSession()) {
@@ -759,6 +1054,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
             info.mode = params.mode;
             info.installReason = params.installReason;
+            info.installScenario = params.installScenario;
             info.sizeBytes = params.sizeBytes;
             info.appPackageName = mPackageName != null ? mPackageName : params.appPackageName;
             if (includeIcon) {
@@ -783,10 +1079,11 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             info.rollbackDataPolicy = params.rollbackDataPolicy;
             info.parentSessionId = mParentSessionId;
             info.childSessionIds = getChildSessionIdsLocked();
-            info.isStagedSessionApplied = mStagedSessionApplied;
-            info.isStagedSessionReady = mStagedSessionReady;
-            info.isStagedSessionFailed = mStagedSessionFailed;
-            info.setStagedSessionErrorCode(mStagedSessionErrorCode, mStagedSessionErrorMessage);
+            info.isStagedSessionApplied = isStagedSessionApplied();
+            info.isStagedSessionReady = isStagedSessionReady();
+            info.isStagedSessionFailed = isStagedSessionFailed();
+            info.setStagedSessionErrorCode(getStagedSessionErrorCode(),
+                    getStagedSessionErrorMessage());
             info.createdMillis = createdMillis;
             info.updatedMillis = updatedMillis;
         }
@@ -821,9 +1118,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
     /** Returns true if a staged session has reached a final state and can be forgotten about  */
     public boolean isStagedAndInTerminalState() {
-        synchronized (mLock) {
-            return params.isStaged && (mStagedSessionApplied || mStagedSessionFailed);
-        }
+        return params.isStaged && mStagedSession.isInTerminalState();
     }
 
     private void assertNotLocked(String cookie) {
@@ -890,7 +1185,12 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
     @GuardedBy("mLock")
     private void computeProgressLocked(boolean forcePublish) {
-        mProgress = MathUtils.constrain(mClientProgress * 0.8f, 0f, 0.8f)
+        // This method is triggered when the client progress is updated or the incremental progress
+        // is updated. For incremental installs, ignore the progress values reported from client.
+        // Instead, only use the progress reported by IncFs as the percentage of loading completion.
+        final float loadingProgress =
+                isIncrementalInstallation() ? mIncrementalProgress : mClientProgress;
+        mProgress = MathUtils.constrain(loadingProgress * 0.8f, 0f, 0.8f)
                 + MathUtils.constrain(mInternalProgress * 0.2f, 0f, 0.2f);
 
         // Only publish when meaningful change
@@ -977,29 +1277,15 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             throw new IllegalStateException("Can't obtain calling installer's package.");
         }
 
-        // Obtaining array of certificates used for signing the installer package.
-        final Signature[] certs = callingInstaller.getSigningDetails().signatures;
-        if (certs == null || certs.length == 0 || certs[0] == null) {
-            throw new IllegalStateException(
-                    "Can't obtain calling installer package's certificates.");
-        }
-        // According to V2/V3 signing schema, the first certificate corresponds to the public key
-        // in the signing block.
-        final byte[] mainCertificateBytes = certs[0].toByteArray();
-
         synchronized (mLock) {
             assertCallerIsOwnerOrRootLocked();
             assertPreparedAndNotCommittedOrDestroyedLocked("addChecksums");
 
-            for (Checksum checksum : checksums) {
-                List<CertifiedChecksum> fileChecksums = mChecksums.get(name);
-                if (fileChecksums == null) {
-                    fileChecksums = new ArrayList<>();
-                    mChecksums.put(name, fileChecksums);
-                }
-                fileChecksums.add(new CertifiedChecksum(checksum, initiatingPackageName,
-                        mainCertificateBytes));
+            if (mChecksums.containsKey(name)) {
+                throw new IllegalStateException("Duplicate checksums.");
             }
+
+            mChecksums.put(name, checksums);
         }
     }
 
@@ -1085,6 +1371,31 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         assertCanWrite(fd != null);
         try {
             doWriteInternal(name, offsetBytes, lengthBytes, fd);
+        } catch (IOException e) {
+            throw ExceptionUtils.wrap(e);
+        }
+    }
+
+    @Override
+    public void stageViaHardLink(String path) {
+        final int callingUid = Binder.getCallingUid();
+        if (callingUid != Process.SYSTEM_UID) {
+            throw new SecurityException("link() can only be run by the system");
+        }
+
+        try {
+            final File target = new File(path);
+            final File source = new File(stageDir, target.getName());
+            try {
+                Os.link(path, source.getAbsolutePath());
+                // Grant READ access for APK to be read successfully
+                Os.chmod(source.getAbsolutePath(), 0644);
+            } catch (ErrnoException e) {
+                e.rethrowAsIOException();
+            }
+            if (!SELinux.restorecon(source)) {
+                throw new IOException("Can't relabel file: " + source);
+            }
         } catch (IOException e) {
             throw ExceptionUtils.wrap(e);
         }
@@ -1616,6 +1927,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 mActiveCount.incrementAndGet();
 
                 mCommitted = true;
+                committedMillis = System.currentTimeMillis();
             }
             return true;
         } catch (PackageManagerException e) {
@@ -1678,6 +1990,10 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         destroyInternal();
         // Dispatch message to remove session from PackageInstallerService.
         dispatchSessionFinished(error, detailMessage, null);
+        // TODO(b/173194203): clean up staged session in destroyInternal() call instead
+        if (isStaged() && stageDir != null) {
+            cleanStageDir();
+        }
     }
 
     private void onSessionVerificationFailure(int error, String msg) {
@@ -1686,11 +2002,11 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         // Session is sealed and committed but could not be verified, we need to destroy it.
         destroyInternal();
         if (isStaged()) {
-            setStagedSessionFailed(
+            mStagedSession.setSessionFailed(
                     SessionInfo.STAGED_SESSION_VERIFICATION_FAILED, msgWithErrorCode);
             // TODO(b/136257624): Remove this once all verification logic has been transferred out
             //  of StagingManager.
-            mStagingManager.notifyVerificationComplete(this);
+            mStagingManager.notifyVerificationComplete(mStagedSession);
         } else {
             // Dispatch message to remove session from PackageInstallerService.
             dispatchSessionFinished(error, msg, null);
@@ -1767,7 +2083,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
     @Override
     public void transfer(String packageName) {
-        Objects.requireNonNull(packageName);
+        Preconditions.checkArgument(!TextUtils.isEmpty(packageName));
 
         ApplicationInfo newOwnerAppInfo = mPm.getApplicationInfo(packageName, 0, userId);
         if (newOwnerAppInfo == null) {
@@ -1793,7 +2109,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             try {
                 sealLocked();
             } catch (PackageManagerException e) {
-                throw new IllegalArgumentException("Package is not valid", e);
+                throw new IllegalStateException("Package is not valid", e);
             }
 
             mInstallerUid = newOwnerAppInfo.uid;
@@ -1809,7 +2125,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                     .write();
         }
         if (params.isStaged) {
-            mStagingManager.commitSession(this);
+            mStagingManager.commitSession(mStagedSession);
             // TODO(b/136257624): CTS test fails if we don't send session finished broadcast, even
             //  though ideally, we just need to send session committed broadcast.
             dispatchSessionFinished(INSTALL_SUCCEEDED, "Session staged", null);
@@ -1822,21 +2138,6 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                     "APEX packages can only be installed using staged sessions.", null);
             return;
         }
-        verify();
-    }
-
-    /**
-     * Resumes verification process for non-final committed staged session.
-     *
-     * Useful if a device gets rebooted before verification is complete and we need to restart the
-     * verification.
-     */
-    void verifyStagedSession() {
-        assertCallerIsOwnerOrRootOrSystemLocked();
-        Preconditions.checkArgument(isCommitted());
-        Preconditions.checkArgument(isStaged());
-        Preconditions.checkArgument(!mStagedSessionApplied && !mStagedSessionFailed);
-
         verify();
     }
 
@@ -1891,36 +2192,6 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             mPm.verifyStage(verifyingSession, verifyingChildSessions);
         } else {
             mPm.verifyStage(verifyingSession);
-        }
-    }
-
-    /**
-     * Installs apks of staged session while skipping the verification process for a committed and
-     * ready session.
-     */
-    void installStagedSession(IntentSender statusReceiver) {
-        assertCallerIsOwnerOrRootOrSystemLocked();
-        Preconditions.checkArgument(!hasParentSessionId()); // Don't allow installing child sessions
-        Preconditions.checkArgument(isCommitted() && isStagedSessionReady());
-
-        // Since staged sessions are installed during boot, the original reference to status
-        // receiver from the owner has already been lost. We can safely replace it with a
-        // status receiver from the system without effecting the flow.
-        updateRemoteStatusReceiver(statusReceiver);
-        install();
-    }
-
-    private void updateRemoteStatusReceiver(IntentSender remoteStatusReceiver) {
-        synchronized (mLock) {
-            mRemoteStatusReceiver = remoteStatusReceiver;
-            if (isMultiPackage()) {
-                final IntentSender childIntentSender =
-                        new ChildStatusIntentReceiver(mChildSessions.clone(), remoteStatusReceiver)
-                                .getIntentSender();
-                for (int i = mChildSessions.size() - 1; i >= 0; --i) {
-                    mChildSessions.valueAt(i).mRemoteStatusReceiver = childIntentSender;
-                }
-            }
         }
     }
 
@@ -2034,7 +2305,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
         // TODO(b/136257624): Some logic in this if block probably belongs in
         //  makeInstallParams().
-        if (!params.isMultiPackage && !isApexSession()) {
+        if (!isMultiPackage() && !isApexSession()) {
             Objects.requireNonNull(mPackageName);
             Objects.requireNonNull(mSigningDetails);
             Objects.requireNonNull(mResolvedBaseFile);
@@ -2088,12 +2359,18 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                             "Failed to inherit existing install", e);
                 }
             }
+            // For mode inherit existing, it would link/copy existing files to stage dir in the
+            // above block. Therefore, we need to parse the complete package in stage dir here.
+            // Besides, PackageLite may be null for staged sessions that don't complete pre-reboot
+            // verification.
+            mPackageLite = getOrParsePackageLiteLocked(stageDir, /* flags */ 0);
 
             // TODO: surface more granular state from dexopt
             mInternalProgress = 0.5f;
             computeProgressLocked(true);
 
-            extractNativeLibraries(stageDir, params.abiOverride, mayInheritNativeLibs());
+            extractNativeLibraries(mPackageLite, stageDir, params.abiOverride,
+                    mayInheritNativeLibs());
         }
 
         final IPackageInstallObserver2 localObserver;
@@ -2136,7 +2413,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             copiedParams.installFlags &= ~PackageManager.INSTALL_ENABLE_ROLLBACK;
         }
         return mPm.new VerificationParams(user, stageDir, localObserver, copiedParams,
-                mInstallSource, mInstallerUid, mSigningDetails, sessionId);
+                mInstallSource, mInstallerUid, mSigningDetails, sessionId, mPackageLite);
     }
 
     private void onVerificationComplete() {
@@ -2144,7 +2421,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         if (isStaged()) {
             // TODO(b/136257624): Remove this once all verification logic has been transferred out
             //  of StagingManager.
-            mStagingManager.notifyPreRebootVerification_Apk_Complete(this);
+            mStagingManager.notifyPreRebootVerification_Apk_Complete(mStagedSession);
             // TODO(b/136257624): We also need to destroy internals for verified staged session,
             //  otherwise file descriptors are never closed for verified staged session until reboot
             return;
@@ -2209,10 +2486,37 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             params.installFlags |= INSTALL_STAGED;
         }
 
+        if (!isMultiPackage() && !isApexSession()) {
+            synchronized (mLock) {
+                // This shouldn't be null, but have this code path just in case.
+                if (mPackageLite == null) {
+                    Slog.wtf(TAG, "Session: " + sessionId + ". Don't have a valid PackageLite.");
+                }
+                mPackageLite = getOrParsePackageLiteLocked(stageDir, /* flags */ 0);
+            }
+        }
+
         synchronized (mLock) {
             return mPm.new InstallParams(stageDir, localObserver, params, mInstallSource, user,
-                    mSigningDetails, mInstallerUid);
+                    mSigningDetails, mInstallerUid, mPackageLite);
         }
+    }
+
+    @GuardedBy("mLock")
+    private PackageLite getOrParsePackageLiteLocked(File packageFile, int flags)
+            throws PackageManagerException {
+        if (mPackageLite != null) {
+            return mPackageLite;
+        }
+
+        final ParseTypeImpl input = ParseTypeImpl.forDefaultParsing();
+        final ParseResult<PackageLite> result =
+                ApkLiteParseUtils.parsePackageLite(input, packageFile, flags);
+        if (result.isError()) {
+            throw new PackageManagerException(PackageManager.INSTALL_FAILED_INTERNAL_ERROR,
+                    result.getErrorMessage(), result.getException());
+        }
+        return result.getResult();
     }
 
     private static void maybeRenameFile(File from, File to) throws PackageManagerException {
@@ -2299,10 +2603,6 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         return false;
     }
 
-    boolean containsApexSession() {
-        return sessionContains((s) -> s.isApexSession());
-    }
-
     boolean containsApkSession() {
         return sessionContains((s) -> !s.isApexSession());
     }
@@ -2360,13 +2660,6 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         }
     }
 
-    private static String splitNameToFileName(String splitName) {
-        if (splitName == null) {
-            return "base";
-        }
-        return "split_" + splitName;
-    }
-
     /**
      * Validate install by confirming that all application packages are have
      * consistent package name, version code, and signing certificates.
@@ -2382,6 +2675,8 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     @GuardedBy("mLock")
     private void validateApkInstallLocked() throws PackageManagerException {
         ApkLite baseApk = null;
+        PackageLite packageLite = null;
+        mPackageLite = null;
         mPackageName = null;
         mVersionCode = -1;
         mSigningDetails = PackageParser.SigningDetails.UNKNOWN;
@@ -2425,6 +2720,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
         // Verify that all staged packages are internally consistent
         final ArraySet<String> stagedSplits = new ArraySet<>();
+        final ArrayMap<String, PackageParser.ApkLite> splitApks = new ArrayMap<>();
         ParseTypeImpl input = ParseTypeImpl.forDefaultParsing();
         for (File addedFile : addedFiles) {
             ParseResult<ApkLite> result = ApkLiteParseUtils.parseApkLite(input.reset(),
@@ -2452,8 +2748,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             assertApkConsistentLocked(String.valueOf(addedFile), apk);
 
             // Take this opportunity to enforce uniform naming
-            final String fileName = splitNameToFileName(apk.splitName);
-            final String targetName = fileName + APK_FILE_EXTENSION;
+            final String targetName = ApkLiteParseUtils.splitNameToFileName(apk);
             if (!FileUtils.isValidExtFilename(targetName)) {
                 throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,
                         "Invalid filename: " + targetName);
@@ -2477,6 +2772,8 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             if (apk.splitName == null) {
                 mResolvedBaseFile = targetFile;
                 baseApk = apk;
+            } else {
+                splitApks.put(apk.splitName, apk);
             }
         }
 
@@ -2500,14 +2797,8 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 mVersionCode = pkgInfo.getLongVersionCode();
             }
             if (mSigningDetails == PackageParser.SigningDetails.UNKNOWN) {
-                try {
-                    mSigningDetails = ApkSignatureVerifier.unsafeGetCertsWithoutVerification(
-                            pkgInfo.applicationInfo.sourceDir,
-                            PackageParser.SigningDetails.SignatureSchemeVersion.JAR);
-                } catch (PackageParserException e) {
-                    throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,
-                            "Couldn't obtain signatures from base APK");
-                }
+                mSigningDetails = unsafeGetCertsWithoutVerification(
+                        pkgInfo.applicationInfo.sourceDir);
             }
         }
 
@@ -2538,6 +2829,21 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,
                         "Full install must include a base package");
             }
+            if (baseApk.isSplitRequired && stagedSplits.size() <= 1) {
+                throw new PackageManagerException(INSTALL_FAILED_MISSING_SPLIT,
+                        "Missing split for " + mPackageName);
+            }
+            // For mode full install, we compose package lite for future usage instead of
+            // re-parsing it again and again.
+            final ParseResult<PackageLite> pkgLiteResult =
+                    ApkLiteParseUtils.composePackageLiteFromApks(input.reset(), stageDir, baseApk,
+                            splitApks, true);
+            if (pkgLiteResult.isError()) {
+                throw new PackageManagerException(pkgLiteResult.getErrorCode(),
+                        pkgLiteResult.getErrorMessage(), pkgLiteResult.getException());
+            }
+            mPackageLite = pkgLiteResult.getResult();
+            packageLite = mPackageLite;
         } else {
             final ApplicationInfo appInfo = pkgInfo.applicationInfo;
             ParseResult<PackageLite> pkgLiteResult = ApkLiteParseUtils.parsePackageLite(
@@ -2547,22 +2853,20 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                         pkgLiteResult.getErrorMessage(), pkgLiteResult.getException());
             }
             final PackageLite existing = pkgLiteResult.getResult();
-            ParseResult<ApkLite> apkLiteResult = ApkLiteParseUtils.parseApkLite(input.reset(),
-                    new File(appInfo.getBaseCodePath()),
-                    PackageParser.PARSE_COLLECT_CERTIFICATES);
-            if (apkLiteResult.isError()) {
-                throw new PackageManagerException(PackageManager.INSTALL_FAILED_INTERNAL_ERROR,
-                        apkLiteResult.getErrorMessage(), apkLiteResult.getException());
+            packageLite = existing;
+            assertPackageConsistentLocked("Existing", existing.packageName,
+                    existing.getLongVersionCode());
+            final PackageParser.SigningDetails signingDetails =
+                    unsafeGetCertsWithoutVerification(existing.baseCodePath);
+            if (!mSigningDetails.signaturesMatchExactly(signingDetails)) {
+                throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,
+                        "Existing signatures are inconsistent");
             }
-            final ApkLite existingBase = apkLiteResult.getResult();
-
-            assertApkConsistentLocked("Existing base", existingBase);
 
             // Inherit base if not overridden.
             if (mResolvedBaseFile == null) {
                 mResolvedBaseFile = new File(appInfo.getBaseCodePath());
                 inheritFileLocked(mResolvedBaseFile);
-                baseApk = existingBase;
             }
 
             // Inherit splits if not overridden.
@@ -2648,8 +2952,19 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                     mResolvedInheritedFiles.addAll(libFilesToInherit);
                 }
             }
+            // For the case of split required, failed if no splits existed
+            if (packageLite.isSplitRequired) {
+                final int existingSplits = ArrayUtils.size(existing.splitNames);
+                final boolean allSplitsRemoved = (existingSplits == removeSplitList.size());
+                final boolean onlyBaseFileStaged = (stagedSplits.size() == 1
+                        && stagedSplits.contains(null));
+                if (allSplitsRemoved && (stagedSplits.isEmpty() || onlyBaseFileStaged)) {
+                    throw new PackageManagerException(INSTALL_FAILED_MISSING_SPLIT,
+                            "Missing split for " + mPackageName);
+                }
+            }
         }
-        if (baseApk.useEmbeddedDex) {
+        if (packageLite.useEmbeddedDex) {
             for (File file : mResolvedStagedFiles) {
                 if (file.getName().endsWith(".apk")
                         && !DexManager.auditUncompressedDexInApk(file.getPath())) {
@@ -2659,15 +2974,11 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 }
             }
         }
-        if (baseApk.isSplitRequired && stagedSplits.size() <= 1) {
-            throw new PackageManagerException(INSTALL_FAILED_MISSING_SPLIT,
-                    "Missing split for " + mPackageName);
-        }
 
         final boolean isInstallerShell = (mInstallerUid == Process.SHELL_UID);
         if (isInstallerShell && isIncrementalInstallation() && mIncrementalFileStorages != null) {
-            if (!baseApk.debuggable && !baseApk.profilableByShell) {
-                mIncrementalFileStorages.disableReadLogs();
+            if (!packageLite.debuggable && !packageLite.profilableByShell) {
+                mIncrementalFileStorages.disallowReadLogs();
             }
         }
     }
@@ -2729,34 +3040,23 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         maybeStageFsveritySignatureLocked(dexMetadataFile, targetDexMetadataFile);
     }
 
-    private static ApkChecksum[] createApkChecksums(String splitName,
-            List<CertifiedChecksum> checksums) {
-        ApkChecksum[] result = new ApkChecksum[checksums.size()];
-        for (int i = 0, size = checksums.size(); i < size; ++i) {
-            CertifiedChecksum checksum = checksums.get(i);
-            result[i] = new ApkChecksum(splitName, checksum.getChecksum(),
-                    checksum.getPackageName(), checksum.getCertificate());
-        }
-        return result;
-    }
-
     @GuardedBy("mLock")
     private void maybeStageDigestsLocked(File origFile, File targetFile, String splitName)
             throws PackageManagerException {
-        final List<CertifiedChecksum> checksums = mChecksums.get(origFile.getName());
+        final Checksum[] checksums = mChecksums.get(origFile.getName());
         if (checksums == null) {
             return;
         }
         mChecksums.remove(origFile.getName());
 
-        if (checksums.isEmpty()) {
+        if (checksums.length == 0) {
             return;
         }
 
         final String targetDigestsPath = ApkChecksums.buildDigestsPathForApk(targetFile.getName());
         final File targetDigestsFile = new File(stageDir, targetDigestsPath);
         try (ByteArrayOutputStream os = new ByteArrayOutputStream()) {
-            ApkChecksums.writeChecksums(os, createApkChecksums(splitName, checksums));
+            ApkChecksums.writeChecksums(os, checksums);
             final byte[] checksumsBytes = os.toByteArray();
 
             if (!isIncrementalInstallation() || mIncrementalFileStorages == null) {
@@ -2821,23 +3121,40 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     @GuardedBy("mLock")
     private void assertApkConsistentLocked(String tag, ApkLite apk)
             throws PackageManagerException {
-        if (!mPackageName.equals(apk.packageName)) {
-            throw new PackageManagerException(INSTALL_FAILED_INVALID_APK, tag + " package "
-                    + apk.packageName + " inconsistent with " + mPackageName);
-        }
-        if (params.appPackageName != null && !params.appPackageName.equals(apk.packageName)) {
-            throw new PackageManagerException(INSTALL_FAILED_INVALID_APK, tag
-                    + " specified package " + params.appPackageName
-                    + " inconsistent with " + apk.packageName);
-        }
-        if (mVersionCode != apk.getLongVersionCode()) {
-            throw new PackageManagerException(INSTALL_FAILED_INVALID_APK, tag
-                    + " version code " + apk.versionCode + " inconsistent with "
-                    + mVersionCode);
-        }
+        assertPackageConsistentLocked(tag, apk.packageName, apk.getLongVersionCode());
         if (!mSigningDetails.signaturesMatchExactly(apk.signingDetails)) {
             throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,
                     tag + " signatures are inconsistent");
+        }
+    }
+
+    @GuardedBy("mLock")
+    private void assertPackageConsistentLocked(String tag, String packageName,
+            long versionCode) throws PackageManagerException {
+        if (!mPackageName.equals(packageName)) {
+            throw new PackageManagerException(INSTALL_FAILED_INVALID_APK, tag + " package "
+                    + packageName + " inconsistent with " + mPackageName);
+        }
+        if (params.appPackageName != null && !params.appPackageName.equals(packageName)) {
+            throw new PackageManagerException(INSTALL_FAILED_INVALID_APK, tag
+                    + " specified package " + params.appPackageName
+                    + " inconsistent with " + packageName);
+        }
+        if (mVersionCode != versionCode) {
+            throw new PackageManagerException(INSTALL_FAILED_INVALID_APK, tag
+                    + " version code " + versionCode + " inconsistent with "
+                    + mVersionCode);
+        }
+    }
+
+    private PackageParser.SigningDetails unsafeGetCertsWithoutVerification(String path)
+            throws PackageManagerException {
+        try {
+            return ApkSignatureVerifier.unsafeGetCertsWithoutVerification(path,
+                    PackageParser.SigningDetails.SignatureSchemeVersion.JAR);
+        } catch (PackageParserException e) {
+            throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,
+                    "Couldn't obtain signatures from APK : " + path);
         }
     }
 
@@ -2873,7 +3190,8 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     /**
      * @return the package name of this session
      */
-    String getPackageName() {
+    @VisibleForTesting(visibility = PACKAGE)
+    public String getPackageName() {
         synchronized (mLock) {
             return mPackageName;
         }
@@ -2885,6 +3203,12 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     public long getUpdatedMillis() {
         synchronized (mLock) {
             return updatedMillis;
+        }
+    }
+
+    long getCommittedMillis() {
+        synchronized (mLock) {
+            return committedMillis;
         }
     }
 
@@ -2972,8 +3296,10 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         Slog.d(TAG, "Copied " + fromFiles.size() + " files into " + toDir);
     }
 
-    private void extractNativeLibraries(File packageDir, String abiOverride, boolean inherit)
+    private void extractNativeLibraries(PackageLite packageLite, File packageDir,
+            String abiOverride, boolean inherit)
             throws PackageManagerException {
+        Objects.requireNonNull(packageLite);
         final File libDir = new File(packageDir, NativeLibraryHelper.LIB_DIR_NAME);
         if (!inherit) {
             // Start from a clean slate
@@ -2982,7 +3308,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
         NativeLibraryHelper.Handle handle = null;
         try {
-            handle = NativeLibraryHelper.Handle.create(packageDir);
+            handle = NativeLibraryHelper.Handle.create(packageLite);
             final int res = NativeLibraryHelper.copyNativeBinariesWithOverride(handle, libDir,
                     abiOverride, isIncrementalInstallation());
             if (res != INSTALL_SUCCEEDED) {
@@ -3087,6 +3413,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
     private void abandonNonStaged() {
         synchronized (mLock) {
+            assertNotChildLocked("abandonNonStaged");
             assertCallerIsOwnerOrRootLocked();
             if (mRelinquished) {
                 if (LOGD) Slog.d(TAG, "Ignoring abandon after commit relinquished control");
@@ -3098,96 +3425,21 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         maybeCleanUpChildSessions();
     }
 
-    private void abandonStaged() {
-        final Runnable r;
-        synchronized (mLock) {
-            assertCallerIsOwnerOrRootLocked();
-            if (isStagedAndInTerminalState()) {
-                // We keep the session in the database if it's in a finalized state. It will be
-                // removed by PackageInstallerService when the last update time is old enough.
-                // Also, in such cases cleanStageDir() has already been executed so no need to
-                // do it now.
-                return;
-            }
-            mDestroyed = true;
-            boolean isCommitted = mCommitted;
-            List<PackageInstallerSession> childSessions = getChildSessionsLocked();
-            r = () -> {
-                assertNotLocked("abandonStaged");
-                if (isCommitted) {
-                    mStagingManager.abortCommittedSession(this);
-                }
-                cleanStageDir(childSessions);
-                destroyInternal();
-                dispatchSessionFinished(INSTALL_FAILED_ABORTED, "Session was abandoned", null);
-                maybeCleanUpChildSessions();
-            };
-            if (mInPreRebootVerification) {
-                // Pre-reboot verification is ongoing. It is not safe to clean up the session yet.
-                mPendingAbandonCallback = r;
-                mCallback.onStagedSessionChanged(this);
-                return;
-            }
+    @GuardedBy("mLock")
+    private void assertNotChildLocked(String cookie) {
+        if (hasParentSessionId()) {
+            throw new IllegalStateException(cookie + " can't be called on a child session, id="
+                    + sessionId + " parentId=" + getParentSessionId());
         }
-        r.run();
     }
 
     @Override
     public void abandon() {
-        if (hasParentSessionId()) {
-            throw new IllegalStateException(
-                    "Session " + sessionId + " is a child of multi-package session "
-                            + getParentSessionId() +  " and may not be abandoned directly.");
-        }
         if (params.isStaged) {
-            abandonStaged();
+            mStagedSession.abandon();
         } else {
             abandonNonStaged();
         }
-    }
-
-    /**
-     * Notified by the staging manager that pre-reboot verification is about to start. The return
-     * value should be checked to decide whether it is OK to start pre-reboot verification. In
-     * the case of a destroyed session, {@code false} is returned and there is no need to start
-     * pre-reboot verification.
-     */
-    boolean notifyStagedStartPreRebootVerification() {
-        synchronized (mLock) {
-            if (mInPreRebootVerification) {
-                throw new IllegalStateException("Pre-reboot verification has started");
-            }
-            if (mDestroyed) {
-                return false;
-            }
-            mInPreRebootVerification = true;
-            return true;
-        }
-    }
-
-    private void dispatchPendingAbandonCallback() {
-        final Runnable callback;
-        synchronized (mLock) {
-            callback = mPendingAbandonCallback;
-            mPendingAbandonCallback = null;
-        }
-        if (callback != null) {
-            callback.run();
-        }
-    }
-
-    /**
-     * Notified by the staging manager that pre-reboot verification has ended. Now it is safe to
-     * clean up the session if {@link #abandon()} has been called previously.
-     */
-    void notifyStagedEndPreRebootVerification() {
-        synchronized (mLock) {
-            if (!mInPreRebootVerification) {
-                throw new IllegalStateException("Pre-reboot verification not started");
-            }
-            mInPreRebootVerification = false;
-        }
-        dispatchPendingAbandonCallback();
     }
 
     @Override
@@ -3321,19 +3573,15 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                         return;
                 }
 
-                synchronized (mLock) {
-                    if (mDestroyed || mDataLoaderFinished) {
-                        // No need to worry about post installation
-                        return;
-                    }
+                if (mDestroyed || mDataLoaderFinished) {
+                    // No need to worry about post installation
+                    return;
                 }
 
                 try {
                     IDataLoader dataLoader = dataLoaderManager.getDataLoader(dataLoaderId);
                     if (dataLoader == null) {
-                        synchronized (mLock) {
-                            mDataLoaderFinished = true;
-                        }
+                        mDataLoaderFinished = true;
                         dispatchSessionValidationFailure(INSTALL_FAILED_MEDIA_UNAVAILABLE,
                                 "Failure to obtain data loader");
                         return;
@@ -3366,9 +3614,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                             break;
                         }
                         case IDataLoaderStatusListener.DATA_LOADER_IMAGE_READY: {
-                            synchronized (mLock) {
-                                mDataLoaderFinished = true;
-                            }
+                            mDataLoaderFinished = true;
                             if (hasParentSessionId()) {
                                 mSessionProvider.getSession(
                                         getParentSessionId()).dispatchSessionSealed();
@@ -3381,9 +3627,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                             break;
                         }
                         case IDataLoaderStatusListener.DATA_LOADER_IMAGE_NOT_READY: {
-                            synchronized (mLock) {
-                                mDataLoaderFinished = true;
-                            }
+                            mDataLoaderFinished = true;
                             dispatchSessionValidationFailure(INSTALL_FAILED_MEDIA_UNAVAILABLE,
                                     "Failed to prepare image.");
                             if (manualStartAndDestroy) {
@@ -3402,9 +3646,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                             break;
                         }
                         case IDataLoaderStatusListener.DATA_LOADER_UNRECOVERABLE:
-                            synchronized (mLock) {
-                                mDataLoaderFinished = true;
-                            }
+                            mDataLoaderFinished = true;
                             dispatchSessionValidationFailure(INSTALL_FAILED_MEDIA_UNAVAILABLE,
                                     "DataLoader reported unrecoverable failure.");
                             break;
@@ -3429,20 +3671,22 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         };
 
         if (!manualStartAndDestroy) {
+            final PerUidReadTimeouts[] perUidReadTimeouts = mPm.getPerUidReadTimeouts();
+
             final StorageHealthCheckParams healthCheckParams = new StorageHealthCheckParams();
             healthCheckParams.blockedTimeoutMs = INCREMENTAL_STORAGE_BLOCKED_TIMEOUT_MS;
             healthCheckParams.unhealthyTimeoutMs = INCREMENTAL_STORAGE_UNHEALTHY_TIMEOUT_MS;
             healthCheckParams.unhealthyMonitoringMs = INCREMENTAL_STORAGE_UNHEALTHY_MONITORING_MS;
+
             final boolean systemDataLoader =
                     params.getComponentName().getPackageName() == SYSTEM_DATA_LOADER_PACKAGE;
+
             final IStorageHealthListener healthListener = new IStorageHealthListener.Stub() {
                 @Override
                 public void onHealthStatus(int storageId, int status) {
-                    synchronized (mLock) {
-                        if (mDestroyed || mDataLoaderFinished) {
-                            // No need to worry about post installation
-                            return;
-                        }
+                    if (mDestroyed || mDataLoaderFinished) {
+                        // No need to worry about post installation
+                        return;
                     }
 
                     switch (status) {
@@ -3457,9 +3701,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                             // fallthrough
                         case IStorageHealthListener.HEALTH_STATUS_UNHEALTHY:
                             // Even ADB installation can't wait for missing pages for too long.
-                            synchronized (mLock) {
-                                mDataLoaderFinished = true;
-                            }
+                            mDataLoaderFinished = true;
                             dispatchSessionValidationFailure(INSTALL_FAILED_MEDIA_UNAVAILABLE,
                                     "Image is missing pages required for installation.");
                             break;
@@ -3469,7 +3711,17 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
             try {
                 mIncrementalFileStorages = IncrementalFileStorages.initialize(mContext, stageDir,
-                        params, statusListener, healthCheckParams, healthListener, addedFiles);
+                        params, statusListener, healthCheckParams, healthListener, addedFiles,
+                        perUidReadTimeouts,
+                        new IPackageLoadingProgressCallback.Stub() {
+                            @Override
+                            public void onPackageLoadingProgressChanged(float progress) {
+                                synchronized (mLock) {
+                                    mIncrementalProgress = progress;
+                                    computeProgressLocked(true);
+                                }
+                            }
+                        });
                 return false;
             } catch (IOException e) {
                 throw new PackageManagerException(INSTALL_FAILED_MEDIA_UNAVAILABLE, e.getMessage(),
@@ -3675,88 +3927,29 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     }
 
     /** {@hide} */
-    void setStagedSessionReady() {
-        synchronized (mLock) {
-            // Do not allow destroyed/failed staged session to change state
-            if (mDestroyed || mStagedSessionFailed) return;
-            mStagedSessionReady = true;
-            mStagedSessionApplied = false;
-            mStagedSessionFailed = false;
-            mStagedSessionErrorCode = SessionInfo.STAGED_SESSION_NO_ERROR;
-            mStagedSessionErrorMessage = "";
-        }
-        mCallback.onStagedSessionChanged(this);
-    }
-
-    /** {@hide} */
-    void setStagedSessionFailed(@StagedSessionErrorCode int errorCode, String errorMessage) {
-        List<PackageInstallerSession> childSessions;
-        synchronized (mLock) {
-            // Do not allow destroyed/failed staged session to change state
-            if (mDestroyed || mStagedSessionFailed) return;
-            mStagedSessionReady = false;
-            mStagedSessionApplied = false;
-            mStagedSessionFailed = true;
-            mStagedSessionErrorCode = errorCode;
-            mStagedSessionErrorMessage = errorMessage;
-            Slog.d(TAG, "Marking session " + sessionId + " as failed: " + errorMessage);
-            childSessions = getChildSessionsLocked();
-        }
-        cleanStageDir(childSessions);
-        mCallback.onStagedSessionChanged(this);
-    }
-
-    /** {@hide} */
-    void setStagedSessionApplied() {
-        List<PackageInstallerSession> childSessions;
-        synchronized (mLock) {
-            // Do not allow destroyed/failed staged session to change state
-            if (mDestroyed || mStagedSessionFailed) return;
-            mStagedSessionReady = false;
-            mStagedSessionApplied = true;
-            mStagedSessionFailed = false;
-            mStagedSessionErrorCode = SessionInfo.STAGED_SESSION_NO_ERROR;
-            mStagedSessionErrorMessage = "";
-            Slog.d(TAG, "Marking session " + sessionId + " as applied");
-            childSessions = getChildSessionsLocked();
-        }
-        cleanStageDir(childSessions);
-        mCallback.onStagedSessionChanged(this);
-    }
-
-    /** {@hide} */
     boolean isStagedSessionReady() {
-        synchronized (mLock) {
-            return mStagedSessionReady;
-        }
+        return params.isStaged && mStagedSession.isSessionReady();
     }
 
     /** {@hide} */
     boolean isStagedSessionApplied() {
-        synchronized (mLock) {
-            return mStagedSessionApplied;
-        }
+        return params.isStaged && mStagedSession.isSessionApplied();
     }
 
     /** {@hide} */
     boolean isStagedSessionFailed() {
-        synchronized (mLock) {
-            return mStagedSessionFailed;
-        }
+        return params.isStaged && mStagedSession.isSessionFailed();
     }
 
     /** {@hide} */
     @StagedSessionErrorCode int getStagedSessionErrorCode() {
-        synchronized (mLock) {
-            return mStagedSessionErrorCode;
-        }
+        return params.isStaged ? mStagedSession.getSessionErrorCode()
+                : SessionInfo.STAGED_SESSION_NO_ERROR;
     }
 
     /** {@hide} */
     String getStagedSessionErrorMessage() {
-        synchronized (mLock) {
-            return mStagedSessionErrorMessage;
-        }
+        return params.isStaged ? mStagedSession.getSessionErrorMessage() : "";
     }
 
     private void destroyInternal() {
@@ -3831,6 +4024,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         pw.printPair("mInstallerUid", mInstallerUid);
         pw.printPair("createdMillis", createdMillis);
         pw.printPair("updatedMillis", updatedMillis);
+        pw.printPair("committedMillis", committedMillis);
         pw.printPair("stageDir", stageDir);
         pw.printPair("stageCid", stageCid);
         pw.println();
@@ -3852,11 +4046,11 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         pw.printPair("params.isStaged", params.isStaged);
         pw.printPair("mParentSessionId", mParentSessionId);
         pw.printPair("mChildSessionIds", getChildSessionIdsLocked());
-        pw.printPair("mStagedSessionApplied", mStagedSessionApplied);
-        pw.printPair("mStagedSessionFailed", mStagedSessionFailed);
-        pw.printPair("mStagedSessionReady", mStagedSessionReady);
-        pw.printPair("mStagedSessionErrorCode", mStagedSessionErrorCode);
-        pw.printPair("mStagedSessionErrorMessage", mStagedSessionErrorMessage);
+        pw.printPair("mStagedSessionApplied", isStagedSessionApplied());
+        pw.printPair("mStagedSessionFailed", isStagedSessionFailed());
+        pw.printPair("mStagedSessionReady", isStagedSessionReady());
+        pw.printPair("mStagedSessionErrorCode", getStagedSessionErrorCode());
+        pw.printPair("mStagedSessionErrorMessage", getStagedSessionErrorMessage());
         pw.println();
 
         pw.decreaseIndent();
@@ -3971,7 +4165,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     private static void writeAutoRevokePermissionsMode(@NonNull TypedXmlSerializer out, int mode)
             throws IOException {
         out.startTag(null, TAG_AUTO_REVOKE_PERMISSIONS_MODE);
-        writeIntAttribute(out, ATTR_MODE, mode);
+        out.attributeInt(null, ATTR_MODE, mode);
         out.endTag(null, TAG_AUTO_REVOKE_PERMISSIONS_MODE);
     }
 
@@ -3994,19 +4188,20 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
             out.startTag(null, TAG_SESSION);
 
-            writeIntAttribute(out, ATTR_SESSION_ID, sessionId);
-            writeIntAttribute(out, ATTR_USER_ID, userId);
+            out.attributeInt(null, ATTR_SESSION_ID, sessionId);
+            out.attributeInt(null, ATTR_USER_ID, userId);
             writeStringAttribute(out, ATTR_INSTALLER_PACKAGE_NAME,
                     mInstallSource.installerPackageName);
             writeStringAttribute(out, ATTR_INSTALLER_ATTRIBUTION_TAG,
                     mInstallSource.installerAttributionTag);
-            writeIntAttribute(out, ATTR_INSTALLER_UID, mInstallerUid);
+            out.attributeInt(null, ATTR_INSTALLER_UID, mInstallerUid);
             writeStringAttribute(out, ATTR_INITIATING_PACKAGE_NAME,
                     mInstallSource.initiatingPackageName);
             writeStringAttribute(out, ATTR_ORIGINATING_PACKAGE_NAME,
                     mInstallSource.originatingPackageName);
-            writeLongAttribute(out, ATTR_CREATED_MILLIS, createdMillis);
-            writeLongAttribute(out, ATTR_UPDATED_MILLIS, updatedMillis);
+            out.attributeLong(null, ATTR_CREATED_MILLIS, createdMillis);
+            out.attributeLong(null, ATTR_UPDATED_MILLIS, updatedMillis);
+            out.attributeLong(null, ATTR_COMMITTED_MILLIS, committedMillis);
             if (stageDir != null) {
                 writeStringAttribute(out, ATTR_SESSION_STAGE_DIR,
                         stageDir.getAbsolutePath());
@@ -4021,32 +4216,32 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
             writeBooleanAttribute(out, ATTR_MULTI_PACKAGE, params.isMultiPackage);
             writeBooleanAttribute(out, ATTR_STAGED_SESSION, params.isStaged);
-            writeBooleanAttribute(out, ATTR_IS_READY, mStagedSessionReady);
-            writeBooleanAttribute(out, ATTR_IS_FAILED, mStagedSessionFailed);
-            writeBooleanAttribute(out, ATTR_IS_APPLIED, mStagedSessionApplied);
-            writeIntAttribute(out, ATTR_STAGED_SESSION_ERROR_CODE, mStagedSessionErrorCode);
+            writeBooleanAttribute(out, ATTR_IS_READY, isStagedSessionReady());
+            writeBooleanAttribute(out, ATTR_IS_FAILED, isStagedSessionFailed());
+            writeBooleanAttribute(out, ATTR_IS_APPLIED, isStagedSessionApplied());
+            out.attributeInt(null, ATTR_STAGED_SESSION_ERROR_CODE, getStagedSessionErrorCode());
             writeStringAttribute(out, ATTR_STAGED_SESSION_ERROR_MESSAGE,
-                    mStagedSessionErrorMessage);
+                    getStagedSessionErrorMessage());
             // TODO(patb,109941548): avoid writing to xml and instead infer / validate this after
             //                       we've read all sessions.
-            writeIntAttribute(out, ATTR_PARENT_SESSION_ID, mParentSessionId);
-            writeIntAttribute(out, ATTR_MODE, params.mode);
-            writeIntAttribute(out, ATTR_INSTALL_FLAGS, params.installFlags);
-            writeIntAttribute(out, ATTR_INSTALL_LOCATION, params.installLocation);
-            writeLongAttribute(out, ATTR_SIZE_BYTES, params.sizeBytes);
+            out.attributeInt(null, ATTR_PARENT_SESSION_ID, mParentSessionId);
+            out.attributeInt(null, ATTR_MODE, params.mode);
+            out.attributeInt(null, ATTR_INSTALL_FLAGS, params.installFlags);
+            out.attributeInt(null, ATTR_INSTALL_LOCATION, params.installLocation);
+            out.attributeLong(null, ATTR_SIZE_BYTES, params.sizeBytes);
             writeStringAttribute(out, ATTR_APP_PACKAGE_NAME, params.appPackageName);
             writeStringAttribute(out, ATTR_APP_LABEL, params.appLabel);
             writeUriAttribute(out, ATTR_ORIGINATING_URI, params.originatingUri);
-            writeIntAttribute(out, ATTR_ORIGINATING_UID, params.originatingUid);
+            out.attributeInt(null, ATTR_ORIGINATING_UID, params.originatingUid);
             writeUriAttribute(out, ATTR_REFERRER_URI, params.referrerUri);
             writeStringAttribute(out, ATTR_ABI_OVERRIDE, params.abiOverride);
             writeStringAttribute(out, ATTR_VOLUME_UUID, params.volumeUuid);
-            writeIntAttribute(out, ATTR_INSTALL_REASON, params.installReason);
+            out.attributeInt(null, ATTR_INSTALL_REASON, params.installReason);
 
             final boolean isDataLoader = params.dataLoaderParams != null;
             writeBooleanAttribute(out, ATTR_IS_DATALOADER, isDataLoader);
             if (isDataLoader) {
-                writeIntAttribute(out, ATTR_DATALOADER_TYPE, params.dataLoaderParams.getType());
+                out.attributeInt(null, ATTR_DATALOADER_TYPE, params.dataLoaderParams.getType());
                 writeStringAttribute(out, ATTR_DATALOADER_PACKAGE_NAME,
                         params.dataLoaderParams.getComponentName().getPackageName());
                 writeStringAttribute(out, ATTR_DATALOADER_CLASS_NAME,
@@ -4082,34 +4277,29 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             final int[] childSessionIds = getChildSessionIdsLocked();
             for (int childSessionId : childSessionIds) {
                 out.startTag(null, TAG_CHILD_SESSION);
-                writeIntAttribute(out, ATTR_SESSION_ID, childSessionId);
+                out.attributeInt(null, ATTR_SESSION_ID, childSessionId);
                 out.endTag(null, TAG_CHILD_SESSION);
             }
 
             final InstallationFile[] files = getInstallationFilesLocked();
             for (InstallationFile file : files) {
                 out.startTag(null, TAG_SESSION_FILE);
-                writeIntAttribute(out, ATTR_LOCATION, file.getLocation());
+                out.attributeInt(null, ATTR_LOCATION, file.getLocation());
                 writeStringAttribute(out, ATTR_NAME, file.getName());
-                writeLongAttribute(out, ATTR_LENGTH_BYTES, file.getLengthBytes());
+                out.attributeLong(null, ATTR_LENGTH_BYTES, file.getLengthBytes());
                 writeByteArrayAttribute(out, ATTR_METADATA, file.getMetadata());
                 writeByteArrayAttribute(out, ATTR_SIGNATURE, file.getSignature());
                 out.endTag(null, TAG_SESSION_FILE);
             }
 
             for (int i = 0, isize = mChecksums.size(); i < isize; ++i) {
-                String fileName = mChecksums.keyAt(i);
-                List<CertifiedChecksum> checksums = mChecksums.valueAt(i);
-                for (int j = 0, jsize = checksums.size(); j < jsize; ++j) {
-                    CertifiedChecksum checksum = checksums.get(j);
+                final String fileName = mChecksums.keyAt(i);
+                final Checksum[] checksums = mChecksums.valueAt(i);
+                for (Checksum checksum : checksums) {
                     out.startTag(null, TAG_SESSION_CHECKSUM);
                     writeStringAttribute(out, ATTR_NAME, fileName);
-                    writeIntAttribute(out, ATTR_CHECKSUM_KIND, checksum.getChecksum().getType());
-                    writeByteArrayAttribute(out, ATTR_CHECKSUM_VALUE,
-                            checksum.getChecksum().getValue());
-                    writeStringAttribute(out, ATTR_CHECKSUM_PACKAGE, checksum.getPackageName());
-                    writeByteArrayAttribute(out, ATTR_CHECKSUM_CERTIFICATE,
-                            checksum.getCertificate());
+                    out.attributeInt(null, ATTR_CHECKSUM_KIND, checksum.getType());
+                    writeByteArrayAttribute(out, ATTR_CHECKSUM_VALUE, checksum.getValue());
                     out.endTag(null, TAG_SESSION_CHECKSUM);
                 }
             }
@@ -4147,51 +4337,52 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             @NonNull StagingManager stagingManager, @NonNull File sessionsDir,
             @NonNull PackageSessionProvider sessionProvider)
             throws IOException, XmlPullParserException {
-        final int sessionId = readIntAttribute(in, ATTR_SESSION_ID);
-        final int userId = readIntAttribute(in, ATTR_USER_ID);
+        final int sessionId = in.getAttributeInt(null, ATTR_SESSION_ID);
+        final int userId = in.getAttributeInt(null, ATTR_USER_ID);
         final String installerPackageName = readStringAttribute(in, ATTR_INSTALLER_PACKAGE_NAME);
         final String installerAttributionTag = readStringAttribute(in,
                 ATTR_INSTALLER_ATTRIBUTION_TAG);
-        final int installerUid = readIntAttribute(in, ATTR_INSTALLER_UID, pm.getPackageUid(
+        final int installerUid = in.getAttributeInt(null, ATTR_INSTALLER_UID, pm.getPackageUid(
                 installerPackageName, PackageManager.MATCH_UNINSTALLED_PACKAGES, userId));
         final String installInitiatingPackageName =
                 readStringAttribute(in, ATTR_INITIATING_PACKAGE_NAME);
         final String installOriginatingPackageName =
                 readStringAttribute(in, ATTR_ORIGINATING_PACKAGE_NAME);
-        final long createdMillis = readLongAttribute(in, ATTR_CREATED_MILLIS);
-        long updatedMillis = readLongAttribute(in, ATTR_UPDATED_MILLIS);
+        final long createdMillis = in.getAttributeLong(null, ATTR_CREATED_MILLIS);
+        long updatedMillis = in.getAttributeLong(null, ATTR_UPDATED_MILLIS);
+        final long committedMillis = in.getAttributeLong(null, ATTR_COMMITTED_MILLIS, 0L);
         final String stageDirRaw = readStringAttribute(in, ATTR_SESSION_STAGE_DIR);
         final File stageDir = (stageDirRaw != null) ? new File(stageDirRaw) : null;
         final String stageCid = readStringAttribute(in, ATTR_SESSION_STAGE_CID);
-        final boolean prepared = readBooleanAttribute(in, ATTR_PREPARED, true);
-        final boolean committed = readBooleanAttribute(in, ATTR_COMMITTED);
-        final boolean destroyed = readBooleanAttribute(in, ATTR_DESTROYED);
-        final boolean sealed = readBooleanAttribute(in, ATTR_SEALED);
-        final int parentSessionId = readIntAttribute(in, ATTR_PARENT_SESSION_ID,
+        final boolean prepared = in.getAttributeBoolean(null, ATTR_PREPARED, true);
+        final boolean committed = in.getAttributeBoolean(null, ATTR_COMMITTED, false);
+        final boolean destroyed = in.getAttributeBoolean(null, ATTR_DESTROYED, false);
+        final boolean sealed = in.getAttributeBoolean(null, ATTR_SEALED, false);
+        final int parentSessionId = in.getAttributeInt(null, ATTR_PARENT_SESSION_ID,
                 SessionInfo.INVALID_ID);
 
         final SessionParams params = new SessionParams(
                 SessionParams.MODE_INVALID);
-        params.isMultiPackage = readBooleanAttribute(in, ATTR_MULTI_PACKAGE, false);
-        params.isStaged = readBooleanAttribute(in, ATTR_STAGED_SESSION, false);
-        params.mode = readIntAttribute(in, ATTR_MODE);
-        params.installFlags = readIntAttribute(in, ATTR_INSTALL_FLAGS);
-        params.installLocation = readIntAttribute(in, ATTR_INSTALL_LOCATION);
-        params.sizeBytes = readLongAttribute(in, ATTR_SIZE_BYTES);
+        params.isMultiPackage = in.getAttributeBoolean(null, ATTR_MULTI_PACKAGE, false);
+        params.isStaged = in.getAttributeBoolean(null, ATTR_STAGED_SESSION, false);
+        params.mode = in.getAttributeInt(null, ATTR_MODE);
+        params.installFlags = in.getAttributeInt(null, ATTR_INSTALL_FLAGS);
+        params.installLocation = in.getAttributeInt(null, ATTR_INSTALL_LOCATION);
+        params.sizeBytes = in.getAttributeLong(null, ATTR_SIZE_BYTES);
         params.appPackageName = readStringAttribute(in, ATTR_APP_PACKAGE_NAME);
         params.appIcon = readBitmapAttribute(in, ATTR_APP_ICON);
         params.appLabel = readStringAttribute(in, ATTR_APP_LABEL);
         params.originatingUri = readUriAttribute(in, ATTR_ORIGINATING_URI);
         params.originatingUid =
-                readIntAttribute(in, ATTR_ORIGINATING_UID, SessionParams.UID_UNKNOWN);
+                in.getAttributeInt(null, ATTR_ORIGINATING_UID, SessionParams.UID_UNKNOWN);
         params.referrerUri = readUriAttribute(in, ATTR_REFERRER_URI);
         params.abiOverride = readStringAttribute(in, ATTR_ABI_OVERRIDE);
         params.volumeUuid = readStringAttribute(in, ATTR_VOLUME_UUID);
-        params.installReason = readIntAttribute(in, ATTR_INSTALL_REASON);
+        params.installReason = in.getAttributeInt(null, ATTR_INSTALL_REASON);
 
-        if (readBooleanAttribute(in, ATTR_IS_DATALOADER)) {
+        if (in.getAttributeBoolean(null, ATTR_IS_DATALOADER, false)) {
             params.dataLoaderParams = new DataLoaderParams(
-                    readIntAttribute(in, ATTR_DATALOADER_TYPE),
+                    in.getAttributeInt(null, ATTR_DATALOADER_TYPE),
                     new ComponentName(
                             readStringAttribute(in, ATTR_DATALOADER_PACKAGE_NAME),
                             readStringAttribute(in, ATTR_DATALOADER_CLASS_NAME)),
@@ -4203,10 +4394,10 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             params.appIcon = BitmapFactory.decodeFile(appIconFile.getAbsolutePath());
             params.appIconLastModified = appIconFile.lastModified();
         }
-        final boolean isReady = readBooleanAttribute(in, ATTR_IS_READY);
-        final boolean isFailed = readBooleanAttribute(in, ATTR_IS_FAILED);
-        final boolean isApplied = readBooleanAttribute(in, ATTR_IS_APPLIED);
-        final int stagedSessionErrorCode = readIntAttribute(in, ATTR_STAGED_SESSION_ERROR_CODE,
+        final boolean isReady = in.getAttributeBoolean(null, ATTR_IS_READY, false);
+        final boolean isFailed = in.getAttributeBoolean(null, ATTR_IS_FAILED, false);
+        final boolean isApplied = in.getAttributeBoolean(null, ATTR_IS_APPLIED, false);
+        final int stagedSessionErrorCode = in.getAttributeInt(null, ATTR_STAGED_SESSION_ERROR_CODE,
                 SessionInfo.STAGED_SESSION_NO_ERROR);
         final String stagedSessionErrorMessage = readStringAttribute(in,
                 ATTR_STAGED_SESSION_ERROR_MESSAGE);
@@ -4226,7 +4417,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         int autoRevokePermissionsMode = MODE_DEFAULT;
         List<Integer> childSessionIds = new ArrayList<>();
         List<InstallationFile> files = new ArrayList<>();
-        ArrayMap<String, List<CertifiedChecksum>> checksums = new ArrayMap<>();
+        ArrayMap<String, List<Checksum>> checksums = new ArrayMap<>();
         int outerDepth = in.getDepth();
         int type;
         while ((type = in.next()) != XmlPullParser.END_DOCUMENT
@@ -4242,33 +4433,32 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
             }
             if (TAG_AUTO_REVOKE_PERMISSIONS_MODE.equals(in.getName())) {
-                autoRevokePermissionsMode = readIntAttribute(in, ATTR_MODE);
+                autoRevokePermissionsMode = in.getAttributeInt(null, ATTR_MODE);
             }
             if (TAG_CHILD_SESSION.equals(in.getName())) {
-                childSessionIds.add(readIntAttribute(in, ATTR_SESSION_ID, SessionInfo.INVALID_ID));
+                childSessionIds.add(in.getAttributeInt(null, ATTR_SESSION_ID,
+                        SessionInfo.INVALID_ID));
             }
             if (TAG_SESSION_FILE.equals(in.getName())) {
                 files.add(new InstallationFile(
-                        readIntAttribute(in, ATTR_LOCATION, 0),
+                        in.getAttributeInt(null, ATTR_LOCATION, 0),
                         readStringAttribute(in, ATTR_NAME),
-                        readLongAttribute(in, ATTR_LENGTH_BYTES, -1),
+                        in.getAttributeLong(null, ATTR_LENGTH_BYTES, -1),
                         readByteArrayAttribute(in, ATTR_METADATA),
                         readByteArrayAttribute(in, ATTR_SIGNATURE)));
             }
             if (TAG_SESSION_CHECKSUM.equals(in.getName())) {
                 final String fileName = readStringAttribute(in, ATTR_NAME);
-                final CertifiedChecksum certifiedChecksum = new CertifiedChecksum(
-                        new Checksum(readIntAttribute(in, ATTR_CHECKSUM_KIND, 0),
-                                readByteArrayAttribute(in, ATTR_CHECKSUM_VALUE)),
-                        readStringAttribute(in, ATTR_CHECKSUM_PACKAGE),
-                        readByteArrayAttribute(in, ATTR_CHECKSUM_CERTIFICATE));
+                final Checksum checksum = new Checksum(
+                        in.getAttributeInt(null, ATTR_CHECKSUM_KIND, 0),
+                        readByteArrayAttribute(in, ATTR_CHECKSUM_VALUE));
 
-                List<CertifiedChecksum> certifiedChecksums = checksums.get(fileName);
-                if (certifiedChecksums == null) {
-                    certifiedChecksums = new ArrayList<>();
-                    checksums.put(fileName, certifiedChecksums);
+                List<Checksum> fileChecksums = checksums.get(fileName);
+                if (fileChecksums == null) {
+                    fileChecksums = new ArrayList<>();
+                    checksums.put(fileName, fileChecksums);
                 }
-                certifiedChecksums.add(certifiedChecksum);
+                fileChecksums.add(checksum);
             }
         }
 
@@ -4302,8 +4492,9 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 installOriginatingPackageName, installerPackageName, installerAttributionTag);
         return new PackageInstallerSession(callback, context, pm, sessionProvider,
                 installerThread, stagingManager, sessionId, userId, installerUid,
-                installSource, params, createdMillis, stageDir, stageCid, fileArray, checksums,
-                prepared, committed, destroyed, sealed, childSessionIdsArray, parentSessionId,
-                isReady, isFailed, isApplied, stagedSessionErrorCode, stagedSessionErrorMessage);
+                installSource, params, createdMillis, committedMillis, stageDir, stageCid,
+                fileArray, checksums, prepared, committed, destroyed, sealed, childSessionIdsArray,
+                parentSessionId, isReady, isFailed, isApplied, stagedSessionErrorCode,
+                stagedSessionErrorMessage);
     }
 }

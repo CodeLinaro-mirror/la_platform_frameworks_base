@@ -78,6 +78,11 @@ public final class BackgroundJobsController extends StateController {
     }
 
     @Override
+    public void evaluateStateLocked(JobStatus jobStatus) {
+        updateSingleJobRestrictionLocked(jobStatus, UNKNOWN);
+    }
+
+    @Override
     public void dumpControllerStateLocked(final IndentingPrintWriter pw,
             final Predicate<JobStatus> predicate) {
         mAppStateTracker.dump(pw);
@@ -189,8 +194,7 @@ public final class BackgroundJobsController extends StateController {
         final String packageName = jobStatus.getSourcePackageName();
 
         final boolean canRun = !mAppStateTracker.areJobsRestricted(uid, packageName,
-                (jobStatus.getInternalFlags() & JobStatus.INTERNAL_FLAG_HAS_FOREGROUND_EXEMPTION)
-                        != 0);
+                jobStatus.canRunInBatterySaver());
 
         final boolean isActive;
         if (activeState == UNKNOWN) {

@@ -59,7 +59,8 @@
     <string name="imei" msgid="2157082351232630390">"IMEI"</string>
     <string name="meid" msgid="3291227361605924674">"MEID"</string>
     <string name="ClipMmi" msgid="4110549342447630629">"זיהוי מתקשר של שיחה נכנסת"</string>
-    <string name="ClirMmi" msgid="4702929460236547156">"זיהוי מתקשר בשיחה יוצאת"</string>
+    <!-- no translation found for ClirMmi (6752346475055446417) -->
+    <skip />
     <string name="ColpMmi" msgid="4736462893284419302">"מזהה של קו מחובר"</string>
     <string name="ColrMmi" msgid="5889782479745764278">"הגבלה של מזהה קו מחובר"</string>
     <string name="CfMmi" msgid="8390012691099787178">"העברת שיחות"</string>
@@ -148,6 +149,10 @@
     <string name="wfc_mode_wifi_preferred_summary" msgid="1035175836270943089">"‏שיחה בחיבור Wi-Fi"</string>
     <string name="wfc_mode_cellular_preferred_summary" msgid="4958965609212575619">"שיחה ברשת סלולרית"</string>
     <string name="wfc_mode_wifi_only_summary" msgid="104951993894678665">"‏Wi-Fi בלבד"</string>
+    <!-- no translation found for crossSimFormat_spn (9125246077491634262) -->
+    <skip />
+    <!-- no translation found for crossSimFormat_spn_cross_sim_calling (779976494687695991) -->
+    <skip />
     <string name="cfTemplateNotForwarded" msgid="862202427794270501">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: ללא העברה"</string>
     <string name="cfTemplateForwarded" msgid="9132506315842157860">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: <xliff:g id="DIALING_NUMBER">{1}</xliff:g>"</string>
     <string name="cfTemplateForwardedTime" msgid="735042369233323609">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: <xliff:g id="DIALING_NUMBER">{1}</xliff:g> כעבור <xliff:g id="TIME_DELAY">{2}</xliff:g> שניות"</string>
@@ -203,6 +208,7 @@
     <string name="gnss_service" msgid="8907781262179951385">"‏שירות GNSS"</string>
     <string name="sensor_notification_service" msgid="7474531979178682676">"שירות להתראות מחיישנים"</string>
     <string name="twilight_service" msgid="8964898045693187224">"שירות דמדומים"</string>
+    <string name="offline_location_time_zone_detection_service_attribution" msgid="303754195048744816">"מזהה אזור זמן (ללא צורך בקישוריות)"</string>
     <string name="factory_reset_warning" msgid="6858705527798047809">"תתבצע מחיקה של המכשיר"</string>
     <string name="factory_reset_message" msgid="2657049595153992213">"לא ניתן להשתמש באפליקציה של מנהל המערכת.\n\nאם יש לך שאלות, יש ליצור קשר עם מנהל המערכת של הארגון."</string>
     <string name="printing_disabled_by" msgid="3517499806528864633">"ההדפסה הושבתה על ידי <xliff:g id="OWNER_APP">%s</xliff:g>."</string>
@@ -293,6 +299,7 @@
     <string name="notification_channel_usb" msgid="1528280969406244896">"‏חיבור USB"</string>
     <string name="notification_channel_heavy_weight_app" msgid="17455756500828043">"אפליקציה פועלת"</string>
     <string name="notification_channel_foreground_service" msgid="7102189948158885178">"אפליקציות שמרוקנות את הסוללה"</string>
+    <string name="notification_channel_accessibility_magnification" msgid="1707913872219798098">"הגדלה"</string>
     <string name="foreground_service_app_in_background" msgid="1439289699671273555">"<xliff:g id="APP_NAME">%1$s</xliff:g> משתמשת בסוללה"</string>
     <string name="foreground_service_apps_in_background" msgid="7340037176412387863">"<xliff:g id="NUMBER">%1$d</xliff:g> אפליקציות משתמשות בסוללה"</string>
     <string name="foreground_service_tap_for_details" msgid="9078123626015586751">"הקש לקבלת פרטים על צריכה של נתונים וסוללה"</string>
@@ -357,6 +364,8 @@
     <string name="permdesc_receiveMms" msgid="958102423732219710">"‏מאפשר לאפליקציה לקבל ולעבד הודעות MMS. משמעות הדבר היא שהאפליקציה יכולה לעקוב אחר הודעות שנשלחו למכשיר או למחוק אותן מבלי להציג לך אותן."</string>
     <string name="permlab_bindCellBroadcastService" msgid="586746677002040651">"העברת הודעות של שידור סלולרי"</string>
     <string name="permdesc_bindCellBroadcastService" msgid="6540910200973641606">"מאפשרת לאפליקציה להתחייב למודול של השידור הסלולרי כדי להעביר הודעות של שידור סלולרי כשהן מתקבלות. התראות שידור סלולרי נשלחות במקומות מסוימים כדי להזהיר אותך מפני מצבי חירום. אפליקציות זדוניות עשויות להפריע לביצועים או לפעולה של המכשיר כאשר מתקבל שידור חירום סלולרי."</string>
+    <string name="permlab_manageOngoingCalls" msgid="281244770664231782">"ניהול שיחות שנערכות"</string>
+    <string name="permdesc_manageOngoingCalls" msgid="7003138133829915265">"לאפליקציה תהיה אפשרות לראות פרטים על שיחות שנערכות במכשיר ולשלוט בשיחות האלה."</string>
     <string name="permlab_readCellBroadcasts" msgid="5869884450872137693">"קריאת הודעות שידור סלולרי"</string>
     <string name="permdesc_readCellBroadcasts" msgid="672513437331980168">"מאפשר לאפליקציה לקרוא הודעות שידור סלולרי שהתקבלו במכשיר שלך. התראות שידור סלולרי נשלחות במקומות מסוימים על מנת להזהיר אותך מפני מצבי חירום. אפליקציות זדוניות עשויות להפריע לביצועים או לפעולה של המכשיר שלך כאשר מתקבל שידור חירום סלולרי."</string>
     <string name="permlab_subscribedFeedsRead" msgid="217624769238425461">"קרא עדכוני מנויים"</string>
@@ -860,7 +869,7 @@
     <string name="lockscreen_transport_prev_description" msgid="2879469521751181478">"הרצועה הקודמת"</string>
     <string name="lockscreen_transport_next_description" msgid="2931509904881099919">"הרצועה הבאה"</string>
     <string name="lockscreen_transport_pause_description" msgid="6705284702135372494">"השהה"</string>
-    <string name="lockscreen_transport_play_description" msgid="106868788691652733">"הפעל"</string>
+    <string name="lockscreen_transport_play_description" msgid="106868788691652733">"הפעלה"</string>
     <string name="lockscreen_transport_stop_description" msgid="1449552232598355348">"הפסק"</string>
     <string name="lockscreen_transport_rew_description" msgid="7680106856221622779">"הרץ אחורה"</string>
     <string name="lockscreen_transport_ffw_description" msgid="4763794746640196772">"הרץ קדימה"</string>
@@ -1848,7 +1857,7 @@
     <string name="battery_saver_description" msgid="6794188153647295212">"‏כדי להאריך את חיי הסוללה, התכונה \'חיסכון בסוללה\':\n\n• מפעילה עיצוב כהה\n• מכבה או מגבילה פעילות ברקע, חלק מהאפקטים החזותיים ותכונות אחרות כמו Ok Google"</string>
     <string name="data_saver_description" msgid="4995164271550590517">"‏כדי לסייע בהפחתת השימוש בנתונים, חוסך הנתונים (Data Saver) מונע מאפליקציות מסוימות שליחה או קבלה של נתונים ברקע. אפליקציה שבה נעשה שימוש כרגע יכולה לגשת לנתונים, אבל בתדירות נמוכה יותר. המשמעות היא, למשל, שתמונות יוצגו רק לאחר שמקישים עליהן."</string>
     <string name="data_saver_enable_title" msgid="7080620065745260137">"להפעיל את חוסך הנתונים?"</string>
-    <string name="data_saver_enable_button" msgid="4399405762586419726">"הפעל"</string>
+    <string name="data_saver_enable_button" msgid="4399405762586419726">"הפעלה"</string>
     <plurals name="zen_mode_duration_minutes_summary" formatted="false" msgid="2877101784123058273">
       <item quantity="two">‏למשך %d דקות (עד <xliff:g id="FORMATTEDTIME_1">%2$s</xliff:g>)</item>
       <item quantity="many">‏למשך %1$d דקות (עד <xliff:g id="FORMATTEDTIME_1">%2$s</xliff:g>)</item>
@@ -1959,7 +1968,7 @@
     <string name="app_suspended_unsuspend_message" msgid="1665438589450555459">"ביטול ההשהיה של האפליקציה"</string>
     <string name="work_mode_off_title" msgid="5503291976647976560">"להפעיל את פרופיל העבודה?"</string>
     <string name="work_mode_off_message" msgid="8417484421098563803">"אפליקציות העבודה, התראות, נתונים ותכונות נוספות של פרופיל העבודה יופעלו"</string>
-    <string name="work_mode_turn_on" msgid="3662561662475962285">"הפעל"</string>
+    <string name="work_mode_turn_on" msgid="3662561662475962285">"הפעלה"</string>
     <string name="app_blocked_title" msgid="7353262160455028160">"האפליקציה לא זמינה"</string>
     <string name="app_blocked_message" msgid="542972921087873023">"האפליקציה <xliff:g id="APP_NAME">%1$s</xliff:g> לא זמינה בשלב זה."</string>
     <string name="deprecated_target_sdk_message" msgid="5203207875657579953">"‏האפליקציה הזו עוצבה לגרסה ישנה יותר של Android וייתכן שלא תפעל כראוי. ניתן לבדוק אם יש עדכונים או ליצור קשר עם המפתח."</string>
@@ -2071,6 +2080,10 @@
     <string name="notification_appops_microphone_active" msgid="581333393214739332">"מיקרופון"</string>
     <string name="notification_appops_overlay_active" msgid="5571732753262836481">"תצוגה מעל אפליקציות אחרות במסך"</string>
     <string name="notification_feedback_indicator" msgid="663476517711323016">"שליחת משוב"</string>
+    <string name="notification_feedback_indicator_alerted" msgid="6552871804121942099">"ההתראה הזו שודרגה ל\'ברירת מחדל\'. יש להקיש כדי לשלוח משוב."</string>
+    <string name="notification_feedback_indicator_silenced" msgid="3799442124723177262">"ההתראה הזו הורדה בדרגה ל\'שקטה\'. יש להקיש כדי לשלוח משוב."</string>
+    <string name="notification_feedback_indicator_promoted" msgid="9030204303764698640">"דירוג ההתראה הזו הוגבה. יש להקיש כדי לשלוח משוב."</string>
+    <string name="notification_feedback_indicator_demoted" msgid="8880309924296450875">"דירוג ההתראה הזו הונמך. יש להקיש כדי לשלוח משוב."</string>
     <string name="dynamic_mode_notification_channel_name" msgid="2986926422100223328">"התראת מידע לגבי מצב שגרתי"</string>
     <string name="dynamic_mode_notification_title" msgid="9205715501274608016">"הסוללה עלולה להתרוקן לפני המועד הרגיל של הטעינה"</string>
     <string name="dynamic_mode_notification_summary" msgid="4141614604437372157">"תכונת החיסכון בסוללה הופעלה כדי להאריך את חיי הסוללה"</string>
@@ -2256,4 +2269,8 @@
     <string name="config_pdp_reject_user_authentication_failed" msgid="4531693033885744689"></string>
     <string name="config_pdp_reject_service_not_subscribed" msgid="8190338397128671588"></string>
     <string name="config_pdp_reject_multi_conn_to_same_pdn_not_allowed" msgid="6024904218067254186"></string>
+    <string name="window_magnification_prompt_title" msgid="8197528399699536320">"‏חדש: Window Magnifier"</string>
+    <string name="window_magnification_prompt_content" msgid="4166711383253283838">"עכשיו אפשר להגדיל את המסך או חלקים ממנו"</string>
+    <string name="turn_on_magnification_settings_action" msgid="8521433346684847700">"הפעלה בהגדרות"</string>
+    <string name="dismiss_action" msgid="1728820550388704784">"סגירה"</string>
 </resources>

@@ -44,6 +44,9 @@ import android.view.KeyEvent;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.logging.MetricsLogger;
+import com.android.internal.logging.UiEvent;
+import com.android.internal.logging.UiEventLogger;
+import com.android.internal.logging.UiEventLoggerImpl;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.server.statusbar.StatusBarManagerInternal;
 import com.android.server.wm.WindowManagerInternal;
@@ -145,16 +148,44 @@ public class GestureLauncherService extends SystemService {
     private long mLastPowerDown;
     private int mPowerButtonConsecutiveTaps;
     private int mPowerButtonSlowConsecutiveTaps;
+    private final UiEventLogger mUiEventLogger;
 
+    @VisibleForTesting
+    public enum GestureLauncherEvent implements UiEventLogger.UiEventEnum {
+        @UiEvent(doc = "The user lifted the device just the right way to launch the camera.")
+        GESTURE_CAMERA_LIFT(658),
+
+        @UiEvent(doc = "The user wiggled the device just the right way to launch the camera.")
+        GESTURE_CAMERA_WIGGLE(659),
+
+        @UiEvent(doc = "The user double-tapped power quickly enough to launch the camera.")
+        GESTURE_CAMERA_DOUBLE_TAP_POWER(660),
+
+        @UiEvent(doc = "The user multi-tapped power quickly enough to signal an emergency.")
+        GESTURE_PANIC_TAP_POWER(661);
+
+        private final int mId;
+
+        GestureLauncherEvent(int id) {
+            mId = id;
+        }
+
+        @Override
+        public int getId() {
+            return mId;
+        }
+    }
     public GestureLauncherService(Context context) {
-        this(context, new MetricsLogger());
+        this(context, new MetricsLogger(), new UiEventLoggerImpl());
     }
 
     @VisibleForTesting
-    GestureLauncherService(Context context, MetricsLogger metricsLogger) {
+    GestureLauncherService(Context context, MetricsLogger metricsLogger,
+            UiEventLogger uiEventLogger) {
         super(context);
         mContext = context;
         mMetricsLogger = metricsLogger;
+        mUiEventLogger = uiEventLogger;
     }
 
     @Override
@@ -226,7 +257,7 @@ public class GestureLauncherService extends SystemService {
 
     @VisibleForTesting
     void updateEmergencyGestureEnabled() {
-        boolean enabled = isEmergencyGestureEnabled(mContext, mUserId);
+        boolean enabled = isEmergencyGestureSettingEnabled(mContext, mUserId);
         synchronized (this) {
             mEmergencyGestureEnabled = enabled;
         }
@@ -359,38 +390,50 @@ public class GestureLauncherService extends SystemService {
     /**
      * Whether to enable emergency gesture.
      */
-    public static boolean isEmergencyGestureEnabled(Context context, int userId) {
-        return Settings.Secure.getIntForUser(context.getContentResolver(),
+    @VisibleForTesting
+    static boolean isEmergencyGestureSettingEnabled(Context context, int userId) {
+        return isEmergencyGestureEnabled(context.getResources())
+                && Settings.Secure.getIntForUser(context.getContentResolver(),
                 Settings.Secure.EMERGENCY_GESTURE_ENABLED, 0, userId) != 0;
     }
 
     /**
      * Whether to enable the camera launch gesture.
      */
-    public static boolean isCameraLaunchEnabled(Resources resources) {
+    private static boolean isCameraLaunchEnabled(Resources resources) {
         boolean configSet = resources.getInteger(
                 com.android.internal.R.integer.config_cameraLaunchGestureSensorType) != -1;
         return configSet &&
                 !SystemProperties.getBoolean("gesture.disable_camera_launch", false);
     }
 
-    public static boolean isCameraDoubleTapPowerEnabled(Resources resources) {
+    @VisibleForTesting
+    static boolean isCameraDoubleTapPowerEnabled(Resources resources) {
         return resources.getBoolean(
                 com.android.internal.R.bool.config_cameraDoubleTapPowerGestureEnabled);
     }
 
-    public static boolean isCameraLiftTriggerEnabled(Resources resources) {
+    private static boolean isCameraLiftTriggerEnabled(Resources resources) {
         boolean configSet = resources.getInteger(
                 com.android.internal.R.integer.config_cameraLiftTriggerSensorType) != -1;
         return configSet;
     }
 
     /**
+     * Whether or not the emergency gesture feature is enabled by platform
+     */
+    private static boolean isEmergencyGestureEnabled(Resources resources) {
+        return resources.getBoolean(com.android.internal.R.bool.config_emergencyGestureEnabled);
+    }
+
+    /**
      * Whether GestureLauncherService should be enabled according to system properties.
      */
     public static boolean isGestureLauncherEnabled(Resources resources) {
-        return isCameraLaunchEnabled(resources) || isCameraDoubleTapPowerEnabled(resources) ||
-                isCameraLiftTriggerEnabled(resources);
+        return isCameraLaunchEnabled(resources)
+                || isCameraDoubleTapPowerEnabled(resources)
+                || isCameraLiftTriggerEnabled(resources)
+                || isEmergencyGestureEnabled(resources);
     }
 
     /**
@@ -460,11 +503,12 @@ public class GestureLauncherService extends SystemService {
             if (launchCamera) {
                 mMetricsLogger.action(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE,
                         (int) powerTapInterval);
+                mUiEventLogger.log(GestureLauncherEvent.GESTURE_CAMERA_DOUBLE_TAP_POWER);
             }
         } else if (launchEmergencyGesture) {
             Slog.i(TAG, "Emergency gesture detected, launching.");
             launchEmergencyGesture = handleEmergencyGesture();
-            // TODO(b/160006048): Add logging
+            mUiEventLogger.log(GestureLauncherEvent.GESTURE_PANIC_TAP_POWER);
         }
         mMetricsLogger.histogram("power_consecutive_short_tap_count",
                 mPowerButtonSlowConsecutiveTaps);
@@ -587,6 +631,7 @@ public class GestureLauncherService extends SystemService {
                 if (handleCameraGesture(true /* useWakelock */,
                         StatusBarManager.CAMERA_LAUNCH_SOURCE_WIGGLE)) {
                     mMetricsLogger.action(MetricsEvent.ACTION_WIGGLE_CAMERA_GESTURE);
+                    mUiEventLogger.log(GestureLauncherEvent.GESTURE_CAMERA_WIGGLE);
                     trackCameraLaunchEvent(event);
                 }
                 return;
@@ -671,6 +716,7 @@ public class GestureLauncherService extends SystemService {
                     if (handleCameraGesture(true /* useWakelock */,
                             StatusBarManager.CAMERA_LAUNCH_SOURCE_LIFT_TRIGGER)) {
                         MetricsLogger.action(mContext, MetricsEvent.ACTION_CAMERA_LIFT_TRIGGER);
+                        mUiEventLogger.log(GestureLauncherEvent.GESTURE_CAMERA_LIFT);
                     }
                 } else {
                     if (DBG_CAMERA_LIFT) Slog.d(TAG, "Ignoring lift event");

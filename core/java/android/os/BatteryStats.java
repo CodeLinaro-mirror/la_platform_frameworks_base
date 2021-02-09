@@ -27,6 +27,7 @@ import android.app.job.JobParameters;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
+import android.location.GnssSignalQuality;
 import android.os.BatteryStatsManager.WifiState;
 import android.os.BatteryStatsManager.WifiSupplState;
 import android.server.ServerProtoEnums;
@@ -47,7 +48,6 @@ import android.util.proto.ProtoOutputStream;
 import android.view.Display;
 
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.location.gnssmetrics.GnssMetrics;
 import com.android.internal.os.BatterySipper;
 import com.android.internal.os.BatteryStatsHelper;
 
@@ -984,6 +984,15 @@ public abstract class BatteryStats implements Parcelable {
          * @param which one of STATS_*
          */
         public abstract void getDeferredJobsLineLocked(StringBuilder sb, int which);
+
+        /**
+         * Returns the measured energy in microjoules that the display consumed while the screen
+         * was on and uid active.
+         * Will return {@link #ENERGY_DATA_UNAVAILABLE} if data is unavailable
+         *
+         * {@hide}
+         */
+        public abstract long getScreenOnEnergy();
 
         public static abstract class Sensor {
 
@@ -2480,6 +2489,29 @@ public abstract class BatteryStats implements Parcelable {
         "auth", "ascing", "asced", "4-way",
         "group", "compl", "dorm", "uninit"
     };
+
+    /**
+     * Returned value if energy data is unavailable
+     *
+     * {@hide}
+     */
+    public static final long ENERGY_DATA_UNAVAILABLE = -1;
+
+    /**
+     * Returns the energy in microjoules that the screen consumed while on.
+     * Will return {@link #ENERGY_DATA_UNAVAILABLE} if data is unavailable
+     *
+     * {@hide}
+     */
+    public abstract long getScreenOnEnergy();
+
+    /**
+     * Returns the energy in microjoules that the screen consumed while in doze
+     * Will return {@link #ENERGY_DATA_UNAVAILABLE} if data is unavailable
+     *
+     * {@hide}
+     */
+    public abstract long getScreenDozeEnergy();
 
     public static final BitDescription[] HISTORY_STATE_DESCRIPTIONS = new BitDescription[] {
         new BitDescription(HistoryItem.STATE_CPU_RUNNING_FLAG, "running", "r"),
@@ -5064,8 +5096,9 @@ public abstract class BatteryStats implements Parcelable {
         final String[] gpsSignalQualityDescription = new String[]{
             "poor (less than 20 dBHz): ",
             "good (greater than 20 dBHz): "};
-        final int numGpsSignalQualityBins = Math.min(GnssMetrics.NUM_GPS_SIGNAL_QUALITY_LEVELS,
-            gpsSignalQualityDescription.length);
+        final int numGpsSignalQualityBins = Math.min(
+                GnssSignalQuality.NUM_GNSS_SIGNAL_QUALITY_LEVELS,
+                gpsSignalQualityDescription.length);
         for (int i=0; i<numGpsSignalQualityBins; i++) {
             final long time = getGpsSignalQualityTime(i, rawRealtime, which);
             sb.append("\n    ");

@@ -18,8 +18,10 @@
 
 #include <cutils/compiler.h>
 #include <utils/Functor.h>
+#include <SaveFlags.h>
 
 #include <androidfw/ResourceTypes.h>
+#include "DisplayList.h"
 #include "Properties.h"
 #include "utils/Macros.h"
 
@@ -29,6 +31,7 @@
 
 class SkAnimatedImage;
 class SkCanvasState;
+class SkRuntimeShaderBuilder;
 class SkVertices;
 
 namespace minikin {
@@ -46,34 +49,6 @@ class CanvasPropertyPaint;
 class CanvasPropertyPrimitive;
 class DeferredLayerUpdater;
 class RenderNode;
-
-namespace skiapipeline {
-class SkiaDisplayList;
-}
-
-/**
- * Data structure that holds the list of commands used in display list stream
- */
-using DisplayList = skiapipeline::SkiaDisplayList;
-}
-
-namespace SaveFlags {
-
-// These must match the corresponding Canvas API constants.
-enum {
-    Matrix = 0x01,
-    Clip = 0x02,
-    HasAlphaLayer = 0x04,
-    ClipToLayer = 0x10,
-
-    // Helper constant
-    MatrixClip = Matrix | Clip,
-};
-typedef uint32_t Flags;
-
-}  // namespace SaveFlags
-
-namespace uirenderer {
 namespace VectorDrawable {
 class Tree;
 }
@@ -143,7 +118,7 @@ public:
 
     virtual void resetRecording(int width, int height,
                                 uirenderer::RenderNode* renderNode = nullptr) = 0;
-    virtual uirenderer::DisplayList* finishRecording() = 0;
+    [[nodiscard]] virtual uirenderer::DisplayList finishRecording() = 0;
     virtual void enableZ(bool enableZ) = 0;
 
     bool isHighContrastText() const { return uirenderer::Properties::enableHighContrastText; }
@@ -159,6 +134,12 @@ public:
                             uirenderer::CanvasPropertyPrimitive* y,
                             uirenderer::CanvasPropertyPrimitive* radius,
                             uirenderer::CanvasPropertyPaint* paint) = 0;
+    virtual void drawRipple(uirenderer::CanvasPropertyPrimitive* x,
+                            uirenderer::CanvasPropertyPrimitive* y,
+                            uirenderer::CanvasPropertyPrimitive* radius,
+                            uirenderer::CanvasPropertyPaint* paint,
+                            uirenderer::CanvasPropertyPrimitive* progress,
+                            const SkRuntimeShaderBuilder& effectBuilder) = 0;
 
     virtual void drawLayer(uirenderer::DeferredLayerUpdater* layerHandle) = 0;
     virtual void drawRenderNode(uirenderer::RenderNode* renderNode) = 0;
@@ -178,10 +159,8 @@ public:
     virtual void restoreToCount(int saveCount) = 0;
     virtual void restoreUnclippedLayer(int saveCount, const SkPaint& paint) = 0;
 
-    virtual int saveLayer(float left, float top, float right, float bottom, const SkPaint* paint,
-                          SaveFlags::Flags flags) = 0;
-    virtual int saveLayerAlpha(float left, float top, float right, float bottom, int alpha,
-                               SaveFlags::Flags flags) = 0;
+    virtual int saveLayer(float left, float top, float right, float bottom, const SkPaint* paint) = 0;
+    virtual int saveLayerAlpha(float left, float top, float right, float bottom, int alpha) = 0;
     virtual int saveUnclippedLayer(int, int, int, int) = 0;
 
     // Matrix

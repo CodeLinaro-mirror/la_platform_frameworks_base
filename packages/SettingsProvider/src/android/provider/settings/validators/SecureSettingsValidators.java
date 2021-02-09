@@ -42,11 +42,6 @@ import java.util.Map;
  * Validators for the Secure Settings.
  */
 public class SecureSettingsValidators {
-    /**
-     * All settings in {@link Secure.SETTINGS_TO_BACKUP} and {@link
-     * DeviceSpecificSettings.DEVICE_SPECIFIC_SETTINGS_TO_BACKUP} array *must* have a non-null
-     * validator, otherwise they won't be restored.
-     */
     public static final Map<String, Validator> VALIDATORS = new ArrayMap<>();
 
     static {
@@ -102,7 +97,7 @@ public class SecureSettingsValidators {
                 Secure.ACCESSIBILITY_CAPTIONING_FONT_SCALE,
                 new InclusiveFloatRangeValidator(0.5f, 2.0f));
         VALIDATORS.put(Secure.ACCESSIBILITY_CAPTIONING_WINDOW_COLOR, ANY_INTEGER_VALIDATOR);
-        VALIDATORS.put(Secure.FORCE_BOLD_TEXT, new DiscreteValueValidator(new String[] {"1", "2"}));
+        VALIDATORS.put(Secure.FONT_WEIGHT_ADJUSTMENT, ANY_INTEGER_VALIDATOR);
         VALIDATORS.put(Secure.REDUCE_BRIGHT_COLORS_LEVEL, PERCENTAGE_INTEGER_VALIDATOR);
         VALIDATORS.put(Secure.REDUCE_BRIGHT_COLORS_PERSIST_ACROSS_REBOOTS, BOOLEAN_VALIDATOR);
         VALIDATORS.put(Secure.TTS_DEFAULT_RATE, NON_NEGATIVE_INTEGER_VALIDATOR);
@@ -273,5 +268,15 @@ public class SecureSettingsValidators {
         VALIDATORS.put(
                 Secure.ASSIST_HANDLES_LEARNING_TIME_ELAPSED_MILLIS, NONE_NEGATIVE_LONG_VALIDATOR);
         VALIDATORS.put(Secure.ASSIST_HANDLES_LEARNING_EVENT_COUNT, NON_NEGATIVE_INTEGER_VALIDATOR);
+        VALIDATORS.put(Secure.ACCESSIBILITY_BUTTON_MODE,
+                new InclusiveIntegerRangeValidator(
+                        Secure.ACCESSIBILITY_BUTTON_MODE_NAVIGATION_BAR,
+                        Secure.ACCESSIBILITY_BUTTON_MODE_FLOATING_MENU));
+        VALIDATORS.put(Secure.ACCESSIBILITY_FLOATING_MENU_SIZE,
+                new DiscreteValueValidator(new String[] {"0", "1"}));
+        VALIDATORS.put(Secure.ACCESSIBILITY_FLOATING_MENU_ICON_TYPE,
+                new DiscreteValueValidator(new String[] {"0", "1"}));
+        VALIDATORS.put(Secure.ACCESSIBILITY_FLOATING_MENU_OPACITY,
+                new InclusiveFloatRangeValidator(0.0f, 1.0f));
     }
 }

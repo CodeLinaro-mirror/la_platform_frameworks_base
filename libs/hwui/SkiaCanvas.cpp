@@ -160,32 +160,20 @@ void SkiaCanvas::restoreToCount(int restoreCount) {
     }
 }
 
-static inline SkCanvas::SaveLayerFlags layerFlags(SaveFlags::Flags flags) {
-    SkCanvas::SaveLayerFlags layerFlags = 0;
-
-    if (!(flags & SaveFlags::ClipToLayer)) {
-        layerFlags |= SkCanvasPriv::kDontClipToLayer_SaveLayerFlag;
-    }
-
-    return layerFlags;
-}
-
-int SkiaCanvas::saveLayer(float left, float top, float right, float bottom, const SkPaint* paint,
-                          SaveFlags::Flags flags) {
+int SkiaCanvas::saveLayer(float left, float top, float right, float bottom, const SkPaint* paint) {
     const SkRect bounds = SkRect::MakeLTRB(left, top, right, bottom);
-    const SkCanvas::SaveLayerRec rec(&bounds, paint, layerFlags(flags));
+    const SkCanvas::SaveLayerRec rec(&bounds, paint);
 
     return mCanvas->saveLayer(rec);
 }
 
-int SkiaCanvas::saveLayerAlpha(float left, float top, float right, float bottom, int alpha,
-                               SaveFlags::Flags flags) {
+int SkiaCanvas::saveLayerAlpha(float left, float top, float right, float bottom, int alpha) {
     if (static_cast<unsigned>(alpha) < 0xFF) {
         SkPaint alphaPaint;
         alphaPaint.setAlpha(alpha);
-        return this->saveLayer(left, top, right, bottom, &alphaPaint, flags);
+        return this->saveLayer(left, top, right, bottom, &alphaPaint);
     }
-    return this->saveLayer(left, top, right, bottom, nullptr, flags);
+    return this->saveLayer(left, top, right, bottom, nullptr);
 }
 
 int SkiaCanvas::saveUnclippedLayer(int left, int top, int right, int bottom) {
@@ -681,7 +669,10 @@ void SkiaCanvas::drawBitmapMesh(Bitmap& bitmap, int meshWidth, int meshHeight,
     if (paint) {
         pnt = *paint;
     }
-    pnt.setShader(bitmap.makeImage()->makeShader());
+    SkSamplingOptions sampling(pnt.isFilterBitmap() ? SkFilterMode::kLinear
+                                                    : SkFilterMode::kNearest,
+                               SkMipmapMode::kNone);
+    pnt.setShader(bitmap.makeImage()->makeShader(sampling));
     auto v = builder.detach();
     apply_looper(&pnt, [&](const SkPaint& p) {
         mCanvas->drawVertices(v, SkBlendMode::kModulate, p);
@@ -820,6 +811,18 @@ void SkiaCanvas::drawCircle(uirenderer::CanvasPropertyPrimitive* x,
                             uirenderer::CanvasPropertyPaint* paint) {
     sk_sp<uirenderer::skiapipeline::AnimatedCircle> drawable(
             new uirenderer::skiapipeline::AnimatedCircle(x, y, radius, paint));
+    mCanvas->drawDrawable(drawable.get());
+}
+
+void SkiaCanvas::drawRipple(uirenderer::CanvasPropertyPrimitive* x,
+                            uirenderer::CanvasPropertyPrimitive* y,
+                            uirenderer::CanvasPropertyPrimitive* radius,
+                            uirenderer::CanvasPropertyPaint* paint,
+                            uirenderer::CanvasPropertyPrimitive* progress,
+                            const SkRuntimeShaderBuilder& effectBuilder) {
+    sk_sp<uirenderer::skiapipeline::AnimatedRipple> drawable(
+            new uirenderer::skiapipeline::AnimatedRipple(x, y, radius, paint, progress,
+                                                         effectBuilder));
     mCanvas->drawDrawable(drawable.get());
 }
 

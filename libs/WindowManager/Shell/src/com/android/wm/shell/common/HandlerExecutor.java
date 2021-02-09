@@ -18,6 +18,7 @@ package com.android.wm.shell.common;
 
 import android.annotation.NonNull;
 import android.os.Handler;
+import android.os.Looper;
 
 /** Executor implementation which is backed by a Handler. */
 public class HandlerExecutor implements ShellExecutor {
@@ -25,6 +26,17 @@ public class HandlerExecutor implements ShellExecutor {
 
     public HandlerExecutor(@NonNull Handler handler) {
         mHandler = handler;
+    }
+
+    @Override
+    public void execute(@NonNull Runnable command) {
+        if (mHandler.getLooper().isCurrentThread()) {
+            command.run();
+            return;
+        }
+        if (!mHandler.post(command)) {
+            throw new RuntimeException(mHandler + " is probably exiting");
+        }
     }
 
     @Override
@@ -40,9 +52,12 @@ public class HandlerExecutor implements ShellExecutor {
     }
 
     @Override
-    public void execute(@NonNull Runnable command) {
-        if (!mHandler.post(command)) {
-            throw new RuntimeException(mHandler + " is probably exiting");
-        }
+    public boolean hasCallback(Runnable r) {
+        return mHandler.hasCallbacks(r);
+    }
+
+    @Override
+    public Looper getLooper() {
+        return mHandler.getLooper();
     }
 }

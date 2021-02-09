@@ -26,6 +26,7 @@ import android.content.res.TypedArray;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.graphics.RectF;
+import android.hardware.display.DisplayManager;
 import android.hardware.fingerprint.FingerprintManager;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
 import android.hardware.fingerprint.IUdfpsOverlayController;
@@ -75,15 +76,15 @@ class UdfpsController implements DozeReceiver {
     private static final float DISPLAY_GAMMA = 2.2f;
     private static final long AOD_INTERRUPT_TIMEOUT_MILLIS = 1000;
 
+    private final Context mContext;
     private final FingerprintManager mFingerprintManager;
-    // Currently the UdfpsController supports a single UDFPS sensor. If devices have multiple
-    // sensors, this, in addition to a lot of the code here, will be updated.
-    @VisibleForTesting
-    final FingerprintSensorPropertiesInternal mSensorProps;
     private final WindowManager mWindowManager;
     private final SystemSettings mSystemSettings;
     private final DelayableExecutor mFgExecutor;
-    private final WindowManager.LayoutParams mLayoutParams;
+    // Currently the UdfpsController supports a single UDFPS sensor. If devices have multiple
+    // sensors, this, in addition to a lot of the code here, will be updated.
+    @VisibleForTesting final FingerprintSensorPropertiesInternal mSensorProps;
+    private final WindowManager.LayoutParams mCoreLayoutParams;
     private final UdfpsView mView;
     // Debugfs path to control the high-brightness mode.
     private final String mHbmPath;
@@ -91,7 +92,7 @@ class UdfpsController implements DozeReceiver {
     private final String mHbmDisableCommand;
     private final boolean mHbmSupported;
     // Brightness in nits in the high-brightness mode.
-    private final float mHbmNits;
+    private final float mMaxNits;
     // A spline mapping from the device's backlight value, normalized to the range [0, 1.0], to a
     // brightness in nits.
     private final Spline mBacklightToNitsSpline;
@@ -107,6 +108,8 @@ class UdfpsController implements DozeReceiver {
     private boolean mIsOverlayShowing;
     // Indicates whether the overlay has been requested.
     private boolean mIsOverlayRequested;
+    // Reason the overlay has been requested. See IUdfpsOverlayController for definitions.
+    private int mRequestReason;
 
     // The fingerprint AOD trigger doesn't provide an ACTION_UP/ACTION_CANCEL event to tell us when
     // to turn off high brightness mode. To get around this limitation, the state of the AOD
@@ -117,13 +120,13 @@ class UdfpsController implements DozeReceiver {
 
     public class UdfpsOverlayController extends IUdfpsOverlayController.Stub {
         @Override
-        public void showUdfpsOverlay(int sensorId) {
-            UdfpsController.this.setShowOverlay(true);
+        public void showUdfpsOverlay(int sensorId, int reason) {
+            UdfpsController.this.showOverlay(reason);
         }
 
         @Override
         public void hideUdfpsOverlay(int sensorId) {
-            UdfpsController.this.setShowOverlay(false);
+            UdfpsController.this.hideOverlay();
         }
 
         @Override
@@ -135,7 +138,7 @@ class UdfpsController implements DozeReceiver {
     @SuppressLint("ClickableViewAccessibility")
     private final UdfpsView.OnTouchListener mOnTouchListener = (v, event) -> {
         UdfpsView view = (UdfpsView) v;
-        final boolean isFingerDown = view.isScrimShowing();
+        final boolean isFingerDown = view.isShowScrimAndDot();
         switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_MOVE:
@@ -166,22 +169,35 @@ class UdfpsController implements DozeReceiver {
             @Main Resources resources,
             LayoutInflater inflater,
             @Nullable FingerprintManager fingerprintManager,
-            PowerManager powerManager,
+            DisplayManager displayManager,
             WindowManager windowManager,
             SystemSettings systemSettings,
             @NonNull StatusBarStateController statusBarStateController,
             @Main DelayableExecutor fgExecutor) {
+        mContext = context;
         // The fingerprint manager is queried for UDFPS before this class is constructed, so the
         // fingerprint manager should never be null.
         mFingerprintManager = checkNotNull(fingerprintManager);
         mWindowManager = windowManager;
         mSystemSettings = systemSettings;
         mFgExecutor = fgExecutor;
-        mLayoutParams = createLayoutParams(context);
 
         mSensorProps = findFirstUdfps();
         // At least one UDFPS sensor exists
         checkArgument(mSensorProps != null);
+
+        mCoreLayoutParams = new WindowManager.LayoutParams(
+                // TODO(b/152419866): Use the UDFPS window type when it becomes available.
+                WindowManager.LayoutParams.TYPE_BOOT_PROGRESS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                PixelFormat.TRANSLUCENT);
+        mCoreLayoutParams.setTitle(TAG);
+        mCoreLayoutParams.setFitInsetsTypes(0);
+        mCoreLayoutParams.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        mCoreLayoutParams.privateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY;
 
         mView = (UdfpsView) inflater.inflate(R.layout.udfps_view, null, false);
         mView.setSensorProperties(mSensorProps);
@@ -198,30 +214,51 @@ class UdfpsController implements DozeReceiver {
         // non-high-brightness mode.
         float[] nitsRange = toFloatArray(resources.obtainTypedArray(
                 com.android.internal.R.array.config_screenBrightnessNits));
+        if (nitsRange.length < 2) {
+            throw new IllegalArgumentException(
+                    String.format("nitsRange.length: %d. Must be >= 2", nitsRange.length));
+        }
 
         // The last value of this range corresponds to the high-brightness mode.
         float[] nitsAutoBrightnessValues = toFloatArray(resources.obtainTypedArray(
                 com.android.internal.R.array.config_autoBrightnessDisplayValuesNits));
+        if (nitsAutoBrightnessValues.length < 2) {
+            throw new IllegalArgumentException(
+                    String.format("nitsAutoBrightnessValues.length: %d. Must be >= 2",
+                            nitsAutoBrightnessValues.length));
+        }
 
-        mHbmNits = nitsAutoBrightnessValues[nitsAutoBrightnessValues.length - 1];
-        float[] hbmNitsRange = {nitsRange[0], mHbmNits};
+        mMaxNits = nitsAutoBrightnessValues[nitsAutoBrightnessValues.length - 1];
+        float[] hbmNitsRange = nitsRange.clone();
+        hbmNitsRange[hbmNitsRange.length - 1] = mMaxNits;
 
         // This range only consists of the minimum and maximum backlight values, which only apply
         // in non-high-brightness mode.
         float[] normalizedBacklightRange = normalizeBacklightRange(
                 resources.getIntArray(
                         com.android.internal.R.array.config_screenBrightnessBacklight));
+        if (normalizedBacklightRange.length < 2) {
+            throw new IllegalArgumentException(
+                    String.format("normalizedBacklightRange.length: %d. Must be >= 2",
+                            normalizedBacklightRange.length));
+        }
+        if (normalizedBacklightRange.length != nitsRange.length) {
+            throw new IllegalArgumentException(
+                    "normalizedBacklightRange.length != nitsRange.length");
+        }
 
         mBacklightToNitsSpline = Spline.createSpline(normalizedBacklightRange, nitsRange);
         mNitsToHbmBacklightSpline = Spline.createSpline(hbmNitsRange, normalizedBacklightRange);
-        mDefaultBrightness = obtainDefaultBrightness(powerManager);
+        mDefaultBrightness = obtainDefaultBrightness(mContext);
 
         // TODO(b/160025856): move to the "dump" method.
-        Log.v(TAG, String.format("ctor | mNitsRange: [%f, %f]", nitsRange[0], nitsRange[1]));
+        Log.v(TAG, String.format("ctor | mNitsRange: [%f, %f]", nitsRange[0],
+                nitsRange[nitsRange.length - 1]));
         Log.v(TAG, String.format("ctor | mHbmNitsRange: [%f, %f]", hbmNitsRange[0],
-                hbmNitsRange[1]));
+                hbmNitsRange[hbmNitsRange.length - 1]));
         Log.v(TAG, String.format("ctor | mNormalizedBacklightRange: [%f, %f]",
-                normalizedBacklightRange[0], normalizedBacklightRange[1]));
+                normalizedBacklightRange[0],
+                normalizedBacklightRange[normalizedBacklightRange.length - 1]));
 
         mFingerprintManager.setUdfpsOverlayController(new UdfpsOverlayController());
         mIsOverlayShowing = false;
@@ -250,30 +287,63 @@ class UdfpsController implements DozeReceiver {
         return mView.getSensorRect();
     }
 
-    private void setShowOverlay(boolean show) {
-        if (show == mIsOverlayRequested) {
+    private void showOverlay(int reason) {
+        if (mIsOverlayRequested) {
             return;
         }
-        mIsOverlayRequested = show;
+        mIsOverlayRequested = true;
+        mRequestReason = reason;
+        updateOverlay();
+    }
+
+    private void hideOverlay() {
+        if (!mIsOverlayRequested) {
+            return;
+        }
+        mIsOverlayRequested = false;
+        mRequestReason = IUdfpsOverlayController.REASON_UNKNOWN;
         updateOverlay();
     }
 
     private void updateOverlay() {
         if (mIsOverlayRequested) {
-            showUdfpsOverlay();
+            showUdfpsOverlay(mRequestReason);
         } else {
             hideUdfpsOverlay();
         }
     }
 
-    private void showUdfpsOverlay() {
+    private WindowManager.LayoutParams computeLayoutParams() {
+        Point p = new Point();
+        // Gets the size based on the current rotation of the display.
+        mContext.getDisplay().getRealSize(p);
+        mCoreLayoutParams.width = p.x;
+        mCoreLayoutParams.x = p.x;
+        mCoreLayoutParams.height = p.y;
+        mCoreLayoutParams.y = p.y;
+        return mCoreLayoutParams;
+    }
+
+    void onConfigurationChanged() {
+        // When the configuration changes it's almost always necessary to destroy and re-create
+        // the overlay's window to pass it the new LayoutParams.
+        // Hiding the overlay will destroy its window. It's safe to hide the overlay regardless
+        // of whether it is already hidden.
+        hideUdfpsOverlay();
+        // If the overlay needs to be shown, this will re-create and show the overlay with the
+        // updated LayoutParams. Otherwise, the overlay will remain hidden.
+        updateOverlay();
+    }
+
+    private void showUdfpsOverlay(int reason) {
         mFgExecutor.execute(() -> {
             if (!mIsOverlayShowing) {
                 try {
                     Log.v(TAG, "showUdfpsOverlay | adding window");
-                    mWindowManager.addView(mView, mLayoutParams);
-                    mIsOverlayShowing = true;
+                    mView.setShowReason(reason);
+                    mWindowManager.addView(mView, computeLayoutParams());
                     mView.setOnTouchListener(mOnTouchListener);
+                    mIsOverlayShowing = true;
                 } catch (RuntimeException e) {
                     Log.e(TAG, "showUdfpsOverlay | failed to add window", e);
                 }
@@ -287,6 +357,7 @@ class UdfpsController implements DozeReceiver {
         mFgExecutor.execute(() -> {
             if (mIsOverlayShowing) {
                 Log.v(TAG, "hideUdfpsOverlay | removing window");
+                mView.setShowReason(IUdfpsOverlayController.REASON_UNKNOWN);
                 mView.setOnTouchListener(null);
                 // Reset the controller back to its starting state.
                 onFingerUp();
@@ -363,19 +434,21 @@ class UdfpsController implements DozeReceiver {
     }
 
     private void onFingerDown(int x, int y, float minor, float major) {
-        mView.setScrimAlpha(computeScrimOpacity());
-        mView.showScrimAndDot();
-        try {
-            if (mHbmSupported) {
+        if (mHbmSupported) {
+            try {
                 FileWriter fw = new FileWriter(mHbmPath);
                 fw.write(mHbmEnableCommand);
                 fw.close();
+            } catch (IOException e) {
+                mView.hideScrimAndDot();
+                Log.e(TAG, "onFingerDown | failed to enable HBM: " + e.getMessage());
             }
-            mFingerprintManager.onPointerDown(mSensorProps.sensorId, x, y, minor, major);
-        } catch (IOException e) {
-            mView.hideScrimAndDot();
-            Log.e(TAG, "onFingerDown | failed to enable HBM: " + e.getMessage());
         }
+        mView.setScrimAlpha(computeScrimOpacity());
+        mView.setRunAfterShowingScrimAndDot(() -> {
+            mFingerprintManager.onPointerDown(mSensorProps.sensorId, x, y, minor, major);
+        });
+        mView.showScrimAndDot();
     }
 
     private void onFingerUp() {
@@ -394,35 +467,9 @@ class UdfpsController implements DozeReceiver {
         }
     }
 
-    private static WindowManager.LayoutParams createLayoutParams(Context context) {
-        Point displaySize = new Point();
-        context.getDisplay().getRealSize(displaySize);
-        // TODO(b/160025856): move to the "dump" method.
-        Log.v(TAG, "createLayoutParams | display size: " + displaySize.x + "x"
-                + displaySize.y);
-        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                displaySize.x,
-                displaySize.y,
-                // TODO(b/152419866): Use the UDFPS window type when it becomes available.
-                WindowManager.LayoutParams.TYPE_BOOT_PROGRESS,
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-                PixelFormat.TRANSLUCENT);
-        lp.setTitle(TAG);
-        lp.setFitInsetsTypes(0);
-        return lp;
-    }
-
-    private static float obtainDefaultBrightness(PowerManager powerManager) {
-        if (powerManager == null) {
-            Log.e(TAG, "PowerManager is unavailable. Can't obtain default brightness.");
-            return 0f;
-        }
-        return MathUtils.constrain(powerManager.getBrightnessConstraint(
-                PowerManager.BRIGHTNESS_CONSTRAINT_TYPE_DEFAULT), PowerManager.BRIGHTNESS_MIN,
-                PowerManager.BRIGHTNESS_MAX);
+    private static float obtainDefaultBrightness(Context context) {
+        return MathUtils.constrain(context.getDisplay().getBrightnessDefault(),
+                PowerManager.BRIGHTNESS_MIN, PowerManager.BRIGHTNESS_MAX);
     }
 
     private static float[] toFloatArray(TypedArray array) {

@@ -17,7 +17,6 @@
 package android.app;
 
 import static android.Manifest.permission.CONTROL_REMOTE_APP_TRANSITION_ANIMATIONS;
-import static android.app.ActivityTaskManager.SPLIT_SCREEN_CREATE_MODE_TOP_OR_LEFT;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_UNDEFINED;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.view.Display.INVALID_DISPLAY;
@@ -27,6 +26,8 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.annotation.TestApi;
+import android.app.ExitTransitionCoordinator.ActivityExitTransitionCallbacks;
+import android.app.ExitTransitionCoordinator.ExitTransitionCallbacks;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
 import android.content.Context;
@@ -44,8 +45,6 @@ import android.os.Parcelable;
 import android.os.RemoteException;
 import android.os.ResultReceiver;
 import android.os.UserHandle;
-import android.transition.Transition;
-import android.transition.TransitionListenerAdapter;
 import android.transition.TransitionManager;
 import android.util.Pair;
 import android.util.Slog;
@@ -55,6 +54,7 @@ import android.view.RemoteAnimationAdapter;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.window.IRemoteTransition;
 import android.window.WindowContainerToken;
 
 import java.lang.annotation.Retention;
@@ -256,13 +256,6 @@ public class ActivityOptions {
             "android.activity.freezeRecentTasksReordering";
 
     /**
-     * Where the split-screen-primary stack should be positioned.
-     * @hide
-     */
-    private static final String KEY_SPLIT_SCREEN_CREATE_MODE =
-            "android:activity.splitScreenCreateMode";
-
-    /**
      * Determines whether to disallow the outgoing activity from entering picture-in-picture as the
      * result of a new activity being launched.
      * @hide
@@ -306,6 +299,8 @@ public class ActivityOptions {
     private static final String KEY_SPECS_FUTURE = "android:activity.specsFuture";
     private static final String KEY_REMOTE_ANIMATION_ADAPTER
             = "android:activity.remoteAnimationAdapter";
+    private static final String KEY_REMOTE_TRANSITION =
+            "android:activity.remoteTransition";
 
     /**
      * @see #setLaunchCookie
@@ -373,7 +368,6 @@ public class ActivityOptions {
     private int mLaunchActivityType = ACTIVITY_TYPE_UNDEFINED;
     private int mLaunchTaskId = -1;
     private int mPendingIntentLaunchFlags;
-    private int mSplitScreenCreateMode = SPLIT_SCREEN_CREATE_MODE_TOP_OR_LEFT;
     private boolean mLockTaskMode = false;
     private boolean mDisallowEnterPictureInPictureWhileLaunching;
     private boolean mApplyActivityFlagsForBubbles;
@@ -389,6 +383,7 @@ public class ActivityOptions {
     private IAppTransitionAnimationSpecsFuture mSpecsFuture;
     private RemoteAnimationAdapter mRemoteAnimationAdapter;
     private IBinder mLaunchCookie;
+    private IRemoteTransition mRemoteTransition;
 
     /**
      * Create an ActivityOptions specifying a custom animation to run when
@@ -806,8 +801,11 @@ public class ActivityOptions {
     public static ActivityOptions makeSceneTransitionAnimation(Activity activity,
             Pair<View, String>... sharedElements) {
         ActivityOptions opts = new ActivityOptions();
-        makeSceneTransitionAnimation(activity, activity.getWindow(), opts,
-                activity.mExitTransitionListener, sharedElements);
+        ExitTransitionCoordinator exit = makeSceneTransitionAnimation(
+                new ActivityExitTransitionCallbacks(activity), activity.mExitTransitionListener,
+                activity.getWindow(), opts, sharedElements);
+        opts.mExitCoordinatorIndex =
+                activity.mActivityTransitionState.addExitTransitionCoordinator(exit);
         return opts;
     }
 
@@ -823,25 +821,19 @@ public class ActivityOptions {
      * @hide
      */
     @SafeVarargs
-    public static ActivityOptions startSharedElementAnimation(Window window,
+    public static Pair<ActivityOptions, ExitTransitionCoordinator> startSharedElementAnimation(
+            Window window, ExitTransitionCallbacks exitCallbacks, SharedElementCallback callback,
             Pair<View, String>... sharedElements) {
         ActivityOptions opts = new ActivityOptions();
-        final View decorView = window.getDecorView();
-        if (decorView == null) {
-            return opts;
-        }
-        final ExitTransitionCoordinator exit =
-                makeSceneTransitionAnimation(null, window, opts, null, sharedElements);
-        if (exit != null) {
-            HideWindowListener listener = new HideWindowListener(window, exit);
-            exit.setHideSharedElementsCallback(listener);
-            exit.startExit();
-        }
-        return opts;
+        ExitTransitionCoordinator exit = makeSceneTransitionAnimation(
+                exitCallbacks, callback, window, opts, sharedElements);
+        opts.mExitCoordinatorIndex = -1;
+        return Pair.create(opts, exit);
     }
 
     /**
-     * This method should be called when the {@link #startSharedElementAnimation(Window, Pair[])}
+     * This method should be called when the
+     * {@link #startSharedElementAnimation(Window, ExitTransitionCallbacks, Pair[])}
      * animation must be stopped and the Views reset. This can happen if there was an error
      * from startActivity or a springboard activity and the animation should stop and reset.
      *
@@ -864,9 +856,9 @@ public class ActivityOptions {
         }
     }
 
-    static ExitTransitionCoordinator makeSceneTransitionAnimation(Activity activity, Window window,
-            ActivityOptions opts, SharedElementCallback callback,
-            Pair<View, String>[] sharedElements) {
+    static ExitTransitionCoordinator makeSceneTransitionAnimation(
+            ExitTransitionCallbacks exitCallbacks, SharedElementCallback callback, Window window,
+            ActivityOptions opts, Pair<View, String>[] sharedElements) {
         if (!window.hasFeature(Window.FEATURE_ACTIVITY_TRANSITIONS)) {
             opts.mAnimationType = ANIM_DEFAULT;
             return null;
@@ -892,17 +884,11 @@ public class ActivityOptions {
             }
         }
 
-        ExitTransitionCoordinator exit = new ExitTransitionCoordinator(activity, window,
+        ExitTransitionCoordinator exit = new ExitTransitionCoordinator(exitCallbacks, window,
                 callback, names, names, views, false);
         opts.mTransitionReceiver = exit;
         opts.mSharedElementNames = names;
-        opts.mIsReturning = (activity == null);
-        if (activity == null) {
-            opts.mExitCoordinatorIndex = -1;
-        } else {
-            opts.mExitCoordinatorIndex =
-                    activity.mActivityTransitionState.addExitTransitionCoordinator(exit);
-        }
+        opts.mIsReturning = false;
         return exit;
     }
 
@@ -928,8 +914,12 @@ public class ActivityOptions {
         opts.mIsReturning = true;
         opts.mResultCode = resultCode;
         opts.mResultData = resultData;
-        opts.mExitCoordinatorIndex =
-                activity.mActivityTransitionState.addExitTransitionCoordinator(exitCoordinator);
+        if (activity == null) {
+            opts.mExitCoordinatorIndex = -1;
+        } else {
+            opts.mExitCoordinatorIndex =
+                    activity.mActivityTransitionState.addExitTransitionCoordinator(exitCoordinator);
+        }
         return opts;
     }
 
@@ -970,6 +960,21 @@ public class ActivityOptions {
         final ActivityOptions opts = new ActivityOptions();
         opts.mRemoteAnimationAdapter = remoteAnimationAdapter;
         opts.mAnimationType = ANIM_REMOTE_ANIMATION;
+        return opts;
+    }
+
+    /**
+     * Create an {@link ActivityOptions} instance that lets the application control the entire
+     * animation using a {@link RemoteAnimationAdapter}.
+     * @hide
+     */
+    @RequiresPermission(CONTROL_REMOTE_APP_TRANSITION_ANIMATIONS)
+    public static ActivityOptions makeRemoteAnimation(RemoteAnimationAdapter remoteAnimationAdapter,
+            IRemoteTransition remoteTransition) {
+        final ActivityOptions opts = new ActivityOptions();
+        opts.mRemoteAnimationAdapter = remoteAnimationAdapter;
+        opts.mAnimationType = ANIM_REMOTE_ANIMATION;
+        opts.mRemoteTransition = remoteTransition;
         return opts;
     }
 
@@ -1054,8 +1059,6 @@ public class ActivityOptions {
         mTaskOverlayCanResume = opts.getBoolean(KEY_TASK_OVERLAY_CAN_RESUME, false);
         mAvoidMoveToFront = opts.getBoolean(KEY_AVOID_MOVE_TO_FRONT, false);
         mFreezeRecentTasksReordering = opts.getBoolean(KEY_FREEZE_RECENT_TASKS_REORDERING, false);
-        mSplitScreenCreateMode = opts.getInt(KEY_SPLIT_SCREEN_CREATE_MODE,
-                SPLIT_SCREEN_CREATE_MODE_TOP_OR_LEFT);
         mDisallowEnterPictureInPictureWhileLaunching = opts.getBoolean(
                 KEY_DISALLOW_ENTER_PICTURE_IN_PICTURE_WHILE_LAUNCHING, false);
         mApplyActivityFlagsForBubbles = opts.getBoolean(
@@ -1080,6 +1083,8 @@ public class ActivityOptions {
         }
         mRemoteAnimationAdapter = opts.getParcelable(KEY_REMOTE_ANIMATION_ADAPTER);
         mLaunchCookie = opts.getBinder(KEY_LAUNCH_COOKIE);
+        mRemoteTransition = IRemoteTransition.Stub.asInterface(opts.getBinder(
+                KEY_REMOTE_TRANSITION));
     }
 
     /**
@@ -1236,6 +1241,11 @@ public class ActivityOptions {
     /** @hide */
     public void setRemoteAnimationAdapter(RemoteAnimationAdapter remoteAnimationAdapter) {
         mRemoteAnimationAdapter = remoteAnimationAdapter;
+    }
+
+    /** @hide */
+    public IRemoteTransition getRemoteTransition() {
+        return mRemoteTransition;
     }
 
     /** @hide */
@@ -1474,14 +1484,9 @@ public class ActivityOptions {
     }
 
     /** @hide */
-    public int getSplitScreenCreateMode() {
-        return mSplitScreenCreateMode;
-    }
-
-    /** @hide */
     @UnsupportedAppUsage
     public void setSplitScreenCreateMode(int splitScreenCreateMode) {
-        mSplitScreenCreateMode = splitScreenCreateMode;
+        // Remove this method after @UnsupportedAppUsage can be removed.
     }
 
     /** @hide */
@@ -1714,9 +1719,6 @@ public class ActivityOptions {
         if (mFreezeRecentTasksReordering) {
             b.putBoolean(KEY_FREEZE_RECENT_TASKS_REORDERING, mFreezeRecentTasksReordering);
         }
-        if (mSplitScreenCreateMode != SPLIT_SCREEN_CREATE_MODE_TOP_OR_LEFT) {
-            b.putInt(KEY_SPLIT_SCREEN_CREATE_MODE, mSplitScreenCreateMode);
-        }
         if (mDisallowEnterPictureInPictureWhileLaunching) {
             b.putBoolean(KEY_DISALLOW_ENTER_PICTURE_IN_PICTURE_WHILE_LAUNCHING,
                     mDisallowEnterPictureInPictureWhileLaunching);
@@ -1747,6 +1749,9 @@ public class ActivityOptions {
         }
         if (mLaunchCookie != null) {
             b.putBinder(KEY_LAUNCH_COOKIE, mLaunchCookie);
+        }
+        if (mRemoteTransition != null) {
+            b.putBinder(KEY_REMOTE_TRANSITION, mRemoteTransition.asBinder());
         }
         return b;
     }
@@ -1868,67 +1873,6 @@ public class ActivityOptions {
                 + mStartY + ", mWidth=" + mWidth + ", mHeight=" + mHeight;
     }
 
-    private static class HideWindowListener extends TransitionListenerAdapter
-        implements ExitTransitionCoordinator.HideSharedElementsCallback {
-        private final Window mWindow;
-        private final ExitTransitionCoordinator mExit;
-        private final boolean mWaitingForTransition;
-        private boolean mTransitionEnded;
-        private boolean mSharedElementHidden;
-        private ArrayList<View> mSharedElements;
-
-        public HideWindowListener(Window window, ExitTransitionCoordinator exit) {
-            mWindow = window;
-            mExit = exit;
-            mSharedElements = new ArrayList<>(exit.mSharedElements);
-            Transition transition = mWindow.getExitTransition();
-            if (transition != null) {
-                transition.addListener(this);
-                mWaitingForTransition = true;
-            } else {
-                mWaitingForTransition = false;
-            }
-            View decorView = mWindow.getDecorView();
-            if (decorView != null) {
-                if (decorView.getTag(com.android.internal.R.id.cross_task_transition) != null) {
-                    throw new IllegalStateException(
-                            "Cannot start a transition while one is running");
-                }
-                decorView.setTagInternal(com.android.internal.R.id.cross_task_transition, exit);
-            }
-        }
-
-        @Override
-        public void onTransitionEnd(Transition transition) {
-            mTransitionEnded = true;
-            hideWhenDone();
-            transition.removeListener(this);
-        }
-
-        @Override
-        public void hideSharedElements() {
-            mSharedElementHidden = true;
-            hideWhenDone();
-        }
-
-        private void hideWhenDone() {
-            if (mSharedElementHidden && (!mWaitingForTransition || mTransitionEnded)) {
-                mExit.resetViews();
-                int numSharedElements = mSharedElements.size();
-                for (int i = 0; i < numSharedElements; i++) {
-                    View view = mSharedElements.get(i);
-                    view.requestLayout();
-                }
-                View decorView = mWindow.getDecorView();
-                if (decorView != null) {
-                    decorView.setTagInternal(
-                            com.android.internal.R.id.cross_task_transition, null);
-                    decorView.setVisibility(View.GONE);
-                }
-            }
-        }
-    }
-
     /**
      * The information about the source of activity launch. E.g. describe an activity is launched
      * from launcher by receiving a motion event with a timestamp.
@@ -1944,7 +1888,7 @@ public class ActivityOptions {
         /** Launched from recents gesture handler. */
         public static final int TYPE_RECENTS_ANIMATION = 4;
 
-        @IntDef(flag = true, prefix = { "TYPE_" }, value = {
+        @IntDef(prefix = { "TYPE_" }, value = {
                 TYPE_LAUNCHER,
                 TYPE_NOTIFICATION,
                 TYPE_LOCKSCREEN,

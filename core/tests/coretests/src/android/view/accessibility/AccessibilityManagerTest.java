@@ -38,6 +38,7 @@ import android.os.UserHandle;
 import androidx.test.InstrumentationRegistry;
 import androidx.test.runner.AndroidJUnit4;
 
+import com.android.internal.R;
 import com.android.internal.util.IntPair;
 import com.android.server.accessibility.test.MessageCapturingHandler;
 
@@ -63,7 +64,8 @@ public class AccessibilityManagerTest {
     private static final String INTENT_ACTION = "TESTACTION";
     private static final String DESCRIPTION = "description";
     private static final PendingIntent TEST_PENDING_INTENT = PendingIntent.getBroadcast(
-            InstrumentationRegistry.getTargetContext(), 0, new Intent(INTENT_ACTION), 0);
+            InstrumentationRegistry.getTargetContext(), 0, new Intent(INTENT_ACTION), 
+            PendingIntent.FLAG_IMMUTABLE);
     private static final RemoteAction TEST_ACTION = new RemoteAction(
             Icon.createWithContentUri("content://test"),
             LABEL,
@@ -73,12 +75,18 @@ public class AccessibilityManagerTest {
     @Mock private IAccessibilityManager mMockService;
     private MessageCapturingHandler mHandler;
     private Instrumentation mInstrumentation;
+    private int mFocusStrokeWidthDefaultValue;
+    private int mFocusColorDefaultValue;
 
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
         mHandler = new MessageCapturingHandler(null);
         mInstrumentation = InstrumentationRegistry.getInstrumentation();
+        mFocusStrokeWidthDefaultValue = mInstrumentation.getContext().getResources()
+                .getDimensionPixelSize(R.dimen.accessibility_focus_highlight_stroke_width);
+        mFocusColorDefaultValue = mInstrumentation.getContext().getResources().getColor(
+                R.color.accessibility_focus_highlight_color);
     }
 
     @After
@@ -94,8 +102,12 @@ public class AccessibilityManagerTest {
         when(mMockService.addClient(any(IAccessibilityManagerClient.class), anyInt()))
                 .thenReturn(serviceReturnValue);
 
+        when(mMockService.getFocusStrokeWidth()).thenReturn(mFocusStrokeWidthDefaultValue);
+        when(mMockService.getFocusColor()).thenReturn(mFocusColorDefaultValue);
+
         AccessibilityManager manager =
-                new AccessibilityManager(mHandler, mMockService, UserHandle.USER_CURRENT);
+                new AccessibilityManager(mInstrumentation.getContext(), mHandler, mMockService,
+                        UserHandle.USER_CURRENT, true);
 
         verify(mMockService).addClient(any(IAccessibilityManagerClient.class), anyInt());
         mHandler.setCallback(manager.getCallback());
@@ -204,5 +216,17 @@ public class AccessibilityManagerTest {
         manager.setWindowMagnificationConnection(connection);
 
         verify(mMockService).setWindowMagnificationConnection(connection);
+    }
+
+    @Test
+    public void testGetDefaultValueOfFocusAppearanceData() {
+        AccessibilityManager manager =
+                new AccessibilityManager(mInstrumentation.getContext(), mHandler, null,
+                        UserHandle.USER_CURRENT, false);
+
+        assertEquals(mFocusStrokeWidthDefaultValue,
+                manager.getAccessibilityFocusStrokeWidth());
+        assertEquals(mFocusColorDefaultValue,
+                manager.getAccessibilityFocusColor());
     }
 }

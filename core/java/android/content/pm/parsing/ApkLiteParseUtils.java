@@ -21,6 +21,7 @@ import static android.content.pm.PackageManager.INSTALL_PARSE_FAILED_MANIFEST_MA
 import static android.content.pm.parsing.ParsingPackageUtils.validateName;
 import static android.os.Trace.TRACE_TAG_PACKAGE_MANAGER;
 
+import android.annotation.NonNull;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageParser;
@@ -49,7 +50,9 @@ import java.io.IOException;
 import java.security.PublicKey;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
 /** @hide */
 public class ApkLiteParseUtils {
@@ -62,6 +65,8 @@ public class ApkLiteParseUtils {
 
     private static final int PARSE_DEFAULT_INSTALL_LOCATION =
             PackageInfo.INSTALL_LOCATION_UNSPECIFIED;
+
+    public static final String APK_FILE_EXTENSION = ".apk";
 
     /**
      * Parse only lightweight details about the package at the given location.
@@ -95,8 +100,8 @@ public class ApkLiteParseUtils {
             final PackageParser.ApkLite baseApk = result.getResult();
             final String packagePath = packageFile.getAbsolutePath();
             return input.success(
-                    new PackageParser.PackageLite(packagePath, baseApk, null, null, null, null,
-                            null, null));
+                    new PackageParser.PackageLite(packagePath, baseApk.codePath, baseApk, null,
+                            null, null, null, null, null));
         } finally {
             Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
         }
@@ -159,13 +164,43 @@ public class ApkLiteParseUtils {
         }
 
         final PackageParser.ApkLite baseApk = apks.remove(null);
+        return composePackageLiteFromApks(input, packageDir, baseApk, apks);
+    }
+
+    /**
+     * Utility method that retrieves lightweight details about the package by given location,
+     * base APK, and split APKs.
+     *
+     * @param packageDir Path to the package
+     * @param baseApk Parsed base APK
+     * @param splitApks Parsed split APKs
+     * @return PackageLite
+     */
+    public static ParseResult<PackageParser.PackageLite> composePackageLiteFromApks(
+            ParseInput input, File packageDir, PackageParser.ApkLite baseApk,
+            ArrayMap<String, PackageParser.ApkLite> splitApks) {
+        return composePackageLiteFromApks(input, packageDir, baseApk, splitApks, false);
+    }
+
+    /**
+     * Utility method that retrieves lightweight details about the package by given location,
+     * base APK, and split APKs.
+     *
+     * @param packageDir Path to the package
+     * @param baseApk Parsed base APK
+     * @param splitApks Parsed split APKs
+     * @param apkRenamed Indicate whether the APKs are renamed after parsed.
+     * @return PackageLite
+     */
+    public static ParseResult<PackageParser.PackageLite> composePackageLiteFromApks(
+            ParseInput input, File packageDir, PackageParser.ApkLite baseApk,
+            ArrayMap<String, PackageParser.ApkLite> splitApks, boolean apkRenamed) {
         if (baseApk == null) {
             return input.error(PackageManager.INSTALL_PARSE_FAILED_BAD_MANIFEST,
                     "Missing base APK in " + packageDir);
         }
-
         // Always apply deterministic ordering based on splitName
-        final int size = apks.size();
+        final int size = ArrayUtils.size(splitApks);
 
         String[] splitNames = null;
         boolean[] isFeatureSplits = null;
@@ -181,23 +216,39 @@ public class ApkLiteParseUtils {
             splitCodePaths = new String[size];
             splitRevisionCodes = new int[size];
 
-            splitNames = apks.keySet().toArray(splitNames);
+            splitNames = splitApks.keySet().toArray(splitNames);
             Arrays.sort(splitNames, PackageParser.sSplitNameComparator);
 
             for (int i = 0; i < size; i++) {
-                final PackageParser.ApkLite apk = apks.get(splitNames[i]);
+                final PackageParser.ApkLite apk = splitApks.get(splitNames[i]);
                 usesSplitNames[i] = apk.usesSplitName;
                 isFeatureSplits[i] = apk.isFeatureSplit;
                 configForSplits[i] = apk.configForSplit;
-                splitCodePaths[i] = apk.codePath;
+                splitCodePaths[i] = apkRenamed ? new File(packageDir,
+                        splitNameToFileName(apk)).getAbsolutePath() : apk.codePath;
                 splitRevisionCodes[i] = apk.revisionCode;
             }
         }
 
         final String codePath = packageDir.getAbsolutePath();
-        return input.success(new PackageParser.PackageLite(codePath, baseApk, splitNames,
-                isFeatureSplits, usesSplitNames, configForSplits, splitCodePaths,
-                splitRevisionCodes));
+        final String baseCodePath = apkRenamed ? new File(packageDir,
+                splitNameToFileName(baseApk)).getAbsolutePath() : baseApk.codePath;
+        return input.success(
+                new PackageParser.PackageLite(codePath, baseCodePath, baseApk, splitNames,
+                        isFeatureSplits, usesSplitNames, configForSplits, splitCodePaths,
+                        splitRevisionCodes));
+    }
+
+    /**
+     * Utility method that retrieves canonical file name by given split name from parsed APK.
+     *
+     * @param apk Parsed APK
+     * @return The canonical file name
+     */
+    public static String splitNameToFileName(@NonNull PackageParser.ApkLite apk) {
+        Objects.requireNonNull(apk);
+        final String fileName = apk.splitName == null ? "base" : "split_" + apk.splitName;
+        return fileName + APK_FILE_EXTENSION;
     }
 
     /**
@@ -556,5 +607,22 @@ public class ApkLiteParseUtils {
         }
 
         return new VerifierInfo(packageName, publicKey);
+    }
+
+    /**
+     * Used to sort a set of APKs based on their split names, always placing the
+     * base APK (with {@code null} split name) first.
+     */
+    private static class SplitNameComparator implements Comparator<String> {
+        @Override
+        public int compare(String lhs, String rhs) {
+            if (lhs == null) {
+                return -1;
+            } else if (rhs == null) {
+                return 1;
+            } else {
+                return lhs.compareTo(rhs);
+            }
+        }
     }
 }

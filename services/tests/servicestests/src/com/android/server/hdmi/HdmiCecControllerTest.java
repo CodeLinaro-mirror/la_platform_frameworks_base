@@ -30,10 +30,13 @@ import static com.android.server.hdmi.Constants.ADDR_TV;
 import static com.android.server.hdmi.Constants.ADDR_UNREGISTERED;
 
 import static junit.framework.Assert.assertEquals;
+import static junit.framework.Assert.assertFalse;
+import static junit.framework.Assert.assertTrue;
 
 import android.content.Context;
 import android.hardware.hdmi.HdmiControlManager;
 import android.hardware.tv.cec.V1_0.SendMessageResult;
+import android.os.Binder;
 import android.os.Looper;
 import android.os.test.TestLooper;
 import android.platform.test.annotations.Presubmit;
@@ -43,10 +46,14 @@ import androidx.test.filters.SmallTest;
 
 import com.android.server.hdmi.HdmiCecController.AllocateAddressCallback;
 
+import junit.framework.TestCase;
+
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+
+import java.util.Optional;
 
 /** Tests for {@link com.android.server.hdmi.HdmiCecController} class. */
 @SmallTest
@@ -79,7 +86,7 @@ public class HdmiCecControllerTest {
     }
 
     private HdmiCecController mHdmiCecController;
-    private int mCecVersion = HdmiControlManager.HDMI_CEC_VERSION_1_4_b;
+    private int mCecVersion = HdmiControlManager.HDMI_CEC_VERSION_1_4_B;
     private int mLogicalAddress = 16;
     private AllocateAddressCallback mCallback =
             new AllocateAddressCallback() {
@@ -256,5 +263,49 @@ public class HdmiCecControllerTest {
         mHdmiCecController.allocateLogicalAddress(DEVICE_PLAYBACK, ADDR_UNREGISTERED, mCallback);
         mTestLooper.dispatchAll();
         assertEquals(ADDR_UNREGISTERED, mLogicalAddress);
+    }
+
+    @Test
+    public void testIsLanguage() {
+        assertTrue(HdmiCecController.isLanguage("en"));
+        assertTrue(HdmiCecController.isLanguage("eng"));
+        assertTrue(HdmiCecController.isLanguage("ger"));
+        assertTrue(HdmiCecController.isLanguage("zh"));
+        assertTrue(HdmiCecController.isLanguage("zhi"));
+        assertTrue(HdmiCecController.isLanguage("zho"));
+
+        assertFalse(HdmiCecController.isLanguage(null));
+        assertFalse(HdmiCecController.isLanguage(""));
+        assertFalse(HdmiCecController.isLanguage("e"));
+        assertFalse(HdmiCecController.isLanguage("一")); // language code must be ASCII
+    }
+
+    @Test
+    public void runOnServiceThread_preservesAndRestoresWorkSourceUid() {
+        Binder.setCallingWorkSourceUid(1234);
+        WorkSourceUidReadingRunnable uidReadingRunnable = new WorkSourceUidReadingRunnable();
+        mHdmiCecController.runOnServiceThread(uidReadingRunnable);
+
+        Binder.setCallingWorkSourceUid(5678);
+        mTestLooper.dispatchAll();
+
+        TestCase.assertEquals(Optional.of(1234), uidReadingRunnable.getWorkSourceUid());
+        TestCase.assertEquals(5678, Binder.getCallingWorkSourceUid());
+    }
+
+    @Test
+    public void runOnIoThread_preservesAndRestoresWorkSourceUid() {
+        int callerUid = 1234;
+        int runnerUid = 5678;
+
+        Binder.setCallingWorkSourceUid(callerUid);
+        WorkSourceUidReadingRunnable uidReadingRunnable = new WorkSourceUidReadingRunnable();
+        mHdmiCecController.runOnIoThread(uidReadingRunnable);
+
+        Binder.setCallingWorkSourceUid(runnerUid);
+        mTestLooper.dispatchAll();
+
+        TestCase.assertEquals(Optional.of(callerUid), uidReadingRunnable.getWorkSourceUid());
+        TestCase.assertEquals(runnerUid, Binder.getCallingWorkSourceUid());
     }
 }

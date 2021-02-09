@@ -291,23 +291,23 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
     }
 
     void restoreAndApplyStagedSessionIfNeeded() {
-        List<PackageInstallerSession> stagedSessionsToRestore = new ArrayList<>();
+        List<StagingManager.StagedSession> stagedSessionsToRestore = new ArrayList<>();
         synchronized (mSessions) {
             for (int i = 0; i < mSessions.size(); i++) {
                 final PackageInstallerSession session = mSessions.valueAt(i);
                 if (session.isStaged()) {
-                    stagedSessionsToRestore.add(session);
+                    stagedSessionsToRestore.add(session.mStagedSession);
                 }
             }
         }
         // Don't hold mSessions lock when calling restoreSession, since it might trigger an APK
         // atomic install which needs to query sessions, which requires lock on mSessions.
         boolean isDeviceUpgrading = mPm.isDeviceUpgrading();
-        for (PackageInstallerSession session : stagedSessionsToRestore) {
-            if (!session.isStagedAndInTerminalState() && session.hasParentSessionId()
+        for (StagingManager.StagedSession session : stagedSessionsToRestore) {
+            if (!session.isInTerminalState() && session.hasParentSessionId()
                     && getSession(session.getParentSessionId()) == null) {
-                session.setStagedSessionFailed(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED,
-                        "An orphan staged session " + session.sessionId + " is found, "
+                session.setSessionFailed(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED,
+                        "An orphan staged session " + session.sessionId() + " is found, "
                                 + "parent " + session.getParentSessionId() + " is missing");
             }
             mStagingManager.restoreSession(session, isDeviceUpgrading);
@@ -319,6 +319,10 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
         final File stagingDir = getTmpSessionDir(volumeUuid);
         final ArraySet<File> unclaimedStages = newArraySet(
                 stagingDir.listFiles(sStageFilter));
+
+        // We also need to clean up orphaned staging directory for staged sessions
+        final File stagedSessionStagingDir = Environment.getDataStagingDirectory(volumeUuid);
+        unclaimedStages.addAll(newArraySet(stagedSessionStagingDir.listFiles()));
 
         // Ignore stages claimed by active sessions
         for (int i = 0; i < mSessions.size(); i++) {
@@ -513,7 +517,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
             String installerAttributionTag, int userId)
             throws IOException {
         final int callingUid = Binder.getCallingUid();
-        mPermissionManager.enforceCrossUserPermission(
+        mPm.enforceCrossUserPermission(
                 callingUid, userId, true, true, "createSession");
 
         if (mPm.isUserRestricted(userId, UserManager.DISALLOW_INSTALL_APPS)) {
@@ -526,6 +530,20 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
             throw new SecurityException("You need the "
                     + "com.android.permission.USE_INSTALLER_V2 permission "
                     + "to use a data loader");
+        }
+
+        // INSTALL_REASON_ROLLBACK allows an app to be rolled back without requiring the ROLLBACK
+        // capability; ensure if this is set as the install reason the app has one of the necessary
+        // signature permissions to perform the rollback.
+        if (params.installReason == PackageManager.INSTALL_REASON_ROLLBACK) {
+            if (mContext.checkCallingOrSelfPermission(Manifest.permission.MANAGE_ROLLBACKS)
+                    != PackageManager.PERMISSION_GRANTED &&
+                    mContext.checkCallingOrSelfPermission(Manifest.permission.TEST_MANAGE_ROLLBACKS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                throw new SecurityException(
+                        "INSTALL_REASON_ROLLBACK requires the MANAGE_ROLLBACKS permission or the "
+                                + "TEST_MANAGE_ROLLBACKS permission");
+            }
         }
 
         // App package name and label length is restricted so that really long strings aren't
@@ -682,11 +700,6 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
             }
         }
 
-        if (params.whitelistedRestrictedPermissions != null) {
-            mPermissionManager.retainHardAndSoftRestrictedPermissions(
-                    params.whitelistedRestrictedPermissions);
-        }
-
         final int sessionId;
         final PackageInstallerSession session;
         synchronized (mSessions) {
@@ -734,8 +747,8 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
                 installerAttributionTag);
         session = new PackageInstallerSession(mInternalCallback, mContext, mPm, this,
                 mInstallThread.getLooper(), mStagingManager, sessionId, userId, callingUid,
-                installSource, params, createdMillis, stageDir, stageCid, null, null, false, false,
-                false, false, null, SessionInfo.INVALID_ID, false, false, false,
+                installSource, params, createdMillis, 0L, stageDir, stageCid, null, null, false,
+                false, false, false, null, SessionInfo.INVALID_ID, false, false, false,
                 SessionInfo.STAGED_SESSION_NO_ERROR, "");
 
         synchronized (mSessions) {
@@ -908,7 +921,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
     @Override
     public ParceledListSlice<SessionInfo> getAllSessions(int userId) {
         final int callingUid = Binder.getCallingUid();
-        mPermissionManager.enforceCrossUserPermission(
+        mPm.enforceCrossUserPermission(
                 callingUid, userId, true, false, "getAllSessions");
 
         final List<SessionInfo> result = new ArrayList<>();
@@ -926,7 +939,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
 
     @Override
     public ParceledListSlice<SessionInfo> getMySessions(String installerPackageName, int userId) {
-        mPermissionManager.enforceCrossUserPermission(
+        mPm.enforceCrossUserPermission(
                 Binder.getCallingUid(), userId, true, false, "getMySessions");
         mAppOps.checkPackage(Binder.getCallingUid(), installerPackageName);
 
@@ -950,7 +963,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
     public void uninstall(VersionedPackage versionedPackage, String callerPackageName, int flags,
                 IntentSender statusReceiver, int userId) {
         final int callingUid = Binder.getCallingUid();
-        mPermissionManager.enforceCrossUserPermission(callingUid, userId, true, true, "uninstall");
+        mPm.enforceCrossUserPermission(callingUid, userId, true, true, "uninstall");
         if ((callingUid != Process.SHELL_UID) && (callingUid != Process.ROOT_UID)) {
             mAppOps.checkPackage(callingUid, callerPackageName);
         }
@@ -1002,7 +1015,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
             String callerPackageName, IntentSender statusReceiver, int userId) {
         final int callingUid = Binder.getCallingUid();
         mContext.enforceCallingOrSelfPermission(Manifest.permission.DELETE_PACKAGES, null);
-        mPermissionManager.enforceCrossUserPermission(callingUid, userId, true, true, "uninstall");
+        mPm.enforceCrossUserPermission(callingUid, userId, true, true, "uninstall");
         if ((callingUid != Process.SHELL_UID) && (callingUid != Process.ROOT_UID)) {
             mAppOps.checkPackage(callingUid, callerPackageName);
         }
@@ -1033,7 +1046,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
 
     @Override
     public void registerCallback(IPackageInstallerCallback callback, int userId) {
-        mPermissionManager.enforceCrossUserPermission(
+        mPm.enforceCrossUserPermission(
                 Binder.getCallingUid(), userId, true, false, "registerCallback");
         registerCallback(callback, eventUserId -> userId == eventUserId);
     }
@@ -1386,7 +1399,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
                 @Override
                 public void run() {
                     if (session.isStaged() && !success) {
-                        mStagingManager.abortSession(session);
+                        mStagingManager.abortSession(session.mStagedSession);
                     }
                     synchronized (mSessions) {
                         if (!session.isStaged() || !success) {

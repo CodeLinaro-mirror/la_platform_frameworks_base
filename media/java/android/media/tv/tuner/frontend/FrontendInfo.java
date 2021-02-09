@@ -46,6 +46,10 @@ public class FrontendInfo {
             FrontendCapabilities frontendCap) {
         mId = id;
         mType = type;
+        // if max Frequency is negative, we set it as max value of the Integer.
+        if (maxFrequency < 0) {
+            maxFrequency = Integer.MAX_VALUE;
+        }
         mFrequencyRange = new Range<>(minFrequency, maxFrequency);
         mSymbolRateRange = new Range<>(minSymbolRate, maxSymbolRate);
         mAcquireRange = acquireRange;
@@ -57,7 +61,7 @@ public class FrontendInfo {
     /**
      * Gets frontend ID.
      *
-     * @return the frontend ID or {@link android.media.tv.tuner.Tuner.INVALID_FRONTEND_ID}
+     * @return the frontend ID or {@link android.media.tv.tuner.Tuner#INVALID_FRONTEND_ID}
      *         if invalid
      */
     public int getId() {

@@ -38,6 +38,7 @@ import com.android.internal.util.LatencyTracker;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardSecurityModel.SecurityMode;
 import com.android.systemui.R;
+import com.android.systemui.classifier.FalsingCollector;
 
 public class KeyguardSimPinViewController
         extends KeyguardPinBasedInputViewController<KeyguardSimPinView> {
@@ -76,11 +77,11 @@ public class KeyguardSimPinViewController
             SecurityMode securityMode, LockPatternUtils lockPatternUtils,
             KeyguardSecurityCallback keyguardSecurityCallback,
             KeyguardMessageAreaController.Factory messageAreaControllerFactory,
-            LatencyTracker latencyTracker,
-            LiftToActivateListener liftToActivateListener,
-            TelephonyManager telephonyManager) {
+            LatencyTracker latencyTracker, LiftToActivateListener liftToActivateListener,
+            TelephonyManager telephonyManager, FalsingCollector falsingCollector) {
         super(view, keyguardUpdateMonitor, securityMode, lockPatternUtils, keyguardSecurityCallback,
-                messageAreaControllerFactory, latencyTracker, liftToActivateListener);
+                messageAreaControllerFactory, latencyTracker, liftToActivateListener,
+                falsingCollector);
         mKeyguardUpdateMonitor = keyguardUpdateMonitor;
         mTelephonyManager = telephonyManager;
         mSimImageView = mView.findViewById(R.id.keyguard_sim);
@@ -309,7 +310,7 @@ public class KeyguardSimPinViewController
         Resources rez = mView.getResources();
         String msg;
         TypedArray array = mView.getContext().obtainStyledAttributes(
-                new int[] { R.attr.wallpaperTextColor });
+                new int[] { android.R.attr.textColor });
         int color = array.getColor(0, Color.WHITE);
         array.recycle();
         if (count < 2) {

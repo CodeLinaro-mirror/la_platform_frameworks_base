@@ -447,6 +447,9 @@ public final class SmsManager {
      *  <code>RESULT_RIL_NO_RESOURCES</code><br>
      *  <code>RESULT_RIL_CANCELLED</code><br>
      *  <code>RESULT_RIL_SIM_ABSENT</code><br>
+     *  <code>RESULT_RIL_SIMULTANEOUS_SMS_AND_CALL_NOT_ALLOWED</code><br>
+     *  <code>RESULT_RIL_ACCESS_BARRED</code><br>
+     *  <code>RESULT_RIL_BLOCKED_DUE_TO_CALL</code><br>
      *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> or any of the RESULT_RIL errors,
      *  the sentIntent may include the extra "errorCode" containing a radio technology specific
      *  value, generally only useful for troubleshooting.<br>
@@ -561,6 +564,9 @@ public final class SmsManager {
      *  <code>RESULT_RIL_NO_RESOURCES</code><br>
      *  <code>RESULT_RIL_CANCELLED</code><br>
      *  <code>RESULT_RIL_SIM_ABSENT</code><br>
+     *  <code>RESULT_RIL_SIMULTANEOUS_SMS_AND_CALL_NOT_ALLOWED</code><br>
+     *  <code>RESULT_RIL_ACCESS_BARRED</code><br>
+     *  <code>RESULT_RIL_BLOCKED_DUE_TO_CALL</code><br>
      *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> or any of the RESULT_RIL errors,
      *  the sentIntent may include the extra "errorCode" containing a radio technology specific
      *  value, generally only useful for troubleshooting.<br>
@@ -632,7 +638,7 @@ public final class SmsManager {
                                 persistMessage, messageId);
                     } catch (RemoteException e) {
                         Log.e(TAG, "sendTextMessageInternal: Couldn't send SMS, exception - "
-                                + e.getMessage() + " id: " + messageId);
+                                + e.getMessage() + " " + formatCrossStackMessageId(messageId));
                         notifySmsError(sentIntent, RESULT_REMOTE_EXCEPTION);
                     }
                 }
@@ -652,7 +658,7 @@ public final class SmsManager {
                         persistMessage, messageId);
             } catch (RemoteException e) {
                 Log.e(TAG, "sendTextMessageInternal (no persist): Couldn't send SMS, exception - "
-                        + e.getMessage() + " id: " + messageId);
+                        + e.getMessage() + " " + formatCrossStackMessageId(messageId));
                 notifySmsError(sentIntent, RESULT_REMOTE_EXCEPTION);
             }
         }
@@ -962,6 +968,9 @@ public final class SmsManager {
      *  <code>RESULT_RIL_NO_RESOURCES</code><br>
      *  <code>RESULT_RIL_CANCELLED</code><br>
      *  <code>RESULT_RIL_SIM_ABSENT</code><br>
+     *  <code>RESULT_RIL_SIMULTANEOUS_SMS_AND_CALL_NOT_ALLOWED</code><br>
+     *  <code>RESULT_RIL_ACCESS_BARRED</code><br>
+     *  <code>RESULT_RIL_BLOCKED_DUE_TO_CALL</code><br>
      *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> or any of the RESULT_RIL errors,
      *  the sentIntent may include the extra "errorCode" containing a radio technology specific
      *  value, generally only useful for troubleshooting.<br>
@@ -1063,8 +1072,7 @@ public final class SmsManager {
                                     deliveryIntents, persistMessage, messageId);
                         } catch (RemoteException e) {
                             Log.e(TAG, "sendMultipartTextMessageInternal: Couldn't send SMS - "
-                                    + e.getMessage() + " id: "
-                                    + messageId);
+                                    + e.getMessage() + " " + formatCrossStackMessageId(messageId));
                             notifySmsError(sentIntents, RESULT_REMOTE_EXCEPTION);
                         }
                     }
@@ -1085,7 +1093,7 @@ public final class SmsManager {
                     }
                 } catch (RemoteException e) {
                     Log.e(TAG, "sendMultipartTextMessageInternal: Couldn't send SMS - "
-                            + e.getMessage() + " id: " + messageId);
+                            + e.getMessage() + " " + formatCrossStackMessageId(messageId));
                     notifySmsError(sentIntents, RESULT_REMOTE_EXCEPTION);
                 }
             }
@@ -1220,6 +1228,9 @@ public final class SmsManager {
      *  <code>RESULT_RIL_NO_RESOURCES</code><br>
      *  <code>RESULT_RIL_CANCELLED</code><br>
      *  <code>RESULT_RIL_SIM_ABSENT</code><br>
+     *  <code>RESULT_RIL_SIMULTANEOUS_SMS_AND_CALL_NOT_ALLOWED</code><br>
+     *  <code>RESULT_RIL_ACCESS_BARRED</code><br>
+     *  <code>RESULT_RIL_BLOCKED_DUE_TO_CALL</code><br>
      *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> or any of the RESULT_RIL errors,
      *  the sentIntent may include the extra "errorCode" containing a radio technology specific
      *  value, generally only useful for troubleshooting.<br>
@@ -1419,6 +1430,9 @@ public final class SmsManager {
      *  <code>RESULT_RIL_NO_RESOURCES</code><br>
      *  <code>RESULT_RIL_CANCELLED</code><br>
      *  <code>RESULT_RIL_SIM_ABSENT</code><br>
+     *  <code>RESULT_RIL_SIMULTANEOUS_SMS_AND_CALL_NOT_ALLOWED</code><br>
+     *  <code>RESULT_RIL_ACCESS_BARRED</code><br>
+     *  <code>RESULT_RIL_BLOCKED_DUE_TO_CALL</code><br>
      *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> or any of the RESULT_RIL errors,
      *  the sentIntent may include the extra "errorCode" containing a radio technology specific
      *  value, generally only useful for troubleshooting.<br>
@@ -2298,7 +2312,10 @@ public final class SmsManager {
             RESULT_RIL_OPERATION_NOT_ALLOWED,
             RESULT_RIL_NO_RESOURCES,
             RESULT_RIL_CANCELLED,
-            RESULT_RIL_SIM_ABSENT
+            RESULT_RIL_SIM_ABSENT,
+            RESULT_RIL_SIMULTANEOUS_SMS_AND_CALL_NOT_ALLOWED,
+            RESULT_RIL_ACCESS_BARRED,
+            RESULT_RIL_BLOCKED_DUE_TO_CALL
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface Result {}
@@ -2562,6 +2579,21 @@ public final class SmsManager {
      * can be retrieved because the SIM or RUIM is absent.
      */
     public static final int RESULT_RIL_SIM_ABSENT = 120;
+
+    /**
+     * 1X voice and SMS are not allowed simulteneously.
+     */
+    public static final int RESULT_RIL_SIMULTANEOUS_SMS_AND_CALL_NOT_ALLOWED = 121;
+
+    /**
+     * Access is barred.
+     */
+    public static final int RESULT_RIL_ACCESS_BARRED = 122;
+
+    /**
+     * SMS is blocked due to call control, e.g., resource unavailable in the SMR entity.
+     */
+    public static final int RESULT_RIL_BLOCKED_DUE_TO_CALL = 123;
 
     // SMS receiving results sent as a "result" extra in {@link Intents.SMS_REJECTED_ACTION}
 
@@ -3101,26 +3133,24 @@ public final class SmsManager {
 
     /**
      * Reset all cell broadcast ranges. Previously enabled ranges will become invalid after this.
-     *
-     * @return {@code true} if succeeded, otherwise {@code false}.
-     *
-     * // TODO: Unhide the API in S.
      * @hide
      */
-    public boolean resetAllCellBroadcastRanges() {
-        boolean success = false;
-
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.MODIFY_CELL_BROADCASTS)
+    public void resetAllCellBroadcastRanges() {
         try {
             ISms iSms = getISmsService();
             if (iSms != null) {
                 // If getSubscriptionId() returns INVALID or an inactive subscription, we will use
                 // the default phone internally.
-                success = iSms.resetAllCellBroadcastRanges(getSubscriptionId());
+                iSms.resetAllCellBroadcastRanges(getSubscriptionId());
             }
         } catch (RemoteException ex) {
-            // ignore it
+            ex.rethrowFromSystemServer();
         }
+    }
 
-        return success;
+    private static String formatCrossStackMessageId(long id) {
+        return "{x-message-id:" + id + "}";
     }
 }

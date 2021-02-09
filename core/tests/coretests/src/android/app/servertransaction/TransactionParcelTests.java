@@ -24,11 +24,13 @@ import static android.app.servertransaction.TestUtils.resultInfoList;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+import android.app.ActivityOptions;
 import android.app.ContentProviderHolder;
 import android.app.IApplicationThread;
 import android.app.IInstrumentationWatcher;
 import android.app.IUiAutomationConnection;
 import android.app.ProfilerInfo;
+import android.app.servertransaction.TestUtils.LaunchActivityItemBuilder;
 import android.content.AutofillOptions;
 import android.content.ComponentName;
 import android.content.ContentCaptureOptions;
@@ -52,6 +54,7 @@ import android.os.Parcelable;
 import android.os.PersistableBundle;
 import android.os.RemoteCallback;
 import android.os.RemoteException;
+import android.os.SharedMemory;
 import android.platform.test.annotations.Presubmit;
 import android.view.DisplayAdjustments.FixedRotationAdjustments;
 import android.view.DisplayCutout;
@@ -194,11 +197,15 @@ public class TransactionParcelTests {
         FixedRotationAdjustments fixedRotationAdjustments = new FixedRotationAdjustments(
                 Surface.ROTATION_90, 1920, 1080, DisplayCutout.NO_CUTOUT);
 
-        LaunchActivityItem item = LaunchActivityItem.obtain(intent, ident, activityInfo,
-                config(), overrideConfig, compat, referrer, null /* voiceInteractor */,
-                procState, bundle, persistableBundle, resultInfoList(), referrerIntentList(),
-                true /* isForward */, null /* profilerInfo */, new Binder(),
-                fixedRotationAdjustments);
+        LaunchActivityItem item = new LaunchActivityItemBuilder()
+                .setIntent(intent).setIdent(ident).setInfo(activityInfo).setCurConfig(config())
+                .setOverrideConfig(overrideConfig).setCompatInfo(compat).setReferrer(referrer)
+                .setProcState(procState).setState(bundle).setPersistentState(persistableBundle)
+                .setPendingResults(resultInfoList()).setActivityOptions(ActivityOptions.makeBasic())
+                .setPendingNewIntents(referrerIntentList()).setIsForward(true)
+                .setAssistToken(new Binder()).setFixedRotationAdjustments(fixedRotationAdjustments)
+                .build();
+
         writeAndPrepareForReading(item);
 
         // Read from parcel and assert
@@ -268,7 +275,7 @@ public class TransactionParcelTests {
     @Test
     public void testStart() {
         // Write to parcel
-        StartActivityItem item = StartActivityItem.obtain();
+        StartActivityItem item = StartActivityItem.obtain(ActivityOptions.makeBasic());
         writeAndPrepareForReading(item);
 
         // Read from parcel and assert
@@ -440,7 +447,8 @@ public class TransactionParcelTests {
                 IUiAutomationConnection iUiAutomationConnection, int i, boolean b, boolean b1,
                 boolean b2, boolean b3, Configuration configuration,
                 CompatibilityInfo compatibilityInfo, Map map, Bundle bundle1, String s1,
-                AutofillOptions ao, ContentCaptureOptions co, long[] disableCompatChanges)
+                AutofillOptions ao, ContentCaptureOptions co, long[] disableCompatChanges,
+                SharedMemory serializedSystemFontMap)
                 throws RemoteException {
         }
 

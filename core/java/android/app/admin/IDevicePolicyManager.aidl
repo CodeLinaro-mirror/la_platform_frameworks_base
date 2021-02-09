@@ -84,11 +84,13 @@ interface IDevicePolicyManager {
     long getPasswordExpiration(in ComponentName who, int userHandle, boolean parent);
 
     boolean isActivePasswordSufficient(int userHandle, boolean parent);
+    boolean isActivePasswordSufficientForDeviceRequirement();
     boolean isProfileActivePasswordSufficientForParent(int userHandle);
     boolean isPasswordSufficientAfterProfileUnification(int userHandle, int profileUser);
     int getPasswordComplexity(boolean parent);
     void setRequiredPasswordComplexity(int passwordComplexity, boolean parent);
     int getRequiredPasswordComplexity(boolean parent);
+    int getAggregatedPasswordComplexityForUser(int userId);
     boolean isUsingUnifiedPassword(in ComponentName admin);
     int getCurrentFailedPasswordAttempts(int userHandle, boolean parent);
     int getProfileWithMinimumFailedPasswordsForWipe(int userHandle, boolean parent);
@@ -184,6 +186,7 @@ interface IDevicePolicyManager {
             in byte[] certBuffer, in byte[] certChainBuffer, String alias, boolean requestAccess,
             boolean isUserSelectable);
     boolean removeKeyPair(in ComponentName who, in String callerPackage, String alias);
+    boolean hasKeyPair(in String callerPackage, in String alias);
     boolean generateKeyPair(in ComponentName who, in String callerPackage, in String algorithm,
             in ParcelableKeyGenParameterSpec keySpec,
             in int idAttestationFlags, out KeymasterCertificateChain attestationChain);
@@ -249,6 +252,7 @@ interface IDevicePolicyManager {
     int stopUser(in ComponentName who, in UserHandle userHandle);
     int logoutUser(in ComponentName who);
     List<UserHandle> getSecondaryUsers(in ComponentName who);
+    void resetNewUserDisclaimer();
 
     void enableSystemApp(in ComponentName admin, in String callerPackage, in String packageName);
     int enableSystemAppWithIntent(in ComponentName admin, in String callerPackage, in Intent intent);
@@ -469,6 +473,7 @@ interface IDevicePolicyManager {
     boolean startViewCalendarEventInManagedProfile(String packageName, long eventId, long start, long end, boolean allDay, int flags);
 
     boolean setKeyGrantForApp(in ComponentName admin, String callerPackage, String alias, String packageName, boolean hasGrant);
+    List<String> getKeyPairGrants(in String callerPackage, in String alias);
 
     void setUserControlDisabledPackages(in ComponentName admin, in List<String> packages);
 
@@ -482,5 +487,10 @@ interface IDevicePolicyManager {
 
     long getManagedProfileMaximumTimeOff(in ComponentName admin);
     void setManagedProfileMaximumTimeOff(in ComponentName admin, long timeoutMs);
-    boolean canProfileOwnerResetPasswordWhenLocked(in int userId);
+    boolean canProfileOwnerResetPasswordWhenLocked(int userId);
+
+    void setNextOperationSafety(int operation, boolean safe);
+
+    String getEnrollmentSpecificId(String callerPackage);
+    void setOrganizationIdForUser(in String callerPackage, in String enterpriseId, int userId);
 }

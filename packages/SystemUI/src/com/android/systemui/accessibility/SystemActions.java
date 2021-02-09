@@ -16,7 +16,7 @@
 
 package com.android.systemui.accessibility;
 
-import static android.view.WindowManager.ScreenshotSource.SCREENSHOT_GLOBAL_ACTIONS;
+import static android.view.WindowManager.ScreenshotSource.SCREENSHOT_ACCESSIBILITY_ACTIONS;
 
 import static com.android.internal.accessibility.common.ShortcutConstants.CHOOSER_PACKAGE_NAME;
 
@@ -349,7 +349,7 @@ public class SystemActions extends SystemUI {
     private void handleTakeScreenshot() {
         ScreenshotHelper screenshotHelper = new ScreenshotHelper(mContext);
         screenshotHelper.takeScreenshot(WindowManager.TAKE_SCREENSHOT_FULLSCREEN, true, true,
-                SCREENSHOT_GLOBAL_ACTIONS, new Handler(Looper.getMainLooper()), null);
+                SCREENSHOT_ACCESSIBILITY_ACTIONS, new Handler(Looper.getMainLooper()), null);
     }
 
     private void handleAccessibilityButton() {
@@ -400,7 +400,10 @@ public class SystemActions extends SystemUI {
                 case INTENT_ACTION_ACCESSIBILITY_SHORTCUT: {
                     Intent intent = new Intent(intentAction);
                     intent.setPackage(context.getPackageName());
-                    return PendingIntent.getBroadcast(context, 0, intent, 0);
+                    // TODO(b/173157883) Please replace FLAG_MUTABLE_UNAUDITED below
+                    // with either FLAG_IMMUTABLE (recommended) or FLAG_MUTABLE.
+                    return PendingIntent.getBroadcast(context, 0, intent,
+                            PendingIntent.FLAG_MUTABLE_UNAUDITED);
                 }
                 default:
                     break;

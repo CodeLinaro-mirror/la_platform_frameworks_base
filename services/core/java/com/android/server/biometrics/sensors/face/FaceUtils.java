@@ -18,7 +18,6 @@ package com.android.server.biometrics.sensors.face;
 
 import android.annotation.Nullable;
 import android.content.Context;
-import android.hardware.biometrics.BiometricAuthenticator;
 import android.hardware.face.Face;
 import android.text.TextUtils;
 import android.util.SparseArray;
@@ -72,13 +71,13 @@ public class FaceUtils implements BiometricUtils<Face> {
     }
 
     /**
-     * Legacy getter for {@link android.hardware.biometrics.face.V1_0} and its extended subclasses,
-     * which do not support a well defined sensorId from the HAL.
+     * Legacy getter for {@link android.hardware.biometrics.face.V1_0} and its extended subclasses.
+     * Framework-side cache is always stored in the same file, regardless of sensorId.
      */
-    public static FaceUtils getInstance() {
+    public static FaceUtils getLegacyInstance(int sensorId) {
         // Note that sensorId for legacy services can be hard-coded to 0 since it's only used
         // to index into the sensor states map.
-        return getInstance(0 /* sensorId */, LEGACY_FACE_FILE);
+        return getInstance(sensorId, LEGACY_FACE_FILE);
     }
 
     private FaceUtils(String fileName) {
@@ -113,6 +112,16 @@ public class FaceUtils implements BiometricUtils<Face> {
     @Override
     public CharSequence getUniqueName(Context context, int userId) {
         return getStateForUser(context, userId).getUniqueName();
+    }
+
+    @Override
+    public void setInvalidationInProgress(Context context, int userId, boolean inProgress) {
+        getStateForUser(context, userId).setInvalidationInProgress(inProgress);
+    }
+
+    @Override
+    public boolean isInvalidationInProgress(Context context, int userId) {
+        return getStateForUser(context, userId).isInvalidationInProgress();
     }
 
     private FaceUserState getStateForUser(Context ctx, int userId) {

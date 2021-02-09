@@ -16,19 +16,18 @@
 
 package com.android.internal.os;
 
-import static org.junit.Assert.assertEquals;
+import static com.google.common.truth.Truth.assertThat;
 
-import android.content.Context;
-import android.os.BatteryStats;
+import android.os.BatteryConsumer;
 import android.os.Binder;
 import android.os.Process;
 
 import androidx.annotation.Nullable;
-import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -40,26 +39,23 @@ import java.util.Collection;
 @RunWith(AndroidJUnit4.class)
 public class SystemServicePowerCalculatorTest {
 
-    private PowerProfile mProfile;
+    private static final double PRECISION = 0.0000001;
+
+    @Rule
+    public final BatteryUsageStatsRule mStatsRule = new BatteryUsageStatsRule();
+
     private MockBatteryStatsImpl mMockBatteryStats;
     private MockKernelCpuUidFreqTimeReader mMockCpuUidFreqTimeReader;
     private MockSystemServerCpuThreadReader mMockSystemServerCpuThreadReader;
-    private SystemServicePowerCalculator mSystemServicePowerCalculator;
 
     @Before
     public void setUp() throws IOException {
-        Context context = InstrumentationRegistry.getContext();
-        mProfile = new PowerProfile(context, true /* forTest */);
         mMockSystemServerCpuThreadReader = new MockSystemServerCpuThreadReader();
         mMockCpuUidFreqTimeReader = new MockKernelCpuUidFreqTimeReader();
-        mMockBatteryStats = new MockBatteryStatsImpl(new MockClocks())
-                .setPowerProfile(mProfile)
+        mMockBatteryStats = mStatsRule.getBatteryStats()
                 .setSystemServerCpuThreadReader(mMockSystemServerCpuThreadReader)
                 .setKernelCpuUidFreqTimeReader(mMockCpuUidFreqTimeReader)
                 .setUserInfoProvider(new MockUserInfoProvider());
-        mMockBatteryStats.getOnBatteryTimeBase().setRunning(true, 0, 0);
-        mSystemServicePowerCalculator =
-                new SystemServicePowerCalculator(mProfile, mMockBatteryStats);
     }
 
     @Test
@@ -103,17 +99,17 @@ public class SystemServicePowerCalculatorTest {
         mMockBatteryStats.updateSystemServiceCallStats();
         mMockBatteryStats.updateSystemServerThreadStats();
 
-        BatterySipper app1 = new BatterySipper(BatterySipper.DrainType.APP,
-                mMockBatteryStats.getUidStatsLocked(workSourceUid1), 0);
-        mSystemServicePowerCalculator.calculateApp(app1, app1.uidObj, 0, 0,
-                BatteryStats.STATS_SINCE_CHARGED);
-        assertEquals(0.00016269, app1.systemServiceCpuPowerMah, 0.0000001);
+        SystemServicePowerCalculator calculator = new SystemServicePowerCalculator(
+                mStatsRule.getPowerProfile());
 
-        BatterySipper app2 = new BatterySipper(BatterySipper.DrainType.APP,
-                mMockBatteryStats.getUidStatsLocked(workSourceUid2), 0);
-        mSystemServicePowerCalculator.calculateApp(app2, app2.uidObj, 0, 0,
-                BatteryStats.STATS_SINCE_CHARGED);
-        assertEquals(0.00146426, app2.systemServiceCpuPowerMah, 0.0000001);
+        mStatsRule.apply(calculator);
+
+        assertThat(mStatsRule.getUidBatteryConsumer(workSourceUid1)
+                .getConsumedPower(BatteryConsumer.POWER_COMPONENT_SYSTEM_SERVICES))
+                .isWithin(PRECISION).of(0.00016269);
+        assertThat(mStatsRule.getUidBatteryConsumer(workSourceUid2)
+                .getConsumedPower(BatteryConsumer.POWER_COMPONENT_SYSTEM_SERVICES))
+                .isWithin(PRECISION).of(0.00146426);
     }
 
     private static class MockKernelCpuUidFreqTimeReader extends

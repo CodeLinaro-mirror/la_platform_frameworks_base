@@ -18,7 +18,10 @@ package android.hardware.biometrics;
 
 import android.hardware.biometrics.IBiometricEnabledOnKeyguardCallback;
 import android.hardware.biometrics.IBiometricServiceReceiver;
+import android.hardware.biometrics.IInvalidationCallback;
+import android.hardware.biometrics.ITestSession;
 import android.hardware.biometrics.PromptInfo;
+import android.hardware.biometrics.SensorPropertiesInternal;
 
 /**
  * Communication channel from BiometricPrompt and BiometricManager to AuthService. The
@@ -28,6 +31,15 @@ import android.hardware.biometrics.PromptInfo;
  * @hide
  */
 interface IAuthService {
+    // Creates a test session with the specified sensorId
+    ITestSession createTestSession(int sensorId, String opPackageName);
+
+    // Retrieve static sensor properties for all biometric sensors
+    List<SensorPropertiesInternal> getSensorProperties(String opPackageName);
+
+    // Retrieve the package where BIometricOrompt's UI is implemented
+    String getUiPackage();
+
     // Requests authentication. The service choose the appropriate biometric to use, and show
     // the corresponding BiometricDialog.
     void authenticate(IBinder token, long sessionId, int userId,
@@ -45,6 +57,11 @@ interface IAuthService {
 
     // Register callback for when keyguard biometric eligibility changes.
     void registerEnabledOnKeyguardCallback(IBiometricEnabledOnKeyguardCallback callback);
+
+    // Requests all BIOMETRIC_STRONG sensors to have their authenticatorId invalidated for the
+    // specified user. This happens when enrollments have been added on devices with multiple
+    // biometric sensors.
+    void invalidateAuthenticatorIds(int userId, int fromSensorId, IInvalidationCallback callback);
 
     // Get a list of AuthenticatorIDs for authenticators which have enrolled templates and meet
     // the requirements for integrating with Keystore. The AuthenticatorID are known in Keystore

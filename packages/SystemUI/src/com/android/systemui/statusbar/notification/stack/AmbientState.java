@@ -20,7 +20,6 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.Context;
 import android.util.MathUtils;
-import android.view.View;
 
 import com.android.systemui.R;
 import com.android.systemui.statusbar.NotificationShelf;
@@ -31,20 +30,16 @@ import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow
 import com.android.systemui.statusbar.notification.row.ExpandableView;
 import com.android.systemui.statusbar.notification.stack.StackScrollAlgorithm.SectionProvider;
 
-import java.util.ArrayList;
-
 /**
  * A global state to track all input states for the algorithm.
  */
 public class AmbientState {
 
     private static final float MAX_PULSE_HEIGHT = 100000f;
+    private static final boolean NOTIFICATIONS_HAVE_SHADOWS = false;
 
     private final SectionProvider mSectionProvider;
-    private ArrayList<View> mDraggedViews = new ArrayList<>();
     private int mScrollY;
-    private int mAnchorViewIndex;
-    private int mAnchorViewY;
     private boolean mDimmed;
     private ActivatableNotificationView mActivatedChild;
     private float mOverScrollTopAmount;
@@ -82,6 +77,7 @@ public class AmbientState {
     private Runnable mOnPulseHeightChangedListener;
     private ExpandableNotificationRow mTrackedHeadsUpRow;
     private float mAppearFraction;
+    private boolean mIsShadeOpening;
 
     /** Tracks the state from AlertingNotificationManager#hasNotifications() */
     private boolean mHasAlertEntries;
@@ -101,13 +97,21 @@ public class AmbientState {
         mBaseZHeight = getBaseHeight(mZDistanceBetweenElements);
     }
 
+    void setIsShadeOpening(boolean isOpening) {
+        mIsShadeOpening = isOpening;
+    }
+
+    public boolean isShadeOpening() {
+        return mIsShadeOpening;
+    }
+
     private static int getZDistanceBetweenElements(Context context) {
         return Math.max(1, context.getResources()
                 .getDimensionPixelSize(R.dimen.z_distance_between_notifications));
     }
 
     private static int getBaseHeight(int zdistanceBetweenElements) {
-        return 4 * zdistanceBetweenElements;
+        return NOTIFICATIONS_HAVE_SHADOWS ? 4 * zdistanceBetweenElements : 0;
     }
 
     /**
@@ -138,40 +142,6 @@ public class AmbientState {
 
     public void setScrollY(int scrollY) {
         this.mScrollY = scrollY;
-    }
-
-    /**
-     * Index of the child view whose Y position on screen is returned by {@link #getAnchorViewY()}.
-     * Other views are laid out outwards from this view in both directions.
-     */
-    public int getAnchorViewIndex() {
-        return mAnchorViewIndex;
-    }
-
-    public void setAnchorViewIndex(int anchorViewIndex) {
-        mAnchorViewIndex = anchorViewIndex;
-    }
-
-    /** Current Y position of the view at {@link #getAnchorViewIndex()}. */
-    public int getAnchorViewY() {
-        return mAnchorViewY;
-    }
-
-    public void setAnchorViewY(int anchorViewY) {
-        mAnchorViewY = anchorViewY;
-    }
-
-    /** Call when dragging begins. */
-    public void onBeginDrag(View view) {
-        mDraggedViews.add(view);
-    }
-
-    public void onDragFinished(View view) {
-        mDraggedViews.remove(view);
-    }
-
-    public ArrayList<View> getDraggedViews() {
-        return mDraggedViews;
     }
 
     /**

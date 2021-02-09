@@ -40,14 +40,14 @@ import android.util.ArraySet;
 import android.util.IndentingPrintWriter;
 import android.util.Log;
 import android.util.Slog;
+import android.util.TypedXmlPullParser;
+import android.util.TypedXmlSerializer;
 
 import com.android.internal.util.Preconditions;
 import com.android.internal.util.XmlUtils;
 import com.android.server.pm.UserRestrictionsUtils;
 
-import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlSerializer;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -98,6 +98,8 @@ class ActiveAdmin {
     private static final String TAG_PASSWORD_HISTORY_LENGTH = "password-history-length";
     private static final String TAG_MIN_PASSWORD_LENGTH = "min-password-length";
     private static final String TAG_PASSWORD_QUALITY = "password-quality";
+    private static final String TAG_PASSWORD_QUALITY_APPLIES_TO_PARENT =
+            "password-quality-applies-parent";
     private static final String TAG_POLICIES = "policies";
     private static final String TAG_CROSS_PROFILE_WIDGET_PROVIDERS =
             "cross-profile-widget-providers";
@@ -132,6 +134,8 @@ class ActiveAdmin {
     private static final String TAG_ALWAYS_ON_VPN_LOCKDOWN = "vpn-lockdown";
     private static final String TAG_COMMON_CRITERIA_MODE = "common-criteria-mode";
     private static final String TAG_PASSWORD_COMPLEXITY = "password-complexity";
+    private static final String TAG_ORGANIZATION_ID = "organization-id";
+    private static final String TAG_ENROLLMENT_SPECIFIC_ID = "enrollment-specific-id";
     private static final String ATTR_VALUE = "value";
     private static final String ATTR_LAST_NETWORK_LOGGING_NOTIFICATION = "last-notification";
     private static final String ATTR_NUM_NETWORK_LOGGING_NOTIFICATIONS = "num-notifications";
@@ -143,6 +147,7 @@ class ActiveAdmin {
 
     @NonNull
     PasswordPolicy mPasswordPolicy = new PasswordPolicy();
+    boolean mPasswordPolicyAppliesToParent = true;
 
     @DevicePolicyManager.PasswordComplexity
     int mPasswordComplexity = PASSWORD_COMPLEXITY_NONE;
@@ -270,6 +275,8 @@ class ActiveAdmin {
     public String mAlwaysOnVpnPackage;
     public boolean mAlwaysOnVpnLockdown;
     boolean mCommonCriteriaMode;
+    public String mOrganizationId;
+    public String mEnrollmentSpecificId;
 
     ActiveAdmin(DeviceAdminInfo info, boolean isParent) {
         this.info = info;
@@ -297,7 +304,7 @@ class ActiveAdmin {
         return UserHandle.of(UserHandle.getUserId(info.getActivityInfo().applicationInfo.uid));
     }
 
-    void writeToXml(XmlSerializer out)
+    void writeToXml(TypedXmlSerializer out)
             throws IllegalArgumentException, IllegalStateException, IOException {
         out.startTag(null, TAG_POLICIES);
         info.writePoliciesToXml(out);
@@ -333,6 +340,9 @@ class ActiveAdmin {
                 writeAttributeValueToXml(
                         out, TAG_MIN_PASSWORD_NONLETTER, mPasswordPolicy.nonLetter);
             }
+
+            writeAttributeValueToXml(out, TAG_PASSWORD_QUALITY_APPLIES_TO_PARENT,
+                    mPasswordPolicyAppliesToParent);
         }
         if (passwordHistoryLength != DEF_PASSWORD_HISTORY_LENGTH) {
             writeAttributeValueToXml(
@@ -407,11 +417,11 @@ class ActiveAdmin {
         }
         if (isNetworkLoggingEnabled) {
             out.startTag(null, TAG_IS_NETWORK_LOGGING_ENABLED);
-            out.attribute(null, ATTR_VALUE, Boolean.toString(isNetworkLoggingEnabled));
-            out.attribute(null, ATTR_NUM_NETWORK_LOGGING_NOTIFICATIONS,
-                    Integer.toString(numNetworkLoggingNotifications));
-            out.attribute(null, ATTR_LAST_NETWORK_LOGGING_NOTIFICATION,
-                    Long.toString(lastNetworkLoggingNotificationTimeMs));
+            out.attributeBoolean(null, ATTR_VALUE, isNetworkLoggingEnabled);
+            out.attributeInt(null, ATTR_NUM_NETWORK_LOGGING_NOTIFICATIONS,
+                    numNetworkLoggingNotifications);
+            out.attributeLong(null, ATTR_LAST_NETWORK_LOGGING_NOTIFICATION,
+                    lastNetworkLoggingNotificationTimeMs);
             out.endTag(null, TAG_IS_NETWORK_LOGGING_ENABLED);
         }
         if (disabledKeyguardFeatures != DEF_KEYGUARD_FEATURES_DISABLED) {
@@ -527,15 +537,21 @@ class ActiveAdmin {
         if (mPasswordComplexity != PASSWORD_COMPLEXITY_NONE) {
             writeAttributeValueToXml(out, TAG_PASSWORD_COMPLEXITY, mPasswordComplexity);
         }
+        if (!TextUtils.isEmpty(mOrganizationId)) {
+            writeTextToXml(out, TAG_ORGANIZATION_ID, mOrganizationId);
+        }
+        if (!TextUtils.isEmpty(mEnrollmentSpecificId)) {
+            writeTextToXml(out, TAG_ENROLLMENT_SPECIFIC_ID, mEnrollmentSpecificId);
+        }
     }
 
-    void writeTextToXml(XmlSerializer out, String tag, String text) throws IOException {
+    void writeTextToXml(TypedXmlSerializer out, String tag, String text) throws IOException {
         out.startTag(null, tag);
         out.text(text);
         out.endTag(null, tag);
     }
 
-    void writePackageListToXml(XmlSerializer out, String outerTag,
+    void writePackageListToXml(TypedXmlSerializer out, String outerTag,
             List<String> packageList)
             throws IllegalArgumentException, IllegalStateException, IOException {
         if (packageList == null) {
@@ -544,35 +560,35 @@ class ActiveAdmin {
         writeAttributeValuesToXml(out, outerTag, TAG_PACKAGE_LIST_ITEM, packageList);
     }
 
-    void writeAttributeValueToXml(XmlSerializer out, String tag, String value)
+    void writeAttributeValueToXml(TypedXmlSerializer out, String tag, String value)
             throws IOException {
         out.startTag(null, tag);
         out.attribute(null, ATTR_VALUE, value);
         out.endTag(null, tag);
     }
 
-    void writeAttributeValueToXml(XmlSerializer out, String tag, int value)
+    void writeAttributeValueToXml(TypedXmlSerializer out, String tag, int value)
             throws IOException {
         out.startTag(null, tag);
-        out.attribute(null, ATTR_VALUE, Integer.toString(value));
+        out.attributeInt(null, ATTR_VALUE, value);
         out.endTag(null, tag);
     }
 
-    void writeAttributeValueToXml(XmlSerializer out, String tag, long value)
+    void writeAttributeValueToXml(TypedXmlSerializer out, String tag, long value)
             throws IOException {
         out.startTag(null, tag);
-        out.attribute(null, ATTR_VALUE, Long.toString(value));
+        out.attributeLong(null, ATTR_VALUE, value);
         out.endTag(null, tag);
     }
 
-    void writeAttributeValueToXml(XmlSerializer out, String tag, boolean value)
+    void writeAttributeValueToXml(TypedXmlSerializer out, String tag, boolean value)
             throws IOException {
         out.startTag(null, tag);
-        out.attribute(null, ATTR_VALUE, Boolean.toString(value));
+        out.attributeBoolean(null, ATTR_VALUE, value);
         out.endTag(null, tag);
     }
 
-    void writeAttributeValuesToXml(XmlSerializer out, String outerTag, String innerTag,
+    void writeAttributeValuesToXml(TypedXmlSerializer out, String outerTag, String innerTag,
             @NonNull Collection<String> values) throws IOException {
         out.startTag(null, outerTag);
         for (String value : values) {
@@ -583,7 +599,7 @@ class ActiveAdmin {
         out.endTag(null, outerTag);
     }
 
-    void readFromXml(XmlPullParser parser, boolean shouldOverridePolicies)
+    void readFromXml(TypedXmlPullParser parser, boolean shouldOverridePolicies)
             throws XmlPullParserException, IOException {
         int outerDepth = parser.getDepth();
         int type;
@@ -600,44 +616,33 @@ class ActiveAdmin {
                     info.readPoliciesFromXml(parser);
                 }
             } else if (TAG_PASSWORD_QUALITY.equals(tag)) {
-                mPasswordPolicy.quality = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                mPasswordPolicy.quality = parser.getAttributeInt(null, ATTR_VALUE);
             } else if (TAG_MIN_PASSWORD_LENGTH.equals(tag)) {
-                mPasswordPolicy.length = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                mPasswordPolicy.length = parser.getAttributeInt(null, ATTR_VALUE);
             } else if (TAG_PASSWORD_HISTORY_LENGTH.equals(tag)) {
-                passwordHistoryLength = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                passwordHistoryLength = parser.getAttributeInt(null, ATTR_VALUE);
             } else if (TAG_MIN_PASSWORD_UPPERCASE.equals(tag)) {
-                mPasswordPolicy.upperCase = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                mPasswordPolicy.upperCase = parser.getAttributeInt(null, ATTR_VALUE);
             } else if (TAG_MIN_PASSWORD_LOWERCASE.equals(tag)) {
-                mPasswordPolicy.lowerCase = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                mPasswordPolicy.lowerCase = parser.getAttributeInt(null, ATTR_VALUE);
             } else if (TAG_MIN_PASSWORD_LETTERS.equals(tag)) {
-                mPasswordPolicy.letters = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                mPasswordPolicy.letters = parser.getAttributeInt(null, ATTR_VALUE);
             } else if (TAG_MIN_PASSWORD_NUMERIC.equals(tag)) {
-                mPasswordPolicy.numeric = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                mPasswordPolicy.numeric = parser.getAttributeInt(null, ATTR_VALUE);
             } else if (TAG_MIN_PASSWORD_SYMBOLS.equals(tag)) {
-                mPasswordPolicy.symbols = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                mPasswordPolicy.symbols = parser.getAttributeInt(null, ATTR_VALUE);
             } else if (TAG_MIN_PASSWORD_NONLETTER.equals(tag)) {
-                mPasswordPolicy.nonLetter = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                mPasswordPolicy.nonLetter = parser.getAttributeInt(null, ATTR_VALUE);
+            } else if (TAG_PASSWORD_QUALITY_APPLIES_TO_PARENT.equals(tag)) {
+                mPasswordPolicyAppliesToParent = parser.getAttributeBoolean(null, ATTR_VALUE);
             } else if (TAG_MAX_TIME_TO_UNLOCK.equals(tag)) {
-                maximumTimeToUnlock = Long.parseLong(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                maximumTimeToUnlock = parser.getAttributeLong(null, ATTR_VALUE);
             } else if (TAG_STRONG_AUTH_UNLOCK_TIMEOUT.equals(tag)) {
-                strongAuthUnlockTimeout = Long.parseLong(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                strongAuthUnlockTimeout = parser.getAttributeLong(null, ATTR_VALUE);
             } else if (TAG_MAX_FAILED_PASSWORD_WIPE.equals(tag)) {
-                maximumFailedPasswordsForWipe = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                maximumFailedPasswordsForWipe = parser.getAttributeInt(null, ATTR_VALUE);
             } else if (TAG_SPECIFIES_GLOBAL_PROXY.equals(tag)) {
-                specifiesGlobalProxy = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                specifiesGlobalProxy = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_GLOBAL_PROXY_SPEC.equals(tag)) {
                 globalProxySpec =
                     parser.getAttributeValue(null, ATTR_VALUE);
@@ -645,48 +650,36 @@ class ActiveAdmin {
                 globalProxyExclusionList =
                     parser.getAttributeValue(null, ATTR_VALUE);
             } else if (TAG_PASSWORD_EXPIRATION_TIMEOUT.equals(tag)) {
-                passwordExpirationTimeout = Long.parseLong(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                passwordExpirationTimeout = parser.getAttributeLong(null, ATTR_VALUE);
             } else if (TAG_PASSWORD_EXPIRATION_DATE.equals(tag)) {
-                passwordExpirationDate = Long.parseLong(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                passwordExpirationDate = parser.getAttributeLong(null, ATTR_VALUE);
             } else if (TAG_ENCRYPTION_REQUESTED.equals(tag)) {
-                encryptionRequested = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                encryptionRequested = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_TEST_ONLY_ADMIN.equals(tag)) {
-                testOnlyAdmin = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                testOnlyAdmin = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_DISABLE_CAMERA.equals(tag)) {
-                disableCamera = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                disableCamera = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_DISABLE_CALLER_ID.equals(tag)) {
-                disableCallerId = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                disableCallerId = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_DISABLE_CONTACTS_SEARCH.equals(tag)) {
-                disableContactsSearch = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                disableContactsSearch = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_DISABLE_BLUETOOTH_CONTACT_SHARING.equals(tag)) {
-                disableBluetoothContactSharing = Boolean.parseBoolean(parser
-                        .getAttributeValue(null, ATTR_VALUE));
+                disableBluetoothContactSharing =
+                        parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_DISABLE_SCREEN_CAPTURE.equals(tag)) {
-                disableScreenCapture = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                disableScreenCapture = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_REQUIRE_AUTO_TIME.equals(tag)) {
-                requireAutoTime = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                requireAutoTime = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_FORCE_EPHEMERAL_USERS.equals(tag)) {
-                forceEphemeralUsers = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                forceEphemeralUsers = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_IS_NETWORK_LOGGING_ENABLED.equals(tag)) {
-                isNetworkLoggingEnabled = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
-                lastNetworkLoggingNotificationTimeMs = Long.parseLong(
-                        parser.getAttributeValue(null, ATTR_LAST_NETWORK_LOGGING_NOTIFICATION));
-                numNetworkLoggingNotifications = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_NUM_NETWORK_LOGGING_NOTIFICATIONS));
+                isNetworkLoggingEnabled = parser.getAttributeBoolean(null, ATTR_VALUE, false);
+                lastNetworkLoggingNotificationTimeMs = parser.getAttributeLong(null,
+                        ATTR_LAST_NETWORK_LOGGING_NOTIFICATION);
+                numNetworkLoggingNotifications = parser.getAttributeInt(null,
+                        ATTR_NUM_NETWORK_LOGGING_NOTIFICATIONS);
             } else if (TAG_DISABLE_KEYGUARD_FEATURES.equals(tag)) {
-                disabledKeyguardFeatures = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                disabledKeyguardFeatures = parser.getAttributeInt(null, ATTR_VALUE);
             } else if (TAG_DISABLE_ACCOUNT_MANAGEMENT.equals(tag)) {
                 readAttributeValues(
                         parser, TAG_ACCOUNT_TYPE, accountTypesWithManagementDisabled);
@@ -712,7 +705,7 @@ class ActiveAdmin {
                         parser, TAG_RESTRICTION, defaultEnabledRestrictionsAlreadySet);
             } else if (TAG_SHORT_SUPPORT_MESSAGE.equals(tag)) {
                 type = parser.next();
-                if (type == XmlPullParser.TEXT) {
+                if (type == TypedXmlPullParser.TEXT) {
                     shortSupportMessage = parser.getText();
                 } else {
                     Log.w(DevicePolicyManagerService.LOG_TAG,
@@ -720,7 +713,7 @@ class ActiveAdmin {
                 }
             } else if (TAG_LONG_SUPPORT_MESSAGE.equals(tag)) {
                 type = parser.next();
-                if (type == XmlPullParser.TEXT) {
+                if (type == TypedXmlPullParser.TEXT) {
                     longSupportMessage = parser.getText();
                 } else {
                     Log.w(DevicePolicyManagerService.LOG_TAG,
@@ -731,22 +724,20 @@ class ActiveAdmin {
                 parentAdmin = new ActiveAdmin(info, /* parent */ true);
                 parentAdmin.readFromXml(parser, shouldOverridePolicies);
             } else if (TAG_ORGANIZATION_COLOR.equals(tag)) {
-                organizationColor = Integer.parseInt(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                organizationColor = parser.getAttributeInt(null, ATTR_VALUE);
             } else if (TAG_ORGANIZATION_NAME.equals(tag)) {
                 type = parser.next();
-                if (type == XmlPullParser.TEXT) {
+                if (type == TypedXmlPullParser.TEXT) {
                     organizationName = parser.getText();
                 } else {
                     Log.w(DevicePolicyManagerService.LOG_TAG,
                             "Missing text when loading organization name");
                 }
             } else if (TAG_IS_LOGOUT_ENABLED.equals(tag)) {
-                isLogoutEnabled = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                isLogoutEnabled = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_START_USER_SESSION_MESSAGE.equals(tag)) {
                 type = parser.next();
-                if (type == XmlPullParser.TEXT) {
+                if (type == TypedXmlPullParser.TEXT) {
                     startUserSessionMessage = parser.getText();
                 } else {
                     Log.w(DevicePolicyManagerService.LOG_TAG,
@@ -754,7 +745,7 @@ class ActiveAdmin {
                 }
             } else if (TAG_END_USER_SESSION_MESSAGE.equals(tag)) {
                 type = parser.next();
-                if (type == XmlPullParser.TEXT) {
+                if (type == TypedXmlPullParser.TEXT) {
                     endUserSessionMessage = parser.getText();
                 } else {
                     Log.w(DevicePolicyManagerService.LOG_TAG,
@@ -770,24 +761,37 @@ class ActiveAdmin {
                 mFactoryResetProtectionPolicy = FactoryResetProtectionPolicy.readFromXml(
                             parser);
             } else if (TAG_SUSPEND_PERSONAL_APPS.equals(tag)) {
-                mSuspendPersonalApps = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                mSuspendPersonalApps = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_PROFILE_MAXIMUM_TIME_OFF.equals(tag)) {
                 mProfileMaximumTimeOffMillis =
-                        Long.parseLong(parser.getAttributeValue(null, ATTR_VALUE));
+                        parser.getAttributeLong(null, ATTR_VALUE);
             } else if (TAG_PROFILE_OFF_DEADLINE.equals(tag)) {
                 mProfileOffDeadline =
-                        Long.parseLong(parser.getAttributeValue(null, ATTR_VALUE));
+                        parser.getAttributeLong(null, ATTR_VALUE);
             } else if (TAG_ALWAYS_ON_VPN_PACKAGE.equals(tag)) {
                 mAlwaysOnVpnPackage = parser.getAttributeValue(null, ATTR_VALUE);
             } else if (TAG_ALWAYS_ON_VPN_LOCKDOWN.equals(tag)) {
-                mAlwaysOnVpnLockdown = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                mAlwaysOnVpnLockdown = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_COMMON_CRITERIA_MODE.equals(tag)) {
-                mCommonCriteriaMode = Boolean.parseBoolean(
-                        parser.getAttributeValue(null, ATTR_VALUE));
+                mCommonCriteriaMode = parser.getAttributeBoolean(null, ATTR_VALUE, false);
             } else if (TAG_PASSWORD_COMPLEXITY.equals(tag)) {
-                mPasswordComplexity = Integer.parseInt(parser.getAttributeValue(null, ATTR_VALUE));
+                mPasswordComplexity = parser.getAttributeInt(null, ATTR_VALUE);
+            } else if (TAG_ORGANIZATION_ID.equals(tag)) {
+                type = parser.next();
+                if (type == TypedXmlPullParser.TEXT) {
+                    mOrganizationId = parser.getText();
+                } else {
+                    Log.w(DevicePolicyManagerService.LOG_TAG,
+                            "Missing Organization ID.");
+                }
+            } else if (TAG_ENROLLMENT_SPECIFIC_ID.equals(tag)) {
+                type = parser.next();
+                if (type == TypedXmlPullParser.TEXT) {
+                    mEnrollmentSpecificId = parser.getText();
+                } else {
+                    Log.w(DevicePolicyManagerService.LOG_TAG,
+                            "Missing Enrollment-specific ID.");
+                }
             } else {
                 Slog.w(DevicePolicyManagerService.LOG_TAG, "Unknown admin tag: " + tag);
                 XmlUtils.skipCurrentTag(parser);
@@ -795,14 +799,14 @@ class ActiveAdmin {
         }
     }
 
-    private List<String> readPackageList(XmlPullParser parser,
+    private List<String> readPackageList(TypedXmlPullParser parser,
             String tag) throws XmlPullParserException, IOException {
         List<String> result = new ArrayList<String>();
         int outerDepth = parser.getDepth();
         int outerType;
-        while ((outerType = parser.next()) != XmlPullParser.END_DOCUMENT
-                && (outerType != XmlPullParser.END_TAG || parser.getDepth() > outerDepth)) {
-            if (outerType == XmlPullParser.END_TAG || outerType == XmlPullParser.TEXT) {
+        while ((outerType = parser.next()) != TypedXmlPullParser.END_DOCUMENT
+                && (outerType != TypedXmlPullParser.END_TAG || parser.getDepth() > outerDepth)) {
+            if (outerType == TypedXmlPullParser.END_TAG || outerType == TypedXmlPullParser.TEXT) {
                 continue;
             }
             String outerTag = parser.getName();
@@ -823,7 +827,7 @@ class ActiveAdmin {
     }
 
     private void readAttributeValues(
-            XmlPullParser parser, String tag, Collection<String> result)
+            TypedXmlPullParser parser, String tag, Collection<String> result)
             throws XmlPullParserException, IOException {
         result.clear();
         int outerDepthDAM = parser.getDepth();
@@ -845,7 +849,7 @@ class ActiveAdmin {
 
     @NonNull
     private ArrayMap<String, TrustAgentInfo> getAllTrustAgentInfos(
-            XmlPullParser parser, String tag) throws XmlPullParserException, IOException {
+            TypedXmlPullParser parser, String tag) throws XmlPullParserException, IOException {
         int outerDepthDAM = parser.getDepth();
         int typeDAM;
         final ArrayMap<String, TrustAgentInfo> result = new ArrayMap<>();
@@ -867,7 +871,7 @@ class ActiveAdmin {
         return result;
     }
 
-    private TrustAgentInfo getTrustAgentInfo(XmlPullParser parser, String tag)
+    private TrustAgentInfo getTrustAgentInfo(TypedXmlPullParser parser, String tag)
             throws XmlPullParserException, IOException  {
         int outerDepthDAM = parser.getDepth();
         int typeDAM;
@@ -994,6 +998,9 @@ class ActiveAdmin {
 
         pw.print("minimumPasswordNonLetter=");
         pw.println(mPasswordPolicy.nonLetter);
+
+        pw.print("passwordPolicyAppliesToParent=");
+        pw.println(mPasswordPolicyAppliesToParent);
 
         pw.print("maximumTimeToUnlock=");
         pw.println(maximumTimeToUnlock);
@@ -1126,5 +1133,15 @@ class ActiveAdmin {
 
         pw.print("mPasswordComplexity=");
         pw.println(mPasswordComplexity);
+
+        if (!TextUtils.isEmpty(mOrganizationId)) {
+            pw.print("mOrganizationId=");
+            pw.println(mOrganizationId);
+        }
+
+        if (!TextUtils.isEmpty(mEnrollmentSpecificId)) {
+            pw.print("mEnrollmentSpecificId=");
+            pw.println(mEnrollmentSpecificId);
+        }
     }
 }

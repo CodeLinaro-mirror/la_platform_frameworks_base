@@ -27,15 +27,17 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Point;
-import android.graphics.Rect;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.RemoteException;
 import android.util.Log;
+import android.window.TaskSnapshot;
 import android.window.WindowContainerToken;
 
 import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
 /**
  * Stores information about a particular Task.
@@ -186,14 +188,6 @@ public class TaskInfo {
     public boolean isResizeable;
 
     /**
-     * Activity bounds if this task or its top activity is presented in letterbox mode and
-     * {@code null} otherwise.
-     * @hide
-     */
-    @Nullable
-    public Rect letterboxActivityBounds;
-
-    /**
      * Relative position of the task's top left corner in the parent container.
      * @hide
      */
@@ -213,6 +207,18 @@ public class TaskInfo {
      */
     public int parentTaskId;
 
+    /**
+     * Whether this task is focused.
+     * @hide
+     */
+    public boolean isFocused;
+
+    /**
+     * Whether this task is visible.
+     * @hide
+     */
+    public boolean isVisible;
+
     TaskInfo() {
         // Do nothing
     }
@@ -226,9 +232,9 @@ public class TaskInfo {
      * @return
      * @hide
      */
-    public ActivityManager.TaskSnapshot getTaskSnapshot(boolean isLowResolution) {
+    public TaskSnapshot getTaskSnapshot(boolean isLowResolution) {
         try {
-            return ActivityManager.getService().getTaskSnapshot(taskId, isLowResolution);
+            return ActivityTaskManager.getService().getTaskSnapshot(taskId, isLowResolution);
         } catch (RemoteException e) {
             Log.e(TAG, "Failed to get task snapshot, taskId=" + taskId, e);
             return null;
@@ -274,10 +280,48 @@ public class TaskInfo {
         launchCookies.add(cookie);
     }
 
+    /**
+     * @return {@code true} if this task contains the launch cookie.
+     * @hide
+     */
+    @TestApi
+    public boolean containsLaunchCookie(@NonNull IBinder cookie) {
+        return launchCookies.contains(cookie);
+    }
+
+    /**
+     * @return The parent task id of this task.
+     * @hide
+     */
+    @TestApi
+    public int getParentTaskId() {
+        return parentTaskId;
+    }
+
     /** @hide */
     @TestApi
     public boolean hasParentTask() {
         return parentTaskId != INVALID_TASK_ID;
+    }
+
+    /**
+      * Returns {@code true} if parameters that are important for task organizers have changed
+      * and {@link com.android.server.wm.TaskOrginizerController} needs to notify listeners
+      * about that.
+      * @hide
+      */
+    public boolean equalsForTaskOrganizer(@Nullable TaskInfo that) {
+        if (that == null) {
+            return false;
+        }
+        return topActivityType == that.topActivityType
+                && isResizeable == that.isResizeable
+                && Objects.equals(positionInParent, that.positionInParent)
+                && Objects.equals(pictureInPictureParams, that.pictureInPictureParams)
+                && getWindowingMode() == that.getWindowingMode()
+                && Objects.equals(taskDescription, that.taskDescription)
+                && isFocused == that.isFocused
+                && isVisible == that.isVisible;
     }
 
     /**
@@ -308,9 +352,10 @@ public class TaskInfo {
         topActivityInfo = source.readTypedObject(ActivityInfo.CREATOR);
         isResizeable = source.readBoolean();
         source.readBinderList(launchCookies);
-        letterboxActivityBounds = source.readTypedObject(Rect.CREATOR);
         positionInParent = source.readTypedObject(Point.CREATOR);
         parentTaskId = source.readInt();
+        isFocused = source.readBoolean();
+        isVisible = source.readBoolean();
     }
 
     /**
@@ -342,9 +387,10 @@ public class TaskInfo {
         dest.writeTypedObject(topActivityInfo, flags);
         dest.writeBoolean(isResizeable);
         dest.writeBinderList(launchCookies);
-        dest.writeTypedObject(letterboxActivityBounds, flags);
         dest.writeTypedObject(positionInParent, flags);
         dest.writeInt(parentTaskId);
+        dest.writeBoolean(isFocused);
+        dest.writeBoolean(isVisible);
     }
 
     @Override
@@ -364,10 +410,11 @@ public class TaskInfo {
                 + " topActivityType=" + topActivityType
                 + " pictureInPictureParams=" + pictureInPictureParams
                 + " topActivityInfo=" + topActivityInfo
-                + " launchCookies" + launchCookies
-                + " letterboxActivityBounds=" + letterboxActivityBounds
+                + " launchCookies=" + launchCookies
                 + " positionInParent=" + positionInParent
-                + " parentTaskId: " + parentTaskId
+                + " parentTaskId=" + parentTaskId
+                + " isFocused=" + isFocused
+                + " isVisible=" + isVisible
                 + "}";
     }
 }

@@ -31,6 +31,8 @@ import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
 import android.annotation.TestApi;
+import android.compat.annotation.ChangeId;
+import android.compat.annotation.EnabledSince;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
 import android.content.Context;
@@ -42,18 +44,13 @@ import android.content.pm.IPackageDataObserver;
 import android.content.pm.PackageManager;
 import android.content.pm.ParceledListSlice;
 import android.content.pm.UserInfo;
-import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.ColorSpace;
-import android.graphics.GraphicBuffer;
 import android.graphics.Matrix;
 import android.graphics.Point;
-import android.graphics.Rect;
 import android.graphics.drawable.Icon;
-import android.hardware.HardwareBuffer;
 import android.os.BatteryStats;
 import android.os.Binder;
 import android.os.Build;
@@ -77,7 +74,8 @@ import android.util.ArrayMap;
 import android.util.DisplayMetrics;
 import android.util.Singleton;
 import android.util.Size;
-import android.view.Surface;
+import android.util.TypedXmlPullParser;
+import android.util.TypedXmlSerializer;
 
 import com.android.internal.app.LocalePicker;
 import com.android.internal.app.procstats.ProcessStats;
@@ -87,9 +85,6 @@ import com.android.internal.util.FastPrintWriter;
 import com.android.internal.util.MemInfoReader;
 import com.android.internal.util.Preconditions;
 import com.android.server.LocalServices;
-
-import org.xmlpull.v1.XmlPullParser;
-import org.xmlpull.v1.XmlSerializer;
 
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
@@ -322,8 +317,8 @@ public class ActivityManager {
     public static final int START_RETURN_INTENT_TO_CALLER = FIRST_START_SUCCESS_CODE + 1;
 
     /**
-     * Result for IActivityManaqer.startActivity: activity wasn't really started, but
-     * a task was simply brought to the foreground.
+     * Result for IActivityManaqer.startActivity: activity was started or brought forward in an
+     * existing task which was brought to the foreground.
      * @hide
      */
     public static final int START_TASK_TO_FRONT = FIRST_START_SUCCESS_CODE + 2;
@@ -866,6 +861,37 @@ public class ActivityManager {
 
     private static final boolean DEVELOPMENT_FORCE_LOW_RAM =
             SystemProperties.getBoolean("debug.force_low_ram", false);
+
+    /**
+     * Intent {@link Intent#ACTION_CLOSE_SYSTEM_DIALOGS} is too powerful to be unrestricted. We
+     * restrict its usage for a few legitimate use-cases only, regardless of targetSdk. For the
+     * other use-cases we drop the intent with a log message.
+     *
+     * Note that this is the lighter version of {@link ActivityManager
+     * #LOCK_DOWN_CLOSE_SYSTEM_DIALOGS} which is not gated on targetSdk in order to eliminate the
+     * abuse vector.
+     *
+     * @hide
+     */
+    @TestApi
+    @ChangeId
+    public static final long DROP_CLOSE_SYSTEM_DIALOGS = 174664120L;
+
+    /**
+     * Intent {@link Intent#ACTION_CLOSE_SYSTEM_DIALOGS} is too powerful to be unrestricted. So,
+     * apps targeting {@link Build.VERSION_CODES#S} or higher will crash if they try to send such
+     * intent and don't have permission {@code android.permission.BROADCAST_CLOSE_SYSTEM_DIALOGS}.
+     *
+     * Note that this is the more restrict version of {@link ActivityManager
+     * #DROP_CLOSE_SYSTEM_DIALOGS} that expects the app to stop sending aforementioned intent once
+     * it bumps its targetSdk to {@link Build.VERSION_CODES#S} or higher.
+     *
+     * @hide
+     */
+    @TestApi
+    @ChangeId
+    @EnabledSince(targetSdkVersion = VERSION_CODES.S)
+    public static final long LOCK_DOWN_CLOSE_SYSTEM_DIALOGS = 174664365L;
 
     /** @hide */
     public int getFrontActivityScreenCompatMode() {
@@ -1501,57 +1527,54 @@ public class ActivityManager {
         }
 
         /** @hide */
-        public void saveToXml(XmlSerializer out) throws IOException {
+        public void saveToXml(TypedXmlSerializer out) throws IOException {
             if (mLabel != null) {
                 out.attribute(null, ATTR_TASKDESCRIPTIONLABEL, mLabel);
             }
             if (mColorPrimary != 0) {
-                out.attribute(null, ATTR_TASKDESCRIPTIONCOLOR_PRIMARY,
-                        Integer.toHexString(mColorPrimary));
+                out.attributeIntHex(null, ATTR_TASKDESCRIPTIONCOLOR_PRIMARY, mColorPrimary);
             }
             if (mColorBackground != 0) {
-                out.attribute(null, ATTR_TASKDESCRIPTIONCOLOR_BACKGROUND,
-                        Integer.toHexString(mColorBackground));
+                out.attributeIntHex(null, ATTR_TASKDESCRIPTIONCOLOR_BACKGROUND, mColorBackground);
             }
             if (mIconFilename != null) {
                 out.attribute(null, ATTR_TASKDESCRIPTIONICON_FILENAME, mIconFilename);
             }
             if (mIcon != null && mIcon.getType() == Icon.TYPE_RESOURCE) {
-                out.attribute(null, ATTR_TASKDESCRIPTIONICON_RESOURCE,
-                        Integer.toString(mIcon.getResId()));
+                out.attributeInt(null, ATTR_TASKDESCRIPTIONICON_RESOURCE, mIcon.getResId());
                 out.attribute(null, ATTR_TASKDESCRIPTIONICON_RESOURCE_PACKAGE,
                         mIcon.getResPackage());
             }
         }
 
         /** @hide */
-        public void restoreFromXml(XmlPullParser in) {
+        public void restoreFromXml(TypedXmlPullParser in) {
             final String label = in.getAttributeValue(null, ATTR_TASKDESCRIPTIONLABEL);
             if (label != null) {
                 setLabel(label);
             }
-            final String colorPrimary = in.getAttributeValue(null,
-                    ATTR_TASKDESCRIPTIONCOLOR_PRIMARY);
-            if (colorPrimary != null) {
-                setPrimaryColor((int) Long.parseLong(colorPrimary, 16));
+            final int colorPrimary = in.getAttributeIntHex(null,
+                    ATTR_TASKDESCRIPTIONCOLOR_PRIMARY, 0);
+            if (colorPrimary != 0) {
+                setPrimaryColor(colorPrimary);
             }
-            final String colorBackground = in.getAttributeValue(null,
-                    ATTR_TASKDESCRIPTIONCOLOR_BACKGROUND);
-            if (colorBackground != null) {
-                setBackgroundColor((int) Long.parseLong(colorBackground, 16));
+            final int colorBackground = in.getAttributeIntHex(null,
+                    ATTR_TASKDESCRIPTIONCOLOR_BACKGROUND, 0);
+            if (colorBackground != 0) {
+                setBackgroundColor(colorBackground);
             }
             final String iconFilename = in.getAttributeValue(null,
                     ATTR_TASKDESCRIPTIONICON_FILENAME);
             if (iconFilename != null) {
                 setIconFilename(iconFilename);
             }
-            final String iconResourceId = in.getAttributeValue(null,
-                    ATTR_TASKDESCRIPTIONICON_RESOURCE);
+            final int iconResourceId = in.getAttributeInt(null,
+                    ATTR_TASKDESCRIPTIONICON_RESOURCE, Resources.ID_NULL);
             final String iconResourcePackage = in.getAttributeValue(null,
                     ATTR_TASKDESCRIPTIONICON_RESOURCE_PACKAGE);
-            if (iconResourceId != null && iconResourcePackage != null) {
+            if (iconResourceId != Resources.ID_NULL && iconResourcePackage != null) {
                 setIcon(Icon.createWithResource(iconResourcePackage,
-                        Integer.parseInt(iconResourceId, 10)));
+                        iconResourceId));
             }
         }
 
@@ -1853,16 +1876,12 @@ public class ActivityManager {
      * the recent tasks.
      */
     @Deprecated
-    public List<RecentTaskInfo> getRecentTasks(int maxNum, int flags)
-            throws SecurityException {
-        try {
-            if (maxNum < 0) {
-                throw new IllegalArgumentException("The requested number of tasks should be >= 0");
-            }
-            return getTaskService().getRecentTasks(maxNum, flags, mContext.getUserId()).getList();
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+    public List<RecentTaskInfo> getRecentTasks(int maxNum, int flags) throws SecurityException {
+        if (maxNum < 0) {
+            throw new IllegalArgumentException("The requested number of tasks should be >= 0");
         }
+        return ActivityTaskManager.getInstance().getRecentTasks(
+                maxNum, flags, mContext.getUserId());
     }
 
     /**
@@ -2083,356 +2102,7 @@ public class ActivityManager {
     @Deprecated
     public List<RunningTaskInfo> getRunningTasks(int maxNum)
             throws SecurityException {
-        try {
-            return getTaskService().getTasks(maxNum);
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
-    }
-
-    /**
-     * Represents a task snapshot.
-     * @hide
-     */
-    public static class TaskSnapshot implements Parcelable {
-        // Identifier of this snapshot
-        private final long mId;
-        // Top activity in task when snapshot was taken
-        private final ComponentName mTopActivityComponent;
-        private final HardwareBuffer mSnapshot;
-        /** Indicates whether task was in landscape or portrait */
-        @Configuration.Orientation
-        private final int mOrientation;
-        /** See {@link android.view.Surface.Rotation} */
-        @Surface.Rotation
-        private int mRotation;
-        /** The size of the snapshot before scaling */
-        private final Point mTaskSize;
-        private final Rect mContentInsets;
-        // Whether this snapshot is a down-sampled version of the high resolution snapshot, used
-        // mainly for loading snapshots quickly from disk when user is flinging fast
-        private final boolean mIsLowResolution;
-        // Whether or not the snapshot is a real snapshot or an app-theme generated snapshot due to
-        // the task having a secure window or having previews disabled
-        private final boolean mIsRealSnapshot;
-        private final int mWindowingMode;
-        private final int mSystemUiVisibility;
-        private final boolean mIsTranslucent;
-        // Must be one of the named color spaces, otherwise, always use SRGB color space.
-        private final ColorSpace mColorSpace;
-
-        public TaskSnapshot(long id,
-                @NonNull ComponentName topActivityComponent, HardwareBuffer snapshot,
-                @NonNull ColorSpace colorSpace, int orientation, int rotation, Point taskSize,
-                Rect contentInsets, boolean isLowResolution, boolean isRealSnapshot,
-                int windowingMode, int systemUiVisibility, boolean isTranslucent) {
-            mId = id;
-            mTopActivityComponent = topActivityComponent;
-            mSnapshot = snapshot;
-            mColorSpace = colorSpace.getId() < 0
-                    ? ColorSpace.get(ColorSpace.Named.SRGB) : colorSpace;
-            mOrientation = orientation;
-            mRotation = rotation;
-            mTaskSize = new Point(taskSize);
-            mContentInsets = new Rect(contentInsets);
-            mIsLowResolution = isLowResolution;
-            mIsRealSnapshot = isRealSnapshot;
-            mWindowingMode = windowingMode;
-            mSystemUiVisibility = systemUiVisibility;
-            mIsTranslucent = isTranslucent;
-        }
-
-        private TaskSnapshot(Parcel source) {
-            mId = source.readLong();
-            mTopActivityComponent = ComponentName.readFromParcel(source);
-            mSnapshot = source.readParcelable(null /* classLoader */);
-            int colorSpaceId = source.readInt();
-            mColorSpace = colorSpaceId >= 0 && colorSpaceId < ColorSpace.Named.values().length
-                    ? ColorSpace.get(ColorSpace.Named.values()[colorSpaceId])
-                    : ColorSpace.get(ColorSpace.Named.SRGB);
-            mOrientation = source.readInt();
-            mRotation = source.readInt();
-            mTaskSize = source.readParcelable(null /* classLoader */);
-            mContentInsets = source.readParcelable(null /* classLoader */);
-            mIsLowResolution = source.readBoolean();
-            mIsRealSnapshot = source.readBoolean();
-            mWindowingMode = source.readInt();
-            mSystemUiVisibility = source.readInt();
-            mIsTranslucent = source.readBoolean();
-        }
-
-        /**
-         * @return Identifier of this snapshot.
-         */
-        public long getId() {
-            return mId;
-        }
-
-        /**
-         * @return The top activity component for the task at the point this snapshot was taken.
-         */
-        public ComponentName getTopActivityComponent() {
-            return mTopActivityComponent;
-        }
-
-        /**
-         * @return The graphic buffer representing the screenshot.
-         *
-         * Note: Prefer {@link #getHardwareBuffer}, which returns the internal object. This version
-         * creates a new object.
-         */
-        @UnsupportedAppUsage
-        public GraphicBuffer getSnapshot() {
-            return GraphicBuffer.createFromHardwareBuffer(mSnapshot);
-        }
-
-        /**
-         * @return The hardware buffer representing the screenshot.
-         */
-        public HardwareBuffer getHardwareBuffer() {
-            return mSnapshot;
-        }
-
-        /**
-         * @return The color space of hardware buffer representing the screenshot.
-         */
-        public ColorSpace getColorSpace() {
-            return mColorSpace;
-        }
-
-        /**
-         * @return The screen orientation the screenshot was taken in.
-         */
-        @UnsupportedAppUsage
-        public int getOrientation() {
-            return mOrientation;
-        }
-
-        /**
-         * @return The screen rotation the screenshot was taken in.
-         */
-        public int getRotation() {
-            return mRotation;
-        }
-
-        /**
-         * @return The size of the task at the point this snapshot was taken.
-         */
-        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-        public Point getTaskSize() {
-            return mTaskSize;
-        }
-
-        /**
-         * @return The system/content insets on the snapshot. These can be clipped off in order to
-         *         remove any areas behind system bars in the snapshot.
-         */
-        @UnsupportedAppUsage
-        public Rect getContentInsets() {
-            return mContentInsets;
-        }
-
-        /**
-         * @return Whether this snapshot is a down-sampled version of the full resolution.
-         */
-        @UnsupportedAppUsage
-        public boolean isLowResolution() {
-            return mIsLowResolution;
-        }
-
-        /**
-         * @return Whether or not the snapshot is a real snapshot or an app-theme generated snapshot
-         * due to the task having a secure window or having previews disabled.
-         */
-        @UnsupportedAppUsage
-        public boolean isRealSnapshot() {
-            return mIsRealSnapshot;
-        }
-
-        /**
-         * @return Whether or not the snapshot is of a translucent app window (non-fullscreen or has
-         * a non-opaque pixel format).
-         */
-        public boolean isTranslucent() {
-            return mIsTranslucent;
-        }
-
-        /**
-         * @return The windowing mode of the task when this snapshot was taken.
-         */
-        public int getWindowingMode() {
-            return mWindowingMode;
-        }
-
-        /**
-         * @return The system ui visibility flags for the top most visible fullscreen window at the
-         *         time that the snapshot was taken.
-         */
-        public int getSystemUiVisibility() {
-            return mSystemUiVisibility;
-        }
-
-        @Override
-        public int describeContents() {
-            return 0;
-        }
-
-        @Override
-        public void writeToParcel(Parcel dest, int flags) {
-            dest.writeLong(mId);
-            ComponentName.writeToParcel(mTopActivityComponent, dest);
-            dest.writeParcelable(mSnapshot != null && !mSnapshot.isClosed() ? mSnapshot : null,
-                    0);
-            dest.writeInt(mColorSpace.getId());
-            dest.writeInt(mOrientation);
-            dest.writeInt(mRotation);
-            dest.writeParcelable(mTaskSize, 0);
-            dest.writeParcelable(mContentInsets, 0);
-            dest.writeBoolean(mIsLowResolution);
-            dest.writeBoolean(mIsRealSnapshot);
-            dest.writeInt(mWindowingMode);
-            dest.writeInt(mSystemUiVisibility);
-            dest.writeBoolean(mIsTranslucent);
-        }
-
-        @Override
-        public String toString() {
-            final int width = mSnapshot != null ? mSnapshot.getWidth() : 0;
-            final int height = mSnapshot != null ? mSnapshot.getHeight() : 0;
-            return "TaskSnapshot{"
-                    + " mId=" + mId
-                    + " mTopActivityComponent=" + mTopActivityComponent.flattenToShortString()
-                    + " mSnapshot=" + mSnapshot + " (" + width + "x" + height + ")"
-                    + " mColorSpace=" + mColorSpace.toString()
-                    + " mOrientation=" + mOrientation
-                    + " mRotation=" + mRotation
-                    + " mTaskSize=" + mTaskSize.toString()
-                    + " mContentInsets=" + mContentInsets.toShortString()
-                    + " mIsLowResolution=" + mIsLowResolution
-                    + " mIsRealSnapshot=" + mIsRealSnapshot
-                    + " mWindowingMode=" + mWindowingMode
-                    + " mSystemUiVisibility=" + mSystemUiVisibility
-                    + " mIsTranslucent=" + mIsTranslucent;
-        }
-
-        public static final @android.annotation.NonNull Creator<TaskSnapshot> CREATOR = new Creator<TaskSnapshot>() {
-            public TaskSnapshot createFromParcel(Parcel source) {
-                return new TaskSnapshot(source);
-            }
-            public TaskSnapshot[] newArray(int size) {
-                return new TaskSnapshot[size];
-            }
-        };
-
-        /** Builder for a {@link TaskSnapshot} object */
-        public static final class Builder {
-            private long mId;
-            private ComponentName mTopActivity;
-            private HardwareBuffer mSnapshot;
-            private ColorSpace mColorSpace;
-            private int mOrientation;
-            private int mRotation;
-            private Point mTaskSize;
-            private Rect mContentInsets;
-            private boolean mIsRealSnapshot;
-            private int mWindowingMode;
-            private int mSystemUiVisibility;
-            private boolean mIsTranslucent;
-            private int mPixelFormat;
-
-            public Builder setId(long id) {
-                mId = id;
-                return this;
-            }
-
-            public Builder setTopActivityComponent(ComponentName name) {
-                mTopActivity = name;
-                return this;
-            }
-
-            public Builder setSnapshot(HardwareBuffer buffer) {
-                mSnapshot = buffer;
-                return this;
-            }
-
-            public Builder setColorSpace(ColorSpace colorSpace) {
-                mColorSpace = colorSpace;
-                return this;
-            }
-
-            public Builder setOrientation(int orientation) {
-                mOrientation = orientation;
-                return this;
-            }
-
-            public Builder setRotation(int rotation) {
-                mRotation = rotation;
-                return this;
-            }
-
-            /**
-             * Sets the original size of the task
-             */
-            public Builder setTaskSize(Point size) {
-                mTaskSize = size;
-                return this;
-            }
-
-            public Builder setContentInsets(Rect contentInsets) {
-                mContentInsets = contentInsets;
-                return this;
-            }
-
-            public Builder setIsRealSnapshot(boolean realSnapshot) {
-                mIsRealSnapshot = realSnapshot;
-                return this;
-            }
-
-            public Builder setWindowingMode(int windowingMode) {
-                mWindowingMode = windowingMode;
-                return this;
-            }
-
-            public Builder setSystemUiVisibility(int systemUiVisibility) {
-                mSystemUiVisibility = systemUiVisibility;
-                return this;
-            }
-
-            public Builder setIsTranslucent(boolean isTranslucent) {
-                mIsTranslucent = isTranslucent;
-                return this;
-            }
-
-            public int getPixelFormat() {
-                return mPixelFormat;
-            }
-
-            public Builder setPixelFormat(int pixelFormat) {
-                mPixelFormat = pixelFormat;
-                return this;
-            }
-
-            public TaskSnapshot build() {
-                return new TaskSnapshot(
-                        mId,
-                        mTopActivity,
-                        mSnapshot,
-                        mColorSpace,
-                        mOrientation,
-                        mRotation,
-                        mTaskSize,
-                        mContentInsets,
-                        // When building a TaskSnapshot with the Builder class, isLowResolution
-                        // is always false. Low-res snapshots are only created when loading from
-                        // disk.
-                        false /* isLowResolution */,
-                        mIsRealSnapshot,
-                        mWindowingMode,
-                        mSystemUiVisibility,
-                        mIsTranslucent);
-
-            }
-        }
+        return ActivityTaskManager.getInstance().getTasks(maxNum);
     }
 
     /** @hide */
@@ -4175,10 +3845,8 @@ public class ActivityManager {
             "android.permission.INTERACT_ACROSS_USERS_FULL"
     })
     public static int getCurrentUser() {
-        UserInfo ui;
         try {
-            ui = getService().getCurrentUser();
-            return ui != null ? ui.id : 0;
+            return getService().getCurrentUserId();
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -4212,6 +3880,52 @@ public class ActivityManager {
             throw new IllegalArgumentException("UserHandle cannot be null.");
         }
         return switchUser(user.getIdentifier());
+    }
+
+    /**
+     * Starts a profile.
+     * To be used with non-managed profiles, managed profiles should use
+     * {@link UserManager#requestQuietModeEnabled}
+     *
+     * @param userHandle user handle of the profile.
+     * @return true if the profile has been successfully started or if the profile is already
+     * running, false if profile failed to start.
+     * @throws IllegalArgumentException if {@code userHandle} is not a profile.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(anyOf = {android.Manifest.permission.MANAGE_USERS,
+            android.Manifest.permission.INTERACT_ACROSS_USERS_FULL})
+    public boolean startProfile(@NonNull UserHandle userHandle) {
+        try {
+            return getService().startProfile(userHandle.getIdentifier());
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Stops a running profile.
+     * To be used with non-managed profiles, managed profiles should use
+     * {@link UserManager#requestQuietModeEnabled}
+     *
+     * @param userHandle user handle of the profile.
+     * @return true if the profile has been successfully stopped or is already stopped. Otherwise
+     * the exceptions listed below are thrown.
+     * @throws IllegalArgumentException if {@code userHandle} is not a profile.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(anyOf = {android.Manifest.permission.MANAGE_USERS,
+            android.Manifest.permission.INTERACT_ACROSS_USERS_FULL})
+    public boolean stopProfile(@NonNull UserHandle userHandle) {
+        try {
+            return getService().stopProfile(userHandle.getIdentifier());
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
     }
 
     /**

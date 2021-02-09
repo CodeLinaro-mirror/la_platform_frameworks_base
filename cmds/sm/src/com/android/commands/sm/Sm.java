@@ -101,12 +101,12 @@ public final class Sm {
             runFstrim();
         } else if ("set-virtual-disk".equals(op)) {
             runSetVirtualDisk();
-        } else if ("set-isolated-storage".equals(op)) {
-            runIsolatedStorage();
         } else if ("start-checkpoint".equals(op)) {
             runStartCheckpoint();
         } else if ("supports-checkpoint".equals(op)) {
             runSupportsCheckpoint();
+        } else if ("unmount-app-data-dirs".equals(op)) {
+            runDisableAppDataIsolation();
         } else {
             throw new IllegalArgumentException();
         }
@@ -253,6 +253,13 @@ public final class Sm {
         System.out.println(result.get());
     }
 
+    public void runDisableAppDataIsolation() throws RemoteException {
+        final String pkgName = nextArg();
+        final int pid = Integer.parseInt(nextArg());
+        final int userId = Integer.parseInt(nextArg());
+        mSm.disableAppDataIsolation(pkgName, pid, userId);
+    }
+
     public void runForget() throws RemoteException {
         final String fsUuid = nextArg();
         if ("all".equals(fsUuid)) {
@@ -284,28 +291,6 @@ public final class Sm {
         final boolean virtualDisk = Boolean.parseBoolean(nextArg());
         mSm.setDebugFlags(virtualDisk ? StorageManager.DEBUG_VIRTUAL_DISK : 0,
                 StorageManager.DEBUG_VIRTUAL_DISK);
-    }
-
-    public void runIsolatedStorage() throws RemoteException {
-        final int value;
-        final int mask = StorageManager.DEBUG_ISOLATED_STORAGE_FORCE_ON
-                | StorageManager.DEBUG_ISOLATED_STORAGE_FORCE_OFF;
-        switch (nextArg()) {
-            case "on":
-            case "true":
-                value = StorageManager.DEBUG_ISOLATED_STORAGE_FORCE_ON;
-                break;
-            case "off":
-                value = StorageManager.DEBUG_ISOLATED_STORAGE_FORCE_OFF;
-                break;
-            case "default":
-            case "false":
-                value = 0;
-                break;
-            default:
-                return;
-        }
-        mSm.setDebugFlags(value, mask);
     }
 
     public void runIdleMaint() throws RemoteException {
@@ -367,11 +352,11 @@ public final class Sm {
         System.err.println("");
         System.err.println("       sm set-emulate-fbe [true|false]");
         System.err.println("");
-        System.err.println("       sm set-isolated-storage [on|off|default]");
-        System.err.println("");
         System.err.println("       sm start-checkpoint <num-retries>");
         System.err.println("");
         System.err.println("       sm supports-checkpoint");
+        System.err.println("");
+        System.err.println("       sm unmount-app-data-dirs PACKAGE_NAME PID USER_ID");
         System.err.println("");
         return 1;
     }

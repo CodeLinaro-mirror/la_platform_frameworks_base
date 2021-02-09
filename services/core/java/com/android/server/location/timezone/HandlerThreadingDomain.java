@@ -16,10 +16,15 @@
 
 package com.android.server.location.timezone;
 
+import android.annotation.DurationMillisLong;
 import android.annotation.NonNull;
 import android.os.Handler;
 
 import java.util.Objects;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The real implementation of {@link ThreadingDomain} that uses a {@link Handler}.
@@ -57,12 +62,44 @@ final class HandlerThreadingDomain extends ThreadingDomain {
     }
 
     @Override
-    void postDelayed(@NonNull Runnable r, long delayMillis) {
+    <V> V postAndWait(@NonNull Callable<V> callable, @DurationMillisLong long durationMillis)
+            throws Exception {
+        // Calling this on this domain's thread would lead to deadlock.
+        assertNotCurrentThread();
+
+        AtomicReference<V> resultReference = new AtomicReference<>();
+        AtomicReference<Exception> exceptionReference = new AtomicReference<>();
+        CountDownLatch latch = new CountDownLatch(1);
+        post(() -> {
+            try {
+                resultReference.set(callable.call());
+            } catch (Exception e) {
+                exceptionReference.set(e);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        try {
+            if (!latch.await(durationMillis, TimeUnit.MILLISECONDS)) {
+                throw new RuntimeException("Timed out");
+            }
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+        if (exceptionReference.get() != null) {
+            throw exceptionReference.get();
+        }
+        return resultReference.get();
+    }
+
+    @Override
+    void postDelayed(@NonNull Runnable r, @DurationMillisLong long delayMillis) {
         getHandler().postDelayed(r, delayMillis);
     }
 
     @Override
-    void postDelayed(Runnable r, Object token, long delayMillis) {
+    void postDelayed(Runnable r, Object token, @DurationMillisLong long delayMillis) {
         getHandler().postDelayed(r, token, delayMillis);
     }
 

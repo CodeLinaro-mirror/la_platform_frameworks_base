@@ -19,6 +19,7 @@ package com.android.server;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Matchers.anyInt;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.never;
@@ -36,6 +37,7 @@ import android.platform.test.annotations.Presubmit;
 import android.provider.Settings;
 import android.telecom.TelecomManager;
 import android.test.mock.MockContentResolver;
+import android.testing.TestableLooper;
 import android.util.MutableBoolean;
 import android.view.KeyEvent;
 
@@ -44,6 +46,7 @@ import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
 import com.android.internal.logging.MetricsLogger;
+import com.android.internal.logging.UiEventLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.internal.util.test.FakeSettingsProvider;
 import com.android.server.statusbar.StatusBarManagerInternal;
@@ -65,6 +68,7 @@ import java.util.List;
 @Presubmit
 @SmallTest
 @RunWith(AndroidJUnit4.class)
+@TestableLooper.RunWithLooper(setAsMainLooper = true)
 public class GestureLauncherServiceTest {
 
     private static final int FAKE_USER_ID = 1337;
@@ -83,6 +87,7 @@ public class GestureLauncherServiceTest {
     private @Mock StatusBarManagerInternal mStatusBarManagerInternal;
     private @Mock TelecomManager mTelecomManager;
     private @Mock MetricsLogger mMetricsLogger;
+    @Mock private UiEventLogger mUiEventLogger;
     private MockContentResolver mContentResolver;
     private GestureLauncherService mGestureLauncherService;
 
@@ -109,7 +114,8 @@ public class GestureLauncherServiceTest {
         when(mContext.getSystemService(Context.TELECOM_SERVICE)).thenReturn(mTelecomManager);
         when(mTelecomManager.createLaunchEmergencyDialerIntent(null)).thenReturn(new Intent());
 
-        mGestureLauncherService = new GestureLauncherService(mContext, mMetricsLogger);
+        mGestureLauncherService = new GestureLauncherService(mContext, mMetricsLogger,
+                mUiEventLogger);
     }
 
     @Test
@@ -157,16 +163,26 @@ public class GestureLauncherServiceTest {
     }
 
     @Test
-    public void testIsEmergencyGestureEnabled_settingDisabled() {
+    public void testIsEmergencyGestureSettingEnabled_settingDisabled() {
+        withEmergencyGestureEnabledConfigValue(true);
         withEmergencyGestureEnabledSettingValue(false);
-        assertFalse(mGestureLauncherService.isEmergencyGestureEnabled(
+        assertFalse(mGestureLauncherService.isEmergencyGestureSettingEnabled(
                 mContext, FAKE_USER_ID));
     }
 
     @Test
-    public void testIsEmergencyGestureEnabled_settingEnabled() {
+    public void testIsEmergencyGestureSettingEnabled_settingEnabled() {
+        withEmergencyGestureEnabledConfigValue(true);
         withEmergencyGestureEnabledSettingValue(true);
-        assertTrue(mGestureLauncherService.isEmergencyGestureEnabled(
+        assertTrue(mGestureLauncherService.isEmergencyGestureSettingEnabled(
+                mContext, FAKE_USER_ID));
+    }
+
+    @Test
+    public void testIsEmergencyGestureSettingEnabled_supportDisabled() {
+        withEmergencyGestureEnabledConfigValue(false);
+        withEmergencyGestureEnabledSettingValue(true);
+        assertFalse(mGestureLauncherService.isEmergencyGestureSettingEnabled(
                 mContext, FAKE_USER_ID));
     }
 
@@ -268,6 +284,7 @@ public class GestureLauncherServiceTest {
 
         verify(mMetricsLogger, never())
             .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -312,6 +329,7 @@ public class GestureLauncherServiceTest {
 
         verify(mMetricsLogger, never())
             .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -358,6 +376,7 @@ public class GestureLauncherServiceTest {
 
         verify(mMetricsLogger, never())
             .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -406,6 +425,8 @@ public class GestureLauncherServiceTest {
                 StatusBarManager.CAMERA_LAUNCH_SOURCE_POWER_DOUBLE_TAP);
         verify(mMetricsLogger)
             .action(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE, (int) interval);
+        verify(mUiEventLogger, times(1))
+                .log(GestureLauncherService.GestureLauncherEvent.GESTURE_CAMERA_DOUBLE_TAP_POWER);
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -427,6 +448,7 @@ public class GestureLauncherServiceTest {
             testInterceptPowerKeyDown_fiveInboundPresses_cameraAndEmergencyEnabled_bothLaunch() {
         withCameraDoubleTapPowerEnableConfigValue(true);
         withCameraDoubleTapPowerDisableSettingValue(0);
+        withEmergencyGestureEnabledConfigValue(true);
         withEmergencyGestureEnabledSettingValue(true);
         mGestureLauncherService.updateCameraDoubleTapPowerEnabled();
         mGestureLauncherService.updateEmergencyGestureEnabled();
@@ -460,6 +482,8 @@ public class GestureLauncherServiceTest {
                 StatusBarManager.CAMERA_LAUNCH_SOURCE_POWER_DOUBLE_TAP);
         verify(mMetricsLogger)
             .action(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE, (int) interval);
+        verify(mUiEventLogger, times(1))
+                .log(GestureLauncherService.GestureLauncherEvent.GESTURE_CAMERA_DOUBLE_TAP_POWER);
 
         final ArgumentCaptor<Integer> cameraIntervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -499,7 +523,8 @@ public class GestureLauncherServiceTest {
         assertTrue(intercepted);
         assertTrue(outLaunched.value);
 
-        // TODO (b/169960245) Verify metric event equiv. to ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE
+        verify(mUiEventLogger, times(1))
+                .log(GestureLauncherService.GestureLauncherEvent.GESTURE_PANIC_TAP_POWER);
         verify(mStatusBarManagerInternal).onEmergencyActionLaunchGestureDetected();
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
@@ -513,6 +538,7 @@ public class GestureLauncherServiceTest {
     @Test
     public void
             testInterceptPowerKeyDown_fiveInboundPresses_emergencyGestureEnabled_launchesFlow() {
+        withEmergencyGestureEnabledConfigValue(true);
         withEmergencyGestureEnabledSettingValue(true);
         mGestureLauncherService.updateEmergencyGestureEnabled();
         withUserSetupCompleteValue(true);
@@ -551,7 +577,8 @@ public class GestureLauncherServiceTest {
         assertTrue(outLaunched.value);
         assertTrue(intercepted);
 
-        // TODO (b/169960245) Verify metric event equiv. to ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE
+        verify(mUiEventLogger, times(1))
+                .log(GestureLauncherService.GestureLauncherEvent.GESTURE_PANIC_TAP_POWER);
         verify(mStatusBarManagerInternal).onEmergencyActionLaunchGestureDetected();
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
@@ -565,6 +592,7 @@ public class GestureLauncherServiceTest {
     @Test
     public void
             testInterceptPowerKeyDown_tenInboundPresses_emergencyGestureEnabled_keyIntercepted() {
+        withEmergencyGestureEnabledConfigValue(true);
         withEmergencyGestureEnabledSettingValue(true);
         mGestureLauncherService.updateEmergencyGestureEnabled();
         withUserSetupCompleteValue(true);
@@ -646,6 +674,7 @@ public class GestureLauncherServiceTest {
 
         verify(mMetricsLogger, never())
                 .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(1)).histogram(
@@ -690,6 +719,7 @@ public class GestureLauncherServiceTest {
 
         verify(mMetricsLogger, never())
             .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -736,6 +766,7 @@ public class GestureLauncherServiceTest {
 
         verify(mMetricsLogger, never())
             .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -782,6 +813,7 @@ public class GestureLauncherServiceTest {
 
         verify(mMetricsLogger, never())
             .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -826,6 +858,7 @@ public class GestureLauncherServiceTest {
 
         verify(mMetricsLogger, never())
             .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -869,6 +902,7 @@ public class GestureLauncherServiceTest {
         assertFalse(outLaunched.value);
         verify(mMetricsLogger, never())
             .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -914,6 +948,7 @@ public class GestureLauncherServiceTest {
         assertFalse(outLaunched.value);
         verify(mMetricsLogger, never())
             .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -961,6 +996,8 @@ public class GestureLauncherServiceTest {
                 StatusBarManager.CAMERA_LAUNCH_SOURCE_POWER_DOUBLE_TAP);
         verify(mMetricsLogger)
             .action(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE, (int) interval);
+        verify(mUiEventLogger, times(1))
+                .log(GestureLauncherService.GestureLauncherEvent.GESTURE_CAMERA_DOUBLE_TAP_POWER);
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -1007,6 +1044,7 @@ public class GestureLauncherServiceTest {
 
         verify(mMetricsLogger, never())
             .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -1051,6 +1089,7 @@ public class GestureLauncherServiceTest {
 
         verify(mMetricsLogger, never())
             .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -1097,6 +1136,7 @@ public class GestureLauncherServiceTest {
 
         verify(mMetricsLogger, never())
             .action(eq(MetricsEvent.ACTION_DOUBLE_TAP_POWER_CAMERA_GESTURE), anyInt());
+        verify(mUiEventLogger, never()).log(any());
 
         final ArgumentCaptor<Integer> intervalCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(mMetricsLogger, times(2)).histogram(
@@ -1116,6 +1156,12 @@ public class GestureLauncherServiceTest {
     private void withCameraDoubleTapPowerEnableConfigValue(boolean enableConfigValue) {
         when(mResources.getBoolean(
                 com.android.internal.R.bool.config_cameraDoubleTapPowerGestureEnabled))
+                .thenReturn(enableConfigValue);
+    }
+
+    private void withEmergencyGestureEnabledConfigValue(boolean enableConfigValue) {
+        when(mResources.getBoolean(
+                com.android.internal.R.bool.config_emergencyGestureEnabled))
                 .thenReturn(enableConfigValue);
     }
 

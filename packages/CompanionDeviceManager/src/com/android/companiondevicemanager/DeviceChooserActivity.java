@@ -17,11 +17,15 @@
 package com.android.companiondevicemanager;
 
 import static android.companion.BluetoothDeviceFilterUtils.getDeviceMacAddress;
+import static android.text.TextUtils.emptyIfNull;
+import static android.text.TextUtils.withoutPrefix;
 import static android.view.WindowManager.LayoutParams.SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS;
 
 import static java.util.Objects.requireNonNull;
 
+import android.annotation.Nullable;
 import android.app.Activity;
+import android.companion.AssociationRequest;
 import android.companion.CompanionDeviceManager;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -62,12 +66,16 @@ public class DeviceChooserActivity extends Activity {
 
         getWindow().addSystemFlags(SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS);
 
-        if (getService().mRequest.isSingleDevice()) {
+        String deviceProfile = getRequest().getDeviceProfile();
+        String profileName = getDeviceProfileName(deviceProfile);
+
+        if (getRequest().isSingleDevice()) {
             setContentView(R.layout.device_confirmation);
             final DeviceFilterPair selectedDevice = getService().mDevicesFound.get(0);
             setTitle(Html.fromHtml(getString(
                     R.string.confirmation_title,
                     getCallingAppName(),
+                    profileName,
                     selectedDevice.getDisplayName()), 0));
             mPairButton = findViewById(R.id.button_pair);
             mPairButton.setOnClickListener(v -> onDeviceConfirmed(getService().mSelectedDevice));
@@ -77,7 +85,9 @@ public class DeviceChooserActivity extends Activity {
             setContentView(R.layout.device_chooser);
             mPairButton = findViewById(R.id.button_pair);
             mPairButton.setVisibility(View.GONE);
-            setTitle(Html.fromHtml(getString(R.string.chooser_title, getCallingAppName()), 0));
+            setTitle(Html.fromHtml(getString(R.string.chooser_title,
+                    profileName,
+                    getCallingAppName()), 0));
             mDeviceListView = findViewById(R.id.device_list);
             final DeviceDiscoveryService.DevicesAdapter adapter = getService().mDevicesAdapter;
             mDeviceListView.setAdapter(adapter);
@@ -97,10 +107,48 @@ public class DeviceChooserActivity extends Activity {
             });
             mDeviceListView.addFooterView(mLoadingIndicator = getProgressBar(), null, false);
         }
+
+        TextView profileSummary = findViewById(R.id.profile_summary);
+
+        if (deviceProfile != null) {
+            String privacyDisclaimer = emptyIfNull(getRequest()
+                    .getDeviceProfilePrivilegesDescription())
+                    .replace("APP_NAME", getCallingAppName());
+            profileSummary.setVisibility(View.VISIBLE);
+            profileSummary.setText(getString(R.string.profile_summary,
+                    getCallingAppName(),
+                    profileName,
+                    privacyDisclaimer));
+        } else {
+            profileSummary.setVisibility(View.GONE);
+        }
+
         getService().mActivity = this;
 
         mCancelButton = findViewById(R.id.button_cancel);
         mCancelButton.setOnClickListener(v -> cancel());
+    }
+
+    private AssociationRequest getRequest() {
+        return getService().mRequest;
+    }
+
+    private String getDeviceProfileName(@Nullable String deviceProfile) {
+        if (deviceProfile == null) {
+            return getString(R.string.profile_name_generic);
+        }
+        switch (deviceProfile) {
+            case AssociationRequest.DEVICE_PROFILE_WATCH: {
+                return getString(R.string.profile_name_watch);
+            }
+            default: {
+                Log.wtf(LOG_TAG,
+                        "No localized profile name found for device profile: " + deviceProfile);
+                return withoutPrefix("android.app.role.COMPANION_DEVICE_", deviceProfile)
+                        .toLowerCase()
+                        .replace('_', ' ');
+            }
+        }
     }
 
     private void cancel() {
@@ -132,7 +180,7 @@ public class DeviceChooserActivity extends Activity {
 
     @Override
     public String getCallingPackage() {
-        return requireNonNull(getService().mRequest.getCallingPackage());
+        return requireNonNull(getRequest().getCallingPackage());
     }
 
     @Override

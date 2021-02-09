@@ -40,6 +40,7 @@ import android.app.ActivityManager;
 import android.app.IApplicationThread;
 import android.app.IServiceConnection;
 import android.app.VrManager;
+import android.app.people.PeopleManager;
 import android.app.time.TimeManager;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.pm.ApplicationInfo;
@@ -63,6 +64,7 @@ import android.os.HandlerExecutor;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.StatFs;
+import android.os.StrictMode;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.os.storage.StorageManager;
@@ -364,6 +366,16 @@ public abstract class Context {
 
     /***********    Public flags above this line ***********/
     /***********    Hidden flags below this line ***********/
+
+    /**
+     * Flag for {@link #bindService}: allow background foreground service starts from the bound
+     * service's process.
+     * This flag is only respected if the caller is holding
+     * {@link android.Manifest.permission#START_FOREGROUND_SERVICES_FROM_BACKGROUND}.
+     * @hide
+     */
+    @SystemApi
+    public static final int BIND_ALLOW_FOREGROUND_SERVICE_STARTS_FROM_BACKGROUND = 0x00040000;
 
     /**
      * Flag for {@link #bindService}: This flag is intended to be used only by the system to adjust
@@ -3106,6 +3118,10 @@ public abstract class Context {
      * @throws SecurityException If the caller does not have permission to access the service
      * or the service can not be found.
      *
+     * @throws IllegalStateException If the caller app's targeting API is
+     * {@link android.os.Build.VERSION_CODES#S} or later, and the foreground service is restricted
+     * from start due to background restriction.
+     *
      * @see #stopService
      * @see android.app.Service#startForeground(int, android.app.Notification)
      */
@@ -3529,6 +3545,7 @@ public abstract class Context {
             LIGHTS_SERVICE,
             //@hide: PEOPLE_SERVICE,
             //@hide: DEVICE_STATE_SERVICE,
+            UWB_SERVICE,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ServiceName {}
@@ -4492,6 +4509,17 @@ public abstract class Context {
     public static final String CONTENT_CAPTURE_MANAGER_SERVICE = "content_capture";
 
     /**
+     * Official published name of the translation service.
+     *
+     * @hide
+     * @see #getSystemService(String)
+     */
+    // TODO(b/176208267): change it back to translation before S release.
+    @SystemApi
+    @SuppressLint("ServiceName")
+    public static final String TRANSLATION_MANAGER_SERVICE = "transformer";
+
+    /**
      * Used for getting content selections and classifications for task snapshots.
      *
      * @hide
@@ -4511,6 +4539,18 @@ public abstract class Context {
      */
     @SystemApi
     public static final String APP_PREDICTION_SERVICE = "app_prediction";
+
+    /**
+     * Official published name of the search ui service.
+     *
+     * <p><b>NOTE: </b> this service is optional; callers of
+     * {@code Context.getSystemServiceName(SEARCH_UI_SERVICE)} should check for {@code null}.
+     *
+     * @hide
+     * @see #getSystemService(String)
+     */
+    @SystemApi
+    public static final String SEARCH_UI_SERVICE = "search_ui";
 
     /**
      * Use with {@link #getSystemService(String)} to access the
@@ -4536,6 +4576,7 @@ public abstract class Context {
      * @hide
      * @see #getSystemService(String)
      */
+    @SystemApi
     public static final String MUSIC_RECOGNITION_SERVICE = "music_recognition";
 
     /**
@@ -4546,6 +4587,15 @@ public abstract class Context {
      */
     @SystemApi
     public static final String PERMISSION_SERVICE = "permission";
+
+    /**
+     * Official published name of the legacy (internal) permission service.
+     *
+     * @see #getSystemService(String)
+     * @hide
+     */
+    //@SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+    public static final String LEGACY_PERMISSION_SERVICE = "legacy_permission";
 
     /**
      * Official published name of the (internal) permission controller service.
@@ -4781,16 +4831,6 @@ public abstract class Context {
      * @see android.app.role.RoleManager
      */
     public static final String ROLE_SERVICE = "role";
-
-    /**
-     * Official published name of the (internal) role controller service.
-     *
-     * @see #getSystemService(String)
-     * @see android.app.role.RoleControllerService
-     *
-     * @hide
-     */
-    public static final String ROLE_CONTROLLER_SERVICE = "role_controller";
 
     /**
      * Use with {@link #getSystemService(String)} to retrieve a
@@ -5046,9 +5086,7 @@ public abstract class Context {
      * Service to capture a bugreport.
      * @see #getSystemService(String)
      * @see android.os.BugreportManager
-     * @hide
      */
-    @SystemApi
     public static final String BUGREPORT_SERVICE = "bugreport";
 
     /**
@@ -5200,7 +5238,6 @@ public abstract class Context {
      * indexing and querying app data managed by the system.
      *
      * @see #getSystemService(String)
-     * @hide
      */
     public static final String APP_SEARCH_SERVICE = "app_search";
 
@@ -5245,6 +5282,15 @@ public abstract class Context {
 
     /**
      * Use with {@link #getSystemService(String)} to retrieve a
+     * {@link android.uwb.UwbManager}.
+     *
+     * @see #getSystemService(String)
+     * @hide
+     */
+    public static final String UWB_SERVICE = "uwb";
+
+    /**
+     * Use with {@link #getSystemService(String)} to retrieve a
      * {@link android.app.DreamManager} for controlling Dream states.
      *
      * @see #getSystemService(String)
@@ -5265,10 +5311,10 @@ public abstract class Context {
     public static final String SMS_SERVICE = "sms";
 
     /**
-     * Use with {@link #getSystemService(String)} to access people service.
+     * Use with {@link #getSystemService(String)} to access a {@link PeopleManager} to interact
+     * with your published conversations.
      *
      * @see #getSystemService(String)
-     * @hide
      */
     public static final String PEOPLE_SERVICE = "people";
 
@@ -5943,27 +5989,56 @@ public abstract class Context {
      * Creating a window context is an expensive operation. Misuse of this API may lead to a huge
      * performance drop. The best practice is to use the same window context when possible.
      * An approach is to create one window context with specific window type and display and
-     * use it everywhere it's needed..
+     * use it everywhere it's needed.
      * </p>
      *
      * @param type Window type in {@link WindowManager.LayoutParams}
-     * @param options Bundle used to pass window-related options.
-     * @return A {@link Context} that can be used to create windows.
-     * @throws UnsupportedOperationException if this is called on a non-UI context, such as
-     *         {@link android.app.Application Application} or {@link android.app.Service Service}.
+     * @param options A bundle used to pass window-related options
+     * @return A {@link Context} that can be used to create
+     *         non-{@link android.app.Activity activity} windows.
      *
      * @see #getSystemService(String)
      * @see #getSystemService(Class)
      * @see #WINDOW_SERVICE
      * @see #LAYOUT_INFLATER_SERVICE
      * @see #WALLPAPER_SERVICE
-     * @throws UnsupportedOperationException if this {@link Context} does not attach to a display or
-     * the current number of window contexts without adding any view by
+     * @throws UnsupportedOperationException if this {@link Context} does not attach to a display,
+     * such as {@link android.app.Application Application} or {@link android.app.Service Service},
+     * or the current number of window contexts without adding any view by
      * {@link WindowManager#addView} <b>exceeds five</b>.
      */
     @UiContext
     @NonNull
     public Context createWindowContext(@WindowType int type, @Nullable Bundle options)  {
+        throw new RuntimeException("Not implemented. Must override in a subclass.");
+    }
+
+    /**
+     * Creates a {@code Context} for a non-{@link android.app.Activity activity} window on the given
+     * {@link Display}.
+     *
+     * <p>
+     * Similar to {@link #createWindowContext(int, Bundle)}, but the {@code display} is passed in,
+     * instead of implicitly using the {@link #getDisplay() original Context's Display}.
+     * </p>
+     *
+     * @param display The {@link Display} to associate with
+     * @param type Window type in {@link WindowManager.LayoutParams}
+     * @param options A bundle used to pass window-related options.
+     * @return A {@link Context} that can be used to create
+     *         non-{@link android.app.Activity activity} windows.
+     * @throws IllegalArgumentException if the {@link Display} is {@code null}.
+     *
+     * @see #getSystemService(String)
+     * @see #getSystemService(Class)
+     * @see #WINDOW_SERVICE
+     * @see #LAYOUT_INFLATER_SERVICE
+     * @see #WALLPAPER_SERVICE
+     */
+    @UiContext
+    @NonNull
+    public Context createWindowContext(@NonNull Display display, @WindowType int type,
+            @Nullable Bundle options) {
         throw new RuntimeException("Not implemented. Must override in a subclass.");
     }
 
@@ -6049,6 +6124,21 @@ public abstract class Context {
     @SuppressWarnings("HiddenAbstractMethod")
     @SystemApi
     public abstract Context createCredentialProtectedStorageContext();
+
+    /**
+     * Creates a UI context with a {@code token}. The users of this API should handle this context's
+     * configuration changes.
+     *
+     * @param token The token to associate with the {@link Resources}
+     * @param display The display to associate with the token context
+     *
+     * @hide
+     */
+    @UiContext
+    @NonNull
+    public Context createTokenContext(@NonNull IBinder token, @NonNull Display display) {
+        throw new RuntimeException("Not implemented. Must override in a subclass.");
+    }
 
     /**
      * Gets the display adjustments holder for this context.  This information
@@ -6142,10 +6232,40 @@ public abstract class Context {
     public abstract boolean canLoadUnsafeResources();
 
     /**
+     * Returns token if the {@link Context} is a {@link android.app.Activity}. Returns
+     * {@code null} otherwise.
+     *
      * @hide
      */
+    @Nullable
     public IBinder getActivityToken() {
         throw new RuntimeException("Not implemented. Must override in a subclass.");
+    }
+
+    /**
+     * Returns token if the {@link Context} is a {@link android.app.WindowContext}. Returns
+     * {@code null} otherwise.
+     *
+     * @hide
+     */
+    @Nullable
+    public IBinder getWindowContextToken() {
+        throw new RuntimeException("Not implemented. Must override in a subclass.");
+    }
+
+    /**
+     * Returns the proper token of a {@link Context}.
+     *
+     * If the {@link Context} is an {@link android.app.Activity}, returns
+     * {@link #getActivityToken()}. If the {@lijnk Context} is a {@link android.app.WindowContext},
+     * returns {@link #getWindowContextToken()}. Returns {@code null}, otherwise.
+     *
+     * @hide
+     */
+    @Nullable
+    public static IBinder getToken(@NonNull Context context) {
+        return context.getActivityToken() != null ? context.getActivityToken()
+                : context.getWindowContextToken();
     }
 
     /**
@@ -6254,5 +6374,26 @@ public abstract class Context {
      */
     public boolean isUiContext() {
         throw new RuntimeException("Not implemented. Must override in a subclass.");
+    }
+
+    /**
+     * Returns {@code true} if the context is a UI context which can access UI components such as
+     * {@link WindowManager}, {@link android.view.LayoutInflater LayoutInflater} or
+     * {@link android.app.WallpaperManager WallpaperManager}. Accessing UI components from non-UI
+     * contexts throws {@link android.os.strictmode.Violation} if
+     * {@link StrictMode.VmPolicy.Builder#detectIncorrectContextUse()} is enabled.
+     * <p>
+     * Examples of UI contexts are
+     * an {@link android.app.Activity Activity}, a context created from
+     * {@link #createWindowContext(int, Bundle)} or
+     * {@link android.inputmethodservice.InputMethodService InputMethodService}
+     * </p>
+     *
+     * @see #getDisplay()
+     * @see #getSystemService(String)
+     * @see StrictMode.VmPolicy.Builder#detectIncorrectContextUse()
+     */
+    public static boolean isUiContext(@NonNull Context context) {
+        return context.isUiContext();
     }
 }

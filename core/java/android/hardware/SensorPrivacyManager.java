@@ -16,16 +16,22 @@
 
 package android.hardware;
 
+import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemService;
+import android.annotation.TestApi;
 import android.content.Context;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.service.SensorPrivacyIndividualEnabledSensorProto;
 import android.util.ArrayMap;
 
 import com.android.internal.annotations.GuardedBy;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * This class provides access to the sensor privacy services; sensor privacy allows the
@@ -35,13 +41,39 @@ import com.android.internal.annotations.GuardedBy;
  *
  * @hide
  */
+@TestApi
 @SystemService(Context.SENSOR_PRIVACY_SERVICE)
 public final class SensorPrivacyManager {
+
+    /** Microphone
+     * @hide */
+    @TestApi
+    public static final int INDIVIDUAL_SENSOR_MICROPHONE =
+            SensorPrivacyIndividualEnabledSensorProto.MICROPHONE;
+
+    /** Camera
+     * @hide */
+    @TestApi
+    public static final int INDIVIDUAL_SENSOR_CAMERA =
+            SensorPrivacyIndividualEnabledSensorProto.CAMERA;
+
+    /**
+     * Individual sensors not listed in {@link Sensor}
+     * @hide
+     */
+    @IntDef(prefix = "INDIVIDUAL_SENSOR_", value = {
+            INDIVIDUAL_SENSOR_MICROPHONE,
+            INDIVIDUAL_SENSOR_CAMERA
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface IndividualSensor {}
 
     /**
      * A class implementing this interface can register with the {@link
      * android.hardware.SensorPrivacyManager} to receive notification when the sensor privacy
      * state changes.
+     *
+     * @hide
      */
     public interface OnSensorPrivacyChangedListener {
         /**
@@ -77,6 +109,8 @@ public final class SensorPrivacyManager {
 
     /**
      * Returns the single instance of the SensorPrivacyManager.
+     *
+     * @hide
      */
     public static SensorPrivacyManager getInstance(Context context) {
         synchronized (sInstanceLock) {
@@ -97,6 +131,8 @@ public final class SensorPrivacyManager {
      * Sets sensor privacy to the specified state.
      *
      * @param enable the state to which sensor privacy should be set.
+     *
+     * @hide
      */
     @RequiresPermission(android.Manifest.permission.MANAGE_SENSOR_PRIVACY)
     public void setSensorPrivacy(boolean enable) {
@@ -113,6 +149,8 @@ public final class SensorPrivacyManager {
      *
      * @param listener the OnSensorPrivacyChangedListener to be notified when the state of sensor
      *                 privacy changes.
+     *
+     * @hide
      */
     public void addSensorPrivacyListener(final OnSensorPrivacyChangedListener listener) {
         synchronized (mListeners) {
@@ -136,11 +174,46 @@ public final class SensorPrivacyManager {
     }
 
     /**
+     * Registers a new listener to receive notification when the state of sensor privacy
+     * changes.
+     *
+     * @param sensor the sensor to listen to changes to
+     * @param listener the OnSensorPrivacyChangedListener to be notified when the state of sensor
+     *                 privacy changes.
+     *
+     * @hide
+     */
+    public void addSensorPrivacyListener(@IndividualSensor int sensor,
+            final OnSensorPrivacyChangedListener listener) {
+        synchronized (mListeners) {
+            ISensorPrivacyListener iListener = mListeners.get(listener);
+            if (iListener == null) {
+                iListener = new ISensorPrivacyListener.Stub() {
+                    @Override
+                    public void onSensorPrivacyChanged(boolean enabled) {
+                        listener.onSensorPrivacyChanged(enabled);
+                    }
+                };
+                mListeners.put(listener, iListener);
+            }
+
+            try {
+                mService.addIndividualSensorPrivacyListener(mContext.getUserId(), sensor,
+                        iListener);
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+        }
+    }
+
+    /**
      * Unregisters the specified listener from receiving notifications when the state of sensor
      * privacy changes.
      *
      * @param listener the OnSensorPrivacyChangedListener to be unregistered from notifications when
      *                 sensor privacy changes.
+     *
+     * @hide
      */
     public void removeSensorPrivacyListener(OnSensorPrivacyChangedListener listener) {
         synchronized (mListeners) {
@@ -160,10 +233,68 @@ public final class SensorPrivacyManager {
      * Returns whether sensor privacy is currently enabled.
      *
      * @return true if sensor privacy is currently enabled, false otherwise.
+     *
+     * @hide
      */
     public boolean isSensorPrivacyEnabled() {
         try {
             return mService.isSensorPrivacyEnabled();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Returns whether sensor privacy is currently enabled for a specific sensor.
+     *
+     * @return true if sensor privacy is currently enabled, false otherwise.
+     *
+     * @hide
+     */
+    @TestApi
+    public boolean isIndividualSensorPrivacyEnabled(@IndividualSensor int sensor) {
+        try {
+            return mService.isIndividualSensorPrivacyEnabled(mContext.getUserId(), sensor);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Sets sensor privacy to the specified state for an individual sensor.
+     *
+     * @param sensor the sensor which to change the state for
+     * @param enable the state to which sensor privacy should be set.
+     *
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(android.Manifest.permission.MANAGE_SENSOR_PRIVACY)
+    public void setIndividualSensorPrivacy(@IndividualSensor int sensor,
+            boolean enable) {
+        try {
+            mService.setIndividualSensorPrivacy(mContext.getUserId(), sensor, enable);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Sets sensor privacy to the specified state for an individual sensor for the profile group of
+     * context's user.
+     *
+     * @param sensor the sensor which to change the state for
+     * @param enable the state to which sensor privacy should be set.
+     *
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(android.Manifest.permission.MANAGE_SENSOR_PRIVACY)
+    public void setIndividualSensorPrivacyForProfileGroup(@IndividualSensor int sensor,
+            boolean enable) {
+        try {
+            mService.setIndividualSensorPrivacyForProfileGroup(mContext.getUserId(), sensor,
+                    enable);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

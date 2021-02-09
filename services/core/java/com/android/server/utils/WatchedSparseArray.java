@@ -18,7 +18,6 @@ package com.android.server.utils;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-
 import android.util.SparseArray;
 
 import java.util.ArrayList;
@@ -28,14 +27,16 @@ import java.util.ArrayList;
  * array registers with the {@link Watchable}.  The array registers only once with each
  * {@link Watchable} no matter how many times the {@link Watchable} is stored in the
  * array.
+ * @param <E> The element type, stored in the array.
  */
-public class WatchedSparseArray<E> extends WatchableImpl {
+public class WatchedSparseArray<E> extends WatchableImpl
+        implements Snappable {
 
     // The storage
     private final SparseArray<E> mStorage;
 
     // If true, the array is watching its children
-    private boolean mWatching = false;
+    private volatile boolean mWatching = false;
 
     // The local observer
     private final Watcher mObserver = new Watcher() {
@@ -142,10 +143,47 @@ public class WatchedSparseArray<E> extends WatchableImpl {
     }
 
     /**
+     * Create a {@link WatchedSparseArray} from a {@link SparseArray}
+     */
+    public WatchedSparseArray(@NonNull SparseArray<E> c) {
+        mStorage = c.clone();
+    }
+
+    /**
      * The copy constructor does not copy the watcher data.
      */
     public WatchedSparseArray(@NonNull WatchedSparseArray<E> r) {
         mStorage = r.mStorage.clone();
+    }
+
+    /**
+     * Make <this> a copy of src.  Any data in <this> is discarded.
+     */
+    public void copyFrom(@NonNull SparseArray<E> src) {
+        clear();
+        final int end = src.size();
+        for (int i = 0; i < end; i++) {
+            put(src.keyAt(i), src.valueAt(i));
+        }
+    }
+
+    /**
+     * Make dst a copy of <this>.  Any previous data in dst is discarded.
+     */
+    public void copyTo(@NonNull SparseArray<E> dst) {
+        dst.clear();
+        final int end = size();
+        for (int i = 0; i < end; i++) {
+            dst.put(keyAt(i), valueAt(i));
+        }
+    }
+
+    /**
+     * Return the underlying storage.  This breaks the wrapper but is necessary when
+     * passing the array to distant methods.
+     */
+    public SparseArray<E> untrackedStorage() {
+        return mStorage;
     }
 
     /**
@@ -389,6 +427,21 @@ public class WatchedSparseArray<E> extends WatchableImpl {
         onChanged();
     }
 
+    @Override
+    public int hashCode() {
+        return mStorage.hashCode();
+    }
+
+    @Override
+    public boolean equals(@Nullable Object o) {
+        if (o instanceof WatchedSparseArray) {
+            WatchedSparseArray w = (WatchedSparseArray) o;
+            return mStorage.equals(w.mStorage);
+        } else {
+            return false;
+        }
+    }
+
     /**
      * <p>This implementation composes a string by iterating over its mappings. If
      * this map contains itself as a value, the string "(this Map)"
@@ -398,4 +451,48 @@ public class WatchedSparseArray<E> extends WatchableImpl {
     public String toString() {
         return mStorage.toString();
     }
+
+    /**
+     * Create a copy of the array.  If the element is a subclass of Snapper then the copy
+     * contains snapshots of the elements.  Otherwise the copy contains references to the
+     * elements.  The returned snapshot is immutable.
+     * @return A new array whose elements are the elements of <this>.
+     */
+    public WatchedSparseArray<E> snapshot() {
+        WatchedSparseArray<E> l = new WatchedSparseArray<>(size());
+        snapshot(l, this);
+        return l;
+    }
+
+    /**
+     * Make <this> a snapshot of the argument.  Note that <this> is immutable when the
+     * method returns.  <this> must be empty when the function is called.
+     * @param r The source array, which is copied into <this>
+     */
+    public void snapshot(@NonNull WatchedSparseArray<E> r) {
+        snapshot(this, r);
+    }
+
+    /**
+     * Make the destination a copy of the source.  If the element is a subclass of Snapper then the
+     * copy contains snapshots of the elements.  Otherwise the copy contains references to the
+     * elements.  The destination must be initially empty.  Upon return, the destination is
+     * immutable.
+     * @param dst The destination array.  It must be empty.
+     * @param src The source array.  It is not modified.
+     */
+    public static <E> void snapshot(@NonNull WatchedSparseArray<E> dst,
+            @NonNull WatchedSparseArray<E> src) {
+        if (dst.size() != 0) {
+            throw new IllegalArgumentException("snapshot destination is not empty");
+        }
+        final int end = src.size();
+        for (int i = 0; i < end; i++) {
+            final E val = Snapshots.maybeSnapshot(src.valueAt(i));
+            final int key = src.keyAt(i);
+            dst.put(key, val);
+        }
+        dst.seal();
+    }
+
 }

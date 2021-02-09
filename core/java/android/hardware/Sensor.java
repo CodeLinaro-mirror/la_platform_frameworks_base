@@ -19,6 +19,7 @@ package android.hardware;
 
 import android.annotation.SystemApi;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.hardware.input.InputSensorInfo;
 import android.os.Build;
 
 /**
@@ -880,7 +881,11 @@ public final class Sensor {
         }
     }
 
-    static int getMaxLengthValuesArray(Sensor sensor, int sdkLevel) {
+    /**
+     * Return sensor's maximum length of values array
+     * @hide
+     */
+    public static int getMaxLengthValuesArray(Sensor sensor, int sdkLevel) {
         // RotationVector length has changed to 3 to 5 for API level 18
         // Set it to 3 for backward compatibility.
         if (sensor.mType == Sensor.TYPE_ROTATION_VECTOR
@@ -920,6 +925,30 @@ public final class Sensor {
     private int     mId;
 
     Sensor() {
+    }
+
+    /**
+     * Construct a sensor object from SensorInfo of an input device.
+     * This is only used for constructing an input device sensor object.
+     * @hide
+     */
+    public Sensor(InputSensorInfo sensorInfo) {
+        this.mName = sensorInfo.getName();
+        this.mVendor = sensorInfo.getVendor();
+        this.mVersion = sensorInfo.getVersion();
+        this.mHandle = sensorInfo.getHandle();
+        this.mType = sensorInfo.getType();
+        this.mMaxRange = sensorInfo.getMaxRange();
+        this.mResolution = sensorInfo.getResolution();
+        this.mPower = sensorInfo.getPower();
+        this.mMinDelay = sensorInfo.getMinDelay();
+        this.mFifoReservedEventCount = sensorInfo.getFifoReservedEventCount();
+        this.mFifoMaxEventCount = sensorInfo.getFifoMaxEventCount();
+        this.mStringType = sensorInfo.getStringType();
+        this.mRequiredPermission = sensorInfo.getRequiredPermission();
+        this.mMaxDelay = sensorInfo.getMaxDelay();
+        this.mFlags = sensorInfo.getFlags();
+        this.mId = sensorInfo.getId();
     }
 
     /**

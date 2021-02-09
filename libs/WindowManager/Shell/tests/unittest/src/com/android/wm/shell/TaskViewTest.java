@@ -30,6 +30,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.app.ActivityManager;
 import android.app.ActivityOptions;
@@ -96,9 +97,9 @@ public class TaskViewTest extends ShellTestCase {
             return null;
         }).when(mExecutor).execute(any());
 
+        when(mOrganizer.getExecutor()).thenReturn(mExecutor);
         mTaskView = new TaskView(mContext, mOrganizer);
-        mTaskView.setExecutor(mExecutor);
-        mTaskView.setListener(mViewListener);
+        mTaskView.setListener(mExecutor, mViewListener);
     }
 
     @After
@@ -111,10 +112,9 @@ public class TaskViewTest extends ShellTestCase {
     @Test
     public void testSetPendingListener_throwsException() {
         TaskView taskView = new TaskView(mContext, mOrganizer);
-        mTaskView.setExecutor(mExecutor);
-        taskView.setListener(mViewListener);
+        taskView.setListener(mExecutor, mViewListener);
         try {
-            taskView.setListener(mViewListener);
+            taskView.setListener(mExecutor, mViewListener);
         } catch (IllegalStateException e) {
             // pass
             return;
@@ -214,5 +214,20 @@ public class TaskViewTest extends ShellTestCase {
         mTaskView.onBackPressedOnTaskRoot(mTaskInfo);
 
         verify(mViewListener).onBackPressedOnTaskRoot(eq(mTaskInfo.taskId));
+    }
+
+    @Test
+    public void testSetOnBackPressedOnTaskRoot() {
+        mTaskView.onTaskAppeared(mTaskInfo, mLeash);
+        verify(mOrganizer).setInterceptBackPressedOnTaskRoot(eq(mTaskInfo.token), eq(true));
+    }
+
+    @Test
+    public void testUnsetOnBackPressedOnTaskRoot() {
+        mTaskView.onTaskAppeared(mTaskInfo, mLeash);
+        verify(mOrganizer).setInterceptBackPressedOnTaskRoot(eq(mTaskInfo.token), eq(true));
+
+        mTaskView.onTaskVanished(mTaskInfo);
+        verify(mOrganizer).setInterceptBackPressedOnTaskRoot(eq(mTaskInfo.token), eq(false));
     }
 }

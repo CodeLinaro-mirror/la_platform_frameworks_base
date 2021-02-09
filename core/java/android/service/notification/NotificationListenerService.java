@@ -242,6 +242,39 @@ public abstract class NotificationListenerService extends Service {
     public @interface NotificationCancelReason{};
 
     /**
+     * @hide
+     */
+    @IntDef(flag = true, prefix = { "FLAG_FILTER_TYPE_" }, value = {
+            FLAG_FILTER_TYPE_CONVERSATIONS,
+            FLAG_FILTER_TYPE_ALERTING,
+            FLAG_FILTER_TYPE_SILENT,
+            FLAG_FILTER_TYPE_ONGOING
+    })
+    public @interface NotificationFilterTypes {}
+    /**
+     * A flag value indicating that this notification listener can see conversation type
+     * notifications.
+     * @hide
+     */
+    public static final int FLAG_FILTER_TYPE_CONVERSATIONS = 1;
+    /**
+     * A flag value indicating that this notification listener can see altering type notifications.
+     * @hide
+     */
+    public static final int FLAG_FILTER_TYPE_ALERTING = 2;
+    /**
+     * A flag value indicating that this notification listener can see silent type notifications.
+     * @hide
+     */
+    public static final int FLAG_FILTER_TYPE_SILENT = 4;
+    /**
+     * A flag value indicating that this notification listener can see important
+     * ( > {@link NotificationManager#IMPORTANCE_MIN}) ongoing type notifications.
+     * @hide
+     */
+    public static final int FLAG_FILTER_TYPE_ONGOING = 8;
+
+    /**
      * The full trim of the StatusBarNotification including all its features.
      *
      * @hide
@@ -1517,8 +1550,10 @@ public abstract class NotificationListenerService extends Service {
      */
     public static class Ranking {
 
-        /** Value signifying that the user has not expressed a per-app visibility override value.
-         * @hide */
+        /**
+         * Value signifying that the user and device policy manager have not expressed a lockscreen
+         * visibility override for a notification.
+         */
         public static final int VISIBILITY_NO_OVERRIDE = NotificationManager.VISIBILITY_NO_OVERRIDE;
 
         /**
@@ -1695,14 +1730,13 @@ public abstract class NotificationListenerService extends Service {
         }
 
         /**
-         * Returns the user specified visibility for the package that posted
-         * this notification, or
+         * Returns the user or device policy manager specified visibility (see
+         * {@link Notification#VISIBILITY_PRIVATE}, {@link Notification#VISIBILITY_PUBLIC},
+         * {@link Notification#VISIBILITY_SECRET}) for this notification, or
          * {@link NotificationListenerService.Ranking#VISIBILITY_NO_OVERRIDE} if
          * no such preference has been expressed.
-         * @hide
          */
-        @UnsupportedAppUsage
-        public int getVisibilityOverride() {
+        public int getLockscreenVisibilityOverride() {
             return mVisibilityOverride;
         }
 

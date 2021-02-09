@@ -26,6 +26,9 @@ import android.hardware.tv.cec.V1_0.IHdmiCec.getPhysicalAddressCallback;
 import android.hardware.tv.cec.V1_0.IHdmiCecCallback;
 import android.hardware.tv.cec.V1_0.Result;
 import android.hardware.tv.cec.V1_0.SendMessageResult;
+import android.icu.util.IllformedLocaleException;
+import android.icu.util.ULocale;
+import android.os.Binder;
 import android.os.Handler;
 import android.os.IHwBinder;
 import android.os.Looper;
@@ -33,6 +36,7 @@ import android.os.RemoteException;
 import android.stats.hdmi.HdmiStatsEnums;
 import android.util.Slog;
 
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.server.hdmi.HdmiAnnotations.IoThreadOnly;
@@ -48,8 +52,6 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.function.Predicate;
-
-import sun.util.locale.LanguageTag;
 
 /**
  * Manages HDMI-CEC command and behaviors. It converts user's command into CEC command
@@ -352,10 +354,28 @@ final class HdmiCecController {
     @ServiceThreadOnly
     void setLanguage(String language) {
         assertRunOnServiceThread();
-        if (!LanguageTag.isLanguage(language)) {
+        if (!isLanguage(language)) {
             return;
         }
         mNativeWrapperImpl.nativeSetLanguage(language);
+    }
+
+    /**
+     * Returns true if the language code is well-formed.
+     */
+    @VisibleForTesting static boolean isLanguage(String language) {
+        // Handle null and empty string because because ULocale.Builder#setLanguage accepts them.
+        if (language == null || language.isEmpty()) {
+            return false;
+        }
+
+        ULocale.Builder builder = new ULocale.Builder();
+        try {
+            builder.setLanguage(language);
+            return true;
+        } catch (IllformedLocaleException e) {
+            return false;
+        }
     }
 
     /**
@@ -506,12 +526,14 @@ final class HdmiCecController {
     // Run a Runnable on IO thread.
     // It should be careful to access member variables on IO thread because
     // it can be accessed from system thread as well.
-    private void runOnIoThread(Runnable runnable) {
-        mIoHandler.post(runnable);
+    @VisibleForTesting
+    void runOnIoThread(Runnable runnable) {
+        mIoHandler.post(new WorkSourceUidPreservingRunnable(runnable));
     }
 
-    private void runOnServiceThread(Runnable runnable) {
-        mControlHandler.post(runnable);
+    @VisibleForTesting
+    void runOnServiceThread(Runnable runnable) {
+        mControlHandler.post(new WorkSourceUidPreservingRunnable(runnable));
     }
 
     @ServiceThreadOnly
@@ -572,6 +594,18 @@ final class HdmiCecController {
         sendCommand(cecMessage, null);
     }
 
+    /**
+     * Returns the calling UID of the original Binder call that triggered this code.
+     * If this code was not triggered by a Binder call, returns the UID of this process.
+     */
+    private int getCallingUid() {
+        int workSourceUid = Binder.getCallingWorkSourceUid();
+        if (workSourceUid == -1) {
+            return Binder.getCallingUid();
+        }
+        return workSourceUid;
+    }
+
     @ServiceThreadOnly
     void sendCommand(final HdmiCecMessage cecMessage,
             final HdmiControlService.SendMessageCallback callback) {
@@ -602,6 +636,7 @@ final class HdmiCecController {
                         mHdmiCecAtomWriter.messageReported(
                                 cecMessage,
                                 FrameworkStatsLog.HDMI_CEC_MESSAGE_REPORTED__DIRECTION__OUTGOING,
+                                getCallingUid(),
                                 finalError
                         );
                         if (callback != null) {
@@ -624,7 +659,7 @@ final class HdmiCecController {
         addCecMessageToHistory(true /* isReceived */, command);
 
         mHdmiCecAtomWriter.messageReported(command,
-                incomingMessageDirection(srcAddress, dstAddress));
+                incomingMessageDirection(srcAddress, dstAddress), getCallingUid());
 
         onReceiveCommand(command);
     }
@@ -635,7 +670,7 @@ final class HdmiCecController {
      */
     private int incomingMessageDirection(int srcAddress, int dstAddress) {
         boolean sourceIsLocal = false;
-        boolean destinationIsLocal = false;
+        boolean destinationIsLocal = dstAddress == Constants.ADDR_BROADCAST;
         for (HdmiCecLocalDevice localDevice : mService.getHdmiCecNetwork().getLocalDeviceList()) {
             int logicalAddress = localDevice.getDeviceInfo().getLogicalAddress();
             if (logicalAddress == srcAddress) {

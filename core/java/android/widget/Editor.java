@@ -16,7 +16,7 @@
 
 package android.widget;
 
-import static android.view.OnReceiveContentListener.Payload.SOURCE_DRAG_AND_DROP;
+import static android.view.ContentInfo.SOURCE_DRAG_AND_DROP;
 
 import android.R;
 import android.animation.ValueAnimator;
@@ -87,6 +87,7 @@ import android.util.SparseArray;
 import android.util.TypedValue;
 import android.view.ActionMode;
 import android.view.ActionMode.Callback;
+import android.view.ContentInfo;
 import android.view.ContextMenu;
 import android.view.ContextThemeWrapper;
 import android.view.DragAndDropPermissions;
@@ -588,8 +589,18 @@ public class Editor {
         mUndoOwner = mUndoManager.getOwner(UNDO_OWNER_TAG, this);
     }
 
-    @VisibleForTesting
-    public @NonNull TextViewOnReceiveContentListener getDefaultOnReceiveContentListener() {
+    /**
+     * Returns the default handler for receiving content in an editable {@link TextView}. This
+     * listener impl is used to encapsulate the default behavior but it is not part of the public
+     * API. If an app wants to execute the default platform behavior for receiving content, it
+     * should call {@link View#onReceiveContent}. Alternatively, if an app implements a custom
+     * listener for receiving content and wants to delegate some of the content to be handled by
+     * the platform, it should return the corresponding content from its listener. See
+     * {@link View#setOnReceiveContentListener} and {@link OnReceiveContentListener} for more info.
+     */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    @NonNull
+    public TextViewOnReceiveContentListener getDefaultOnReceiveContentListener() {
         return mDefaultOnReceiveContentListener;
     }
 
@@ -2869,10 +2880,10 @@ public class Editor {
             final int originalLength = mTextView.getText().length();
             Selection.setSelection((Spannable) mTextView.getText(), offset);
             final ClipData clip = event.getClipData();
-            final OnReceiveContentListener.Payload payload =
-                    new OnReceiveContentListener.Payload.Builder(clip, SOURCE_DRAG_AND_DROP)
+            final ContentInfo payload =
+                    new ContentInfo.Builder(clip, SOURCE_DRAG_AND_DROP)
                     .build();
-            mTextView.onReceiveContent(payload);
+            mTextView.performReceiveContent(payload);
             if (dragDropIntoItself) {
                 deleteSourceAfterLocalDrop(dragLocalState, offset, originalLength);
             }
@@ -6613,6 +6624,9 @@ public class Editor {
                     }
 
                     updateSelection(event);
+                    if (mTextView.hasSelection() && mEndHandle != null) {
+                        mEndHandle.updateMagnifier(event);
+                    }
                     break;
 
                 case MotionEvent.ACTION_UP:
@@ -6623,6 +6637,9 @@ public class Editor {
                         break;
                     }
                     updateSelection(event);
+                    if (mEndHandle != null) {
+                        mEndHandle.dismissMagnifier();
+                    }
 
                     // No longer dragging to select text, let the parent intercept events.
                     mTextView.getParent().requestDisallowInterceptTouchEvent(false);

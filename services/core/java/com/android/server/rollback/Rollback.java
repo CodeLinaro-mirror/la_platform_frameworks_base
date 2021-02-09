@@ -51,6 +51,7 @@ import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.internal.util.Preconditions;
 import com.android.server.LocalServices;
+import com.android.server.RescueParty;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
 
 import java.io.File;
@@ -141,9 +142,15 @@ class Rollback {
 
     /**
      * The current state of the rollback.
-     * ENABLING, AVAILABLE, or COMMITTED.
+     * ENABLING, AVAILABLE, DELETED, or COMMITTED.
      */
     private @RollbackState int mState;
+
+    /**
+     * The detailed description of the current state. For a DELETED state, it describes
+     * the reason why the rollback is deleted.
+     */
+    private @NonNull String mStateDescription = "";
 
     /**
      * True if we are expecting the package manager to call restoreUserData
@@ -231,7 +238,7 @@ class Rollback {
      * Constructs a pre-populated Rollback instance.
      */
     Rollback(RollbackInfo info, File backupDir, Instant timestamp, int stagedSessionId,
-            @RollbackState int state, boolean restoreUserDataInProgress,
+            @RollbackState int state, String stateDescription, boolean restoreUserDataInProgress,
             int userId, String installerPackageName, SparseIntArray extensionVersions) {
         this.info = info;
         mUserId = userId;
@@ -240,6 +247,7 @@ class Rollback {
         mTimestamp = timestamp;
         mStagedSessionId = stagedSessionId;
         mState = state;
+        mStateDescription = stateDescription;
         mRestoreUserDataInProgress = restoreUserDataInProgress;
         mExtensionVersions = Objects.requireNonNull(extensionVersions);
         // TODO(b/120200473): Include this field during persistence. This field will be used to
@@ -478,7 +486,7 @@ class Rollback {
             Slog.w(TAG, "Cannot make deleted rollback available.");
             return;
         }
-        mState = ROLLBACK_STATE_AVAILABLE;
+        setState(ROLLBACK_STATE_AVAILABLE, "");
         mTimestamp = Instant.now();
         RollbackStore.saveRollback(this);
     }
@@ -533,7 +541,10 @@ class Rollback {
             PackageInstaller.Session parentSession = packageInstaller.openSession(
                     parentSessionId);
 
+            List<String> packageNames = new ArrayList<>(info.getPackages().size());
             for (PackageRollbackInfo pkgRollbackInfo : info.getPackages()) {
+                packageNames.add(pkgRollbackInfo.getPackageName());
+
                 if (pkgRollbackInfo.isApkInApex()) {
                     // No need to issue a downgrade install request for apk-in-apex. It will
                     // be rolled back when its parent apex is downgraded.
@@ -574,9 +585,18 @@ class Rollback {
                             ParcelFileDescriptor.MODE_READ_ONLY)) {
                         final long token = Binder.clearCallingIdentity();
                         try {
-                            session.write(packageCodePath.getName(), 0,
-                                    packageCodePath.length(),
-                                    fd);
+                            boolean fallbackToCopy = false;
+                            try {
+                                // Populate apk/apex files using hard links to avoid copy
+                                session.stageViaHardLink(packageCodePath.getAbsolutePath());
+                            } catch (Exception ignore) {
+                                fallbackToCopy = true;
+                            }
+                            if (fallbackToCopy) {
+                                session.write(packageCodePath.getName(), 0,
+                                        packageCodePath.length(),
+                                        fd);
+                            }
                         } finally {
                             Binder.restoreCallingIdentity(token);
                         }
@@ -584,6 +604,9 @@ class Rollback {
                 }
                 parentSession.addChildSessionId(sessionId);
             }
+
+            // Clear flags.
+            RescueParty.resetDeviceConfigForPackages(packageNames);
 
             Consumer<Intent> onResult = result -> {
                 mHandler.post(() -> {
@@ -598,7 +621,7 @@ class Rollback {
                         // Why would we expect commit not to fail again?
                         // TODO: Could this cause a rollback to be resurrected
                         // if it should otherwise have expired by now?
-                        mState = ROLLBACK_STATE_AVAILABLE;
+                        setState(ROLLBACK_STATE_AVAILABLE, "Commit failed");
                         mRestoreUserDataInProgress = false;
                         info.setCommittedSessionId(-1);
                         sendFailure(context, statusReceiver,
@@ -642,7 +665,7 @@ class Rollback {
             };
 
             final LocalIntentReceiver receiver = new LocalIntentReceiver(onResult);
-            mState = ROLLBACK_STATE_COMMITTED;
+            setState(ROLLBACK_STATE_COMMITTED, "");
             info.setCommittedSessionId(parentSessionId);
             mRestoreUserDataInProgress = true;
             parentSession.commit(receiver.getIntentSender());
@@ -691,7 +714,7 @@ class Rollback {
      * Deletes app data snapshots associated with this rollback, and moves to the DELETED state.
      */
     @WorkerThread
-    void delete(AppDataRollbackHelper dataHelper) {
+    void delete(AppDataRollbackHelper dataHelper, @NonNull String reason) {
         assertInWorkerThread();
         boolean containsApex = false;
         Set<Integer> apexUsers = new ArraySet<>();
@@ -717,7 +740,7 @@ class Rollback {
         }
 
         RollbackStore.deleteRollback(this);
-        mState = ROLLBACK_STATE_DELETED;
+        setState(ROLLBACK_STATE_DELETED, reason);
     }
 
     /**
@@ -847,6 +870,7 @@ class Rollback {
             case Rollback.ROLLBACK_STATE_ENABLING: return "enabling";
             case Rollback.ROLLBACK_STATE_AVAILABLE: return "available";
             case Rollback.ROLLBACK_STATE_COMMITTED: return "committed";
+            case Rollback.ROLLBACK_STATE_DELETED: return "deleted";
         }
         throw new AssertionError("Invalid rollback state: " + state);
     }
@@ -858,6 +882,7 @@ class Rollback {
             case "enabling": return Rollback.ROLLBACK_STATE_ENABLING;
             case "available": return Rollback.ROLLBACK_STATE_AVAILABLE;
             case "committed": return Rollback.ROLLBACK_STATE_COMMITTED;
+            case "deleted": return Rollback.ROLLBACK_STATE_DELETED;
         }
         throw new ParseException("Invalid rollback state: " + state, 0);
     }
@@ -926,6 +951,7 @@ class Rollback {
         ipw.println(info.getRollbackId() + ":");
         ipw.increaseIndent();
         ipw.println("-state: " + getStateAsString());
+        ipw.println("-stateDescription: " + mStateDescription);
         ipw.println("-timestamp: " + getTimestamp());
         if (getStagedSessionId() != -1) {
             ipw.println("-stagedSessionId: " + getStagedSessionId());
@@ -954,5 +980,18 @@ class Rollback {
             ipw.decreaseIndent();
         }
         ipw.decreaseIndent();
+    }
+
+    @WorkerThread
+    String getStateDescription() {
+        assertInWorkerThread();
+        return mStateDescription;
+    }
+
+    @VisibleForTesting
+    void setState(@RollbackState int state, String description) {
+        assertInWorkerThread();
+        mState = state;
+        mStateDescription = description;
     }
 }

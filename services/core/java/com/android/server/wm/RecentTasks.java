@@ -36,13 +36,13 @@ import static android.content.Intent.FLAG_ACTIVITY_NEW_TASK;
 import static android.os.Process.SYSTEM_UID;
 
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_TASKS;
-import static com.android.server.wm.ActivityStackSupervisor.REMOVE_FROM_RECENTS;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_RECENTS;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_RECENTS_TRIM_TASKS;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.POSTFIX_RECENTS;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.POSTFIX_TASKS;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_ATM;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_WITH_CLASS_NAME;
+import static com.android.server.wm.ActivityTaskSupervisor.REMOVE_FROM_RECENTS;
 
 import android.annotation.Nullable;
 import android.app.ActivityManager;
@@ -150,7 +150,7 @@ class RecentTasks {
      */
     private final TaskPersister mTaskPersister;
     private final ActivityTaskManagerService mService;
-    private final ActivityStackSupervisor mSupervisor;
+    private final ActivityTaskSupervisor mSupervisor;
 
     /**
      * Keeps track of the static recents package/component which is granted additional permissions
@@ -180,6 +180,9 @@ class RecentTasks {
 
     /** The non-empty tasks that are removed from recent tasks (see {@link #removeForAddTask}). */
     private final ArrayList<Task> mHiddenTasks = new ArrayList<>();
+
+    /** Whether to trim inactive tasks when activities are idle. */
+    private boolean mCheckTrimmableTasksOnIdle;
 
     // These values are generally loaded from resources, but can be set dynamically in the tests
     private boolean mHasVisibleRecentTasks;
@@ -217,7 +220,7 @@ class RecentTasks {
                     final RootWindowContainer rac = mService.mRootWindowContainer;
                     final DisplayContent dc = rac.getDisplayContent(displayId).mDisplayContent;
                     if (dc.pointWithinAppWindow(x, y)) {
-                        final Task stack = mService.getTopDisplayFocusedStack();
+                        final Task stack = mService.getTopDisplayFocusedRootTask();
                         final Task topTask = stack != null ? stack.getTopMostTask() : null;
                         resetFreezeTaskListReordering(topTask);
                     }
@@ -232,20 +235,20 @@ class RecentTasks {
     @VisibleForTesting
     RecentTasks(ActivityTaskManagerService service, TaskPersister taskPersister) {
         mService = service;
-        mSupervisor = mService.mStackSupervisor;
+        mSupervisor = mService.mTaskSupervisor;
         mTaskPersister = taskPersister;
         mGlobalMaxNumTasks = ActivityTaskManager.getMaxRecentTasksStatic();
         mHasVisibleRecentTasks = true;
         mTaskNotificationController = service.getTaskChangeNotificationController();
     }
 
-    RecentTasks(ActivityTaskManagerService service, ActivityStackSupervisor stackSupervisor) {
+    RecentTasks(ActivityTaskManagerService service, ActivityTaskSupervisor taskSupervisor) {
         final File systemDir = Environment.getDataSystemDirectory();
         final Resources res = service.mContext.getResources();
         mService = service;
-        mSupervisor = mService.mStackSupervisor;
-        mTaskPersister = new TaskPersister(systemDir, stackSupervisor, service, this,
-                stackSupervisor.mPersisterQueue);
+        mSupervisor = mService.mTaskSupervisor;
+        mTaskPersister = new TaskPersister(systemDir, taskSupervisor, service, this,
+                taskSupervisor.mPersisterQueue);
         mGlobalMaxNumTasks = ActivityTaskManager.getMaxRecentTasksStatic();
         mTaskNotificationController = service.getTaskChangeNotificationController();
         mHasVisibleRecentTasks = res.getBoolean(com.android.internal.R.bool.config_hasRecents);
@@ -325,7 +328,7 @@ class RecentTasks {
     @VisibleForTesting
     void resetFreezeTaskListReorderingOnTimeout() {
         synchronized (mService.mGlobalLock) {
-            final Task focusedStack = mService.getTopDisplayFocusedStack();
+            final Task focusedStack = mService.getTopDisplayFocusedRootTask();
             final Task topTask = focusedStack != null ? focusedStack.getTopMostTask() : null;
             resetFreezeTaskListReordering(topTask);
         }
@@ -524,7 +527,7 @@ class RecentTasks {
      */
     void notifyTaskPersisterLocked(Task task, boolean flush) {
         final Task rootTask = task != null ? task.getRootTask() : null;
-        if (rootTask != null && rootTask.isHomeOrRecentsStack()) {
+        if (rootTask != null && rootTask.isHomeOrRecentsRootTask()) {
             // Never persist the home or recents task.
             return;
         }
@@ -558,7 +561,7 @@ class RecentTasks {
 
     private static boolean shouldPersistTaskLocked(Task task) {
         final Task rootTask = task.getRootTask();
-        return task.isPersistable && (rootTask == null || !rootTask.isHomeOrRecentsStack());
+        return task.isPersistable && (rootTask == null || !rootTask.isHomeOrRecentsRootTask());
     }
 
     void onSystemReadyLocked() {
@@ -989,7 +992,7 @@ class RecentTasks {
             }
             final Task rootTask = task.getRootTask();
             if ((task.isPersistable || task.inRecents)
-                    && (rootTask == null || !rootTask.isHomeOrRecentsStack())) {
+                    && (rootTask == null || !rootTask.isHomeOrRecentsRootTask())) {
                 if (TaskPersister.DEBUG) Slog.d(TAG, "adding to persistentTaskIds task=" + task);
                 persistentTaskIds.add(task.mTaskId);
             } else {
@@ -1044,16 +1047,6 @@ class RecentTasks {
      */
     void add(Task task) {
         if (DEBUG_RECENTS_TRIM_TASKS) Slog.d(TAG, "add: task=" + task);
-
-        // Only allow trimming task if it is not updating visibility for activities, so the caller
-        // doesn't need to handle unexpected size and index when looping task containers.
-        final boolean canTrimTask = !mSupervisor.inActivityVisibilityUpdate();
-
-        // Clean up the hidden tasks when going to home because the user may not be unable to return
-        // to the task from recents.
-        if (canTrimTask && !mHiddenTasks.isEmpty() && task.isActivityTypeHome()) {
-            removeUnreachableHiddenTasks(task.getWindowingMode());
-        }
 
         final boolean isAffiliated = task.mAffiliatedTaskId != task.mTaskId
                 || task.mNextAffiliateTaskId != INVALID_TASK_ID
@@ -1183,10 +1176,7 @@ class RecentTasks {
             cleanupLocked(task.mUserId);
         }
 
-        // Trim the set of tasks to the active set
-        if (canTrimTask) {
-            trimInactiveRecentTasks();
-        }
+        mCheckTrimmableTasksOnIdle = true;
         notifyTaskPersisterLocked(task, false /* flush */);
     }
 
@@ -1210,6 +1200,22 @@ class RecentTasks {
     void remove(Task task) {
         mTasks.remove(task);
         notifyTaskRemoved(task, false /* wasTrimmed */, false /* killProcess */);
+    }
+
+    /**
+     * Called when an activity reports idle. The caller should not be in any loop that iterates
+     * window hierarchy. so it is safe (e.g. index out of bound) to remove inactive tasks.
+     */
+    void onActivityIdle(ActivityRecord r) {
+        // Clean up the hidden tasks when going to home because the user may not be unable to return
+        // to the task from recents.
+        if (!mHiddenTasks.isEmpty() && r.isActivityTypeHome()) {
+            removeUnreachableHiddenTasks(r.getWindowingMode());
+        }
+        if (mCheckTrimmableTasksOnIdle) {
+            mCheckTrimmableTasksOnIdle = false;
+            trimInactiveRecentTasks();
+        }
     }
 
     /**
@@ -1490,6 +1496,7 @@ class RecentTasks {
         final Task removedTask = mTasks.remove(removeIndex);
         if (removedTask != task) {
             if (removedTask.hasChild()) {
+                Slog.i(TAG, "Add " + removedTask + " to hidden list because adding " + task);
                 // A non-empty task is replaced by a new task. Because the removed task is no longer
                 // managed by the recent tasks list, add it to the hidden list to prevent the task
                 // from becoming dangling.

@@ -18,6 +18,7 @@ package com.android.wm.shell.onehanded;
 
 import androidx.annotation.NonNull;
 
+import com.android.wm.shell.common.annotations.ExternalThread;
 import com.android.wm.shell.onehanded.OneHandedGestureHandler.OneHandedGestureEventCallback;
 
 import java.io.PrintWriter;
@@ -25,6 +26,7 @@ import java.io.PrintWriter;
 /**
  * Interface to engage one handed feature.
  */
+@ExternalThread
 public interface OneHanded {
     /**
      * Return one handed settings enabled or not.
@@ -47,9 +49,9 @@ public interface OneHanded {
     void stopOneHanded();
 
     /**
-     * Exits one handed mode with {@link OneHandedEvents}.
+     * Exits one handed mode with {@link OneHandedUiEventLogger}.
      */
-    void stopOneHanded(int event);
+    void stopOneHanded(int uiEvent);
 
     /**
      * Set navigation 3 button mode enabled or disabled by users.

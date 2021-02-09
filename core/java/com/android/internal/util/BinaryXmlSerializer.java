@@ -69,7 +69,7 @@ public final class BinaryXmlSerializer implements TypedXmlSerializer {
      * {@code ABX_}, representing "Android Binary XML." The final byte is a
      * version number which may be incremented as the protocol changes.
      */
-    static final byte[] PROTOCOL_MAGIC_VERSION_0 = new byte[] { 0x41, 0x42, 0x58, 0x00 };
+    public static final byte[] PROTOCOL_MAGIC_VERSION_0 = new byte[] { 0x41, 0x42, 0x58, 0x00 };
 
     /**
      * Internal token which represents an attribute associated with the most
@@ -120,7 +120,7 @@ public final class BinaryXmlSerializer implements TypedXmlSerializer {
 
     @Override
     public void setOutput(@NonNull OutputStream os, @Nullable String encoding) throws IOException {
-        if (encoding != null && !StandardCharsets.UTF_8.name().equals(encoding)) {
+        if (encoding != null && !StandardCharsets.UTF_8.name().equalsIgnoreCase(encoding)) {
             throw new UnsupportedOperationException();
         }
 
@@ -144,7 +144,10 @@ public final class BinaryXmlSerializer implements TypedXmlSerializer {
     @Override
     public void startDocument(@Nullable String encoding, @Nullable Boolean standalone)
             throws IOException {
-        if (encoding != null && !StandardCharsets.UTF_8.name().equals(encoding)) {
+        if (encoding != null && !StandardCharsets.UTF_8.name().equalsIgnoreCase(encoding)) {
+            throw new UnsupportedOperationException();
+        }
+        if (standalone != null && !standalone) {
             throw new UnsupportedOperationException();
         }
         mOut.writeByte(START_DOCUMENT | TYPE_NULL);

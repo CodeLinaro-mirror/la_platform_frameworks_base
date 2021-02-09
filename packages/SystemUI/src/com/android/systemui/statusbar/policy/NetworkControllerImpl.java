@@ -30,17 +30,16 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Configuration;
-import android.content.res.Resources;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkScoreManager;
+import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.PersistableBundle;
 import android.provider.Settings;
 import android.telephony.CarrierConfigManager;
 import android.telephony.CellSignalStrength;
@@ -51,6 +50,7 @@ import android.telephony.SubscriptionManager;
 import android.telephony.SubscriptionManager.OnSubscriptionsChangedListener;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
+import android.util.FeatureFlagUtils;
 import android.util.Log;
 import android.util.MathUtils;
 import android.util.SparseArray;
@@ -59,6 +59,9 @@ import androidx.annotation.NonNull;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.settingslib.mobile.MobileMappings.Config;
+import com.android.settingslib.mobile.MobileStatusTracker.SubscriptionDefaults;
+import com.android.settingslib.mobile.TelephonyIcons;
 import com.android.settingslib.net.DataUsageController;
 import com.android.systemui.Dumpable;
 import com.android.systemui.R;
@@ -109,6 +112,7 @@ public class NetworkControllerImpl extends BroadcastReceiver
     private final BroadcastDispatcher mBroadcastDispatcher;
     private final DemoModeController mDemoModeController;
     private final Object mLock = new Object();
+    private final boolean mProviderModel;
     private Config mConfig;
 
     private PhoneStateListener mPhoneStateListener;
@@ -139,6 +143,8 @@ public class NetworkControllerImpl extends BroadcastReceiver
     // States that don't belong to a subcontroller.
     private boolean mAirplaneMode = false;
     private boolean mHasNoSubs;
+    private boolean mNoDefaultNetwork = false;
+    private boolean mNoNetworksAvailable = true;
     private Locale mLocale = null;
     // This list holds our ordering.
     private List<SubscriptionInfo> mCurrentSubscriptions = new ArrayList<>();
@@ -186,6 +192,7 @@ public class NetworkControllerImpl extends BroadcastReceiver
             TelephonyManager telephonyManager,
             @Nullable WifiManager wifiManager,
             NetworkScoreManager networkScoreManager,
+            AccessPointControllerImpl accessPointController,
             DemoModeController demoModeController) {
         this(context, connectivityManager,
                 telephonyManager,
@@ -193,7 +200,7 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 networkScoreManager,
                 SubscriptionManager.from(context), Config.readConfig(context), bgLooper,
                 new CallbackHandler(),
-                new AccessPointControllerImpl(context),
+                accessPointController,
                 new DataUsageController(context),
                 new SubscriptionDefaults(),
                 deviceProvisionedController,
@@ -268,9 +275,37 @@ public class NetworkControllerImpl extends BroadcastReceiver
             }
         });
 
+        WifiManager.ScanResultsCallback scanResultsCallback =
+                new WifiManager.ScanResultsCallback() {
+            @Override
+            public void onScanResultsAvailable() {
+                mNoNetworksAvailable = true;
+                for (ScanResult scanResult : mWifiManager.getScanResults()) {
+                    if (!scanResult.SSID.equals(mWifiSignalController.getState().ssid)) {
+                        mNoNetworksAvailable = false;
+                        break;
+                    }
+                }
+                // Only update the network availability if there is no default network.
+                if (mNoDefaultNetwork) {
+                    mCallbackHandler.setConnectivityStatus(mNoDefaultNetwork, !mInetCondition,
+                            mNoNetworksAvailable);
+                }
+            }
+        };
+
+        mWifiManager.registerScanResultsCallback(mReceiverHandler::post, scanResultsCallback);
+
         ConnectivityManager.NetworkCallback callback = new ConnectivityManager.NetworkCallback(){
             private Network mLastNetwork;
             private NetworkCapabilities mLastNetworkCapabilities;
+
+            @Override
+            public void onLost(Network network) {
+                mLastNetwork = null;
+                mLastNetworkCapabilities = null;
+                updateConnectivity();
+            }
 
             @Override
             public void onCapabilitiesChanged(
@@ -320,6 +355,8 @@ public class NetworkControllerImpl extends BroadcastReceiver
         };
 
         mDemoModeController.addCallback(this);
+        mProviderModel = FeatureFlagUtils.isEnabled(
+                mContext, FeatureFlagUtils.SETTINGS_PROVIDER_MODEL);
     }
 
     private final Runnable mClearForceValidated = () -> {
@@ -358,9 +395,7 @@ public class NetworkControllerImpl extends BroadcastReceiver
 
         // broadcasts
         IntentFilter filter = new IntentFilter();
-        filter.addAction(WifiManager.RSSI_CHANGED_ACTION);
         filter.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
-        filter.addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION);
         filter.addAction(Intent.ACTION_SIM_STATE_CHANGED);
         filter.addAction(TelephonyManager.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED);
         filter.addAction(TelephonyManager.ACTION_DEFAULT_VOICE_SUBSCRIPTION_CHANGED);
@@ -391,7 +426,6 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 }
             }
         });
-
         updateMobileControllers();
 
         // Initial setup of emergency information. Handled as if we had received a sticky broadcast
@@ -442,14 +476,18 @@ public class NetworkControllerImpl extends BroadcastReceiver
 
     private MobileSignalController getDataController() {
         int dataSubId = mSubDefaults.getActiveDataSubId();
-        if (!SubscriptionManager.isValidSubscriptionId(dataSubId)) {
+        return getControllerWithSubId(dataSubId);
+    }
+
+    private MobileSignalController getControllerWithSubId(int subId) {
+        if (!SubscriptionManager.isValidSubscriptionId(subId)) {
             if (DEBUG) Log.e(TAG, "No data sim selected");
             return mDefaultSignalController;
         }
-        if (mMobileSignalControllers.indexOfKey(dataSubId) >= 0) {
-            return mMobileSignalControllers.get(dataSubId);
+        if (mMobileSignalControllers.indexOfKey(subId) >= 0) {
+            return mMobileSignalControllers.get(subId);
         }
-        if (DEBUG) Log.e(TAG, "Cannot find controller for data sub: " + dataSubId);
+        if (DEBUG) Log.e(TAG, "Cannot find controller for data sub: " + subId);
         return mDefaultSignalController;
     }
 
@@ -477,6 +515,15 @@ public class NetworkControllerImpl extends BroadcastReceiver
         }
 
         return dataController.isDataDisabled();
+    }
+
+    boolean isCarrierMergedWifi(int subId) {
+        return mWifiSignalController.isCarrierMergedWifi(subId);
+    }
+
+    String getNonDefaultMobileDataNetworkName(int subId) {
+        MobileSignalController controller = getControllerWithSubId(subId);
+        return controller != null ? controller.getNonDefaultCarrierName() : "";
     }
 
     private void notifyControllersMobileDataChanged() {
@@ -540,6 +587,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
         cb.setIsAirplaneMode(new IconState(mAirplaneMode,
                 TelephonyIcons.FLIGHT_MODE_ICON, R.string.accessibility_airplane_mode, mContext));
         cb.setNoSims(mHasNoSubs, mSimDetected);
+        if (mProviderModel) {
+            cb.setConnectivityStatus(mNoDefaultNetwork, !mInetCondition, mNoNetworksAvailable);
+        }
         mWifiSignalController.notifyListeners(cb);
         mEthernetSignalController.notifyListeners(cb);
         for (int i = 0; i < mMobileSignalControllers.size(); i++) {
@@ -884,6 +934,12 @@ public class NetworkControllerImpl extends BroadcastReceiver
         mInetCondition = !mValidatedTransports.isEmpty();
 
         pushConnectivityToSignals();
+        if (mProviderModel) {
+            mNoDefaultNetwork = mConnectedTransports.isEmpty();
+            mCallbackHandler.setConnectivityStatus(mNoDefaultNetwork, !mInetCondition,
+                    mNoNetworksAvailable);
+            notifyAllListeners();
+        }
     }
 
     /**
@@ -1201,59 +1257,4 @@ public class NetworkControllerImpl extends BroadcastReceiver
             registerListeners();
         }
     };
-
-    public static class SubscriptionDefaults {
-        public int getDefaultVoiceSubId() {
-            return SubscriptionManager.getDefaultVoiceSubscriptionId();
-        }
-
-        public int getDefaultDataSubId() {
-            return SubscriptionManager.getDefaultDataSubscriptionId();
-        }
-
-        public int getActiveDataSubId() {
-            return SubscriptionManager.getActiveDataSubscriptionId();
-        }
-    }
-
-    @VisibleForTesting
-    static class Config {
-        boolean showAtLeast3G = false;
-        boolean show4gFor3g = false;
-        boolean alwaysShowCdmaRssi = false;
-        boolean show4gForLte = false;
-        boolean hideLtePlus = false;
-        boolean hspaDataDistinguishable;
-        boolean alwaysShowDataRatIcon = false;
-
-        static Config readConfig(Context context) {
-            Config config = new Config();
-            Resources res = context.getResources();
-
-            config.showAtLeast3G = res.getBoolean(R.bool.config_showMin3G);
-            config.alwaysShowCdmaRssi =
-                    res.getBoolean(com.android.internal.R.bool.config_alwaysUseCdmaRssi);
-            config.hspaDataDistinguishable =
-                    res.getBoolean(R.bool.config_hspa_data_distinguishable);
-
-            CarrierConfigManager configMgr = (CarrierConfigManager)
-                    context.getSystemService(Context.CARRIER_CONFIG_SERVICE);
-            // Handle specific carrier config values for the default data SIM
-            int defaultDataSubId = SubscriptionManager.from(context)
-                    .getDefaultDataSubscriptionId();
-            PersistableBundle b = configMgr.getConfigForSubId(defaultDataSubId);
-            if (b != null) {
-                config.alwaysShowDataRatIcon = b.getBoolean(
-                        CarrierConfigManager.KEY_ALWAYS_SHOW_DATA_RAT_ICON_BOOL);
-                config.show4gForLte = b.getBoolean(
-                        CarrierConfigManager.KEY_SHOW_4G_FOR_LTE_DATA_ICON_BOOL);
-                config.show4gFor3g = b.getBoolean(
-                        CarrierConfigManager.KEY_SHOW_4G_FOR_3G_DATA_ICON_BOOL);
-                config.hideLtePlus = b.getBoolean(
-                        CarrierConfigManager.KEY_HIDE_LTE_PLUS_DATA_ICON_BOOL);
-            }
-
-            return config;
-        }
-    }
 }

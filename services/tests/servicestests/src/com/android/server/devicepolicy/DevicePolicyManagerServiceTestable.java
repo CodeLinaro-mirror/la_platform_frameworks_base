@@ -36,7 +36,6 @@ import android.os.Looper;
 import android.os.PowerManagerInternal;
 import android.os.UserHandle;
 import android.os.UserManager;
-import android.os.UserManagerInternal;
 import android.permission.IPermissionManager;
 import android.security.KeyChain;
 import android.telephony.TelephonyManager;
@@ -51,6 +50,7 @@ import com.android.internal.widget.LockPatternUtils;
 import com.android.internal.widget.LockSettingsInternal;
 import com.android.server.PersistentDataBlockManagerInternal;
 import com.android.server.net.NetworkPolicyManagerInternal;
+import com.android.server.pm.UserManagerInternal;
 
 import java.io.File;
 import java.io.IOException;
@@ -126,6 +126,8 @@ public class DevicePolicyManagerServiceTestable extends DevicePolicyManagerServi
 
         // Used as an override when set to nonzero.
         private long mCurrentTimeMillis = 0;
+
+        private final Map<Long, Pair<String, Integer>> mEnabledChanges = new ArrayMap<>();
 
         public MockInjector(MockSystemServices services, DpmMockContext context) {
             super(context);
@@ -317,9 +319,11 @@ public class DevicePolicyManagerServiceTestable extends DevicePolicyManagerServi
         }
 
         @Override
-        void recoverySystemRebootWipeUserData(boolean shutdown, String reason, boolean force,
-                boolean wipeEuicc) throws IOException {
-            services.recoverySystem.rebootWipeUserData(shutdown, reason, force, wipeEuicc);
+        boolean recoverySystemRebootWipeUserData(boolean shutdown, String reason, boolean force,
+                boolean wipeEuicc, boolean wipeExtRequested, boolean wipeResetProtectionData)
+                        throws IOException {
+            return services.recoverySystem.rebootWipeUserData(shutdown, reason, force, wipeEuicc,
+                    wipeExtRequested, wipeResetProtectionData);
         }
 
         @Override
@@ -456,6 +460,11 @@ public class DevicePolicyManagerServiceTestable extends DevicePolicyManagerServi
         }
 
         @Override
+        KeyChain.KeyChainConnection keyChainBind() {
+            return services.keyChainConnection;
+        }
+
+        @Override
         KeyChain.KeyChainConnection keyChainBindAsUser(UserHandle user) {
             return services.keyChainConnection;
         }
@@ -486,6 +495,34 @@ public class DevicePolicyManagerServiceTestable extends DevicePolicyManagerServi
         @Override
         public long systemCurrentTimeMillis() {
             return mCurrentTimeMillis != 0 ? mCurrentTimeMillis : System.currentTimeMillis();
+        }
+
+        public void setChangeEnabledForPackage(
+                long changeId, boolean enabled, String packageName, int userId) {
+            if (enabled) {
+                mEnabledChanges.put(changeId, Pair.create(packageName, userId));
+            } else {
+                mEnabledChanges.remove(changeId);
+            }
+        }
+
+        public void clearEnabledChanges() {
+            mEnabledChanges.clear();
+        }
+
+        @Override
+        public boolean isChangeEnabled(long changeId, String packageName, int userId) {
+            Pair<String, Integer> packageAndUser = mEnabledChanges.get(changeId);
+            if (packageAndUser == null) {
+                return false;
+            }
+
+            if (!packageAndUser.first.equals(packageName)
+                    || !packageAndUser.second.equals(userId)) {
+                return false;
+            }
+
+            return true;
         }
     }
 }

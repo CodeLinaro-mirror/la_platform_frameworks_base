@@ -17,6 +17,7 @@
 package android.telephony;
 
 import android.Manifest;
+import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
@@ -53,9 +54,13 @@ public class CarrierConfigManager {
     public static final String EXTRA_SLOT_INDEX = "android.telephony.extra.SLOT_INDEX";
 
     /**
-     * Extra included in {@link #ACTION_CARRIER_CONFIG_CHANGED} to indicate whether this is a
-     * rebroadcast on unlock. Defaults to {@code false} if not specified.
-     * @hide
+     * {@link #ACTION_CARRIER_CONFIG_CHANGED} is broadcast once on device bootup and then again when
+     * the device is unlocked. Direct-Boot-aware applications may use the first broadcast as an
+     * early signal that the carrier config has been loaded, but other applications will only
+     * receive the second broadcast, when the device is unlocked.
+     *
+     * This extra is included in {@link #ACTION_CARRIER_CONFIG_CHANGED} to indicate whether this is
+     * a rebroadcast on unlock.
      */
     public static final String EXTRA_REBROADCAST_ON_UNLOCK =
             "android.telephony.extra.REBROADCAST_ON_UNLOCK";
@@ -736,6 +741,14 @@ public class CarrierConfigManager {
      * provisioning, availability etc.
      */
     public static final String KEY_CARRIER_WFC_IMS_AVAILABLE_BOOL = "carrier_wfc_ims_available_bool";
+
+    /**
+     * Flag specifying whether Cross SIM over IMS should be available for carrier.
+     * When {@code false} the carrier does not support cross SIM calling.
+     * When {@code true} the carrier does support cross sim calling, where available
+     */
+    public static final String KEY_CARRIER_CROSS_SIM_IMS_AVAILABLE_BOOL =
+            "carrier_cross_sim_ims_available_bool";
 
     /**
      * Specifies a map from dialstrings to replacements for roaming network service numbers which
@@ -1492,6 +1505,31 @@ public class CarrierConfigManager {
             "wfc_carrier_name_override_by_pnn_bool";
 
     /**
+     * Value for {#CROSS_SIM_SPN_FORMAT_CARRIER_NAME_WITH_BRANDING} cnfig.
+     * specifies SPN format of displaying carrier name only.
+     *
+     */
+    public static final int CROSS_SIM_SPN_FORMAT_CARRIER_NAME_ONLY = 0;
+
+    /**
+     * Value for {#CROSS_SIM_SPN_FORMAT_CARRIER_NAME_WITH_BRANDING} cnfig.
+     * specifies SPN format of displaying carrier name along with "Cross-SIM calling".
+     */
+    public static final int CROSS_SIM_SPN_FORMAT_CARRIER_NAME_WITH_BRANDING = 1;
+
+    /**
+     * Indexes of SPN format strings in crossSimSpnFormats.
+     *
+     * <p>Available options are:
+     * <ul>
+     * <li>  {#CROSS_SIM_SPN_FORMAT_CARRIER_NAME_ONLY}: %s</li>
+     * <li>  {#CROSS_SIM_SPN_FORMAT_CARRIER_NAME_WITH_BRANDING}: %s Cross-SIM Calling</li>
+     * </ul>
+     * %s will be filled with carrier name
+     */
+    public static final String KEY_CROSS_SIM_SPN_FORMAT_INT = "cross_sim_spn_format_int";
+
+    /**
      * Override the SPN Display Condition 2 integer bits (lsb). B2, B1 is the last two bits of the
      * spn display condition coding.
      *
@@ -1881,9 +1919,8 @@ public class CarrierConfigManager {
      *     "APN_1, ERROR_CODE_1 : CARRIER_ACTION_IDX_1, CARRIER_ACTION_IDX_2...",
      *     "APN_1, ERROR_CODE_2 : CARRIER_ACTION_IDX_1 "
      * }
-     * Where {@code APN_1} is a string defined in
-     * com.android.internal.telephony.PhoneConstants
-     * Example: "default"
+     * Where {@code APN_1} is an integer defined in {@link android.telephony.data.ApnSetting}
+     * (e.g. {@link android.telephony.data.ApnSetting#TYPE_DEFAULT}
      *
      * {@code ERROR_CODE_1} is an integer defined in android.telephony.DataFailCause
      * Example:
@@ -2030,15 +2067,29 @@ public class CarrierConfigManager {
             "allow_hold_call_during_emergency_bool";
 
     /**
-     * Flag indicating whether the carrier supports RCS presence indication for
-     * User Capability Exchange (UCE).  When presence is supported, the device should use the
+     * Flag indicating whether or not the carrier supports the periodic exchange of phone numbers
+     * in the user's address book with the carrier's presence server in order to retrieve the RCS
+     * capabilities for each contact used in the RCS User Capability Exchange (UCE) procedure. See
+     * RCC.71, section 3 for more information.
+     * <p>
+     * The flag {@link Ims#KEY_ENABLE_PRESENCE_PUBLISH_BOOL} must also be enabled if this flag is
+     * enabled, as sending a periodic SIP PUBLISH with this device's RCS capabilities is a
+     * requirement for capability exchange to begin.
+     * <p>
+     * When presence is supported, the device should use the
      * {@link android.provider.ContactsContract.Data#CARRIER_PRESENCE} bit mask and set the
      * {@link android.provider.ContactsContract.Data#CARRIER_PRESENCE_VT_CAPABLE} bit to indicate
      * whether each contact supports video calling.  The UI is made aware that presence is enabled
      * via {@link android.telecom.PhoneAccount#CAPABILITY_VIDEO_CALLING_RELIES_ON_PRESENCE}
      * and can choose to hide or show the video calling icon based on whether a contact supports
      * video.
+     *
+     * @deprecated No longer used in framework code, however it may still be used by applications
+     * that have not updated their code. This config should still be set to {@code true} if
+     * {@link Ims#KEY_RCS_BULK_CAPABILITY_EXCHANGE_BOOL} is set to {@code true} and
+     * {@link Ims#KEY_ENABLE_PRESENCE_CAPABILITY_EXCHANGE_BOOL} is set to {@code true}.
      */
+    @Deprecated
     public static final String KEY_USE_RCS_PRESENCE_BOOL = "use_rcs_presence_bool";
 
     /**
@@ -2355,7 +2406,8 @@ public class CarrierConfigManager {
             "show_blocking_pay_phone_option_bool";
 
     /**
-     * Flag specifying whether the carrier will use the WFC home network mode in roaming network.
+     * Flag specifying whether the carrier will use the
+     * WFC home network mode in roaming network.
      * {@code false} - roaming preference can be selected separately from the home preference.
      * {@code true}  - roaming preference is the same as home preference and
      *                 {@link #KEY_CARRIER_DEFAULT_WFC_IMS_MODE_INT} is used as the default value.
@@ -3539,6 +3591,28 @@ public class CarrierConfigManager {
      */
     public static final String ENABLE_EAP_METHOD_PREFIX_BOOL = "enable_eap_method_prefix_bool";
 
+
+    /**
+     * Configs used by ImsServiceEntitlement.
+     */
+    public static final class ImsServiceEntitlement {
+        private ImsServiceEntitlement() {}
+
+        /** Prefix of all ImsServiceEntitlement.KEY_* constants. */
+        public static final String KEY_PREFIX = "imsserviceentitlement.";
+
+
+        /** The address of the entitlement configuration server. */
+        public static final String KEY_AES_URL_STRING = KEY_PREFIX + "aes_url_string";
+
+
+        private static PersistableBundle getDefaults() {
+            PersistableBundle defaults = new PersistableBundle();
+            defaults.putString(KEY_AES_URL_STRING, "");
+            return defaults;
+        }
+    }
+
     /**
      * GPS configs. See the GNSS HAL documentation for more details.
      */
@@ -3847,12 +3921,569 @@ public class CarrierConfigManager {
         public static final String KEY_IMS_SINGLE_REGISTRATION_REQUIRED_BOOL =
                 KEY_PREFIX + "ims_single_registration_required_bool";
 
+        /**
+         * A boolean flag specifying whether or not this carrier supports the device notifying the
+         * network of its RCS capabilities using the SIP PUBLISH procedure defined for User
+         * Capability Exchange (UCE). See RCC.71, section 3 for more information.
+         * <p>
+         * If this key's value is set to false, the procedure for RCS contact capability exchange
+         * via SIP SUBSCRIBE/NOTIFY will also be disabled internally, and
+         * {@link Ims#KEY_ENABLE_PRESENCE_PUBLISH_BOOL} must also be set to false to ensure
+         * apps do not improperly think that capability exchange via SIP PUBLISH is enabled.
+         * <p> The default value for this key is {@code false}.
+         */
+        public static final String KEY_ENABLE_PRESENCE_PUBLISH_BOOL =
+                KEY_PREFIX + "enable_presence_publish_bool";
+
+        /**
+         * Flag indicating whether or not this carrier supports the exchange of phone numbers with
+         * the carrier's RCS presence server in order to retrieve the RCS capabilities of requested
+         * contacts used in the RCS User Capability Exchange (UCE) procedure. See RCC.71, section 3
+         * for more information.
+         * <p>
+         * When presence is supported, the device uses the SIP SUBSCRIBE/NOTIFY procedure internally
+         * to retrieve the requested RCS capabilities. See
+         * {@link android.telephony.ims.RcsUceAdapter} for more information on how RCS capabilities
+         * can be retrieved from the carrier's network.
+         */
+        public static final String KEY_ENABLE_PRESENCE_CAPABILITY_EXCHANGE_BOOL =
+                KEY_PREFIX + "enable_presence_capability_exchange_bool";
+
+
+        /**
+         * Flag indicating whether or not the carrier expects the RCS UCE service to periodically
+         * refresh the RCS capabilities cache of the user's contacts as well as request the
+         * capabilities of call contacts when the SIM card is first inserted or when a new contact
+         * is added, removed, or modified. This corresponds to the RCC.07 A.19
+         * "DISABLE INITIAL ADDRESS BOOK SCAN" parameter.
+         * <p>
+         * If this flag is disabled, the capabilities cache will not be refreshed internally at all
+         * and will only be updated if the cached capabilities are stale when an application
+         * requests them.
+         */
+        public static final String KEY_RCS_BULK_CAPABILITY_EXCHANGE_BOOL =
+                KEY_PREFIX + "rcs_bulk_capability_exchange_bool";
+
+        /**
+         * Flag indicating whether or not the carrier supports capability exchange with a list of
+         * contacts. When {@code true}, the device will batch together multiple requests and
+         * construct a RLMI document in the SIP SUBSCRIBE request (see RFC 4662). If {@code false},
+         * the request will be split up into one SIP SUBSCRIBE request per contact.
+         */
+        public static final String KEY_ENABLE_PRESENCE_GROUP_SUBSCRIBE_BOOL =
+                KEY_PREFIX + "enable_presence_group_subscribe_bool";
+
         private Ims() {}
 
         private static PersistableBundle getDefaults() {
             PersistableBundle defaults = new PersistableBundle();
             defaults.putInt(KEY_WIFI_OFF_DEFERRING_TIME_MILLIS_INT, 4000);
             defaults.putBoolean(KEY_IMS_SINGLE_REGISTRATION_REQUIRED_BOOL, false);
+            defaults.putBoolean(KEY_ENABLE_PRESENCE_PUBLISH_BOOL, false);
+            defaults.putBoolean(KEY_ENABLE_PRESENCE_CAPABILITY_EXCHANGE_BOOL, false);
+            defaults.putBoolean(KEY_RCS_BULK_CAPABILITY_EXCHANGE_BOOL, false);
+            defaults.putBoolean(KEY_ENABLE_PRESENCE_GROUP_SUBSCRIBE_BOOL, true);
+            return defaults;
+        }
+    }
+
+    /**
+     * Configs used for epdg tunnel bring up.
+     *
+     * @see <a href="https://tools.ietf.org/html/rfc7296">RFC 7296, Internet Key Exchange Protocol
+     *     Version 2 (IKEv2)</a>
+     */
+    public static final class Iwlan {
+        /** Prefix of all Epdg.KEY_* constants. */
+        public static final String KEY_PREFIX = "iwlan.";
+
+        /**
+         * Time in seconds after which the child security association session is terminated if rekey
+         * procedure is not successful. If not set or set to <= 0, the default value is 3600
+         * seconds.
+         */
+        public static final String KEY_CHILD_SA_REKEY_HARD_TIMER_SEC_INT =
+                KEY_PREFIX + "child_sa_rekey_hard_timer_sec_int";
+
+        /**
+         * Time in seconds after which the child session rekey procedure is started. If not set or
+         * set to <= 0, default value is 3000 seconds.
+         */
+        public static final String KEY_CHILD_SA_REKEY_SOFT_TIMER_SEC_INT =
+                KEY_PREFIX + "child_sa_rekey_soft_timer_sec_int";
+
+        /**
+         * Supported DH groups for IKE negotiation. Possible values are {@link #DH_GROUP_NONE},
+         * {@link #DH_GROUP_1024_BIT_MODP}, {@link #DH_GROUP_1536_BIT_MODP}, {@link
+         * #DH_GROUP_2048_BIT_MODP}
+         */
+        public static final String KEY_DIFFIE_HELLMAN_GROUPS_INT_ARRAY =
+                KEY_PREFIX + "diffie_hellman_groups_int_array";
+
+        /**
+         * Time in seconds after which a dead peer detection (DPD) request is sent. If not set or
+         * set to <= 0, default value is 120 seconds.
+         */
+        public static final String KEY_DPD_TIMER_SEC_INT = KEY_PREFIX + "dpd_timer_sec_int";
+
+        /**
+         * Method used to authenticate epdg server. Possible values are {@link
+         * #AUTHENTICATION_METHOD_EAP_ONLY}, {@link #AUTHENTICATION_METHOD_CERT}
+         */
+        public static final String KEY_EPDG_AUTHENTICATION_METHOD_INT =
+                KEY_PREFIX + "epdg_authentication_method_int";
+
+        /**
+         * A priority list of ePDG addresses to be used. Possible values are {@link
+         * #EPDG_ADDRESS_STATIC}, {@link #EPDG_ADDRESS_PLMN}, {@link #EPDG_ADDRESS_PCO}, {@link
+         * #EPDG_ADDRESS_CELLULAR_LOC}
+         */
+        public static final String KEY_EPDG_ADDRESS_PRIORITY_INT_ARRAY =
+                KEY_PREFIX + "epdg_address_priority_int_array";
+
+        /** Epdg static IP address or FQDN */
+        public static final String KEY_EPDG_STATIC_ADDRESS_STRING =
+                KEY_PREFIX + "epdg_static_address_string";
+
+        /** Epdg static IP address or FQDN for roaming */
+        public static final String KEY_EPDG_STATIC_ADDRESS_ROAMING_STRING =
+                KEY_PREFIX + "epdg_static_address_roaming_string";
+
+        /**
+         * List of supported key sizes for AES Cipher Block Chaining (CBC) encryption mode of child
+         * session. Possible values are {@link #KEY_LEN_UNUSED}, {@link #KEY_LEN_AES_128}, {@link
+         * #KEY_LEN_AES_192}, {@link #KEY_LEN_AES_256}
+         */
+        public static final String KEY_CHILD_SESSION_AES_CBC_KEY_SIZE_INT_ARRAY =
+                KEY_PREFIX + "child_session_aes_cbc_key_size_int_array";
+
+        /**
+         * List of supported key sizes for AES Counter (CTR) encryption mode of child session.
+         * Possible values are {@link #KEY_LEN_UNUSED},
+         * {@link #KEY_LEN_AES_128}, {@link #KEY_LEN_AES_192}, {@link #KEY_LEN_AES_256}
+         */
+        public static final String KEY_CHILD_SESSION_AES_CTR_KEY_SIZE_INT_ARRAY =
+                KEY_PREFIX + "child_session_aes_ctr_key_size_int_array";
+
+        /**
+         * List of supported encryption algorithms for child session. Possible values are
+         * {@link #ENCRYPTION_ALGORITHM_AES_CBC}
+         */
+        public static final String KEY_SUPPORTED_CHILD_SESSION_ENCRYPTION_ALGORITHMS_INT_ARRAY =
+                KEY_PREFIX + "supported_child_session_encryption_algorithms_int_array";
+
+        /**
+         * Time in seconds after which the IKE session is terminated if rekey procedure is not
+         * successful. If not set or set to <= 0, default value is 3600 seconds.
+         */
+        public static final String KEY_IKE_REKEY_HARD_TIMER_SEC_INT =
+                KEY_PREFIX + "ike_rekey_hard_timer_in_sec";
+
+        /**
+         * Time in seconds after which the IKE session rekey procedure is started. If not set or set
+         * to <= 0, default value is 3000 seconds.
+         */
+        public static final String KEY_IKE_REKEY_SOFT_TIMER_SEC_INT =
+                KEY_PREFIX + "ike_rekey_soft_timer_sec_int";
+
+        /**
+         * List of supported key sizes for AES Cipher Block Chaining (CBC) encryption mode of IKE
+         * session. Possible values - {@link #KEY_LEN_UNUSED}, {@link #KEY_LEN_AES_128}, {@link
+         * #KEY_LEN_AES_192}, {@link #KEY_LEN_AES_256}
+         */
+        public static final String KEY_IKE_SESSION_AES_CBC_KEY_SIZE_INT_ARRAY =
+                KEY_PREFIX + "ike_session_encryption_aes_cbc_key_size_int_array";
+
+
+        /**
+         * List of supported key sizes for AES Counter (CTR) encryption mode of IKE session.
+         * Possible values - {@link #KEY_LEN_UNUSED}, {@link #KEY_LEN_AES_128},
+         * {@link #KEY_LEN_AES_192}, {@link #KEY_LEN_AES_256}
+         */
+         public static final String KEY_IKE_SESSION_AES_CTR_KEY_SIZE_INT_ARRAY =
+                 KEY_PREFIX + "ike_session_encryption_aes_ctr_key_size_int_array";
+
+        /**
+         * List of supported encryption algorithms for IKE session. Possible values are
+         * {@link #ENCRYPTION_ALGORITHM_AES_CBC}, {@link #ENCRYPTION_ALGORITHM_AES_CTR}
+         */
+        public static final String KEY_SUPPORTED_IKE_SESSION_ENCRYPTION_ALGORITHMS_INT_ARRAY =
+                KEY_PREFIX + "supported_ike_session_encryption_algorithms_int_array";
+
+        /**
+         * List of supported integrity algorithms for IKE session Possible values are {@link
+         * #INTEGRITY_ALGORITHM_NONE}, {@link #INTEGRITY_ALGORITHM_HMAC_SHA1_96}, {@link
+         * #INTEGRITY_ALGORITHM_AES_XCBC_96}, {@link #INTEGRITY_ALGORITHM_HMAC_SHA2_256_128}, {@link
+         * #INTEGRITY_ALGORITHM_HMAC_SHA2_384_192}, {@link #INTEGRITY_ALGORITHM_HMAC_SHA2_512_256}
+         */
+        public static final String KEY_SUPPORTED_INTEGRITY_ALGORITHMS_INT_ARRAY =
+                KEY_PREFIX + "supported_integrity_algorithms_int_array";
+
+        /** Maximum number of retries for tunnel establishment. */
+        public static final String KEY_MAX_RETRIES_INT = KEY_PREFIX + "max_retries_int";
+
+        /**
+         * Time in seconds after which a NATT keep alive message is sent. If not set or set to <= 0,
+         * default value is 20 seconds.
+         */
+        public static final String KEY_NATT_KEEP_ALIVE_TIMER_SEC_INT =
+                KEY_PREFIX + "natt_keep_alive_timer_sec_int";
+
+        /** List of '-' separated MCC/MNCs used to create ePDG FQDN as per 3GPP TS 23.003 */
+        public static final String KEY_MCC_MNCS_STRING_ARRAY = KEY_PREFIX + "mcc_mncs_string_array";
+
+        /**
+         * List of supported pseudo random function algorithms for IKE session. Possible values are
+         * {@link #PSEUDORANDOM_FUNCTION_HMAC_SHA1}, {@link #PSEUDORANDOM_FUNCTION_AES128_XCBC},
+         * {@link #PSEUDORANDOM_FUNCTION_SHA2_256}, {@link #PSEUDORANDOM_FUNCTION_SHA2_384},
+         * {@link #PSEUDORANDOM_FUNCTION_SHA2_512}
+         */
+        public static final String KEY_SUPPORTED_PRF_ALGORITHMS_INT_ARRAY =
+                KEY_PREFIX + "supported_prf_algorithms_int_array";
+
+        /**
+         * List of IKE message retransmission timeouts in milliseconds, where each timeout
+         * is the waiting time before next retry, except the last timeout which is the waiting time
+         * before terminating the IKE Session. Min list length = 1, Max
+         * list length = 10 Min timeout = 500 ms, Max timeout = 1800000 ms
+         */
+        public static final String KEY_RETRANSMIT_TIMER_MSEC_INT_ARRAY =
+                KEY_PREFIX + "retransmit_timer_sec_int_array";
+
+        /** Controls if wifi mac Id should be added to network access identifier(NAI) */
+        public static final String KEY_ADD_WIFI_MAC_ADDR_TO_NAI_BOOL =
+                KEY_PREFIX + "add_wifi_mac_addr_to_nai_bool";
+
+        /**
+         * Specifies the local identity type for IKE negotiations. Possible values are {@link
+         * #ID_TYPE_FQDN}, {@link #ID_TYPE_RFC822_ADDR}, {@link #ID_TYPE_KEY_ID}
+         */
+        public static final String KEY_IKE_LOCAL_ID_TYPE_INT = KEY_PREFIX + "ike_local_id_type_int";
+
+        /**
+         * Specifies the remote identity type for IKE negotiations. Possible values are {@link
+         * #ID_TYPE_FQDN}, {@link #ID_TYPE_RFC822_ADDR}, {@link #ID_TYPE_KEY_ID}
+         */
+        public static final String KEY_IKE_REMOTE_ID_TYPE_INT =
+                KEY_PREFIX + "ike_remote_id_type_int";
+
+        /** Controls if KE payload should be added during child session local rekey procedure. */
+        public static final String KEY_ADD_KE_TO_CHILD_SESSION_REKEY_BOOL =
+                KEY_PREFIX + "add_ke_to_child_session_rekey_bool";
+
+        /** Specifies the PCO id for IPv6 Epdg server address */
+        public static final String KEY_EPDG_PCO_ID_IPV6_INT = KEY_PREFIX + "epdg_pco_id_ipv6_int";
+
+        /** Specifies the PCO id for IPv4 Epdg server address */
+        public static final String KEY_EPDG_PCO_ID_IPV4_INT = KEY_PREFIX + "epdg_pco_id_ipv4_int";
+
+        /** @hide */
+        @IntDef({AUTHENTICATION_METHOD_EAP_ONLY, AUTHENTICATION_METHOD_CERT})
+        public @interface AuthenticationMethodType {}
+
+        /**
+         * Certificate sent from the server is ignored. Only Extensible Authentication Protocol
+         * (EAP) is used to authenticate the server. EAP_ONLY_AUTH payload is added to IKE_AUTH
+         * request if supported.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc5998">RFC 5998</a>
+         */
+        public static final int AUTHENTICATION_METHOD_EAP_ONLY = 0;
+        /** Server is authenticated using its certificate. */
+        public static final int AUTHENTICATION_METHOD_CERT = 1;
+
+        /** @hide */
+        @IntDef({
+            EPDG_ADDRESS_STATIC,
+            EPDG_ADDRESS_PLMN,
+            EPDG_ADDRESS_PCO,
+            EPDG_ADDRESS_CELLULAR_LOC
+        })
+        public @interface EpdgAddressType {}
+
+        /** Use static epdg address. */
+        public static final int EPDG_ADDRESS_STATIC = 0;
+        /** Construct the epdg address using plmn. */
+        public static final int EPDG_ADDRESS_PLMN = 1;
+        /**
+         * Use the epdg address received in protocol configuration options (PCO) from the network.
+         */
+        public static final int EPDG_ADDRESS_PCO = 2;
+        /** Use cellular location to chose epdg server */
+        public static final int EPDG_ADDRESS_CELLULAR_LOC = 3;
+
+        /** @hide */
+        @IntDef({KEY_LEN_UNUSED, KEY_LEN_AES_128, KEY_LEN_AES_192, KEY_LEN_AES_256})
+        public @interface EncrpytionKeyLengthType {}
+
+        public static final int KEY_LEN_UNUSED = 0;
+        /** AES Encryption/Ciphering Algorithm key length 128 bits. */
+        public static final int KEY_LEN_AES_128 = 128;
+        /** AES Encryption/Ciphering Algorithm key length 192 bits. */
+        public static final int KEY_LEN_AES_192 = 192;
+        /** AES Encryption/Ciphering Algorithm key length 256 bits. */
+        public static final int KEY_LEN_AES_256 = 256;
+
+        /** @hide */
+        @IntDef({
+            DH_GROUP_NONE,
+            DH_GROUP_1024_BIT_MODP,
+            DH_GROUP_1536_BIT_MODP,
+            DH_GROUP_2048_BIT_MODP,
+            DH_GROUP_3072_BIT_MODP,
+            DH_GROUP_4096_BIT_MODP
+        })
+        public @interface DhGroup {}
+
+        /** None Diffie-Hellman Group. */
+        public static final int DH_GROUP_NONE = 0;
+        /**
+         * 1024-bit MODP Diffie-Hellman Group.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int DH_GROUP_1024_BIT_MODP = 2;
+        /**
+         * 1536-bit MODP Diffie-Hellman Group.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int DH_GROUP_1536_BIT_MODP = 5;
+        /**
+         * 2048-bit MODP Diffie-Hellman Group.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int DH_GROUP_2048_BIT_MODP = 14;
+        /**
+         * 3072-bit MODP Diffie-Hellman Group.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int DH_GROUP_3072_BIT_MODP = 15;
+        /**
+         * 4096-bit MODP Diffie-Hellman Group.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int DH_GROUP_4096_BIT_MODP = 16;
+
+        /** @hide */
+        @IntDef({ENCRYPTION_ALGORITHM_AES_CBC, ENCRYPTION_ALGORITHM_AES_CTR})
+        public @interface EncryptionAlgorithm {}
+
+        /**
+         * AES-CBC Encryption/Ciphering Algorithm.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int ENCRYPTION_ALGORITHM_AES_CBC = 12;
+
+        /**
+         * AES-CTR Encryption/Ciphering Algorithm.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int ENCRYPTION_ALGORITHM_AES_CTR = 13;
+
+        /** @hide */
+        @IntDef({
+            INTEGRITY_ALGORITHM_NONE,
+            INTEGRITY_ALGORITHM_HMAC_SHA1_96,
+            INTEGRITY_ALGORITHM_AES_XCBC_96,
+            INTEGRITY_ALGORITHM_HMAC_SHA2_256_128,
+            INTEGRITY_ALGORITHM_HMAC_SHA2_384_192,
+            INTEGRITY_ALGORITHM_HMAC_SHA2_512_256
+        })
+        public @interface IntegrityAlgorithm {}
+
+        /** None Authentication/Integrity Algorithm. */
+        public static final int INTEGRITY_ALGORITHM_NONE = 0;
+        /**
+         * HMAC-SHA1 Authentication/Integrity Algorithm.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int INTEGRITY_ALGORITHM_HMAC_SHA1_96 = 2;
+        /**
+         * AES-XCBC-96 Authentication/Integrity Algorithm.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int INTEGRITY_ALGORITHM_AES_XCBC_96 = 5;
+        /**
+         * HMAC-SHA256 Authentication/Integrity Algorithm with 128-bit truncation.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int INTEGRITY_ALGORITHM_HMAC_SHA2_256_128 = 12;
+        /**
+         * HMAC-SHA384 Authentication/Integrity Algorithm with 192-bit truncation.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int INTEGRITY_ALGORITHM_HMAC_SHA2_384_192 = 13;
+        /**
+         * HMAC-SHA512 Authentication/Integrity Algorithm with 256-bit truncation.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int INTEGRITY_ALGORITHM_HMAC_SHA2_512_256 = 14;
+
+        /** @hide */
+        @IntDef({
+            PSEUDORANDOM_FUNCTION_HMAC_SHA1,
+            PSEUDORANDOM_FUNCTION_AES128_XCBC,
+            PSEUDORANDOM_FUNCTION_SHA2_256,
+            PSEUDORANDOM_FUNCTION_SHA2_384,
+            PSEUDORANDOM_FUNCTION_SHA2_512
+        })
+        public @interface PseudorandomFunction {}
+
+        /**
+         * HMAC-SHA1 Pseudorandom Function.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int PSEUDORANDOM_FUNCTION_HMAC_SHA1 = 2;
+        /**
+         * AES128-XCBC Pseudorandom Function.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int PSEUDORANDOM_FUNCTION_AES128_XCBC = 4;
+        /**
+         * HMAC-SHA2-256 Pseudorandom Function.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int PSEUDORANDOM_FUNCTION_SHA2_256 = 5;
+        /**
+         * HMAC-SHA2-384 Pseudorandom Function.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int PSEUDORANDOM_FUNCTION_SHA2_384 = 6;
+        /**
+         * HMAC-SHA2-384 Pseudorandom Function.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.3">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int PSEUDORANDOM_FUNCTION_SHA2_512 = 7;
+
+        /** @hide */
+        @IntDef({ID_TYPE_FQDN, ID_TYPE_RFC822_ADDR, ID_TYPE_KEY_ID})
+        public @interface IkeIdType {}
+
+        /**
+         * Ike Identification Fully Qualified Domain Name
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.5">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int ID_TYPE_FQDN = 2;
+        /**
+         * Ike Identification Fully Qualified RFC 822 email address.
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.5">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int ID_TYPE_RFC822_ADDR = 3;
+        /**
+         * Ike Identification opaque octet stream for vendor specific information
+         *
+         * @see <a href="https://tools.ietf.org/html/rfc7296#section-3.5">RFC 7296, Internet Key
+         *     Exchange Protocol Version 2 (IKEv2)</a>
+         */
+        public static final int ID_TYPE_KEY_ID = 11;
+
+        private Iwlan() {}
+
+        private static PersistableBundle getDefaults() {
+            PersistableBundle defaults = new PersistableBundle();
+            defaults.putInt(KEY_IKE_REKEY_SOFT_TIMER_SEC_INT, 7200);
+            defaults.putInt(KEY_IKE_REKEY_HARD_TIMER_SEC_INT, 14400);
+            defaults.putInt(KEY_CHILD_SA_REKEY_SOFT_TIMER_SEC_INT, 3600);
+            defaults.putInt(KEY_CHILD_SA_REKEY_HARD_TIMER_SEC_INT, 7200);
+            defaults.putIntArray(
+                    KEY_RETRANSMIT_TIMER_MSEC_INT_ARRAY, new int[] {500, 1000, 2000, 4000, 8000});
+            defaults.putInt(KEY_DPD_TIMER_SEC_INT, 120);
+            defaults.putInt(KEY_MAX_RETRIES_INT, 3);
+            defaults.putIntArray(
+                    KEY_DIFFIE_HELLMAN_GROUPS_INT_ARRAY,
+                    new int[] {
+                        DH_GROUP_1024_BIT_MODP, DH_GROUP_1536_BIT_MODP, DH_GROUP_2048_BIT_MODP
+                    });
+            defaults.putIntArray(
+                    KEY_SUPPORTED_IKE_SESSION_ENCRYPTION_ALGORITHMS_INT_ARRAY,
+                    new int[] {ENCRYPTION_ALGORITHM_AES_CBC});
+            defaults.putIntArray(
+                    KEY_SUPPORTED_CHILD_SESSION_ENCRYPTION_ALGORITHMS_INT_ARRAY,
+                    new int[] {ENCRYPTION_ALGORITHM_AES_CBC});
+            defaults.putIntArray(
+                    KEY_SUPPORTED_INTEGRITY_ALGORITHMS_INT_ARRAY,
+                    new int[] {
+                        INTEGRITY_ALGORITHM_AES_XCBC_96,
+                        INTEGRITY_ALGORITHM_HMAC_SHA1_96,
+                        INTEGRITY_ALGORITHM_HMAC_SHA2_256_128,
+                        INTEGRITY_ALGORITHM_HMAC_SHA2_384_192,
+                        INTEGRITY_ALGORITHM_HMAC_SHA2_512_256,
+                    });
+            defaults.putIntArray(
+                    KEY_SUPPORTED_PRF_ALGORITHMS_INT_ARRAY,
+                    new int[] {
+                        PSEUDORANDOM_FUNCTION_HMAC_SHA1,
+                        PSEUDORANDOM_FUNCTION_AES128_XCBC,
+                        PSEUDORANDOM_FUNCTION_SHA2_256,
+                        PSEUDORANDOM_FUNCTION_SHA2_384,
+                        PSEUDORANDOM_FUNCTION_SHA2_512
+                    });
+
+            defaults.putInt(KEY_EPDG_AUTHENTICATION_METHOD_INT, AUTHENTICATION_METHOD_EAP_ONLY);
+            defaults.putString(KEY_EPDG_STATIC_ADDRESS_STRING, "");
+            defaults.putString(KEY_EPDG_STATIC_ADDRESS_ROAMING_STRING, "");
+            // will be used after b/158036773 is fixed
+            defaults.putInt(KEY_NATT_KEEP_ALIVE_TIMER_SEC_INT, 20);
+            defaults.putIntArray(
+                    KEY_IKE_SESSION_AES_CBC_KEY_SIZE_INT_ARRAY,
+                    new int[] {KEY_LEN_AES_128, KEY_LEN_AES_192, KEY_LEN_AES_256});
+            defaults.putIntArray(
+                    KEY_CHILD_SESSION_AES_CBC_KEY_SIZE_INT_ARRAY,
+                    new int[] {KEY_LEN_AES_128, KEY_LEN_AES_192, KEY_LEN_AES_256});
+            defaults.putIntArray(
+                    KEY_IKE_SESSION_AES_CTR_KEY_SIZE_INT_ARRAY,
+                    new int[] {KEY_LEN_AES_128, KEY_LEN_AES_192, KEY_LEN_AES_256});
+            defaults.putIntArray(
+                    KEY_CHILD_SESSION_AES_CTR_KEY_SIZE_INT_ARRAY,
+                    new int[] {KEY_LEN_AES_128, KEY_LEN_AES_192, KEY_LEN_AES_256});
+            defaults.putIntArray(
+                    KEY_EPDG_ADDRESS_PRIORITY_INT_ARRAY,
+                    new int[] {EPDG_ADDRESS_PLMN, EPDG_ADDRESS_STATIC});
+            defaults.putStringArray(KEY_MCC_MNCS_STRING_ARRAY, new String[] {});
+            defaults.putBoolean(KEY_ADD_WIFI_MAC_ADDR_TO_NAI_BOOL, false);
+            defaults.putInt(KEY_IKE_LOCAL_ID_TYPE_INT, ID_TYPE_RFC822_ADDR);
+            defaults.putInt(KEY_IKE_REMOTE_ID_TYPE_INT, ID_TYPE_FQDN);
+            defaults.putBoolean(KEY_ADD_KE_TO_CHILD_SESSION_REKEY_BOOL, false);
+            defaults.putInt(KEY_EPDG_PCO_ID_IPV6_INT, 0);
+            defaults.putInt(KEY_EPDG_PCO_ID_IPV4_INT, 0);
+
             return defaults;
         }
     }
@@ -3986,6 +4617,17 @@ public class CarrierConfigManager {
             "default_preferred_apn_name_string";
 
     /**
+     * Indicates if the carrier supports call composer.
+     */
+    public static final String KEY_SUPPORTS_CALL_COMPOSER_BOOL = "supports_call_composer_bool";
+
+    /**
+     * Indicates the carrier server url that serves the call composer picture.
+     */
+    public static final String KEY_CALL_COMPOSER_PICTURE_SERVER_URL_STRING =
+            "call_composer_picture_server_url_string";
+
+    /**
      * For Android 11, provide a temporary solution for OEMs to use the lower of the two MTU values
      * for IPv4 and IPv6 if both are sent.
      * TODO: remove in later release
@@ -3994,6 +4636,19 @@ public class CarrierConfigManager {
      */
     public static final String KEY_USE_LOWER_MTU_VALUE_IF_BOTH_RECEIVED =
             "use_lower_mtu_value_if_both_received";
+
+    /**
+     * Indicates if auto-configuration server is used for the RCS config
+     * Reference: GSMA RCC.14
+     */
+    public static final String KEY_USE_ACS_FOR_RCS_BOOL = "use_acs_for_rcs_bool";
+
+    /**
+     * Indicates temporarily unmetered mobile data is supported by the carrier.
+     * @hide
+     */
+    public static final String KEY_NETWORK_TEMP_NOT_METERED_SUPPORTED_BOOL =
+            "network_temp_not_metered_supported_bool";
 
     /** The default value for every variable. */
     private final static PersistableBundle sDefaults;
@@ -4029,6 +4684,7 @@ public class CarrierConfigManager {
         sDefaults.putBoolean(KEY_IGNORE_DATA_ENABLED_CHANGED_FOR_VIDEO_CALLS, true);
         sDefaults.putBoolean(KEY_VILTE_DATA_IS_METERED_BOOL, true);
         sDefaults.putBoolean(KEY_CARRIER_WFC_IMS_AVAILABLE_BOOL, false);
+        sDefaults.putBoolean(KEY_CARRIER_CROSS_SIM_IMS_AVAILABLE_BOOL, false);
         sDefaults.putBoolean(KEY_CARRIER_WFC_SUPPORTS_WIFI_ONLY_BOOL, false);
         sDefaults.putBoolean(KEY_CARRIER_DEFAULT_WFC_IMS_ENABLED_BOOL, false);
         sDefaults.putBoolean(KEY_CARRIER_DEFAULT_WFC_IMS_ROAMING_ENABLED_BOOL, false);
@@ -4202,6 +4858,7 @@ public class CarrierConfigManager {
         sDefaults.putBoolean(KEY_CARRIER_NAME_OVERRIDE_BOOL, false);
         sDefaults.putString(KEY_CARRIER_NAME_STRING, "");
         sDefaults.putBoolean(KEY_WFC_CARRIER_NAME_OVERRIDE_BY_PNN_BOOL, false);
+        sDefaults.putInt(KEY_CROSS_SIM_SPN_FORMAT_INT, 1);
         sDefaults.putInt(KEY_SPN_DISPLAY_CONDITION_OVERRIDE_INT, -1);
         sDefaults.putStringArray(KEY_SPDI_OVERRIDE_STRING_ARRAY, null);
         sDefaults.putStringArray(KEY_PNN_OVERRIDE_STRING_ARRAY, null);
@@ -4491,6 +5148,7 @@ public class CarrierConfigManager {
         sDefaults.putLong(KEY_OPPORTUNISTIC_NETWORK_BACKOFF_TIME_LONG, 10000);
         /* Default value is 60 seconds. */
         sDefaults.putLong(KEY_OPPORTUNISTIC_NETWORK_MAX_BACKOFF_TIME_LONG, 60000);
+        sDefaults.putAll(ImsServiceEntitlement.getDefaults());
         sDefaults.putAll(Gps.getDefaults());
         sDefaults.putIntArray(KEY_CDMA_ENHANCED_ROAMING_INDICATOR_FOR_HOME_NETWORK_INT_ARRAY,
                 new int[] {
@@ -4514,6 +5172,7 @@ public class CarrierConfigManager {
                 });
         sDefaults.putBoolean(KEY_SUPPORT_WPS_OVER_IMS_BOOL, true);
         sDefaults.putAll(Ims.getDefaults());
+        sDefaults.putAll(Iwlan.getDefaults());
         sDefaults.putStringArray(KEY_CARRIER_CERTIFICATE_STRING_ARRAY, new String[0]);
          sDefaults.putBoolean(KEY_FORMAT_INCOMING_NUMBER_TO_NATIONAL_FOR_JP_BOOL, false);
         sDefaults.putIntArray(KEY_DISCONNECT_CAUSE_PLAY_BUSYTONE_INT_ARRAY,
@@ -4537,7 +5196,11 @@ public class CarrierConfigManager {
         sDefaults.putStringArray(KEY_MISSED_INCOMING_CALL_SMS_PATTERN_STRING_ARRAY, new String[0]);
         sDefaults.putBoolean(KEY_DISABLE_DUN_APN_WHILE_ROAMING_WITH_PRESET_APN_BOOL, false);
         sDefaults.putString(KEY_DEFAULT_PREFERRED_APN_NAME_STRING, "");
+        sDefaults.putBoolean(KEY_SUPPORTS_CALL_COMPOSER_BOOL, false);
+        sDefaults.putString(KEY_CALL_COMPOSER_PICTURE_SERVER_URL_STRING, "");
         sDefaults.putBoolean(KEY_USE_LOWER_MTU_VALUE_IF_BOTH_RECEIVED, false);
+        sDefaults.putBoolean(KEY_USE_ACS_FOR_RCS_BOOL, false);
+        sDefaults.putBoolean(KEY_NETWORK_TEMP_NOT_METERED_SUPPORTED_BOOL, false);
     }
 
     /**
@@ -4556,9 +5219,25 @@ public class CarrierConfigManager {
         public static final String KEY_HOTSPOT_MAX_CLIENT_COUNT =
                 KEY_PREFIX + "hotspot_maximum_client_count";
 
+        /**
+         * This configuration is intended to be a narrow exception for provisioning
+         * {@link android.net.wifi.WifiNetworkSuggestion} of widely-known carrier networks that do
+         * not support using randomized MAC address.
+         * Carrier provisioned {@link android.net.wifi.WifiNetworkSuggestion} with SSIDs included
+         * in this list will have MAC randomization disabled.
+         *
+         * Note: the SSIDs in the list are expected to be interpreted as is - do not add double
+         * quotes to the SSIDs.
+         */
+        public static final String KEY_SUGGESTION_SSID_LIST_WITH_MAC_RANDOMIZATION_DISABLED =
+                KEY_PREFIX + "suggestion_ssid_list_with_mac_randomization_disabled";
+
         private static PersistableBundle getDefaults() {
             PersistableBundle defaults = new PersistableBundle();
             defaults.putInt(KEY_HOTSPOT_MAX_CLIENT_COUNT, 0);
+            defaults.putStringArray(KEY_SUGGESTION_SSID_LIST_WITH_MAC_RANDOMIZATION_DISABLED,
+                    new String[0]);
+
             return defaults;
         }
 

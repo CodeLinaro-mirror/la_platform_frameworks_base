@@ -61,6 +61,7 @@ public final class Permission {
             PermissionInfo.PROTECTION_NORMAL,
             PermissionInfo.PROTECTION_SIGNATURE,
             PermissionInfo.PROTECTION_SIGNATURE_OR_SYSTEM,
+            PermissionInfo.PROTECTION_INTERNAL,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ProtectionLevel {}
@@ -246,6 +247,11 @@ public final class Permission {
                 == PermissionInfo.PROTECTION_SIGNATURE;
     }
 
+    public boolean isInternal() {
+        return (mPermissionInfo.protectionLevel & PermissionInfo.PROTECTION_MASK_BASE)
+                == PermissionInfo.PROTECTION_INTERNAL;
+    }
+
     public boolean isAppOp() {
         return (mPermissionInfo.protectionLevel & PermissionInfo.PROTECTION_FLAG_APPOP) != 0;
     }
@@ -331,6 +337,14 @@ public final class Permission {
         return (mPermissionInfo.protectionLevel & PermissionInfo.PROTECTION_FLAG_RETAIL_DEMO) != 0;
     }
 
+    public boolean isRecents() {
+        return (mPermissionInfo.protectionLevel & PermissionInfo.PROTECTION_FLAG_RECENTS) != 0;
+    }
+
+    public boolean isRole() {
+        return (mPermissionInfo.protectionLevel & PermissionInfo.PROTECTION_FLAG_ROLE) != 0;
+    }
+
     public void transfer(@NonNull String oldPackageName, @NonNull String newPackageName) {
         if (!oldPackageName.equals(mPermissionInfo.packageName)) {
             return;
@@ -399,8 +413,7 @@ public final class Permission {
     @NonNull
     public static Permission createOrUpdate(@Nullable Permission permission,
             @NonNull PermissionInfo permissionInfo, @NonNull AndroidPackage pkg,
-            @NonNull Collection<Permission> permissionTrees, boolean isOverridingSystemPermission,
-            boolean chatty) {
+            @NonNull Collection<Permission> permissionTrees, boolean isOverridingSystemPermission) {
         // Allow system apps to redefine non-system permissions
         boolean ownerChanged = false;
         if (permission != null && !Objects.equals(permission.mPermissionInfo.packageName,
@@ -437,7 +450,7 @@ public final class Permission {
                     permission.mPermissionInfo = permissionInfo;
                     permission.mReconciled = true;
                     permission.mUid = pkg.getUid();
-                    if (chatty) {
+                    if (PackageManagerService.DEBUG_PACKAGE_SCANNING) {
                         if (r == null) {
                             r = new StringBuilder(256);
                         } else {
@@ -456,7 +469,7 @@ public final class Permission {
                         + permissionInfo.packageName + " ignored: original from "
                         + permission.mPermissionInfo.packageName);
             }
-        } else if (chatty) {
+        } else if (PackageManagerService.DEBUG_PACKAGE_SCANNING) {
             if (r == null) {
                 r = new StringBuilder(256);
             } else {

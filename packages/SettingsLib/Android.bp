@@ -43,6 +43,7 @@ java_defaults {
         "SettingsLibSearchWidget",
         "SettingsLibSettingsSpinner",
         "SettingsLibLayoutPreference",
+        "SettingsLibMainSwitchPreference",
         "SettingsLibActionButtonsPreference",
         "SettingsLibEntityHeaderWidgets",
         "SettingsLibBarChartPreference",
@@ -51,6 +52,11 @@ java_defaults {
         "SettingsLibRadioButtonPreference",
         "SettingsLibDisplayDensityUtils",
         "SettingsLibUtils",
+        "SettingsLibEmergencyNumber",
+        "SettingsLibTopIntroPreference",
+        "SettingsLibBannerMessagePreference",
+        "SettingsLibFooterPreference",
+        "SettingsLibUsageProgressBarPreference",
     ],
 }
 

@@ -16,13 +16,16 @@
 
 package com.android.server.biometrics.sensors.iris;
 
+import android.annotation.NonNull;
 import android.hardware.biometrics.IBiometricAuthenticator;
 import android.hardware.biometrics.IBiometricSensorReceiver;
+import android.hardware.biometrics.IInvalidationCallback;
+import android.hardware.biometrics.ITestSession;
+import android.hardware.biometrics.SensorPropertiesInternal;
 import android.hardware.iris.IIrisService;
 import android.os.IBinder;
 import android.os.RemoteException;
 
-import com.android.server.biometrics.SensorConfig;
 import com.android.server.biometrics.sensors.LockoutTracker;
 
 /**
@@ -36,10 +39,25 @@ public final class IrisAuthenticator extends IBiometricAuthenticator.Stub {
     }
 
     @Override
+    public ITestSession createTestSession(@NonNull String opPackageName) throws RemoteException {
+        return null;
+    }
+
+    @Override
+    public SensorPropertiesInternal getSensorProperties(@NonNull String opPackageName)
+            throws RemoteException {
+        return null;
+    }
+
+    @Override
+    public byte[] dumpSensorServiceStateProto() throws RemoteException {
+        return null;
+    }
+
+    @Override
     public void prepareForAuthentication(boolean requireConfirmation, IBinder token,
             long sessionId, int userId, IBiometricSensorReceiver sensorReceiver,
-            String opPackageName, int cookie, int callingUid, int callingPid, int callingUserId)
-            throws RemoteException {
+            String opPackageName, int cookie) throws RemoteException {
     }
 
     @Override
@@ -47,8 +65,8 @@ public final class IrisAuthenticator extends IBiometricAuthenticator.Stub {
     }
 
     @Override
-    public void cancelAuthenticationFromService(IBinder token, String opPackageName, int callingUid,
-            int callingPid, int callingUserId) throws RemoteException {
+    public void cancelAuthenticationFromService(IBinder token, String opPackageName)
+            throws RemoteException {
     }
 
     @Override
@@ -65,6 +83,10 @@ public final class IrisAuthenticator extends IBiometricAuthenticator.Stub {
     public @LockoutTracker.LockoutMode int getLockoutModeForUser(int userId)
             throws RemoteException {
         return LockoutTracker.LOCKOUT_NONE;
+    }
+
+    @Override
+    public void invalidateAuthenticatorId(int userId, IInvalidationCallback callback) {
     }
 
     @Override

@@ -191,6 +191,15 @@ public class HdmiAudioSystemClientTest {
         }
 
         @Override
+        public void toggleAndFollowTvPower() {
+        }
+
+        @Override
+        public boolean shouldHandleTvPowerKey() {
+            return false;
+        }
+
+        @Override
         public void queryDisplayStatus(final IHdmiControlCallback callback) {
         }
 
@@ -383,6 +392,16 @@ public class HdmiAudioSystemClientTest {
         @Override
         public List<String> getAllowedCecSettingStringValues(String name) {
             return new ArrayList<>();
+        }
+
+        @Override
+        public void addCecSettingChangeListener(String name,
+                IHdmiCecSettingChangeListener listener) {
+        }
+
+        @Override
+        public void removeCecSettingChangeListener(String name,
+                IHdmiCecSettingChangeListener listener) {
         }
 
         @Override

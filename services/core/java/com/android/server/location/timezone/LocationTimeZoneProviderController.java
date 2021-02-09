@@ -16,6 +16,7 @@
 
 package com.android.server.location.timezone;
 
+import android.annotation.DurationMillisLong;
 import android.annotation.NonNull;
 import android.os.Handler;
 
@@ -59,7 +60,7 @@ import java.util.Objects;
  * disputed areas and oceans. Distinguishing uncertainty allows the controller to try other
  * providers (or give up), where as certainty means it should not.
  *
- * <p>A provider can fail permanently. A permanent failure will disable the provider until next
+ * <p>A provider can fail permanently. A permanent failure will stop the provider until next
  * boot.
  */
 abstract class LocationTimeZoneProviderController implements Dumpable {
@@ -90,7 +91,11 @@ abstract class LocationTimeZoneProviderController implements Dumpable {
     abstract boolean isUncertaintyTimeoutSet();
 
     @VisibleForTesting
+    @DurationMillisLong
     abstract long getUncertaintyTimeoutDelayMillis();
+
+    /** Called if the geolocation time zone detection is being reconfigured. */
+    abstract void destroy();
 
     /**
      * Used by {@link LocationTimeZoneProviderController} to obtain information from the surrounding
@@ -105,6 +110,9 @@ abstract class LocationTimeZoneProviderController implements Dumpable {
             mThreadingDomain = Objects.requireNonNull(threadingDomain);
             mSharedLock = threadingDomain.getLockObject();
         }
+
+        /** Destroys the environment, i.e. deregisters listeners, etc. */
+        abstract void destroy();
 
         /** Returns the {@link ConfigurationInternal} for the current user of the device. */
         abstract ConfigurationInternal getCurrentUserConfigurationInternal();

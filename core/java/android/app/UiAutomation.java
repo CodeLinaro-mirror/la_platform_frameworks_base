@@ -438,8 +438,8 @@ public final class UiAutomation {
      * Adopt the permission identity of the shell UID for all permissions. This allows
      * you to call APIs protected permissions which normal apps cannot hold but are
      * granted to the shell UID. If you already adopted all shell permissions by calling
-     * this method or {@link #adoptShellPermissionIdentity(String...)} a subsequent call
-     * would be a no-op. Note that your permission state becomes that of the shell UID
+     * this method or {@link #adoptShellPermissionIdentity(String...)} a subsequent call will
+     * replace any previous adoption. Note that your permission state becomes that of the shell UID
      * and it is not a combination of your and the shell UID permissions.
      * <p>
      * <strong>Note:<strong/> Calling this method adopts all shell permissions and overrides
@@ -460,13 +460,13 @@ public final class UiAutomation {
     /**
      * Adopt the permission identity of the shell UID only for the provided permissions.
      * This allows you to call APIs protected permissions which normal apps cannot hold
-     * but are granted to the shell UID. If you already adopted the specified shell
-     * permissions by calling this method or {@link #adoptShellPermissionIdentity()} a
-     * subsequent call would be a no-op. Note that your permission state becomes that of the
-     * shell UID and it is not a combination of your and the shell UID permissions.
+     * but are granted to the shell UID. If you already adopted shell permissions by calling
+     * this method, or {@link #adoptShellPermissionIdentity()} a subsequent call will replace any
+     * previous adoption.
      * <p>
-     * <strong>Note:<strong/> Calling this method adopts only the specified shell permissions
-     * and overrides all adopted permissions via {@link #adoptShellPermissionIdentity()}.
+     * <strong>Note:<strong/> This method behave differently from
+     * {@link #adoptShellPermissionIdentity()}. Only the listed permissions will use the shell
+     * identity and other permissions will still check against the original UID
      *
      * @param permissions The permissions to adopt or <code>null</code> to adopt all.
      *
@@ -695,6 +695,9 @@ public final class UiAutomation {
 
     /**
      * A method for injecting an arbitrary input event.
+     *
+     * This method waits for all window container animations and surface operations to complete.
+     *
      * <p>
      * <strong>Note:</strong> It is caller's responsibility to recycle the event.
      * </p>
@@ -704,12 +707,34 @@ public final class UiAutomation {
      * @return Whether event injection succeeded.
      */
     public boolean injectInputEvent(InputEvent event, boolean sync) {
+        return injectInputEvent(event, sync, true /* waitForAnimations */);
+    }
+
+    /**
+     * A method for injecting an arbitrary input event, optionally waiting for window animations to
+     * complete.
+     * <p>
+     * <strong>Note:</strong> It is caller's responsibility to recycle the event.
+     * </p>
+     *
+     * @param event The event to inject.
+     * @param sync  Whether to inject the event synchronously.
+     * @param waitForAnimations Whether to wait for all window container animations and surface
+     *   operations to complete.
+     * @return Whether event injection succeeded.
+     *
+     * @hide
+     */
+    @TestApi
+    public boolean injectInputEvent(@NonNull InputEvent event, boolean sync,
+            boolean waitForAnimations) {
         try {
             if (DEBUG) {
-                Log.i(LOG_TAG, "Injecting: " + event + " sync: " + sync);
+                Log.i(LOG_TAG, "Injecting: " + event + " sync: " + sync + " waitForAnimations: "
+                        + waitForAnimations);
             }
             // Calling out without a lock held.
-            return mUiAutomationConnection.injectInputEvent(event, sync);
+            return mUiAutomationConnection.injectInputEvent(event, sync, waitForAnimations);
         } catch (RemoteException re) {
             Log.e(LOG_TAG, "Error while injecting input event!", re);
         }
@@ -726,7 +751,26 @@ public final class UiAutomation {
     public void syncInputTransactions() {
         try {
             // Calling out without a lock held.
-            mUiAutomationConnection.syncInputTransactions();
+            mUiAutomationConnection.syncInputTransactions(true /* waitForAnimations */);
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while syncing input transactions!", re);
+        }
+    }
+
+    /**
+     * A request for WindowManagerService to wait until all input information has been sent from
+     * WindowManager to native InputManager and optionally wait for animations to complete.
+     *
+     * @param waitForAnimations Whether to wait for all window container animations and surface
+     *   operations to complete.
+     *
+     * @hide
+     */
+    @TestApi
+    public void syncInputTransactions(boolean waitForAnimations) {
+        try {
+            // Calling out without a lock held.
+            mUiAutomationConnection.syncInputTransactions(waitForAnimations);
         } catch (RemoteException re) {
             Log.e(LOG_TAG, "Error while syncing input transactions!", re);
         }

@@ -54,12 +54,12 @@ public class WindowAddRemovePerfTest extends WindowManagerPerfTestBase
     @BeforeClass
     public static void setUpClass() {
         // Get the permission to use most window types.
-        sUiAutomation.adoptShellPermissionIdentity();
+        getUiAutomation().adoptShellPermissionIdentity();
     }
 
     @AfterClass
     public static void tearDownClass() {
-        sUiAutomation.dropShellPermissionIdentity();
+        getUiAutomation().dropShellPermissionIdentity();
     }
 
     /** The last customized iterations will provide the information of method profiling. */
@@ -107,8 +107,8 @@ public class WindowAddRemovePerfTest extends WindowManagerPerfTestBase
 
                 long startTime = SystemClock.elapsedRealtimeNanos();
                 session.addToDisplay(this, mLayoutParams, View.VISIBLE,
-                        Display.DEFAULT_DISPLAY, mRequestedVisibility, mOutFrame,
-                        mOutDisplayCutout, inputChannel, mOutInsetsState, mOutControls);
+                        Display.DEFAULT_DISPLAY, mRequestedVisibility, mOutFrame, inputChannel,
+                        mOutInsetsState, mOutControls);
                 final long elapsedTimeNsOfAdd = SystemClock.elapsedRealtimeNanos() - startTime;
                 state.addExtraResult("add", elapsedTimeNsOfAdd);
 

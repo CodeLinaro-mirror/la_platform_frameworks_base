@@ -85,8 +85,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1045,22 +1043,22 @@ public final class StrictMode {
             /**
              * Detect attempts to invoke a method on a {@link Context} that is not suited for such
              * operation.
-             * <p>An example of this is trying to obtain an instance of visual service (e.g.
+             * <p>An example of this is trying to obtain an instance of UI service (e.g.
              * {@link android.view.WindowManager}) from a non-visual {@link Context}. This is not
              * allowed, since a non-visual {@link Context} is not adjusted to any visual area, and
              * therefore can report incorrect metrics or resources.
              * @see Context#getDisplay()
              * @see Context#getSystemService(String)
-             * @hide
              */
-            @TestApi
             public @NonNull Builder detectIncorrectContextUse() {
                 return enable(DETECT_VM_INCORRECT_CONTEXT_USE);
             }
 
             /**
              * Disable detection of incorrect context use.
-             * TODO(b/149790106): Fix usages and remove.
+             *
+             * @see #detectIncorrectContextUse()
+             *
              * @hide
              */
             @TestApi
@@ -2194,6 +2192,33 @@ public final class StrictMode {
     /** @hide */
     public static void onIncorrectContextUsed(String message, Throwable originStack) {
         onVmPolicyViolation(new IncorrectContextUseViolation(message, originStack));
+    }
+
+    /**
+     * A helper method to verify if the {@code context} is a UI context and throw
+     * {@link IncorrectContextUseViolation} if the {@code context} is not a UI context.
+     *
+     * @param context The context to verify if it is a UI context
+     * @param methodName The asserted method name
+     *
+     * @see Context#isUiContext()
+     * @see IncorrectContextUseViolation
+     *
+     * @hide
+     */
+    public static void assertUiContext(@NonNull Context context, @NonNull String methodName) {
+        if (vmIncorrectContextUseEnabled() && !context.isUiContext()) {
+            final String errorMessage = "Tried to access UI related API" + methodName
+                    + " from a non-UI Context:" + context;
+            final String message = "UI-related services, such as WindowManager, WallpaperService "
+                    + "or LayoutInflater should be accessed from Activity or other UI "
+                    + "Contexts. Use an Activity or a Context created with "
+                    + "Context#createWindowContext(int, Bundle), which are adjusted to "
+                    + "the configuration and visual bounds of an area on screen.";
+            final Exception exception = new IllegalAccessException(errorMessage);
+            StrictMode.onIncorrectContextUsed(message, exception);
+            Log.e(TAG, errorMessage + " " + message, exception);
+        }
     }
 
     /** Assume locked until we hear otherwise */

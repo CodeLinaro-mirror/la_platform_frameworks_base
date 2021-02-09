@@ -73,6 +73,7 @@ import android.graphics.RecordingCanvas;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Region;
+import android.graphics.RenderEffect;
 import android.graphics.RenderNode;
 import android.graphics.Shader;
 import android.graphics.drawable.ColorDrawable;
@@ -112,7 +113,6 @@ import android.view.AccessibilityIterators.TextSegmentIterator;
 import android.view.AccessibilityIterators.WordTextSegmentIterator;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.InputDevice.InputSourceClass;
-import android.view.OnReceiveContentListener.Payload;
 import android.view.Window.OnContentApplyWindowInsetsListener;
 import android.view.WindowInsets.Type;
 import android.view.WindowInsetsAnimation.Bounds;
@@ -155,6 +155,7 @@ import com.android.internal.widget.ScrollBarUtils;
 import com.google.android.collect.Lists;
 import com.google.android.collect.Maps;
 
+import java.io.PrintWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.ref.WeakReference;
@@ -1273,7 +1274,6 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
             AUTOFILL_TYPE_TOGGLE,
             AUTOFILL_TYPE_LIST,
             AUTOFILL_TYPE_DATE,
-            AUTOFILL_TYPE_RICH_CONTENT
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface AutofillType {}
@@ -1336,17 +1336,6 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * @see #getAutofillType()
      */
     public static final int AUTOFILL_TYPE_DATE = 4;
-
-    /**
-     * Autofill type for a field that can accept rich content (text, images, etc).
-     *
-     * <p>{@link AutofillValue} instances for autofilling a {@link View} can be obtained through
-     * {@link AutofillValue#forRichContent(ClipData)}, and the values passed to
-     * autofill a {@link View} can be fetched through {@link AutofillValue#getRichContentValue()}.
-     *
-     * @see #getAutofillType()
-     */
-    public static final int AUTOFILL_TYPE_RICH_CONTENT = 5;
 
 
     /** @hide */
@@ -8832,6 +8821,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
                 structure.setAutofillValue(getAutofillValue());
             }
             structure.setImportantForAutofill(getImportantForAutofill());
+            structure.setOnReceiveContentMimeTypes(getOnReceiveContentMimeTypes());
         }
 
         int ignoredParentLeft = 0;
@@ -9008,7 +8998,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     }
 
     /**
-     * Sets the listener to be {@link #onReceiveContent used} to handle insertion of
+     * Sets the listener to be {@link #performReceiveContent used} to handle insertion of
      * content into this view.
      *
      * <p>Depending on the type of view, this listener may be invoked for different scenarios. For
@@ -9039,7 +9029,6 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      *                  not be null or empty if a non-null listener is passed in.
      * @param listener The listener to use. This can be null to reset to the default behavior.
      */
-    @SuppressWarnings("rawtypes")
     public void setOnReceiveContentListener(@Nullable String[] mimeTypes,
             @Nullable OnReceiveContentListener listener) {
         if (listener != null) {
@@ -9055,27 +9044,48 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     }
 
     /**
-     * Receives the given content. Invokes the listener configured via
-     * {@link #setOnReceiveContentListener}; if no listener is set, the default implementation is a
-     * no-op (returns the passed-in content without acting on it).
+     * Receives the given content. If no listener is set, invokes {@link #onReceiveContent}. If a
+     * listener is {@link #setOnReceiveContentListener set}, invokes the listener instead; if the
+     * listener returns a non-null result, invokes {@link #onReceiveContent} to handle it.
      *
      * @param payload The content to insert and related metadata.
      *
      * @return The portion of the passed-in content that was not accepted (may be all, some, or none
      * of the passed-in content).
      */
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    public @Nullable Payload onReceiveContent(@NonNull Payload payload) {
+    @Nullable
+    public ContentInfo performReceiveContent(@NonNull ContentInfo payload) {
         final OnReceiveContentListener listener = (mListenerInfo == null) ? null
                 : getListenerInfo().mOnReceiveContentListener;
         if (listener != null) {
-            return listener.onReceiveContent(this, payload);
+            final ContentInfo remaining = listener.onReceiveContent(this, payload);
+            return (remaining == null) ? null : onReceiveContent(remaining);
         }
+        return onReceiveContent(payload);
+    }
+
+    /**
+     * Implements the default behavior for receiving content for this type of view. The default
+     * view implementation is a no-op (returns the passed-in content without acting on it).
+     *
+     * <p>Widgets should override this method to define their default behavior for receiving
+     * content. Apps should {@link #setOnReceiveContentListener set a listener} to provide
+     * app-specific handling for receiving content.
+     *
+     * <p>See {@link #setOnReceiveContentListener} and {@link #performReceiveContent} for more info.
+     *
+     * @param payload The content to insert and related metadata.
+     *
+     * @return The portion of the passed-in content that was not handled (may be all, some, or none
+     * of the passed-in content).
+     */
+    @Nullable
+    public ContentInfo onReceiveContent(@NonNull ContentInfo payload) {
         return payload;
     }
 
     /**
-     * Returns the MIME types accepted by {@link #onReceiveContent} for this view, as
+     * Returns the MIME types accepted by {@link #performReceiveContent} for this view, as
      * configured via {@link #setOnReceiveContentListener}. By default returns null.
      *
      * <p>Different features (e.g. pasting from the clipboard, inserting stickers from the soft
@@ -9092,10 +9102,11 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * {@link android.content.Intent#normalizeMimeType} to ensure that it is converted to
      * lowercase.
      *
-     * @return The MIME types accepted by {@link #onReceiveContent} for this view (may
+     * @return The MIME types accepted by {@link #performReceiveContent} for this view (may
      * include patterns such as "image/*").
      */
-    public @Nullable String[] getOnReceiveContentMimeTypes() {
+    @Nullable
+    public String[] getOnReceiveContentMimeTypes() {
         return mOnReceiveContentMimeTypes;
     }
 
@@ -10437,7 +10448,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      *
      * @hide
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @UnsupportedAppUsage(trackingBug = 171933273)
     protected boolean isVisibleToUser(Rect boundInView) {
         if (mAttachInfo != null) {
             // Attached to invisible window means this view is not visible.
@@ -17903,6 +17914,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * @see #setOutlineProvider(ViewOutlineProvider)
      * @see #getClipToOutline()
      */
+    @RemotableViewMethod
     public void setClipToOutline(boolean clipToOutline) {
         damageInParent();
         if (getClipToOutline() != clipToOutline) {
@@ -21041,6 +21053,21 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
         // invalidate() here
         invalidateParentCaches();
         invalidate(true);
+    }
+
+    /**
+     * Configure the {@link android.graphics.RenderEffect} to apply to this View.
+     * This will apply a visual effect to the results of the View before it is drawn. For example if
+     * {@link RenderEffect#createBlurEffect(float, float, RenderEffect, Shader.TileMode)}
+     * is provided, the contents will be drawn in a separate layer, then this layer will be blurred
+     * when this View is drawn.
+     * @param renderEffect to be applied to the View. Passing null clears the previously configured
+     *                     {@link RenderEffect}
+     */
+    public void setRenderEffect(@Nullable RenderEffect renderEffect) {
+        if (mRenderNode.setRenderEffect(renderEffect)) {
+            invalidateViewProperty(true, true);
+        }
     }
 
     /**
@@ -27933,10 +27960,26 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * Requests pointer capture mode.
      * <p>
      * When the window has pointer capture, the mouse pointer icon will disappear and will not
-     * change its position. Further mouse will be dispatched with the source
-     * {@link InputDevice#SOURCE_MOUSE_RELATIVE}, and relative position changes will be available
-     * through {@link MotionEvent#getX} and {@link MotionEvent#getY}. Non-mouse events
-     * (touchscreens, or stylus) will not be affected.
+     * change its position. Enabling pointer capture will change the behavior of input devices in
+     * the following ways:
+     * <ul>
+     *     <li>Events from a mouse will be delivered with the source
+     *     {@link InputDevice#SOURCE_MOUSE_RELATIVE}, and relative position changes will be
+     *     available through {@link MotionEvent#getX} and {@link MotionEvent#getY}.</li>
+     *
+     *     <li>Events from a touchpad will be delivered with the source
+     *     {@link InputDevice#SOURCE_TOUCHPAD}, where the absolute position of each of the pointers
+     *     on the touchpad will be available through {@link MotionEvent#getX(int)} and
+     *     {@link MotionEvent#getY(int)}, and their relative movements are stored in
+     *     {@link MotionEvent#AXIS_RELATIVE_X} and {@link MotionEvent#AXIS_RELATIVE_Y}.</li>
+     *
+     *     <li>Events from other types of devices, such as touchscreens, will not be affected.</li>
+     * </ul>
+     * <p>
+     * Events captured through pointer capture will be dispatched to
+     * {@link OnCapturedPointerListener#onCapturedPointer(View, MotionEvent)} if an
+     * {@link OnCapturedPointerListener} is set, and otherwise to
+     * {@link #onCapturedPointerEvent(MotionEvent)}.
      * <p>
      * If the window already has pointer capture, this call does nothing.
      * <p>
@@ -27945,6 +27988,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      *
      * @see #releasePointerCapture()
      * @see #hasPointerCapture()
+     * @see #onPointerCaptureChange(boolean)
      */
     public void requestPointerCapture() {
         final ViewRootImpl viewRootImpl = getViewRootImpl();
@@ -27960,6 +28004,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * If the window does not have pointer capture, this call will do nothing.
      * @see #requestPointerCapture()
      * @see #hasPointerCapture()
+     * @see #onPointerCaptureChange(boolean)
      */
     public void releasePointerCapture() {
         final ViewRootImpl viewRootImpl = getViewRootImpl();
@@ -28985,12 +29030,36 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
         boolean mUse32BitDrawingCache;
 
         /**
+         * For windows that are full-screen but using insets to layout inside
+         * of the screen decorations, these are the current insets for the
+         * content of the window.
+         */
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.Q,
+                publicAlternatives = "Use {@link WindowInsets#getInsets(int)}")
+        final Rect mContentInsets = new Rect();
+
+        /**
+         * For windows that are full-screen but using insets to layout inside
+         * of the screen decorations, these are the current insets for the
+         * actual visible parts of the window.
+         */
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.Q,
+                publicAlternatives = "Use {@link WindowInsets#getInsets(int)}")
+        final Rect mVisibleInsets = new Rect();
+
+        /**
+         * For windows that are full-screen but using insets to layout inside
+         * of the screen decorations, these are the current insets for the
+         * stable system windows.
+         */
+        @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.Q,
+                publicAlternatives = "Use {@link WindowInsets#getInsets(int)}")
+        final Rect mStableInsets = new Rect();
+
+        /**
          * Current caption insets to the display coordinate.
          */
         final Rect mCaptionInsets = new Rect();
-
-        final DisplayCutout.ParcelableWrapper mDisplayCutout =
-                new DisplayCutout.ParcelableWrapper(DisplayCutout.NO_CUTOUT);
 
         /**
          * In multi-window we force show the system bars. Because we don't want that the surface
@@ -29376,6 +29445,16 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
                 mScrollCaptureInternal = new ScrollCaptureInternal();
             }
             return mScrollCaptureInternal;
+        }
+
+        public void dump(String prefix, PrintWriter writer) {
+            String innerPrefix = prefix + "  ";
+            writer.println(prefix + "AttachInfo:");
+            writer.println(innerPrefix + "mHasWindowFocus=" + mHasWindowFocus);
+            writer.println(innerPrefix + "mWindowVisibility=" + mWindowVisibility);
+            writer.println(innerPrefix + "mInTouchMode=" + mInTouchMode);
+            writer.println(innerPrefix + "mUnbufferedDispatchRequested="
+                    + mUnbufferedDispatchRequested);
         }
     }
 

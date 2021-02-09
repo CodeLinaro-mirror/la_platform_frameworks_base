@@ -33,7 +33,6 @@ import static com.android.server.wm.WindowManagerInternal.AppTransitionListener;
 
 import android.annotation.IntDef;
 import android.annotation.NonNull;
-import android.app.ActivityManager.TaskSnapshot;
 import android.app.WindowConfiguration;
 import android.graphics.Point;
 import android.graphics.Rect;
@@ -53,10 +52,14 @@ import android.view.InputWindowHandle;
 import android.view.RemoteAnimationTarget;
 import android.view.SurfaceControl;
 import android.view.SurfaceControl.Transaction;
+import android.view.WindowInsets.Type;
+import android.window.TaskSnapshot;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.inputmethod.SoftInputShowHideReason;
+import com.android.internal.os.BackgroundThread;
 import com.android.internal.protolog.common.ProtoLog;
+import com.android.internal.util.LatencyTracker;
 import com.android.internal.util.function.pooled.PooledConsumer;
 import com.android.internal.util.function.pooled.PooledFunction;
 import com.android.internal.util.function.pooled.PooledLambda;
@@ -83,6 +86,11 @@ import java.util.stream.Collectors;
 public class RecentsAnimationController implements DeathRecipient {
     private static final String TAG = RecentsAnimationController.class.getSimpleName();
     private static final long FAILSAFE_DELAY = 1000;
+    /**
+     * If the recents animation is canceled before the delay since the window drawn, do not log the
+     * action because the duration is too small that may be just a mistouch.
+     */
+    private static final long LATENCY_TRACKER_LOG_DELAY_MS = 300;
 
     public static final int REORDER_KEEP_IN_PLACE = 0;
     public static final int REORDER_MOVE_TO_TOP = 1;
@@ -122,7 +130,7 @@ public class RecentsAnimationController implements DeathRecipient {
     private boolean mPendingStart = true;
 
     // Set when the animation has been canceled
-    private boolean mCanceled;
+    private volatile boolean mCanceled;
 
     // Whether or not the input consumer is enabled. The input consumer must be both registered and
     // enabled for it to start intercepting touch events.
@@ -139,6 +147,9 @@ public class RecentsAnimationController implements DeathRecipient {
     // Whether to take a screenshot when handling a deferred cancel
     private boolean mCancelDeferredWithScreenshot;
 
+    @VisibleForTesting
+    boolean mShouldAttachNavBarToAppDuringTransition;
+
     /**
      * Animates the screenshot of task that used to be controlled by RecentsAnimation.
      * @see {@link #setCancelOnNextTransitionStart}
@@ -151,14 +162,14 @@ public class RecentsAnimationController implements DeathRecipient {
      */
     final AppTransitionListener mAppTransitionListener = new AppTransitionListener() {
         @Override
-        public int onAppTransitionStartingLocked(int transit, long duration,
+        public int onAppTransitionStartingLocked(boolean keyguardGoingAway, long duration,
                 long statusBarAnimationStartTime, long statusBarAnimationDuration) {
             continueDeferredCancel();
             return 0;
         }
 
         @Override
-        public void onAppTransitionCancelledLocked(int transit) {
+        public void onAppTransitionCancelledLocked(boolean keyguardGoingAway) {
             continueDeferredCancel();
         }
 
@@ -363,6 +374,9 @@ public class RecentsAnimationController implements DeathRecipient {
                 Binder.restoreCallingIdentity(token);
             }
         }
+
+        @Override
+        public void detachNavigationBarFromApp() {}
     };
 
     /**
@@ -379,6 +393,8 @@ public class RecentsAnimationController implements DeathRecipient {
         mDisplayId = displayId;
         mStatusBar = LocalServices.getService(StatusBarManagerInternal.class);
         mDisplayContent = service.mRoot.getDisplayContent(displayId);
+        mShouldAttachNavBarToAppDuringTransition =
+                mDisplayContent.getDisplayPolicy().shouldAttachNavBarToAppDuringTransition();
     }
 
     /**
@@ -397,7 +413,7 @@ public class RecentsAnimationController implements DeathRecipient {
         final ArrayList<Task> visibleTasks = mDisplayContent.getDefaultTaskDisplayArea()
                 .getVisibleTasks();
         final Task targetStack = mDisplayContent.getDefaultTaskDisplayArea()
-                .getStack(WINDOWING_MODE_UNDEFINED, targetActivityType);
+                .getRootTask(WINDOWING_MODE_UNDEFINED, targetActivityType);
         if (targetStack != null) {
             final PooledConsumer c = PooledLambda.obtainConsumer((t, outList) ->
 	            { if (!outList.contains(t)) outList.add(t); }, PooledLambda.__(Task.class),
@@ -426,6 +442,10 @@ public class RecentsAnimationController implements DeathRecipient {
         } catch (RemoteException e) {
             cancelAnimation(REORDER_MOVE_TO_ORIGINAL_POSITION, "initialize-failedToLinkToDeath");
             return;
+        }
+
+        if (mShouldAttachNavBarToAppDuringTransition) {
+            attachNavBarToApp();
         }
 
         // Adjust the wallpaper visibility for the showing target activity
@@ -534,7 +554,10 @@ public class RecentsAnimationController implements DeathRecipient {
                             : null;
             final Rect contentInsets;
             if (mTargetActivityRecord != null && mTargetActivityRecord.findMainWindow() != null) {
-                contentInsets = mTargetActivityRecord.findMainWindow().getContentInsets();
+                contentInsets = mTargetActivityRecord.findMainWindow()
+                        .getInsetsStateWithVisibilityOverride()
+                        .calculateInsets(mTargetActivityRecord.getBounds(), Type.systemBars(),
+                                false /* ignoreVisibility */);
             } else {
                 // If the window for the activity had not yet been created, use the display insets.
                 mService.getStableInsets(mDisplayId, mTmpRect);
@@ -553,8 +576,65 @@ public class RecentsAnimationController implements DeathRecipient {
         if (mTargetActivityRecord != null) {
             final ArrayMap<WindowContainer, Integer> reasons = new ArrayMap<>(1);
             reasons.put(mTargetActivityRecord, APP_TRANSITION_RECENTS_ANIM);
-            mService.mAtmService.mStackSupervisor.getActivityMetricsLogger()
+            mService.mAtmService.mTaskSupervisor.getActivityMetricsLogger()
                     .notifyTransitionStarting(reasons);
+        }
+    }
+
+    @VisibleForTesting
+    WindowToken getNavigationBarWindowToken() {
+        WindowState navBar = mDisplayContent.getDisplayPolicy().getNavigationBar();
+        if (navBar != null) {
+            return navBar.mToken;
+        }
+        return null;
+    }
+
+    private void attachNavBarToApp() {
+        ActivityRecord topActivity = null;
+        for (int i = mPendingAnimations.size() - 1; i >= 0; i--) {
+            final TaskAnimationAdapter adapter = mPendingAnimations.get(i);
+            final Task task = adapter.mTask;
+            if (!task.isHomeOrRecentsRootTask()) {
+                topActivity = task.getTopVisibleActivity();
+                break;
+            }
+        }
+        final WindowToken navToken = getNavigationBarWindowToken();
+        if (topActivity == null || navToken == null) {
+            return;
+        }
+
+        final SurfaceControl.Transaction t = navToken.getPendingTransaction();
+        final SurfaceControl navSurfaceControl = navToken.getSurfaceControl();
+        t.reparent(navSurfaceControl, topActivity.getSurfaceControl());
+        t.show(navSurfaceControl);
+
+        final WindowContainer imeContainer = mDisplayContent.getImeContainer();
+        if (imeContainer.isVisible()) {
+            t.setRelativeLayer(navSurfaceControl, imeContainer.getSurfaceControl(), 1);
+        } else {
+            // Place the nav bar on top of anything else in the top activity.
+            t.setLayer(navSurfaceControl, Integer.MAX_VALUE);
+        }
+    }
+
+    private void restoreNavBarFromApp(boolean animate) {
+        // Reparent the SurfaceControl of nav bar token back.
+        final WindowToken navToken = getNavigationBarWindowToken();
+        final SurfaceControl.Transaction t = mDisplayContent.getPendingTransaction();
+        if (navToken != null) {
+            final WindowContainer parent = navToken.getParent();
+            t.reparent(navToken.getSurfaceControl(), parent.getSurfaceControl());
+        }
+
+        if (animate) {
+            // Run fade-in animation to show navigation bar back to bottom of the display.
+            final NavBarFadeAnimationController controller =
+                    mDisplayContent.getDisplayPolicy().getNavBarFadeAnimationController();
+            if (controller != null) {
+                controller.fadeWindowToken(true);
+            }
         }
     }
 
@@ -586,6 +666,15 @@ public class RecentsAnimationController implements DeathRecipient {
                 !recentTaskIds.get(task.mTaskId), true /* hidden */, finishedCallback);
         mPendingNewTaskTargets.add(task.mTaskId);
         return adapter.createRemoteAnimationTarget();
+    }
+
+    void logRecentsAnimationStartTime(int durationMs) {
+        BackgroundThread.getHandler().postDelayed(() -> {
+            if (!mCanceled) {
+                mService.mLatencyTracker.logAction(LatencyTracker.ACTION_START_RECENTS_ANIMATION,
+                        durationMs);
+            }
+        }, LATENCY_TRACKER_LOG_DELAY_MS);
     }
 
     private boolean removeTaskInternal(int taskId) {
@@ -759,12 +848,16 @@ public class RecentsAnimationController implements DeathRecipient {
                 taskAdapter.mTask.dontAnimateDimExit();
             }
             removeAnimation(taskAdapter);
-            taskAdapter.maybeApplyFinishBounds();
+            taskAdapter.onCleanup();
         }
 
         for (int i = mPendingWallpaperAnimations.size() - 1; i >= 0; i--) {
             final WallpaperAnimationAdapter wallpaperAdapter = mPendingWallpaperAnimations.get(i);
             removeWallpaperAnimation(wallpaperAdapter);
+        }
+
+        if (mShouldAttachNavBarToAppDuringTransition) {
+            restoreNavBarFromApp(reorderMode == REORDER_MOVE_TO_TOP);
         }
 
         // Clear any pending failsafe runnables
@@ -846,7 +939,7 @@ public class RecentsAnimationController implements DeathRecipient {
         return w != null && w.mAttrs.type == TYPE_BASE_APPLICATION &&
                 ((w.mActivityRecord != null && mTargetActivityRecord == w.mActivityRecord)
                         || isAnimatingTask(w.getTask()))
-                && isTargetOverWallpaper();
+                && isTargetOverWallpaper() && w.isOnScreen();
     }
 
     /**
@@ -969,8 +1062,8 @@ public class RecentsAnimationController implements DeathRecipient {
             if (mainWindow == null) {
                 return null;
             }
-            final Rect insets = new Rect();
-            mainWindow.getContentInsets(insets);
+            final Rect insets = mainWindow.getInsetsStateWithVisibilityOverride().calculateInsets(
+                    mBounds, Type.systemBars(), false /* ignoreVisibility */);
             InsetUtils.addInsets(insets, mainWindow.mActivityRecord.getLetterboxInsets());
             final int mode = topApp.getActivityType() == mTargetActivityType
                     ? MODE_OPENING
@@ -983,14 +1076,19 @@ public class RecentsAnimationController implements DeathRecipient {
             return mTarget;
         }
 
-        void maybeApplyFinishBounds() {
+        void onCleanup() {
             if (!mFinishBounds.isEmpty()) {
+                // Apply any pending bounds changes
                 final SurfaceControl taskSurface = mTask.getSurfaceControl();
                 mTask.getPendingTransaction()
                         .setPosition(taskSurface, mFinishBounds.left, mFinishBounds.top)
                         .setWindowCrop(taskSurface, mFinishBounds.width(), mFinishBounds.height())
                         .apply();
                 mFinishBounds.setEmpty();
+            } else if (!mTask.isAttached()) {
+                // Apply the task's pending transaction in case it is detached and its transaction
+                // is not reachable.
+                mTask.getPendingTransaction().apply();
             }
         }
 

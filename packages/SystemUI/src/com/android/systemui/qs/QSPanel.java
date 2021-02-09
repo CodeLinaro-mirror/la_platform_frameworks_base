@@ -16,8 +16,6 @@
 
 package com.android.systemui.qs;
 
-import static com.android.systemui.media.dagger.MediaModule.QS_PANEL;
-import static com.android.systemui.util.InjectionInflationController.VIEW_CONTEXT;
 import static com.android.systemui.util.Utils.useQsMediaPlayer;
 
 import android.annotation.NonNull;
@@ -28,6 +26,7 @@ import android.content.res.Resources;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.provider.Settings;
 import android.util.AttributeSet;
 import android.util.Pair;
 import android.view.Gravity;
@@ -36,29 +35,19 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
 
-import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.UiEventLogger;
-import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.internal.widget.RemeasuringLinearLayout;
-import com.android.systemui.Dependency;
 import com.android.systemui.R;
-import com.android.systemui.media.MediaHierarchyManager;
-import com.android.systemui.media.MediaHost;
 import com.android.systemui.plugins.qs.DetailAdapter;
 import com.android.systemui.plugins.qs.QSTile;
-import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.settings.brightness.BrightnessSlider;
 import com.android.systemui.statusbar.policy.BrightnessMirrorController;
 import com.android.systemui.tuner.TunerService;
 import com.android.systemui.tuner.TunerService.Tunable;
-import com.android.systemui.util.animation.DisappearParameters;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
-
-import javax.inject.Inject;
-import javax.inject.Named;
 
 /** View that represents the quick settings tile panel (when expanded/pulled down). **/
 public class QSPanel extends LinearLayout implements Tunable {
@@ -69,7 +58,6 @@ public class QSPanel extends LinearLayout implements Tunable {
     private static final String TAG = "QSPanel";
 
     protected final Context mContext;
-    protected final MediaHost mMediaHost;
 
     /**
      * The index where the content starts that needs to be moved between parents
@@ -82,7 +70,6 @@ public class QSPanel extends LinearLayout implements Tunable {
     protected BrightnessSlider mToggleSliderController;
 
     private final H mHandler = new H();
-    private final MetricsLogger mMetricsLogger = Dependency.get(MetricsLogger.class);
     /** Whether or not the QS media player feature is enabled. */
     protected boolean mUsingMediaPlayer;
     private int mVisualMarginStart;
@@ -92,8 +79,6 @@ public class QSPanel extends LinearLayout implements Tunable {
     protected boolean mListening;
 
     private QSDetail.Callback mCallback;
-    private final QSLogger mQSLogger;
-    protected final UiEventLogger mUiEventLogger;
     protected QSTileHost mHost;
     private final List<OnConfigurationChangedListener> mOnConfigurationChangedListeners =
             new ArrayList<>();
@@ -109,7 +94,6 @@ public class QSPanel extends LinearLayout implements Tunable {
     @Nullable
     private ViewGroup mHeaderContainer;
     private PageIndicator mFooterPageIndicator;
-    private boolean mGridContentVisible = true;
     private int mContentMarginStart;
     private int mContentMarginEnd;
     private int mVisualTilePadding;
@@ -129,28 +113,16 @@ public class QSPanel extends LinearLayout implements Tunable {
     private int mMediaTotalBottomMargin;
     private int mFooterMarginStartHorizontal;
     private Consumer<Boolean> mMediaVisibilityChangedListener;
+    private final boolean mSideLabels;
 
-
-    @Inject
-    public QSPanel(
-            @Named(VIEW_CONTEXT) Context context,
-            AttributeSet attrs,
-            QSLogger qsLogger,
-            @Named(QS_PANEL) MediaHost mediaHost,
-            UiEventLogger uiEventLogger
-    ) {
+    public QSPanel(Context context, AttributeSet attrs) {
         super(context, attrs);
         mUsingMediaPlayer = useQsMediaPlayer(context);
         mMediaTotalBottomMargin = getResources().getDimensionPixelSize(
                 R.dimen.quick_settings_bottom_margin_media);
-        mMediaHost = mediaHost;
-        mMediaHost.addVisibilityChangeListener((visible) -> {
-            onMediaVisibilityChanged(visible);
-            return null;
-        });
         mContext = context;
-        mQSLogger = qsLogger;
-        mUiEventLogger = uiEventLogger;
+        mSideLabels = Settings.Secure.getInt(
+                mContext.getContentResolver(), "sysui_side_labels", 0) != 0;
 
         setOrientation(VERTICAL);
 
@@ -179,10 +151,7 @@ public class QSPanel extends LinearLayout implements Tunable {
 
             lp = new LayoutParams(LayoutParams.MATCH_PARENT, 0, 1);
             addView(mHorizontalLinearLayout, lp);
-
-            initMediaHostState();
         }
-        mQSLogger.logAllTilesChangeListening(mListening, getDumpableTag(), "");
     }
 
     protected void onMediaVisibilityChanged(Boolean visible) {
@@ -209,8 +178,9 @@ public class QSPanel extends LinearLayout implements Tunable {
     /** */
     public QSTileLayout createRegularTileLayout() {
         if (mRegularTileLayout == null) {
-            mRegularTileLayout = (QSTileLayout) LayoutInflater.from(mContext).inflate(
-                    R.layout.qs_paged_tile_layout, this, false);
+            mRegularTileLayout = (QSTileLayout) LayoutInflater.from(mContext)
+                    .inflate(mSideLabels ? R.layout.qs_paged_tile_layout_side_labels
+                            : R.layout.qs_paged_tile_layout, this, false);
         }
         return mRegularTileLayout;
     }
@@ -218,43 +188,6 @@ public class QSPanel extends LinearLayout implements Tunable {
 
     protected QSTileLayout createHorizontalTileLayout() {
         return createRegularTileLayout();
-    }
-
-    protected void initMediaHostState() {
-        mMediaHost.setExpansion(1.0f);
-        mMediaHost.setShowsOnlyActiveMedia(false);
-        updateMediaDisappearParameters();
-        mMediaHost.init(MediaHierarchyManager.LOCATION_QS);
-    }
-
-    /**
-     * Update the way the media disappears based on if we're using the horizontal layout
-     */
-    private void updateMediaDisappearParameters() {
-        if (!mUsingMediaPlayer) {
-            return;
-        }
-        DisappearParameters parameters = mMediaHost.getDisappearParameters();
-        if (mUsingHorizontalLayout) {
-            // Only height remaining
-            parameters.getDisappearSize().set(0.0f, 0.4f);
-            // Disappearing on the right side on the bottom
-            parameters.getGonePivot().set(1.0f, 1.0f);
-            // translating a bit horizontal
-            parameters.getContentTranslationFraction().set(0.25f, 1.0f);
-            parameters.setDisappearEnd(0.6f);
-        } else {
-            // Only width remaining
-            parameters.getDisappearSize().set(1.0f, 0.0f);
-            // Disappearing on the bottom
-            parameters.getGonePivot().set(0.0f, 1.0f);
-            // translating a bit vertical
-            parameters.getContentTranslationFraction().set(0.0f, 1.05f);
-            parameters.setDisappearEnd(0.95f);
-        }
-        parameters.setFadeStartPosition(0.95f);
-        parameters.setDisappearStart(0.0f);
-        mMediaHost.setDisappearParameters(parameters);
     }
 
     @Override
@@ -296,14 +229,6 @@ public class QSPanel extends LinearLayout implements Tunable {
             }
         }
         setMeasuredDimension(getMeasuredWidth(), height);
-    }
-
-    @Override
-    protected void onDetachedFromWindow() {
-        if (mTileLayout != null) {
-            mTileLayout.setListening(false);
-        }
-        super.onDetachedFromWindow();
     }
 
     protected String getDumpableTag() {
@@ -417,65 +342,6 @@ public class QSPanel extends LinearLayout implements Tunable {
         mDivider = findViewById(R.id.divider);
     }
 
-    boolean switchTileLayout(boolean force, List<QSPanelControllerBase.TileRecord> records) {
-        /** Whether or not the QuickQSPanel currently contains a media player. */
-        boolean horizontal = shouldUseHorizontalLayout();
-        if (mDivider != null) {
-            if (!horizontal && mUsingMediaPlayer && mMediaHost.getVisible()) {
-                mDivider.setVisibility(View.VISIBLE);
-            } else {
-                mDivider.setVisibility(View.GONE);
-            }
-        }
-        if (horizontal != mUsingHorizontalLayout || force) {
-            mUsingHorizontalLayout = horizontal;
-            View visibleView = horizontal ? mHorizontalLinearLayout : (View) mRegularTileLayout;
-            View hiddenView = horizontal ? (View) mRegularTileLayout : mHorizontalLinearLayout;
-            ViewGroup newParent = horizontal ? mHorizontalContentContainer : this;
-            QSTileLayout newLayout = horizontal ? mHorizontalTileLayout : mRegularTileLayout;
-            if (hiddenView != null &&
-                    (mRegularTileLayout != mHorizontalTileLayout ||
-                            hiddenView != mRegularTileLayout)) {
-                // Only hide the view if the horizontal and the regular view are different,
-                // otherwise its reattached.
-                hiddenView.setVisibility(View.GONE);
-            }
-            visibleView.setVisibility(View.VISIBLE);
-            switchAllContentToParent(newParent, newLayout);
-            reAttachMediaHost();
-            if (mTileLayout != null) {
-                mTileLayout.setListening(false);
-                for (QSPanelControllerBase.TileRecord record : records) {
-                    mTileLayout.removeTile(record);
-                    record.tile.removeCallback(record.callback);
-                }
-            }
-            mTileLayout = newLayout;
-            if (needsDynamicRowsAndColumns()) {
-                newLayout.setMinRows(horizontal ? 2 : 1);
-                // Let's use 3 columns to match the current layout
-                newLayout.setMaxColumns(horizontal ? 3 : TileLayout.NO_MAX_COLUMNS);
-            }
-            updateTileLayoutMargins();
-            updateFooterMargin();
-            updateDividerMargin();
-            updateMediaDisappearParameters();
-            updateMediaHostContentMargins();
-            updateHorizontalLinearLayoutMargins();
-            updatePadding();
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Sets the listening state of the current layout to the state of the view. Used after
-     * switching layouts.
-     */
-    public void reSetLayoutListening() {
-        mTileLayout.setListening(mListening);
-    }
-
     private void updateHorizontalLinearLayoutMargins() {
         if (mHorizontalLinearLayout != null && !displayMediaMarginsOnMedia()) {
             LayoutParams lp = (LayoutParams) mHorizontalLinearLayout.getLayoutParams();
@@ -538,27 +404,19 @@ public class QSPanel extends LinearLayout implements Tunable {
         }
     }
 
-    private boolean shouldUseHorizontalLayout() {
-        return mUsingMediaPlayer && mMediaHost.getVisible()
-                && getResources().getConfiguration().orientation
-                == Configuration.ORIENTATION_LANDSCAPE;
-    }
-
-    protected void reAttachMediaHost() {
+    /** Call when orientation has changed and MediaHost needs to be adjusted. */
+    private void reAttachMediaHost(ViewGroup hostView, boolean horizontal) {
         if (!mUsingMediaPlayer) {
             return;
         }
-        boolean horizontal = shouldUseHorizontalLayout();
-        ViewGroup host = mMediaHost.getHostView();
-
         ViewGroup newParent = horizontal ? mHorizontalLinearLayout : this;
-        ViewGroup currentParent = (ViewGroup) host.getParent();
+        ViewGroup currentParent = (ViewGroup) hostView.getParent();
         if (currentParent != newParent) {
             if (currentParent != null) {
-                currentParent.removeView(host);
+                currentParent.removeView(hostView);
             }
-            newParent.addView(host);
-            LinearLayout.LayoutParams layoutParams = (LayoutParams) host.getLayoutParams();
+            newParent.addView(hostView);
+            LinearLayout.LayoutParams layoutParams = (LayoutParams) hostView.getLayoutParams();
             layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT;
             layoutParams.width = horizontal ? 0 : ViewGroup.LayoutParams.MATCH_PARENT;
             layoutParams.weight = horizontal ? 1.2f : 0;
@@ -572,7 +430,6 @@ public class QSPanel extends LinearLayout implements Tunable {
 
     public void setExpanded(boolean expanded) {
         if (mExpanded == expanded) return;
-        mQSLogger.logPanelExpanded(expanded, getDumpableTag());
         mExpanded = expanded;
         if (!mExpanded && mTileLayout instanceof PagedTileLayout) {
             ((PagedTileLayout) mTileLayout).setCurrentItem(0, false);
@@ -590,15 +447,9 @@ public class QSPanel extends LinearLayout implements Tunable {
     }
 
     /** */
-    public void setListening(boolean listening, String cachedSpecs) {
-        if (mListening == listening) return;
+    public void setListening(boolean listening) {
         mListening = listening;
-        if (mTileLayout != null) {
-            mQSLogger.logAllTilesChangeListening(listening, getDumpableTag(), cachedSpecs);
-            mTileLayout.setListening(listening);
-        }
     }
-
 
     public void showDetailAdapter(boolean show, DetailAdapter adapter, int[] locationInWindow) {
         int xInWindow = locationInWindow[0];
@@ -742,14 +593,6 @@ public class QSPanel extends LinearLayout implements Tunable {
         fireScanStateChanged(scanState);
     }
 
-    void setGridContentVisibility(boolean visible) {
-        int newVis = visible ? VISIBLE : INVISIBLE;
-        setVisibility(newVis);
-        if (mGridContentVisible != visible) {
-            mMetricsLogger.visibility(MetricsEvent.QS_PANEL, newVis);
-        }
-        mGridContentVisible = visible;
-    }
     private void fireShowingDetail(DetailAdapter detail, int x, int y) {
         if (mCallback != null) {
             mCallback.onShowingDetail(detail, x, y);
@@ -777,14 +620,15 @@ public class QSPanel extends LinearLayout implements Tunable {
         return mDivider;
     }
 
-    public void setContentMargins(int startMargin, int endMargin) {
+    /** */
+    public void setContentMargins(int startMargin, int endMargin, ViewGroup mediaHostView) {
         // Only some views actually want this content padding, others want to go all the way
         // to the edge like the brightness slider
         mContentMarginStart = startMargin;
         mContentMarginEnd = endMargin;
         updateTileLayoutMargins(mContentMarginStart - mVisualTilePadding,
                 mContentMarginEnd - mVisualTilePadding);
-        updateMediaHostContentMargins();
+        updateMediaHostContentMargins(mediaHostView);
         updateFooterMargin();
         updateDividerMargin();
     }
@@ -840,13 +684,14 @@ public class QSPanel extends LinearLayout implements Tunable {
     /**
      * Update the margins of the media hosts
      */
-    protected void updateMediaHostContentMargins() {
+    protected void updateMediaHostContentMargins(ViewGroup mediaHostView) {
         if (mUsingMediaPlayer) {
-            int marginStart = mContentMarginStart;
+            int marginStart = 0;
+            int marginEnd = 0;
             if (mUsingHorizontalLayout) {
-                marginStart = 0;
+                marginEnd = mContentMarginEnd;
             }
-            updateMargins(mMediaHost.getHostView(), marginStart, mContentMarginEnd);
+            updateMargins(mediaHostView, marginStart, marginEnd);
         }
     }
 
@@ -883,6 +728,55 @@ public class QSPanel extends LinearLayout implements Tunable {
 
     public void setSecurityFooter(View view) {
         mSecurityFooter = view;
+    }
+
+    void setUsingHorizontalLayout(boolean horizontal, ViewGroup mediaHostView, boolean force,
+            UiEventLogger uiEventLogger) {
+        if (horizontal != mUsingHorizontalLayout || force) {
+            mUsingHorizontalLayout = horizontal;
+            View visibleView = horizontal ? mHorizontalLinearLayout : (View) mRegularTileLayout;
+            View hiddenView = horizontal ? (View) mRegularTileLayout : mHorizontalLinearLayout;
+            ViewGroup newParent = horizontal ? mHorizontalContentContainer : this;
+            QSPanel.QSTileLayout newLayout = horizontal
+                    ? mHorizontalTileLayout : mRegularTileLayout;
+            if (hiddenView != null
+                    && (mRegularTileLayout != mHorizontalTileLayout
+                    || hiddenView != mRegularTileLayout)) {
+                // Only hide the view if the horizontal and the regular view are different,
+                // otherwise its reattached.
+                hiddenView.setVisibility(View.GONE);
+            }
+            visibleView.setVisibility(View.VISIBLE);
+            switchAllContentToParent(newParent, newLayout);
+            reAttachMediaHost(mediaHostView, horizontal);
+            mTileLayout = newLayout;
+            newLayout.setListening(mListening, uiEventLogger);
+            if (needsDynamicRowsAndColumns()) {
+                newLayout.setMinRows(horizontal ? 2 : 1);
+                // Let's use 3 columns to match the current layout
+                int columns;
+                if (mSideLabels) {
+                    columns = horizontal ? 1 : 2;
+                } else {
+                    columns = horizontal ? 3 : TileLayout.NO_MAX_COLUMNS;
+                }
+                newLayout.setMaxColumns(columns);
+            }
+            updateMargins(mediaHostView);
+        }
+    }
+
+    private void updateMargins(ViewGroup mediaHostView) {
+        updateTileLayoutMargins();
+        updateFooterMargin();
+        updateDividerMargin();
+        updateMediaHostContentMargins(mediaHostView);
+        updateHorizontalLinearLayoutMargins();
+        updatePadding();
+    }
+
+    boolean useSideLabels() {
+        return mSideLabels;
     }
 
     private class H extends Handler {
@@ -926,7 +820,7 @@ public class QSPanel extends LinearLayout implements Tunable {
         boolean updateResources();
 
         /** */
-        void setListening(boolean listening);
+        void setListening(boolean listening, UiEventLogger uiEventLogger);
 
         /**
          * Set the minimum number of rows to show
@@ -938,7 +832,7 @@ public class QSPanel extends LinearLayout implements Tunable {
         }
 
         /**
-         * Set the max number of collums to show
+         * Set the max number of columns to show
          *
          * @param maxColumns the maximum
          *
@@ -951,6 +845,8 @@ public class QSPanel extends LinearLayout implements Tunable {
         default void setExpansion(float expansion) {}
 
         int getNumVisibleTiles();
+
+        default void setShowLabels(boolean show) {}
     }
 
     interface OnConfigurationChangedListener {

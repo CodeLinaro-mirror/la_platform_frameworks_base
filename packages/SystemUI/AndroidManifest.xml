@@ -78,6 +78,7 @@
     <uses-permission android:name="android.permission.REQUEST_NETWORK_SCORES" />
     <uses-permission android:name="android.permission.CONTROL_VPN" />
     <uses-permission android:name="android.permission.PEERS_MAC_ADDRESS"/>
+    <uses-permission android:name="android.permission.READ_WIFI_CREDENTIAL"/>
     <!-- Physical hardware -->
     <uses-permission android:name="android.permission.MANAGE_USB" />
     <uses-permission android:name="android.permission.CONTROL_DISPLAY_BRIGHTNESS" />
@@ -103,6 +104,7 @@
     <uses-permission android:name="android.permission.START_ACTIVITY_AS_CALLER" />
     <uses-permission android:name="android.permission.START_TASKS_FROM_RECENTS" />
     <uses-permission android:name="android.permission.GET_INTENT_SENDER_INTENT" />
+    <uses-permission android:name="android.permission.BROADCAST_CLOSE_SYSTEM_DIALOGS" />
 
     <!-- WindowManager -->
     <uses-permission android:name="android.permission.INTERNAL_SYSTEM_WINDOW" />
@@ -390,7 +392,7 @@
         </activity-alias>
 
         <activity
-            android:name="com.android.wm.shell.splitscreen.ForcedResizableInfoActivity"
+            android:name="com.android.wm.shell.legacysplitscreen.ForcedResizableInfoActivity"
             android:theme="@style/ForcedResizableTheme"
             android:excludeFromRecents="true"
             android:stateNotNeeded="true"
@@ -516,19 +518,13 @@
             android:excludeFromRecents="true"
             android:visibleToInstantApps="true"/>
 
-        <!-- started from PipController -->
+        <!-- started from TvNotificationPanel -->
         <activity
-            android:name="com.android.wm.shell.pip.tv.PipMenuActivity"
-            android:permission="com.android.systemui.permission.SELF"
-            android:exported="false"
-            android:theme="@style/PipTheme"
-            android:launchMode="singleTop"
-            android:taskAffinity=""
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|locale|layoutDirection"
-            android:resizeableActivity="true"
-            android:supportsPictureInPicture="true"
-            androidprv:alwaysFocusable="true"
-            android:excludeFromRecents="true" />
+            android:name=".statusbar.tv.notifications.TvNotificationPanelActivity"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:noHistory="true"
+            android:theme="@style/TvSidePanelTheme" />
 
         <!-- started from SliceProvider -->
         <activity android:name=".SlicePermissionActivity"
@@ -575,14 +571,11 @@
         <!-- People Space UI Screen -->
         <activity android:name=".people.PeopleSpaceActivity"
             android:label="People"
-            android:icon="@drawable/ic_music_note"
+            android:enabled="true"
             android:exported="true"
-            android:enabled="false"
-            android:theme="@android:style/Theme.Material.NoActionBar"
-            android:launchMode="singleInstance">
+            android:theme="@android:style/Theme.Material.NoActionBar">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE"/>
             </intent-filter>
         </activity>
 
@@ -623,8 +616,7 @@
 
         <service
             android:name=".keyguard.KeyguardService"
-            android:exported="true"
-            android:enabled="@bool/config_enableKeyguardService" />
+            android:exported="true" />
 
         <activity android:name=".keyguard.WorkLockActivity"
                   android:label="@string/accessibility_desc_work_lock"

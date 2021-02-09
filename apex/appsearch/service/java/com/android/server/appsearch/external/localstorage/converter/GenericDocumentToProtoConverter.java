@@ -17,8 +17,8 @@
 package com.android.server.appsearch.external.localstorage.converter;
 
 import android.annotation.NonNull;
-
 import android.app.appsearch.GenericDocument;
+
 import com.android.internal.util.Preconditions;
 
 import com.google.android.icing.proto.DocumentProto;
@@ -30,19 +30,20 @@ import java.util.Collections;
 
 /**
  * Translates a {@link GenericDocument} into a {@link DocumentProto}.
+ *
  * @hide
  */
-
 public final class GenericDocumentToProtoConverter {
     private GenericDocumentToProtoConverter() {}
 
     /** Converts a {@link GenericDocument} into a {@link DocumentProto}. */
     @NonNull
     @SuppressWarnings("unchecked")
-    public static DocumentProto convert(@NonNull GenericDocument document) {
+    public static DocumentProto toDocumentProto(@NonNull GenericDocument document) {
         Preconditions.checkNotNull(document);
         DocumentProto.Builder mProtoBuilder = DocumentProto.newBuilder();
-        mProtoBuilder.setUri(document.getUri())
+        mProtoBuilder
+                .setUri(document.getUri())
                 .setSchema(document.getSchemaType())
                 .setNamespace(document.getNamespace())
                 .setScore(document.getScore())
@@ -53,40 +54,43 @@ public final class GenericDocumentToProtoConverter {
         for (int i = 0; i < keys.size(); i++) {
             String name = keys.get(i);
             PropertyProto.Builder propertyProto = PropertyProto.newBuilder().setName(name);
-            String[] stringValues = document.getPropertyStringArray(name);
-            long[] longValues = document.getPropertyLongArray(name);
-            double[] doubleValues = document.getPropertyDoubleArray(name);
-            boolean[] booleanValues = document.getPropertyBooleanArray(name);
-            byte[][] bytesValues = document.getPropertyBytesArray(name);
-            GenericDocument[] documentValues = document.getPropertyDocumentArray(name);
-            if (stringValues != null) {
+            Object property = document.getProperty(name);
+            if (property instanceof String[]) {
+                String[] stringValues = (String[]) property;
                 for (int j = 0; j < stringValues.length; j++) {
                     propertyProto.addStringValues(stringValues[j]);
                 }
-            } else if (longValues != null) {
+            } else if (property instanceof long[]) {
+                long[] longValues = (long[]) property;
                 for (int j = 0; j < longValues.length; j++) {
                     propertyProto.addInt64Values(longValues[j]);
                 }
-            } else if (doubleValues != null) {
+            } else if (property instanceof double[]) {
+                double[] doubleValues = (double[]) property;
                 for (int j = 0; j < doubleValues.length; j++) {
                     propertyProto.addDoubleValues(doubleValues[j]);
                 }
-            } else if (booleanValues != null) {
+            } else if (property instanceof boolean[]) {
+                boolean[] booleanValues = (boolean[]) property;
                 for (int j = 0; j < booleanValues.length; j++) {
                     propertyProto.addBooleanValues(booleanValues[j]);
                 }
-            } else if (bytesValues != null) {
+            } else if (property instanceof byte[][]) {
+                byte[][] bytesValues = (byte[][]) property;
                 for (int j = 0; j < bytesValues.length; j++) {
                     propertyProto.addBytesValues(ByteString.copyFrom(bytesValues[j]));
                 }
-            } else if (documentValues != null) {
+            } else if (property instanceof GenericDocument[]) {
+                GenericDocument[] documentValues = (GenericDocument[]) property;
                 for (int j = 0; j < documentValues.length; j++) {
-                    DocumentProto proto = convert(documentValues[j]);
+                    DocumentProto proto = toDocumentProto(documentValues[j]);
                     propertyProto.addDocumentValues(proto);
                 }
             } else {
                 throw new IllegalStateException(
-                        "Property \"" + name + "\" has unsupported value type");
+                        String.format(
+                                "Property \"%s\" has unsupported value type %s",
+                                name, property.getClass().toString()));
             }
             mProtoBuilder.addProperties(propertyProto);
         }
@@ -95,7 +99,7 @@ public final class GenericDocumentToProtoConverter {
 
     /** Converts a {@link DocumentProto} into a {@link GenericDocument}. */
     @NonNull
-    public static GenericDocument convert(@NonNull DocumentProto proto) {
+    public static GenericDocument toGenericDocument(@NonNull DocumentProto proto) {
         Preconditions.checkNotNull(proto);
         GenericDocument.Builder<?> documentBuilder =
                 new GenericDocument.Builder<>(proto.getUri(), proto.getSchema())
@@ -140,7 +144,7 @@ public final class GenericDocumentToProtoConverter {
             } else if (property.getDocumentValuesCount() > 0) {
                 GenericDocument[] values = new GenericDocument[property.getDocumentValuesCount()];
                 for (int j = 0; j < values.length; j++) {
-                    values[j] = convert(property.getDocumentValues(j));
+                    values[j] = toGenericDocument(property.getDocumentValues(j));
                 }
                 documentBuilder.setPropertyDocument(name, values);
             } else {

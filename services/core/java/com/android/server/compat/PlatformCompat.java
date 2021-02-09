@@ -25,9 +25,13 @@ import static android.os.Process.SYSTEM_UID;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.IActivityManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManagerInternal;
+import android.net.Uri;
 import android.os.Binder;
 import android.os.Build;
 import android.os.RemoteException;
@@ -60,7 +64,6 @@ public class PlatformCompat extends IPlatformCompat.Stub {
     private final CompatConfig mCompatConfig;
 
     private static int sMinTargetSdk = Build.VERSION_CODES.Q;
-    private static int sMaxTargetSdk = Build.VERSION_CODES.R;
 
     public PlatformCompat(Context context) {
         mContext = context;
@@ -75,6 +78,7 @@ public class PlatformCompat extends IPlatformCompat.Stub {
         mChangeReporter = new ChangeReporter(
                 ChangeReporter.SOURCE_SYSTEM_SERVER);
         mCompatConfig = compatConfig;
+        registerPackageReceiver(context);
     }
 
     @Override
@@ -120,10 +124,12 @@ public class PlatformCompat extends IPlatformCompat.Stub {
      * permission check.
      */
     public boolean isChangeEnabledInternal(long changeId, ApplicationInfo appInfo) {
-        boolean value = isChangeEnabledInternalNoLogging(changeId, appInfo);
-        reportChange(changeId, appInfo.uid,
-                value ? ChangeReporter.STATE_ENABLED : ChangeReporter.STATE_DISABLED);
-        return value;
+        boolean enabled = isChangeEnabledInternalNoLogging(changeId, appInfo);
+        if (appInfo != null) {
+            reportChange(changeId, appInfo.uid,
+                    enabled ? ChangeReporter.STATE_ENABLED : ChangeReporter.STATE_DISABLED);
+        }
+        return enabled;
     }
 
     @Override
@@ -132,7 +138,7 @@ public class PlatformCompat extends IPlatformCompat.Stub {
         checkCompatChangeReadAndLogPermission();
         ApplicationInfo appInfo = getApplicationInfo(packageName, userId);
         if (appInfo == null) {
-            return true;
+            return mCompatConfig.willChangeBeEnabled(changeId, packageName);
         }
         return isChangeEnabled(changeId, appInfo);
     }
@@ -142,7 +148,7 @@ public class PlatformCompat extends IPlatformCompat.Stub {
         checkCompatChangeReadAndLogPermission();
         String[] packages = mContext.getPackageManager().getPackagesForUid(uid);
         if (packages == null || packages.length == 0) {
-            return true;
+            return mCompatConfig.defaultChangeIdValue(changeId);
         }
         boolean enabled = true;
         for (String packageName : packages) {
@@ -385,11 +391,48 @@ public class PlatformCompat extends IPlatformCompat.Stub {
             return false;
         }
         if (change.getEnableSinceTargetSdk() > 0) {
-            if (change.getEnableSinceTargetSdk() < sMinTargetSdk
-                    || change.getEnableSinceTargetSdk() > sMaxTargetSdk) {
+            if (change.getEnableSinceTargetSdk() < sMinTargetSdk) {
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * Registers a broadcast receiver that listens for package install, replace or remove.
+     * @param context the context where the receiver should be registered.
+     */
+    public void registerPackageReceiver(Context context) {
+        final BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent == null) {
+                    return;
+                }
+                final Uri packageData = intent.getData();
+                if (packageData == null) {
+                    return;
+                }
+                final String packageName = packageData.getSchemeSpecificPart();
+                if (packageName == null) {
+                    return;
+                }
+                mCompatConfig.recheckOverrides(packageName);
+            }
+        };
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_PACKAGE_ADDED);
+        filter.addAction(Intent.ACTION_PACKAGE_REPLACED);
+        filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        filter.addDataScheme("package");
+        context.registerReceiver(receiver, filter);
+    }
+
+    /**
+     * Register the observer for
+     * {@link android.provider.Settings.Global#FORCE_NON_DEBUGGABLE_FINAL_BUILD_FOR_COMPAT}
+     */
+    public void registerContentObserver() {
+        mCompatConfig.registerContentObserver();
     }
 }

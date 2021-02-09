@@ -42,19 +42,23 @@ enum class CanvasOpType : int8_t {
     DrawRoundRectProperty,
     DrawDoubleRoundRect,
     DrawCircleProperty,
+    DrawRippleProperty,
     DrawCircle,
     DrawOval,
     DrawArc,
     DrawPaint,
     DrawPoint,
+    DrawPoints,
     DrawPath,
     DrawLine,
+    DrawLines,
     DrawVertices,
     DrawImage,
     DrawImageRect,
     // DrawImageLattice also used to draw 9 patches
     DrawImageLattice,
     DrawPicture,
+    DrawLayer,
 
     // TODO: Rest
 

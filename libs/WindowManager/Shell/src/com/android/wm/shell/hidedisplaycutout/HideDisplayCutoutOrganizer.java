@@ -42,9 +42,11 @@ import androidx.annotation.VisibleForTesting;
 import com.android.internal.R;
 import com.android.wm.shell.common.DisplayChangeController;
 import com.android.wm.shell.common.DisplayController;
+import com.android.wm.shell.common.ShellExecutor;
 
 import java.io.PrintWriter;
 import java.util.List;
+import java.util.concurrent.Executor;
 
 /**
  * Manages the display areas of hide display cutout feature.
@@ -88,7 +90,9 @@ class HideDisplayCutoutOrganizer extends DisplayAreaOrganizer {
                 t.apply();
             };
 
-    HideDisplayCutoutOrganizer(Context context, DisplayController displayController) {
+    HideDisplayCutoutOrganizer(Context context, DisplayController displayController,
+            ShellExecutor mainExecutor) {
+        super(mainExecutor);
         mContext = context;
         mDisplayController = displayController;
     }
@@ -272,8 +276,9 @@ class HideDisplayCutoutOrganizer extends DisplayAreaOrganizer {
     @VisibleForTesting
     void applyBoundsAndOffsets(WindowContainerToken token, SurfaceControl leash,
             WindowContainerTransaction wct, SurfaceControl.Transaction t) {
-        wct.setBounds(token, mCurrentDisplayBounds.isEmpty() ? null : mCurrentDisplayBounds);
+        wct.setBounds(token, mCurrentDisplayBounds);
         t.setPosition(leash, mOffsetX,  mOffsetY);
+        t.setWindowCrop(leash, mCurrentDisplayBounds.width(), mCurrentDisplayBounds.height());
     }
 
     @VisibleForTesting

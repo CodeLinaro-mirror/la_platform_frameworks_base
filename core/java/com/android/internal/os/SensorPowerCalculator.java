@@ -17,25 +17,32 @@ package com.android.internal.os;
 
 import android.hardware.Sensor;
 import android.hardware.SensorManager;
+import android.location.GnssSignalQuality;
 import android.os.BatteryStats;
+import android.os.UserHandle;
 import android.util.SparseArray;
-
-import com.android.internal.location.gnssmetrics.GnssMetrics;
 
 import java.util.List;
 
 public class SensorPowerCalculator extends PowerCalculator {
+    private final PowerProfile mPowerProfile;
     private final List<Sensor> mSensors;
-    private final double mGpsPower;
+    private double mGpsPower;
 
-    public SensorPowerCalculator(PowerProfile profile, SensorManager sensorManager,
-            BatteryStats stats, long rawRealtimeUs, int statsType) {
+    public SensorPowerCalculator(PowerProfile profile, SensorManager sensorManager) {
+        mPowerProfile = profile;
         mSensors = sensorManager.getSensorList(Sensor.TYPE_ALL);
-        mGpsPower = getAverageGpsPower(profile, stats, rawRealtimeUs, statsType);
     }
 
     @Override
-    public void calculateApp(BatterySipper app, BatteryStats.Uid u, long rawRealtimeUs,
+    public void calculate(List<BatterySipper> sippers, BatteryStats batteryStats,
+            long rawRealtimeUs, long rawUptimeUs, int statsType, SparseArray<UserHandle> asUsers) {
+        mGpsPower = getAverageGpsPower(batteryStats, rawRealtimeUs, statsType);
+        super.calculate(sippers, batteryStats, rawRealtimeUs, rawUptimeUs, statsType, asUsers);
+    }
+
+    @Override
+    protected void calculateApp(BatterySipper app, BatteryStats.Uid u, long rawRealtimeUs,
             long rawUptimeUs, int statsType) {
         // Process Sensor usage
         final SparseArray<? extends BatteryStats.Uid.Sensor> sensorStats = u.getSensorStats();
@@ -49,14 +56,14 @@ public class SensorPowerCalculator extends PowerCalculator {
             switch (sensorHandle) {
                 case BatteryStats.Uid.Sensor.GPS:
                     app.gpsTimeMs = sensorTime;
-                    app.gpsPowerMah = (app.gpsTimeMs * mGpsPower) / (1000*60*60);
+                    app.gpsPowerMah = (app.gpsTimeMs * mGpsPower) / (1000 * 60 * 60);
                     break;
                 default:
                     final int sensorsCount = mSensors.size();
                     for (int i = 0; i < sensorsCount; i++) {
                         final Sensor s = mSensors.get(i);
                         if (s.getHandle() == sensorHandle) {
-                            app.sensorPowerMah += (sensorTime * s.getPower()) / (1000*60*60);
+                            app.sensorPowerMah += (sensorTime * s.getPower()) / (1000 * 60 * 60);
                             break;
                         }
                     }
@@ -65,21 +72,22 @@ public class SensorPowerCalculator extends PowerCalculator {
         }
     }
 
-    private double getAverageGpsPower(PowerProfile profile, BatteryStats stats, long rawRealtimeUs,
+    private double getAverageGpsPower(BatteryStats stats, long rawRealtimeUs,
             int statsType) {
         double averagePower =
-                profile.getAveragePowerOrDefault(PowerProfile.POWER_GPS_ON, -1);
+                mPowerProfile.getAveragePowerOrDefault(PowerProfile.POWER_GPS_ON, -1);
         if (averagePower != -1) {
             return averagePower;
         }
         averagePower = 0;
         long totalTime = 0;
         double totalPower = 0;
-        for (int i = 0; i < GnssMetrics.NUM_GPS_SIGNAL_QUALITY_LEVELS; i++) {
+        for (int i = 0; i < GnssSignalQuality.NUM_GNSS_SIGNAL_QUALITY_LEVELS; i++) {
             long timePerLevel = stats.getGpsSignalQualityTime(i, rawRealtimeUs, statsType);
             totalTime += timePerLevel;
-            totalPower += profile.getAveragePower(PowerProfile.POWER_GPS_SIGNAL_QUALITY_BASED, i)
-                    * timePerLevel;
+            totalPower +=
+                    mPowerProfile.getAveragePower(PowerProfile.POWER_GPS_SIGNAL_QUALITY_BASED, i)
+                            * timePerLevel;
         }
         if (totalTime != 0) {
             averagePower = totalPower / totalTime;

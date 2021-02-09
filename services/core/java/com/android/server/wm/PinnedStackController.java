@@ -29,7 +29,6 @@ import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.Slog;
 import android.view.DisplayInfo;
-import android.view.IPinnedStackController;
 import android.view.IPinnedStackListener;
 
 import java.io.PrintWriter;
@@ -63,8 +62,6 @@ class PinnedStackController {
     private final PinnedStackListenerDeathHandler mPinnedStackListenerDeathHandler =
             new PinnedStackListenerDeathHandler();
 
-    private final PinnedStackControllerCallback mCallbacks = new PinnedStackControllerCallback();
-
     /** Whether the PiP is entering or leaving. */
     private boolean mIsPipWindowingModeChanging;
 
@@ -84,18 +81,6 @@ class PinnedStackController {
 
     // Temp vars for calculation
     private final DisplayMetrics mTmpMetrics = new DisplayMetrics();
-
-    /**
-     * The callback object passed to listeners for them to notify the controller of state changes.
-     */
-    private class PinnedStackControllerCallback extends IPinnedStackController.Stub {
-        @Override
-        public int getDisplayRotation() {
-            synchronized (mService.mGlobalLock) {
-                return mDisplayInfo.rotation;
-            }
-        }
-    }
 
     /**
      * Handler for the case where the listener dies.
@@ -141,9 +126,7 @@ class PinnedStackController {
     void registerPinnedStackListener(IPinnedStackListener listener) {
         try {
             listener.asBinder().linkToDeath(mPinnedStackListenerDeathHandler, 0);
-            listener.onListenerRegistered(mCallbacks);
             mPinnedStackListener = listener;
-            notifyDisplayInfoChanged(mDisplayInfo);
             notifyImeVisibilityChanged(mIsImeShowing, mImeHeight);
             notifyMovementBoundsChanged(false /* fromImeAdjustment */);
             notifyActionsChanged(mActions);
@@ -184,23 +167,6 @@ class PinnedStackController {
             mPinnedStackListener.onActivityHidden(componentName);
         } catch (RemoteException e) {
             Slog.e(TAG_WM, "Error delivering reset reentry fraction event.", e);
-        }
-    }
-
-    private void setDisplayInfo(DisplayInfo displayInfo) {
-        mDisplayInfo.copyFrom(displayInfo);
-        notifyDisplayInfoChanged(mDisplayInfo);
-    }
-
-    /**
-     * In the case where the display rotation is changed but there is no stack, we can't depend on
-     * onTaskStackBoundsChanged() to be called.  But we still should update our known display info
-     * with the new state so that we can update SystemUI.
-     */
-    void onDisplayInfoChanged(DisplayInfo displayInfo) {
-        synchronized (mService.mGlobalLock) {
-            setDisplayInfo(displayInfo);
-            notifyMovementBoundsChanged(false /* fromImeAdjustment */);
         }
     }
 
@@ -301,18 +267,6 @@ class PinnedStackController {
             } catch (RemoteException e) {
                 Slog.e(TAG_WM, "Error delivering actions changed event.", e);
             }
-        }
-    }
-
-    /**
-     * Notifies listeners that the PIP animation is about to happen.
-     */
-    private void notifyDisplayInfoChanged(DisplayInfo displayInfo) {
-        if (mPinnedStackListener == null) return;
-        try {
-            mPinnedStackListener.onDisplayInfoChanged(displayInfo);
-        } catch (RemoteException e) {
-            Slog.e(TAG_WM, "Error delivering DisplayInfo changed event.", e);
         }
     }
 

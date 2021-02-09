@@ -17,6 +17,7 @@
 package android.telephony.ims;
 
 import android.annotation.NonNull;
+import android.annotation.SystemApi;
 import android.telephony.ims.stub.SipDelegate;
 
 /**
@@ -36,6 +37,7 @@ import android.telephony.ims.stub.SipDelegate;
  * @see SipDelegateManager#createSipDelegate
  * @hide
  */
+@SystemApi
 public interface SipDelegateConnection {
 
     /**
@@ -47,9 +49,8 @@ public interface SipDelegateConnection {
      * @param sipMessage The SipMessage to be sent.
      * @param configVersion The SipDelegateImsConfiguration version used to construct the
      *                      SipMessage. See {@link SipDelegateImsConfiguration#getVersion} for more
-     *                      information on this parameter and why it is used.
      */
-    void sendMessage(@NonNull SipMessage sipMessage, int configVersion);
+    void sendMessage(@NonNull SipMessage sipMessage, long configVersion);
 
     /**
      * Notify the {@link SipDelegate} that a SIP message received from
@@ -59,6 +60,22 @@ public interface SipDelegateConnection {
      *         branch parameter.
      */
     void notifyMessageReceived(@NonNull String viaTransactionId);
+
+    /**
+     * The SIP Dialog associated with the provided Call-ID is being closed and routing resources
+     * associated with the SIP dialog are free to be released.
+     * <p>
+     * Calling this method is also mandatory for situations where the framework IMS stack is waiting
+     * for pending SIP dialogs to be closed before it can perform a handover or apply a provisioning
+     * change. See {@link DelegateRegistrationState} for more information about
+     * the scenarios where this can occur.
+     * <p>
+     * This method will need to be called for each SIP dialog managed by this application when it is
+     * closed.
+     * @param callId The call-ID header value associated with the ongoing SIP Dialog that is
+     *         closing.
+     */
+    void closeDialog(@NonNull String callId);
 
     /**
      * Notify the SIP delegate that the SIP message has been received from

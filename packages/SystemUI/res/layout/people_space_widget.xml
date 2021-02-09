@@ -19,9 +19,9 @@
     android:id="@+id/widget_list_view"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@android:color/holo_blue_light"
+    android:background="@drawable/people_space_widget_background"
     android:clipChildren="false"
     android:clipToPadding="false"
-    android:padding="5dp"
+    android:padding="2dp"
     android:divider="@null"
     android:dividerHeight="0dp"/>

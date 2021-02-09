@@ -19,6 +19,7 @@ package com.android.server.biometrics.sensors.fingerprint.hidl;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.Context;
+import android.hardware.biometrics.BiometricAuthenticator;
 import android.hardware.biometrics.BiometricFingerprintConstants;
 import android.hardware.biometrics.BiometricsProtoEnums;
 import android.hardware.biometrics.fingerprint.V2_1.IBiometricsFingerprint;
@@ -51,11 +52,13 @@ public class FingerprintEnrollClient extends EnrollClient<IBiometricsFingerprint
             @NonNull ClientMonitorCallbackConverter listener, int userId,
             @NonNull byte[] hardwareAuthToken, @NonNull String owner,
             @NonNull BiometricUtils<Fingerprint> utils, int timeoutSec, int sensorId,
-            @Nullable IUdfpsOverlayController udfpsOverlayController) {
+            @Nullable IUdfpsOverlayController udfpsOverlayController,
+            boolean shouldLogMetrics) {
         super(context, lazyDaemon, token, listener, userId, hardwareAuthToken, owner, utils,
                 timeoutSec, BiometricsProtoEnums.MODALITY_FINGERPRINT, sensorId,
                 true /* shouldVibrate */);
         mUdfpsOverlayController = udfpsOverlayController;
+        setShouldLog(shouldLogMetrics);
     }
 
     @Override
@@ -65,7 +68,7 @@ public class FingerprintEnrollClient extends EnrollClient<IBiometricsFingerprint
         final int enrolled = mBiometricUtils.getBiometricsForUser(getContext(), getTargetUserId())
                 .size();
         if (enrolled >= limit) {
-            Slog.w(TAG, "Too many faces registered, user: " + getTargetUserId());
+            Slog.w(TAG, "Too many fingerprints registered, user: " + getTargetUserId());
             return true;
         }
         return false;
@@ -73,7 +76,8 @@ public class FingerprintEnrollClient extends EnrollClient<IBiometricsFingerprint
 
     @Override
     protected void startHalOperation() {
-        UdfpsHelper.showUdfpsOverlay(getSensorId(), mUdfpsOverlayController);
+        UdfpsHelper.showUdfpsOverlay(getSensorId(), IUdfpsOverlayController.REASON_ENROLL,
+                mUdfpsOverlayController);
         try {
             // GroupId was never used. In fact, groupId is always the same as userId.
             getFreshDaemon().enroll(mHardwareAuthToken, getTargetUserId(), mTimeoutSec);
@@ -96,6 +100,15 @@ public class FingerprintEnrollClient extends EnrollClient<IBiometricsFingerprint
             onError(BiometricFingerprintConstants.FINGERPRINT_ERROR_HW_UNAVAILABLE,
                     0 /* vendorCode */);
             mCallback.onClientFinished(this, false /* success */);
+        }
+    }
+
+    @Override
+    public void onEnrollResult(BiometricAuthenticator.Identifier identifier, int remaining) {
+        super.onEnrollResult(identifier, remaining);
+
+        if (remaining == 0) {
+            UdfpsHelper.hideUdfpsOverlay(getSensorId(), mUdfpsOverlayController);
         }
     }
 

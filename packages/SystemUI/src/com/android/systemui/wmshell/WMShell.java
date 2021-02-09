@@ -43,6 +43,7 @@ import com.android.keyguard.KeyguardUpdateMonitorCallback;
 import com.android.systemui.Dependency;
 import com.android.systemui.SystemUI;
 import com.android.systemui.dagger.SysUISingleton;
+import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.keyguard.ScreenLifecycle;
 import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.NavigationModeController;
@@ -52,22 +53,22 @@ import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.UserInfoController;
 import com.android.systemui.tracing.ProtoTracer;
 import com.android.systemui.tracing.nano.SystemUiTraceProto;
-import com.android.wm.shell.ShellDump;
-import com.android.wm.shell.apppairs.AppPairs;
+import com.android.wm.shell.ShellCommandHandler;
 import com.android.wm.shell.hidedisplaycutout.HideDisplayCutout;
+import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
 import com.android.wm.shell.nano.WmShellTraceProto;
 import com.android.wm.shell.onehanded.OneHanded;
-import com.android.wm.shell.onehanded.OneHandedEvents;
 import com.android.wm.shell.onehanded.OneHandedGestureHandler.OneHandedGestureEventCallback;
 import com.android.wm.shell.onehanded.OneHandedTransitionCallback;
+import com.android.wm.shell.onehanded.OneHandedUiEventLogger;
 import com.android.wm.shell.pip.Pip;
 import com.android.wm.shell.protolog.ShellProtoLogImpl;
-import com.android.wm.shell.splitscreen.SplitScreen;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.Arrays;
 import java.util.Optional;
+import java.util.concurrent.Executor;
 
 import javax.inject.Inject;
 
@@ -87,19 +88,21 @@ public final class WMShell extends SystemUI
                     | SYSUI_STATE_BUBBLES_EXPANDED
                     | SYSUI_STATE_QUICK_SETTINGS_EXPANDED;
 
+    // Shell interfaces
+    private final Optional<Pip> mPipOptional;
+    private final Optional<LegacySplitScreen> mSplitScreenOptional;
+    private final Optional<OneHanded> mOneHandedOptional;
+    private final Optional<HideDisplayCutout> mHideDisplayCutoutOptional;
+    private final Optional<ShellCommandHandler> mShellCommandHandler;
+
     private final CommandQueue mCommandQueue;
     private final ConfigurationController mConfigurationController;
     private final KeyguardUpdateMonitor mKeyguardUpdateMonitor;
     private final NavigationModeController mNavigationModeController;
     private final ScreenLifecycle mScreenLifecycle;
     private final SysUiState mSysUiState;
-    private final Optional<Pip> mPipOptional;
-    private final Optional<SplitScreen> mSplitScreenOptional;
-    private final Optional<OneHanded> mOneHandedOptional;
-    private final Optional<HideDisplayCutout> mHideDisplayCutoutOptional;
     private final ProtoTracer mProtoTracer;
-    private final Optional<ShellDump> mShellDump;
-    private final Optional<AppPairs> mAppPairsOptional;
+    private final Executor mSysUiMainExecutor;
 
     private boolean mIsSysUiStateValid;
     private KeyguardUpdateMonitorCallback mSplitScreenKeyguardCallback;
@@ -107,19 +110,20 @@ public final class WMShell extends SystemUI
     private KeyguardUpdateMonitorCallback mOneHandedKeyguardCallback;
 
     @Inject
-    public WMShell(Context context, CommandQueue commandQueue,
+    public WMShell(Context context,
+            Optional<Pip> pipOptional,
+            Optional<LegacySplitScreen> splitScreenOptional,
+            Optional<OneHanded> oneHandedOptional,
+            Optional<HideDisplayCutout> hideDisplayCutoutOptional,
+            Optional<ShellCommandHandler> shellCommandHandler,
+            CommandQueue commandQueue,
             ConfigurationController configurationController,
             KeyguardUpdateMonitor keyguardUpdateMonitor,
             NavigationModeController navigationModeController,
             ScreenLifecycle screenLifecycle,
             SysUiState sysUiState,
-            Optional<Pip> pipOptional,
-            Optional<SplitScreen> splitScreenOptional,
-            Optional<OneHanded> oneHandedOptional,
-            Optional<HideDisplayCutout> hideDisplayCutoutOptional,
             ProtoTracer protoTracer,
-            Optional<ShellDump> shellDump,
-            Optional<AppPairs> appPairsOptional) {
+            @Main Executor sysUiMainExecutor) {
         super(context);
         mCommandQueue = commandQueue;
         mConfigurationController = configurationController;
@@ -132,13 +136,13 @@ public final class WMShell extends SystemUI
         mOneHandedOptional = oneHandedOptional;
         mHideDisplayCutoutOptional = hideDisplayCutoutOptional;
         mProtoTracer = protoTracer;
-        mProtoTracer.add(this);
-        mShellDump = shellDump;
-        mAppPairsOptional = appPairsOptional;
+        mShellCommandHandler = shellCommandHandler;
+        mSysUiMainExecutor = sysUiMainExecutor;
     }
 
     @Override
     public void start() {
+        mProtoTracer.add(this);
         mCommandQueue.addCallback(this);
         mPipOptional.ifPresent(this::initPip);
         mSplitScreenOptional.ifPresent(this::initSplitScreen);
@@ -172,6 +176,11 @@ public final class WMShell extends SystemUI
 
         mConfigurationController.addCallback(new ConfigurationController.ConfigurationListener() {
             @Override
+            public void onConfigChanged(Configuration newConfig) {
+                pip.onConfigurationChanged(newConfig);
+            }
+
+            @Override
             public void onDensityOrFontScaleChanged() {
                 pip.onDensityOrFontScaleChanged();
             }
@@ -189,7 +198,7 @@ public final class WMShell extends SystemUI
     }
 
     @VisibleForTesting
-    void initSplitScreen(SplitScreen splitScreen) {
+    void initSplitScreen(LegacySplitScreen legacySplitScreen) {
         mSplitScreenKeyguardCallback = new KeyguardUpdateMonitorCallback() {
             @Override
             public void onKeyguardVisibilityChanged(boolean showing) {
@@ -197,7 +206,7 @@ public final class WMShell extends SystemUI
                 // above everything, it is actually transparent except for notifications, so
                 // we still need to hide any surfaces that are below it.
                 // TODO(b/148906453): Figure out keyguard dismiss animation for divider view.
-                splitScreen.onKeyguardVisibilityChanged(showing);
+                legacySplitScreen.onKeyguardVisibilityChanged(showing);
             }
         };
         mKeyguardUpdateMonitor.registerCallback(mSplitScreenKeyguardCallback);
@@ -212,34 +221,43 @@ public final class WMShell extends SystemUI
         oneHanded.registerTransitionCallback(new OneHandedTransitionCallback() {
             @Override
             public void onStartFinished(Rect bounds) {
-                mSysUiState.setFlag(SYSUI_STATE_ONE_HANDED_ACTIVE,
-                        true).commitUpdate(DEFAULT_DISPLAY);
+                mSysUiMainExecutor.execute(() -> {
+                    mSysUiState.setFlag(SYSUI_STATE_ONE_HANDED_ACTIVE,
+                            true).commitUpdate(DEFAULT_DISPLAY);
+                });
             }
 
             @Override
             public void onStopFinished(Rect bounds) {
-                mSysUiState.setFlag(SYSUI_STATE_ONE_HANDED_ACTIVE,
-                        false).commitUpdate(DEFAULT_DISPLAY);
+                mSysUiMainExecutor.execute(() -> {
+                    mSysUiState.setFlag(SYSUI_STATE_ONE_HANDED_ACTIVE,
+                            false).commitUpdate(DEFAULT_DISPLAY);
+                });
             }
         });
 
         oneHanded.registerGestureCallback(new OneHandedGestureEventCallback() {
             @Override
             public void onStart() {
-                if (oneHanded.isOneHandedEnabled()) {
-                    oneHanded.startOneHanded();
-                } else if (oneHanded.isSwipeToNotificationEnabled()) {
-                    mCommandQueue.handleSystemKey(KeyEvent.KEYCODE_SYSTEM_NAVIGATION_DOWN);
-                }
+                mSysUiMainExecutor.execute(() -> {
+                    if (oneHanded.isOneHandedEnabled()) {
+                        oneHanded.startOneHanded();
+                    } else if (oneHanded.isSwipeToNotificationEnabled()) {
+                        mCommandQueue.handleSystemKey(KeyEvent.KEYCODE_SYSTEM_NAVIGATION_DOWN);
+                    }
+                });
             }
 
             @Override
             public void onStop() {
-                if (oneHanded.isOneHandedEnabled()) {
-                    oneHanded.stopOneHanded(OneHandedEvents.EVENT_ONE_HANDED_TRIGGER_GESTURE_OUT);
-                } else if (oneHanded.isSwipeToNotificationEnabled()) {
-                    mCommandQueue.handleSystemKey(KeyEvent.KEYCODE_SYSTEM_NAVIGATION_UP);
-                }
+                mSysUiMainExecutor.execute(() -> {
+                    if (oneHanded.isOneHandedEnabled()) {
+                        oneHanded.stopOneHanded(
+                                OneHandedUiEventLogger.EVENT_ONE_HANDED_TRIGGER_GESTURE_OUT);
+                    } else if (oneHanded.isSwipeToNotificationEnabled()) {
+                        mCommandQueue.handleSystemKey(KeyEvent.KEYCODE_SYSTEM_NAVIGATION_UP);
+                    }
+                });
             }
         });
 
@@ -262,7 +280,7 @@ public final class WMShell extends SystemUI
             @Override
             public void onScreenTurningOff() {
                 oneHanded.stopOneHanded(
-                        OneHandedEvents.EVENT_ONE_HANDED_TRIGGER_SCREEN_OFF_OUT);
+                        OneHandedUiEventLogger.EVENT_ONE_HANDED_TRIGGER_SCREEN_OFF_OUT);
             }
         });
 
@@ -276,7 +294,8 @@ public final class WMShell extends SystemUI
             public void setImeWindowStatus(int displayId, IBinder token, int vis,
                     int backDisposition, boolean showImeSwitcher) {
                 if (displayId == DEFAULT_DISPLAY && (vis & InputMethodService.IME_VISIBLE) != 0) {
-                    oneHanded.stopOneHanded(OneHandedEvents.EVENT_ONE_HANDED_TRIGGER_POP_IME_OUT);
+                    oneHanded.stopOneHanded(
+                            OneHandedUiEventLogger.EVENT_ONE_HANDED_TRIGGER_POP_IME_OUT);
                 }
             }
         });
@@ -304,11 +323,17 @@ public final class WMShell extends SystemUI
     @Override
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         // Handle commands if provided
+        if (mShellCommandHandler.isPresent()
+                && mShellCommandHandler.get().handleCommand(args, pw)) {
+            return;
+        }
+        // Handle logging commands if provided
         if (handleLoggingCommand(args, pw)) {
             return;
         }
         // Dump WMShell stuff here if no commands were handled
-        mShellDump.ifPresent((shellDump) -> shellDump.dump(pw));
+        mShellCommandHandler.ifPresent(
+                shellCommandHandler -> shellCommandHandler.dump(pw));
     }
 
     @Override
@@ -337,21 +362,6 @@ public final class WMShell extends SystemUI
                     if (result == 0) {
                         pw.println("Stopping logging on groups: " + Arrays.toString(groups));
                     }
-                    return true;
-                }
-
-                case "pair": {
-                    String[] groups = Arrays.copyOfRange(args, i + 1, args.length);
-                    final int taskId1 = new Integer(groups[0]);
-                    final int taskId2 = new Integer(groups[1]);
-                    mAppPairsOptional.ifPresent(appPairs -> appPairs.pair(taskId1, taskId2));
-                    return true;
-                }
-
-                case "unpair": {
-                    String[] groups = Arrays.copyOfRange(args, i + 1, args.length);
-                    final int taskId = new Integer(groups[0]);
-                    mAppPairsOptional.ifPresent(appPairs -> appPairs.unpair(taskId));
                     return true;
                 }
             }

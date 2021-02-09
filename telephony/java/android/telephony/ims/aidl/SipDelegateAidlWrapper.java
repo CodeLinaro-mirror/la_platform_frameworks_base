@@ -28,21 +28,27 @@ import android.telephony.ims.SipDelegateImsConfiguration;
 import android.telephony.ims.SipDelegateManager;
 import android.telephony.ims.SipMessage;
 import android.telephony.ims.stub.SipDelegate;
+import android.text.TextUtils;
+import android.util.Log;
 
-import java.util.List;
+import com.android.internal.telephony.SipMessageParsingUtils;
+
+import java.util.ArrayList;
+import java.util.Set;
 import java.util.concurrent.Executor;
 
 /**
  * Implementation of callbacks by wrapping the internal AIDL from telephony. Also implements
- * ISipDelegate internally when {@link DelegateStateCallback#onCreated(SipDelegate, List)} is called
+ * ISipDelegate internally when {@link DelegateStateCallback#onCreated(SipDelegate, Set)} is called
  * in order to trampoline events back to telephony.
  * @hide
  */
 public class SipDelegateAidlWrapper implements DelegateStateCallback, DelegateMessageCallback {
+    private static final String LOG_TAG = "SipDelegateAW";
 
     private final ISipDelegate.Stub mDelegateBinder = new ISipDelegate.Stub() {
         @Override
-        public void sendMessage(SipMessage sipMessage, int configVersion) {
+        public void sendMessage(SipMessage sipMessage, long configVersion) {
             SipDelegate d = mDelegate;
             final long token = Binder.clearCallingIdentity();
             try {
@@ -136,10 +142,10 @@ public class SipDelegateAidlWrapper implements DelegateStateCallback, DelegateMe
 
     @Override
     public void onCreated(@NonNull SipDelegate delegate,
-            @Nullable List<FeatureTagState> deniedTags) {
+            @Nullable Set<FeatureTagState> deniedTags) {
         mDelegate = delegate;
         try {
-            mStateBinder.onCreated(mDelegateBinder, deniedTags);
+            mStateBinder.onCreated(mDelegateBinder, new ArrayList<>(deniedTags));
         } catch (RemoteException e) {
             // BinderDied will trigger destroySipDelegate, so just ignore this locally.
         }
@@ -182,11 +188,15 @@ public class SipDelegateAidlWrapper implements DelegateStateCallback, DelegateMe
     }
 
     private void notifyLocalMessageFailedToBeReceived(SipMessage m, int reason) {
-        //TODO: parse transaction ID or throw IllegalArgumentException if the SipMessage
-        // transaction ID can not be parsed.
+        String transactionId = SipMessageParsingUtils.getTransactionId(m.getHeaderSection());
+        if (TextUtils.isEmpty(transactionId)) {
+            Log.w(LOG_TAG, "failure to parse SipMessage.");
+            throw new IllegalArgumentException("Malformed SipMessage, can not determine "
+                    + "transaction ID.");
+        }
         SipDelegate d = mDelegate;
         if (d != null) {
-            mExecutor.execute(() -> d.notifyMessageReceiveError(null, reason));
+            mExecutor.execute(() -> d.notifyMessageReceiveError(transactionId, reason));
         }
     }
 }

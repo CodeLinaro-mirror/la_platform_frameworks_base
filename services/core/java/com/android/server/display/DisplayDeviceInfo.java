@@ -22,7 +22,10 @@ import android.util.DisplayMetrics;
 import android.view.Display;
 import android.view.DisplayAddress;
 import android.view.DisplayCutout;
+import android.view.DisplayEventReceiver;
 import android.view.Surface;
+
+import com.android.internal.BrightnessSynchronizer;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -333,6 +336,13 @@ final class DisplayDeviceInfo {
      */
     public String ownerPackageName;
 
+    public DisplayEventReceiver.FrameRateOverride[] frameRateOverrides =
+            new DisplayEventReceiver.FrameRateOverride[0];
+
+    public float brightnessMinimum;
+    public float brightnessMaximum;
+    public float brightnessDefault;
+
     public void setAssumedDensityForExternalDisplay(int width, int height) {
         densityDpi = Math.min(width, height) * DisplayMetrics.DENSITY_XHIGH / 1080;
         // Technically, these values should be smaller than the apparent density
@@ -386,7 +396,12 @@ final class DisplayDeviceInfo {
                 || !Objects.equals(address, other.address)
                 || !Objects.equals(deviceProductInfo, other.deviceProductInfo)
                 || ownerUid != other.ownerUid
-                || !Objects.equals(ownerPackageName, other.ownerPackageName)) {
+                || !Objects.equals(ownerPackageName, other.ownerPackageName)
+                || !Objects.equals(frameRateOverrides, other.frameRateOverrides)
+                || !BrightnessSynchronizer.floatEquals(brightnessMinimum, other.brightnessMinimum)
+                || !BrightnessSynchronizer.floatEquals(brightnessMaximum, other.brightnessMaximum)
+                || !BrightnessSynchronizer.floatEquals(brightnessDefault,
+                other.brightnessDefault)) {
             diff |= DIFF_OTHER;
         }
         return diff;
@@ -425,6 +440,10 @@ final class DisplayDeviceInfo {
         state = other.state;
         ownerUid = other.ownerUid;
         ownerPackageName = other.ownerPackageName;
+        frameRateOverrides = other.frameRateOverrides;
+        brightnessMinimum = other.brightnessMinimum;
+        brightnessMaximum = other.brightnessMaximum;
+        brightnessDefault = other.brightnessDefault;
     }
 
     // For debugging purposes
@@ -461,6 +480,13 @@ final class DisplayDeviceInfo {
             sb.append(", owner ").append(ownerPackageName);
             sb.append(" (uid ").append(ownerUid).append(")");
         }
+        sb.append(", frameRateOverride ");
+        for (DisplayEventReceiver.FrameRateOverride frameRateOverride : frameRateOverrides) {
+            sb.append(frameRateOverride).append(" ");
+        }
+        sb.append(", brightnessMinimum ").append(brightnessMinimum);
+        sb.append(", brightnessMaximum ").append(brightnessMaximum);
+        sb.append(", brightnessDefault ").append(brightnessDefault);
         sb.append(flagsToString(flags));
         sb.append("}");
         return sb.toString();

@@ -16,6 +16,7 @@
 
 package android.app.admin;
 
+import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -229,5 +230,29 @@ public abstract class DevicePolicyManagerInternal {
     /**
      * Returns the profile owner component for the given user, or {@code null} if there is not one.
      */
-    public abstract ComponentName getProfileOwnerAsUser(int userHandle);
+    @Nullable
+    public abstract ComponentName getProfileOwnerAsUser(@UserIdInt int userId);
+
+    /**
+     * Returns the user id of the device owner, or {@link UserHandle#USER_NULL} if there is not one.
+     */
+    @UserIdInt
+    public abstract int getDeviceOwnerUserId();
+
+    /**
+     * Returns whether the given package is a device owner or a profile owner in the calling user.
+     */
+    public abstract boolean isDeviceOrProfileOwnerInCallingUser(String packageName);
+
+    /**
+     * Returns whether this class supports being deferred the responsibility for resetting the given
+     * op.
+     */
+    public abstract boolean supportsResetOp(int op);
+
+    /**
+     * Resets the given op across the profile group of the given user for the given package. Assumes
+     * {@link #supportsResetOp(int)} is true.
+     */
+    public abstract void resetOp(int op, String packageName, @UserIdInt int userId);
 }

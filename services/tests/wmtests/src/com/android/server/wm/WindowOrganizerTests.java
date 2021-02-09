@@ -74,10 +74,13 @@ import android.view.Display;
 import android.view.SurfaceControl;
 import android.window.ITaskOrganizer;
 import android.window.IWindowContainerTransactionCallback;
+import android.window.StartingWindowInfo;
 import android.window.TaskAppearedInfo;
 import android.window.WindowContainerTransaction;
 
 import androidx.test.filters.SmallTest;
+
+import com.android.server.wm.TaskOrganizerController.PendingTaskEvent;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -149,10 +152,14 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final ITaskOrganizer organizer = registerMockOrganizer();
         final Task stack = createStack();
         final Task task = createTask(stack);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
 
         verify(organizer).onTaskAppeared(any(RunningTaskInfo.class), any(SurfaceControl.class));
 
         stack.removeImmediately();
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer).onTaskVanished(any());
     }
 
@@ -161,15 +168,21 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final ITaskOrganizer organizer = registerMockOrganizer();
         final Task stack = createStack();
         final Task task = createTask(stack, false);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
 
         verify(organizer, never())
                 .onTaskAppeared(any(RunningTaskInfo.class), any(SurfaceControl.class));
         stack.setHasBeenVisible(true);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         assertTrue(stack.getHasBeenVisible());
 
         verify(organizer).onTaskAppeared(any(RunningTaskInfo.class), any(SurfaceControl.class));
 
         stack.removeImmediately();
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer).onTaskVanished(any());
     }
 
@@ -194,12 +207,16 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final ITaskOrganizer organizer = registerMockOrganizer();
         final Task stack = createStack();
         final Task task = createTask(stack, false /* fakeDraw */);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
 
         verify(organizer, never())
                 .onTaskAppeared(any(RunningTaskInfo.class), any(SurfaceControl.class));
         assertTrue(stack.isOrganized());
 
         mWm.mAtmService.mTaskOrganizerController.unregisterTaskOrganizer(organizer);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         assertTaskVanished(organizer, false /* expectVanished */, stack);
         assertFalse(stack.isOrganized());
     }
@@ -209,11 +226,16 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final ITaskOrganizer organizer = registerMockOrganizer();
         final Task stack = createStack();
         final Task task = createTask(stack);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
 
         verify(organizer).onTaskAppeared(any(RunningTaskInfo.class), any(SurfaceControl.class));
         assertTrue(stack.isOrganized());
 
         stack.setTaskOrganizer(null);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
+
         verify(organizer).onTaskVanished(any());
         assertFalse(stack.isOrganized());
     }
@@ -223,11 +245,16 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final ITaskOrganizer organizer = registerMockOrganizer();
         final Task stack = createStack();
         final Task task = createTask(stack);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
 
         verify(organizer).onTaskAppeared(any(RunningTaskInfo.class), any(SurfaceControl.class));
         assertTrue(stack.isOrganized());
 
         mWm.mAtmService.mTaskOrganizerController.unregisterTaskOrganizer(organizer);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
+
         assertTaskVanished(organizer, true /* expectVanished */, stack);
         assertFalse(stack.isOrganized());
     }
@@ -242,6 +269,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final Task task3 = createTask(stack3);
         final ArrayList<TaskAppearedInfo> existingTasks = new ArrayList<>();
         final ITaskOrganizer organizer = registerMockOrganizer(existingTasks);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
 
         // verify that tasks are returned and taskAppeared is not called
         assertContainsTasks(existingTasks, stack, stack2, stack3);
@@ -253,6 +282,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
         // Now we replace the registration and verify the new organizer receives existing tasks
         final ArrayList<TaskAppearedInfo> existingTasks2 = new ArrayList<>();
         final ITaskOrganizer organizer2 = registerMockOrganizer(existingTasks2);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         assertContainsTasks(existingTasks2, stack, stack2, stack3);
         verify(organizer2, times(0)).onTaskAppeared(any(RunningTaskInfo.class),
                 any(SurfaceControl.class));
@@ -264,6 +295,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
         // Now we unregister the second one, the first one should automatically be reregistered
         // so we verify that it's now seeing changes.
         mWm.mAtmService.mTaskOrganizerController.unregisterTaskOrganizer(organizer2);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer, times(3))
                 .onTaskAppeared(any(RunningTaskInfo.class), any(SurfaceControl.class));
         assertTaskVanished(organizer2, true /* expectVanished */, stack, stack2, stack3);
@@ -340,7 +373,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
     @Test
     public void testSetActivityWindowingMode() {
         final ActivityRecord record = makePipableActivity();
-        final Task stack = record.getStack();
+        final Task stack = record.getRootTask();
         final WindowContainerTransaction t = new WindowContainerTransaction();
 
         t.setWindowingMode(stack.mRemoteToken.toWindowContainerToken(), WINDOWING_MODE_PINNED);
@@ -387,7 +420,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
     public void testSetIgnoreOrientationRequest_taskDisplayArea() {
         removeGlobalMinSizeRestriction();
         final TaskDisplayArea taskDisplayArea = mDisplayContent.getDefaultTaskDisplayArea();
-        final Task stack = taskDisplayArea.createStack(
+        final Task stack = taskDisplayArea.createRootTask(
                 WINDOWING_MODE_FULLSCREEN, ACTIVITY_TYPE_STANDARD, false /* onTop */);
         final ActivityRecord activity = new ActivityBuilder(mAtm).setTask(stack).build();
         taskDisplayArea.setIgnoreOrientationRequest(true /* ignoreOrientationRequest */);
@@ -425,7 +458,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
     public void testSetIgnoreOrientationRequest_displayContent() {
         removeGlobalMinSizeRestriction();
         final TaskDisplayArea taskDisplayArea = mDisplayContent.getDefaultTaskDisplayArea();
-        final Task stack = taskDisplayArea.createStack(
+        final Task stack = taskDisplayArea.createRootTask(
                 WINDOWING_MODE_FULLSCREEN, ACTIVITY_TYPE_STANDARD, false /* onTop */);
         final ActivityRecord activity = new ActivityBuilder(mAtm).setTask(stack).build();
         mDisplayContent.setFocusedApp(activity);
@@ -506,12 +539,12 @@ public class WindowOrganizerTests extends WindowTestsBase {
     public void testTileAddRemoveChild() {
         ITaskOrganizer listener = new ITaskOrganizer.Stub() {
             @Override
-            public void addStartingWindow(ActivityManager.RunningTaskInfo info, IBinder appToken) {
+            public void addStartingWindow(StartingWindowInfo info, IBinder appToken) {
 
             }
 
             @Override
-            public void removeStartingWindow(ActivityManager.RunningTaskInfo info) { }
+            public void removeStartingWindow(int taskId) { }
 
             @Override
             public void onTaskAppeared(RunningTaskInfo taskInfo, SurfaceControl leash) { }
@@ -571,12 +604,12 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final boolean[] called = {false};
         ITaskOrganizer listener = new ITaskOrganizer.Stub() {
             @Override
-            public void addStartingWindow(ActivityManager.RunningTaskInfo info, IBinder appToken) {
+            public void addStartingWindow(StartingWindowInfo info, IBinder appToken) {
 
             }
 
             @Override
-            public void removeStartingWindow(ActivityManager.RunningTaskInfo info) { }
+            public void removeStartingWindow(int taskId) { }
 
             @Override
             public void onTaskAppeared(RunningTaskInfo taskInfo, SurfaceControl leash) { }
@@ -598,6 +631,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
         Task task = mWm.mAtmService.mTaskOrganizerController.createRootTask(
                 mDisplayContent, WINDOWING_MODE_SPLIT_SCREEN_SECONDARY, null);
         RunningTaskInfo info1 = task.getTaskInfo();
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         lastReportedTiles.clear();
         called[0] = false;
 
@@ -642,12 +677,12 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final ArrayMap<IBinder, RunningTaskInfo> lastReportedTiles = new ArrayMap<>();
         ITaskOrganizer listener = new ITaskOrganizer.Stub() {
             @Override
-            public void addStartingWindow(ActivityManager.RunningTaskInfo info, IBinder appToken) {
+            public void addStartingWindow(StartingWindowInfo info, IBinder appToken) {
 
             }
 
             @Override
-            public void removeStartingWindow(ActivityManager.RunningTaskInfo info) { }
+            public void removeStartingWindow(int taskId) { }
 
             @Override
             public void onTaskAppeared(RunningTaskInfo taskInfo, SurfaceControl leash) { }
@@ -672,6 +707,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
         Task task2 = mWm.mAtmService.mTaskOrganizerController.createRootTask(
                 mDisplayContent, WINDOWING_MODE_SPLIT_SCREEN_SECONDARY, null);
         RunningTaskInfo info2 = task2.getTaskInfo();
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
 
         final int initialRootTaskCount = mWm.mAtmService.mTaskOrganizerController.getRootTasks(
                 mDisplayContent.mDisplayId, null /* activityTypes */).size();
@@ -741,11 +778,10 @@ public class WindowOrganizerTests extends WindowTestsBase {
     }
 
     private List<Task> getTasksCreatedByOrganizer(DisplayContent dc) {
-        ArrayList<Task> out = new ArrayList<>();
-        dc.forAllTaskDisplayAreas(taskDisplayArea -> {
-            for (int sNdx = taskDisplayArea.getStackCount() - 1; sNdx >= 0; --sNdx) {
-                final Task t = taskDisplayArea.getStackAt(sNdx);
-                if (t.mCreatedByOrganizer) out.add(t);
+        final ArrayList<Task> out = new ArrayList<>();
+        dc.forAllRootTasks(task -> {
+            if (task.mCreatedByOrganizer) {
+                out.add(task);
             }
         });
         return out;
@@ -787,9 +823,9 @@ public class WindowOrganizerTests extends WindowTestsBase {
         RunningTaskInfo mInfo;
 
         @Override
-        public void addStartingWindow(ActivityManager.RunningTaskInfo info, IBinder appToken) { }
+        public void addStartingWindow(StartingWindowInfo info, IBinder appToken) { }
         @Override
-        public void removeStartingWindow(ActivityManager.RunningTaskInfo info) { }
+        public void removeStartingWindow(int taskId) { }
         @Override
         public void onTaskAppeared(RunningTaskInfo info, SurfaceControl leash) {
             mInfo = info;
@@ -824,7 +860,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
 
         final PictureInPictureParams p = new PictureInPictureParams.Builder()
                 .setAspectRatio(new Rational(1, 2)).build();
-        assertTrue(mWm.mAtmService.enterPictureInPictureMode(record.token, p));
+        assertTrue(mWm.mAtmService.mActivityClientController.enterPictureInPictureMode(
+                record.token, p));
         waitUntilHandlersIdle();
         assertNotNull(o.mInfo);
         assertNotNull(o.mInfo.pictureInPictureParams);
@@ -845,15 +882,18 @@ public class WindowOrganizerTests extends WindowTestsBase {
         final ActivityRecord record = makePipableActivity();
         final PictureInPictureParams p = new PictureInPictureParams.Builder()
                 .setAspectRatio(new Rational(1, 2)).build();
-        assertTrue(mWm.mAtmService.enterPictureInPictureMode(record.token, p));
+        assertTrue(mWm.mAtmService.mActivityClientController.enterPictureInPictureMode(
+                record.token, p));
         waitUntilHandlersIdle();
         assertNotNull(o.mInfo);
         assertNotNull(o.mInfo.pictureInPictureParams);
 
         final PictureInPictureParams p2 = new PictureInPictureParams.Builder()
                 .setAspectRatio(new Rational(3, 4)).build();
-        mWm.mAtmService.setPictureInPictureParams(record.token, p2);
+        mWm.mAtmService.mActivityClientController.setPictureInPictureParams(record.token, p2);
         waitUntilHandlersIdle();
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         assertNotNull(o.mChangedInfo);
         assertNotNull(o.mChangedInfo.pictureInPictureParams);
         final Rational ratio = o.mChangedInfo.pictureInPictureParams.getAspectRatioRational();
@@ -893,16 +933,24 @@ public class WindowOrganizerTests extends WindowTestsBase {
         stack.setTaskOrganizer(organizer);
         // setHasBeenVisible was already called once by the set-up code.
         stack.setHasBeenVisible(true);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer, times(1))
                 .onTaskAppeared(any(RunningTaskInfo.class), any(SurfaceControl.class));
 
         stack.setTaskOrganizer(null);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer, times(1)).onTaskVanished(any());
         stack.setTaskOrganizer(organizer);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer, times(2))
                 .onTaskAppeared(any(RunningTaskInfo.class), any(SurfaceControl.class));
 
         stack.removeImmediately();
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer, times(2)).onTaskVanished(any());
     }
 
@@ -920,7 +968,9 @@ public class WindowOrganizerTests extends WindowTestsBase {
         assertTrue(stack2.isOrganized());
 
         // Verify a back pressed does not call the organizer
-        mWm.mAtmService.onBackPressedOnTaskRoot(activity.token);
+        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(activity.token);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer, never()).onBackPressedOnTaskRoot(any());
 
         // Enable intercepting back
@@ -928,7 +978,9 @@ public class WindowOrganizerTests extends WindowTestsBase {
                 stack.mRemoteToken.toWindowContainerToken(), true);
 
         // Verify now that the back press does call the organizer
-        mWm.mAtmService.onBackPressedOnTaskRoot(activity.token);
+        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(activity.token);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer, times(1)).onBackPressedOnTaskRoot(any());
 
         // Disable intercepting back
@@ -936,7 +988,9 @@ public class WindowOrganizerTests extends WindowTestsBase {
                 stack.mRemoteToken.toWindowContainerToken(), false);
 
         // Verify now that the back press no longer calls the organizer
-        mWm.mAtmService.onBackPressedOnTaskRoot(activity.token);
+        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(activity.token);
+        // Ensure events dispatch to organizer.
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer, times(1)).onBackPressedOnTaskRoot(any());
     }
 
@@ -1015,6 +1069,151 @@ public class WindowOrganizerTests extends WindowTestsBase {
         mWm.mAtmService.mWindowOrganizerController.applyTransaction(wct);
         assertTrue(task1.isOrganized());
         assertTrue(task2.isOrganized());
+    }
+
+    @Test
+    public void testAppearDeferThenInfoChange() {
+        final ITaskOrganizer organizer = registerMockOrganizer();
+        final Task stack = createStack();
+
+        // Assume layout defer
+        mWm.mWindowPlacerLocked.deferLayout();
+
+        final Task task = createTask(stack);
+        final ActivityRecord record = createActivityRecord(stack.mDisplayContent, task);
+
+        stack.setWindowingMode(WINDOWING_MODE_MULTI_WINDOW);
+        record.setTaskDescription(new ActivityManager.TaskDescription("TestDescription"));
+        waitUntilHandlersIdle();
+
+        ArrayList<PendingTaskEvent> pendingEvents = getTaskPendingEvent(stack);
+        assertEquals(1, pendingEvents.size());
+        assertEquals(PendingTaskEvent.EVENT_APPEARED, pendingEvents.get(0).mEventType);
+        assertEquals("TestDescription",
+                pendingEvents.get(0).mTask.getTaskInfo().taskDescription.getLabel());
+    }
+
+    @Test
+    public void testAppearDeferThenVanish() {
+        final ITaskOrganizer organizer = registerMockOrganizer();
+        final Task stack = createStack();
+
+        // Assume layout defer
+        mWm.mWindowPlacerLocked.deferLayout();
+
+        final Task task = createTask(stack);
+
+        stack.removeImmediately();
+        waitUntilHandlersIdle();
+
+        ArrayList<PendingTaskEvent> pendingEvents = getTaskPendingEvent(stack);
+        assertEquals(0, pendingEvents.size());
+    }
+
+    @Test
+    public void testInfoChangeDeferMultiple() {
+        final ITaskOrganizer organizer = registerMockOrganizer();
+        final Task stack = createStack();
+        final Task task = createTask(stack);
+        final ActivityRecord record = createActivityRecord(stack.mDisplayContent, task);
+
+        // Assume layout defer
+        mWm.mWindowPlacerLocked.deferLayout();
+
+        stack.setWindowingMode(WINDOWING_MODE_MULTI_WINDOW);
+        record.setTaskDescription(new ActivityManager.TaskDescription("TestDescription"));
+        waitUntilHandlersIdle();
+
+        ArrayList<PendingTaskEvent> pendingEvents = getTaskPendingEvent(stack);
+        assertEquals(1, pendingEvents.size());
+        assertEquals(PendingTaskEvent.EVENT_INFO_CHANGED, pendingEvents.get(0).mEventType);
+        assertEquals("TestDescription",
+                pendingEvents.get(0).mTask.getTaskInfo().taskDescription.getLabel());
+
+        record.setTaskDescription(new ActivityManager.TaskDescription("TestDescription2"));
+        waitUntilHandlersIdle();
+
+        pendingEvents = getTaskPendingEvent(stack);
+        assertEquals(1, pendingEvents.size());
+        assertEquals(PendingTaskEvent.EVENT_INFO_CHANGED, pendingEvents.get(0).mEventType);
+        assertEquals("TestDescription2",
+                pendingEvents.get(0).mTask.getTaskInfo().taskDescription.getLabel());
+    }
+
+    @Test
+    public void testInfoChangDeferThenVanish() {
+        final ITaskOrganizer organizer = registerMockOrganizer();
+        final Task stack = createStack();
+        final Task task = createTask(stack);
+        final ActivityRecord record = createActivityRecord(stack.mDisplayContent, task);
+
+        // Assume layout defer
+        mWm.mWindowPlacerLocked.deferLayout();
+
+        stack.setWindowingMode(WINDOWING_MODE_MULTI_WINDOW);
+        record.setTaskDescription(new ActivityManager.TaskDescription("TestDescription"));
+
+        stack.removeImmediately();
+        waitUntilHandlersIdle();
+
+        ArrayList<PendingTaskEvent> pendingEvents = getTaskPendingEvent(stack);
+        assertEquals(1, pendingEvents.size());
+        assertEquals(PendingTaskEvent.EVENT_VANISHED, pendingEvents.get(0).mEventType);
+        assertEquals("TestDescription",
+                pendingEvents.get(0).mTask.getTaskInfo().taskDescription.getLabel());
+    }
+
+    @Test
+    public void testVanishDeferThenInfoChange() {
+        final ITaskOrganizer organizer = registerMockOrganizer();
+        final Task stack = createStack();
+        final Task task = createTask(stack);
+        final ActivityRecord record = createActivityRecord(stack.mDisplayContent, task);
+
+        // Assume layout defer
+        mWm.mWindowPlacerLocked.deferLayout();
+
+        stack.removeImmediately();
+        stack.setWindowingMode(WINDOWING_MODE_MULTI_WINDOW);
+        waitUntilHandlersIdle();
+
+        ArrayList<PendingTaskEvent> pendingEvents = getTaskPendingEvent(stack);
+        assertEquals(1, pendingEvents.size());
+        assertEquals(PendingTaskEvent.EVENT_VANISHED, pendingEvents.get(0).mEventType);
+    }
+
+    @Test
+    public void testVanishDeferThenBackOnRoot() {
+        final ITaskOrganizer organizer = registerMockOrganizer();
+        final Task stack = createStack();
+        final Task task = createTask(stack);
+        final ActivityRecord record = createActivityRecord(stack.mDisplayContent, task);
+
+        // Assume layout defer
+        mWm.mWindowPlacerLocked.deferLayout();
+
+        stack.removeImmediately();
+        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(record.token);
+        waitUntilHandlersIdle();
+
+        ArrayList<PendingTaskEvent> pendingEvents = getTaskPendingEvent(stack);
+        assertEquals(1, pendingEvents.size());
+        assertEquals(PendingTaskEvent.EVENT_VANISHED, pendingEvents.get(0).mEventType);
+    }
+
+    private ArrayList<PendingTaskEvent> getTaskPendingEvent(Task task) {
+        ArrayList<PendingTaskEvent> total =
+                mWm.mAtmService.mTaskOrganizerController.getPendingEventList();
+        ArrayList<PendingTaskEvent> result = new ArrayList();
+
+        for (int i = 0; i < total.size(); i++) {
+            PendingTaskEvent entry = total.get(i);
+            if (entry.mTask.mTaskId == task.mTaskId) {
+                result.add(entry);
+            }
+        }
+
+        return result;
     }
 
     /**

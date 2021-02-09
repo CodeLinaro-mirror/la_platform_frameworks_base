@@ -227,8 +227,7 @@ bool AssetManagerSymbolSource::AddAssetPath(const StringPiece& path) {
       apk_assets.push_back(apk_asset.get());
     }
 
-    asset_manager_.SetApkAssets(apk_assets, true /* invalidate_caches */,
-                                false /* filter_incompatible_configs */);
+    asset_manager_.SetApkAssets(apk_assets);
     return true;
   }
   return false;
@@ -265,21 +264,22 @@ bool AssetManagerSymbolSource::IsPackageDynamic(uint32_t packageId,
 
 static std::unique_ptr<SymbolTable::Symbol> LookupAttributeInTable(
     android::AssetManager2& am, ResourceId id) {
+  using namespace android;
   if (am.GetApkAssets().empty()) {
     return {};
   }
 
-  const android::ResolvedBag* bag = am.GetBag(id.id);
-  if (bag == nullptr) {
+  auto bag_result = am.GetBag(id.id);
+  if (!bag_result.has_value()) {
     return nullptr;
   }
 
   // We found a resource.
   std::unique_ptr<SymbolTable::Symbol> s = util::make_unique<SymbolTable::Symbol>(id);
-
+  const ResolvedBag* bag = *bag_result;
   const size_t count = bag->entry_count;
   for (uint32_t i = 0; i < count; i++) {
-    if (bag->entries[i].key == android::ResTable_map::ATTR_TYPE) {
+    if (bag->entries[i].key == ResTable_map::ATTR_TYPE) {
       s->attribute = std::make_shared<Attribute>(bag->entries[i].value.data);
       break;
     }
@@ -287,25 +287,25 @@ static std::unique_ptr<SymbolTable::Symbol> LookupAttributeInTable(
 
   if (s->attribute) {
     for (size_t i = 0; i < count; i++) {
-      const android::ResolvedBag::Entry& map_entry = bag->entries[i];
+      const ResolvedBag::Entry& map_entry = bag->entries[i];
       if (Res_INTERNALID(map_entry.key)) {
         switch (map_entry.key) {
-          case android::ResTable_map::ATTR_MIN:
+          case ResTable_map::ATTR_MIN:
             s->attribute->min_int = static_cast<int32_t>(map_entry.value.data);
             break;
-          case android::ResTable_map::ATTR_MAX:
+          case ResTable_map::ATTR_MAX:
             s->attribute->max_int = static_cast<int32_t>(map_entry.value.data);
             break;
         }
         continue;
       }
 
-      android::AssetManager2::ResourceName name;
-      if (!am.GetResourceName(map_entry.key, &name)) {
+      auto name = am.GetResourceName(map_entry.key);
+      if (!name.has_value()) {
         return nullptr;
       }
 
-      Maybe<ResourceName> parsed_name = ResourceUtils::ToResourceName(name);
+      Maybe<ResourceName> parsed_name = ResourceUtils::ToResourceName(*name);
       if (!parsed_name) {
         return nullptr;
       }
@@ -328,7 +328,7 @@ std::unique_ptr<SymbolTable::Symbol> AssetManagerSymbolSource::FindByName(
 
   bool found = false;
   ResourceId res_id = 0;
-  uint32_t type_spec_flags;
+  uint32_t type_spec_flags = 0;
   ResourceName real_name;
 
   // There can be mangled resources embedded within other packages. Here we will
@@ -340,8 +340,19 @@ std::unique_ptr<SymbolTable::Symbol> AssetManagerSymbolSource::FindByName(
       real_name.package = package_name;
     }
 
-    res_id = asset_manager_.GetResourceId(real_name.to_string());
-    if (res_id.is_valid_static() && asset_manager_.GetResourceFlags(res_id.id, &type_spec_flags)) {
+    auto real_res_id = asset_manager_.GetResourceId(real_name.to_string());
+    if (!real_res_id.has_value()) {
+      return true;
+    }
+
+    res_id.id = *real_res_id;
+    if (!res_id.is_valid_static()) {
+      return true;
+    }
+
+    auto flags = asset_manager_.GetResourceTypeSpecFlags(res_id.id);
+    if (flags.has_value()) {
+      type_spec_flags = *flags;
       found = true;
       return false;
     }
@@ -371,11 +382,11 @@ std::unique_ptr<SymbolTable::Symbol> AssetManagerSymbolSource::FindByName(
 
 static Maybe<ResourceName> GetResourceName(android::AssetManager2& am,
                                            ResourceId id) {
-  android::AssetManager2::ResourceName name;
-  if (!am.GetResourceName(id.id, &name)) {
+  auto name = am.GetResourceName(id.id);
+  if (!name.has_value()) {
     return {};
   }
-  return ResourceUtils::ToResourceName(name);
+  return ResourceUtils::ToResourceName(*name);
 }
 
 std::unique_ptr<SymbolTable::Symbol> AssetManagerSymbolSource::FindById(
@@ -394,9 +405,8 @@ std::unique_ptr<SymbolTable::Symbol> AssetManagerSymbolSource::FindById(
     return {};
   }
 
-
-  uint32_t type_spec_flags = 0;
-  if (!asset_manager_.GetResourceFlags(id.id, &type_spec_flags)) {
+  auto flags = asset_manager_.GetResourceTypeSpecFlags(id.id);
+  if (!flags.has_value()) {
     return {};
   }
 
@@ -411,7 +421,7 @@ std::unique_ptr<SymbolTable::Symbol> AssetManagerSymbolSource::FindById(
   }
 
   if (s) {
-    s->is_public = (type_spec_flags & android::ResTable_typeSpec::SPEC_PUBLIC) != 0;
+    s->is_public = (*flags & android::ResTable_typeSpec::SPEC_PUBLIC) != 0;
     return s;
   }
   return {};

@@ -16,18 +16,28 @@
 
 package com.android.server.vibrator;
 
+import android.app.ActivityManager;
+import android.app.IUidObserver;
 import android.content.Context;
+import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Handler;
+import android.os.PowerManager;
+import android.os.PowerManagerInternal;
+import android.os.PowerSaveState;
+import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.VibrationAttributes;
+import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
+import android.util.SparseArray;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.server.LocalServices;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +46,8 @@ import java.util.List;
 // TODO(b/159207608): Make this package-private once vibrator services are moved to this package
 public final class VibrationSettings {
     private static final String TAG = "VibrationSettings";
+
+    private static final long[] DOUBLE_CLICK_EFFECT_FALLBACK_TIMINGS = {0, 30, 100, 30};
 
     /** Listener for changes on vibration settings. */
     public interface OnVibratorSettingsChanged {
@@ -48,9 +60,12 @@ public final class VibrationSettings {
     private final Vibrator mVibrator;
     private final AudioManager mAudioManager;
     private final SettingsObserver mSettingObserver;
+    @VisibleForTesting
+    final UidObserver mUidObserver;
 
     @GuardedBy("mLock")
     private final List<OnVibratorSettingsChanged> mListeners = new ArrayList<>();
+    private final SparseArray<VibrationEffect> mFallbackEffects;
 
     @GuardedBy("mLock")
     private boolean mVibrateInputDevices;
@@ -66,12 +81,15 @@ public final class VibrationSettings {
     private int mNotificationIntensity;
     @GuardedBy("mLock")
     private int mRingIntensity;
+    @GuardedBy("mLock")
+    private boolean mLowPowerMode;
 
     public VibrationSettings(Context context, Handler handler) {
         mContext = context;
         mVibrator = context.getSystemService(Vibrator.class);
         mAudioManager = context.getSystemService(AudioManager.class);
         mSettingObserver = new SettingsObserver(handler);
+        mUidObserver = new UidObserver();
 
         registerSettingsObserver(Settings.System.getUriFor(Settings.System.VIBRATE_INPUT_DEVICES));
         registerSettingsObserver(Settings.System.getUriFor(Settings.System.VIBRATE_WHEN_RINGING));
@@ -83,6 +101,52 @@ public final class VibrationSettings {
                 Settings.System.getUriFor(Settings.System.NOTIFICATION_VIBRATION_INTENSITY));
         registerSettingsObserver(
                 Settings.System.getUriFor(Settings.System.RING_VIBRATION_INTENSITY));
+
+        VibrationEffect clickEffect = createEffectFromResource(
+                com.android.internal.R.array.config_virtualKeyVibePattern);
+        VibrationEffect doubleClickEffect = VibrationEffect.createWaveform(
+                DOUBLE_CLICK_EFFECT_FALLBACK_TIMINGS, -1 /*repeatIndex*/);
+        VibrationEffect heavyClickEffect = createEffectFromResource(
+                com.android.internal.R.array.config_longPressVibePattern);
+        VibrationEffect tickEffect = createEffectFromResource(
+                com.android.internal.R.array.config_clockTickVibePattern);
+
+        mFallbackEffects = new SparseArray<>();
+        mFallbackEffects.put(VibrationEffect.EFFECT_CLICK, clickEffect);
+        mFallbackEffects.put(VibrationEffect.EFFECT_DOUBLE_CLICK, doubleClickEffect);
+        mFallbackEffects.put(VibrationEffect.EFFECT_TICK, tickEffect);
+        mFallbackEffects.put(VibrationEffect.EFFECT_HEAVY_CLICK, heavyClickEffect);
+        mFallbackEffects.put(VibrationEffect.EFFECT_TEXTURE_TICK,
+                VibrationEffect.get(VibrationEffect.EFFECT_TICK, false));
+
+        try {
+            ActivityManager.getService().registerUidObserver(mUidObserver,
+                    ActivityManager.UID_OBSERVER_PROCSTATE | ActivityManager.UID_OBSERVER_GONE,
+                    ActivityManager.PROCESS_STATE_UNKNOWN, null);
+        } catch (RemoteException e) {
+            // ignored; both services live in system_server
+        }
+
+        PowerManagerInternal pm = LocalServices.getService(PowerManagerInternal.class);
+        pm.registerLowPowerModeObserver(
+                new PowerManagerInternal.LowPowerModeListener() {
+                    @Override
+                    public int getServiceType() {
+                        return PowerManager.ServiceType.VIBRATION;
+                    }
+
+                    @Override
+                    public void onLowPowerModeChanged(PowerSaveState result) {
+                        boolean shouldNotifyListeners;
+                        synchronized (mLock) {
+                            shouldNotifyListeners = result.batterySaverEnabled != mLowPowerMode;
+                            mLowPowerMode = result.batterySaverEnabled;
+                        }
+                        if (shouldNotifyListeners) {
+                            notifyListeners();
+                        }
+                    }
+                });
 
         // Update with current values from settings.
         updateSettings();
@@ -150,12 +214,26 @@ public final class VibrationSettings {
     }
 
     /**
-     * Return {@code true} if the device should vibrate for ringtones.
+     * Return a {@link VibrationEffect} that should be played if the device do not support given
+     * {@code effectId}.
+     *
+     * @param effectId one of VibrationEffect.EFFECT_*
+     * @return The effect to be played as a fallback
+     */
+    public VibrationEffect getFallbackEffect(int effectId) {
+        return mFallbackEffects.get(effectId);
+    }
+
+    /**
+     * Return {@code true} if the device should vibrate for current ringer mode.
      *
      * <p>This checks the current {@link AudioManager#getRingerModeInternal()} against user settings
-     * for vibrations while ringing.
+     * for ringtone usage only. All other usages are allowed independently of ringer mode.
      */
-    public boolean shouldVibrateForRingtone() {
+    public boolean shouldVibrateForRingerMode(int usageHint) {
+        if (!isRingtone(usageHint)) {
+            return true;
+        }
         int ringerMode = mAudioManager.getRingerModeInternal();
         synchronized (mLock) {
             if (mVibrateWhenRinging) {
@@ -166,6 +244,27 @@ public final class VibrationSettings {
                 return ringerMode == AudioManager.RINGER_MODE_VIBRATE;
             }
         }
+    }
+
+    /**
+     * Returns {@code true} if this vibration is allowed for given {@code uid}.
+     *
+     * <p>This checks if the user is aware of this foreground process, or if the vibration usage is
+     * allowed to play in the background (i.e. it's a notification, ringtone or alarm vibration).
+     */
+    public boolean shouldVibrateForUid(int uid, int usageHint) {
+        return mUidObserver.isUidForeground(uid) || isClassAlarm(usageHint);
+    }
+
+    /**
+     * Returns {@code true} if this vibration is allowed for current power mode state.
+     *
+     * <p>This checks if the device is in battery saver mode, in which case only alarm, ringtone and
+     * {@link VibrationAttributes#USAGE_COMMUNICATION_REQUEST} usages are allowed to vibrate.
+     */
+    public boolean shouldVibrateForPowerMode(int usageHint) {
+        return !mLowPowerMode || isRingtone(usageHint) || isAlarm(usageHint)
+                || usageHint == VibrationAttributes.USAGE_COMMUNICATION_REQUEST;
     }
 
     /** Return {@code true} if input devices should vibrate instead of this device. */
@@ -194,10 +293,13 @@ public final class VibrationSettings {
         return usageHint == VibrationAttributes.USAGE_ALARM;
     }
 
+    private static boolean isClassAlarm(int usageHint) {
+        return (usageHint & VibrationAttributes.USAGE_CLASS_MASK)
+                == VibrationAttributes.USAGE_CLASS_ALARM;
+    }
+
     /** Updates all vibration settings and triggers registered listeners. */
-    @VisibleForTesting
     public void updateSettings() {
-        List<OnVibratorSettingsChanged> currentListeners;
         synchronized (mLock) {
             mVibrateWhenRinging = getSystemSetting(Settings.System.VIBRATE_WHEN_RINGING, 0) != 0;
             mApplyRampingRinger = getGlobalSetting(Settings.Global.APPLY_RAMPING_RINGER, 0) != 0;
@@ -210,12 +312,8 @@ public final class VibrationSettings {
                     mVibrator.getDefaultRingVibrationIntensity());
             mVibrateInputDevices = getSystemSetting(Settings.System.VIBRATE_INPUT_DEVICES, 0) > 0;
             mZenMode = getGlobalSetting(Settings.Global.ZEN_MODE, Settings.Global.ZEN_MODE_OFF);
-            currentListeners = new ArrayList<>(mListeners);
         }
-
-        for (OnVibratorSettingsChanged listener : currentListeners) {
-            listener.onChange();
-        }
+        notifyListeners();
     }
 
     @Override
@@ -224,9 +322,11 @@ public final class VibrationSettings {
                 + "mVibrateInputDevices=" + mVibrateInputDevices
                 + ", mVibrateWhenRinging=" + mVibrateWhenRinging
                 + ", mApplyRampingRinger=" + mApplyRampingRinger
+                + ", mLowPowerMode=" + mLowPowerMode
                 + ", mZenMode=" + Settings.Global.zenModeToString(mZenMode)
+                + ", mProcStatesCache=" + mUidObserver.mProcStatesCache
                 + ", mHapticFeedbackIntensity="
-                +  intensityToString(getCurrentIntensity(VibrationAttributes.USAGE_TOUCH))
+                + intensityToString(getCurrentIntensity(VibrationAttributes.USAGE_TOUCH))
                 + ", mHapticFeedbackDefaultIntensity="
                 + intensityToString(getDefaultIntensity(VibrationAttributes.USAGE_TOUCH))
                 + ", mNotificationIntensity="
@@ -238,6 +338,16 @@ public final class VibrationSettings {
                 + ", mRingDefaultIntensity="
                 + intensityToString(getDefaultIntensity(VibrationAttributes.USAGE_RINGTONE))
                 + '}';
+    }
+
+    private void notifyListeners() {
+        List<OnVibratorSettingsChanged> currentListeners;
+        synchronized (mLock) {
+            currentListeners = new ArrayList<>(mListeners);
+        }
+        for (OnVibratorSettingsChanged listener : currentListeners) {
+            listener.onChange();
+        }
     }
 
     private static String intensityToString(int intensity) {
@@ -270,6 +380,33 @@ public final class VibrationSettings {
                 UserHandle.USER_ALL);
     }
 
+    private VibrationEffect createEffectFromResource(int resId) {
+        long[] timings = getLongIntArray(mContext.getResources(), resId);
+        return createEffectFromTimings(timings);
+    }
+
+    private static VibrationEffect createEffectFromTimings(long[] timings) {
+        if (timings == null || timings.length == 0) {
+            return null;
+        } else if (timings.length == 1) {
+            return VibrationEffect.createOneShot(timings[0], VibrationEffect.DEFAULT_AMPLITUDE);
+        } else {
+            return VibrationEffect.createWaveform(timings, -1);
+        }
+    }
+
+    private static long[] getLongIntArray(Resources r, int resid) {
+        int[] ar = r.getIntArray(resid);
+        if (ar == null) {
+            return null;
+        }
+        long[] out = new long[ar.length];
+        for (int i = 0; i < ar.length; i++) {
+            out[i] = ar[i];
+        }
+        return out;
+    }
+
     /** Implementation of {@link ContentObserver} to be registered to a setting {@link Uri}. */
     private final class SettingsObserver extends ContentObserver {
         SettingsObserver(Handler handler) {
@@ -279,6 +416,39 @@ public final class VibrationSettings {
         @Override
         public void onChange(boolean selfChange) {
             updateSettings();
+        }
+    }
+
+    /** Implementation of {@link ContentObserver} to be registered to a setting {@link Uri}. */
+    @VisibleForTesting
+    final class UidObserver extends IUidObserver.Stub {
+        private final SparseArray<Integer> mProcStatesCache = new SparseArray<>();
+
+        public boolean isUidForeground(int uid) {
+            return mProcStatesCache.get(uid, ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND)
+                    <= ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND;
+        }
+
+        @Override
+        public void onUidGone(int uid, boolean disabled) {
+            mProcStatesCache.delete(uid);
+        }
+
+        @Override
+        public void onUidActive(int uid) {
+        }
+
+        @Override
+        public void onUidIdle(int uid, boolean disabled) {
+        }
+
+        @Override
+        public void onUidStateChanged(int uid, int procState, long procStateSeq, int capability) {
+            mProcStatesCache.put(uid, procState);
+        }
+
+        @Override
+        public void onUidCachedChanged(int uid, boolean cached) {
         }
     }
 }

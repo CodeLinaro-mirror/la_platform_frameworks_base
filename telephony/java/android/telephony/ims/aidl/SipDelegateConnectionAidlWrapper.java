@@ -28,8 +28,11 @@ import android.telephony.ims.SipMessage;
 import android.telephony.ims.stub.DelegateConnectionMessageCallback;
 import android.telephony.ims.stub.DelegateConnectionStateCallback;
 import android.telephony.ims.stub.SipDelegate;
+import android.text.TextUtils;
 import android.util.ArraySet;
 import android.util.Log;
+
+import com.android.internal.telephony.SipMessageParsingUtils;
 
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -158,7 +161,7 @@ public class SipDelegateConnectionAidlWrapper implements SipDelegateConnection,
     }
 
     @Override
-    public void sendMessage(SipMessage sipMessage, int configVersion) {
+    public void sendMessage(SipMessage sipMessage, long configVersion) {
         try {
             ISipDelegate conn = getSipDelegateBinder();
             if (conn == null) {
@@ -194,6 +197,19 @@ public class SipDelegateConnectionAidlWrapper implements SipDelegateConnection,
                 return;
             }
             conn.notifyMessageReceiveError(viaTransactionId, reason);
+        } catch (RemoteException e) {
+            // Nothing to do here, app will eventually get remote death callback.
+        }
+    }
+
+    @Override
+    public void closeDialog(String callId) {
+        try {
+            ISipDelegate conn = getSipDelegateBinder();
+            if (conn == null) {
+                return;
+            }
+            conn.closeDialog(callId);
         } catch (RemoteException e) {
             // Nothing to do here, app will eventually get remote death callback.
         }
@@ -252,9 +268,13 @@ public class SipDelegateConnectionAidlWrapper implements SipDelegateConnection,
     }
 
     private void notifyLocalMessageFailedToSend(SipMessage m, int reason) {
-        //TODO: parse transaction ID or throw IllegalArgumentException if the SipMessage
-        // transaction ID can not be parsed.
+        String transactionId = SipMessageParsingUtils.getTransactionId(m.getHeaderSection());
+        if (TextUtils.isEmpty(transactionId)) {
+            Log.w(LOG_TAG, "sendMessage detected a malformed SipMessage and can not get a "
+                    + "transaction ID.");
+            throw new IllegalArgumentException("Could not send SipMessage due to malformed header");
+        }
         mExecutor.execute(() ->
-                mMessageCallback.onMessageSendFailure(null, reason));
+                mMessageCallback.onMessageSendFailure(transactionId, reason));
     }
 }

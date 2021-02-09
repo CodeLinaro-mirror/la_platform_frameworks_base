@@ -729,6 +729,23 @@ public final class LoadedApk {
         }
     }
 
+    private StrictMode.VmPolicy allowVmViolations() {
+        if (mActivityThread == null) {
+            // When LoadedApk is used without an ActivityThread (usually in a
+            // zygote context), don't call into StrictMode, as it initializes
+            // the binder subsystem, which we don't want.
+            return null;
+        }
+
+        return StrictMode.allowVmViolations();
+    }
+
+    private void setVmPolicy(StrictMode.VmPolicy policy) {
+        if (mActivityThread != null && policy != null) {
+            StrictMode.setVmPolicy(policy);
+        }
+    }
+
     private void createOrUpdateClassLoaderLocked(List<String> addedPaths) {
         if (mPackageName.equals("android")) {
             // Note: This branch is taken for system server and we don't need to setup
@@ -984,13 +1001,20 @@ public final class LoadedApk {
 
         // Temporarily disable logging of disk reads on the Looper thread as this is necessary -
         // and the loader will access the directory anyway if we don't check it.
-        StrictMode.ThreadPolicy oldPolicy = allowThreadDiskReads();
+        StrictMode.ThreadPolicy oldThreadPolicy = allowThreadDiskReads();
+
+        // Also disable logging of access to /data/user before CE storage is unlocked. The check
+        // below will return false (because the directory name we pass will not match the
+        // encrypted one), but that's correct.
+        StrictMode.VmPolicy oldVmPolicy = allowVmViolations();
+
         try {
             // We are constructing a classloader for a different package. It is likely,
             // but not certain, that we can't acccess its app data dir - so check.
             return new File(mDataDir).canExecute();
         } finally {
-            setThreadPolicy(oldPolicy);
+            setThreadPolicy(oldThreadPolicy);
+            setVmPolicy(oldVmPolicy);
         }
     }
 
@@ -1284,7 +1308,7 @@ public final class LoadedApk {
                 Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
                 throw new RuntimeException(
                     "Unable to instantiate application " + appClass
-                    + ": " + e.toString(), e);
+                    + " package " + mPackageName + ": " + e.toString(), e);
             }
         }
         mActivityThread.mAllApplications.add(app);

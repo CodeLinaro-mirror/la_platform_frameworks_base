@@ -34,10 +34,6 @@ import java.util.Map;
  * Validators for Global settings
  */
 public class GlobalSettingsValidators {
-    /**
-     * All settings in {@link Global.SETTINGS_TO_BACKUP} array *must* have a non-null validator,
-     * otherwise they won't be restored.
-     */
     public static final Map<String, Validator> VALIDATORS = new ArrayMap<>();
 
     static {
@@ -150,5 +146,6 @@ public class GlobalSettingsValidators {
         VALIDATORS.put(Global.CUSTOM_BUGREPORT_HANDLER_USER, ANY_INTEGER_VALIDATOR);
         VALIDATORS.put(Global.DEVELOPMENT_SETTINGS_ENABLED, BOOLEAN_VALIDATOR);
         VALIDATORS.put(Global.NOTIFICATION_FEEDBACK_ENABLED, BOOLEAN_VALIDATOR);
+        VALIDATORS.put(Global.RESTRICTED_NETWORKING_MODE, BOOLEAN_VALIDATOR);
     }
 }

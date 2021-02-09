@@ -42,6 +42,8 @@ import android.util.Base64;
 import android.util.Slog;
 import android.util.SparseIntArray;
 import android.util.TimeUtils;
+import android.util.TypedXmlPullParser;
+import android.util.TypedXmlSerializer;
 import android.util.Xml;
 import android.util.proto.ProtoOutputStream;
 
@@ -52,7 +54,6 @@ import libcore.io.IoUtils;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlSerializer;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -60,7 +61,6 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -496,11 +496,14 @@ final class SettingsState {
     public List<String> setSettingsLocked(String prefix, Map<String, String> keyValues,
             String packageName) {
         List<String> changedKeys = new ArrayList<>();
+        final Iterator<Map.Entry<String, Setting>> iterator = mSettings.entrySet().iterator();
         // Delete old keys with the prefix that are not part of the new set.
-        for (int i = 0; i < mSettings.keySet().size(); ++i) {
-            String key = mSettings.keyAt(i);
-            if (key.startsWith(prefix) && !keyValues.containsKey(key)) {
-                Setting oldState = mSettings.remove(key);
+        while (iterator.hasNext()) {
+            Map.Entry<String, Setting> entry = iterator.next();
+            final String key = entry.getKey();
+            final Setting oldState = entry.getValue();
+            if (key != null && key.startsWith(prefix) && !keyValues.containsKey(key)) {
+                iterator.remove();
 
                 FrameworkStatsLog.write(FrameworkStatsLog.SETTING_CHANGED, key,
                         /* value= */ "", /* newValue= */ "", oldState.value, /* tag */ "", false,
@@ -803,13 +806,10 @@ final class SettingsState {
             try {
                 out = destination.startWrite();
 
-                XmlSerializer serializer = Xml.newSerializer();
-                serializer.setOutput(out, StandardCharsets.UTF_8.name());
-                serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output",
-                        true);
+                TypedXmlSerializer serializer = Xml.resolveSerializer(out);
                 serializer.startDocument(null, true);
                 serializer.startTag(null, TAG_SETTINGS);
-                serializer.attribute(null, ATTR_VERSION, String.valueOf(version));
+                serializer.attributeInt(null, ATTR_VERSION, version);
 
                 final int settingCount = settings.size();
                 for (int i = 0; i < settingCount; i++) {
@@ -905,7 +905,7 @@ final class SettingsState {
         }
     }
 
-    static void writeSingleSetting(int version, XmlSerializer serializer, String id,
+    static void writeSingleSetting(int version, TypedXmlSerializer serializer, String id,
             String name, String value, String defaultValue, String packageName,
             String tag, boolean defaultSysSet, boolean isValuePreservedInRestore)
             throws IOException {
@@ -923,18 +923,18 @@ final class SettingsState {
         if (defaultValue != null) {
             setValueAttribute(ATTR_DEFAULT_VALUE, ATTR_DEFAULT_VALUE_BASE64,
                     version, serializer, defaultValue);
-            serializer.attribute(null, ATTR_DEFAULT_SYS_SET, Boolean.toString(defaultSysSet));
+            serializer.attributeBoolean(null, ATTR_DEFAULT_SYS_SET, defaultSysSet);
             setValueAttribute(ATTR_TAG, ATTR_TAG_BASE64,
                     version, serializer, tag);
         }
         if (isValuePreservedInRestore) {
-            serializer.attribute(null, ATTR_PRESERVE_IN_RESTORE, Boolean.toString(true));
+            serializer.attributeBoolean(null, ATTR_PRESERVE_IN_RESTORE, true);
         }
         serializer.endTag(null, TAG_SETTING);
     }
 
     static void setValueAttribute(String attr, String attrBase64, int version,
-            XmlSerializer serializer, String value) throws IOException {
+            TypedXmlSerializer serializer, String value) throws IOException {
         if (version >= SETTINGS_VERSION_NEW_ENCODING) {
             if (value == null) {
                 // Null value -> No ATTR_VALUE nor ATTR_VALUE_BASE64.
@@ -953,7 +953,7 @@ final class SettingsState {
         }
     }
 
-    private static void writeSingleNamespaceHash(XmlSerializer serializer, String namespace,
+    private static void writeSingleNamespaceHash(TypedXmlSerializer serializer, String namespace,
             String bannedHashCode) throws IOException {
         if (namespace == null || bannedHashCode == null) {
             return;
@@ -968,7 +968,7 @@ final class SettingsState {
         return Integer.toString(keyValues.hashCode());
     }
 
-    private String getValueAttribute(XmlPullParser parser, String attr, String base64Attr) {
+    private String getValueAttribute(TypedXmlPullParser parser, String attr, String base64Attr) {
         if (mVersion >= SETTINGS_VERSION_NEW_ENCODING) {
             final String value = parser.getAttributeValue(null, attr);
             if (value != null) {
@@ -1036,8 +1036,7 @@ final class SettingsState {
     @GuardedBy("mLock")
     private boolean parseStateFromXmlStreamLocked(FileInputStream in) {
         try {
-            XmlPullParser parser = Xml.newPullParser();
-            parser.setInput(in, StandardCharsets.UTF_8.name());
+            TypedXmlPullParser parser = Xml.resolvePullParser(in);
             parseStateLocked(parser);
             return true;
         } catch (XmlPullParserException | IOException e) {
@@ -1057,7 +1056,7 @@ final class SettingsState {
         return stateFile.exists();
     }
 
-    private void parseStateLocked(XmlPullParser parser)
+    private void parseStateLocked(TypedXmlPullParser parser)
             throws IOException, XmlPullParserException {
         final int outerDepth = parser.getDepth();
         int type;
@@ -1077,10 +1076,10 @@ final class SettingsState {
     }
 
     @GuardedBy("mLock")
-    private void parseSettingsLocked(XmlPullParser parser)
+    private void parseSettingsLocked(TypedXmlPullParser parser)
             throws IOException, XmlPullParserException {
 
-        mVersion = Integer.parseInt(parser.getAttributeValue(null, ATTR_VERSION));
+        mVersion = parser.getAttributeInt(null, ATTR_VERSION);
 
         final int outerDepth = parser.getDepth();
         int type;
@@ -1098,14 +1097,12 @@ final class SettingsState {
                 String packageName = parser.getAttributeValue(null, ATTR_PACKAGE);
                 String defaultValue = getValueAttribute(parser, ATTR_DEFAULT_VALUE,
                         ATTR_DEFAULT_VALUE_BASE64);
-                String isPreservedInRestoreString = parser.getAttributeValue(null,
-                        ATTR_PRESERVE_IN_RESTORE);
-                boolean isPreservedInRestore = Boolean.parseBoolean(isPreservedInRestoreString);
+                boolean isPreservedInRestore = parser.getAttributeBoolean(null,
+                        ATTR_PRESERVE_IN_RESTORE, false);
                 String tag = null;
                 boolean fromSystem = false;
                 if (defaultValue != null) {
-                    fromSystem = Boolean.parseBoolean(parser.getAttributeValue(
-                            null, ATTR_DEFAULT_SYS_SET));
+                    fromSystem = parser.getAttributeBoolean(null, ATTR_DEFAULT_SYS_SET, false);
                     tag = getValueAttribute(parser, ATTR_TAG, ATTR_TAG_BASE64);
                 }
                 mSettings.put(name, new Setting(name, value, defaultValue, packageName, tag,
@@ -1119,7 +1116,7 @@ final class SettingsState {
     }
 
     @GuardedBy("mLock")
-    private void parseNamespaceHash(XmlPullParser parser)
+    private void parseNamespaceHash(TypedXmlPullParser parser)
             throws IOException, XmlPullParserException {
 
         final int outerDepth = parser.getDepth();

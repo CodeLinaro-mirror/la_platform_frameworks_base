@@ -19,37 +19,58 @@ package com.android.wm.shell.apppairs;
 import static com.android.wm.shell.protolog.ShellProtoLogGroup.WM_SHELL_TASK_ORG;
 
 import android.app.ActivityManager;
+import android.util.Slog;
 import android.util.SparseArray;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.protolog.common.ProtoLog;
 import com.android.wm.shell.ShellTaskOrganizer;
+import com.android.wm.shell.common.DisplayController;
+import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.common.SyncTransactionQueue;
 
 import java.io.PrintWriter;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Class manages app-pairs multitasking mode and implements the main interface {@link AppPairs}.
  */
-public class AppPairsController implements AppPairs {
+public class AppPairsController {
     private static final String TAG = AppPairsController.class.getSimpleName();
 
     private final ShellTaskOrganizer mTaskOrganizer;
     private final SyncTransactionQueue mSyncQueue;
+    private final ShellExecutor mMainExecutor;
+    private final AppPairsImpl mImpl = new AppPairsImpl();
 
     private AppPairsPool mPairsPool;
     // Active app-pairs mapped by root task id key.
     private final SparseArray<AppPair> mActiveAppPairs = new SparseArray<>();
+    private final DisplayController mDisplayController;
 
-    public AppPairsController(ShellTaskOrganizer organizer, SyncTransactionQueue syncQueue) {
-        mTaskOrganizer = organizer;
-        mSyncQueue = syncQueue;
+    /**
+     * Creates {@link AppPairs}, returns {@code null} if the feature is not supported.
+     */
+    @Nullable
+    public static AppPairs create(ShellTaskOrganizer organizer,
+            SyncTransactionQueue syncQueue, DisplayController displayController,
+            ShellExecutor mainExecutor) {
+        return new AppPairsController(organizer, syncQueue, displayController,
+                mainExecutor).mImpl;
     }
 
-    @Override
-    public void onOrganizerRegistered() {
+    AppPairsController(ShellTaskOrganizer organizer, SyncTransactionQueue syncQueue,
+                DisplayController displayController, ShellExecutor mainExecutor) {
+        mTaskOrganizer = organizer;
+        mSyncQueue = syncQueue;
+        mDisplayController = displayController;
+        mMainExecutor = mainExecutor;
+    }
+
+    void onOrganizerRegistered() {
         if (mPairsPool == null) {
             setPairsPool(new AppPairsPool(this));
         }
@@ -60,8 +81,7 @@ public class AppPairsController implements AppPairs {
         mPairsPool = pool;
     }
 
-    @Override
-    public boolean pair(int taskId1, int taskId2) {
+    boolean pair(int taskId1, int taskId2) {
         final ActivityManager.RunningTaskInfo task1 = mTaskOrganizer.getRunningTaskInfo(taskId1);
         final ActivityManager.RunningTaskInfo task2 = mTaskOrganizer.getRunningTaskInfo(taskId2);
         if (task1 == null || task2 == null) {
@@ -70,8 +90,7 @@ public class AppPairsController implements AppPairs {
         return pair(task1, task2);
     }
 
-    @Override
-    public boolean pair(ActivityManager.RunningTaskInfo task1,
+    boolean pair(ActivityManager.RunningTaskInfo task1,
             ActivityManager.RunningTaskInfo task2) {
         return pairInner(task1, task2) != null;
     }
@@ -90,8 +109,7 @@ public class AppPairsController implements AppPairs {
         return pair;
     }
 
-    @Override
-    public void unpair(int taskId) {
+    void unpair(int taskId) {
         unpair(taskId, true /* releaseToPool */);
     }
 
@@ -127,8 +145,11 @@ public class AppPairsController implements AppPairs {
         return mSyncQueue;
     }
 
-    @Override
-    public void dump(@NonNull PrintWriter pw, String prefix) {
+    DisplayController getDisplayController() {
+        return mDisplayController;
+    }
+
+    private void dump(@NonNull PrintWriter pw, String prefix) {
         final String innerPrefix = prefix + "  ";
         final String childPrefix = innerPrefix + "  ";
         pw.println(prefix + this);
@@ -147,4 +168,55 @@ public class AppPairsController implements AppPairs {
         return TAG + "#" + mActiveAppPairs.size();
     }
 
+    private class AppPairsImpl implements AppPairs {
+        @Override
+        public boolean pair(int task1, int task2) {
+            boolean[] result = new boolean[1];
+            try {
+                mMainExecutor.executeBlocking(() -> {
+                    result[0] = AppPairsController.this.pair(task1, task2);
+                });
+            } catch (InterruptedException e) {
+                Slog.e(TAG, "Failed to pair tasks: " + task1 + ", " + task2);
+            }
+            return result[0];
+        }
+
+        @Override
+        public boolean pair(ActivityManager.RunningTaskInfo task1,
+                ActivityManager.RunningTaskInfo task2) {
+            boolean[] result = new boolean[1];
+            try {
+                mMainExecutor.executeBlocking(() -> {
+                    result[0] = AppPairsController.this.pair(task1, task2);
+                });
+            } catch (InterruptedException e) {
+                Slog.e(TAG, "Failed to pair tasks: " + task1 + ", " + task2);
+            }
+            return result[0];
+        }
+
+        @Override
+        public void unpair(int taskId) {
+            mMainExecutor.execute(() -> {
+                AppPairsController.this.unpair(taskId);
+            });
+        }
+
+        @Override
+        public void onOrganizerRegistered() {
+            mMainExecutor.execute(() -> {
+                AppPairsController.this.onOrganizerRegistered();
+            });
+        }
+
+        @Override
+        public void dump(@NonNull PrintWriter pw, String prefix) {
+            try {
+                mMainExecutor.executeBlocking(() -> AppPairsController.this.dump(pw, prefix));
+            } catch (InterruptedException e) {
+                Slog.e(TAG, "Failed to dump AppPairsController in 2s");
+            }
+        }
+    }
 }

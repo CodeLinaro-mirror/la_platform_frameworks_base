@@ -37,22 +37,21 @@ import android.view.animation.Interpolator;
 import androidx.annotation.Nullable;
 
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.colorextraction.ColorExtractor;
 import com.android.internal.colorextraction.ColorExtractor.GradientColors;
-import com.android.internal.colorextraction.ColorExtractor.OnColorsChangedListener;
 import com.android.internal.graphics.ColorUtils;
 import com.android.internal.util.function.TriConsumer;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.KeyguardUpdateMonitorCallback;
+import com.android.settingslib.Utils;
 import com.android.systemui.DejankUtils;
 import com.android.systemui.Dumpable;
 import com.android.systemui.R;
-import com.android.systemui.colorextraction.SysuiColorExtractor;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dock.DockManager;
 import com.android.systemui.statusbar.BlurUtils;
 import com.android.systemui.statusbar.ScrimView;
 import com.android.systemui.statusbar.notification.stack.ViewState;
+import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.util.AlarmTimeout;
 import com.android.systemui.util.wakelock.DelayedWakeLock;
@@ -71,8 +70,7 @@ import javax.inject.Inject;
  * security method gets shown).
  */
 @SysUISingleton
-public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnColorsChangedListener,
-        Dumpable {
+public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dumpable {
 
     static final String TAG = "ScrimController";
     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
@@ -125,12 +123,7 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnCo
      * The default scrim under the shade and dialogs.
      * This should not be lower than 0.54, otherwise we won't pass GAR.
      */
-    public static final float BUSY_SCRIM_ALPHA = 0.85f;
-
-    /**
-     * Same as above, but when blur is supported.
-     */
-    public static final float BLUR_SCRIM_ALPHA = 0.54f;
+    public static final float BUSY_SCRIM_ALPHA = 1f;
 
     static final int TAG_KEY_ANIM = R.id.scrim;
     private static final int TAG_START_ALPHA = R.id.scrim_alpha_start;
@@ -153,8 +146,8 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnCo
     private final AlarmTimeout mTimeTicker;
     private final KeyguardVisibilityCallback mKeyguardVisibilityCallback;
     private final Handler mHandler;
+    private final BlurUtils mBlurUtils;
 
-    private final SysuiColorExtractor mColorExtractor;
     private GradientColors mColors;
     private boolean mNeedsDrawableColorUpdate;
 
@@ -163,6 +156,7 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnCo
 
     // Assuming the shade is expanded during initialization
     private float mExpansionFraction = 1f;
+    private float mQsExpansion;
 
     private boolean mDarkenWhileDragging;
     private boolean mExpansionAffectsAlpha = true;
@@ -204,12 +198,12 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnCo
     public ScrimController(LightBarController lightBarController, DozeParameters dozeParameters,
             AlarmManager alarmManager, KeyguardStateController keyguardStateController,
             DelayedWakeLock.Builder delayedWakeLockBuilder, Handler handler,
-            KeyguardUpdateMonitor keyguardUpdateMonitor, SysuiColorExtractor sysuiColorExtractor,
-            DockManager dockManager, BlurUtils blurUtils) {
+            KeyguardUpdateMonitor keyguardUpdateMonitor, DockManager dockManager,
+            BlurUtils blurUtils, ConfigurationController configurationController) {
 
         mScrimStateListener = lightBarController::setScrimState;
-        mDefaultScrimAlpha = blurUtils.supportsBlursOnWindows()
-                ? BLUR_SCRIM_ALPHA : BUSY_SCRIM_ALPHA;
+        mDefaultScrimAlpha = BUSY_SCRIM_ALPHA;
+        mBlurUtils = blurUtils;
 
         mKeyguardStateController = keyguardStateController;
         mDarkenWhileDragging = !mKeyguardStateController.canDismissLockScreen();
@@ -230,11 +224,24 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnCo
                         keyguardStateController.getKeyguardFadingAwayDuration());
             }
         });
+        configurationController.addCallback(new ConfigurationController.ConfigurationListener() {
+            @Override
+            public void onThemeChanged() {
+                ScrimController.this.onThemeChanged();
+            }
 
-        mColorExtractor = sysuiColorExtractor;
-        mColorExtractor.addOnColorsChangedListener(this);
-        mColors = mColorExtractor.getNeutralColors();
-        mNeedsDrawableColorUpdate = true;
+            @Override
+            public void onOverlayChanged() {
+                ScrimController.this.onThemeChanged();
+            }
+
+            @Override
+            public void onUiModeChanged() {
+                ScrimController.this.onThemeChanged();
+            }
+        });
+
+        mColors = new GradientColors();
     }
 
     /**
@@ -245,6 +252,7 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnCo
         mScrimBehind = scrimBehind;
         mScrimInFront = scrimInFront;
         mScrimForBubble = scrimForBubble;
+        updateThemeColors();
 
         if (mScrimBehindChangeRunnable != null) {
             mScrimBehind.setChangeRunnable(mScrimBehindChangeRunnable);
@@ -362,13 +370,15 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnCo
         if (mKeyguardUpdateMonitor.needsSlowUnlockTransition() && mState == ScrimState.UNLOCKED) {
             mAnimationDelay = StatusBar.FADE_KEYGUARD_START_DELAY;
             scheduleUpdate();
-        } else if ((!mDozeParameters.getAlwaysOn() && oldState == ScrimState.AOD)
+        } else if ((oldState == ScrimState.AOD  // leaving doze
+                && (!mDozeParameters.getAlwaysOn() || mState == ScrimState.UNLOCKED))
                 || (mState == ScrimState.AOD && !mDozeParameters.getDisplayNeedsBlanking())) {
             // Scheduling a frame isn't enough when:
             //  • Leaving doze and we need to modify scrim color immediately
             //  • ColorFade will not kick-in and scrim cannot wait for pre-draw.
             onPreDraw();
         } else {
+            // Schedule a frame
             scheduleUpdate();
         }
 
@@ -451,6 +461,31 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnCo
 
             boolean relevantState = (mState == ScrimState.UNLOCKED
                     || mState == ScrimState.KEYGUARD
+                    || mState == ScrimState.SHADE_LOCKED
+                    || mState == ScrimState.PULSING
+                    || mState == ScrimState.BUBBLE_EXPANDED);
+            if (!(relevantState && mExpansionAffectsAlpha)) {
+                return;
+            }
+            applyAndDispatchExpansion();
+        }
+    }
+
+    /**
+     * Current state of the QuickSettings expansion when pulling it from the top.
+     *
+     * @param fraction From 0 to 1 where 0 means collapsed and 1 expanded.
+     */
+    public void setQsExpansion(float fraction) {
+        if (isNaN(fraction)) {
+            return;
+        }
+        if (mQsExpansion != fraction) {
+            mQsExpansion = fraction;
+            Log.d(TAG, "set qs fraction");
+
+            boolean relevantState = (mState == ScrimState.SHADE_LOCKED
+                    || mState == ScrimState.KEYGUARD
                     || mState == ScrimState.PULSING
                     || mState == ScrimState.BUBBLE_EXPANDED);
             if (!(relevantState && mExpansionAffectsAlpha)) {
@@ -493,7 +528,8 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnCo
             behindFraction = (float) Math.pow(behindFraction, 0.8f);
             mBehindAlpha = behindFraction * mDefaultScrimAlpha;
             mInFrontAlpha = 0;
-        } else if (mState == ScrimState.KEYGUARD || mState == ScrimState.PULSING) {
+        } else if (mState == ScrimState.KEYGUARD || mState == ScrimState.SHADE_LOCKED
+                || mState == ScrimState.PULSING) {
             // Either darken of make the scrim transparent when you
             // pull down the shade
             float interpolatedFract = getInterpolatedFraction();
@@ -509,6 +545,11 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnCo
             }
             mBehindTint = ColorUtils.blendARGB(ScrimState.BOUNCER.getBehindTint(),
                     mState.getBehindTint(), interpolatedFract);
+            if (mQsExpansion > 0) {
+                mBehindAlpha = MathUtils.lerp(mBehindAlpha, mDefaultScrimAlpha, mQsExpansion);
+                mBehindTint = ColorUtils.blendARGB(mBehindTint,
+                        ScrimState.SHADE_LOCKED.getBehindTint(), mQsExpansion);
+            }
         }
         if (isNaN(mBehindAlpha) || isNaN(mInFrontAlpha)) {
             throw new IllegalStateException("Scrim opacity is NaN for state: " + mState
@@ -619,11 +660,6 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnCo
             mScrimInFront.setColors(mColors, animateScrimInFront);
             mScrimBehind.setColors(mColors, animateScrimBehind);
 
-            // Calculate minimum scrim opacity for white or black text.
-            int textColor = mColors.supportsDarkText() ? Color.BLACK : Color.WHITE;
-            int mainColor = mColors.getMainColor();
-            float minOpacity = ColorUtils.calculateMinimumBackgroundAlpha(textColor, mainColor,
-                    4.5f /* minimumContrast */) / 255f;
             dispatchScrimState(mScrimBehind.getViewAlpha());
         }
 
@@ -968,10 +1004,20 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, OnCo
         // Don't care in the base class.
     }
 
-    @Override
-    public void onColorsChanged(ColorExtractor colorExtractor, int which) {
-        mColors = mColorExtractor.getNeutralColors();
+    private void updateThemeColors() {
+        if (mScrimBehind == null) return;
+        int background = Utils.getColorAttr(mScrimBehind.getContext(),
+                android.R.attr.colorBackgroundFloating).getDefaultColor();
+        int accent = Utils.getColorAccent(mScrimBehind.getContext()).getDefaultColor();
+        mColors.setMainColor(background);
+        mColors.setSecondaryColor(accent);
+        mColors.setSupportsDarkText(
+                ColorUtils.calculateContrast(mColors.getMainColor(), Color.WHITE) > 4.5);
         mNeedsDrawableColorUpdate = true;
+    }
+
+    private void onThemeChanged() {
+        updateThemeColors();
         scheduleUpdate();
     }
 

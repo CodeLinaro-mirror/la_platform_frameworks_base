@@ -19,11 +19,15 @@ package com.android.server.utils;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 
+import com.android.internal.annotations.GuardedBy;
+
 import java.util.ArrayList;
 import java.util.Objects;
 
 /**
- * A concrete implementation of {@link Watchable}
+ * A concrete implementation of {@link Watchable}.  This includes one commonly needed feature:
+ * the Watchable may be sealed, so that it throws an {@link IllegalStateException} if
+ * a change is detected.
  */
 public class WatchableImpl implements Watchable {
     /**
@@ -62,6 +66,18 @@ public class WatchableImpl implements Watchable {
     }
 
     /**
+     * Return true if the {@link Watcher) is a registered observer.
+     * @param observer A {@link Watcher} that might be registered
+     * @return true if the observer is registered with this {@link Watchable}.
+     */
+    @Override
+    public boolean isRegisteredObserver(@NonNull Watcher observer) {
+        synchronized (mObservers) {
+            return mObservers.contains(observer);
+        }
+    }
+
+    /**
      * Return the number of registered observers.
      *
      * @return The number of registered observers.
@@ -78,10 +94,37 @@ public class WatchableImpl implements Watchable {
     @Override
     public void dispatchChange(@Nullable Watchable what) {
         synchronized (mObservers) {
+            if (mSealed) {
+                throw new IllegalStateException("attempt to change a sealed object");
+            }
             final int end = mObservers.size();
             for (int i = 0; i < end; i++) {
                 mObservers.get(i).onChange(what);
             }
+        }
+    }
+
+    /**
+     * True if the object is sealed.
+     */
+    @GuardedBy("mObservers")
+    private boolean mSealed = false;
+
+    /**
+     * Freeze the {@link Watchable}.
+     */
+    public void seal() {
+        synchronized (mObservers) {
+            mSealed = true;
+        }
+    }
+
+    /**
+     * Return the sealed state.
+     */
+    public boolean isSealed() {
+        synchronized (mObservers) {
+            return mSealed;
         }
     }
 }

@@ -36,6 +36,7 @@ import android.annotation.SdkConstant.SdkConstantType;
 import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.LocusId;
@@ -67,6 +68,7 @@ import android.os.Parcelable;
 import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.UserHandle;
+import android.provider.Settings;
 import android.text.BidiFormatter;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
@@ -80,7 +82,9 @@ import android.util.ArraySet;
 import android.util.Log;
 import android.util.Pair;
 import android.util.SparseArray;
+import android.util.TypedValue;
 import android.util.proto.ProtoOutputStream;
+import android.view.ContextThemeWrapper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -98,6 +102,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -212,6 +217,11 @@ public class Notification implements Parcelable
      * Maximum entries of reply text that are accepted by Builder and friends.
      */
     private static final int MAX_REPLY_HISTORY = 5;
+
+    /**
+     * Maximum aspect ratio of the large icon. 16:9
+     */
+    private static final float MAX_LARGE_ICON_ASPECT_RATIO = 16f / 9f;
 
     /**
      * Maximum number of (generic) action buttons in a notification (contextual action buttons are
@@ -384,6 +394,7 @@ public class Notification implements Parcelable
     private static final ArraySet<Integer> STANDARD_LAYOUTS = new ArraySet<>();
     static {
         STANDARD_LAYOUTS.add(R.layout.notification_template_material_base);
+        STANDARD_LAYOUTS.add(R.layout.notification_template_material_heads_up_base);
         STANDARD_LAYOUTS.add(R.layout.notification_template_material_big_base);
         STANDARD_LAYOUTS.add(R.layout.notification_template_material_big_picture);
         STANDARD_LAYOUTS.add(R.layout.notification_template_material_big_text);
@@ -630,10 +641,22 @@ public class Notification implements Parcelable
      */
     public static final int FLAG_BUBBLE = 0x00001000;
 
+    /**
+     * @hide
+     */
+    public static final int FLAG_IMMEDIATE_FGS_DISPLAY = 0x00002000;
+
+    private static final List<Class<? extends Style>> PLATFORM_STYLE_CLASSES = Arrays.asList(
+            BigTextStyle.class, BigPictureStyle.class, InboxStyle.class, MediaStyle.class,
+            DecoratedCustomViewStyle.class, DecoratedMediaCustomViewStyle.class,
+            MessagingStyle.class);
+
     /** @hide */
-    @IntDef({FLAG_SHOW_LIGHTS, FLAG_ONGOING_EVENT, FLAG_INSISTENT, FLAG_ONLY_ALERT_ONCE,
+    @IntDef(flag = true, prefix = { "FLAG_" }, value = {FLAG_SHOW_LIGHTS, FLAG_ONGOING_EVENT,
+            FLAG_INSISTENT, FLAG_ONLY_ALERT_ONCE,
             FLAG_AUTO_CANCEL, FLAG_NO_CLEAR, FLAG_FOREGROUND_SERVICE, FLAG_HIGH_PRIORITY,
-            FLAG_LOCAL_ONLY, FLAG_GROUP_SUMMARY, FLAG_AUTOGROUP_SUMMARY, FLAG_BUBBLE})
+            FLAG_LOCAL_ONLY, FLAG_GROUP_SUMMARY, FLAG_AUTOGROUP_SUMMARY, FLAG_BUBBLE,
+            FLAG_IMMEDIATE_FGS_DISPLAY})
     @Retention(RetentionPolicy.SOURCE)
     public @interface NotificationFlags{};
 
@@ -1512,6 +1535,14 @@ public class Notification implements Parcelable
          */
         public static final int SEMANTIC_ACTION_CALL = 10;
 
+        /**
+         * {@code SemanticAction}: Mark the conversation associated with the notification as a
+         * priority. Note that this is only for use by the notification assistant services.
+         * @hide
+         */
+        @SystemApi
+        public static final int SEMANTIC_ACTION_MARK_CONVERSATION_AS_PRIORITY = 11;
+
         private final Bundle mExtras;
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
         private Icon mIcon;
@@ -2222,7 +2253,8 @@ public class Notification implements Parcelable
                 SEMANTIC_ACTION_UNMUTE,
                 SEMANTIC_ACTION_THUMBS_UP,
                 SEMANTIC_ACTION_THUMBS_DOWN,
-                SEMANTIC_ACTION_CALL
+                SEMANTIC_ACTION_CALL,
+                SEMANTIC_ACTION_MARK_CONVERSATION_AS_PRIORITY
         })
         @Retention(RetentionPolicy.SOURCE)
         public @interface SemanticAction {}
@@ -4217,9 +4249,9 @@ public class Notification implements Parcelable
         /**
          * Add a large icon to the notification content view.
          *
-         * In the platform template, this image will be shown on the left of the notification view
-         * in place of the {@link #setSmallIcon(Icon) small icon} (which will be placed in a small
-         * badge atop the large icon).
+         * In the platform template, this image will be shown either on the right of the
+         * notification, with an aspect ratio of up to 16:9, or (when the notification is grouped)
+         * on the left in place of the {@link #setSmallIcon(Icon) small icon}.
          */
         @NonNull
         public Builder setLargeIcon(Bitmap b) {
@@ -4229,9 +4261,9 @@ public class Notification implements Parcelable
         /**
          * Add a large icon to the notification content view.
          *
-         * In the platform template, this image will be shown on the left of the notification view
-         * in place of the {@link #setSmallIcon(Icon) small icon} (which will be placed in a small
-         * badge atop the large icon).
+         * In the platform template, this image will be shown either on the right of the
+         * notification, with an aspect ratio of up to 16:9, or (when the notification is grouped)
+         * on the left in place of the {@link #setSmallIcon(Icon) small icon}.
          */
         @NonNull
         public Builder setLargeIcon(Icon icon) {
@@ -4377,6 +4409,18 @@ public class Notification implements Parcelable
         @NonNull
         public Builder setOnlyAlertOnce(boolean onlyAlertOnce) {
             setFlag(FLAG_ONLY_ALERT_ONCE, onlyAlertOnce);
+            return this;
+        }
+
+        /**
+         * Set to {@code true} to require that the Notification associated with a
+         * foreground service is shown as soon as the service's {@code startForeground()}
+         * method is called, even if the system's UI policy might otherwise defer
+         * its visibility to a later time.
+         */
+        @NonNull
+        public Builder setShowForegroundImmediately(boolean showImmediately) {
+            setFlag(FLAG_IMMEDIATE_FGS_DISPLAY, showImmediately);
             return this;
         }
 
@@ -4853,6 +4897,7 @@ public class Notification implements Parcelable
             // Small icon doesn't need to be reset, as it's always set. Resetting would prevent
             // re-using the drawable when the notification is updated.
             contentView.setBoolean(R.id.expand_button, "setExpanded", false);
+            contentView.setViewVisibility(R.id.app_name_text, View.GONE);
             contentView.setTextViewText(R.id.app_name_text, null);
             contentView.setViewVisibility(R.id.chronometer, View.GONE);
             contentView.setViewVisibility(R.id.header_text, View.GONE);
@@ -4868,13 +4913,10 @@ public class Notification implements Parcelable
             mN.mUsesStandardHeader = false;
         }
 
-        private RemoteViews applyStandardTemplate(int resId, TemplateBindResult result) {
-            return applyStandardTemplate(resId, mParams.reset().fillTextsFrom(this),
-                    result);
-        }
-
         private RemoteViews applyStandardTemplate(int resId, StandardTemplateParams p,
                 TemplateBindResult result) {
+            p.headerless(resId == getBaseLayoutResource()
+                    || resId == getHeadsUpBaseLayoutResource());
             RemoteViews contentView = new BuilderRemoteViews(mContext.getApplicationInfo(), resId);
 
             resetStandardTemplate(contentView);
@@ -4882,25 +4924,24 @@ public class Notification implements Parcelable
             final Bundle ex = mN.extras;
             updateBackgroundColor(contentView, p);
             bindNotificationHeader(contentView, p);
-            bindLargeIconAndReply(contentView, p, result);
+            bindLargeIconAndApplyMargin(contentView, p, result);
             boolean showProgress = handleProgressBar(contentView, ex, p);
-            if (p.title != null) {
+            if (p.hasTitle()) {
                 contentView.setViewVisibility(R.id.title, View.VISIBLE);
                 contentView.setTextViewText(R.id.title, processTextSpans(p.title));
                 setTextViewColorPrimary(contentView, R.id.title, p);
                 contentView.setViewLayoutWidth(R.id.title, showProgress
                         ? ViewGroup.LayoutParams.WRAP_CONTENT
-                        : ViewGroup.LayoutParams.MATCH_PARENT);
+                        : ViewGroup.LayoutParams.MATCH_PARENT,
+                        TypedValue.COMPLEX_UNIT_PX);
             }
-            if (p.text != null) {
+            if (p.text != null && p.text.length() != 0) {
                 int textId = showProgress ? com.android.internal.R.id.text_line_1
                         : com.android.internal.R.id.text;
                 contentView.setTextViewText(textId, processTextSpans(p.text));
                 setTextViewColorSecondary(contentView, textId, p);
                 contentView.setViewVisibility(textId, View.VISIBLE);
             }
-
-            setContentMinHeight(contentView, showProgress || mN.hasLargeIcon());
 
             return contentView;
         }
@@ -5059,27 +5100,12 @@ public class Notification implements Parcelable
             }
         }
 
-        /**
-         * @param remoteView the remote view to update the minheight in
-         * @param hasMinHeight does it have a mimHeight
-         * @hide
-         */
-        void setContentMinHeight(RemoteViews remoteView, boolean hasMinHeight) {
-            int minHeight = 0;
-            if (hasMinHeight) {
-                // we need to set the minHeight of the notification
-                minHeight = mContext.getResources().getDimensionPixelSize(
-                        com.android.internal.R.dimen.notification_min_content_height);
-            }
-            remoteView.setInt(R.id.notification_main_column, "setMinimumHeight", minHeight);
-        }
-
         private boolean handleProgressBar(RemoteViews contentView, Bundle ex,
                 StandardTemplateParams p) {
             final int max = ex.getInt(EXTRA_PROGRESS_MAX, 0);
             final int progress = ex.getInt(EXTRA_PROGRESS, 0);
             final boolean ind = ex.getBoolean(EXTRA_PROGRESS_INDETERMINATE);
-            if (p.hasProgress && (max != 0 || ind)) {
+            if (!p.mHideProgress && (max != 0 || ind)) {
                 contentView.setViewVisibility(com.android.internal.R.id.progress, View.VISIBLE);
                 contentView.setProgressBar(
                         R.id.progress, max, progress, ind);
@@ -5099,130 +5125,98 @@ public class Notification implements Parcelable
             }
         }
 
-        private void bindLargeIconAndReply(RemoteViews contentView, StandardTemplateParams p,
-                TemplateBindResult result) {
-            boolean largeIconShown = bindLargeIcon(contentView, p);
-            boolean replyIconShown = bindReplyIcon(contentView, p);
-            boolean iconContainerVisible = largeIconShown || replyIconShown;
-            contentView.setViewVisibility(R.id.right_icon_container,
-                    iconContainerVisible ? View.VISIBLE : View.GONE);
-            int marginEnd = calculateMarginEnd(largeIconShown, replyIconShown);
-            contentView.setViewLayoutMarginEnd(R.id.line1, marginEnd);
-            contentView.setViewLayoutMarginEnd(R.id.text, marginEnd);
-            contentView.setViewLayoutMarginEnd(R.id.progress, marginEnd);
-            if (result != null) {
-                result.setIconMarginEnd(marginEnd);
-                result.setRightIconContainerVisible(iconContainerVisible);
+        private void bindLargeIconAndApplyMargin(RemoteViews contentView,
+                @NonNull StandardTemplateParams p,
+                @Nullable TemplateBindResult result) {
+            if (result == null) {
+                result = new TemplateBindResult();
+            }
+            bindLargeIcon(contentView, p, result);
+            if (p.mHeaderless) {
+                // views in the headerless (collapsed) state
+                result.mHeadingExtraMarginSet.applyToView(contentView,
+                        R.id.notification_headerless_view_column);
+            } else {
+                // views in states with a header (big states)
+                result.mHeadingExtraMarginSet.applyToView(contentView, R.id.notification_header);
+                result.mTitleMarginSet.applyToView(contentView, R.id.line1);
             }
         }
 
-        private int calculateMarginEnd(boolean largeIconShown, boolean replyIconShown) {
-            int marginEnd = 0;
-            int contentMargin = mContext.getResources().getDimensionPixelSize(
-                    R.dimen.notification_content_margin_end);
-            int iconSize = mContext.getResources().getDimensionPixelSize(
-                    R.dimen.notification_right_icon_size);
-            if (replyIconShown) {
-                // The size of the reply icon
-                marginEnd += iconSize;
-
-                int replyInset = mContext.getResources().getDimensionPixelSize(
-                        R.dimen.notification_reply_inset);
-                // We're subtracting the inset of the reply icon to make sure it's
-                // aligned nicely on the right, and remove it from the following padding
-                marginEnd -= replyInset * 2;
-            }
-            if (largeIconShown) {
-                // adding size of the right icon
-                marginEnd += iconSize;
-
-                if (replyIconShown) {
-                    // We also add some padding to the reply icon if it's around
-                    marginEnd += contentMargin;
+        // This code is executed on behalf of other apps' notifications, sometimes even by 3p apps,
+        // a use case that is not supported by the Compat Framework library.  Workarounds to resolve
+        // the change's state in NotificationManagerService were very complex. These behavior
+        // changes are entirely visual, and should otherwise be undetectable by apps.
+        @SuppressWarnings("AndroidFrameworkCompatChange")
+        private void calculateLargeIconDimens(boolean largeIconShown,
+                @NonNull TemplateBindResult result) {
+            final Resources resources = mContext.getResources();
+            final float density = resources.getDisplayMetrics().density;
+            final float contentMarginDp = resources.getDimension(
+                    R.dimen.notification_content_margin_end) / density;
+            final float expanderSizeDp = resources.getDimension(
+                    R.dimen.notification_header_expand_icon_size) / density - contentMarginDp;
+            final float viewHeightDp = resources.getDimension(
+                    R.dimen.notification_right_icon_size) / density;
+            float viewWidthDp = viewHeightDp;  // icons are 1:1 by default
+            if (largeIconShown && (
+                    mContext.getApplicationInfo().targetSdkVersion >= Build.VERSION_CODES.S
+                            || DevFlags.shouldBackportSNotifRules(mContext.getContentResolver()))) {
+                Drawable drawable = mN.mLargeIcon.loadDrawable(mContext);
+                if (drawable != null) {
+                    int iconWidth = drawable.getIntrinsicWidth();
+                    int iconHeight = drawable.getIntrinsicHeight();
+                    if (iconWidth > iconHeight && iconHeight > 0) {
+                        final float maxViewWidthDp = viewHeightDp * MAX_LARGE_ICON_ASPECT_RATIO;
+                        viewWidthDp = Math.min(viewHeightDp * iconWidth / iconHeight,
+                                maxViewWidthDp);
+                    }
                 }
             }
-            if (replyIconShown || largeIconShown) {
-                // The padding to the content
-                marginEnd += contentMargin;
-            }
-            return marginEnd;
+            final float extraMarginEndDpIfVisible = viewWidthDp + contentMarginDp;
+            result.setRightIconState(largeIconShown, viewWidthDp,
+                    extraMarginEndDpIfVisible, expanderSizeDp);
         }
 
         /**
          * Bind the large icon.
-         * @return if the largeIcon is visible
          */
-        private boolean bindLargeIcon(RemoteViews contentView, StandardTemplateParams p) {
+        private void bindLargeIcon(RemoteViews contentView, @NonNull StandardTemplateParams p,
+                @NonNull TemplateBindResult result) {
             if (mN.mLargeIcon == null && mN.largeIcon != null) {
                 mN.mLargeIcon = Icon.createWithBitmap(mN.largeIcon);
             }
             boolean showLargeIcon = mN.mLargeIcon != null && !p.hideLargeIcon;
+            calculateLargeIconDimens(showLargeIcon, result);
             if (showLargeIcon) {
+                contentView.setViewLayoutWidth(R.id.right_icon,
+                        result.mRightIconWidthDp, TypedValue.COMPLEX_UNIT_DIP);
                 contentView.setViewVisibility(R.id.right_icon, View.VISIBLE);
                 contentView.setImageViewIcon(R.id.right_icon, mN.mLargeIcon);
                 processLargeLegacyIcon(mN.mLargeIcon, contentView, p);
-            }
-            return showLargeIcon;
-        }
-
-        /**
-         * Bind the reply icon.
-         * @return if the reply icon is visible
-         */
-        private boolean bindReplyIcon(RemoteViews contentView, StandardTemplateParams p) {
-            boolean actionVisible = !p.hideReplyIcon;
-            Action action = null;
-            if (actionVisible) {
-                action = findReplyAction();
-                actionVisible = action != null;
-            }
-            if (actionVisible) {
-                contentView.setViewVisibility(R.id.reply_icon_action, View.VISIBLE);
-                contentView.setDrawableTint(R.id.reply_icon_action,
-                        false /* targetBackground */,
-                        getNeutralColor(p),
-                        PorterDuff.Mode.SRC_ATOP);
-                contentView.setOnClickPendingIntent(R.id.reply_icon_action, action.actionIntent);
-                contentView.setRemoteInputs(R.id.reply_icon_action, action.mRemoteInputs);
             } else {
-                contentView.setRemoteInputs(R.id.reply_icon_action, null);
+                // The "reset" doesn't clear the drawable, so we do it here.  This clear is
+                // important because the presence of a drawable in this view (regardless of the
+                // visibility) is used by NotificationGroupingUtil to set the visibility.
+                contentView.setImageViewIcon(R.id.right_icon, null);
             }
-            contentView.setViewVisibility(R.id.reply_icon_action,
-                    actionVisible ? View.VISIBLE : View.GONE);
-            return actionVisible;
-        }
-
-        private Action findReplyAction() {
-            ArrayList<Action> actions = mActions;
-            if (mOriginalActions != null) {
-                actions = mOriginalActions;
-            }
-            int numActions = actions.size();
-            for (int i = 0; i < numActions; i++) {
-                Action action = actions.get(i);
-                if (hasValidRemoteInput(action)) {
-                    return action;
-                }
-            }
-            return null;
         }
 
         private void bindNotificationHeader(RemoteViews contentView, StandardTemplateParams p) {
             bindSmallIcon(contentView, p);
-            bindHeaderAppName(contentView, p);
-            bindHeaderText(contentView, p);
-            bindHeaderTextSecondary(contentView, p);
-            bindHeaderChronometerAndTime(contentView, p);
+            // Populate text left-to-right so that separators are only shown between strings
+            boolean hasTextToLeft = bindHeaderAppName(contentView, p, false /* force */);
+            hasTextToLeft |= bindHeaderTextSecondary(contentView, p, hasTextToLeft);
+            hasTextToLeft |= bindHeaderText(contentView, p, hasTextToLeft);
+            if (!hasTextToLeft) {
+                // If there's still no text, force add the app name so there is some text.
+                hasTextToLeft |= bindHeaderAppName(contentView, p, true /* force */);
+            }
+            bindHeaderChronometerAndTime(contentView, p, hasTextToLeft);
             bindProfileBadge(contentView, p);
             bindAlertedIcon(contentView, p);
-            bindFeedbackIcon(contentView, p);
             bindExpandButton(contentView, p);
             mN.mUsesStandardHeader = true;
-        }
-
-        private void bindFeedbackIcon(RemoteViews contentView, StandardTemplateParams p) {
-            int color = getNeutralColor(p);
-            contentView.setDrawableTint(R.id.feedback, false, color, PorterDuff.Mode.SRC_ATOP);
         }
 
         private void bindExpandButton(RemoteViews contentView, StandardTemplateParams p) {
@@ -5234,10 +5228,12 @@ public class Notification implements Parcelable
         }
 
         private void bindHeaderChronometerAndTime(RemoteViews contentView,
-                StandardTemplateParams p) {
+                StandardTemplateParams p, boolean hasTextToLeft) {
             if (showsTimeOrChronometer()) {
-                contentView.setViewVisibility(R.id.time_divider, View.VISIBLE);
-                setTextViewColorSecondary(contentView, R.id.time_divider, p);
+                if (hasTextToLeft) {
+                    contentView.setViewVisibility(R.id.time_divider, View.VISIBLE);
+                    setTextViewColorSecondary(contentView, R.id.time_divider, p);
+                }
                 if (mN.extras.getBoolean(EXTRA_SHOW_CHRONOMETER)) {
                     contentView.setViewVisibility(R.id.chronometer, View.VISIBLE);
                     contentView.setLong(R.id.chronometer, "setBase",
@@ -5258,7 +5254,11 @@ public class Notification implements Parcelable
             }
         }
 
-        private void bindHeaderText(RemoteViews contentView, StandardTemplateParams p) {
+        /**
+         * @return true if the header text will be visible
+         */
+        private boolean bindHeaderText(RemoteViews contentView, StandardTemplateParams p,
+                boolean hasTextToLeft) {
             CharSequence summaryText = p.summaryText;
             if (summaryText == null && mStyle != null && mStyle.mSummaryTextSet
                     && mStyle.hasSummaryInHeader()) {
@@ -5269,26 +5269,38 @@ public class Notification implements Parcelable
                     && mN.extras.getCharSequence(EXTRA_INFO_TEXT) != null) {
                 summaryText = mN.extras.getCharSequence(EXTRA_INFO_TEXT);
             }
-            if (summaryText != null) {
+            if (!TextUtils.isEmpty(summaryText)) {
                 // TODO: Remove the span entirely to only have the string with propper formating.
                 contentView.setTextViewText(R.id.header_text, processTextSpans(
                         processLegacyText(summaryText)));
                 setTextViewColorSecondary(contentView, R.id.header_text, p);
                 contentView.setViewVisibility(R.id.header_text, View.VISIBLE);
-                contentView.setViewVisibility(R.id.header_text_divider, View.VISIBLE);
-                setTextViewColorSecondary(contentView, R.id.header_text_divider, p);
+                if (hasTextToLeft) {
+                    contentView.setViewVisibility(R.id.header_text_divider, View.VISIBLE);
+                    setTextViewColorSecondary(contentView, R.id.header_text_divider, p);
+                }
+                return true;
             }
+            return false;
         }
 
-        private void bindHeaderTextSecondary(RemoteViews contentView, StandardTemplateParams p) {
+        /**
+         * @return true if the secondary header text will be visible
+         */
+        private boolean bindHeaderTextSecondary(RemoteViews contentView, StandardTemplateParams p,
+                boolean hasTextToLeft) {
             if (!TextUtils.isEmpty(p.headerTextSecondary)) {
                 contentView.setTextViewText(R.id.header_text_secondary, processTextSpans(
                         processLegacyText(p.headerTextSecondary)));
                 setTextViewColorSecondary(contentView, R.id.header_text_secondary, p);
                 contentView.setViewVisibility(R.id.header_text_secondary, View.VISIBLE);
-                contentView.setViewVisibility(R.id.header_text_secondary_divider, View.VISIBLE);
-                setTextViewColorSecondary(contentView, R.id.header_text_secondary_divider, p);
+                if (hasTextToLeft) {
+                    contentView.setViewVisibility(R.id.header_text_secondary_divider, View.VISIBLE);
+                    setTextViewColorSecondary(contentView, R.id.header_text_secondary_divider, p);
+                }
+                return true;
             }
+            return false;
         }
 
         /**
@@ -5325,13 +5337,29 @@ public class Notification implements Parcelable
 
             return String.valueOf(name);
         }
-        private void bindHeaderAppName(RemoteViews contentView, StandardTemplateParams p) {
+
+        /**
+         * @return true if the app name will be visible
+         */
+        private boolean bindHeaderAppName(RemoteViews contentView, StandardTemplateParams p,
+                boolean force) {
+            if (p.mViewType == StandardTemplateParams.VIEW_TYPE_MINIMIZED && !force) {
+                // unless the force flag is set, don't show the app name in the minimized state.
+                return false;
+            }
+            if (p.mHeaderless && p.hasTitle()) {
+                // the headerless template will have the TITLE in this position; return true to
+                // keep the divider visible between that title and the next text element.
+                return true;
+            }
+            contentView.setViewVisibility(R.id.app_name_text, View.VISIBLE);
             contentView.setTextViewText(R.id.app_name_text, loadHeaderAppName());
             if (isColorized(p)) {
                 setTextViewColorPrimary(contentView, R.id.app_name_text, p);
             } else {
                 contentView.setTextColor(R.id.app_name_text, getSecondaryTextColor(p));
             }
+            return true;
         }
 
         private boolean isColorized(StandardTemplateParams p) {
@@ -5371,14 +5399,12 @@ public class Notification implements Parcelable
             big.setViewVisibility(R.id.notification_material_reply_text_3, View.GONE);
             big.setTextViewText(R.id.notification_material_reply_text_3, null);
 
-            big.setViewLayoutMarginBottomDimen(R.id.notification_action_list_margin_target,
-                    R.dimen.notification_content_margin);
-        }
-
-        private RemoteViews applyStandardTemplateWithActions(int layoutId,
-                TemplateBindResult result) {
-            return applyStandardTemplateWithActions(layoutId, mParams.reset().fillTextsFrom(this),
-                    result);
+            final boolean snoozeEnabled = mContext.getContentResolver() != null
+                    && (Settings.Secure.getInt(mContext.getContentResolver(),
+                        Settings.Secure.SHOW_NOTIFICATION_SNOOZE, 0) == 1);
+            int bottomMarginDimen = snoozeEnabled ? 0 : R.dimen.notification_content_margin;
+            big.setViewLayoutMarginDimen(R.id.notification_action_list_margin_target,
+                    RemoteViews.MARGIN_BOTTOM, bottomMarginDimen);
         }
 
         private static List<Notification.Action> filterOutContextualActions(
@@ -5407,10 +5433,11 @@ public class Notification implements Parcelable
             int N = nonContextualActions.size();
             boolean emphazisedMode = mN.fullScreenIntent != null;
             big.setBoolean(R.id.actions, "setEmphasizedMode", emphazisedMode);
-            if (N > 0) {
+            if (N > 0 && !p.mHideActions) {
                 big.setViewVisibility(R.id.actions_container, View.VISIBLE);
                 big.setViewVisibility(R.id.actions, View.VISIBLE);
-                big.setViewLayoutMarginBottomDimen(R.id.notification_action_list_margin_target, 0);
+                big.setViewLayoutMarginDimen(R.id.notification_action_list_margin_target,
+                        RemoteViews.MARGIN_BOTTOM, 0);
                 if (N>MAX_ACTION_BUTTONS) N=MAX_ACTION_BUTTONS;
                 for (int i=0; i<N; i++) {
                     Action action = nonContextualActions.get(i);
@@ -5499,6 +5526,71 @@ public class Notification implements Parcelable
             return createContentView(false /* increasedheight */ );
         }
 
+        // This code is executed on behalf of other apps' notifications, sometimes even by 3p apps,
+        // a use case that is not supported by the Compat Framework library.  Workarounds to resolve
+        // the change's state in NotificationManagerService were very complex. While it's possible
+        // apps can detect the change, it's most likely that the changes will simply result in
+        // visual regressions.
+        @SuppressWarnings("AndroidFrameworkCompatChange")
+        private boolean fullyCustomViewRequiresDecoration(boolean fromStyle) {
+            // Custom views which come from a platform style class are safe, and thus do not need to
+            // be wrapped.  Any subclass of those styles has the opportunity to make arbitrary
+            // changes to the RemoteViews, and thus can't be trusted as a fully vetted view.
+            if (fromStyle && PLATFORM_STYLE_CLASSES.contains(mStyle.getClass())) {
+                return false;
+            }
+            final ContentResolver contentResolver = mContext.getContentResolver();
+            final int decorationType = DevFlags.getFullyCustomViewNotifDecoration(contentResolver);
+            return decorationType != DevFlags.DECORATION_NONE
+                    && (DevFlags.shouldBackportSNotifRules(contentResolver)
+                    || mContext.getApplicationInfo().targetSdkVersion >= Build.VERSION_CODES.S);
+        }
+
+        private RemoteViews minimallyDecoratedContentView(@NonNull RemoteViews customContent) {
+            int decorationType =
+                    DevFlags.getFullyCustomViewNotifDecoration(mContext.getContentResolver());
+            StandardTemplateParams p = mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_NORMAL)
+                    .decorationType(decorationType)
+                    .fillTextsFrom(this);
+            TemplateBindResult result = new TemplateBindResult();
+            RemoteViews standard = applyStandardTemplate(getBaseLayoutResource(), p, result);
+            buildCustomContentIntoTemplate(mContext, standard, customContent,
+                    p, result, decorationType);
+            return standard;
+        }
+
+        private RemoteViews minimallyDecoratedBigContentView(@NonNull RemoteViews customContent) {
+            int decorationType =
+                    DevFlags.getFullyCustomViewNotifDecoration(mContext.getContentResolver());
+            StandardTemplateParams p = mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_BIG)
+                    .decorationType(decorationType)
+                    .fillTextsFrom(this);
+            TemplateBindResult result = new TemplateBindResult();
+            RemoteViews standard = applyStandardTemplateWithActions(getBigBaseLayoutResource(),
+                    p, result);
+            buildCustomContentIntoTemplate(mContext, standard, customContent,
+                    p, result, decorationType);
+            return standard;
+        }
+
+        private RemoteViews minimallyDecoratedHeadsUpContentView(
+                @NonNull RemoteViews customContent) {
+            int decorationType =
+                    DevFlags.getFullyCustomViewNotifDecoration(mContext.getContentResolver());
+            StandardTemplateParams p = mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_HEADS_UP)
+                    .decorationType(decorationType)
+                    .fillTextsFrom(this);
+            TemplateBindResult result = new TemplateBindResult();
+            RemoteViews standard = applyStandardTemplateWithActions(getHeadsUpBaseLayoutResource(),
+                    p, result);
+            buildCustomContentIntoTemplate(mContext, standard, customContent,
+                    p, result, decorationType);
+            return standard;
+        }
+
         /**
          * Construct a RemoteViews for the smaller content view.
          *
@@ -5511,14 +5603,19 @@ public class Notification implements Parcelable
          */
         public RemoteViews createContentView(boolean increasedHeight) {
             if (mN.contentView != null && useExistingRemoteView()) {
-                return mN.contentView;
+                return fullyCustomViewRequiresDecoration(false /* fromStyle */)
+                        ? minimallyDecoratedContentView(mN.contentView) : mN.contentView;
             } else if (mStyle != null) {
                 final RemoteViews styleView = mStyle.makeContentView(increasedHeight);
                 if (styleView != null) {
-                    return styleView;
+                    return fullyCustomViewRequiresDecoration(true /* fromStyle */)
+                            ? minimallyDecoratedContentView(styleView) : styleView;
                 }
             }
-            return applyStandardTemplate(getBaseLayoutResource(), null /* result */);
+            StandardTemplateParams p = mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_NORMAL)
+                    .fillTextsFrom(this);
+            return applyStandardTemplate(getBaseLayoutResource(), p, null /* result */);
         }
 
         private boolean useExistingRemoteView() {
@@ -5532,16 +5629,51 @@ public class Notification implements Parcelable
         public RemoteViews createBigContentView() {
             RemoteViews result = null;
             if (mN.bigContentView != null && useExistingRemoteView()) {
-                return mN.bigContentView;
-            } else if (mStyle != null) {
+                return fullyCustomViewRequiresDecoration(false /* fromStyle */)
+                        ? minimallyDecoratedBigContentView(mN.bigContentView) : mN.bigContentView;
+            }
+            if (mStyle != null) {
                 result = mStyle.makeBigContentView();
                 hideLine1Text(result);
-            } else if (mActions.size() != 0) {
-                result = applyStandardTemplateWithActions(getBigBaseLayoutResource(),
-                        null /* result */);
+                if (fullyCustomViewRequiresDecoration(true /* fromStyle */)) {
+                    result = minimallyDecoratedBigContentView(result);
+                }
+            }
+            if (result == null) {
+                if (bigContentViewRequired()) {
+                    StandardTemplateParams p = mParams.reset()
+                            .viewType(StandardTemplateParams.VIEW_TYPE_BIG)
+                            .fillTextsFrom(this);
+                    result = applyStandardTemplateWithActions(getBigBaseLayoutResource(), p,
+                            null /* result */);
+                } else if (DevFlags.shouldBackportSNotifRules(mContext.getContentResolver())
+                        && useExistingRemoteView()
+                        && fullyCustomViewRequiresDecoration(false /* fromStyle */)) {
+                    // This "backport" logic is a special case to handle the UNDO style of notif
+                    // so that we can see what that will look like when the app targets S.
+                    result = minimallyDecoratedBigContentView(mN.contentView);
+                }
             }
             makeHeaderExpanded(result);
             return result;
+        }
+
+        // This code is executed on behalf of other apps' notifications, sometimes even by 3p apps,
+        // a use case that is not supported by the Compat Framework library.  Workarounds to resolve
+        // the change's state in NotificationManagerService were very complex. While it's possible
+        // apps can detect the change, it's most likely that the changes will simply result in
+        // visual regressions.
+        @SuppressWarnings("AndroidFrameworkCompatChange")
+        private boolean bigContentViewRequired() {
+            if (mContext.getApplicationInfo().targetSdkVersion >= Build.VERSION_CODES.S) {
+                return true;
+            }
+            // If the big content view has no content, we can exempt the app from having to show it.
+            boolean exempt = mN.contentView != null && mN.bigContentView == null
+                    && mStyle == null && mActions.size() == 0
+                    && mN.extras.getCharSequence(EXTRA_TITLE) == null
+                    && mN.extras.getCharSequence(EXTRA_TEXT) == null;
+            return !exempt;
         }
 
         /**
@@ -5551,7 +5683,9 @@ public class Notification implements Parcelable
          * @hide
          */
         public RemoteViews makeNotificationHeader() {
-            return makeNotificationHeader(mParams.reset().fillTextsFrom(this));
+            return makeNotificationHeader(mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_GROUP_HEADER)
+                    .fillTextsFrom(this));
         }
 
         /**
@@ -5612,11 +5746,14 @@ public class Notification implements Parcelable
          */
         public RemoteViews createHeadsUpContentView(boolean increasedHeight) {
             if (mN.headsUpContentView != null && useExistingRemoteView()) {
-                return mN.headsUpContentView;
+                return fullyCustomViewRequiresDecoration(false /* fromStyle */)
+                        ? minimallyDecoratedHeadsUpContentView(mN.headsUpContentView)
+                        : mN.headsUpContentView;
             } else if (mStyle != null) {
                 final RemoteViews styleView = mStyle.makeHeadsUpContentView(increasedHeight);
                 if (styleView != null) {
-                    return styleView;
+                    return fullyCustomViewRequiresDecoration(true /* fromStyle */)
+                            ? minimallyDecoratedHeadsUpContentView(styleView) : styleView;
                 }
             } else if (mActions.size() == 0) {
                 return null;
@@ -5624,10 +5761,11 @@ public class Notification implements Parcelable
 
             // We only want at most a single remote input history to be shown here, otherwise
             // the content would become squished.
-            StandardTemplateParams p = mParams.reset().fillTextsFrom(this)
+            StandardTemplateParams p = mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_HEADS_UP)
+                    .fillTextsFrom(this)
                     .setMaxRemoteInputHistory(1);
-            return applyStandardTemplateWithActions(getBigBaseLayoutResource(),
-                    p,
+            return applyStandardTemplateWithActions(getHeadsUpBaseLayoutResource(), p,
                     null /* result */);
         }
 
@@ -5672,7 +5810,9 @@ public class Notification implements Parcelable
             }
             mN.extras = publicExtras;
             RemoteViews view;
-            StandardTemplateParams params = mParams.reset().fillTextsFrom(this);
+            StandardTemplateParams params = mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_PUBLIC)
+                    .fillTextsFrom(this);
             if (isLowPriority) {
                 params.forceDefaultColor();
             }
@@ -5696,6 +5836,7 @@ public class Notification implements Parcelable
          */
         public RemoteViews makeLowPriorityContentView(boolean useRegularSubtext) {
             StandardTemplateParams p = mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_MINIMIZED)
                     .forceDefaultColor()
                     .fillTextsFrom(this);
             if (!useRegularSubtext || TextUtils.isEmpty(mParams.summaryText)) {
@@ -5929,8 +6070,7 @@ public class Notification implements Parcelable
             }
 
             int color;
-            int background = mContext.getColor(
-                    com.android.internal.R.color.notification_material_background_color);
+            int background = obtainBackgroundColor();
             if (rawColor == COLOR_DEFAULT) {
                 ensureColors(p);
                 color = ContrastColorUtil.resolveDefaultColor(mContext, background, mInNightMode);
@@ -5963,8 +6103,7 @@ public class Notification implements Parcelable
             if (mNeutralColor != COLOR_INVALID) {
                 return mNeutralColor;
             }
-            int background = mContext.getColor(
-                    com.android.internal.R.color.notification_material_background_color);
+            int background = obtainBackgroundColor();
             mNeutralColor = ContrastColorUtil.resolveDefaultColor(mContext, background,
                     mInNightMode);
             if (Color.alpha(mNeutralColor) < 255) {
@@ -6115,6 +6254,24 @@ public class Notification implements Parcelable
             return mN;
         }
 
+        private @ColorInt int obtainBackgroundColor() {
+            int defaultColor = mInNightMode ? Color.BLACK : Color.WHITE;
+            Resources.Theme theme = mContext.getTheme();
+            if (theme == null) {
+                // Running unit tests with mocked context
+                return defaultColor;
+            }
+            theme = new ContextThemeWrapper(mContext, R.style.Theme_DeviceDefault_DayNight)
+                    .getTheme();
+            TypedArray ta = theme.obtainStyledAttributes(new int[]{R.attr.colorBackground});
+            if (ta == null) {
+                return defaultColor;
+            }
+            int background = ta.getColor(0, defaultColor);
+            ta.recycle();
+            return background;
+        }
+
         /**
          * Apply this Builder to an existing {@link Notification} object.
          *
@@ -6181,6 +6338,10 @@ public class Notification implements Parcelable
             return R.layout.notification_template_material_base;
         }
 
+        private int getHeadsUpBaseLayoutResource() {
+            return R.layout.notification_template_material_heads_up_base;
+        }
+
         private int getBigBaseLayoutResource() {
             return R.layout.notification_template_material_big_base;
         }
@@ -6244,8 +6405,7 @@ public class Notification implements Parcelable
         private int resolveBackgroundColor(StandardTemplateParams p) {
             int backgroundColor = getBackgroundColor(p);
             if (backgroundColor == COLOR_DEFAULT) {
-                backgroundColor = mContext.getColor(
-                        com.android.internal.R.color.notification_material_background_color);
+                backgroundColor = obtainBackgroundColor();
             }
             return backgroundColor;
         }
@@ -6383,6 +6543,35 @@ public class Notification implements Parcelable
     }
 
     /**
+     * Describe whether this notification's content such that it should always display
+     * immediately when tied to a foreground service, even if the system might generally
+     * avoid showing the notifications for short-lived foreground service lifetimes.
+     *
+     * Immediate visibility of the Notification is recommended when:
+     * <ul>
+     *     <li>The app specifically indicated it with
+     *         {@link Notification.Builder#setShowForegroundImmediately(boolean)
+     *         setShowForegroundImmediately(true)}</li>
+     *     <li>It is a media notification or has an associated media session</li>
+     *     <li>It is a call or navigation notification</li>
+     *     <li>It provides additional action affordances</li>
+     * </ul>
+     * @return whether this notification should always be displayed immediately when
+     * its associated service transitions to the foreground state
+     * @hide
+     */
+    public boolean shouldShowForegroundImmediately() {
+        if ((flags & Notification.FLAG_IMMEDIATE_FGS_DISPLAY) != 0
+                || isMediaNotification() || hasMediaSession()
+                || CATEGORY_CALL.equals(category)
+                || CATEGORY_NAVIGATION.equals(category)
+                || (actions != null && actions.length > 0)) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * @return whether this notification has a media session attached
      * @hide
      */
@@ -6494,16 +6683,62 @@ public class Notification implements Parcelable
      */
     @SystemApi
     public static Class<? extends Style> getNotificationStyleClass(String templateClass) {
-        Class<? extends Style>[] classes = new Class[] {
-                BigTextStyle.class, BigPictureStyle.class, InboxStyle.class, MediaStyle.class,
-                DecoratedCustomViewStyle.class, DecoratedMediaCustomViewStyle.class,
-                MessagingStyle.class };
-        for (Class<? extends Style> innerClass : classes) {
+        for (Class<? extends Style> innerClass : PLATFORM_STYLE_CLASSES) {
             if (templateClass.equals(innerClass.getName())) {
                 return innerClass;
             }
         }
         return null;
+    }
+
+    private static void buildCustomContentIntoTemplate(@NonNull Context context,
+            @NonNull RemoteViews template, @Nullable RemoteViews customContent,
+            @NonNull StandardTemplateParams p, @NonNull TemplateBindResult result,
+            int decorationType) {
+        int childIndex = -1;
+        if (customContent != null) {
+            // Need to clone customContent before adding, because otherwise it can no longer be
+            // parceled independently of remoteViews.
+            customContent = customContent.clone();
+            if (p.mHeaderless) {
+                if (decorationType <= DevFlags.DECORATION_PARTIAL) {
+                    template.removeFromParent(R.id.notification_top_line);
+                }
+                if (decorationType != DevFlags.DECORATION_FULL_COMPATIBLE) {
+                    // Change the max content size from 60dp (the compatible size) to 48dp
+                    // (the constrained size).  This is done by increasing the minimum margin
+                    // (implemented as top/bottom margins) and decreasing the extra margin
+                    // (implemented as the height of shrinkable top/bottom views in the column).
+                    template.setViewLayoutMarginDimen(
+                            R.id.notification_headerless_view_column,
+                            RemoteViews.MARGIN_TOP,
+                            R.dimen.notification_headerless_margin_constrained_minimum);
+                    template.setViewLayoutMarginDimen(
+                            R.id.notification_headerless_view_column,
+                            RemoteViews.MARGIN_BOTTOM,
+                            R.dimen.notification_headerless_margin_constrained_minimum);
+                    template.setViewLayoutHeightDimen(
+                            R.id.notification_headerless_margin_extra_top,
+                            R.dimen.notification_headerless_margin_constrained_extra);
+                    template.setViewLayoutHeightDimen(
+                            R.id.notification_headerless_margin_extra_bottom,
+                            R.dimen.notification_headerless_margin_constrained_extra);
+                }
+            } else {
+                // also update the end margin to account for the large icon or expander
+                Resources resources = context.getResources();
+                result.mTitleMarginSet.applyToView(template, R.id.notification_main_column,
+                        resources.getDimension(R.dimen.notification_content_margin_end)
+                                / resources.getDisplayMetrics().density);
+            }
+            template.removeAllViewsExceptId(R.id.notification_main_column, R.id.progress);
+            template.addView(R.id.notification_main_column, customContent, 0 /* index */);
+            template.addFlags(RemoteViews.FLAG_REAPPLY_DISALLOWED);
+            childIndex = 0;
+        }
+        template.setIntTag(R.id.notification_main_column,
+                com.android.internal.R.id.notification_custom_view_index_tag,
+                childIndex);
     }
 
     /**
@@ -6563,7 +6798,10 @@ public class Notification implements Parcelable
         }
 
         protected RemoteViews getStandardView(int layoutId) {
-            StandardTemplateParams p = mBuilder.mParams.reset().fillTextsFrom(mBuilder);
+            // TODO(jeffdq): set the view type based on the layout resource?
+            StandardTemplateParams p = mBuilder.mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_UNSPECIFIED)
+                    .fillTextsFrom(mBuilder);
             return getStandardView(layoutId, p, null);
         }
 
@@ -6892,7 +7130,8 @@ public class Notification implements Parcelable
                 mBuilder.mN.largeIcon = null;
             }
 
-            StandardTemplateParams p = mBuilder.mParams.reset().fillTextsFrom(mBuilder);
+            StandardTemplateParams p = mBuilder.mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_BIG).fillTextsFrom(mBuilder);
             RemoteViews contentView = getStandardView(mBuilder.getBigPictureLayoutResource(),
                     p, null /* result */);
             if (mSummaryTextSet) {
@@ -6901,7 +7140,6 @@ public class Notification implements Parcelable
                 mBuilder.setTextViewColorSecondary(contentView, R.id.text, p);
                 contentView.setViewVisibility(R.id.text, View.VISIBLE);
             }
-            mBuilder.setContentMinHeight(contentView, mBuilder.mN.hasLargeIcon());
 
             if (mBigLargeIconSet) {
                 mBuilder.mN.mLargeIcon = oldLargeIcon;
@@ -7097,6 +7335,7 @@ public class Notification implements Parcelable
         @Override
         public RemoteViews makeHeadsUpContentView(boolean increasedHeight) {
             if (increasedHeight && mBuilder.mActions.size() > 0) {
+                // TODO(b/163626038): pass VIEW_TYPE_HEADS_UP?
                 return makeBigContentView();
             }
             return super.makeHeadsUpContentView(increasedHeight);
@@ -7106,11 +7345,10 @@ public class Notification implements Parcelable
          * @hide
          */
         public RemoteViews makeBigContentView() {
-            StandardTemplateParams p = mBuilder.mParams.reset().fillTextsFrom(mBuilder).text(null);
-            TemplateBindResult result = new TemplateBindResult();
-            RemoteViews contentView = getStandardView(mBuilder.getBigTextLayoutResource(), p,
-                    result);
-            contentView.setInt(R.id.big_text, "setImageEndMargin", result.getIconMarginEnd());
+            StandardTemplateParams p = mBuilder.mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_BIG)
+                    .fillTextsFrom(mBuilder).text(null);
+            RemoteViews contentView = getStandardView(mBuilder.getBigTextLayoutResource(), p, null);
 
             CharSequence bigTextText = mBuilder.processLegacyText(mBigText);
             if (TextUtils.isEmpty(bigTextText)) {
@@ -7123,8 +7361,6 @@ public class Notification implements Parcelable
             mBuilder.setTextViewColorSecondary(contentView, R.id.big_text, p);
             contentView.setViewVisibility(R.id.big_text,
                     TextUtils.isEmpty(bigTextText) ? View.GONE : View.VISIBLE);
-            contentView.setBoolean(R.id.big_text, "setHasImage",
-                    result.isRightIconContainerVisible());
 
             return contentView;
         }
@@ -7708,11 +7944,12 @@ public class Notification implements Parcelable
             Icon largeIcon = mBuilder.mN.mLargeIcon;
             TemplateBindResult bindResult = new TemplateBindResult();
             StandardTemplateParams p = mBuilder.mParams.reset()
-                    .hasProgress(false)
+                    .viewType(isCollapsed ? StandardTemplateParams.VIEW_TYPE_NORMAL
+                            : StandardTemplateParams.VIEW_TYPE_BIG)
+                    .hideProgress(true)
                     .title(conversationTitle)
                     .text(null)
                     .hideLargeIcon(hideRightIcons || isOneToOne)
-                    .hideReplyIcon(hideRightIcons)
                     .headerTextSecondary(conversationTitle);
             RemoteViews contentView = mBuilder.applyStandardTemplateWithActions(
                     isConversationLayout
@@ -7724,8 +7961,11 @@ public class Notification implements Parcelable
             addExtras(mBuilder.mN.extras);
             if (!isConversationLayout) {
                 // also update the end margin if there is an image
-                contentView.setViewLayoutMarginEnd(R.id.notification_messaging,
-                        bindResult.getIconMarginEnd());
+                // NOTE: This template doesn't support moving this icon to the left, so we don't
+                // need to fully apply the MarginSet
+                contentView.setViewLayoutMargin(R.id.notification_messaging, RemoteViews.MARGIN_END,
+                        bindResult.mHeadingExtraMarginSet.getDpValue(),
+                        TypedValue.COMPLEX_UNIT_DIP);
             }
             contentView.setInt(R.id.status_bar_latest_event_content, "setLayoutColor",
                     mBuilder.isColorized(p)
@@ -8213,7 +8453,9 @@ public class Notification implements Parcelable
          * @hide
          */
         public RemoteViews makeBigContentView() {
-            StandardTemplateParams p = mBuilder.mParams.reset().fillTextsFrom(mBuilder).text(null);
+            StandardTemplateParams p = mBuilder.mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_BIG)
+                    .fillTextsFrom(mBuilder).text(null);
             TemplateBindResult result = new TemplateBindResult();
             RemoteViews contentView = getStandardView(mBuilder.getInboxLayoutResource(), p, result);
 
@@ -8265,8 +8507,6 @@ public class Notification implements Parcelable
                             mBuilder.processTextSpans(mBuilder.processLegacyText(str)));
                     mBuilder.setTextViewColorSecondary(contentView, rowIds[i], p);
                     contentView.setViewPadding(rowIds[i], 0, topPadding, 0, 0);
-                    handleInboxImageMargin(contentView, rowIds[i], first,
-                            result.getIconMarginEnd());
                     if (first) {
                         onlyViewId = rowIds[i];
                     } else {
@@ -8311,20 +8551,6 @@ public class Notification implements Parcelable
                 }
             }
             return false;
-        }
-
-        private void handleInboxImageMargin(RemoteViews contentView, int id, boolean first,
-                int marginEndValue) {
-            int endMargin = 0;
-            if (first) {
-                final int max = mBuilder.mN.extras.getInt(EXTRA_PROGRESS_MAX, 0);
-                final boolean ind = mBuilder.mN.extras.getBoolean(EXTRA_PROGRESS_INDETERMINATE);
-                boolean hasProgress = max != 0 || ind;
-                if (!hasProgress) {
-                    endMargin = marginEndValue;
-                }
-            }
-            contentView.setViewLayoutMarginEnd(id, endMargin);
         }
     }
 
@@ -8533,8 +8759,10 @@ public class Notification implements Parcelable
         }
 
         private RemoteViews makeMediaContentView() {
-            StandardTemplateParams p = mBuilder.mParams.reset().hasProgress(false).fillTextsFrom(
-                    mBuilder);
+            StandardTemplateParams p = mBuilder.mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_NORMAL)
+                    .hideProgress(true)
+                    .fillTextsFrom(mBuilder);
             RemoteViews view = mBuilder.applyStandardTemplate(
                     R.layout.notification_template_material_media, p,
                     null /* result */);
@@ -8562,7 +8790,8 @@ public class Notification implements Parcelable
             if (mBuilder.mN.hasLargeIcon()) {
                 endMargin = R.dimen.notification_media_image_margin_end;
             }
-            view.setViewLayoutMarginEndDimen(R.id.notification_main_column, endMargin);
+            view.setViewLayoutMarginDimen(R.id.notification_main_column,
+                            RemoteViews.MARGIN_END, endMargin);
             return view;
         }
 
@@ -8580,8 +8809,10 @@ public class Notification implements Parcelable
             if (!mBuilder.mN.hasLargeIcon() && actionCount <= actionsInCompact) {
                 return null;
             }
-            StandardTemplateParams p = mBuilder.mParams.reset().hasProgress(false).fillTextsFrom(
-                    mBuilder);
+            StandardTemplateParams p = mBuilder.mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_BIG)
+                    .hideProgress(true)
+                    .fillTextsFrom(mBuilder);
             RemoteViews big = mBuilder.applyStandardTemplate(
                     R.layout.notification_template_material_big_media, p , null /* result */);
 
@@ -8598,8 +8829,8 @@ public class Notification implements Parcelable
 
         private void handleImage(RemoteViews contentView) {
             if (mBuilder.mN.hasLargeIcon()) {
-                contentView.setViewLayoutMarginEndDimen(R.id.line1, 0);
-                contentView.setViewLayoutMarginEndDimen(R.id.text, 0);
+                contentView.setViewLayoutMarginDimen(R.id.line1, RemoteViews.MARGIN_END, 0);
+                contentView.setViewLayoutMarginDimen(R.id.text, RemoteViews.MARGIN_END, 0);
             }
         }
 
@@ -8675,21 +8906,39 @@ public class Notification implements Parcelable
             RemoteViews headsUpContentView = mBuilder.mN.headsUpContentView == null
                     ? mBuilder.mN.contentView
                     : mBuilder.mN.headsUpContentView;
+            if (headsUpContentView == null) {
+                return null;  // no custom view; use the default behavior
+            }
             if (mBuilder.mActions.size() == 0) {
                return makeStandardTemplateWithCustomContent(headsUpContentView);
             }
+            int decorationType = getDecorationType();
             TemplateBindResult result = new TemplateBindResult();
+            StandardTemplateParams p = mBuilder.mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_HEADS_UP)
+                    .decorationType(decorationType)
+                    .fillTextsFrom(mBuilder);
             RemoteViews remoteViews = mBuilder.applyStandardTemplateWithActions(
-                        mBuilder.getBigBaseLayoutResource(), result);
-            buildIntoRemoteViewContent(remoteViews, headsUpContentView, result);
+                    mBuilder.getHeadsUpBaseLayoutResource(), p, result);
+            buildCustomContentIntoTemplate(mBuilder.mContext, remoteViews, headsUpContentView,
+                    p, result, decorationType);
             return remoteViews;
         }
 
         private RemoteViews makeStandardTemplateWithCustomContent(RemoteViews customContent) {
+            if (customContent == null) {
+                return null;  // no custom view; use the default behavior
+            }
+            int decorationType = getDecorationType();
             TemplateBindResult result = new TemplateBindResult();
+            StandardTemplateParams p = mBuilder.mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_NORMAL)
+                    .decorationType(decorationType)
+                    .fillTextsFrom(mBuilder);
             RemoteViews remoteViews = mBuilder.applyStandardTemplate(
-                    mBuilder.getBaseLayoutResource(), result);
-            buildIntoRemoteViewContent(remoteViews, customContent, result);
+                    mBuilder.getBaseLayoutResource(), p, result);
+            buildCustomContentIntoTemplate(mBuilder.mContext, remoteViews, customContent,
+                    p, result, decorationType);
             return remoteViews;
         }
 
@@ -8697,36 +8946,38 @@ public class Notification implements Parcelable
             RemoteViews bigContentView = mBuilder.mN.bigContentView == null
                     ? mBuilder.mN.contentView
                     : mBuilder.mN.bigContentView;
-            if (mBuilder.mActions.size() == 0) {
-                return makeStandardTemplateWithCustomContent(bigContentView);
+            if (bigContentView == null) {
+                return null;  // no custom view; use the default behavior
             }
+            int decorationType = getDecorationType();
             TemplateBindResult result = new TemplateBindResult();
+            StandardTemplateParams p = mBuilder.mParams.reset()
+                    .viewType(StandardTemplateParams.VIEW_TYPE_BIG)
+                    .decorationType(decorationType)
+                    .fillTextsFrom(mBuilder);
             RemoteViews remoteViews = mBuilder.applyStandardTemplateWithActions(
-                    mBuilder.getBigBaseLayoutResource(), result);
-            buildIntoRemoteViewContent(remoteViews, bigContentView, result);
+                    mBuilder.getBigBaseLayoutResource(), p, result);
+            buildCustomContentIntoTemplate(mBuilder.mContext, remoteViews, bigContentView,
+                    p, result, decorationType);
             return remoteViews;
         }
 
-        private void buildIntoRemoteViewContent(RemoteViews remoteViews,
-                RemoteViews customContent, TemplateBindResult result) {
-            int childIndex = -1;
-            if (customContent != null) {
-                // Need to clone customContent before adding, because otherwise it can no longer be
-                // parceled independently of remoteViews.
-                customContent = customContent.clone();
-                remoteViews.removeAllViewsExceptId(R.id.notification_main_column, R.id.progress);
-                remoteViews.addView(R.id.notification_main_column, customContent, 0 /* index */);
-                remoteViews.addFlags(RemoteViews.FLAG_REAPPLY_DISALLOWED);
-                childIndex = 0;
+        // This code is executed on behalf of other apps' notifications, sometimes even by 3p apps,
+        // a use case that is not supported by the Compat Framework library.  Workarounds to resolve
+        // the change's state in NotificationManagerService were very complex. While it's possible
+        // apps can detect the change, it's most likely that the changes will simply result in
+        // visual regressions.
+        @SuppressWarnings("AndroidFrameworkCompatChange")
+        private int getDecorationType() {
+            ContentResolver contentResolver = mBuilder.mContext.getContentResolver();
+            if (mBuilder.mContext.getApplicationInfo().targetSdkVersion >= Build.VERSION_CODES.S
+                    || DevFlags.shouldBackportSNotifRules(contentResolver)) {
+                return DevFlags.getDecoratedCustomViewNotifDecoration(contentResolver);
+            } else {
+                // For apps that don't target S, this decoration provides the closest behavior to R,
+                // but doesn't fit with the design guidelines for S.
+                return DevFlags.DECORATION_FULL_COMPATIBLE;
             }
-            remoteViews.setIntTag(R.id.notification_main_column,
-                    com.android.internal.R.id.notification_custom_view_index_tag,
-                    childIndex);
-            // also update the end margin if there is an image
-            Resources resources = mBuilder.mContext.getResources();
-            int endMargin = resources.getDimensionPixelSize(
-                    R.dimen.notification_content_margin_end) + result.getIconMarginEnd();
-            remoteViews.setViewLayoutMarginEnd(R.id.notification_main_column, endMargin);
         }
 
         /**
@@ -9807,7 +10058,7 @@ public class Notification implements Parcelable
          * <pre class="prettyprint">
          * Intent displayIntent = new Intent(context, MyDisplayActivity.class);
          * PendingIntent displayPendingIntent = PendingIntent.getActivity(context,
-         *         0, displayIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+         *         0, displayIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE_UNAUDITED);
          * Notification notif = new Notification.Builder(context)
          *         .extend(new Notification.WearableExtender()
          *                 .setDisplayIntent(displayPendingIntent)
@@ -10962,48 +11213,114 @@ public class Notification implements Parcelable
      * A result object where information about the template that was created is saved.
      */
     private static class TemplateBindResult {
-        int mIconMarginEnd;
-        boolean mRightIconContainerVisible;
+        boolean mRightIconVisible;
+        float mRightIconWidthDp;
 
         /**
-         * Get the margin end that needs to be added to any fields that may overlap
-         * with the right actions.
+         * The margin end that needs to be added to the heading so that it won't overlap
+         * with the large icon.  This value includes the space required to accommodate the large
+         * icon, but should be added to the space needed to accommodate the expander. This does
+         * not include the 16dp content margin that all notification views must have.
          */
-        public int getIconMarginEnd() {
-            return mIconMarginEnd;
+        public final MarginSet mHeadingExtraMarginSet = new MarginSet();
+
+        /**
+         * The margin end that needs to be added to the heading so that it won't overlap
+         * with the large icon.  This value includes the space required to accommodate the large
+         * icon as well as the expander.  This does not include the 16dp content margin that all
+         * notification views must have.
+         */
+        public final MarginSet mHeadingFullMarginSet = new MarginSet();
+
+        /**
+         * The margin end that needs to be added to the title text of the big state
+         * so that it won't overlap with the large icon, but assuming the text can run under
+         * the expander when that icon is not visible.
+         */
+        public final MarginSet mTitleMarginSet = new MarginSet();
+
+        public void setRightIconState(boolean visible, float widthDp,
+                float marginEndDpIfVisible, float expanderSizeDp) {
+            mRightIconVisible = visible;
+            mRightIconWidthDp = widthDp;
+            mHeadingExtraMarginSet.setValues(0, marginEndDpIfVisible);
+            mHeadingFullMarginSet.setValues(expanderSizeDp, marginEndDpIfVisible + expanderSizeDp);
+            mTitleMarginSet.setValues(0, marginEndDpIfVisible + expanderSizeDp);
         }
 
         /**
-         * Is the icon container visible on the right size because of the reply button or the
-         * right icon.
+         * This contains the end margins for a view when the right icon is visible or not.  These
+         * values are both needed so that NotificationGroupingUtil can 'move' the right_icon to the
+         * left_icon and adjust the margins, and to undo that change as well.
          */
-        public boolean isRightIconContainerVisible() {
-            return mRightIconContainerVisible;
-        }
+        private class MarginSet {
+            private float mValueIfGone;
+            private float mValueIfVisible;
 
-        public void setIconMarginEnd(int iconMarginEnd) {
-            this.mIconMarginEnd = iconMarginEnd;
-        }
+            public void setValues(float valueIfGone, float valueIfVisible) {
+                mValueIfGone = valueIfGone;
+                mValueIfVisible = valueIfVisible;
+            }
 
-        public void setRightIconContainerVisible(boolean iconContainerVisible) {
-            mRightIconContainerVisible = iconContainerVisible;
+            public void applyToView(@NonNull RemoteViews views, @IdRes int viewId) {
+                applyToView(views, viewId, 0);
+            }
+
+            public void applyToView(@NonNull RemoteViews views, @IdRes int viewId,
+                    float extraMarginDp) {
+                final float marginEndDp = getDpValue() + extraMarginDp;
+                if (viewId == R.id.notification_header) {
+                    views.setFloat(R.id.notification_header,
+                            "setTopLineExtraMarginEndDp", marginEndDp);
+                } else {
+                    views.setViewLayoutMargin(viewId, RemoteViews.MARGIN_END,
+                                    marginEndDp, TypedValue.COMPLEX_UNIT_DIP);
+                }
+                if (mRightIconVisible) {
+                    views.setIntTag(viewId, R.id.tag_margin_end_when_icon_visible,
+                            TypedValue.createComplexDimension(
+                                    mValueIfVisible + extraMarginDp, TypedValue.COMPLEX_UNIT_DIP));
+                    views.setIntTag(viewId, R.id.tag_margin_end_when_icon_gone,
+                            TypedValue.createComplexDimension(
+                                    mValueIfGone + extraMarginDp, TypedValue.COMPLEX_UNIT_DIP));
+                }
+            }
+
+            public float getDpValue() {
+                return mRightIconVisible ? mValueIfVisible : mValueIfGone;
+            }
         }
     }
 
     private static class StandardTemplateParams {
-        boolean hasProgress = true;
+        public static int VIEW_TYPE_UNSPECIFIED = 0;
+        public static int VIEW_TYPE_NORMAL = 1;
+        public static int VIEW_TYPE_BIG = 2;
+        public static int VIEW_TYPE_HEADS_UP = 3;
+        public static int VIEW_TYPE_MINIMIZED = 4;
+        public static int VIEW_TYPE_PUBLIC = 5;
+        public static int VIEW_TYPE_GROUP_HEADER = 6;
+
+        int mViewType = VIEW_TYPE_UNSPECIFIED;
+        boolean mHeaderless;
+        boolean mHideTitle;
+        boolean mHideActions;
+        boolean mHideProgress;
         CharSequence title;
         CharSequence text;
         CharSequence headerTextSecondary;
         CharSequence summaryText;
         int maxRemoteInputHistory = Style.MAX_REMOTE_INPUT_HISTORY_LINES;
         boolean hideLargeIcon;
-        boolean hideReplyIcon;
         boolean allowColorization  = true;
         boolean forceDefaultColor = false;
 
         final StandardTemplateParams reset() {
-            hasProgress = true;
+            mViewType = VIEW_TYPE_UNSPECIFIED;
+            mHeaderless = false;
+            mHideTitle = false;
+            mHideActions = false;
+            mHideProgress = false;
             title = null;
             text = null;
             summaryText = null;
@@ -11014,8 +11331,32 @@ public class Notification implements Parcelable
             return this;
         }
 
-        final StandardTemplateParams hasProgress(boolean hasProgress) {
-            this.hasProgress = hasProgress;
+        final boolean hasTitle() {
+            return !TextUtils.isEmpty(title) && !mHideTitle;
+        }
+
+        final StandardTemplateParams viewType(int viewType) {
+            mViewType = viewType;
+            return this;
+        }
+
+        public StandardTemplateParams headerless(boolean headerless) {
+            mHeaderless = headerless;
+            return this;
+        }
+
+        final StandardTemplateParams hideActions(boolean hideActions) {
+            this.mHideActions = hideActions;
+            return this;
+        }
+
+        final StandardTemplateParams hideProgress(boolean hideProgress) {
+            this.mHideProgress = hideProgress;
+            return this;
+        }
+
+        final StandardTemplateParams hideTitle(boolean hideTitle) {
+            this.mHideTitle = hideTitle;
             return this;
         }
 
@@ -11041,11 +11382,6 @@ public class Notification implements Parcelable
 
         final StandardTemplateParams hideLargeIcon(boolean hideLargeIcon) {
             this.hideLargeIcon = hideLargeIcon;
-            return this;
-        }
-
-        final StandardTemplateParams hideReplyIcon(boolean hideReplyIcon) {
-            this.hideReplyIcon = hideReplyIcon;
             return this;
         }
 
@@ -11075,6 +11411,137 @@ public class Notification implements Parcelable
         public StandardTemplateParams setMaxRemoteInputHistory(int maxRemoteInputHistory) {
             this.maxRemoteInputHistory = maxRemoteInputHistory;
             return this;
+        }
+
+        public StandardTemplateParams decorationType(int decorationType) {
+            boolean hideTitle = decorationType <= DevFlags.DECORATION_FULL_COMPATIBLE;
+            boolean hideOtherFields = decorationType <= DevFlags.DECORATION_MINIMAL;
+            hideTitle(hideTitle);
+            hideLargeIcon(hideOtherFields);
+            hideProgress(hideOtherFields);
+            hideActions(hideOtherFields);
+            return this;
+        }
+    }
+
+    /**
+     * A class to centrally access various developer flags related to notifications.
+     * This class is a non-final wrapper around Settings.Global which allows mocking for unit tests.
+     * TODO(b/176239013): Try to remove this before shipping S
+     * @hide
+     */
+    public static class DevFlags {
+
+        /**
+         * Notifications will not be decorated.  The custom content will be shown as-is.
+         *
+         * <p>NOTE: This option is not available for notifications with DecoratedCustomViewStyle,
+         * as that API contract includes decorations that this does not provide.
+         */
+        public static final int DECORATION_NONE = 0;
+
+        /**
+         * Notifications will be minimally decorated with ONLY an icon and expander as follows:
+         * <li>A large icon is never shown.
+         * <li>A progress bar is never shown.
+         * <li>The expanded and heads up states do not show actions, even if provided.
+         * <li>The collapsed state gives the app's custom content 48dp of vertical space.
+         * <li>The collapsed state does NOT include the top line of views,
+         * like the alerted icon or work profile badge.
+         *
+         * <p>NOTE: This option is not available for notifications with DecoratedCustomViewStyle,
+         * as that API contract includes decorations that this does not provide.
+         */
+        public static final int DECORATION_MINIMAL = 1;
+
+        /**
+         * Notifications will be partially decorated with AT LEAST an icon and expander as follows:
+         * <li>A large icon is shown if provided.
+         * <li>A progress bar is shown if provided and enough space remains below the content.
+         * <li>Actions are shown in the expanded and heads up states.
+         * <li>The collapsed state gives the app's custom content 48dp of vertical space.
+         * <li>The collapsed state does NOT include the top line of views,
+         * like the alerted icon or work profile badge.
+         */
+        public static final int DECORATION_PARTIAL = 2;
+
+        /**
+         * Notifications will be fully decorated as follows:
+         * <li>A large icon is shown if provided.
+         * <li>A progress bar is shown if provided and enough space remains below the content.
+         * <li>Actions are shown in the expanded and heads up states.
+         * <li>The collapsed state gives the app's custom content 40dp of vertical space.
+         * <li>The collapsed state DOES include the top line of views,
+         * like the alerted icon or work profile badge.
+         * <li>The collapsed state's top line views will never show the title text.
+         */
+        public static final int DECORATION_FULL_COMPATIBLE = 3;
+
+        /**
+         * Notifications will be fully decorated as follows:
+         * <li>A large icon is shown if provided.
+         * <li>A progress bar is shown if provided and enough space remains below the content.
+         * <li>Actions are shown in the expanded and heads up states.
+         * <li>The collapsed state gives the app's custom content 20dp of vertical space.
+         * <li>The collapsed state DOES include the top line of views
+         * like the alerted icon or work profile badge.
+         * <li>The collapsed state's top line views will contain the title text if provided.
+         */
+        public static final int DECORATION_FULL_CONSTRAINED = 4;
+
+        private static final boolean DEFAULT_BACKPORT_S_NOTIF_RULES = false;
+        private static final int DEFAULT_FULLY_CUSTOM_DECORATION = DECORATION_MINIMAL;
+        private static final int DEFAULT_DECORATED_DECORATION = DECORATION_PARTIAL;
+
+        /**
+         * Used by unit tests to force that this class returns its default values, which is required
+         * in cases where the ContentResolver instance is a mock.
+         * @hide
+         */
+        public static boolean sForceDefaults;
+
+        /**
+         * @return if the S notification rules should be backported to apps not yet targeting S
+         * @hide
+         */
+        public static boolean shouldBackportSNotifRules(@NonNull ContentResolver contentResolver) {
+            if (sForceDefaults) {
+                return DEFAULT_BACKPORT_S_NOTIF_RULES;
+            }
+            return Settings.Global.getInt(contentResolver, Settings.Global.BACKPORT_S_NOTIF_RULES,
+                        DEFAULT_BACKPORT_S_NOTIF_RULES ? 1 : 0) == 1;
+        }
+
+        /**
+         * @return the decoration type to be applied to notifications with fully custom view.
+         * @hide
+         */
+        public static int getFullyCustomViewNotifDecoration(
+                @NonNull ContentResolver contentResolver) {
+            if (sForceDefaults) {
+                return DEFAULT_FULLY_CUSTOM_DECORATION;
+            }
+            final int decoration = Settings.Global.getInt(contentResolver,
+                    Settings.Global.FULLY_CUSTOM_VIEW_NOTIF_DECORATION,
+                    DEFAULT_FULLY_CUSTOM_DECORATION);
+            // clamp to a valid decoration value
+            return Math.max(DECORATION_NONE, Math.min(decoration, DECORATION_FULL_CONSTRAINED));
+        }
+
+        /**
+         * @return the decoration type to be applied to notifications with DecoratedCustomViewStyle.
+         * @hide
+         */
+        public static int getDecoratedCustomViewNotifDecoration(
+                @NonNull ContentResolver contentResolver) {
+            if (sForceDefaults) {
+                return DEFAULT_DECORATED_DECORATION;
+            }
+            final int decoration = Settings.Global.getInt(contentResolver,
+                    Settings.Global.DECORATED_CUSTOM_VIEW_NOTIF_DECORATION,
+                    DEFAULT_DECORATED_DECORATION);
+            // clamp to a valid decoration value (and don't allow decoration to be NONE or MINIMAL)
+            return Math.max(DECORATION_PARTIAL, Math.min(decoration, DECORATION_FULL_CONSTRAINED));
         }
     }
 }

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#define ATRACE_TAG ATRACE_TAG_VIEW
 #include "FontUtils.h"
 #include "GraphicsJNI.h"
 #include "fonts/Font.h"
@@ -25,8 +26,13 @@
 #include <minikin/FontCollection.h>
 #include <minikin/FontFamily.h>
 #include <minikin/SystemFonts.h>
+#include <utils/TraceUtils.h>
+
+#include <mutex>
+#include <unordered_map>
 
 using namespace android;
+using android::uirenderer::TraceUtils;
 
 static inline Typeface* toTypeface(jlong ptr) {
     return reinterpret_cast<Typeface*>(ptr);
@@ -94,13 +100,27 @@ static jint Typeface_getWeight(CRITICAL_JNI_PARAMS_COMMA jlong faceHandle) {
 }
 
 static jlong Typeface_createFromArray(JNIEnv *env, jobject, jlongArray familyArray,
-        int weight, int italic) {
+                                      jlong fallbackPtr, int weight, int italic) {
     ScopedLongArrayRO families(env, familyArray);
     std::vector<std::shared_ptr<minikin::FontFamily>> familyVec;
-    familyVec.reserve(families.size());
-    for (size_t i = 0; i < families.size(); i++) {
-        FontFamilyWrapper* family = reinterpret_cast<FontFamilyWrapper*>(families[i]);
-        familyVec.emplace_back(family->family);
+    Typeface* typeface = (fallbackPtr == 0) ? nullptr : toTypeface(fallbackPtr);
+    if (typeface != nullptr) {
+        const std::vector<std::shared_ptr<minikin::FontFamily>>& fallbackFamilies =
+            toTypeface(fallbackPtr)->fFontCollection->getFamilies();
+        familyVec.reserve(families.size() + fallbackFamilies.size());
+        for (size_t i = 0; i < families.size(); i++) {
+            FontFamilyWrapper* family = reinterpret_cast<FontFamilyWrapper*>(families[i]);
+            familyVec.emplace_back(family->family);
+        }
+        for (size_t i = 0; i < fallbackFamilies.size(); i++) {
+            familyVec.emplace_back(fallbackFamilies[i]);
+        }
+    } else {
+        familyVec.reserve(families.size());
+        for (size_t i = 0; i < families.size(); i++) {
+            FontFamilyWrapper* family = reinterpret_cast<FontFamilyWrapper*>(families[i]);
+            familyVec.emplace_back(family->family);
+        }
     }
     return toJLong(Typeface::createFromFamilies(std::move(familyVec), weight, italic));
 }
@@ -135,6 +155,20 @@ static void Typeface_registerGenericFamily(JNIEnv *env, jobject, jstring familyN
                                            toTypeface(ptr)->fFontCollection);
 }
 
+static sk_sp<SkData> makeSkDataCached(const std::string& path) {
+    // We don't clear cache as Typeface objects created by Typeface_readTypefaces() will be stored
+    // in a static field and will not be garbage collected.
+    static std::unordered_map<std::string, sk_sp<SkData>> cache;
+    static std::mutex mutex;
+    ALOG_ASSERT(!path.empty());
+    std::lock_guard lock{mutex};
+    sk_sp<SkData>& entry = cache[path];
+    if (entry.get() == nullptr) {
+        entry = SkData::MakeFromFileName(path.c_str());
+    }
+    return entry;
+}
+
 static std::function<std::shared_ptr<minikin::MinikinFont>()> readMinikinFontSkia(
         minikin::BufferReader* reader) {
     std::string_view fontPath = reader->readString();
@@ -144,7 +178,15 @@ static std::function<std::shared_ptr<minikin::MinikinFont>()> readMinikinFontSki
     std::tie(axesPtr, axesCount) = reader->readArray<minikin::FontVariation>();
     return [fontPath, fontIndex, axesPtr, axesCount]() -> std::shared_ptr<minikin::MinikinFont> {
         std::string path(fontPath.data(), fontPath.size());
-        sk_sp<SkData> data = SkData::MakeFromFileName(path.c_str());
+        ATRACE_FORMAT("Loading font %s", path.c_str());
+        sk_sp<SkData> data = makeSkDataCached(path);
+        if (data.get() == nullptr) {
+            // This may happen if:
+            // 1. When the process failed to open the file (e.g. invalid path or permission).
+            // 2. When the process failed to map the file (e.g. hitting max_map_count limit).
+            ALOGE("Failed to make SkData from file name: %s", path.c_str());
+            return nullptr;
+        }
         const void* fontPtr = data->data();
         size_t fontSize = data->size();
         std::vector<minikin::FontVariation> axes(axesPtr, axesPtr + axesCount);
@@ -243,7 +285,7 @@ static const JNINativeMethod gTypefaceMethods[] = {
     { "nativeGetReleaseFunc",     "()J",  (void*)Typeface_getReleaseFunc },
     { "nativeGetStyle",           "(J)I",  (void*)Typeface_getStyle },
     { "nativeGetWeight",      "(J)I",  (void*)Typeface_getWeight },
-    { "nativeCreateFromArray",    "([JII)J",
+    { "nativeCreateFromArray",    "([JJII)J",
                                            (void*)Typeface_createFromArray },
     { "nativeSetDefault",         "(J)V",   (void*)Typeface_setDefault },
     { "nativeGetSupportedAxes",   "(J)[I",  (void*)Typeface_getSupportedAxes },

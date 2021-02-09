@@ -32,18 +32,13 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.junit.runners.Parameterized
 
 /**
  * Test Pip Notifications on TV.
  * To run this test: `atest WMShellFlickerTests:TvPipNotificationTests`
  */
 @RequiresDevice
-@RunWith(Parameterized::class)
-class TvPipNotificationTests(rotationName: String, rotation: Int)
-    : TvPipTestBase(rotationName, rotation) {
-
+class TvPipNotificationTests : TvPipTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
@@ -154,10 +149,6 @@ class TvPipNotificationTests(rotationName: String, rotation: Int)
     companion object {
         private const val TITLE_MEDIA_SESSION_PLAYING = "TestApp media is playing"
         private const val TITLE_MEDIA_SESSION_PAUSED = "TestApp media is paused"
-
-        @Parameterized.Parameters(name = "{0}")
-        @JvmStatic
-        fun getParams(): Collection<Array<Any>> = rotationParams
     }
 }
 
@@ -180,4 +171,4 @@ private val StatusBarNotification.deleteIntent: PendingIntent?
     get() = tvExtensions?.getParcelable("delete_intent")
 
 private fun StatusBarNotification.isPipNotificationWithTitle(expectedTitle: String): Boolean =
-    tag == "PipNotification" && title == expectedTitle
+    tag == "TvPip" && title == expectedTitle

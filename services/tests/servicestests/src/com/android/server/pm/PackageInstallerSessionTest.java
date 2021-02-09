@@ -29,6 +29,8 @@ import android.util.AtomicFile;
 import android.util.Slog;
 import android.util.TypedXmlPullParser;
 import android.util.TypedXmlSerializer;
+import android.util.TypedXmlPullParser;
+import android.util.TypedXmlSerializer;
 import android.util.Xml;
 
 import androidx.test.runner.AndroidJUnit4;
@@ -171,6 +173,7 @@ public class PackageInstallerSessionTest {
                 /* installSource */ installSource,
                 /* sessionParams */ params,
                 /* createdMillis */ 0L,
+                /* committedMillis */ 0L,
                 /* stageDir */ mTmpDir,
                 /* stageCid */ null,
                 /* files */ null,

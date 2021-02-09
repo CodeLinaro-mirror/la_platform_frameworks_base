@@ -68,6 +68,7 @@ class QSSecurityFooter implements OnClickListener, DialogInterface.OnClickListen
     private final View mRootView;
     private final TextView mFooterText;
     private final ImageView mFooterIcon;
+    private final ImageView mPrimaryFooterIcon;
     private final Context mContext;
     private final Callback mCallback = new Callback();
     private final SecurityController mSecurityController;
@@ -83,6 +84,7 @@ class QSSecurityFooter implements OnClickListener, DialogInterface.OnClickListen
     private CharSequence mFooterTextContent = null;
     private int mFooterTextId;
     private int mFooterIconId;
+    private Drawable mPrimaryFooterIconDrawable;
 
     @Inject
     QSSecurityFooter(@Named(QS_SECURITY_FOOTER_VIEW) View rootView, Context context,
@@ -92,6 +94,7 @@ class QSSecurityFooter implements OnClickListener, DialogInterface.OnClickListen
         mRootView.setOnClickListener(this);
         mFooterText = mRootView.findViewById(R.id.footer_text);
         mFooterIcon = mRootView.findViewById(R.id.footer_icon);
+        mPrimaryFooterIcon = mRootView.findViewById(R.id.primary_footer_icon);
         mFooterIconId = R.drawable.ic_info_outline;
         mContext = context;
         mMainHandler = mainHandler;
@@ -140,8 +143,6 @@ class QSSecurityFooter implements OnClickListener, DialogInterface.OnClickListen
     }
 
     public void showDeviceMonitoringDialog() {
-        mHost.collapsePanels();
-        // TODO: Delay dialog creation until after panels are collapsed.
         createDialog();
     }
 
@@ -188,6 +189,18 @@ class QSSecurityFooter implements OnClickListener, DialogInterface.OnClickListen
             mFooterIconId = footerIconId;
             mMainHandler.post(mUpdateIcon);
         }
+
+        // Update the primary icon
+        if (isParentalControlsEnabled) {
+            if (mPrimaryFooterIconDrawable == null) {
+                DeviceAdminInfo info = mSecurityController.getDeviceAdminInfo();
+                mPrimaryFooterIconDrawable = mSecurityController.getIcon(info);
+            }
+        } else {
+            mPrimaryFooterIconDrawable = null;
+        }
+        mMainHandler.post(mUpdatePrimaryIcon);
+
         mMainHandler.post(mUpdateDisplayState);
     }
 
@@ -276,6 +289,7 @@ class QSSecurityFooter implements OnClickListener, DialogInterface.OnClickListen
         if (which == DialogInterface.BUTTON_NEGATIVE) {
             final Intent intent = new Intent(Settings.ACTION_ENTERPRISE_PRIVACY_SETTINGS);
             mDialog.dismiss();
+            // This dismisses the shade on opening the activity
             mActivityStarter.postStartActivityDismissingKeyguard(intent, 0);
         }
     }
@@ -532,6 +546,15 @@ class QSSecurityFooter implements OnClickListener, DialogInterface.OnClickListen
         }
     };
 
+    private final Runnable mUpdatePrimaryIcon = new Runnable() {
+        @Override
+        public void run() {
+            mPrimaryFooterIcon.setVisibility(mPrimaryFooterIconDrawable != null
+                    ? View.VISIBLE : View.GONE);
+            mPrimaryFooterIcon.setImageDrawable(mPrimaryFooterIconDrawable);
+        }
+    };
+
     private final Runnable mUpdateDisplayState = new Runnable() {
         @Override
         public void run() {
@@ -581,6 +604,7 @@ class QSSecurityFooter implements OnClickListener, DialogInterface.OnClickListen
         public void onClick(View widget) {
             final Intent intent = new Intent(Settings.ACTION_VPN_SETTINGS);
             mDialog.dismiss();
+            // This dismisses the shade on opening the activity
             mActivityStarter.postStartActivityDismissingKeyguard(intent, 0);
         }
 

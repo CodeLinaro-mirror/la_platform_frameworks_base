@@ -15,37 +15,152 @@
  */
 package android.app.appsearch;
 
+import android.annotation.CallbackExecutor;
 import android.annotation.NonNull;
 import android.annotation.SystemService;
 import android.content.Context;
 import android.os.Bundle;
+import android.os.ParcelableException;
 import android.os.RemoteException;
 
 import com.android.internal.infra.AndroidFuture;
 import com.android.internal.util.Preconditions;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 /**
  * This class provides access to the centralized AppSearch index maintained by the system.
  *
  * <p>Apps can index structured text documents with AppSearch, which can then be retrieved through
  * the query API.
- *
- * @hide
  */
 // TODO(b/148046169): This class header needs a detailed example/tutorial.
 @SystemService(Context.APP_SEARCH_SERVICE)
 public class AppSearchManager {
-    private static final String DEFAULT_DATABASE = "";
+    /**
+     * The default empty database name.
+     * @hide
+     */
+    public static final String DEFAULT_DATABASE_NAME = "";
+
     private final IAppSearchManager mService;
+    private final Context mContext;
 
     /** @hide */
-    public AppSearchManager(@NonNull IAppSearchManager service) {
-        mService = service;
+    public AppSearchManager(@NonNull Context context, @NonNull IAppSearchManager service) {
+        mContext = Objects.requireNonNull(context);
+        mService = Objects.requireNonNull(service);
+    }
+
+    /** Contains information about how to create the search session. */
+    public static final class SearchContext {
+        final String mDatabaseName;
+
+        SearchContext(@NonNull String databaseName) {
+            mDatabaseName = Objects.requireNonNull(databaseName);
+        }
+
+        /**
+         * Returns the name of the database to create or open.
+         *
+         * <p>Databases with different names are fully separate with distinct types, namespaces,
+         * and data.
+         */
+        @NonNull
+        public String getDatabaseName() {
+            return mDatabaseName;
+        }
+
+        /** Builder for {@link SearchContext} objects. */
+        public static final class Builder {
+            private String mDatabaseName = DEFAULT_DATABASE_NAME;
+            private boolean mBuilt = false;
+
+            /**
+             * Sets the name of the database associated with {@link AppSearchSession}.
+             *
+             * <p>{@link AppSearchSession} will create or open a database under the given name.
+             *
+             * <p>Databases with different names are fully separate with distinct types, namespaces,
+             * and data.
+             *
+             * <p>Database name cannot contain {@code '/'}.
+             *
+             * <p>If not specified, defaults to the empty string.
+             *
+             * @param databaseName The name of the database.
+             * @throws IllegalArgumentException if the databaseName contains {@code '/'}.
+             */
+            @NonNull
+            public Builder setDatabaseName(@NonNull String databaseName) {
+                Preconditions.checkState(!mBuilt, "Builder has already been used");
+                Objects.requireNonNull(databaseName);
+                if (databaseName.contains("/")) {
+                    throw new IllegalArgumentException("Database name cannot contain '/'");
+                }
+                mDatabaseName = databaseName;
+                return this;
+            }
+
+            /** Builds a {@link SearchContext} instance. */
+            @NonNull
+            public SearchContext build() {
+                Preconditions.checkState(!mBuilt, "Builder has already been used");
+                mBuilt = true;
+                return new SearchContext(mDatabaseName);
+            }
+        }
+    }
+
+    /**
+     * Creates a new {@link AppSearchSession}.
+     *
+     * <p>This process requires an AppSearch native indexing file system. If it's not created, the
+     * initialization process will create one under the user's credential encrypted directory.
+     *
+     * @param searchContext The {@link SearchContext} contains all information to create a new
+     *                      {@link AppSearchSession}
+     * @param executor      Executor on which to invoke the callback.
+     * @param callback      The {@link AppSearchResult}&lt;{@link AppSearchSession}&gt; of
+     *                      performing this operation. Or a {@link AppSearchResult} with failure
+     *                      reason code and error information.
+     */
+    public void createSearchSession(
+            @NonNull SearchContext searchContext,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull Consumer<AppSearchResult<AppSearchSession>> callback) {
+        Objects.requireNonNull(searchContext);
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(callback);
+        AppSearchSession.createSearchSession(
+                searchContext, mService, mContext.getUserId(), executor, callback);
+    }
+
+    /**
+     * Creates a new {@link GlobalSearchSession}.
+     *
+     * <p>This process requires an AppSearch native indexing file system. If it's not created, the
+     * initialization process will create one under the user's credential encrypted directory.
+     *
+     * @param executor      Executor on which to invoke the callback.
+     * @param callback      The {@link AppSearchResult}&lt;{@link GlobalSearchSession}&gt; of
+     *                      performing this operation. Or a {@link AppSearchResult} with failure
+     *                      reason code and error information.
+     */
+    public void createGlobalSearchSession(
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull Consumer<AppSearchResult<GlobalSearchSession>> callback) {
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(callback);
+        GlobalSearchSession.createGlobalSearchSession(
+                mService, mContext.getUserId(), executor, callback);
     }
 
     /**
@@ -99,7 +214,7 @@ public class AppSearchManager {
      *
      * @param request The schema update request.
      * @return the result of performing this operation.
-     *
+     * @deprecated use {@link AppSearchSession#setSchema} instead.
      * @hide
      */
     @NonNull
@@ -113,9 +228,20 @@ public class AppSearchManager {
         }
         AndroidFuture<AppSearchResult> future = new AndroidFuture<>();
         try {
-            mService.setSchema(DEFAULT_DATABASE, schemaBundles, request.isForceOverride(), future);
+            mService.setSchema(
+                    DEFAULT_DATABASE_NAME,
+                    schemaBundles,
+                    new ArrayList<>(request.getSchemasNotVisibleToSystemUi()),
+                    /*schemasPackageAccessible=*/ Collections.emptyMap(),
+                    request.isForceOverride(),
+                    mContext.getUserId(),
+                    new IAppSearchResultCallback.Stub() {
+                        public void onResult(AppSearchResult result) {
+                            future.complete(result);
+                        }
+                    });
         } catch (RemoteException e) {
-            future.completeExceptionally(e);
+            throw e.rethrowFromSystemServer();
         }
         return getFutureOrThrow(future);
     }
@@ -134,6 +260,9 @@ public class AppSearchManager {
      * {@link AppSearchBatchResult} are the URIs of the input documents. The values are
      * {@code null} if they were successfully indexed, or a failed {@link AppSearchResult}
      * otherwise.
+     * @throws RuntimeException If an error occurred during the execution.
+     *
+     * @deprecated use {@link AppSearchSession#putDocuments} instead.
      * @hide
      */
     public AppSearchBatchResult<String, Void> putDocuments(@NonNull PutDocumentsRequest request) {
@@ -146,7 +275,16 @@ public class AppSearchManager {
         }
         AndroidFuture<AppSearchBatchResult> future = new AndroidFuture<>();
         try {
-            mService.putDocuments(DEFAULT_DATABASE, documentBundles, future);
+            mService.putDocuments(DEFAULT_DATABASE_NAME, documentBundles, mContext.getUserId(),
+                    new IAppSearchBatchResultCallback.Stub() {
+                        public void onResult(AppSearchBatchResult result) {
+                            future.complete(result);
+                        }
+
+                        public void onSystemError(ParcelableException exception) {
+                            future.completeExceptionally(exception);
+                        }
+                    });
         } catch (RemoteException e) {
             future.completeExceptionally(e);
         }
@@ -165,6 +303,10 @@ public class AppSearchManager {
      * {@link GenericDocument}s on success, or a failed {@link AppSearchResult} otherwise.
      * URIs that are not found will return a failed {@link AppSearchResult} with a result code
      * of {@link AppSearchResult#RESULT_NOT_FOUND}.
+     * @throws RuntimeException If an error occurred during the execution.
+     *
+     * @deprecated use {@link AppSearchSession#getByUri} instead.
+     * @hide
      */
     public AppSearchBatchResult<String, GenericDocument> getByUri(
             @NonNull GetByUriRequest request) {
@@ -173,7 +315,17 @@ public class AppSearchManager {
         List<String> uris = new ArrayList<>(request.getUris());
         AndroidFuture<AppSearchBatchResult> future = new AndroidFuture<>();
         try {
-            mService.getDocuments(DEFAULT_DATABASE, request.getNamespace(), uris, future);
+            mService.getDocuments(DEFAULT_DATABASE_NAME, request.getNamespace(), uris,
+                    mContext.getUserId(),
+                    new IAppSearchBatchResultCallback.Stub() {
+                        public void onResult(AppSearchBatchResult result) {
+                            future.complete(result);
+                        }
+
+                        public void onSystemError(ParcelableException exception) {
+                            future.completeExceptionally(exception);
+                        }
+                    });
         } catch (RemoteException e) {
             future.completeExceptionally(e);
         }
@@ -252,6 +404,9 @@ public class AppSearchManager {
      *
      * @param queryExpression Query String to search.
      * @param searchSpec Spec for setting filters, raw query etc.
+     * @throws RuntimeException If an error occurred during the execution.
+     *
+     * @deprecated use AppSearchSession#query instead.
      * @hide
      */
     @NonNull
@@ -259,26 +414,31 @@ public class AppSearchManager {
             @NonNull String queryExpression, @NonNull SearchSpec searchSpec) {
         // TODO(b/146386470): Transmit the result documents as a RemoteStream instead of sending
         //     them in one big list.
-        AndroidFuture<AppSearchResult> searchResultsFuture = new AndroidFuture<>();
+        AndroidFuture<AppSearchResult> future = new AndroidFuture<>();
         try {
-            mService.query(DEFAULT_DATABASE, queryExpression,
-                    searchSpec.getBundle(), searchResultsFuture);
+            mService.query(DEFAULT_DATABASE_NAME, queryExpression, searchSpec.getBundle(),
+                    mContext.getUserId(),
+                    new IAppSearchResultCallback.Stub() {
+                        public void onResult(AppSearchResult result) {
+                            future.complete(result);
+                        }
+                    });
+            AppSearchResult<Bundle> bundleResult = getFutureOrThrow(future);
+            if (!bundleResult.isSuccess()) {
+                return AppSearchResult.newFailedResult(bundleResult.getResultCode(),
+                        bundleResult.getErrorMessage());
+            }
+            SearchResultPage searchResultPage = new SearchResultPage(bundleResult.getResultValue());
+            return AppSearchResult.newSuccessfulResult(searchResultPage.getResults());
         } catch (RemoteException e) {
-            searchResultsFuture.completeExceptionally(e);
+            throw e.rethrowFromSystemServer();
+        } catch (Throwable t) {
+            return AppSearchResult.throwableToFailedResult(t);
         }
-
-        // Translate the Bundle into a searchResultPage.
-        AppSearchResult<Bundle> bundleResult = getFutureOrThrow(searchResultsFuture);
-        if (!bundleResult.isSuccess()) {
-            return AppSearchResult.newFailedResult(bundleResult.getResultCode(),
-                    bundleResult.getErrorMessage());
-        }
-        SearchResultPage searchResultPage = new SearchResultPage(bundleResult.getResultValue());
-        return AppSearchResult.newSuccessfulResult(searchResultPage.getResults());
     }
 
     /**
-     * Deletes {@link GenericDocument}s by URI.
+     * Removes {@link GenericDocument}s by URI.
      *
      * <p>You should not call this method directly; instead, use the {@code AppSearch#delete()} API
      * provided by JetPack.
@@ -289,12 +449,26 @@ public class AppSearchManager {
      * or a failed {@link AppSearchResult} otherwise. URIs that are not found will return a
      * failed {@link AppSearchResult} with a result code of
      * {@link AppSearchResult#RESULT_NOT_FOUND}.
+     * @throws RuntimeException If an error occurred during the execution.
+     *
+     * @deprecated use {@link AppSearchSession#removeByUri} instead.
+     * @hide
      */
     public AppSearchBatchResult<String, Void> removeByUri(@NonNull RemoveByUriRequest request) {
         List<String> uris = new ArrayList<>(request.getUris());
         AndroidFuture<AppSearchBatchResult> future = new AndroidFuture<>();
         try {
-            mService.removeByUri(DEFAULT_DATABASE, request.getNamespace(), uris, future);
+            mService.removeByUri(DEFAULT_DATABASE_NAME, request.getNamespace(), uris,
+                    mContext.getUserId(),
+                    new IAppSearchBatchResultCallback.Stub() {
+                        public void onResult(AppSearchBatchResult result) {
+                            future.complete(result);
+                        }
+
+                        public void onSystemError(ParcelableException exception) {
+                            future.completeExceptionally(exception);
+                        }
+                    });
         } catch (RemoteException e) {
             future.completeExceptionally(e);
         }

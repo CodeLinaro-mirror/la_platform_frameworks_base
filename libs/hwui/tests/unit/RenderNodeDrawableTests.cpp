@@ -198,7 +198,7 @@ TEST(RenderNodeDrawable, saveLayerClipAndMatrixRestore) {
                 EXPECT_TRUE(getRecorderMatrix(recorder).isIdentity());
 
                 // note we don't pass SaveFlags::MatrixClip, but matrix and clip will be saved
-                recorder.saveLayer(0, 0, 400, 400, &layerPaint, SaveFlags::ClipToLayer);
+                recorder.saveLayer(0, 0, 400, 400, &layerPaint);
                 ASSERT_EQ(SkRect::MakeLTRB(0, 0, 400, 400), getRecorderClipBounds(recorder));
                 EXPECT_TRUE(getRecorderMatrix(recorder).isIdentity());
 
@@ -206,7 +206,7 @@ TEST(RenderNodeDrawable, saveLayerClipAndMatrixRestore) {
                 ASSERT_EQ(SkRect::MakeLTRB(50, 50, 350, 350), getRecorderClipBounds(recorder));
 
                 recorder.translate(300.0f, 400.0f);
-                EXPECT_EQ(SkMatrix::MakeTrans(300.0f, 400.0f), getRecorderMatrix(recorder));
+                EXPECT_EQ(SkMatrix::Translate(300.0f, 400.0f), getRecorderMatrix(recorder));
 
                 recorder.restore();
                 ASSERT_EQ(SkRect::MakeLTRB(0, 0, 400, 800), getRecorderClipBounds(recorder));
@@ -938,7 +938,8 @@ RENDERTHREAD_TEST(RenderNodeDrawable, simple) {
         void onDrawRect(const SkRect& rect, const SkPaint& paint) override {
             EXPECT_EQ(0, mDrawCounter++);
         }
-        void onDrawImage(const SkImage*, SkScalar dx, SkScalar dy, const SkPaint*) override {
+        void onDrawImage2(const SkImage*, SkScalar dx, SkScalar dy, const SkSamplingOptions&,
+                          const SkPaint*) override {
             EXPECT_EQ(1, mDrawCounter++);
         }
     };
@@ -1047,7 +1048,7 @@ TEST(RenderNodeDrawable, renderNode) {
     EXPECT_EQ(2, canvas.mDrawCounter);
 }
 
-// Verify that layers are composed with kLow_SkFilterQuality filter quality.
+// Verify that layers are composed with linear filtering.
 RENDERTHREAD_SKIA_PIPELINE_TEST(RenderNodeDrawable, layerComposeQuality) {
     static const int CANVAS_WIDTH = 1;
     static const int CANVAS_HEIGHT = 1;
@@ -1056,10 +1057,12 @@ RENDERTHREAD_SKIA_PIPELINE_TEST(RenderNodeDrawable, layerComposeQuality) {
     class FrameTestCanvas : public TestCanvasBase {
     public:
         FrameTestCanvas() : TestCanvasBase(CANVAS_WIDTH, CANVAS_HEIGHT) {}
-        void onDrawImageRect(const SkImage* image, const SkRect* src, const SkRect& dst,
-                             const SkPaint* paint, SrcRectConstraint constraint) override {
+        void onDrawImageRect2(const SkImage* image, const SkRect& src, const SkRect& dst,
+                              const SkSamplingOptions& sampling, const SkPaint* paint,
+                              SrcRectConstraint constraint) override {
             mDrawCounter++;
-            EXPECT_EQ(kLow_SkFilterQuality, paint->getFilterQuality());
+            EXPECT_FALSE(sampling.useCubic);
+            EXPECT_EQ(SkFilterMode::kLinear, sampling.filter);
         }
     };
 
@@ -1107,27 +1110,27 @@ TEST(ReorderBarrierDrawable, testShadowMatrix) {
             EXPECT_EQ(dy, TRANSLATE_Y);
         }
 
-        virtual void didSetMatrix(const SkMatrix& matrix) override {
+        virtual void didSetM44(const SkM44& matrix) override {
             mDrawCounter++;
             // First invocation is EndReorderBarrierDrawable::drawShadow to apply shadow matrix.
             // Second invocation is preparing the matrix for an elevated RenderNodeDrawable.
-            EXPECT_TRUE(matrix.isIdentity());
+            EXPECT_TRUE(matrix == SkM44());
             EXPECT_TRUE(getTotalMatrix().isIdentity());
         }
 
-        virtual void didConcat(const SkMatrix& matrix) override {
+        virtual void didConcat44(const SkM44& matrix) override {
             mDrawCounter++;
             if (mFirstDidConcat) {
                 // First invocation is EndReorderBarrierDrawable::drawShadow to apply shadow matrix.
                 mFirstDidConcat = false;
-                EXPECT_EQ(SkMatrix::MakeTrans(CASTER_X + TRANSLATE_X, CASTER_Y + TRANSLATE_Y),
+                EXPECT_EQ(SkM44::Translate(CASTER_X + TRANSLATE_X, CASTER_Y + TRANSLATE_Y),
                           matrix);
-                EXPECT_EQ(SkMatrix::MakeTrans(CASTER_X + TRANSLATE_X, CASTER_Y + TRANSLATE_Y),
+                EXPECT_EQ(SkMatrix::Translate(CASTER_X + TRANSLATE_X, CASTER_Y + TRANSLATE_Y),
                           getTotalMatrix());
             } else {
                 // Second invocation is preparing the matrix for an elevated RenderNodeDrawable.
-                EXPECT_EQ(SkMatrix::MakeTrans(TRANSLATE_X, TRANSLATE_Y), matrix);
-                EXPECT_EQ(SkMatrix::MakeTrans(TRANSLATE_X, TRANSLATE_Y), getTotalMatrix());
+                EXPECT_EQ(SkM44::Translate(TRANSLATE_X, TRANSLATE_Y), matrix);
+                EXPECT_EQ(SkMatrix::Translate(TRANSLATE_X, TRANSLATE_Y), getTotalMatrix());
             }
         }
 
@@ -1169,8 +1172,9 @@ RENDERTHREAD_SKIA_PIPELINE_TEST(SkiaRecordingCanvas, drawVectorDrawable) {
     class VectorDrawableTestCanvas : public TestCanvasBase {
     public:
         VectorDrawableTestCanvas() : TestCanvasBase(CANVAS_WIDTH, CANVAS_HEIGHT) {}
-        void onDrawImageRect(const SkImage*, const SkRect* src, const SkRect& dst,
-                              const SkPaint* paint, SrcRectConstraint constraint) override {
+        void onDrawImageRect2(const SkImage*, const SkRect& src, const SkRect& dst,
+                              const SkSamplingOptions&, const SkPaint* paint,
+                              SrcRectConstraint constraint) override {
             const int index = mDrawCounter++;
             switch (index) {
                 case 0:

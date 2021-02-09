@@ -26,11 +26,11 @@
 
 #include <android-base/chrono_utils.h>
 #include <android/graphics/region.h>
+#include <android/gui/BnScreenCaptureListener.h>
 #include <android_runtime/AndroidRuntime.h>
 #include <android_runtime/android_hardware_HardwareBuffer.h>
 #include <android_runtime/android_view_Surface.h>
 #include <android_runtime/android_view_SurfaceSession.h>
-#include <gui/IScreenCaptureListener.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
@@ -51,6 +51,7 @@
 #include <ui/HdrCapabilities.h>
 #include <ui/Rect.h>
 #include <ui/Region.h>
+#include <utils/LightRefBase.h>
 #include <utils/Log.h>
 
 // ----------------------------------------------------------------------------
@@ -206,6 +207,16 @@ static struct {
     jfieldID appRequestRefreshRateMax;
 } gDesiredDisplayConfigSpecsClassInfo;
 
+static struct {
+    jclass clazz;
+    jmethodID onJankDataAvailable;
+} gJankDataListenerClassInfo;
+
+static struct {
+    jclass clazz;
+    jmethodID ctor;
+} gJankDataClassInfo;
+
 class JNamedColorSpace {
 public:
     // ColorSpace.Named.SRGB.ordinal() = 0;
@@ -236,7 +247,7 @@ constexpr ui::Dataspace pickDataspaceFromColorMode(const ui::ColorMode colorMode
     }
 }
 
-class ScreenCaptureListenerWrapper : public BnScreenCaptureListener {
+class ScreenCaptureListenerWrapper : public gui::BnScreenCaptureListener {
 public:
     explicit ScreenCaptureListenerWrapper(JNIEnv* env, jobject jobject) {
         env->GetJavaVM(&mVm);
@@ -251,12 +262,13 @@ public:
         }
     }
 
-    status_t onScreenCaptureComplete(const ScreenCaptureResults& captureResults) override {
+    binder::Status onScreenCaptureComplete(
+            const gui::ScreenCaptureResults& captureResults) override {
         JNIEnv* env = getenv();
         if (captureResults.result != NO_ERROR || captureResults.buffer == nullptr) {
             env->CallVoidMethod(screenCaptureListenerObject,
                                 gScreenCaptureListenerClassInfo.onScreenCaptureComplete, nullptr);
-            return NO_ERROR;
+            return binder::Status::ok();
         }
         jobject jhardwareBuffer = android_hardware_HardwareBuffer_createFromAHardwareBuffer(
                 env, captureResults.buffer->toAHardwareBuffer());
@@ -272,7 +284,7 @@ public:
                             screenshotHardwareBuffer);
         env->DeleteLocalRef(jhardwareBuffer);
         env->DeleteLocalRef(screenshotHardwareBuffer);
-        return NO_ERROR;
+        return binder::Status::ok();
     }
 
 private:
@@ -738,14 +750,15 @@ static void nativeSetShadowRadius(JNIEnv* env, jclass clazz, jlong transactionOb
 }
 
 static void nativeSetFrameRate(JNIEnv* env, jclass clazz, jlong transactionObj, jlong nativeObject,
-                               jfloat frameRate, jint compatibility) {
+                               jfloat frameRate, jint compatibility, jboolean shouldBeSeamless) {
     auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
 
     const auto ctrl = reinterpret_cast<SurfaceControl*>(nativeObject);
     // Our compatibility is a Surface.FRAME_RATE_COMPATIBILITY_* value, and
     // Transaction::setFrameRate() takes an ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_* value. The
     // values are identical though, so no need to convert anything.
-    transaction->setFrameRate(ctrl, frameRate, static_cast<int8_t>(compatibility));
+    transaction->setFrameRate(ctrl, frameRate, static_cast<int8_t>(compatibility),
+                              bool(shouldBeSeamless));
 }
 
 static jlong nativeAcquireFrameRateFlexibilityToken(JNIEnv* env, jclass clazz) {
@@ -1600,6 +1613,78 @@ static void nativeSetFrameTimelineVsync(JNIEnv* env, jclass clazz, jlong transac
     transaction->setFrameTimelineVsync(frameTimelineVsyncId);
 }
 
+class JankDataListenerWrapper : public JankDataListener {
+public:
+    JankDataListenerWrapper(JNIEnv* env, jobject onJankDataListenerObject) {
+        mOnJankDataListenerWeak = env->NewWeakGlobalRef(onJankDataListenerObject);
+        env->GetJavaVM(&mVm);
+    }
+
+    ~JankDataListenerWrapper() {
+        JNIEnv* env = getEnv();
+        env->DeleteWeakGlobalRef(mOnJankDataListenerWeak);
+    }
+
+    void onJankDataAvailable(const std::vector<JankData>& jankData) {
+        JNIEnv* env = getEnv();
+
+        jobject target = env->NewLocalRef(mOnJankDataListenerWeak);
+        if (target == nullptr) return;
+
+        jobjectArray jJankDataArray = env->NewObjectArray(jankData.size(),
+                gJankDataClassInfo.clazz, nullptr);
+        for (int i = 0; i < jankData.size(); i++) {
+            jobject jJankData = env->NewObject(gJankDataClassInfo.clazz,
+                    gJankDataClassInfo.ctor, jankData[i].frameVsyncId, jankData[i].jankType);
+            env->SetObjectArrayElement(jJankDataArray, i, jJankData);
+        }
+        env->CallVoidMethod(target,
+                gJankDataListenerClassInfo.onJankDataAvailable,
+                jJankDataArray);
+        env->DeleteLocalRef(target);
+    }
+
+private:
+
+    JNIEnv* getEnv() {
+        JNIEnv* env;
+        mVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+        return env;
+    }
+
+    JavaVM* mVm;
+    jobject mOnJankDataListenerWeak;
+};
+
+static void nativeAddJankDataListener(JNIEnv* env, jclass clazz,
+                                       jlong jankDataCallbackListenerPtr,
+                                       jlong nativeSurfaceControl) {
+    sp<SurfaceControl> surface(reinterpret_cast<SurfaceControl *>(nativeSurfaceControl));
+    if (surface == nullptr) {
+        return;
+    }
+    sp<JankDataListenerWrapper> wrapper =
+            reinterpret_cast<JankDataListenerWrapper*>(jankDataCallbackListenerPtr);
+    TransactionCompletedListener::getInstance()->addJankListener(wrapper, surface);
+}
+
+static void nativeRemoveJankDataListener(JNIEnv* env, jclass clazz,
+                                          jlong jankDataCallbackListenerPtr) {
+    sp<JankDataListenerWrapper> wrapper =
+            reinterpret_cast<JankDataListenerWrapper*>(jankDataCallbackListenerPtr);
+    TransactionCompletedListener::getInstance()->removeJankListener(wrapper);
+}
+
+static jlong nativeCreateJankDataListenerWrapper(JNIEnv* env, jclass clazz,
+                                                 jobject jankDataListenerObject) {
+    return reinterpret_cast<jlong>(
+            new JankDataListenerWrapper(env, jankDataListenerObject));
+}
+
+static jint nativeGetGPUContextPriority(JNIEnv* env, jclass clazz) {
+    return static_cast<jint>(SurfaceComposerClient::getGPUContextPriority());
+}
+
 // ----------------------------------------------------------------------------
 
 static const JNINativeMethod sSurfaceControlMethods[] = {
@@ -1668,7 +1753,7 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
             (void*)nativeSetBlurRegions },
     {"nativeSetShadowRadius", "(JJF)V",
             (void*)nativeSetShadowRadius },
-    {"nativeSetFrameRate", "(JJFI)V",
+    {"nativeSetFrameRate", "(JJFIZ)V",
             (void*)nativeSetFrameRate },
     {"nativeAcquireFrameRateFlexibilityToken", "()J",
             (void*)nativeAcquireFrameRateFlexibilityToken },
@@ -1784,6 +1869,14 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
             (void*)nativeSetFocusedWindow},
     {"nativeSetFrameTimelineVsync", "(JJ)V",
             (void*)nativeSetFrameTimelineVsync },
+    {"nativeAddJankDataListener", "(JJ)V",
+            (void*)nativeAddJankDataListener },
+    {"nativeRemoveJankDataListener", "(J)V",
+            (void*)nativeRemoveJankDataListener },
+    {"nativeCreateJankDataListenerWrapper", "(Landroid/view/SurfaceControl$OnJankDataListener;)J",
+            (void*)nativeCreateJankDataListenerWrapper },
+    {"nativeGetGPUContextPriority", "()I",
+            (void*)nativeGetGPUContextPriority },
         // clang-format on
 };
 
@@ -1965,6 +2058,18 @@ int register_android_view_SurfaceControl(JNIEnv* env)
     gScreenCaptureListenerClassInfo.onScreenCaptureComplete =
             GetMethodIDOrDie(env, screenCaptureListenerClazz, "onScreenCaptureComplete",
                              "(Landroid/view/SurfaceControl$ScreenshotHardwareBuffer;)V");
+
+    jclass jankDataClazz =
+                FindClassOrDie(env, "android/view/SurfaceControl$JankData");
+    gJankDataClassInfo.clazz = MakeGlobalRefOrDie(env, jankDataClazz);
+    gJankDataClassInfo.ctor =
+            GetMethodIDOrDie(env, gJankDataClassInfo.clazz, "<init>", "(JI)V");
+    jclass onJankDataListenerClazz =
+            FindClassOrDie(env, "android/view/SurfaceControl$OnJankDataListener");
+    gJankDataListenerClassInfo.clazz = MakeGlobalRefOrDie(env, onJankDataListenerClazz);
+    gJankDataListenerClassInfo.onJankDataAvailable =
+            GetMethodIDOrDie(env, onJankDataListenerClazz, "onJankDataAvailable",
+                             "([Landroid/view/SurfaceControl$JankData;)V");
     return err;
 }
 

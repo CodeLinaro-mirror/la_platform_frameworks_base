@@ -1018,6 +1018,20 @@ public final class Settings {
             "android.settings.MANAGE_ALL_APPLICATIONS_SETTINGS";
 
     /**
+     * Activity Action: Show settings to manage all SIM profiles.
+     * <p>
+     * In some cases, a matching Activity may not exist, so ensure you
+     * safeguard against this.
+     * <p>
+     * Input: Nothing.
+     * <p>
+     * Output: Nothing.
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_MANAGE_ALL_SUBSCRIPTIONS_SETTINGS =
+            "android.settings.MANAGE_ALL_SUBSCRIPTIONS_SETTINGS";
+
+    /**
      * Activity Action: Show screen for controlling which apps can draw on top of other apps.
      * <p>
      * In some cases, a matching Activity may not exist, so ensure you safeguard against this.
@@ -1848,7 +1862,7 @@ public final class Settings {
 
     /**
      * Activity Action: Show notification bubble settings for a single app.
-     * See {@link NotificationManager#areBubblesAllowed()}.
+     * See {@link NotificationManager#getBubblePreference()}.
      * <p>
      *     Input: {@link #EXTRA_APP_PACKAGE}, the package to display.
      * <p>
@@ -3060,6 +3074,7 @@ public final class Settings {
         // com.android.providers.settings.SettingsProtoDumpUtil#dumpProtoSystemSettingsLocked.
 
         private static final float DEFAULT_FONT_SCALE = 1.0f;
+        private static final int DEFAULT_FONT_WEIGHT = 0;
 
         /**
          * The content:// style URL for this table
@@ -3580,9 +3595,8 @@ public final class Settings {
             if (outConfig.fontScale < 0) {
                 outConfig.fontScale = DEFAULT_FONT_SCALE;
             }
-            outConfig.forceBoldText = Settings.Secure.getIntForUser(
-                    cr, Settings.Secure.FORCE_BOLD_TEXT, Configuration.FORCE_BOLD_TEXT_NO,
-                    userHandle);
+            outConfig.fontWeightAdjustment = Settings.Secure.getIntForUser(
+                    cr, Settings.Secure.FONT_WEIGHT_ADJUSTMENT, DEFAULT_FONT_WEIGHT, userHandle);
 
             final String localeValue =
                     Settings.System.getStringForUser(cr, SYSTEM_LOCALES, userHandle);
@@ -3613,7 +3627,7 @@ public final class Settings {
             if (!inoutConfig.userSetLocale && !inoutConfig.getLocales().isEmpty()) {
                 inoutConfig.clearLocales();
             }
-            inoutConfig.forceBoldText = Configuration.FORCE_BOLD_TEXT_UNDEFINED;
+            inoutConfig.fontWeightAdjustment = Configuration.FONT_WEIGHT_ADJUSTMENT_UNDEFINED;
         }
 
         /**
@@ -6814,17 +6828,16 @@ public final class Settings {
         public static final String KEYGUARD_SLICE_URI = "keyguard_slice_uri";
 
         /**
-         * Whether to draw text in bold.
+         * The adjustment in font weight. This is used to draw text in bold.
          *
-         * <p>Values:
-         *  1 - Text is not displayed in bold. (Default)
-         *  2 - Text is displayed in bold.
+         * <p> This value can be negative. To display bolded text, the adjustment used is 300,
+         * which is the difference between
+         * {@link android.graphics.fonts.FontStyle#FONT_WEIGHT_NORMAL} and
+         * {@link android.graphics.fonts.FontStyle#FONT_WEIGHT_BOLD}.
          *
-         * @see Configuration#FORCE_BOLD_TEXT_NO
-         * @see Configuration#FORCE_BOLD_TEXT_YES
          * @hide
          */
-        public static final String FORCE_BOLD_TEXT = "force_bold_text";
+        public static final String FONT_WEIGHT_ADJUSTMENT = "font_weight_adjustment";
 
         /**
          * Whether to speak passwords while in accessibility mode.
@@ -7761,6 +7774,32 @@ public final class Settings {
                 "minimal_post_processing_allowed";
 
         /**
+         * No mode switching will happen.
+         *
+         * @see #MATCH_CONTENT_FRAME_RATE
+         * @hide
+         */
+        public static final int MATCH_CONTENT_FRAMERATE_NEVER = 0;
+
+        /**
+         * Allow only refresh rate switching between modes in the same configuration group.
+         * This way only switches without visual interruptions for the user will be allowed.
+         *
+         * @see #MATCH_CONTENT_FRAME_RATE
+         * @hide
+         */
+        public static final int MATCH_CONTENT_FRAMERATE_SEAMLESSS_ONLY = 1;
+
+        /**
+         * Allow refresh rate switching between all refresh rates even if the switch will have
+         * visual interruptions for the user.
+         *
+         * @see #MATCH_CONTENT_FRAME_RATE
+         * @hide
+         */
+        public static final int MATCH_CONTENT_FRAMERATE_ALWAYS = 2;
+
+        /**
          * User's preference for refresh rate switching.
          *
          * <p>Values:
@@ -7770,6 +7809,9 @@ public final class Settings {
          *     for the user.
          *
          * @see android.view.Surface#setFrameRate
+         * @see #MATCH_CONTENT_FRAMERATE_NEVER
+         * @see #MATCH_CONTENT_FRAMERATE_SEAMLESSS_ONLY
+         * @see #MATCH_CONTENT_FRAMERATE_ALWAYS
          * @hide
          */
         public static final String MATCH_CONTENT_FRAME_RATE =
@@ -9073,8 +9115,8 @@ public final class Settings {
          * Controls magnification mode when magnification is enabled via a system-wide triple tap
          * gesture or the accessibility shortcut.
          *
-         * @see#ACCESSIBILITY_MAGNIFICATION_MODE_FULLSCREEN
-         * @see#ACCESSIBILITY_MAGNIFICATION_MODE_WINDOW
+         * @see #ACCESSIBILITY_MAGNIFICATION_MODE_FULLSCREEN
+         * @see #ACCESSIBILITY_MAGNIFICATION_MODE_WINDOW
          * @hide
          */
         @TestApi
@@ -9107,9 +9149,9 @@ public final class Settings {
          * Controls magnification capability. Accessibility magnification is capable of at least one
          * of the magnification modes.
          *
-         * @see#ACCESSIBILITY_MAGNIFICATION_MODE_FULLSCREEN
-         * @see#ACCESSIBILITY_MAGNIFICATION_MODE_WINDOW
-         * @see#ACCESSIBILITY_MAGNIFICATION_MODE_ALL
+         * @see #ACCESSIBILITY_MAGNIFICATION_MODE_FULLSCREEN
+         * @see #ACCESSIBILITY_MAGNIFICATION_MODE_WINDOW
+         * @see #ACCESSIBILITY_MAGNIFICATION_MODE_ALL
          * @hide
          */
         @TestApi
@@ -9118,12 +9160,77 @@ public final class Settings {
 
         /**
          *  Whether to show the window magnification prompt dialog when the user uses full-screen
-         *  magnification first time after database is upgraded .
+         *  magnification first time after database is upgraded.
          *
          * @hide
          */
         public static final String ACCESSIBILITY_SHOW_WINDOW_MAGNIFICATION_PROMPT =
                 "accessibility_show_window_magnification_prompt";
+
+        /**
+         * Controls the accessibility button mode. System will force-set the value to {@link
+         * #ACCESSIBILITY_BUTTON_MODE_FLOATING_MENU} if {@link #NAVIGATION_MODE} is fully
+         * gestural.
+         * <ul>
+         *    <li> 0 = button in navigation bar </li>
+         *    <li> 1 = button floating on the display </li>
+         * </ul>
+         *
+         * @see #ACCESSIBILITY_BUTTON_MODE_NAVIGATION_BAR
+         * @see #ACCESSIBILITY_BUTTON_MODE_FLOATING_MENU
+         * @hide
+         */
+        public static final String ACCESSIBILITY_BUTTON_MODE =
+                "accessibility_button_mode";
+
+        /**
+         * Accessibility button mode value that specifying the accessibility service or feature to
+         * be toggled via the button in the navigation bar.
+         *
+         * @hide
+         */
+        public static final int ACCESSIBILITY_BUTTON_MODE_NAVIGATION_BAR = 0x0;
+
+        /**
+         * Accessibility button mode value that specifying the accessibility service or feature to
+         * be toggled via the button floating on the display.
+         *
+         * @hide
+         */
+        public static final int ACCESSIBILITY_BUTTON_MODE_FLOATING_MENU = 0x1;
+
+        /**
+         * The size of the accessibility floating menu.
+         * <ul>
+         *     <li> 0 = small size
+         *     <li> 1 = large size
+         * </ul>
+         *
+         * @hide
+         */
+        public static final String ACCESSIBILITY_FLOATING_MENU_SIZE =
+                "accessibility_floating_menu_size";
+
+        /**
+         * The icon type of the accessibility floating menu.
+         * <ul>
+         *     <li> 0 = full circle type
+         *     <li> 1 = half circle type
+         * </ul>
+         *
+         * @hide
+         */
+        public static final String ACCESSIBILITY_FLOATING_MENU_ICON_TYPE =
+                "accessibility_floating_menu_icon_type";
+
+        /**
+         * The opacity value for the accessibility floating menu fade out effect, from 0.0
+         * (transparent) to 1.0 (opaque).
+         *
+         * @hide
+         */
+        public static final String ACCESSIBILITY_FLOATING_MENU_OPACITY =
+                "accessibility_floating_menu_opacity";
 
         /**
          * Whether the Adaptive connectivity option is enabled.
@@ -9789,12 +9896,13 @@ public final class Settings {
                 "use_blast_adapter_sv";
 
         /**
-         * If {@code true}, vendor provided window manager display settings will be ignored.
-         * (0 = false, 1 = true)
+         * Path to the WindowManager display settings file. If unset, the default file path will
+         * be used.
+         *
          * @hide
          */
-        public static final String DEVELOPMENT_IGNORE_VENDOR_DISPLAY_SETTINGS =
-                "ignore_vendor_display_settings";
+        public static final String DEVELOPMENT_WM_DISPLAY_SETTINGS_PATH =
+                "wm_display_settings_path";
 
        /**
         * Whether user has enabled development settings.
@@ -9953,13 +10061,13 @@ public final class Settings {
          * upon going to sleep. It additionally controls whether a playback device attempts to turn
          * on the connected Audio system when waking up. Supported values are:
          * <ul>
-         * <li>{@link HdmiControlManager#SEND_STANDBY_ON_SLEEP_TO_TV} Upon going to sleep, device
+         * <li>{@link HdmiControlManager#POWER_CONTROL_MODE_TV} Upon going to sleep, device
          * sends {@code <Standby>} to TV only. Upon waking up, device does not turn on the Audio
          * system via {@code <System Audio Mode Request>}.</li>
-         * <li>{@link HdmiControlManager#SEND_STANDBY_ON_SLEEP_BROADCAST} Upon going to sleep,
+         * <li>{@link HdmiControlManager#POWER_CONTROL_MODE_BROADCAST} Upon going to sleep,
          * device sends {@code <Standby>} to all devices in the network. Upon waking up, device
          * attempts to turn on the Audio system via {@code <System Audio Mode Request>}.</li>
-         * <li>{@link HdmiControlManager#SEND_STANDBY_ON_SLEEP_NONE} Upon going to sleep, device
+         * <li>{@link HdmiControlManager#POWER_CONTROL_MODE_NONE} Upon going to sleep, device
          * does not send any {@code <Standby>} message. Upon waking up, device does not turn on the
          * Audio system via {@code <System Audio Mode Request>}.</li>
          * </ul>
@@ -11708,24 +11816,6 @@ public final class Settings {
                 "battery_saver_device_specific_constants";
 
         /**
-         * Settings for adaptive Battery Saver mode. Uses the same flags as
-         * {@link #BATTERY_SAVER_CONSTANTS}.
-         *
-         * @hide
-         */
-        public static final String BATTERY_SAVER_ADAPTIVE_CONSTANTS =
-                "battery_saver_adaptive_constants";
-
-        /**
-         * Device specific settings for adaptive Battery Saver mode. Uses the same flags as
-         * {@link #BATTERY_SAVER_DEVICE_SPECIFIC_CONSTANTS}.
-         *
-         * @hide
-         */
-        public static final String BATTERY_SAVER_ADAPTIVE_DEVICE_SPECIFIC_CONSTANTS =
-                "battery_saver_adaptive_device_specific_constants";
-
-        /**
          * Battery tip specific settings
          * This is encoded as a key=value list, separated by commas. Ex:
          *
@@ -13278,16 +13368,6 @@ public final class Settings {
                 "storage_settings_clobber_threshold";
 
         /**
-         * If set to 1, {@link Secure#LOCATION_MODE} will be set to {@link Secure#LOCATION_MODE_OFF}
-         * temporarily for all users.
-         *
-         * @hide
-         */
-        @TestApi
-        public static final String LOCATION_GLOBAL_KILL_SWITCH =
-                "location_global_kill_switch";
-
-        /**
          * If set to 1, SettingsProvider's restoreAnyVersion="true" attribute will be ignored
          * and restoring to lower version of platform API will be skipped.
          *
@@ -13382,6 +13462,16 @@ public final class Settings {
         @TestApi
         public static final String HIDDEN_API_POLICY = "hidden_api_policy";
 
+         /**
+         * Flag for forcing {@link com.android.server.compat.OverrideValidatorImpl}
+         * to consider this a non-debuggable build.
+         *
+         * @hide
+         */
+        public static final String FORCE_NON_DEBUGGABLE_FINAL_BUILD_FOR_COMPAT =
+                "force_non_debuggable_final_build_for_compat";
+
+
         /**
          * Current version of signed configuration applied.
          *
@@ -13406,11 +13496,6 @@ public final class Settings {
          */
         public static final String MAX_SOUND_TRIGGER_DETECTION_SERVICE_OPS_PER_DAY =
                 "max_sound_trigger_detection_service_ops_per_day";
-
-        /** {@hide} */
-        public static final String ISOLATED_STORAGE_LOCAL = "isolated_storage_local";
-        /** {@hide} */
-        public static final String ISOLATED_STORAGE_REMOTE = "isolated_storage_remote";
 
         /**
          * Indicates whether aware is available in the current location.
@@ -14508,10 +14593,11 @@ public final class Settings {
         public static final String SHOW_PEOPLE_SPACE = "show_people_space";
 
         /**
-         * Which types of conversations to show in People Space.
+         * Which types of conversation(s) to show in People Space.
          * Values are:
-         * 0: All conversations (default)
+         * 0: Single user-selected conversation (default)
          * 1: Priority conversations only
+         * 2: All conversations
          * @hide
          */
         public static final String PEOPLE_SPACE_CONVERSATION_TYPE =
@@ -14534,6 +14620,48 @@ public final class Settings {
          * @hide
          */
         public static final String SHOW_NEW_NOTIF_DISMISS = "show_new_notif_dismiss";
+
+        /**
+         * Whether to enforce the new notification rules (aka rules that are only applied to
+         * notifications from apps targeting S) on all notifications.
+         * - Collapsed custom view notifications will get the new 76dp height instead of 106dp.
+         * - Custom view notifications will be partially decorated.
+         * - Large icons will be given an aspect ratio of up to 16:9.
+         *
+         * Values are:
+         * 0: Disabled (Only apps targeting S will receive the new rules)
+         * 1: Enabled (All apps will receive the new rules)
+         * @hide
+         */
+        public static final String BACKPORT_S_NOTIF_RULES = "backport_s_notif_rules";
+
+        /**
+         * The decoration to put on fully custom views that target S.
+         *
+         * <p>Values are:
+         * <br>0: DECORATION_NONE: no decorations.
+         * <br>1: DECORATION_MINIMAL: most minimal template; just the icon and the expander.
+         * <br>2: DECORATION_PARTIAL: basic template without the top line.
+         * <br>3: DECORATION_FULL_COMPATIBLE: basic template with the top line; 40dp of height.
+         * <br>4: DECORATION_FULL_CONSTRAINED: basic template with the top line;  28dp of height.
+         * <p>See {@link android.app.Notification.DevFlags} for more details.
+         * @hide
+         */
+        public static final String FULLY_CUSTOM_VIEW_NOTIF_DECORATION =
+                "fully_custom_view_notif_decoration";
+
+        /**
+         * The decoration to put on decorated custom views that target S.
+         *
+         * <p>Values are:
+         * <br>2: DECORATION_PARTIAL: basic template without the top line.
+         * <br>3: DECORATION_FULL_COMPATIBLE: basic template with the top line; 40dp of height.
+         * <br>4: DECORATION_FULL_CONSTRAINED: basic template with the top line;  28dp of height.
+         * <p>See {@link android.app.Notification.DevFlags} for more details.
+         * @hide
+         */
+        public static final String DECORATED_CUSTOM_VIEW_NOTIF_DECORATION =
+                "decorated_custom_view_notif_decoration";
 
         /**
          * Block untrusted touches mode.
@@ -14578,17 +14706,15 @@ public final class Settings {
                 "maximum_obscuring_opacity_for_touch";
 
         /**
-         * LatencyTracker settings.
+         * Used to enable / disable the Restricted Networking Mode in which network access is
+         * restricted to apps holding the CONNECTIVITY_USE_RESTRICTED_NETWORKS permission.
          *
-         * The following strings are supported as keys:
-         * <pre>
-         *     enabled              (boolean)
-         *     sampling_interval    (int)
-         * </pre>
-         *
+         * Values are:
+         * 0: disabled
+         * 1: enabled
          * @hide
          */
-        public static final String LATENCY_TRACKER = "latency_tracker";
+        public static final String RESTRICTED_NETWORKING_MODE = "restricted_networking_mode";
     }
 
     /**

@@ -21,6 +21,8 @@ import org.junit.runners.Suite;
 
 @RunWith(Suite.class)
 @Suite.SuiteClasses({
+        AmbientDisplayPowerCalculatorTest.class,
+        AudioPowerCalculatorTest.class,
         BatteryStatsCpuTimesTest.class,
         BatteryStatsBackgroundStatsTest.class,
         BatteryStatsBinderCallStatsTest.class,
@@ -38,8 +40,13 @@ import org.junit.runners.Suite;
         BatteryStatsTimeBaseTest.class,
         BatteryStatsTimerTest.class,
         BatteryStatsUidTest.class,
+        BatteryUsageStatsTest.class,
         BatteryStatsUserLifecycleTests.class,
+        BluetoothPowerCalculatorTest.class,
         BstatsCpuTimesValidationTest.class,
+        CameraPowerCalculatorTest.class,
+        FlashlightPowerCalculatorTest.class,
+        IdlePowerCalculatorTest.class,
         KernelCpuProcStringReaderTest.class,
         KernelCpuUidActiveTimeReaderTest.class,
         KernelCpuUidBpfMapReaderTest.class,
@@ -52,7 +59,12 @@ import org.junit.runners.Suite;
         LongSamplingCounterTest.class,
         LongSamplingCounterArrayTest.class,
         PowerCalculatorTest.class,
-        PowerProfileTest.class
+        PowerProfileTest.class,
+        ScreenPowerCalculatorTest.class,
+        SystemServicePowerCalculatorTest.class,
+        VideoPowerCalculatorTest.class,
+
+        com.android.internal.power.MeasuredEnergyStatsTest.class
     })
 public class BatteryStatsTests {
 }

@@ -199,6 +199,7 @@ public abstract class WallpaperService extends Service {
         final InsetsSourceControl[] mTempControls = new InsetsSourceControl[0];
         final MergedConfiguration mMergedConfiguration = new MergedConfiguration();
         private final Point mSurfaceSize = new Point();
+        private final Point mLastSurfaceSize = new Point();
         private final Matrix mTmpMatrix = new Matrix();
         private final float[] mTmpValues = new float[9];
 
@@ -880,8 +881,7 @@ public abstract class WallpaperService extends Service {
 
                         if (mSession.addToDisplay(mWindow, mLayout, View.VISIBLE,
                                 mDisplay.getDisplayId(), mInsetsState, mWinFrames.frame,
-                                mWinFrames.displayCutout, inputChannel, mInsetsState,
-                                mTempControls) < 0) {
+                                inputChannel, mInsetsState, mTempControls) < 0) {
                             Log.w(TAG, "Failed to add window while updating wallpaper surface.");
                             return;
                         }
@@ -908,6 +908,14 @@ public abstract class WallpaperService extends Service {
                     if (mSurfaceControl.isValid()) {
                         mSurfaceHolder.mSurface.copyFrom(mSurfaceControl);
                     }
+                    if (!mLastSurfaceSize.equals(mSurfaceSize)) {
+                        mLastSurfaceSize.set(mSurfaceSize.x, mSurfaceSize.y);
+                        if (mSurfaceControl != null && mSurfaceControl.isValid()) {
+                            SurfaceControl.Transaction t = new SurfaceControl.Transaction();
+                            t.setBufferSize(mSurfaceControl, mSurfaceSize.x, mSurfaceSize.y);
+                            t.apply();
+                        }
+                    }
 
                     if (DEBUG) Log.v(TAG, "New surface: " + mSurfaceHolder.mSurface
                             + ", frame=" + mWinFrames);
@@ -915,13 +923,13 @@ public abstract class WallpaperService extends Service {
                     int w = mWinFrames.frame.width();
                     int h = mWinFrames.frame.height();
 
-                    final DisplayCutout rawCutout = mWinFrames.displayCutout.get();
+                    final DisplayCutout rawCutout = mInsetsState.getDisplayCutout();
                     final Configuration config = getResources().getConfiguration();
                     final Rect visibleFrame = new Rect(mWinFrames.frame);
                     visibleFrame.intersect(mInsetsState.getDisplayFrame());
                     WindowInsets windowInsets = mInsetsState.calculateInsets(visibleFrame,
                             null /* ignoringVisibilityState */, config.isScreenRound(),
-                            false /* alwaysConsumeSystemBars */, rawCutout, mLayout.softInputMode,
+                            false /* alwaysConsumeSystemBars */, mLayout.softInputMode,
                             mLayout.flags, SYSTEM_UI_FLAG_VISIBLE, mLayout.type,
                             config.windowConfiguration.getWindowingMode(), null /* typeSideMap */);
 

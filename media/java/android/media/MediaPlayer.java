@@ -1352,7 +1352,6 @@ public class MediaPlayer extends PlayerBase
     }
 
     private void startImpl() {
-        baseStart();
         stayAwake(true);
         _start();
     }
@@ -1378,7 +1377,6 @@ public class MediaPlayer extends PlayerBase
     public void stop() throws IllegalStateException {
         stayAwake(false);
         _stop();
-        baseStop();
     }
 
     private native void _stop() throws IllegalStateException;
@@ -1392,7 +1390,6 @@ public class MediaPlayer extends PlayerBase
     public void pause() throws IllegalStateException {
         stayAwake(false);
         _pause();
-        basePause();
     }
 
     private native void _pause() throws IllegalStateException;
@@ -1487,23 +1484,75 @@ public class MediaPlayer extends PlayerBase
         if (deviceId == 0) {
             return null;
         }
-        AudioDeviceInfo[] devices =
-                AudioManager.getDevicesStatic(AudioManager.GET_DEVICES_OUTPUTS);
-        for (int i = 0; i < devices.length; i++) {
-            if (devices[i].getId() == deviceId) {
-                return devices[i];
+        return AudioManager.getDeviceForPortId(deviceId, AudioManager.GET_DEVICES_OUTPUTS);
+    }
+
+
+    /**
+     * Sends device list change notification to all listeners.
+     */
+    private void broadcastRoutingChange() {
+        AudioManager.resetAudioPortGeneration();
+        synchronized (mRoutingChangeListeners) {
+            // Prevent the case where an event is triggered by registering a routing change
+            // listener via the media player.
+            if (mEnableSelfRoutingMonitor) {
+                baseUpdateDeviceId(getRoutedDevice());
+            }
+            for (NativeRoutingEventHandlerDelegate delegate
+                    : mRoutingChangeListeners.values()) {
+                delegate.notifyClient();
             }
         }
-        return null;
+    }
+
+    /**
+     * Call BEFORE adding a routing callback handler and when enabling self routing listener
+     * @return returns true for success, false otherwise.
+     */
+    @GuardedBy("mRoutingChangeListeners")
+    private boolean testEnableNativeRoutingCallbacksLocked() {
+        if (mRoutingChangeListeners.size() == 0 && !mEnableSelfRoutingMonitor) {
+            try {
+                native_enableDeviceCallback(true);
+                return true;
+            } catch (IllegalStateException e) {
+                // Fail silently as media player state could have changed in between start
+                // and enabling routing callback, return false to indicate not enabled
+            }
+        }
+        return false;
+    }
+
+    private void  tryToEnableNativeRoutingCallback() {
+        synchronized (mRoutingChangeListeners) {
+            if (!mEnableSelfRoutingMonitor) {
+                mEnableSelfRoutingMonitor = testEnableNativeRoutingCallbacksLocked();
+            }
+        }
+    }
+
+    private void tryToDisableNativeRoutingCallback() {
+        synchronized (mRoutingChangeListeners) {
+            if (mEnableSelfRoutingMonitor) {
+                mEnableSelfRoutingMonitor = false;
+                testDisableNativeRoutingCallbacksLocked();
+            }
+        }
     }
 
     /*
-     * Call BEFORE adding a routing callback handler or AFTER removing a routing callback handler.
+     * Call AFTER removing a routing callback handler and when disabling self routing listener
      */
     @GuardedBy("mRoutingChangeListeners")
-    private void enableNativeRoutingCallbacksLocked(boolean enabled) {
-        if (mRoutingChangeListeners.size() == 0) {
-            native_enableDeviceCallback(enabled);
+    private void testDisableNativeRoutingCallbacksLocked() {
+        if (mRoutingChangeListeners.size() == 0 && !mEnableSelfRoutingMonitor) {
+            try {
+                native_enableDeviceCallback(false);
+            } catch (IllegalStateException e) {
+                // Fail silently as media player state could have changed in between stop
+                // and disabling routing callback
+            }
         }
     }
 
@@ -1515,6 +1564,9 @@ public class MediaPlayer extends PlayerBase
     @GuardedBy("mRoutingChangeListeners")
     private ArrayMap<AudioRouting.OnRoutingChangedListener,
             NativeRoutingEventHandlerDelegate> mRoutingChangeListeners = new ArrayMap<>();
+
+    @GuardedBy("mRoutingChangeListeners")
+    private boolean mEnableSelfRoutingMonitor;
 
     /**
      * Adds an {@link AudioRouting.OnRoutingChangedListener} to receive notifications of routing
@@ -1529,7 +1581,7 @@ public class MediaPlayer extends PlayerBase
             Handler handler) {
         synchronized (mRoutingChangeListeners) {
             if (listener != null && !mRoutingChangeListeners.containsKey(listener)) {
-                enableNativeRoutingCallbacksLocked(true);
+                testEnableNativeRoutingCallbacksLocked();
                 mRoutingChangeListeners.put(
                         listener, new NativeRoutingEventHandlerDelegate(this, listener,
                                 handler != null ? handler : mEventHandler));
@@ -1548,8 +1600,8 @@ public class MediaPlayer extends PlayerBase
         synchronized (mRoutingChangeListeners) {
             if (mRoutingChangeListeners.containsKey(listener)) {
                 mRoutingChangeListeners.remove(listener);
-                enableNativeRoutingCallbacksLocked(false);
             }
+            testDisableNativeRoutingCallbacksLocked();
         }
     }
 
@@ -3301,6 +3353,7 @@ public class MediaPlayer extends PlayerBase
 
     @Override
     protected void finalize() {
+        tryToDisableNativeRoutingCallback();
         baseRelease();
         native_finalize();
     }
@@ -3415,6 +3468,8 @@ public class MediaPlayer extends PlayerBase
 
             case MEDIA_STOPPED:
                 {
+                    tryToDisableNativeRoutingCallback();
+                    baseStop();
                     TimeProvider timeProvider = mTimeProvider;
                     if (timeProvider != null) {
                         timeProvider.onStopped();
@@ -3423,8 +3478,16 @@ public class MediaPlayer extends PlayerBase
                 break;
 
             case MEDIA_STARTED:
+                {
+                    baseStart(native_getRoutedDeviceId());
+                    tryToEnableNativeRoutingCallback();
+                }
+                // fall through
             case MEDIA_PAUSED:
                 {
+                    if (msg.what == MEDIA_PAUSED) {
+                        basePause();
+                    }
                     TimeProvider timeProvider = mTimeProvider;
                     if (timeProvider != null) {
                         timeProvider.onPaused(msg.what == MEDIA_PAUSED);
@@ -3590,14 +3653,8 @@ public class MediaPlayer extends PlayerBase
                 break;
 
             case MEDIA_AUDIO_ROUTING_CHANGED:
-                AudioManager.resetAudioPortGeneration();
-                synchronized (mRoutingChangeListeners) {
-                    for (NativeRoutingEventHandlerDelegate delegate
-                            : mRoutingChangeListeners.values()) {
-                        delegate.notifyClient();
-                    }
-                }
-                return;
+                    broadcastRoutingChange();
+                    return;
 
             case MEDIA_TIME_DISCONTINUITY:
                 final OnMediaTimeDiscontinuityListener mediaTimeListener;
@@ -3802,6 +3859,7 @@ public class MediaPlayer extends PlayerBase
     private final OnCompletionListener mOnCompletionInternalListener = new OnCompletionListener() {
         @Override
         public void onCompletion(MediaPlayer mp) {
+            tryToDisableNativeRoutingCallback();
             baseStop();
         }
     };
@@ -4232,19 +4290,21 @@ public class MediaPlayer extends PlayerBase
      * @see OnRtpRxNoticeListener
      *
      * @param listener the listener called after a notice from RTP Rx
-     * @param handler the {@link Handler} that receives RTP Tx events
-     *
+     * @param handler the {@link Handler} that receives RTP Tx events. If null is passed,
+     *                notifications will be posted on the thread that created this MediaPlayer
+     *                instance. If the creating thread does not have a {@link Looper}, then
+     *                notifications will be posted on the main thread.
      * @hide
      */
     @SystemApi
-    @RequiresPermission("android.permission.BIND_IMS_SERVICE")
+    @RequiresPermission(BIND_IMS_SERVICE)
     public void setOnRtpRxNoticeListener(
             @NonNull Context context,
             @NonNull OnRtpRxNoticeListener listener, @Nullable Handler handler) {
         Objects.requireNonNull(context);
         Preconditions.checkArgument(
                 context.checkSelfPermission(BIND_IMS_SERVICE) == PERMISSION_GRANTED,
-                "android.permission.BIND_IMS_SERVICE permission not granted.");
+                BIND_IMS_SERVICE + " permission not granted.");
         mOnRtpRxNoticeListener = Objects.requireNonNull(listener);
         mOnRtpRxNoticeHandler = handler;
     }

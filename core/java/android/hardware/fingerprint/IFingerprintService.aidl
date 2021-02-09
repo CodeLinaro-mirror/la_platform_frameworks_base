@@ -17,6 +17,7 @@ package android.hardware.fingerprint;
 
 import android.hardware.biometrics.IBiometricSensorReceiver;
 import android.hardware.biometrics.IBiometricServiceLockoutResetCallback;
+import android.hardware.biometrics.IInvalidationCallback;
 import android.hardware.biometrics.ITestSession;
 import android.hardware.fingerprint.IFingerprintClientActiveCallback;
 import android.hardware.fingerprint.IFingerprintServiceReceiver;
@@ -34,13 +35,19 @@ interface IFingerprintService {
     // Creates a test session with the specified sensorId
     ITestSession createTestSession(int sensorId, String opPackageName);
 
+    // Requests a proto dump of the specified sensor
+    byte[] dumpSensorServiceStateProto(int sensorId);
+
     // Retrieve static sensor properties for all fingerprint sensors
     List<FingerprintSensorPropertiesInternal> getSensorPropertiesInternal(String opPackageName);
+
+    // Retrieve static sensor properties for the specified sensor
+    FingerprintSensorPropertiesInternal getSensorProperties(int sensorId, String opPackageName);
 
     // Authenticate the given sessionId with a fingerprint. This is protected by
     // USE_FINGERPRINT/USE_BIOMETRIC permission. This is effectively deprecated, since it only comes
     // through FingerprintManager now.
-    void authenticate(IBinder token, long operationId, int userId,
+    void authenticate(IBinder token, long operationId, int sensorId, int userId,
             IFingerprintServiceReceiver receiver, String opPackageName);
 
     // Uses the fingerprint hardware to detect for the presence of a finger, without giving details
@@ -54,8 +61,7 @@ interface IFingerprintService {
     // by BiometricService. To start authentication after the clients are ready, use
     // startPreparedClient().
     void prepareForAuthentication(int sensorId, IBinder token, long operationId, int userId,
-            IBiometricSensorReceiver sensorReceiver, String opPackageName, int cookie,
-            int callingUid, int callingPid, int callingUserId);
+            IBiometricSensorReceiver sensorReceiver, String opPackageName, int cookie);
 
     // Starts authentication with the previously prepared client.
     void startPreparedClient(int sensorId, int cookie);
@@ -68,12 +74,11 @@ interface IFingerprintService {
 
     // Same as above, except this is protected by the MANAGE_BIOMETRIC signature permission. Takes
     // an additional uid, pid, userid.
-    void cancelAuthenticationFromService(int sensorId, IBinder token, String opPackageName,
-            int callingUid, int callingPid, int callingUserId);
+    void cancelAuthenticationFromService(int sensorId, IBinder token, String opPackageName);
 
     // Start fingerprint enrollment
     void enroll(IBinder token, in byte [] hardwareAuthToken, int userId, IFingerprintServiceReceiver receiver,
-            String opPackageName);
+            String opPackageName, boolean shouldLogMetrics);
 
     // Cancel enrollment in progress
     void cancelEnrollment(IBinder token);
@@ -111,6 +116,9 @@ interface IFingerprintService {
 
     // Return the LockoutTracker status for the specified user
     int getLockoutModeForUser(int sensorId, int userId);
+
+    // Requests for the specified sensor+userId's authenticatorId to be invalidated
+    void invalidateAuthenticatorId(int sensorId, int userId, IInvalidationCallback callback);
 
     // Gets the authenticator ID for fingerprint
     long getAuthenticatorId(int sensorId, int callingUserId);

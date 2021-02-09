@@ -27,7 +27,6 @@ import android.accounts.IAccountManager;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.ActivityManagerInternal;
-import android.app.role.IRoleManager;
 import android.app.role.RoleManager;
 import android.content.ComponentName;
 import android.content.Context;
@@ -80,7 +79,6 @@ import android.os.ParcelFileDescriptor;
 import android.os.ParcelFileDescriptor.AutoCloseInputStream;
 import android.os.PersistableBundle;
 import android.os.Process;
-import android.os.RemoteCallback;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.ServiceSpecificException;
@@ -91,7 +89,7 @@ import android.os.UserHandle;
 import android.os.UserManager;
 import android.os.incremental.V4Signature;
 import android.os.storage.StorageManager;
-import android.permission.IPermissionManager;
+import android.permission.PermissionManager;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.text.TextUtils;
@@ -106,9 +104,11 @@ import com.android.internal.content.PackageHelper;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.internal.util.Preconditions;
+import com.android.server.FgThread;
 import com.android.server.LocalServices;
 import com.android.server.SystemConfig;
 import com.android.server.pm.PackageManagerShellCommandDataLoader.Metadata;
+import com.android.server.pm.permission.LegacyPermissionManagerInternal;
 
 import dalvik.system.DexFile;
 
@@ -145,8 +145,9 @@ class PackageManagerShellCommand extends ShellCommand {
     private static final String TAG = "PackageManagerShellCommand";
 
     final IPackageManager mInterface;
-    final IPermissionManager mPermissionManager;
-    final Context mShellPackageContext;
+    final LegacyPermissionManagerInternal mLegacyPermissionManager;
+    final PermissionManager mPermissionManager;
+    final Context mContext;
     final private WeakHashMap<String, Resources> mResourceCache =
             new WeakHashMap<String, Resources>();
     int mTargetUser;
@@ -154,16 +155,11 @@ class PackageManagerShellCommand extends ShellCommand {
     boolean mComponents;
     int mQueryFlags;
 
-    PackageManagerShellCommand(
-            PackageManagerService service, IPermissionManager permissionManager, Context context) {
+    PackageManagerShellCommand(PackageManagerService service, Context context) {
         mInterface = service;
-        mPermissionManager = permissionManager;
-        try {
-            mShellPackageContext = context.createPackageContext("com.android.shell", 0);
-        } catch (NameNotFoundException e) {
-            // should not happen
-            throw new RuntimeException(e);
-        }
+        mLegacyPermissionManager = LocalServices.getService(LegacyPermissionManagerInternal.class);
+        mPermissionManager = context.getSystemService(PermissionManager.class);
+        mContext = context;
     }
 
     @Override
@@ -486,8 +482,17 @@ class PackageManagerShellCommand extends ShellCommand {
             return 1;
         }
 
+        final Context shellPackageContext;
+        try {
+            shellPackageContext = mContext.createPackageContextAsUser(
+                    "com.android.shell", 0, Binder.getCallingUserHandle());
+        } catch (NameNotFoundException e) {
+            // should not happen
+            throw new RuntimeException(e);
+        }
+
         final LocalIntentReceiver receiver = new LocalIntentReceiver();
-        RollbackManager rm = mShellPackageContext.getSystemService(RollbackManager.class);
+        RollbackManager rm = shellPackageContext.getSystemService(RollbackManager.class);
         RollbackInfo rollback = null;
         for (RollbackInfo r : rm.getAvailableRollbacks()) {
             for (PackageRollbackInfo info : r.getPackages()) {
@@ -549,7 +554,8 @@ class PackageManagerShellCommand extends ShellCommand {
                                     + apkLiteResult.getErrorMessage(),
                             apkLiteResult.getException());
                 }
-                PackageLite pkgLite = new PackageLite(null, apkLiteResult.getResult(), null, null,
+                final ApkLite apkLite = apkLiteResult.getResult();
+                PackageLite pkgLite = new PackageLite(null, apkLite.codePath, apkLite, null, null,
                         null, null, null, null);
                 sessionSize += PackageHelper.calculateInstalledSize(pkgLite,
                         params.sessionParams.abiOverride, fd.getFileDescriptor());
@@ -883,8 +889,7 @@ class PackageManagerShellCommand extends ShellCommand {
 
     private int runListPermissionGroups() throws RemoteException {
         final PrintWriter pw = getOutPrintWriter();
-        final List<PermissionGroupInfo> pgs =
-                mPermissionManager.getAllPermissionGroups(0).getList();
+        final List<PermissionGroupInfo> pgs = mPermissionManager.getAllPermissionGroups(0);
 
         final int count = pgs.size();
         for (int p = 0; p < count ; p++) {
@@ -931,7 +936,7 @@ class PackageManagerShellCommand extends ShellCommand {
         final ArrayList<String> groupList = new ArrayList<String>();
         if (groups) {
             final List<PermissionGroupInfo> infos =
-                    mPermissionManager.getAllPermissionGroups(0 /*flags*/).getList();
+                    mPermissionManager.getAllPermissionGroups(0 /*flags*/);
             final int count = infos.size();
             for (int i = 0; i < count; i++) {
                 groupList.add(infos.get(i).name);
@@ -2293,18 +2298,18 @@ class PackageManagerShellCommand extends ShellCommand {
             getErrPrintWriter().println("Error: no permission specified");
             return 1;
         }
-        final int translatedUserId =
-                translateUserId(userId, UserHandle.USER_NULL, "runGrantRevokePermission");
+        final UserHandle translatedUser = UserHandle.of(translateUserId(userId,
+                UserHandle.USER_NULL, "runGrantRevokePermission"));
         if (grant) {
-            mPermissionManager.grantRuntimePermission(pkg, perm, translatedUserId);
+            mPermissionManager.grantRuntimePermission(pkg, perm, translatedUser);
         } else {
-            mPermissionManager.revokeRuntimePermission(pkg, perm, translatedUserId, null);
+            mPermissionManager.revokeRuntimePermission(pkg, perm, translatedUser, null);
         }
         return 0;
     }
 
     private int runResetPermissions() throws RemoteException {
-        mPermissionManager.resetRuntimePermissions();
+        mLegacyPermissionManager.resetRuntimePermissions();
         return 0;
     }
 
@@ -2319,7 +2324,7 @@ class PackageManagerShellCommand extends ShellCommand {
             getErrPrintWriter().println("Error: no enforcement specified");
             return 1;
         }
-        mPermissionManager.setPermissionEnforced(permission, Boolean.parseBoolean(enforcedRaw));
+        // Permissions are always enforced now.
         return 0;
     }
 
@@ -2966,12 +2971,10 @@ class PackageManagerShellCommand extends ShellCommand {
         final int translatedUserId =
                 translateUserId(userId, UserHandle.USER_NULL, "runSetHomeActivity");
         final CompletableFuture<Boolean> future = new CompletableFuture<>();
-        final RemoteCallback callback = new RemoteCallback(res -> future.complete(res != null));
         try {
-            IRoleManager roleManager = android.app.role.IRoleManager.Stub.asInterface(
-                    ServiceManager.getServiceOrThrow(Context.ROLE_SERVICE));
-            roleManager.addRoleHolderAsUser(RoleManager.ROLE_HOME, pkgName,
-                    0, translatedUserId, callback);
+            RoleManager roleManager = mContext.getSystemService(RoleManager.class);
+            roleManager.addRoleHolderAsUser(RoleManager.ROLE_HOME, pkgName, 0,
+                    UserHandle.of(translatedUserId), FgThread.getExecutor(), future::complete);
             boolean success = future.get();
             if (success) {
                 pw.println("Success");
@@ -3481,7 +3484,7 @@ class PackageManagerShellCommand extends ShellCommand {
                 prefix = "  ";
             }
             List<PermissionInfo> ps = mPermissionManager
-                    .queryPermissionsByGroup(groupList.get(i), 0 /*flags*/).getList();
+                    .queryPermissionsByGroup(groupList.get(i), 0 /*flags*/);
             final int count = ps.size();
             boolean first = true;
             for (int p = 0 ; p < count ; p++) {

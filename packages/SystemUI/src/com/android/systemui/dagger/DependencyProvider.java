@@ -30,7 +30,6 @@ import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.ServiceManager;
 import android.os.UserHandle;
-import android.util.DisplayMetrics;
 import android.view.Choreographer;
 import android.view.IWindowManager;
 import android.view.LayoutInflater;
@@ -57,6 +56,7 @@ import com.android.systemui.dump.DumpManager;
 import com.android.systemui.keyguard.KeyguardViewMediator;
 import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.NavigationBarController;
+import com.android.systemui.navigationbar.NavigationBarOverlayController;
 import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.plugins.PluginInitializerImpl;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
@@ -82,8 +82,8 @@ import com.android.systemui.statusbar.policy.DeviceProvisionedController;
 import com.android.systemui.statusbar.policy.NetworkController;
 import com.android.systemui.theme.ThemeOverlayApplier;
 import com.android.systemui.util.leak.LeakDetector;
+import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
 import com.android.wm.shell.pip.Pip;
-import com.android.wm.shell.splitscreen.SplitScreen;
 
 import java.util.Optional;
 import java.util.concurrent.Executor;
@@ -141,16 +141,6 @@ public class DependencyProvider {
         return networkController.getDataSaverController();
     }
 
-    /** */
-    @Provides
-    @SysUISingleton
-    public DisplayMetrics provideDisplayMetrics(Context context, WindowManager windowManager) {
-        DisplayMetrics displayMetrics = new DisplayMetrics();
-        context.getDisplay().getMetrics(displayMetrics);
-        return displayMetrics;
-    }
-
-    /** */
     @Provides
     @SysUISingleton
     public INotificationManager provideINotificationManager() {
@@ -224,7 +214,7 @@ public class DependencyProvider {
             BroadcastDispatcher broadcastDispatcher,
             CommandQueue commandQueue,
             Optional<Pip> pipOptional,
-            Optional<SplitScreen> splitScreenOptional,
+            Optional<LegacySplitScreen> splitScreenOptional,
             Optional<Recents> recentsOptional,
             Lazy<StatusBar> statusBarLazy,
             ShadeController shadeController,
@@ -232,6 +222,7 @@ public class DependencyProvider {
             SystemActions systemActions,
             @Main Handler mainHandler,
             UiEventLogger uiEventLogger,
+            NavigationBarOverlayController navBarOverlayController,
             ConfigurationController configurationController) {
         return new NavigationBarController(context,
                 windowManager,
@@ -255,6 +246,7 @@ public class DependencyProvider {
                 systemActions,
                 mainHandler,
                 uiEventLogger,
+                navBarOverlayController,
                 configurationController);
     }
 

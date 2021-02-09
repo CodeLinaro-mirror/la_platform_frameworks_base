@@ -18,16 +18,19 @@ package com.android.server.biometrics.sensors.fingerprint.aidl;
 
 import android.annotation.NonNull;
 import android.hardware.biometrics.common.ICancellationSignal;
+import android.hardware.biometrics.face.Error;
 import android.hardware.biometrics.fingerprint.ISession;
 import android.hardware.keymaster.HardwareAuthToken;
+import android.os.Binder;
+import android.os.IBinder;
 import android.util.Slog;
 
 /**
- * Test HAL that provides only provides mostly no-ops.
+ * Test session that provides mostly no-ops.
  */
 class TestSession extends ISession.Stub {
 
-    private static final String TAG = "TestSession";
+    private static final String TAG = "FingerprintTestSession";
 
     @NonNull private final Sensor.HalSessionCallback mHalSessionCallback;
 
@@ -37,24 +40,32 @@ class TestSession extends ISession.Stub {
 
     @Override
     public void generateChallenge(int cookie, int timeoutSec) {
-
+        mHalSessionCallback.onChallengeGenerated(0 /* challenge */);
     }
 
     @Override
     public void revokeChallenge(int cookie, long challenge) {
-
+        mHalSessionCallback.onChallengeRevoked(challenge);
     }
 
     @Override
     public ICancellationSignal enroll(int cookie, HardwareAuthToken hat) {
-        Slog.d(TAG, "enroll");
         return null;
     }
 
     @Override
     public ICancellationSignal authenticate(int cookie, long operationId) {
-        Slog.d(TAG, "authenticate");
-        return null;
+        return new ICancellationSignal() {
+            @Override
+            public void cancel() {
+                mHalSessionCallback.onError(Error.CANCELED, 0 /* vendorCode */);
+            }
+
+            @Override
+            public IBinder asBinder() {
+                return new Binder();
+            }
+        };
     }
 
     @Override
@@ -80,13 +91,15 @@ class TestSession extends ISession.Stub {
     }
 
     @Override
-    public void invalidateAuthenticatorId(int cookie, HardwareAuthToken hat) {
-
+    public void invalidateAuthenticatorId(int cookie) {
+        Slog.d(TAG, "invalidateAuthenticatorId");
+        // Immediately return a value so the framework can continue with subsequent requests.
+        mHalSessionCallback.onAuthenticatorIdInvalidated(0);
     }
 
     @Override
     public void resetLockout(int cookie, HardwareAuthToken hat) {
-
+        mHalSessionCallback.onLockoutCleared();
     }
 
     @Override

@@ -20,6 +20,7 @@ import static com.android.systemui.Dependency.ALLOW_NOTIFICATION_LONG_PRESS_NAME
 import static com.android.systemui.Dependency.LEAK_REPORT_EMAIL_NAME;
 
 import android.content.Context;
+import android.hardware.SensorPrivacyManager;
 import android.os.Handler;
 import android.os.PowerManager;
 
@@ -43,6 +44,7 @@ import com.android.systemui.qs.tileimpl.QSFactoryImpl;
 import com.android.systemui.recents.Recents;
 import com.android.systemui.recents.RecentsImplementation;
 import com.android.systemui.statusbar.CommandQueue;
+import com.android.systemui.statusbar.NotificationListener;
 import com.android.systemui.statusbar.NotificationLockscreenUserManager;
 import com.android.systemui.statusbar.NotificationLockscreenUserManagerImpl;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
@@ -62,6 +64,11 @@ import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
 import com.android.systemui.statusbar.policy.DeviceProvisionedControllerImpl;
 import com.android.systemui.statusbar.policy.HeadsUpManager;
+import com.android.systemui.statusbar.policy.IndividualSensorPrivacyController;
+import com.android.systemui.statusbar.policy.IndividualSensorPrivacyControllerImpl;
+import com.android.systemui.statusbar.policy.SensorPrivacyController;
+import com.android.systemui.statusbar.policy.SensorPrivacyControllerImpl;
+import com.android.systemui.statusbar.tv.notifications.TvNotificationHandler;
 
 import javax.inject.Named;
 
@@ -105,6 +112,25 @@ public abstract class TvSystemUIModule {
                 broadcastDispatcher, demoModeController, mainHandler, bgHandler);
         bC.init();
         return bC;
+    }
+
+    @Provides
+    @SysUISingleton
+    static SensorPrivacyController provideSensorPrivacyController(
+            SensorPrivacyManager sensorPrivacyManager) {
+        SensorPrivacyController spC = new SensorPrivacyControllerImpl(sensorPrivacyManager);
+        spC.init();
+        return spC;
+    }
+
+    @Provides
+    @SysUISingleton
+    static IndividualSensorPrivacyController provideIndividualSensorPrivacyController(
+            SensorPrivacyManager sensorPrivacyManager) {
+        IndividualSensorPrivacyController spC = new IndividualSensorPrivacyControllerImpl(
+                sensorPrivacyManager);
+        spC.init();
+        return spC;
     }
 
     @Binds
@@ -164,4 +190,11 @@ public abstract class TvSystemUIModule {
 
     @Binds
     abstract DozeHost provideDozeHost(DozeServiceHost dozeServiceHost);
+
+    @Provides
+    @SysUISingleton
+    static TvNotificationHandler provideTvNotificationHandler(Context context,
+            NotificationListener notificationListener) {
+        return new TvNotificationHandler(context, notificationListener);
+    }
 }

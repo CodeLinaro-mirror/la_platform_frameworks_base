@@ -19,6 +19,8 @@ package com.android.server.wm;
 import static android.view.WindowManager.REMOVE_CONTENT_MODE_DESTROY;
 import static android.view.WindowManager.REMOVE_CONTENT_MODE_MOVE_TO_PRIMARY;
 import static android.view.WindowManager.REMOVE_CONTENT_MODE_UNDEFINED;
+import static android.view.WindowManager.DISPLAY_IME_POLICY_LOCAL;
+import static android.view.WindowManager.DISPLAY_IME_POLICY_FALLBACK_DISPLAY;
 
 import static com.android.server.wm.DisplayContent.FORCE_SCALING_MODE_AUTO;
 import static com.android.server.wm.DisplayContent.FORCE_SCALING_MODE_DISABLED;
@@ -31,6 +33,7 @@ import android.view.Display;
 import android.view.DisplayInfo;
 import android.view.IWindowManager;
 import android.view.Surface;
+import android.view.WindowManager.DisplayImePolicy;
 
 import com.android.server.policy.WindowManagerPolicy;
 import com.android.server.wm.DisplayContent.ForceScalingMode;
@@ -212,22 +215,23 @@ class DisplayWindowSettings {
         mSettingsProvider.updateOverrideSettings(displayInfo, overrideSettings);
     }
 
-    boolean shouldShowImeLocked(DisplayContent dc) {
+    @DisplayImePolicy int getImePolicyLocked(DisplayContent dc) {
         if (dc.getDisplayId() == Display.DEFAULT_DISPLAY) {
             // Default display should show IME.
-            return true;
+            return DISPLAY_IME_POLICY_LOCAL;
         }
 
         final DisplayInfo displayInfo = dc.getDisplayInfo();
         final SettingsProvider.SettingsEntry settings = mSettingsProvider.getSettings(displayInfo);
-        return settings.mShouldShowIme != null ? settings.mShouldShowIme : false;
+        return settings.mImePolicy != null ? settings.mImePolicy
+                : DISPLAY_IME_POLICY_FALLBACK_DISPLAY;
     }
 
-    void setShouldShowImeLocked(DisplayContent dc, boolean shouldShow) {
+    void setDisplayImePolicy(DisplayContent dc, @DisplayImePolicy int imePolicy) {
         final DisplayInfo displayInfo = dc.getDisplayInfo();
         final SettingsProvider.SettingsEntry overrideSettings =
                 mSettingsProvider.getOverrideSettings(displayInfo);
-        overrideSettings.mShouldShowIme = shouldShow;
+        overrideSettings.mImePolicy = imePolicy;
         mSettingsProvider.updateOverrideSettings(displayInfo, overrideSettings);
     }
 
@@ -256,6 +260,10 @@ class DisplayWindowSettings {
         final boolean ignoreOrientationRequest = settings.mIgnoreOrientationRequest != null
                 ? settings.mIgnoreOrientationRequest : false;
         dc.setIgnoreOrientationRequest(ignoreOrientationRequest);
+
+        final boolean ignoreDisplayCutout = settings.mIgnoreDisplayCutout != null
+                ? settings.mIgnoreDisplayCutout : false;
+        dc.mIgnoreDisplayCutout = ignoreDisplayCutout;
 
         final int width = hasSizeOverride ? settings.mForcedWidth : dc.mInitialDisplayWidth;
         final int height = hasSizeOverride ? settings.mForcedHeight : dc.mInitialDisplayHeight;
@@ -343,11 +351,13 @@ class DisplayWindowSettings {
             @Nullable
             Boolean mShouldShowSystemDecors;
             @Nullable
-            Boolean mShouldShowIme;
+            Integer mImePolicy;
             @Nullable
             Integer mFixedToUserRotation;
             @Nullable
             Boolean mIgnoreOrientationRequest;
+            @Nullable
+            Boolean mIgnoreDisplayCutout;
 
             SettingsEntry() {}
 
@@ -406,8 +416,8 @@ class DisplayWindowSettings {
                     mShouldShowSystemDecors = other.mShouldShowSystemDecors;
                     changed = true;
                 }
-                if (other.mShouldShowIme != mShouldShowIme) {
-                    mShouldShowIme = other.mShouldShowIme;
+                if (!Objects.equals(other.mImePolicy, mImePolicy)) {
+                    mImePolicy = other.mImePolicy;
                     changed = true;
                 }
                 if (!Objects.equals(other.mFixedToUserRotation, mFixedToUserRotation)) {
@@ -416,6 +426,10 @@ class DisplayWindowSettings {
                 }
                 if (other.mIgnoreOrientationRequest != mIgnoreOrientationRequest) {
                     mIgnoreOrientationRequest = other.mIgnoreOrientationRequest;
+                    changed = true;
+                }
+                if (other.mIgnoreDisplayCutout != mIgnoreDisplayCutout) {
+                    mIgnoreDisplayCutout = other.mIgnoreDisplayCutout;
                     changed = true;
                 }
                 return changed;
@@ -481,9 +495,9 @@ class DisplayWindowSettings {
                     mShouldShowSystemDecors = delta.mShouldShowSystemDecors;
                     changed = true;
                 }
-                if (delta.mShouldShowIme != null
-                        && delta.mShouldShowIme != mShouldShowIme) {
-                    mShouldShowIme = delta.mShouldShowIme;
+                if (delta.mImePolicy != null
+                        && !Objects.equals(delta.mImePolicy, mImePolicy)) {
+                    mImePolicy = delta.mImePolicy;
                     changed = true;
                 }
                 if (delta.mFixedToUserRotation != null
@@ -494,6 +508,11 @@ class DisplayWindowSettings {
                 if (delta.mIgnoreOrientationRequest != null
                         && delta.mIgnoreOrientationRequest != mIgnoreOrientationRequest) {
                     mIgnoreOrientationRequest = delta.mIgnoreOrientationRequest;
+                    changed = true;
+                }
+                if (delta.mIgnoreDisplayCutout != null
+                        && delta.mIgnoreDisplayCutout != mIgnoreDisplayCutout) {
+                    mIgnoreDisplayCutout = delta.mIgnoreDisplayCutout;
                     changed = true;
                 }
                 return changed;
@@ -509,9 +528,10 @@ class DisplayWindowSettings {
                         && mRemoveContentMode == REMOVE_CONTENT_MODE_UNDEFINED
                         && mShouldShowWithInsecureKeyguard == null
                         && mShouldShowSystemDecors == null
-                        && mShouldShowIme == null
+                        && mImePolicy == null
                         && mFixedToUserRotation == null
-                        && mIgnoreOrientationRequest == null;
+                        && mIgnoreOrientationRequest == null
+                        && mIgnoreDisplayCutout == null;
             }
 
             @Override
@@ -530,18 +550,18 @@ class DisplayWindowSettings {
                         && Objects.equals(mShouldShowWithInsecureKeyguard,
                                 that.mShouldShowWithInsecureKeyguard)
                         && Objects.equals(mShouldShowSystemDecors, that.mShouldShowSystemDecors)
-                        && Objects.equals(mShouldShowIme, that.mShouldShowIme)
+                        && Objects.equals(mImePolicy, that.mImePolicy)
                         && Objects.equals(mFixedToUserRotation, that.mFixedToUserRotation)
-                        && Objects.equals(mIgnoreOrientationRequest,
-                                that.mIgnoreOrientationRequest);
+                        && Objects.equals(mIgnoreOrientationRequest, that.mIgnoreOrientationRequest)
+                        && Objects.equals(mIgnoreDisplayCutout, that.mIgnoreDisplayCutout);
             }
 
             @Override
             public int hashCode() {
                 return Objects.hash(mWindowingMode, mUserRotationMode, mUserRotation, mForcedWidth,
                         mForcedHeight, mForcedDensity, mForcedScalingMode, mRemoveContentMode,
-                        mShouldShowWithInsecureKeyguard, mShouldShowSystemDecors, mShouldShowIme,
-                        mFixedToUserRotation, mIgnoreOrientationRequest);
+                        mShouldShowWithInsecureKeyguard, mShouldShowSystemDecors, mImePolicy,
+                        mFixedToUserRotation, mIgnoreOrientationRequest, mIgnoreDisplayCutout);
             }
 
             @Override
@@ -557,9 +577,10 @@ class DisplayWindowSettings {
                         + ", mRemoveContentMode=" + mRemoveContentMode
                         + ", mShouldShowWithInsecureKeyguard=" + mShouldShowWithInsecureKeyguard
                         + ", mShouldShowSystemDecors=" + mShouldShowSystemDecors
-                        + ", mShouldShowIme=" + mShouldShowIme
+                        + ", mShouldShowIme=" + mImePolicy
                         + ", mFixedToUserRotation=" + mFixedToUserRotation
                         + ", mIgnoreOrientationRequest=" + mIgnoreOrientationRequest
+                        + ", mIgnoreDisplayCutout=" + mIgnoreDisplayCutout
                         + '}';
             }
         }

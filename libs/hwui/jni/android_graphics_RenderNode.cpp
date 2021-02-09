@@ -76,11 +76,9 @@ static jlong android_view_RenderNode_getNativeFinalizer(JNIEnv* env,
     return static_cast<jlong>(reinterpret_cast<uintptr_t>(&releaseRenderNode));
 }
 
-static void android_view_RenderNode_setDisplayList(JNIEnv* env,
-        jobject clazz, jlong renderNodePtr, jlong displayListPtr) {
+static void android_view_RenderNode_discardDisplayList(CRITICAL_JNI_PARAMS_COMMA jlong renderNodePtr) {
     RenderNode* renderNode = reinterpret_cast<RenderNode*>(renderNodePtr);
-    DisplayList* newData = reinterpret_cast<DisplayList*>(displayListPtr);
-    renderNode->setStagingDisplayList(newData);
+    renderNode->discardStagingDisplayList();
 }
 
 static jboolean android_view_RenderNode_isValid(CRITICAL_JNI_PARAMS_COMMA jlong renderNodePtr) {
@@ -657,18 +655,11 @@ static const JNINativeMethod gMethods[] = {
     { "nAddAnimator",              "(JJ)V", (void*) android_view_RenderNode_addAnimator },
     { "nEndAllAnimators",          "(J)V", (void*) android_view_RenderNode_endAllAnimators },
     { "nRequestPositionUpdates",   "(JLandroid/graphics/RenderNode$PositionUpdateListener;)V", (void*) android_view_RenderNode_requestPositionUpdates },
-    { "nSetDisplayList",       "(JJ)V",   (void*) android_view_RenderNode_setDisplayList },
-
-
-// ----------------------------------------------------------------------------
-// Fast JNI via @CriticalNative annotation in RenderNode.java
-// ----------------------------------------------------------------------------
-    { "nSetDisplayList",       "(JJ)V",   (void*) android_view_RenderNode_setDisplayList },
-
 
 // ----------------------------------------------------------------------------
 // Critical JNI via @CriticalNative annotation in RenderNode.java
 // ----------------------------------------------------------------------------
+    { "nDiscardDisplayList",   "(J)V",   (void*) android_view_RenderNode_discardDisplayList },
     { "nIsValid",              "(J)Z",   (void*) android_view_RenderNode_isValid },
     { "nSetLayerType",         "(JI)Z",  (void*) android_view_RenderNode_setLayerType },
     { "nGetLayerType",         "(J)I",   (void*) android_view_RenderNode_getLayerType },
@@ -696,7 +687,7 @@ static const JNINativeMethod gMethods[] = {
     { "nSetRevealClip",        "(JZFFF)Z", (void*) android_view_RenderNode_setRevealClip },
 
     { "nSetAlpha",             "(JF)Z",  (void*) android_view_RenderNode_setAlpha },
-    { "nSetRenderEffect",      "(JJ)V",  (void*) android_view_RenderNode_setRenderEffect },
+    { "nSetRenderEffect",      "(JJ)Z",  (void*) android_view_RenderNode_setRenderEffect },
     { "nSetHasOverlappingRendering", "(JZ)Z",
             (void*) android_view_RenderNode_setHasOverlappingRendering },
     { "nSetUsageHint",    "(JI)V", (void*) android_view_RenderNode_setUsageHint },

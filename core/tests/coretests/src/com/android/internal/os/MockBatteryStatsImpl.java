@@ -16,17 +16,19 @@
 
 package com.android.internal.os;
 
+import android.location.GnssSignalQuality;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.SparseIntArray;
 
-import com.android.internal.location.gnssmetrics.GnssMetrics;
 import com.android.internal.os.KernelCpuUidTimeReader.KernelCpuUidActiveTimeReader;
 import com.android.internal.os.KernelCpuUidTimeReader.KernelCpuUidClusterTimeReader;
 import com.android.internal.os.KernelCpuUidTimeReader.KernelCpuUidFreqTimeReader;
 import com.android.internal.os.KernelCpuUidTimeReader.KernelCpuUidUserSysTimeReader;
+import com.android.internal.power.MeasuredEnergyStats;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Queue;
 import java.util.concurrent.Future;
 
@@ -44,13 +46,22 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
                 mOnBatteryTimeBase);
         mScreenDozeTimer = new BatteryStatsImpl.StopwatchTimer(clocks, null, -1, null,
                 mOnBatteryTimeBase);
+        for (int i = 0; i < mScreenBrightnessTimer.length; i++) {
+            mScreenBrightnessTimer[i] = new BatteryStatsImpl.StopwatchTimer(clocks, null, -1, null,
+                    mOnBatteryTimeBase);
+        }
         mBluetoothScanTimer = new StopwatchTimer(mClocks, null, -14, null, mOnBatteryTimeBase);
+        mBluetoothActivity = new ControllerActivityCounterImpl(mOnBatteryTimeBase, 1);
         setExternalStatsSyncLocked(new DummyExternalStatsSync());
 
-        for (int i = 0; i < GnssMetrics.NUM_GPS_SIGNAL_QUALITY_LEVELS; i++) {
+        for (int i = 0; i < GnssSignalQuality.NUM_GNSS_SIGNAL_QUALITY_LEVELS; i++) {
             mGpsSignalQualityTimer[i] = new StopwatchTimer(clocks, null, -1000 - i, null,
                     mOnBatteryTimeBase);
         }
+
+        final boolean[] supportedBuckets = new boolean[MeasuredEnergyStats.NUMBER_ENERGY_BUCKETS];
+        Arrays.fill(supportedBuckets, true);
+        mGlobalMeasuredEnergyStats = new MeasuredEnergyStats(supportedBuckets);
 
         // A no-op handler.
         mHandler = new Handler(Looper.getMainLooper()) {
@@ -192,8 +203,8 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
         }
 
         @Override
-        public Future<?> scheduleCpuSyncDueToScreenStateChange(
-                boolean onBattery, boolean onBatteryScreenOff) {
+        public Future<?> scheduleSyncDueToScreenStateChange(
+                int flag, boolean onBattery, boolean onBatteryScreenOff, int screenState) {
             return null;
         }
 

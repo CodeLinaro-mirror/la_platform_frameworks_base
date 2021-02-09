@@ -20,10 +20,11 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
-import android.app.IActivityTaskManager;
 import android.app.TaskStackListener;
 import android.content.Context;
 import android.content.pm.UserInfo;
+import android.hardware.biometrics.IInvalidationCallback;
+import android.hardware.biometrics.ITestSession;
 import android.hardware.biometrics.face.IFace;
 import android.hardware.biometrics.face.SensorProps;
 import android.hardware.face.Face;
@@ -40,10 +41,13 @@ import android.util.Slog;
 import android.util.SparseArray;
 import android.util.proto.ProtoOutputStream;
 
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.server.biometrics.Utils;
 import com.android.server.biometrics.sensors.AuthenticationClient;
-import com.android.server.biometrics.sensors.ClientMonitor;
+import com.android.server.biometrics.sensors.BaseClientMonitor;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
+import com.android.server.biometrics.sensors.HalClientMonitor;
+import com.android.server.biometrics.sensors.InvalidationRequesterClient;
 import com.android.server.biometrics.sensors.LockoutResetDispatcher;
 import com.android.server.biometrics.sensors.PerformanceTracker;
 import com.android.server.biometrics.sensors.face.FaceUtils;
@@ -63,17 +67,19 @@ import java.util.List;
  * Provider for a single instance of the {@link IFace} HAL.
  */
 public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
-    private static final String TAG = "FaceProvider";
     private static final int ENROLL_TIMEOUT_SEC = 75;
+
+    private boolean mTestHalEnabled;
 
     @NonNull private final Context mContext;
     @NonNull private final String mHalInstanceName;
-    @NonNull private final SparseArray<Sensor> mSensors; // Map of sensors that this HAL supports
-    @NonNull private final ClientMonitor.LazyDaemon<IFace> mLazyDaemon;
+    @NonNull @VisibleForTesting
+    final SparseArray<Sensor> mSensors; // Map of sensors that this HAL supports
+    @NonNull private final HalClientMonitor.LazyDaemon<IFace> mLazyDaemon;
     @NonNull private final Handler mHandler;
     @NonNull private final LockoutResetDispatcher mLockoutResetDispatcher;
     @NonNull private final UsageStats mUsageStats;
-    @NonNull private final IActivityTaskManager mActivityTaskManager;
+    @NonNull private final ActivityTaskManager mActivityTaskManager;
     @NonNull private final BiometricTaskStackListener mTaskStackListener;
 
     @Nullable private IFace mDaemon;
@@ -83,7 +89,7 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
         public void onTaskStackChanged() {
             mHandler.post(() -> {
                 for (int i = 0; i < mSensors.size(); i++) {
-                    final ClientMonitor<?> client = mSensors.get(i).getScheduler()
+                    final BaseClientMonitor client = mSensors.valueAt(i).getScheduler()
                             .getCurrentClient();
                     if (!(client instanceof AuthenticationClient)) {
                         Slog.e(getTag(), "Task stack changed for client: " + client);
@@ -93,22 +99,18 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
                         continue; // Keyguard is always allowed
                     }
 
-                    try {
-                        final List<ActivityManager.RunningTaskInfo> runningTasks =
-                                mActivityTaskManager.getTasks(1);
-                        if (!runningTasks.isEmpty()) {
-                            final String topPackage =
-                                    runningTasks.get(0).topActivity.getPackageName();
-                            if (!topPackage.contentEquals(client.getOwnerString())
-                                    && !client.isAlreadyDone()) {
-                                Slog.e(getTag(), "Stopping background authentication, top: "
-                                        + topPackage + " currentClient: " + client);
-                                mSensors.get(i).getScheduler()
-                                        .cancelAuthentication(client.getToken());
-                            }
+                    final List<ActivityManager.RunningTaskInfo> runningTasks =
+                            mActivityTaskManager.getTasks(1);
+                    if (!runningTasks.isEmpty()) {
+                        final String topPackage =
+                                runningTasks.get(0).topActivity.getPackageName();
+                        if (!topPackage.contentEquals(client.getOwnerString())
+                                && !client.isAlreadyDone()) {
+                            Slog.e(getTag(), "Stopping background authentication, top: "
+                                    + topPackage + " currentClient: " + client);
+                            mSensors.valueAt(i).getScheduler()
+                                    .cancelAuthentication(client.getToken());
                         }
-                    } catch (RemoteException e) {
-                        Slog.e(getTag(), "Unable to get running tasks", e);
                     }
                 }
             });
@@ -125,7 +127,7 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
         mHandler = new Handler(Looper.getMainLooper());
         mUsageStats = new UsageStats(context);
         mLockoutResetDispatcher = lockoutResetDispatcher;
-        mActivityTaskManager = ActivityTaskManager.getService();
+        mActivityTaskManager = ActivityTaskManager.getInstance();
         mTaskStackListener = new BiometricTaskStackListener();
 
         for (SensorProps prop : props) {
@@ -149,6 +151,10 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
 
     @Nullable
     private synchronized IFace getHalInstance() {
+        if (mTestHalEnabled) {
+            return new TestHal();
+        }
+
         if (mDaemon != null) {
             return mDaemon;
         }
@@ -177,7 +183,7 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
         return mDaemon;
     }
 
-    private void scheduleForSensor(int sensorId, @NonNull ClientMonitor<?> client) {
+    private void scheduleForSensor(int sensorId, @NonNull BaseClientMonitor client) {
         if (!mSensors.contains(sensorId)) {
             throw new IllegalStateException("Unable to schedule client: " + client
                     + " for sensor: " + sensorId);
@@ -185,8 +191,8 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
         mSensors.get(sensorId).getScheduler().scheduleClientMonitor(client);
     }
 
-    private void scheduleForSensor(int sensorId, @NonNull ClientMonitor<?> client,
-            ClientMonitor.Callback callback) {
+    private void scheduleForSensor(int sensorId, @NonNull BaseClientMonitor client,
+            BaseClientMonitor.Callback callback) {
         if (!mSensors.contains(sensorId)) {
             throw new IllegalStateException("Unable to schedule client: " + client
                     + " for sensor: " + sensorId);
@@ -196,11 +202,17 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
 
     private void createNewSessionWithoutHandler(@NonNull IFace daemon, int sensorId,
             int userId) throws RemoteException {
-        // Note that per IFingerprint createSession contract, this method will block until all
+        // Note that per IFace createSession contract, this method will block until all
         // existing operations are canceled/finished. However, also note that this is fine, since
         // this method "withoutHandler" means it should only ever be invoked from the worker thread,
         // so callers will never be blocked.
         mSensors.get(sensorId).createNewSession(daemon, sensorId, userId);
+
+        if (FaceUtils.getInstance(sensorId).isInvalidationInProgress(mContext, userId)) {
+            Slog.w(getTag(), "Scheduling unfinished invalidation request for sensor: " + sensorId
+                    + ", user: " + userId);
+            scheduleInvalidationRequest(sensorId, userId);
+        }
     }
 
 
@@ -237,6 +249,15 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
         });
     }
 
+    private void scheduleInvalidationRequest(int sensorId, int userId) {
+        mHandler.post(() -> {
+            final InvalidationRequesterClient<Face> client =
+                    new InvalidationRequesterClient<>(mContext, userId, sensorId,
+                            FaceUtils.getInstance(sensorId));
+            mSensors.get(sensorId).getScheduler().scheduleClientMonitor(client);
+        });
+    }
+
     @Override
     public boolean containsSensor(int sensorId) {
         return mSensors.contains(sensorId);
@@ -254,8 +275,40 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
 
     @NonNull
     @Override
+    public FaceSensorPropertiesInternal getSensorProperties(int sensorId) {
+        return mSensors.get(sensorId).getSensorProperties();
+    }
+
+    @NonNull
+    @Override
     public List<Face> getEnrolledFaces(int sensorId, int userId) {
         return FaceUtils.getInstance(sensorId).getBiometricsForUser(mContext, userId);
+    }
+
+    @Override
+    public void scheduleInvalidateAuthenticatorId(int sensorId, int userId,
+            @NonNull IInvalidationCallback callback) {
+        mHandler.post(() -> {
+            final IFace daemon = getHalInstance();
+            if (daemon == null) {
+                Slog.e(getTag(), "Null daemon during scheduleInvalidateAuthenticatorId: "
+                        + sensorId);
+                return;
+            }
+
+            try {
+                if (!mSensors.get(sensorId).hasSessionForUser(userId)) {
+                    createNewSessionWithoutHandler(daemon, sensorId, userId);
+                }
+
+                final FaceInvalidationClient client = new FaceInvalidationClient(mContext,
+                        mSensors.get(sensorId).getLazySession(), userId, sensorId,
+                        mSensors.get(sensorId).getAuthenticatorIds(), callback);
+                mSensors.get(sensorId).getScheduler().scheduleClientMonitor(client);
+            } catch (RemoteException e) {
+                Slog.e(getTag(), "Remote exception", e);
+            }
+        });
     }
 
     @Override
@@ -352,12 +405,13 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
                         new ClientMonitorCallbackConverter(receiver), userId, hardwareAuthToken,
                         opPackageName, FaceUtils.getInstance(sensorId), disabledFeatures,
                         ENROLL_TIMEOUT_SEC, previewSurface, sensorId, maxTemplatesPerUser);
-                scheduleForSensor(sensorId, client, new ClientMonitor.Callback() {
+                scheduleForSensor(sensorId, client, new BaseClientMonitor.Callback() {
                     @Override
-                    public void onClientFinished(@NonNull ClientMonitor<?> clientMonitor,
+                    public void onClientFinished(@NonNull BaseClientMonitor clientMonitor,
                             boolean success) {
                         if (success) {
                             scheduleLoadAuthenticatorIdsForUser(sensorId, userId);
+                            scheduleInvalidationRequest(sensorId, userId);
                         }
                     }
                 });
@@ -518,7 +572,9 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
 
     @Override
     public void dumpProtoState(int sensorId, @NonNull ProtoOutputStream proto) {
-
+        if (mSensors.contains(sensorId)) {
+            mSensors.get(sensorId).dumpProtoState(sensorId, proto);
+        }
     }
 
     @Override
@@ -533,12 +589,13 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
 
         JSONObject dump = new JSONObject();
         try {
-            dump.put("service", "Face Manager");
+            dump.put("service", getTag());
 
             JSONArray sets = new JSONArray();
             for (UserInfo user : UserManager.get(mContext).getUsers()) {
                 final int userId = user.getUserHandle().getIdentifier();
-                final int c = FaceUtils.getInstance().getBiometricsForUser(mContext, userId).size();
+                final int c = FaceUtils.getInstance(sensorId)
+                        .getBiometricsForUser(mContext, userId).size();
                 JSONObject set = new JSONObject();
                 set.put("id", userId);
                 set.put("count", c);
@@ -557,7 +614,7 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
 
             dump.put("prints", sets);
         } catch (JSONException e) {
-            Slog.e(TAG, "dump formatting failure", e);
+            Slog.e(getTag(), "dump formatting failure", e);
         }
         pw.println(dump);
         pw.println("HAL deaths since last reboot: " + performanceTracker.getHALDeathCount());
@@ -566,15 +623,31 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
         mUsageStats.print(pw);
     }
 
+    @NonNull
+    @Override
+    public ITestSession createTestSession(int sensorId, @NonNull String opPackageName) {
+        return mSensors.get(sensorId).createTestSession();
+    }
+
+    @Override
+    public void dumpHal(int sensorId, @NonNull FileDescriptor fd, @NonNull String[] args) {}
+
     @Override
     public void binderDied() {
         Slog.e(getTag(), "HAL died");
         mHandler.post(() -> {
             mDaemon = null;
             for (int i = 0; i < mSensors.size(); i++) {
+                final Sensor sensor = mSensors.valueAt(i);
                 final int sensorId = mSensors.keyAt(i);
                 PerformanceTracker.getInstanceForSensorId(sensorId).incrementHALDeathCount();
+                sensor.getScheduler().recordCrashState();
+                sensor.getScheduler().reset();
             }
         });
+    }
+
+    void setTestHalEnabled(boolean enabled) {
+        mTestHalEnabled = enabled;
     }
 }

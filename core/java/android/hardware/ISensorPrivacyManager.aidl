@@ -26,10 +26,19 @@ interface ISensorPrivacyManager {
     // =============== Beginning of transactions used on native side as well ======================
     void addSensorPrivacyListener(in ISensorPrivacyListener listener);
 
+    void addIndividualSensorPrivacyListener(int userId, int sensor,
+            in ISensorPrivacyListener listener);
+
     void removeSensorPrivacyListener(in ISensorPrivacyListener listener);
 
     boolean isSensorPrivacyEnabled();
 
+    boolean isIndividualSensorPrivacyEnabled(int userId, int sensor);
+
     void setSensorPrivacy(boolean enable);
+
+    void setIndividualSensorPrivacy(int userId, int sensor, boolean enable);
+
+    void setIndividualSensorPrivacyForProfileGroup(int userId, int sensor, boolean enable);
     // =============== End of transactions used on native side as well ============================
 }

@@ -24,6 +24,10 @@ import static android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_M
 
 import static com.android.wm.shell.bubbles.BubbleDebugConfig.TAG_BUBBLES;
 import static com.android.wm.shell.bubbles.BubbleDebugConfig.TAG_WITH_CLASS_NAME;
+import static com.android.wm.shell.bubbles.BubblePositioner.TASKBAR_POSITION_BOTTOM;
+import static com.android.wm.shell.bubbles.BubblePositioner.TASKBAR_POSITION_LEFT;
+import static com.android.wm.shell.bubbles.BubblePositioner.TASKBAR_POSITION_NONE;
+import static com.android.wm.shell.bubbles.BubblePositioner.TASKBAR_POSITION_RIGHT;
 
 import android.annotation.NonNull;
 import android.annotation.UserIdInt;
@@ -38,8 +42,9 @@ import android.content.pm.PackageManager;
 import android.content.pm.ShortcutInfo;
 import android.content.res.Configuration;
 import android.graphics.PixelFormat;
+import android.graphics.PointF;
 import android.os.Binder;
-import android.os.Handler;
+import android.os.Bundle;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.UserHandle;
@@ -62,6 +67,7 @@ import com.android.internal.statusbar.IStatusBarService;
 import com.android.wm.shell.ShellTaskOrganizer;
 import com.android.wm.shell.WindowManagerShellWrapper;
 import com.android.wm.shell.common.FloatingContentCoordinator;
+import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.pip.PinnedStackListenerForwarder;
 
 import java.io.FileDescriptor;
@@ -81,13 +87,25 @@ public class BubbleController implements Bubbles {
 
     private static final String TAG = TAG_WITH_CLASS_NAME ? "BubbleController" : TAG_BUBBLES;
 
+    // TODO(b/173386799) keep in sync with Launcher3 and also don't do a broadcast
+    public static final String TASKBAR_CHANGED_BROADCAST = "taskbarChanged";
+    public static final String EXTRA_TASKBAR_CREATED = "taskbarCreated";
+    public static final String EXTRA_BUBBLE_OVERFLOW_OPENED = "bubbleOverflowOpened";
+    public static final String EXTRA_TASKBAR_VISIBLE = "taskbarVisible";
+    public static final String EXTRA_TASKBAR_POSITION = "taskbarPosition";
+    public static final String EXTRA_TASKBAR_ICON_SIZE = "taskbarIconSize";
+    public static final String EXTRA_TASKBAR_BUBBLE_XY = "taskbarBubbleXY";
+    public static final String EXTRA_TASKBAR_SIZE = "taskbarSize";
+    public static final String LEFT_POSITION = "Left";
+    public static final String RIGHT_POSITION = "Right";
+    public static final String BOTTOM_POSITION = "Bottom";
+
     private final Context mContext;
     private BubbleExpandListener mExpandListener;
     @Nullable private BubbleStackView.SurfaceSynchronizer mSurfaceSynchronizer;
     private final FloatingContentCoordinator mFloatingContentCoordinator;
     private final BubbleDataRepository mDataRepository;
     private BubbleLogger mLogger;
-    private final Handler mMainHandler;
     private BubbleData mBubbleData;
     private View mBubbleScrim;
     @Nullable private BubbleStackView mStackView;
@@ -119,7 +137,7 @@ public class BubbleController implements Bubbles {
     private WindowManager mWindowManager;
 
     // Used to post to main UI thread
-    private Handler mHandler = new Handler();
+    private final ShellExecutor mMainExecutor;
 
     /** LayoutParams used to add the BubbleStackView to the window manager. */
     private WindowManager.LayoutParams mWmLayoutParams;
@@ -167,15 +185,15 @@ public class BubbleController implements Bubbles {
             WindowManagerShellWrapper windowManagerShellWrapper,
             LauncherApps launcherApps,
             UiEventLogger uiEventLogger,
-            Handler mainHandler,
-            ShellTaskOrganizer organizer) {
+            ShellTaskOrganizer organizer,
+            ShellExecutor mainExecutor) {
         BubbleLogger logger = new BubbleLogger(uiEventLogger);
         BubblePositioner positioner = new BubblePositioner(context, windowManager);
         BubbleData data = new BubbleData(context, logger, positioner);
         return new BubbleController(context, data, synchronizer, floatingContentCoordinator,
                 new BubbleDataRepository(context, launcherApps),
                 statusBarService, windowManager, windowManagerShellWrapper, launcherApps,
-                logger, mainHandler, organizer, positioner);
+                logger, organizer, positioner, mainExecutor);
     }
 
     /**
@@ -192,14 +210,14 @@ public class BubbleController implements Bubbles {
             WindowManagerShellWrapper windowManagerShellWrapper,
             LauncherApps launcherApps,
             BubbleLogger bubbleLogger,
-            Handler mainHandler,
             ShellTaskOrganizer organizer,
-            BubblePositioner positioner) {
+            BubblePositioner positioner,
+            ShellExecutor mainExecutor) {
         mContext = context;
         mFloatingContentCoordinator = floatingContentCoordinator;
         mDataRepository = dataRepository;
         mLogger = bubbleLogger;
-        mMainHandler = mainHandler;
+        mMainExecutor = mainExecutor;
 
         mBubblePositioner = positioner;
         mBubbleData = data;
@@ -222,7 +240,7 @@ public class BubbleController implements Bubbles {
                 bubble.setPendingIntentCanceled();
                 return;
             }
-            mHandler.post(() -> removeBubble(bubble.getKey(), DISMISS_INVALID_INTENT));
+            mMainExecutor.execute(() -> removeBubble(bubble.getKey(), DISMISS_INVALID_INTENT));
         });
 
         try {
@@ -292,6 +310,60 @@ public class BubbleController implements Bubbles {
             mBarService.hideCurrentInputMethodForBubbles();
         } catch (RemoteException e) {
             e.printStackTrace();
+        }
+    }
+
+    @Override
+    public void openBubbleOverflow() {
+        ensureStackViewCreated();
+        mBubbleData.setShowingOverflow(true);
+        mBubbleData.setSelectedBubble(mBubbleData.getOverflow());
+        mBubbleData.setExpanded(true);
+    }
+
+    /** Called when any taskbar state changes (e.g. visibility, position, sizes). */
+    @Override
+    public void onTaskbarChanged(Bundle b) {
+        if (b == null) {
+            return;
+        }
+        boolean isVisible = b.getBoolean(EXTRA_TASKBAR_VISIBLE, false /* default */);
+        String position = b.getString(EXTRA_TASKBAR_POSITION, RIGHT_POSITION /* default */);
+        @BubblePositioner.TaskbarPosition int taskbarPosition = TASKBAR_POSITION_NONE;
+        switch (position) {
+            case LEFT_POSITION:
+                taskbarPosition = TASKBAR_POSITION_LEFT;
+                break;
+            case RIGHT_POSITION:
+                taskbarPosition = TASKBAR_POSITION_RIGHT;
+                break;
+            case BOTTOM_POSITION:
+                taskbarPosition = TASKBAR_POSITION_BOTTOM;
+                break;
+        }
+        int[] itemPosition = b.getIntArray(EXTRA_TASKBAR_BUBBLE_XY);
+        int iconSize = b.getInt(EXTRA_TASKBAR_ICON_SIZE);
+        int taskbarSize = b.getInt(EXTRA_TASKBAR_SIZE);
+        Log.w(TAG, "onTaskbarChanged:"
+                + " isVisible: " + isVisible
+                + " position: " + position
+                + " itemPosition: " + itemPosition[0] + "," + itemPosition[1]
+                + " iconSize: " + iconSize);
+        PointF point = new PointF(itemPosition[0], itemPosition[1]);
+        mBubblePositioner.setPinnedLocation(isVisible ? point : null);
+        mBubblePositioner.updateForTaskbar(iconSize, taskbarPosition, isVisible, taskbarSize);
+        if (mStackView != null) {
+            if (isVisible && b.getBoolean(EXTRA_TASKBAR_CREATED, false /* default */)) {
+                // If taskbar was created, add and remove the window so that bubbles display on top
+                removeFromWindowManagerMaybe();
+                addToWindowManagerMaybe();
+            }
+            mStackView.updateStackPosition();
+            mBubbleIconFactory = new BubbleIconFactory(mContext);
+            mStackView.onDisplaySizeChanged();
+        }
+        if (b.getBoolean(EXTRA_BUBBLE_OVERFLOW_OPENED, false)) {
+            openBubbleOverflow();
         }
     }
 
@@ -1140,7 +1212,7 @@ public class BubbleController implements Bubbles {
         @Override
         public void onImeVisibilityChanged(boolean imeVisible, int imeHeight) {
             if (mStackView != null) {
-                mStackView.post(() -> mStackView.onImeVisibilityChanged(imeVisible, imeHeight));
+                mStackView.onImeVisibilityChanged(imeVisible, imeHeight);
             }
         }
     }

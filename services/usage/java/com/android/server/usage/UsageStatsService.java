@@ -82,6 +82,7 @@ import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.util.SparseIntArray;
 
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.content.PackageMonitor;
 import com.android.internal.os.BackgroundThread;
 import com.android.internal.util.CollectionUtils;
@@ -90,7 +91,6 @@ import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
-import com.android.server.SystemService.TargetUser;
 import com.android.server.usage.AppStandbyInternal.AppIdleStateChangeListener;
 
 import java.io.BufferedReader;
@@ -178,14 +178,18 @@ public class UsageStatsService extends SystemService implements
     private final SparseArray<LinkedList<Event>> mReportedEvents = new SparseArray<>();
     final SparseArray<ArraySet<String>> mUsageReporters = new SparseArray();
     final SparseArray<ActivityData> mVisibleActivities = new SparseArray();
+    private final ArraySet<UsageStatsManagerInternal.UsageEventListener> mUsageEventListeners =
+            new ArraySet<>();
 
     private static class ActivityData {
         private final String mTaskRootPackage;
         private final String mTaskRootClass;
+        private final String mUsageSourcePackage;
         public int lastEvent = Event.NONE;
-        private ActivityData(String taskRootPackage, String taskRootClass) {
+        private ActivityData(String taskRootPackage, String taskRootClass, String sourcePackage) {
             mTaskRootPackage = taskRootPackage;
             mTaskRootClass = taskRootClass;
+            mUsageSourcePackage = sourcePackage;
         }
     }
 
@@ -202,8 +206,24 @@ public class UsageStatsService extends SystemService implements
                 }
             };
 
+    @VisibleForTesting
+    static class Injector {
+        AppStandbyInternal getAppStandbyController(Context context) {
+            return AppStandbyInternal.newAppStandbyController(
+                    UsageStatsService.class.getClassLoader(), context);
+        }
+    }
+
+    private final Injector mInjector;
+
     public UsageStatsService(Context context) {
+        this(context, new Injector());
+    }
+
+    @VisibleForTesting
+    UsageStatsService(Context context, Injector injector) {
         super(context);
+        mInjector = injector;
     }
 
     @Override
@@ -214,8 +234,7 @@ public class UsageStatsService extends SystemService implements
         mPackageManagerInternal = LocalServices.getService(PackageManagerInternal.class);
         mHandler = new H(BackgroundThread.get().getLooper());
 
-        mAppStandby = AppStandbyInternal.newAppStandbyController(
-                UsageStatsService.class.getClassLoader(), getContext());
+        mAppStandby = mInjector.getAppStandbyController(getContext());
 
         mAppTimeLimit = new AppTimeLimitController(
                 new AppTimeLimitController.TimeLimitCallbackListener() {
@@ -262,6 +281,11 @@ public class UsageStatsService extends SystemService implements
 
         publishLocalService(UsageStatsManagerInternal.class, new LocalService());
         publishLocalService(AppStandbyInternal.class, mAppStandby);
+        publishBinderServices();
+    }
+
+    @VisibleForTesting
+    void publishBinderServices() {
         publishBinderService(Context.USAGE_STATS_SERVICE, new BinderService());
     }
 
@@ -818,23 +842,25 @@ public class UsageStatsService extends SystemService implements
                                     .APP_USAGE_EVENT_OCCURRED__EVENT_TYPE__MOVE_TO_FOREGROUND);
                     // check if this activity has already been resumed
                     if (mVisibleActivities.get(event.mInstanceId) != null) break;
-                    final ActivityData resumedData = new ActivityData(event.mTaskRootPackage,
-                            event.mTaskRootClass);
-                    resumedData.lastEvent = Event.ACTIVITY_RESUMED;
-                    mVisibleActivities.put(event.mInstanceId, resumedData);
+                    final String usageSourcePackage;
+                    switch(mUsageSource) {
+                        case USAGE_SOURCE_CURRENT_ACTIVITY:
+                            usageSourcePackage = event.mPackage;
+                            break;
+                        case USAGE_SOURCE_TASK_ROOT_ACTIVITY:
+                        default:
+                            usageSourcePackage = event.mTaskRootPackage;
+                            break;
+                    }
                     try {
-                        switch(mUsageSource) {
-                            case USAGE_SOURCE_CURRENT_ACTIVITY:
-                                mAppTimeLimit.noteUsageStart(event.mPackage, userId);
-                                break;
-                            case USAGE_SOURCE_TASK_ROOT_ACTIVITY:
-                            default:
-                                mAppTimeLimit.noteUsageStart(event.mTaskRootPackage, userId);
-                                break;
-                        }
+                        mAppTimeLimit.noteUsageStart(usageSourcePackage, userId);
                     } catch (IllegalArgumentException iae) {
                         Slog.e(TAG, "Failed to note usage start", iae);
                     }
+                    final ActivityData resumedData = new ActivityData(event.mTaskRootPackage,
+                            event.mTaskRootClass, usageSourcePackage);
+                    resumedData.lastEvent = Event.ACTIVITY_RESUMED;
+                    mVisibleActivities.put(event.mInstanceId, resumedData);
                     break;
                 case Event.ACTIVITY_PAUSED:
                     final ActivityData pausedData = mVisibleActivities.get(event.mInstanceId);
@@ -906,15 +932,7 @@ public class UsageStatsService extends SystemService implements
                         event.mTaskRootClass = prevData.mTaskRootClass;
                     }
                     try {
-                        switch(mUsageSource) {
-                            case USAGE_SOURCE_CURRENT_ACTIVITY:
-                                mAppTimeLimit.noteUsageStop(event.mPackage, userId);
-                                break;
-                            case USAGE_SOURCE_TASK_ROOT_ACTIVITY:
-                            default:
-                                mAppTimeLimit.noteUsageStop(event.mTaskRootPackage, userId);
-                                break;
-                        }
+                        mAppTimeLimit.noteUsageStop(prevData.mUsageSourcePackage, userId);
                     } catch (IllegalArgumentException iae) {
                         Slog.w(TAG, "Failed to note usage stop", iae);
                     }
@@ -928,7 +946,10 @@ public class UsageStatsService extends SystemService implements
             service.reportEvent(event);
         }
 
-        mAppStandby.reportEvent(event, userId);
+        final int size = mUsageEventListeners.size();
+        for (int i = 0; i < size; ++i) {
+            mUsageEventListeners.valueAt(i).onUsageEvent(userId, event);
+        }
     }
 
     /**
@@ -1148,6 +1169,25 @@ public class UsageStatsService extends SystemService implements
                 return null; // user was stopped or removed
             }
             return service.queryEventsForPackage(beginTime, endTime, packageName, includeTaskRoot);
+        }
+    }
+
+    /**
+     * Called via the local interface.
+     */
+    private void registerListener(@NonNull UsageStatsManagerInternal.UsageEventListener listener) {
+        synchronized (mLock) {
+            mUsageEventListeners.add(listener);
+        }
+    }
+
+    /**
+     * Called via the local interface.
+     */
+    private void unregisterListener(
+            @NonNull UsageStatsManagerInternal.UsageEventListener listener) {
+        synchronized (mLock) {
+            mUsageEventListeners.remove(listener);
         }
     }
 
@@ -2316,6 +2356,22 @@ public class UsageStatsService extends SystemService implements
         @Override
         public boolean updatePackageMappingsData() {
             return UsageStatsService.this.updatePackageMappingsData();
+        }
+
+        /**
+         * Register a listener that will be notified of every new usage event.
+         */
+        @Override
+        public void registerListener(@NonNull UsageEventListener listener) {
+            UsageStatsService.this.registerListener(listener);
+        }
+
+        /**
+         * Unregister a listener from being notified of every new usage event.
+         */
+        @Override
+        public void unregisterListener(@NonNull UsageEventListener listener) {
+            UsageStatsService.this.unregisterListener(listener);
         }
     }
 

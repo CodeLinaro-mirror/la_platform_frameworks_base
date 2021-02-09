@@ -274,11 +274,18 @@ public class JobInfo implements Parcelable {
 
     /**
      * This job needs to be exempted from the app standby throttling. Only the system (UID 1000)
-     * can set it. Jobs with a time constrant must not have it.
+     * can set it. Jobs with a time constraint must not have it.
      *
      * @hide
      */
     public static final int FLAG_EXEMPT_FROM_APP_STANDBY = 1 << 3;
+
+    /**
+     * Whether it's an expedited job or not.
+     *
+     * @hide
+     */
+    public static final int FLAG_EXPEDITED = 1 << 4;
 
     /**
      * @hide
@@ -462,11 +469,11 @@ public class JobInfo implements Parcelable {
     public @NetworkType int getNetworkType() {
         if (networkRequest == null) {
             return NETWORK_TYPE_NONE;
-        } else if (networkRequest.networkCapabilities.hasCapability(NET_CAPABILITY_NOT_METERED)) {
+        } else if (networkRequest.hasCapability(NET_CAPABILITY_NOT_METERED)) {
             return NETWORK_TYPE_UNMETERED;
-        } else if (networkRequest.networkCapabilities.hasCapability(NET_CAPABILITY_NOT_ROAMING)) {
+        } else if (networkRequest.hasCapability(NET_CAPABILITY_NOT_ROAMING)) {
             return NETWORK_TYPE_NOT_ROAMING;
-        } else if (networkRequest.networkCapabilities.hasTransport(TRANSPORT_CELLULAR)) {
+        } else if (networkRequest.hasTransport(TRANSPORT_CELLULAR)) {
             return NETWORK_TYPE_CELLULAR;
         } else {
             return NETWORK_TYPE_ANY;
@@ -571,10 +578,27 @@ public class JobInfo implements Parcelable {
 
     /**
      * Return the backoff policy of this job.
+     *
      * @see JobInfo.Builder#setBackoffCriteria(long, int)
      */
     public @BackoffPolicy int getBackoffPolicy() {
         return backoffPolicy;
+    }
+
+    /**
+     * @see JobInfo.Builder#setExpedited(boolean)
+     */
+    public boolean isExpedited() {
+        return (flags & FLAG_EXPEDITED) != 0;
+    }
+
+    /**
+     * @see JobInfo.Builder#setExpedited(boolean)
+     * @deprecated Use {@link #isExpedited()} instead
+     */
+    @Deprecated
+    public boolean isForegroundJob() {
+        return (flags & FLAG_EXPEDITED) != 0;
     }
 
     /**
@@ -1442,6 +1466,57 @@ public class JobInfo implements Parcelable {
         }
 
         /**
+         * Setting this to true indicates that this job is important and needs to run as soon as
+         * possible with stronger guarantees than regular jobs. These "expedited" jobs will:
+         * <ol>
+         *     <li>Run as soon as possible</li>
+         *     <li>Be exempted from Doze and battery saver restrictions</li>
+         *     <li>Have network access</li>
+         *     <li>Less likely to be killed than regular jobs</li>
+         * </ol>
+         *
+         * Since these jobs have stronger guarantees than regular jobs, they will be subject to
+         * stricter quotas. As long as an app has available expedited quota, jobs scheduled with
+         * this set to true will run with these guarantees. If an app has run out of available
+         * expedited quota, any pending expedited jobs will run as regular jobs.
+         * {@link JobParameters#isExpeditedJob()} can be used to know whether the executing job
+         * has expedited guarantees or not. In addition, {@link JobScheduler#schedule(JobInfo)}
+         * will immediately return {@link JobScheduler#RESULT_FAILURE} if the app does not have
+         * available quota (and the job will not be successfully scheduled).
+         *
+         * Expedited jobs may only set network, storage-not-low, and persistence constraints.
+         * No other constraints are allowed.
+         *
+         * Note: Even though expedited jobs are meant to run as soon as possible, they may be
+         * deferred if the system is under heavy load or requested constraints are not satisfied.
+         *
+         * @see JobInfo#isExpedited()
+         */
+        @NonNull
+        public Builder setExpedited(boolean expedited) {
+            if (expedited) {
+                mFlags |= FLAG_EXPEDITED;
+            } else {
+                mFlags &= (~FLAG_EXPEDITED);
+            }
+            return this;
+        }
+
+        /**
+         * @deprecated Use {@link #setExpedited(boolean)} instead.
+         */
+        @Deprecated
+        @NonNull
+        public Builder setForeground(boolean foreground) {
+            if (foreground) {
+                mFlags |= FLAG_EXPEDITED;
+            } else {
+                mFlags &= (~FLAG_EXPEDITED);
+            }
+            return this;
+        }
+
+        /**
          * Setting this to true indicates that this job is important while the scheduling app
          * is in the foreground or on the temporary whitelist for background restrictions.
          * This means that the system will relax doze restrictions on this job during this time.
@@ -1456,7 +1531,9 @@ public class JobInfo implements Parcelable {
          * @param importantWhileForeground whether to relax doze restrictions for this job when the
          *                                 app is in the foreground. False by default.
          * @see JobInfo#isImportantWhileForeground()
+         * @deprecated Use {@link #setExpedited(boolean)} instead.
          */
+        @Deprecated
         public Builder setImportantWhileForeground(boolean importantWhileForeground) {
             if (importantWhileForeground) {
                 mFlags |= FLAG_IMPORTANT_WHILE_FOREGROUND;
@@ -1506,56 +1583,16 @@ public class JobInfo implements Parcelable {
          * @return The job object to hand to the JobScheduler. This object is immutable.
          */
         public JobInfo build() {
-            // Check that network estimates require network type
-            if ((mNetworkDownloadBytes > 0 || mNetworkUploadBytes > 0) && mNetworkRequest == null) {
-                throw new IllegalArgumentException(
-                        "Can't provide estimated network usage without requiring a network");
-            }
-            // We can't serialize network specifiers
-            if (mIsPersisted && mNetworkRequest != null
-                    && mNetworkRequest.networkCapabilities.getNetworkSpecifier() != null) {
-                throw new IllegalArgumentException(
-                        "Network specifiers aren't supported for persistent jobs");
-            }
-            // Check that a deadline was not set on a periodic job.
-            if (mIsPeriodic) {
-                if (mMaxExecutionDelayMillis != 0L) {
-                    throw new IllegalArgumentException("Can't call setOverrideDeadline() on a " +
-                            "periodic job.");
-                }
-                if (mMinLatencyMillis != 0L) {
-                    throw new IllegalArgumentException("Can't call setMinimumLatency() on a " +
-                            "periodic job");
-                }
-                if (mTriggerContentUris != null) {
-                    throw new IllegalArgumentException("Can't call addTriggerContentUri() on a " +
-                            "periodic job");
-                }
-            }
-            if (mIsPersisted) {
-                if (mTriggerContentUris != null) {
-                    throw new IllegalArgumentException("Can't call addTriggerContentUri() on a " +
-                            "persisted job");
-                }
-                if (!mTransientExtras.isEmpty()) {
-                    throw new IllegalArgumentException("Can't call setTransientExtras() on a " +
-                            "persisted job");
-                }
-                if (mClipData != null) {
-                    throw new IllegalArgumentException("Can't call setClipData() on a " +
-                            "persisted job");
-                }
-            }
-            if ((mFlags & FLAG_IMPORTANT_WHILE_FOREGROUND) != 0 && mHasEarlyConstraint) {
-                throw new IllegalArgumentException("An important while foreground job cannot "
-                        + "have a time delay");
-            }
+            // This check doesn't need to be inside enforceValidity. It's an unnecessary legacy
+            // check that would ideally be phased out instead.
             if (mBackoffPolicySet && (mConstraintFlags & CONSTRAINT_FLAG_DEVICE_IDLE) != 0) {
                 throw new IllegalArgumentException("An idle mode job will not respect any" +
                         " back-off policy, so calling setBackoffCriteria with" +
                         " setRequiresDeviceIdle is an error.");
             }
-            return new JobInfo(this);
+            JobInfo jobInfo = new JobInfo(this);
+            jobInfo.enforceValidity();
+            return jobInfo;
         }
 
         /**
@@ -1566,6 +1603,80 @@ public class JobInfo implements Parcelable {
                     ? mJobService.flattenToShortString()
                     : "null";
             return "JobInfo.Builder{job:" + mJobId + "/" + service + "}";
+        }
+    }
+
+    /**
+     * @hide
+     */
+    public void enforceValidity() {
+        // Check that network estimates require network type
+        if ((networkDownloadBytes > 0 || networkUploadBytes > 0) && networkRequest == null) {
+            throw new IllegalArgumentException(
+                    "Can't provide estimated network usage without requiring a network");
+        }
+
+        // Check that a deadline was not set on a periodic job.
+        if (isPeriodic) {
+            if (maxExecutionDelayMillis != 0L) {
+                throw new IllegalArgumentException(
+                        "Can't call setOverrideDeadline() on a periodic job.");
+            }
+            if (minLatencyMillis != 0L) {
+                throw new IllegalArgumentException(
+                        "Can't call setMinimumLatency() on a periodic job");
+            }
+            if (triggerContentUris != null) {
+                throw new IllegalArgumentException(
+                        "Can't call addTriggerContentUri() on a periodic job");
+            }
+        }
+
+        if (isPersisted) {
+            // We can't serialize network specifiers
+            if (networkRequest != null
+                    && networkRequest.getNetworkSpecifier() != null) {
+                throw new IllegalArgumentException(
+                        "Network specifiers aren't supported for persistent jobs");
+            }
+            if (triggerContentUris != null) {
+                throw new IllegalArgumentException(
+                        "Can't call addTriggerContentUri() on a persisted job");
+            }
+            if (!transientExtras.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Can't call setTransientExtras() on a persisted job");
+            }
+            if (clipData != null) {
+                throw new IllegalArgumentException(
+                        "Can't call setClipData() on a persisted job");
+            }
+        }
+
+        if ((flags & FLAG_IMPORTANT_WHILE_FOREGROUND) != 0 && hasEarlyConstraint) {
+            throw new IllegalArgumentException(
+                    "An important while foreground job cannot have a time delay");
+        }
+
+        if ((flags & FLAG_EXPEDITED) != 0) {
+            if (hasEarlyConstraint) {
+                throw new IllegalArgumentException("An expedited job cannot have a time delay");
+            }
+            if (hasLateConstraint) {
+                throw new IllegalArgumentException("An expedited job cannot have a deadline");
+            }
+            if (isPeriodic) {
+                throw new IllegalArgumentException("An expedited job cannot be periodic");
+            }
+            if ((constraintFlags & ~CONSTRAINT_FLAG_STORAGE_NOT_LOW) != 0
+                    || (flags & ~FLAG_EXPEDITED) != 0) {
+                throw new IllegalArgumentException(
+                        "An expedited job can only have network and storage-not-low constraints");
+            }
+            if (triggerContentUris != null && triggerContentUris.length > 0) {
+                throw new IllegalArgumentException(
+                        "Can't call addTriggerContentUri() on an expedited job");
+            }
         }
     }
 

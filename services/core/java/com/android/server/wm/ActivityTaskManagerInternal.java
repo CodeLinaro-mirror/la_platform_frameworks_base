@@ -19,7 +19,6 @@ package com.android.server.wm;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
-import android.app.ActivityManager;
 import android.app.AppProtoEnums;
 import android.app.IActivityManager;
 import android.app.IApplicationThread;
@@ -34,6 +33,7 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.service.voice.IVoiceInteractionSession;
 import android.util.proto.ProtoOutputStream;
+import android.window.TaskSnapshot;
 
 import com.android.internal.app.IVoiceInteractor;
 import com.android.server.am.PendingIntentRecord;
@@ -285,6 +285,19 @@ public abstract class ActivityTaskManagerInternal {
     public abstract void enforceCallerIsRecentsOrHasPermission(String permission, String func);
 
     /**
+     * Returns true if the app can close system dialogs. Otherwise it either throws a {@link
+     * SecurityException} or returns false with a logcat message depending on whether the app
+     * targets SDK level {@link android.os.Build.VERSION_CODES#S} or not.
+     */
+    public abstract boolean checkCanCloseSystemDialogs(int pid, int uid,
+            @Nullable String packageName);
+
+    /**
+     * Returns whether the app can close system dialogs or not.
+     */
+    public abstract boolean canCloseSystemDialogs(int pid, int uid);
+
+    /**
      * Called after the voice interaction service has changed.
      */
     public abstract void notifyActiveVoiceInteractionServiceChanged(ComponentName component);
@@ -372,19 +385,14 @@ public abstract class ActivityTaskManagerInternal {
         }
     }
 
-    /**
-     * Set the corresponding display information for the process global configuration. To be called
-     * when we need to show IME on a different display.
-     *
-     * @param pid The process id associated with the IME window.
-     * @param displayId The ID of the display showing the IME.
-     */
-    public abstract void onImeWindowSetOnDisplay(int pid, int displayId);
-
     public abstract void sendActivityResult(int callingUid, IBinder activityToken,
             String resultWho, int requestCode, int resultCode, Intent data);
     public abstract void clearPendingResultForActivity(
             IBinder activityToken, WeakReference<PendingIntentRecord> pir);
+
+    /** Returns the component name of the activity token. */
+    @Nullable
+    public abstract ComponentName getActivityName(IBinder activityToken);
 
     /**
      * @return the activity token and IApplicationThread for the top activity in the task or null
@@ -514,7 +522,6 @@ public abstract class ActivityTaskManagerInternal {
 
     public abstract void onUidActive(int uid, int procState);
     public abstract void onUidInactive(int uid);
-    public abstract void onActiveUidsCleared();
     public abstract void onUidProcStateChanged(int uid, int procState);
 
     public abstract void onUidAddedToPendingTempAllowlist(int uid, String tag);
@@ -549,7 +556,7 @@ public abstract class ActivityTaskManagerInternal {
      * <p>Warning! this may restore the snapshot from disk so can block, don't call in a latency
      * sensitive environment.
      */
-    public abstract ActivityManager.TaskSnapshot getTaskSnapshotBlocking(int taskId,
+    public abstract TaskSnapshot getTaskSnapshotBlocking(int taskId,
             boolean isLowResolution);
 
     /** Returns true if uid is considered foreground for activity start purposes. */
@@ -560,8 +567,13 @@ public abstract class ActivityTaskManagerInternal {
      */
     public abstract void setDeviceOwnerUid(int uid);
 
-    /** Set all associated companion app that belongs to an userId. */
-    public abstract void setCompanionAppPackages(int userId, Set<String> companionAppPackages);
+    /**
+     * Set all associated companion app that belongs to a userId.
+     * @param userId
+     * @param companionAppUids ActivityTaskManager will take ownership of this Set, the caller
+     *                         shouldn't touch the Set after calling this interface.
+     */
+    public abstract void setCompanionAppUids(int userId, Set<Integer> companionAppUids);
 
     /**
      * @param packageName The package to check

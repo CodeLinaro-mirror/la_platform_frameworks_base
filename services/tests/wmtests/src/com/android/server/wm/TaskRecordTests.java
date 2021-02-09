@@ -70,6 +70,8 @@ import android.graphics.Rect;
 import android.os.IBinder;
 import android.platform.test.annotations.Presubmit;
 import android.util.DisplayMetrics;
+import android.util.TypedXmlPullParser;
+import android.util.TypedXmlSerializer;
 import android.util.Xml;
 import android.view.DisplayInfo;
 
@@ -80,7 +82,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlSerializer;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -136,13 +137,13 @@ public class TaskRecordTests extends WindowTestsBase {
         final Task task = createTask(1);
         spyOn(task);
         doReturn(true).when(task).hasChild();
-        assertFalse(task.returnsToHomeStack());
+        assertFalse(task.returnsToHomeRootTask());
         task.intent = null;
-        assertFalse(task.returnsToHomeStack());
+        assertFalse(task.returnsToHomeRootTask());
         task.intent = new Intent();
-        assertFalse(task.returnsToHomeStack());
+        assertFalse(task.returnsToHomeRootTask());
         task.intent.addFlags(FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_TASK_ON_HOME);
-        assertTrue(task.returnsToHomeStack());
+        assertTrue(task.returnsToHomeRootTask());
     }
 
     /** Ensures that empty bounds cause appBounds to inherit from parent. */
@@ -175,7 +176,7 @@ public class TaskRecordTests extends WindowTestsBase {
     public void testFitWithinBounds() {
         final Rect parentBounds = new Rect(10, 10, 200, 200);
         TaskDisplayArea taskDisplayArea = mAtm.mRootWindowContainer.getDefaultTaskDisplayArea();
-        Task stack = taskDisplayArea.createStack(WINDOWING_MODE_FREEFORM,
+        Task stack = taskDisplayArea.createRootTask(WINDOWING_MODE_FREEFORM,
                 ACTIVITY_TYPE_STANDARD, true /* onTop */);
         Task task = new TaskBuilder(mSupervisor).setParentTask(stack).build();
         final Configuration parentConfig = stack.getConfiguration();
@@ -495,7 +496,7 @@ public class TaskRecordTests extends WindowTestsBase {
     @Test
     public void testInsetDisregardedWhenFreeformOverlapsNavBar() {
         TaskDisplayArea taskDisplayArea = mAtm.mRootWindowContainer.getDefaultTaskDisplayArea();
-        Task stack = taskDisplayArea.createStack(WINDOWING_MODE_FULLSCREEN,
+        Task stack = taskDisplayArea.createRootTask(WINDOWING_MODE_FULLSCREEN,
                 ACTIVITY_TYPE_STANDARD, true /* onTop */);
         DisplayInfo displayInfo = new DisplayInfo();
         mAtm.mContext.getDisplay().getDisplayInfo(displayInfo);
@@ -570,9 +571,11 @@ public class TaskRecordTests extends WindowTestsBase {
         info.packageName = DEFAULT_COMPONENT_PACKAGE_NAME;
         info.targetActivity = targetClassName;
 
-        final Task task = new Task(mAtm, 1 /* taskId */, info, intent,
-                null /* voiceSession */, null /* voiceInteractor */, null /* taskDescriptor */,
-                null /*stack*/);
+        final Task task = new Task.Builder(mAtm)
+                .setTaskId(1)
+                .setActivityInfo(info)
+                .setIntent(intent)
+                .build();
         assertEquals("The alias activity component should be saved in task intent.", aliasClassName,
                 task.intent.getComponent().getClassName());
 
@@ -930,7 +933,7 @@ public class TaskRecordTests extends WindowTestsBase {
 
     @Test
     public void testSaveLaunchingStateWhenConfigurationChanged() {
-        LaunchParamsPersister persister = mAtm.mStackSupervisor.mLaunchParamsPersister;
+        LaunchParamsPersister persister = mAtm.mTaskSupervisor.mLaunchParamsPersister;
         spyOn(persister);
 
         final Task task = getTestTask();
@@ -946,7 +949,7 @@ public class TaskRecordTests extends WindowTestsBase {
 
     @Test
     public void testSaveLaunchingStateWhenClearingParent() {
-        LaunchParamsPersister persister = mAtm.mStackSupervisor.mLaunchParamsPersister;
+        LaunchParamsPersister persister = mAtm.mTaskSupervisor.mLaunchParamsPersister;
         spyOn(persister);
 
         final Task task = getTestTask();
@@ -971,7 +974,7 @@ public class TaskRecordTests extends WindowTestsBase {
 
     @Test
     public void testNotSaveLaunchingStateNonFreeformDisplay() {
-        LaunchParamsPersister persister = mAtm.mStackSupervisor.mLaunchParamsPersister;
+        LaunchParamsPersister persister = mAtm.mTaskSupervisor.mLaunchParamsPersister;
         spyOn(persister);
 
         final Task task = getTestTask();
@@ -986,7 +989,7 @@ public class TaskRecordTests extends WindowTestsBase {
 
     @Test
     public void testNotSaveLaunchingStateWhenNotFullscreenOrFreeformWindow() {
-        LaunchParamsPersister persister = mAtm.mStackSupervisor.mLaunchParamsPersister;
+        LaunchParamsPersister persister = mAtm.mTaskSupervisor.mLaunchParamsPersister;
         spyOn(persister);
 
         final Task task = getTestTask();
@@ -1025,9 +1028,9 @@ public class TaskRecordTests extends WindowTestsBase {
         final TaskDisplayArea secondTaskDisplayArea = createTaskDisplayArea(
                 mDisplayContent, mRootWindowContainer.mWmService, "TestTaskDisplayArea",
                 FEATURE_VENDOR_FIRST);
-        final Task firstStack = firstTaskDisplayArea.createStack(
+        final Task firstStack = firstTaskDisplayArea.createRootTask(
                 WINDOWING_MODE_FULLSCREEN, ACTIVITY_TYPE_STANDARD, false /* onTop */);
-        final Task secondStack = secondTaskDisplayArea.createStack(
+        final Task secondStack = secondTaskDisplayArea.createRootTask(
                 WINDOWING_MODE_FULLSCREEN, ACTIVITY_TYPE_STANDARD, false /* onTop */);
         final ActivityRecord firstActivity = new ActivityBuilder(mAtm)
                 .setTask(firstStack).build();
@@ -1064,12 +1067,12 @@ public class TaskRecordTests extends WindowTestsBase {
 
         activity.setRequestedOrientation(SCREEN_ORIENTATION_LANDSCAPE);
         assertEquals(SCREEN_ORIENTATION_UNSET, task.getOrientation());
-        verify(display).onDescendantOrientationChanged(any(), same(task));
+        verify(display).onDescendantOrientationChanged(same(task));
         reset(display);
 
         display.setWindowingMode(WINDOWING_MODE_FULLSCREEN);
         assertEquals(SCREEN_ORIENTATION_LANDSCAPE, task.getOrientation());
-        verify(display).onDescendantOrientationChanged(any(), same(task));
+        verify(display).onDescendantOrientationChanged(same(task));
     }
 
     private Task getTestTask() {
@@ -1081,7 +1084,7 @@ public class TaskRecordTests extends WindowTestsBase {
             Rect expectedConfigBounds) {
 
         TaskDisplayArea taskDisplayArea = mAtm.mRootWindowContainer.getDefaultTaskDisplayArea();
-        Task stack = taskDisplayArea.createStack(windowingMode, ACTIVITY_TYPE_STANDARD,
+        Task stack = taskDisplayArea.createRootTask(windowingMode, ACTIVITY_TYPE_STANDARD,
                 true /* onTop */);
         Task task = new TaskBuilder(mSupervisor).setParentTask(stack).build();
 
@@ -1097,7 +1100,7 @@ public class TaskRecordTests extends WindowTestsBase {
 
     private byte[] serializeToBytes(Task r) throws Exception {
         try (ByteArrayOutputStream os = new ByteArrayOutputStream()) {
-            final XmlSerializer serializer = Xml.newSerializer();
+            final TypedXmlSerializer serializer = Xml.newFastSerializer();
             serializer.setOutput(os, "UTF-8");
             serializer.startDocument(null, true);
             serializer.startTag(null, TASK_TAG);
@@ -1112,19 +1115,20 @@ public class TaskRecordTests extends WindowTestsBase {
 
     private Task restoreFromBytes(byte[] in) throws IOException, XmlPullParserException {
         try (Reader reader = new InputStreamReader(new ByteArrayInputStream(in))) {
-            final XmlPullParser parser = Xml.newPullParser();
+            final TypedXmlPullParser parser = Xml.newFastPullParser();
             parser.setInput(reader);
             assertEquals(XmlPullParser.START_TAG, parser.next());
             assertEquals(TASK_TAG, parser.getName());
-            return Task.restoreFromXml(parser, mAtm.mStackSupervisor);
+            return Task.restoreFromXml(parser, mAtm.mTaskSupervisor);
         }
     }
 
     private Task createTask(int taskId) {
-        return new Task(mAtm, taskId, new Intent(), null, null, null,
-                ActivityBuilder.getDefaultComponent(), null, false, false, false, 0, 10050, null,
-                0, false, null, 0, 0, 0, 0, null, null, 0, false, false, false, 0,
-                0, null /*ActivityInfo*/, null /*_voiceSession*/, null /*_voiceInteractor*/,
-                null /*stack*/);
+        return new Task.Builder(mAtm)
+                .setTaskId(taskId)
+                .setIntent(new Intent())
+                .setRealActivity(ActivityBuilder.getDefaultComponent())
+                .setEffectiveUid(10050)
+                .buildInner();
     }
 }

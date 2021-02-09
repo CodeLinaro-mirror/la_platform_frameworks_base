@@ -64,6 +64,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Parcel;
+import android.os.Parcelable;
 import android.os.PersistableBundle;
 import android.os.RemoteException;
 import android.os.UserHandle;
@@ -75,6 +77,7 @@ import android.permission.PermissionManager;
 import android.util.AndroidException;
 import android.util.Log;
 
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.ArrayUtils;
 
 import dalvik.system.VMRuntime;
@@ -95,6 +98,11 @@ import java.util.Set;
  * packages that are currently installed on the device.
  *
  * You can find this class through {@link Context#getPackageManager}.
+ *
+ * <p class="note"><strong>Note: </strong>If your app targets Android 11 (API level 30) or
+ * higher, the methods in this class each return a filtered list of apps. Learn more about how to
+ * <a href="/training/basics/intents/package-visibility">manage package visibility</a>.
+ * </p>
  */
 public abstract class PackageManager {
     private static final String TAG = "PackageManager";
@@ -116,6 +124,243 @@ public abstract class PackageManager {
     }
 
     /**
+     * A property value set within the manifest.
+     * <p>
+     * The value of a property will only have a single type, as defined by
+     * the property itself.
+     */
+    public static final class Property implements Parcelable {
+        private static final int TYPE_BOOLEAN = 1;
+        private static final int TYPE_FLOAT = 2;
+        private static final int TYPE_INTEGER = 3;
+        private static final int TYPE_RESOURCE = 4;
+        private static final int TYPE_STRING = 5;
+        private final String mName;
+        private final int mType;
+        private final String mClassName;
+        private final String mPackageName;
+        private boolean mBooleanValue;
+        private float mFloatValue;
+        private int mIntegerValue;
+        private String mStringValue;
+
+        /** @hide */
+        @VisibleForTesting
+        public Property(@NonNull String name, int type,
+                @NonNull String packageName, @Nullable String className) {
+            assert name != null;
+            assert type >= TYPE_BOOLEAN && type <= TYPE_STRING;
+            assert packageName != null;
+            this.mName = name;
+            this.mType = type;
+            this.mPackageName = packageName;
+            this.mClassName = className;
+        }
+        /** @hide */
+        public Property(@NonNull String name, boolean value,
+                String packageName, String className) {
+            this(name, TYPE_BOOLEAN, packageName, className);
+            mBooleanValue = value;
+        }
+        /** @hide */
+        public Property(@NonNull String name, float value,
+                String packageName, String className) {
+            this(name, TYPE_FLOAT, packageName, className);
+            mFloatValue = value;
+        }
+        /** @hide */
+        public Property(@NonNull String name, int value, boolean isResource,
+                String packageName, String className) {
+            this(name, isResource ? TYPE_RESOURCE : TYPE_INTEGER, packageName, className);
+            mIntegerValue = value;
+        }
+        /** @hide */
+        public Property(@NonNull String name, String value,
+                String packageName, String className) {
+            this(name, TYPE_STRING, packageName, className);
+            mStringValue = value;
+        }
+
+        /** @hide */
+        @VisibleForTesting
+        public int getType() {
+            return mType;
+        }
+
+        /**
+         * Returns the name of the property.
+         */
+        @NonNull public String getName() {
+            return mName;
+        }
+
+        /**
+         * Returns the name of the package where this this property was defined.
+         */
+        @NonNull public String getPackageName() {
+            return mPackageName;
+        }
+
+        /**
+         * Returns the classname of the component where this property was defined.
+         * <p>If the property was defined within and &lt;application&gt; tag, retutrns
+         * {@code null}
+         */
+        @Nullable public String getClassName() {
+            return mClassName;
+        }
+
+        /**
+         * Returns the boolean value set for the property.
+         * <p>If the property is not of a boolean type, returns {@code false}.
+         */
+        public boolean getBoolean() {
+            return mBooleanValue;
+        }
+
+        /**
+         * Returns {@code true} if the property is a boolean type. Otherwise {@code false}.
+         */
+        public boolean isBoolean() {
+            return mType == TYPE_BOOLEAN;
+        }
+
+        /**
+         * Returns the float value set for the property.
+         * <p>If the property is not of a float type, returns {@code 0.0}.
+         */
+        public float getFloat() {
+            return mFloatValue;
+        }
+
+        /**
+         * Returns {@code true} if the property is a float type. Otherwise {@code false}.
+         */
+        public boolean isFloat() {
+            return mType == TYPE_FLOAT;
+        }
+
+        /**
+         * Returns the integer value set for the property.
+         * <p>If the property is not of an integer type, returns {@code 0}.
+         */
+        public int getInteger() {
+            return mType == TYPE_INTEGER ? mIntegerValue : 0;
+        }
+
+        /**
+         * Returns {@code true} if the property is an integer type. Otherwise {@code false}.
+         */
+        public boolean isInteger() {
+            return mType == TYPE_INTEGER;
+        }
+
+        /**
+         * Returns the a resource id set for the property.
+         * <p>If the property is not of a resource id type, returns {@code 0}.
+         */
+        public int getResourceId() {
+            return mType == TYPE_RESOURCE ? mIntegerValue : 0;
+        }
+
+        /**
+         * Returns {@code true} if the property is a resource id type. Otherwise {@code false}.
+         */
+        public boolean isResourceId() {
+            return mType == TYPE_RESOURCE;
+        }
+
+        /**
+         * Returns the a String value set for the property.
+         * <p>If the property is not a String type, returns {@code null}.
+         */
+        @Nullable public String getString() {
+            return mStringValue;
+        }
+
+        /**
+         * Returns {@code true} if the property is a String type. Otherwise {@code false}.
+         */
+        public boolean isString() {
+            return mType == TYPE_STRING;
+        }
+
+        /**
+         * Adds a mapping from the given key to this property's value in the provided
+         * {@link android.os.Bundle}. If the provided {@link android.os.Bundle} is
+         * {@code null}, creates a new {@link android.os.Bundle}.
+         * @hide
+         */
+        public Bundle toBundle(Bundle outBundle) {
+            final Bundle b = outBundle == null ? new Bundle() : outBundle;
+            if (mType == TYPE_BOOLEAN) {
+                b.putBoolean(mName, mBooleanValue);
+            } else if (mType == TYPE_FLOAT) {
+                b.putFloat(mName, mFloatValue);
+            } else if (mType == TYPE_INTEGER) {
+                b.putInt(mName, mIntegerValue);
+            } else if (mType == TYPE_RESOURCE) {
+                b.putInt(mName, mIntegerValue);
+            } else if (mType == TYPE_STRING) {
+                b.putString(mName, mStringValue);
+            }
+            return b;
+        }
+
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+
+        @Override
+        public void writeToParcel(@NonNull Parcel dest, int flags) {
+            dest.writeString(mName);
+            dest.writeInt(mType);
+            dest.writeString(mPackageName);
+            dest.writeString(mClassName);
+            if (mType == TYPE_BOOLEAN) {
+                dest.writeBoolean(mBooleanValue);
+            } else if (mType == TYPE_FLOAT) {
+                dest.writeFloat(mFloatValue);
+            } else if (mType == TYPE_INTEGER) {
+                dest.writeInt(mIntegerValue);
+            } else if (mType == TYPE_RESOURCE) {
+                dest.writeInt(mIntegerValue);
+            } else if (mType == TYPE_STRING) {
+                dest.writeString(mStringValue);
+            }
+        }
+
+        @NonNull
+        public static final Creator<Property> CREATOR = new Creator<Property>() {
+            @Override
+            public Property createFromParcel(@NonNull Parcel source) {
+                final String name = source.readString();
+                final int type = source.readInt();
+                final String packageName = source.readString();
+                final String className = source.readString();
+                if (type == TYPE_BOOLEAN) {
+                    return new Property(name, source.readBoolean(), packageName, className);
+                } else if (type == TYPE_FLOAT) {
+                    return new Property(name, source.readFloat(), packageName, className);
+                } else if (type == TYPE_INTEGER) {
+                    return new Property(name, source.readInt(), false, packageName, className);
+                } else if (type == TYPE_RESOURCE) {
+                    return new Property(name, source.readInt(), true, packageName, className);
+                } else if (type == TYPE_STRING) {
+                    return new Property(name, source.readString(), packageName, className);
+                }
+                return null;
+            }
+
+            @Override
+            public Property[] newArray(int size) {
+                return new Property[size];
+            }
+        };
+    }
+
+    /**
      * Listener for changes in permissions granted to a UID.
      *
      * @hide
@@ -129,6 +374,41 @@ public abstract class PackageManager {
          */
         public void onPermissionsChanged(int uid);
     }
+
+    /** @hide */
+    public static final int TYPE_UNKNOWN = 0;
+    /** @hide */
+    public static final int TYPE_ACTIVITY = 1;
+    /** @hide */
+    public static final int TYPE_RECEIVER = 2;
+    /** @hide */
+    public static final int TYPE_SERVICE = 3;
+    /** @hide */
+    public static final int TYPE_PROVIDER = 4;
+    /** @hide */
+    public static final int TYPE_APPLICATION = 5;
+    /** @hide */
+    @IntDef(prefix = { "TYPE_" }, value = {
+            TYPE_UNKNOWN,
+            TYPE_ACTIVITY,
+            TYPE_RECEIVER,
+            TYPE_SERVICE,
+            TYPE_PROVIDER,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface ComponentType {}
+
+    /** @hide */
+    @IntDef(prefix = { "TYPE_" }, value = {
+            TYPE_UNKNOWN,
+            TYPE_ACTIVITY,
+            TYPE_RECEIVER,
+            TYPE_SERVICE,
+            TYPE_PROVIDER,
+            TYPE_APPLICATION,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface PropertyLocation {}
 
     /**
      * As a guiding principle:
@@ -169,6 +449,7 @@ public abstract class PackageManager {
             GET_DISABLED_UNTIL_USED_COMPONENTS,
             GET_UNINSTALLED_PACKAGES,
             MATCH_HIDDEN_UNTIL_INSTALLED_COMPONENTS,
+            GET_ATTRIBUTIONS,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface PackageInfoFlags {}
@@ -561,6 +842,11 @@ public abstract class PackageManager {
      * </ul>
      */
     public static final int MATCH_DIRECT_BOOT_AUTO = 0x10000000;
+
+    /**
+     * {@link PackageInfo} flag: return all attributions declared in the package manifest
+     */
+    public static final int GET_ATTRIBUTIONS = 0x80000000;
 
     /** @hide */
     @Deprecated
@@ -1041,6 +1327,60 @@ public abstract class PackageManager {
      * @hide
      */
     public static final int INSTALL_REASON_ROLLBACK = 5;
+
+    /** @hide */
+    @IntDef(prefix = { "INSTALL_SCENARIO_" }, value = {
+            INSTALL_SCENARIO_DEFAULT,
+            INSTALL_SCENARIO_FAST,
+            INSTALL_SCENARIO_BULK,
+            INSTALL_SCENARIO_BULK_SECONDARY,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface InstallScenario {}
+
+    /**
+     * A value to indicate the lack of CUJ information, disabling all installation scenario logic.
+     *
+     * @hide
+     */
+    public static final int INSTALL_SCENARIO_DEFAULT = 0;
+
+    /**
+     * Installation scenario providing the fastest “install button to launch" experience possible.
+     *
+     * @hide
+     */
+    public static final int INSTALL_SCENARIO_FAST = 1;
+
+    /**
+     * Installation scenario indicating a bulk operation with the desired result of a fully
+     * optimized application.  If the system is busy or resources are scarce the system will
+     * perform less work to avoid impacting system health.
+     *
+     * Examples of bulk installation scenarios might include device restore, background updates of
+     * multiple applications, or user-triggered updates for all applications.
+     *
+     * The decision to use BULK or BULK_SECONDARY should be based on the desired user experience.
+     * BULK_SECONDARY operations may take less time to complete but, when they do, will produce
+     * less optimized applications.  The device state (e.g. memory usage or battery status) should
+     * not be considered when making this decision as those factors are taken into account by the
+     * Package Manager when acting on the installation scenario.
+     *
+     * @hide
+     */
+    public static final int INSTALL_SCENARIO_BULK = 2;
+
+    /**
+     * Installation scenario indicating a bulk operation that prioritizes minimal system health
+     * impact over application optimization.  The application may undergo additional optimization
+     * if the system is idle and system resources are abundant.  The more elements of a bulk
+     * operation that are marked BULK_SECONDARY, the faster the entire bulk operation will be.
+     *
+     * See the comments for INSTALL_SCENARIO_BULK for more information.
+     *
+     * @hide
+     */
+    public static final int INSTALL_SCENARIO_BULK_SECONDARY = 3;
 
     /** @hide */
     @IntDef(prefix = { "UNINSTALL_REASON_" }, value = {
@@ -2348,6 +2688,23 @@ public abstract class PackageManager {
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature(String, int)}: If this feature is supported, the feature version
+     * specifies a date such that the device is known to pass the OpenGLES dEQP test suite
+     * associated with that date.  The date is encoded as follows:
+     * <ul>
+     * <li>Year in bits 31-16</li>
+     * <li>Month in bits 15-8</li>
+     * <li>Day in bits 7-0</li>
+     * </ul>
+     * <p>
+     * Example: 2021-03-01 is encoded as 0x07E50301, and would indicate that the device passes the
+     * OpenGL ES dEQP test suite version that was current on 2021-03-01.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_OPENGLES_DEQP_LEVEL = "android.software.opengles.deqp.level";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
      * {@link #hasSystemFeature}: The device includes broadcast radio tuner.
      * @hide
      */
@@ -2532,6 +2889,15 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_TELEPHONY_IMS = "android.hardware.telephony.ims";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device is capable of communicating with
+     * other devices via ultra wideband.
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_UWB = "android.hardware.uwb";
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
@@ -3040,6 +3406,14 @@ public abstract class PackageManager {
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}:
+     * The device supports translation of text-to-text in multiple languages via integration with
+     * the system {@link android.service.translation.TranslationService translation provider}.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_TRANSLATION = "android.software.translation";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}:
      * The device implements headtracking suitable for a VR device.
      */
     @SdkConstant(SdkConstantType.FEATURE)
@@ -3137,6 +3511,17 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_TUNER = "android.hardware.tv.tuner";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device supports a enabling/disabling sensor privacy for
+     * camera. When sensory privacy for the camera is enabled no camera data is send to clients,
+     * e.g. the view finder in a camera app would appear blank.
+     *
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_CAMERA_TOGGLE = "android.hardware.camera.toggle";
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}: The device has
@@ -3842,6 +4227,14 @@ public abstract class PackageManager {
      */
     public static final int UNSTARTABLE_REASON_INSUFFICIENT_STORAGE = 2;
 
+    /**
+     * A manifest property to control app's participation in {@code adb backup}. Should only
+     * be used by system / privileged apps.
+     *
+     * @hide
+     */
+    public static final String PROPERTY_ALLOW_ADB_BACKUP = "android.backup.ALLOW_ADB_BACKUP";
+
     /** {@hide} */
     public int getUserId() {
         return UserHandle.myUserId();
@@ -4087,6 +4480,7 @@ public abstract class PackageManager {
      * @throws NameNotFoundException if a package with the given name cannot be
      *             found on the system.
      */
+    //@Deprecated
     public abstract PermissionInfo getPermissionInfo(@NonNull String permName,
             @PermissionInfoFlags int flags) throws NameNotFoundException;
 
@@ -4099,9 +4493,10 @@ public abstract class PackageManager {
      * @param flags Additional option flags to modify the data returned.
      * @return Returns a list of {@link PermissionInfo} containing information
      *         about all of the permissions in the given group.
-     * @throws NameNotFoundException if a package with the given name cannot be
+     * @throws NameNotFoundException if a group with the given name cannot be
      *             found on the system.
      */
+    //@Deprecated
     @NonNull
     public abstract List<PermissionInfo> queryPermissionsByGroup(@NonNull String permissionGroup,
             @PermissionInfoFlags int flags) throws NameNotFoundException;
@@ -4130,7 +4525,7 @@ public abstract class PackageManager {
      * Retrieve all of the information we know about a particular group of
      * permissions.
      *
-     * @param permName The fully qualified name (i.e.
+     * @param groupName The fully qualified name (i.e.
      *            com.google.permission_group.APPS) of the permission you are
      *            interested in.
      * @param flags Additional option flags to modify the data returned.
@@ -4139,8 +4534,9 @@ public abstract class PackageManager {
      * @throws NameNotFoundException if a package with the given name cannot be
      *             found on the system.
      */
+    //@Deprecated
     @NonNull
-    public abstract PermissionGroupInfo getPermissionGroupInfo(@NonNull String permName,
+    public abstract PermissionGroupInfo getPermissionGroupInfo(@NonNull String groupName,
             @PermissionGroupInfoFlags int flags) throws NameNotFoundException;
 
     /**
@@ -4150,6 +4546,7 @@ public abstract class PackageManager {
      * @return Returns a list of {@link PermissionGroupInfo} containing
      *         information about all of the known permission groups.
      */
+    //@Deprecated
     @NonNull
     public abstract List<PermissionGroupInfo> getAllPermissionGroups(
             @PermissionGroupInfoFlags int flags);
@@ -4406,6 +4803,7 @@ public abstract class PackageManager {
      * @return Whether the permission is restricted by policy.
      */
     @CheckResult
+    //@Deprecated
     public abstract boolean isPermissionRevokedByPolicy(@NonNull String permName,
             @NonNull String packageName);
 
@@ -4454,6 +4852,7 @@ public abstract class PackageManager {
      *
      * @see #removePermission(String)
      */
+    //@Deprecated
     public abstract boolean addPermission(@NonNull PermissionInfo info);
 
     /**
@@ -4463,6 +4862,7 @@ public abstract class PackageManager {
      * expense of no guarantee the added permission will be retained if
      * the device is rebooted before it is written.
      */
+    //@Deprecated
     public abstract boolean addPermissionAsync(@NonNull PermissionInfo info);
 
     /**
@@ -4478,6 +4878,7 @@ public abstract class PackageManager {
      *
      * @see #addPermission(PermissionInfo)
      */
+    //@Deprecated
     public abstract void removePermission(@NonNull String permName);
 
     /**
@@ -4530,6 +4931,7 @@ public abstract class PackageManager {
      *
      * @hide
      */
+    //@Deprecated
     @SuppressWarnings("HiddenAbstractMethod")
     @SystemApi
     @RequiresPermission(android.Manifest.permission.GRANT_RUNTIME_PERMISSIONS)
@@ -4557,6 +4959,7 @@ public abstract class PackageManager {
      *
      * @hide
      */
+    //@Deprecated
     @SuppressWarnings("HiddenAbstractMethod")
     @SystemApi
     @RequiresPermission(android.Manifest.permission.REVOKE_RUNTIME_PERMISSIONS)
@@ -4585,6 +4988,7 @@ public abstract class PackageManager {
      *
      * @hide
      */
+    //@Deprecated
     @SystemApi
     @RequiresPermission(android.Manifest.permission.REVOKE_RUNTIME_PERMISSIONS)
     public void revokeRuntimePermission(@NonNull String packageName,
@@ -4602,6 +5006,7 @@ public abstract class PackageManager {
      *
      * @hide
      */
+    //@Deprecated
     @SuppressWarnings("HiddenAbstractMethod")
     @SystemApi
     @RequiresPermission(anyOf = {
@@ -4625,6 +5030,7 @@ public abstract class PackageManager {
      *
      * @hide
      */
+    //@Deprecated
     @SuppressWarnings("HiddenAbstractMethod")
     @SystemApi
     @RequiresPermission(anyOf = {
@@ -4689,6 +5095,7 @@ public abstract class PackageManager {
      *
      * @throws SecurityException if you try to access a whitelist that you have no access to.
      */
+    //@Deprecated
     @RequiresPermission(value = Manifest.permission.WHITELIST_RESTRICTED_PERMISSIONS,
             conditional = true)
     public @NonNull Set<String> getWhitelistedRestrictedPermissions(
@@ -4755,6 +5162,7 @@ public abstract class PackageManager {
      *
      * @throws SecurityException if you try to modify a whitelist that you have no access to.
      */
+    //@Deprecated
     @RequiresPermission(value = Manifest.permission.WHITELIST_RESTRICTED_PERMISSIONS,
             conditional = true)
     public boolean addWhitelistedRestrictedPermission(@NonNull String packageName,
@@ -4824,6 +5232,7 @@ public abstract class PackageManager {
      *
      * @throws SecurityException if you try to modify a whitelist that you have no access to.
      */
+    //@Deprecated
     @RequiresPermission(value = Manifest.permission.WHITELIST_RESTRICTED_PERMISSIONS,
         conditional = true)
     public boolean removeWhitelistedRestrictedPermission(@NonNull String packageName,
@@ -4856,6 +5265,7 @@ public abstract class PackageManager {
      *
      * @throws SecurityException if you you have no access to modify this.
      */
+    //@Deprecated
     @RequiresPermission(value = Manifest.permission.WHITELIST_AUTO_REVOKE_PERMISSIONS,
             conditional = true)
     public boolean setAutoRevokeWhitelisted(@NonNull String packageName, boolean whitelisted) {
@@ -4883,6 +5293,7 @@ public abstract class PackageManager {
      *
      * @throws SecurityException if you you have no access to this.
      */
+    //@Deprecated
     @RequiresPermission(value = Manifest.permission.WHITELIST_AUTO_REVOKE_PERMISSIONS,
             conditional = true)
     public boolean isAutoRevokeWhitelisted(@NonNull String packageName) {
@@ -4901,6 +5312,7 @@ public abstract class PackageManager {
      *
      * @hide
      */
+    //@Deprecated
     @SuppressWarnings("HiddenAbstractMethod")
     @UnsupportedAppUsage
     public abstract boolean shouldShowRequestPermissionRationale(@NonNull String permName);
@@ -7203,6 +7615,7 @@ public abstract class PackageManager {
      *
      * @hide
      */
+    //@Deprecated
     @SuppressWarnings("HiddenAbstractMethod")
     @SystemApi
     @RequiresPermission(Manifest.permission.OBSERVE_GRANT_REVOKE_PERMISSIONS)
@@ -7216,6 +7629,7 @@ public abstract class PackageManager {
      *
      * @hide
      */
+    //@Deprecated
     @SuppressWarnings("HiddenAbstractMethod")
     @SystemApi
     @RequiresPermission(Manifest.permission.OBSERVE_GRANT_REVOKE_PERMISSIONS)
@@ -8124,7 +8538,7 @@ public abstract class PackageManager {
      * Trust any Installer to provide checksums for the package.
      * @see #requestChecksums
      */
-    public static final @Nullable List<Certificate> TRUST_ALL = Collections.singletonList(null);
+    public static final @NonNull List<Certificate> TRUST_ALL = Collections.singletonList(null);
 
     /**
      * Don't trust any Installer to provide checksums for the package.
@@ -8360,6 +8774,87 @@ public abstract class PackageManager {
     public Set<String> getMimeGroup(@NonNull String mimeGroup) {
         throw new UnsupportedOperationException(
                 "getMimeGroup not implemented in subclass");
+    }
+
+    /**
+     * Returns the property defined in the given package's &lt;appliction&gt; tag.
+     *
+     * @throws NameNotFoundException if either the given package is not installed or if the
+     * given property is not defined within the &lt;application&gt; tag.
+     */
+    @NonNull
+    public Property getProperty(@NonNull String propertyName, @NonNull String packageName)
+            throws NameNotFoundException {
+        throw new UnsupportedOperationException(
+                "getProperty not implemented in subclass");
+    }
+
+    /**
+     * Returns the property defined in the given component declaration.
+     *
+     * @throws NameNotFoundException if either the given component does not exist or if the
+     * given property is not defined within the component declaration.
+     */
+    @NonNull
+    public Property getProperty(@NonNull String propertyName, @NonNull ComponentName component)
+            throws NameNotFoundException {
+        throw new UnsupportedOperationException(
+                "getProperty not implemented in subclass");
+    }
+
+    /**
+     * Returns the property definition for all &lt;application&gt; tags.
+     * <p>If the property is not defined with any &lt;application&gt; tag,
+     * returns and empty list.
+     */
+    @NonNull
+    public List<Property> queryApplicationProperty(@NonNull String propertyName) {
+        throw new UnsupportedOperationException(
+                "qeuryApplicationProperty not implemented in subclass");
+    }
+
+    /**
+     * Returns the property definition for all &lt;activity&gt; and &lt;activity-alias&gt; tags.
+     * <p>If the property is not defined with any &lt;activity&gt; and &lt;activity-alias&gt; tag,
+     * returns and empty list.
+     */
+    @NonNull
+    public List<Property> queryActivityProperty(@NonNull String propertyName) {
+        throw new UnsupportedOperationException(
+                "qeuryActivityProperty not implemented in subclass");
+    }
+
+    /**
+     * Returns the property definition for all &lt;provider&gt; tags.
+     * <p>If the property is not defined with any &lt;provider&gt; tag,
+     * returns and empty list.
+     */
+    @NonNull
+    public List<Property> queryProviderProperty(@NonNull String propertyName) {
+        throw new UnsupportedOperationException(
+                "qeuryProviderProperty not implemented in subclass");
+    }
+
+    /**
+     * Returns the property definition for all &lt;receiver&gt; tags.
+     * <p>If the property is not defined with any &lt;receiver&gt; tag,
+     * returns and empty list.
+     */
+    @NonNull
+    public List<Property> queryReceiverProperty(@NonNull String propertyName) {
+        throw new UnsupportedOperationException(
+                "qeuryReceiverProperty not implemented in subclass");
+    }
+
+    /**
+     * Returns the property definition for all &lt;service&gt; tags.
+     * <p>If the property is not defined with any &lt;service&gt; tag,
+     * returns and empty list.
+     */
+    @NonNull
+    public List<Property> queryServiceProperty(@NonNull String propertyName) {
+        throw new UnsupportedOperationException(
+                "qeuryServiceProperty not implemented in subclass");
     }
 
     /**

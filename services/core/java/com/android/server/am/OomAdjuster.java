@@ -72,6 +72,7 @@ import static com.android.server.am.AppProfiler.TAG_PSS;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_SWITCH;
 
 import android.app.ActivityManager;
+import android.app.ActivityThread;
 import android.app.ApplicationExitInfo;
 import android.app.usage.UsageEvents;
 import android.compat.annotation.ChangeId;
@@ -91,7 +92,6 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.Trace;
-import android.os.UserHandle;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.LongSparseArray;
@@ -119,7 +119,7 @@ import java.util.Arrays;
  * All of the code required to compute proc states and oom_adj values.
  */
 public final class OomAdjuster {
-    private static final String TAG = "OomAdjuster";
+    static final String TAG = "OomAdjuster";
     static final String OOM_ADJ_REASON_METHOD = "updateOomAdj";
     static final String OOM_ADJ_REASON_NONE = OOM_ADJ_REASON_METHOD + "_meh";
     static final String OOM_ADJ_REASON_ACTIVITY = OOM_ADJ_REASON_METHOD + "_activityChange";
@@ -168,6 +168,12 @@ public final class OomAdjuster {
      * Service for optimizing resource usage from background apps.
      */
     CachedAppOptimizer mCachedAppOptimizer;
+
+    /**
+     * Re-rank apps getting a cache oom adjustment from lru to weighted order
+     * based on weighted scores for LRU, PSS and cache use count.
+     */
+    CacheOomRanker mCacheOomRanker;
 
     ActivityManagerConstants mConstants;
 
@@ -331,6 +337,7 @@ public final class OomAdjuster {
         mLocalPowerManager = LocalServices.getService(PowerManagerInternal.class);
         mConstants = mService.mConstants;
         mCachedAppOptimizer = new CachedAppOptimizer(mService);
+        mCacheOomRanker = new CacheOomRanker();
 
         mProcessGroupHandler = new Handler(adjusterThread.getLooper(), msg -> {
             final int pid = msg.arg1;
@@ -361,6 +368,7 @@ public final class OomAdjuster {
 
     void initSettings() {
         mCachedAppOptimizer.init();
+        mCacheOomRanker.init(ActivityThread.currentApplication().getMainExecutor());
         if (mService.mConstants.KEEP_WARMING_SERVICES.size() > 0) {
             final IntentFilter filter = new IntentFilter(Intent.ACTION_USER_SWITCHED);
             mService.mContext.registerReceiverForAllUsers(new BroadcastReceiver() {
@@ -484,7 +492,7 @@ public final class OomAdjuster {
                 ActiveUids uids = mTmpUidRecords;
                 uids.clear();
                 uids.put(uidRec.uid, uidRec);
-                updateUidsLocked(uids, now);
+                updateUidsLocked(uids, SystemClock.elapsedRealtime());
                 mProcessList.incrementProcStateSeqAndNotifyAppsLocked(uids);
             }
         }
@@ -769,6 +777,9 @@ public final class OomAdjuster {
             }
         }
 
+        if (mCacheOomRanker.useOomReranking()) {
+            mCacheOomRanker.reRankLruCachedApps(mProcessList);
+        }
         assignCachedAdjIfNecessary(mProcessList.mLruProcesses);
 
         if (computeClients) { // There won't be cycles if we didn't compute clients above.
@@ -1329,7 +1340,7 @@ public final class OomAdjuster {
         app.setCached(false);
         app.shouldNotFreeze = false;
 
-        app.mAllowStartFgsState = PROCESS_STATE_NONEXISTENT;
+        app.resetAllowStartFgs();
 
         final int appUid = app.info.uid;
         final int logUid = mService.mCurOomAdjUid;
@@ -1351,7 +1362,6 @@ public final class OomAdjuster {
             app.setCurrentSchedulingGroup(ProcessList.SCHED_GROUP_DEFAULT);
             app.curCapability = PROCESS_CAPABILITY_ALL;
             app.setCurProcState(ActivityManager.PROCESS_STATE_PERSISTENT);
-            app.bumpAllowStartFgsState(PROCESS_STATE_PERSISTENT);
             // System processes can do UI, and when they do we want to have
             // them trim their memory after the user leaves the UI.  To
             // facilitate this, here we need to determine whether or not it
@@ -1382,6 +1392,8 @@ public final class OomAdjuster {
             app.setCurRawProcState(app.getCurProcState());
             app.curAdj = app.maxAdj;
             app.completedAdjSeq = app.adjSeq;
+            app.bumpAllowStartFgsState(app.getCurProcState());
+            app.setAllowStartFgs();
             // if curAdj is less than prevAppAdj, then this process was promoted
             return app.curAdj < prevAppAdj || app.getCurProcState() < prevProcState;
         }
@@ -1772,6 +1784,11 @@ public final class OomAdjuster {
 
                     int clientAdj = client.getCurRawAdj();
                     int clientProcState = client.getCurRawProcState();
+
+                    // pass client's mAllowStartFgs to the app if client is not persistent process.
+                    if (client.mAllowStartFgs && client.maxAdj >= ProcessList.FOREGROUND_APP_ADJ) {
+                        app.mAllowStartFgs = true;
+                    }
 
                     if ((cr.flags & Context.BIND_WAIVE_PRIORITY) == 0) {
                         if (shouldSkipDueToCycle(app, client, procState, adj, cycleReEval)) {
@@ -2236,7 +2253,7 @@ public final class OomAdjuster {
         app.setCurRawProcState(procState);
         app.setHasForegroundActivities(foregroundActivities);
         app.completedAdjSeq = mAdjSeq;
-
+        app.setAllowStartFgs();
         // if curAdj or curProcState improved, then this process was promoted
         return app.curAdj < prevAppAdj || app.getCurProcState() < prevProcState
                 || app.curCapability != prevCapability ;
@@ -2713,11 +2730,11 @@ public final class OomAdjuster {
     }
 
     @GuardedBy("mService")
-    final void setAppIdTempWhitelistStateLocked(int appId, boolean onWhitelist) {
+    final void setAppIdTempWhitelistStateLocked(int uid, boolean onWhitelist) {
         boolean changed = false;
         for (int i = mActiveUids.size() - 1; i >= 0; i--) {
             final UidRecord uidRec = mActiveUids.valueAt(i);
-            if (UserHandle.getAppId(uidRec.uid) == appId && uidRec.curWhitelist != onWhitelist) {
+            if (uidRec.uid == uid && uidRec.curWhitelist != onWhitelist) {
                 uidRec.curWhitelist = onWhitelist;
                 changed = true;
             }
@@ -2766,6 +2783,11 @@ public final class OomAdjuster {
     @GuardedBy("mService")
     void dumpCachedAppOptimizerSettings(PrintWriter pw) {
         mCachedAppOptimizer.dump(pw);
+    }
+
+    @GuardedBy("mService")
+    void dumpCacheOomRankerSettings(PrintWriter pw) {
+        mCacheOomRanker.dump(pw);
     }
 
     @GuardedBy("mService")

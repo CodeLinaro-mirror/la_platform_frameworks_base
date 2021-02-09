@@ -199,8 +199,8 @@ class FaceAuthenticationClient extends AuthenticationClient<IBiometricsFace> {
             intent.setPackage("com.android.settings");
 
             final PendingIntent pendingIntent = PendingIntent.getActivityAsUser(getContext(),
-                    0 /* requestCode */, intent, 0 /* flags */, null /* options */,
-                    UserHandle.CURRENT);
+                    0 /* requestCode */, intent, PendingIntent.FLAG_IMMUTABLE /* flags */,
+                    null /* options */, UserHandle.CURRENT);
 
             final String channelName = "FaceEnrollNotificationChannel";
 

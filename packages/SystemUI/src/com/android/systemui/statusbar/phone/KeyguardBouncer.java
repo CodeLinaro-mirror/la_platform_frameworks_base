@@ -39,9 +39,9 @@ import com.android.keyguard.KeyguardUpdateMonitorCallback;
 import com.android.keyguard.ViewMediatorCallback;
 import com.android.keyguard.dagger.KeyguardBouncerComponent;
 import com.android.systemui.DejankUtils;
+import com.android.systemui.classifier.FalsingCollector;
 import com.android.systemui.dagger.qualifiers.RootView;
 import com.android.systemui.keyguard.DismissCallbackRegistry;
-import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.shared.system.SysUiStatsLog;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 
@@ -65,7 +65,7 @@ public class KeyguardBouncer {
     protected final Context mContext;
     protected final ViewMediatorCallback mCallback;
     protected final ViewGroup mContainer;
-    private final FalsingManager mFalsingManager;
+    private final FalsingCollector mFalsingCollector;
     private final DismissCallbackRegistry mDismissCallbackRegistry;
     private final Handler mHandler;
     private final List<BouncerExpansionCallback> mExpansionCallbacks = new ArrayList<>();
@@ -100,7 +100,7 @@ public class KeyguardBouncer {
 
     private KeyguardBouncer(Context context, ViewMediatorCallback callback,
             ViewGroup container,
-            DismissCallbackRegistry dismissCallbackRegistry, FalsingManager falsingManager,
+            DismissCallbackRegistry dismissCallbackRegistry, FalsingCollector falsingCollector,
             BouncerExpansionCallback expansionCallback,
             KeyguardStateController keyguardStateController,
             KeyguardUpdateMonitor keyguardUpdateMonitor,
@@ -111,7 +111,7 @@ public class KeyguardBouncer {
         mCallback = callback;
         mContainer = container;
         mKeyguardUpdateMonitor = keyguardUpdateMonitor;
-        mFalsingManager = falsingManager;
+        mFalsingCollector = falsingCollector;
         mDismissCallbackRegistry = dismissCallbackRegistry;
         mHandler = handler;
         mKeyguardStateController = keyguardStateController;
@@ -203,7 +203,7 @@ public class KeyguardBouncer {
      * will never be notified and its internal state will be out of sync.
      */
     private void onFullyShown() {
-        mFalsingManager.onBouncerShown();
+        mFalsingCollector.onBouncerShown();
         if (mKeyguardViewController == null) {
             Log.wtf(TAG, "onFullyShown when view was null");
         } else {
@@ -223,7 +223,7 @@ public class KeyguardBouncer {
         if (mRoot != null) {
             mRoot.setVisibility(View.INVISIBLE);
         }
-        mFalsingManager.onBouncerHidden();
+        mFalsingCollector.onBouncerHidden();
         DejankUtils.postAfterTraversal(mResetRunnable);
     }
 
@@ -290,7 +290,7 @@ public class KeyguardBouncer {
             mDismissCallbackRegistry.notifyDismissCancelled();
         }
         mIsScrimmed = false;
-        mFalsingManager.onBouncerHidden();
+        mFalsingCollector.onBouncerHidden();
         mCallback.onBouncerVisiblityChanged(false /* shown */);
         cancelShowRunnable();
         if (mKeyguardViewController != null) {
@@ -327,7 +327,7 @@ public class KeyguardBouncer {
     public void reset() {
         cancelShowRunnable();
         inflateView();
-        mFalsingManager.onBouncerHidden();
+        mFalsingCollector.onBouncerHidden();
     }
 
     public void onScreenTurnedOff() {
@@ -377,6 +377,7 @@ public class KeyguardBouncer {
      */
     public void setExpansion(float fraction) {
         float oldExpansion = mExpansion;
+        boolean expansionChanged = mExpansion != fraction;
         mExpansion = fraction;
         if (mKeyguardViewController != null && !mIsAnimatingAway) {
             mKeyguardViewController.setExpansion(fraction);
@@ -393,6 +394,10 @@ public class KeyguardBouncer {
             if (mKeyguardViewController != null) {
                 mKeyguardViewController.onStartingToHide();
             }
+        }
+
+        if (expansionChanged) {
+            dispatchExpansionChanged();
         }
     }
 
@@ -446,10 +451,6 @@ public class KeyguardBouncer {
         }
     }
 
-    public boolean onBackPressed() {
-        return mKeyguardViewController != null && mKeyguardViewController.handleBackKey();
-    }
-
     /**
      * @return True if and only if the security method should be shown before showing the
      * notifications on Keyguard, like SIM PIN/PUK.
@@ -489,6 +490,14 @@ public class KeyguardBouncer {
         return mKeyguardViewController.interceptMediaKey(event);
     }
 
+    /**
+     * @return true if the pre IME back event should be handled
+     */
+    public boolean dispatchBackKeyEventPreIme() {
+        ensureView();
+        return mKeyguardViewController.dispatchBackKeyEventPreIme();
+    }
+
     public void notifyKeyguardAuthenticated(boolean strongAuth) {
         ensureView();
         mKeyguardViewController.finish(strongAuth, KeyguardUpdateMonitor.getCurrentUser());
@@ -518,6 +527,12 @@ public class KeyguardBouncer {
         }
     }
 
+    private void dispatchExpansionChanged() {
+        for (BouncerExpansionCallback callback : mExpansionCallbacks) {
+            callback.onExpansionChanged(mExpansion);
+        }
+    }
+
     public void dump(PrintWriter pw) {
         pw.println("KeyguardBouncer");
         pw.println("  isShowing(): " + isShowing());
@@ -534,6 +549,12 @@ public class KeyguardBouncer {
         void onStartingToHide();
         void onStartingToShow();
         void onFullyHidden();
+
+        /**
+         * From 0f {@link KeyguardBouncer#EXPANSION_VISIBLE} when fully visible
+         * to 1f {@link KeyguardBouncer#EXPANSION_HIDDEN} when fully hidden
+         */
+        default void onExpansionChanged(float bouncerHideAmount) {}
     }
 
     /** Create a {@link KeyguardBouncer} once a container and bouncer callback are available. */
@@ -541,7 +562,7 @@ public class KeyguardBouncer {
         private final Context mContext;
         private final ViewMediatorCallback mCallback;
         private final DismissCallbackRegistry mDismissCallbackRegistry;
-        private final FalsingManager mFalsingManager;
+        private final FalsingCollector mFalsingCollector;
         private final KeyguardStateController mKeyguardStateController;
         private final KeyguardUpdateMonitor mKeyguardUpdateMonitor;
         private final KeyguardBypassController mKeyguardBypassController;
@@ -551,7 +572,7 @@ public class KeyguardBouncer {
 
         @Inject
         public Factory(Context context, ViewMediatorCallback callback,
-                DismissCallbackRegistry dismissCallbackRegistry, FalsingManager falsingManager,
+                DismissCallbackRegistry dismissCallbackRegistry, FalsingCollector falsingCollector,
                 KeyguardStateController keyguardStateController,
                 KeyguardUpdateMonitor keyguardUpdateMonitor,
                 KeyguardBypassController keyguardBypassController, Handler handler,
@@ -560,7 +581,7 @@ public class KeyguardBouncer {
             mContext = context;
             mCallback = callback;
             mDismissCallbackRegistry = dismissCallbackRegistry;
-            mFalsingManager = falsingManager;
+            mFalsingCollector = falsingCollector;
             mKeyguardStateController = keyguardStateController;
             mKeyguardUpdateMonitor = keyguardUpdateMonitor;
             mKeyguardBypassController = keyguardBypassController;
@@ -572,7 +593,7 @@ public class KeyguardBouncer {
         public KeyguardBouncer create(@RootView ViewGroup container,
                 BouncerExpansionCallback expansionCallback) {
             return new KeyguardBouncer(mContext, mCallback, container,
-                    mDismissCallbackRegistry, mFalsingManager, expansionCallback,
+                    mDismissCallbackRegistry, mFalsingCollector, expansionCallback,
                     mKeyguardStateController, mKeyguardUpdateMonitor,
                     mKeyguardBypassController, mHandler, mKeyguardSecurityModel,
                     mKeyguardBouncerComponentFactory);

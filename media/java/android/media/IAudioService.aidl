@@ -28,6 +28,7 @@ import android.media.IAudioFocusDispatcher;
 import android.media.IAudioRoutesObserver;
 import android.media.IAudioServerStateDispatcher;
 import android.media.ICapturePresetDevicesRoleDispatcher;
+import android.media.ICommunicationDeviceDispatcher;
 import android.media.IPlaybackConfigDispatcher;
 import android.media.IRecordingConfigDispatcher;
 import android.media.IRingtonePlayer;
@@ -62,7 +63,7 @@ interface IAudioService {
 
     oneway void playerAttributes(in int piid, in AudioAttributes attr);
 
-    oneway void playerEvent(in int piid, in int event);
+    oneway void playerEvent(in int piid, in int event, in int deviceId);
 
     oneway void releasePlayer(in int piid);
 
@@ -334,4 +335,25 @@ interface IAudioService {
     oneway void setStreamVolumeForUid(int streamType, int direction, int flags,
             in String packageName, int uid, int pid, in UserHandle userHandle,
             int targetSdkVersion);
+
+    boolean isMusicActive(in boolean remotely);
+
+    int getDevicesForStream(in int streamType);
+
+    boolean setDeviceForCommunication(IBinder cb, int portId);
+
+    int getDeviceForCommunication();
+
+    void registerCommunicationDeviceDispatcher(ICommunicationDeviceDispatcher dispatcher);
+
+    oneway void unregisterCommunicationDeviceDispatcher(
+            ICommunicationDeviceDispatcher dispatcher);
+
+    boolean areFastScrollSoundEffectsEnabled();
+
+    oneway void setFastScrollSoundEffectsEnabled(boolean enabled);
+
+    boolean isHomeSoundEffectEnabled();
+
+    oneway void setHomeSoundEffectEnabled(boolean enabled);
 }

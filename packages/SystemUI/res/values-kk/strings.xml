@@ -33,8 +33,8 @@
     <string name="invalid_charger_title" msgid="938685362320735167">"USB арқылы зарядтау мүмкін емес"</string>
     <string name="invalid_charger_text" msgid="2339310107232691577">"Құрылғымен бірге берілген зарядтау құралын пайдаланыңыз"</string>
     <string name="battery_low_why" msgid="2056750982959359863">"Параметрлер"</string>
-    <string name="battery_saver_confirmation_title" msgid="1234998463717398453">"Battery Saver функциясын қосу керек пе?"</string>
-    <string name="battery_saver_confirmation_title_generic" msgid="2299231884234959849">"Battery Saver туралы ақпарат"</string>
+    <string name="battery_saver_confirmation_title" msgid="1234998463717398453">"Батареяны үнемдеу режимін қосу керек пе?"</string>
+    <string name="battery_saver_confirmation_title_generic" msgid="2299231884234959849">"Батареяны үнемдеу режимі туралы ақпарат"</string>
     <string name="battery_saver_confirmation_ok" msgid="5042136476802816494">"Қосу"</string>
     <string name="battery_saver_start_action" msgid="4553256017945469937">"Battery saver функциясын қосу"</string>
     <string name="status_bar_settings_settings_button" msgid="534331565185171556">"Параметрлер"</string>
@@ -83,8 +83,9 @@
     <string name="screenshot_saved_title" msgid="8893267638659083153">"Скриншот сақталды"</string>
     <string name="screenshot_saved_text" msgid="7778833104901642442">"Скриншотты көру үшін түртіңіз"</string>
     <string name="screenshot_failed_title" msgid="3259148215671936891">"Скриншот сақталмады"</string>
+    <string name="screenshot_failed_to_save_user_locked_text" msgid="6156607948256936920">"Скриншот сақталуы үшін, құрылғы құлпын ашу керек."</string>
     <string name="screenshot_failed_to_save_unknown_text" msgid="1506621600548684129">"Қайта скриншот жасап көріңіз"</string>
-    <string name="screenshot_failed_to_save_text" msgid="8344173457344027501">"Жадтағы шектеулі бос орынға байланысты скриншот сақталмайды"</string>
+    <string name="screenshot_failed_to_save_text" msgid="7232739948999195960">"Скриншотты сақтау мүмкін емес."</string>
     <string name="screenshot_failed_to_capture_text" msgid="7818288545874407451">"Қолданба немесе ұйым скриншоттар түсіруге рұқсат етпейді"</string>
     <string name="screenshot_edit_label" msgid="8754981973544133050">"Өзгерту"</string>
     <string name="screenshot_edit_description" msgid="3333092254706788906">"Скриншотты өзгерту"</string>
@@ -186,16 +187,6 @@
     <string name="accessibility_battery_three_bars" msgid="118341923832368291">"Батарея үш баған."</string>
     <string name="accessibility_battery_full" msgid="1480463938961288494">"Батарея толы."</string>
     <string name="accessibility_battery_unknown" msgid="1807789554617976440">"Батарея зарядының мөлшері белгісіз."</string>
-    <string name="accessibility_no_phone" msgid="8828412144430247025">"Телефон жоқ."</string>
-    <string name="accessibility_phone_one_bar" msgid="8786055123727785588">"Телефон бір баған."</string>
-    <string name="accessibility_phone_two_bars" msgid="3316909612598670674">"Телефон екі баған."</string>
-    <string name="accessibility_phone_three_bars" msgid="5670937367300884534">"Телефон үш баған."</string>
-    <string name="accessibility_phone_signal_full" msgid="1103449569988869971">"Телефон сигналы толық."</string>
-    <string name="accessibility_no_data" msgid="2124768255213392359">"Дерекқор жоқ."</string>
-    <string name="accessibility_data_one_bar" msgid="3226985124149387055">"Дерекқор бір баған."</string>
-    <string name="accessibility_data_two_bars" msgid="4576231688545173059">"Дерекқор екі баған."</string>
-    <string name="accessibility_data_three_bars" msgid="3036562180893930325">"Дерекқор үш баған."</string>
-    <string name="accessibility_data_signal_full" msgid="283507058258113551">"Дерекқор сигналы толы."</string>
     <string name="accessibility_wifi_name" msgid="4863440268606851734">"<xliff:g id="WIFI">%s</xliff:g> қосылған."</string>
     <string name="accessibility_bluetooth_name" msgid="7300973230214067678">"<xliff:g id="BLUETOOTH">%s</xliff:g> қосылған."</string>
     <string name="accessibility_cast_name" msgid="7344437925388773685">"<xliff:g id="CAST">%s</xliff:g> трансляциясына қосылды."</string>
@@ -204,8 +195,6 @@
     <string name="accessibility_wimax_two_bars" msgid="7335485192390018939">"WiMAX екі жолақ."</string>
     <string name="accessibility_wimax_three_bars" msgid="2773714362377629938">"WiMAX үш жолақ."</string>
     <string name="accessibility_wimax_signal_full" msgid="3101861561730624315">"WiMAX сигналы толық."</string>
-    <string name="accessibility_ethernet_disconnected" msgid="2097190491174968655">"Ethernet ажыратылған."</string>
-    <string name="accessibility_ethernet_connected" msgid="3988347636883115213">"Ethernet қосылған."</string>
     <string name="accessibility_no_signal" msgid="1115622734914921920">"Сигнал жоқ."</string>
     <string name="accessibility_not_connected" msgid="4061305616351042142">"Жалғанбаған."</string>
     <string name="accessibility_zero_bars" msgid="1364823964848784827">"Нөл жолақ."</string>
@@ -217,30 +206,17 @@
     <string name="accessibility_desc_off" msgid="8055389500285421408">"Өшірулі."</string>
     <string name="accessibility_desc_connected" msgid="3082590384032624233">"Жалғанған."</string>
     <string name="accessibility_desc_connecting" msgid="8011433412112903614">"Қосылуда."</string>
-    <string name="data_connection_gprs" msgid="2752584037409568435">"GPRS"</string>
     <string name="data_connection_hspa" msgid="6096234094857660873">"HSPA"</string>
-    <string name="data_connection_3g" msgid="1215807817895516914">"3G"</string>
-    <string name="data_connection_3_5g" msgid="4097346596394846450">"H"</string>
-    <string name="data_connection_3_5g_plus" msgid="8938598386721354697">"H+"</string>
-    <string name="data_connection_4g" msgid="5770196771037980730">"4G"</string>
-    <string name="data_connection_4g_plus" msgid="780615287092000279">"4G+"</string>
-    <string name="data_connection_lte" msgid="557021044282539923">"LTE"</string>
-    <string name="data_connection_lte_plus" msgid="4799302403782283178">"LTE+"</string>
-    <string name="data_connection_cdma" msgid="7678457855627313518">"1X"</string>
     <string name="data_connection_roaming" msgid="375650836665414797">"Роуминг"</string>
-    <string name="data_connection_edge" msgid="6316755666481405762">"EDGE"</string>
     <string name="accessibility_data_connection_wifi" msgid="4422160347472742434">"Wi-Fi"</string>
     <string name="accessibility_no_sim" msgid="1140839832913084973">"SIM жоқ."</string>
     <string name="accessibility_cell_data" msgid="172950885786007392">"Мобильдік дерекқор"</string>
     <string name="accessibility_cell_data_on" msgid="691666434519443162">"Мобильдік деректер қосулы"</string>
-    <string name="cell_data_off_content_description" msgid="9165555931499878044">"Мобильдік деректер өшірулі"</string>
-    <string name="not_default_data_content_description" msgid="6757881730711522517">"Деректерді пайдалануға реттелмеген."</string>
     <string name="cell_data_off" msgid="4886198950247099526">"Өшірулі"</string>
     <string name="accessibility_bluetooth_tether" msgid="6327291292208790599">"Bluetooth тетеринг."</string>
     <string name="accessibility_airplane_mode" msgid="1899529214045998505">"Ұшақ режимі."</string>
     <string name="accessibility_vpn_on" msgid="8037549696057288731">"VPN қосулы."</string>
     <string name="accessibility_no_sims" msgid="5711270400476534667">"SIM картасы жоқ."</string>
-    <string name="carrier_network_change_mode" msgid="5174141476991149918">"Оператор желісін өзгерту"</string>
     <string name="accessibility_battery_details" msgid="6184390274150865789">"Батарея мәліметтерін ашу"</string>
     <string name="accessibility_battery_level" msgid="5143715405241138822">"Батарея <xliff:g id="NUMBER">%d</xliff:g> пайыз."</string>
     <string name="accessibility_battery_level_with_estimate" msgid="4843119982547599452">"Батарея заряды: <xliff:g id="PERCENTAGE">%1$s</xliff:g> пайыз. Пайдалануға байланысты шамамен <xliff:g id="TIME">%2$s</xliff:g> уақытқа жетеді."</string>
@@ -368,6 +344,10 @@
     <string name="quick_settings_ime_label" msgid="3351174938144332051">"Енгізу әдісі"</string>
     <string name="quick_settings_location_label" msgid="2621868789013389163">"Орналасу"</string>
     <string name="quick_settings_location_off_label" msgid="7923929131443915919">"Орын өшірулі"</string>
+    <!-- no translation found for quick_settings_camera_label (1367149596242401934) -->
+    <skip />
+    <!-- no translation found for quick_settings_mic_label (8245831073612564953) -->
+    <skip />
     <string name="quick_settings_media_device_label" msgid="8034019242363789941">"Meдиа құрылғысы"</string>
     <string name="quick_settings_rssi_label" msgid="3397615415140356701">"RSSI (алынған сигнал қуатының көрсеткіші)"</string>
     <string name="quick_settings_rssi_emergency_only" msgid="7499207215265078598">"Құтқару қызметіне ғана қоңырау шалынады"</string>
@@ -377,6 +357,13 @@
     <string name="quick_settings_user_title" msgid="8673045967216204537">"Пайдаланушы"</string>
     <string name="quick_settings_user_new_user" msgid="3347905871336069666">"Жаңа пайдаланушы"</string>
     <string name="quick_settings_wifi_label" msgid="2879507532983487244">"Wi-Fi"</string>
+    <string name="quick_settings_internet_label" msgid="6603068555872455463">"Интернет"</string>
+    <!-- no translation found for quick_settings_airplane_safe_label (2665758539772645899) -->
+    <skip />
+    <!-- no translation found for quick_settings_networks_available (1875138606855420438) -->
+    <skip />
+    <!-- no translation found for quick_settings_networks_unavailable (1167847013337940082) -->
+    <skip />
     <string name="quick_settings_wifi_not_connected" msgid="4071097522427039160">"Жалғанбаған"</string>
     <string name="quick_settings_wifi_no_network" msgid="6003178398713839313">"Желі жоқ"</string>
     <string name="quick_settings_wifi_off_label" msgid="4003379736176547594">"Wi-Fi өшірулі"</string>
@@ -478,9 +465,9 @@
     <string name="accessibility_multi_user_switch_quick_contact" msgid="4504508915324898576">"Профильді көрсету"</string>
     <string name="user_add_user" msgid="4336657383006913022">"Пайдаланушы қосу"</string>
     <string name="user_new_user_name" msgid="2019166282704195789">"Жаңа пайдаланушы"</string>
-    <string name="guest_exit_guest_dialog_title" msgid="5015697561580641422">"Қонақты жою керек пе?"</string>
+    <string name="guest_exit_guest_dialog_title" msgid="2034481024623462357">"Қонақ сеансы аяқталсын ба?"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"Осы сеанстағы барлық қолданбалар мен деректер жойылады."</string>
-    <string name="guest_exit_guest_dialog_remove" msgid="7505817591242703757">"Алып тастау"</string>
+    <string name="guest_exit_guest_dialog_remove" msgid="8533184512885775423">"Сеансты аяқтау"</string>
     <string name="guest_wipe_session_title" msgid="7147965814683990944">"Қош келдіңіз, қонақ"</string>
     <string name="guest_wipe_session_message" msgid="3393823610257065457">"Сеансты жалғастыру керек пе?"</string>
     <string name="guest_wipe_session_wipe" msgid="8056836584445473309">"Қайта бастау"</string>
@@ -501,7 +488,7 @@
     <string name="user_remove_user_title" msgid="9124124694835811874">"Пайдаланушы жойылсын ба?"</string>
     <string name="user_remove_user_message" msgid="6702834122128031833">"Осы пайдаланушының барлық қолданбалары мен деректері жойылады."</string>
     <string name="user_remove_user_remove" msgid="8387386066949061256">"Жою"</string>
-    <string name="battery_saver_notification_title" msgid="8419266546034372562">"Battery saver қосулы"</string>
+    <string name="battery_saver_notification_title" msgid="8419266546034372562">"Батареяны үнемдеу режимі қосулы"</string>
     <string name="battery_saver_notification_text" msgid="2617841636449016951">"Өнімділікті және фондық деректерді азайтады"</string>
     <string name="battery_saver_notification_action_text" msgid="6022091913807026887">"Battery saver функциясын өшіру"</string>
     <string name="media_projection_dialog_text" msgid="1755705274910034772">"<xliff:g id="APP_SEEKING_PERMISSION">%s</xliff:g> жазу не трансляциялау кезінде экранда көрсетілетін немесе дыбысталатын барлық ақпаратты пайдалана алады. Бұған құпия сөздер, төлем туралы мәліметтер, суреттер, хабарлар және аудиоматериалдар кіреді."</string>
@@ -722,6 +709,10 @@
     <string name="notification_channel_summary_default_with_bubbles" msgid="1782419896613644568">"Телефон параметрлеріне байланысты шылдырлауы не дірілдеуі мүмкін. <xliff:g id="APP_NAME">%1$s</xliff:g> чаттары әдепкісінше қалқымалы етіп көрсетіледі."</string>
     <string name="notification_channel_summary_bubble" msgid="7235935211580860537">"Осы мазмұнға бекітілген қалқымалы таңбашамен назарыңызды өзіне тартады."</string>
     <string name="notification_channel_summary_automatic" msgid="5813109268050235275">"Хабарландыру дыбысының немесе дірілдің қосылуын жүйе анықтайтын болады"</string>
+    <string name="notification_channel_summary_automatic_alerted" msgid="954166812246932240">"&lt;b&gt;Күйі:&lt;/b&gt; \"Әдепкі\" санатына көтерілген"</string>
+    <string name="notification_channel_summary_automatic_silenced" msgid="7403004439649872047">"&lt;b&gt;Күйі:&lt;/b&gt; \"Үнсіз\" санатына төмендетілген"</string>
+    <string name="notification_channel_summary_automatic_promoted" msgid="1301710305149590426">"&lt;b&gt;Күйі:&lt;/b&gt; маңыздылық деңгейі көтерілген"</string>
+    <string name="notification_channel_summary_automatic_demoted" msgid="1831303964660807700">"&lt;b&gt;Күйі:&lt;/b&gt; маңыздылық деңгейі төмендетілген"</string>
     <string name="notification_channel_summary_priority" msgid="7952654515769021553">"Әңгімелер бөлімінің жоғарғы жағында тұрады, қалқыма хабар түрінде шығады, құлыптаулы экранда профиль суретін көрсетеді"</string>
     <string name="notification_conversation_channel_settings" msgid="2409977688430606835">"Параметрлер"</string>
     <string name="notification_priority_title" msgid="2079708866333537093">"Маңызды"</string>
@@ -740,9 +731,10 @@
     <string name="appops_camera_mic_overlay" msgid="5584311236445644095">"Бұл қолданба экранда басқа қолданбалардың үстінен көрсетіліп тұр және ол микрофон мен камераны пайдалануда."</string>
     <string name="notification_appops_settings" msgid="5208974858340445174">"Параметрлер"</string>
     <string name="notification_appops_ok" msgid="2177609375872784124">"Жарайды"</string>
-    <string name="feedback_silenced" msgid="5382212321253328247">"Хабарландырудың дыбысы жүйе арқылы өшірілген."</string>
-    <string name="feedback_promoted" msgid="8075757485407091976">"Хабарландырудың күйі жүйе арқылы көтерілген."</string>
-    <string name="feedback_demoted" msgid="5848066008939031913">"Хабарландырудың күйі жүйе арқылы түсірілген."</string>
+    <string name="feedback_alerted" msgid="5192459808484271208">"Жүйе бұл хабарландырудың маңыздылық деңгейін автоматты түрде &lt;b&gt;\"Әдепкі\" санатына көтерді&lt;/b&gt;."</string>
+    <string name="feedback_silenced" msgid="9116540317466126457">"Жүйе бұл хабарландырудың деңгейін автоматты түрде &lt;b&gt;\"Үнсіз\" санатына төмендетті&lt;/b&gt;."</string>
+    <string name="feedback_promoted" msgid="2125562787759780807">"Жүйе бұл хабарландырудың маңыздылық деңгейін автоматты түрде &lt;b&gt;көтерді&lt;/b&gt;."</string>
+    <string name="feedback_demoted" msgid="951884763467110604">"Жүйе бұл хабарландырудың маңыздылық деңгейін автоматты түрде &lt;b&gt;төмендетті&lt;/b&gt;."</string>
     <string name="feedback_prompt" msgid="2278631214125128281">"Барлығы дұрыс па?"</string>
     <string name="feedback_response" msgid="4671729244976641339">"Пікіріңіз үшін рақмет!"</string>
     <string name="feedback_ok" msgid="6481426753298857144">"Жарайды"</string>
@@ -777,7 +769,7 @@
       <item quantity="one">%d минут</item>
     </plurals>
     <string name="battery_panel_title" msgid="5931157246673665963">"Батареяны пайдалану"</string>
-    <string name="battery_detail_charging_summary" msgid="8821202155297559706">"Зарядтау кезінде Батарея үнемдегіш қол жетімді емес"</string>
+    <string name="battery_detail_charging_summary" msgid="8821202155297559706">"Зарядтау кезінде Батареяны үнемдеу режимі істемейді"</string>
     <string name="battery_detail_switch_title" msgid="6940976502957380405">"Батареяны үнемдеу режимі"</string>
     <string name="battery_detail_switch_summary" msgid="3668748557848025990">"Өнімділікті және фондық деректерді азайтады"</string>
     <string name="keyboard_key_button_template" msgid="8005673627272051429">"<xliff:g id="NAME">%1$s</xliff:g> түймесі"</string>
@@ -965,7 +957,7 @@
     <string name="slice_permission_checkbox" msgid="4242888137592298523">"<xliff:g id="APP">%1$s</xliff:g> қолданбасына кез келген қолданбаның үзіндісін көрсетуге рұқсат беру"</string>
     <string name="slice_permission_allow" msgid="6340449521277951123">"Рұқсат беру"</string>
     <string name="slice_permission_deny" msgid="6870256451658176895">"Тыйым салу"</string>
-    <string name="auto_saver_title" msgid="6873691178754086596">"Түймені түртіп, Battery Saver функциясын реттеңіз"</string>
+    <string name="auto_saver_title" msgid="6873691178754086596">"Түймені түртіп, Батареяны үнемдеу режимін реттеңіз"</string>
     <string name="auto_saver_text" msgid="3214960308353838764">"Батареяның заряды бітуге жақындағанда қосыңыз."</string>
     <string name="no_auto_saver_action" msgid="7467924389609773835">"Жоқ, рақмет"</string>
     <string name="auto_saver_enabled_title" msgid="4294726198280286333">"Battery Saver кестесі қосылды"</string>

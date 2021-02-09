@@ -62,6 +62,7 @@ import android.app.usage.AppStandbyInfo;
 import android.app.usage.UsageEvents;
 import android.app.usage.UsageStatsManager.StandbyBuckets;
 import android.app.usage.UsageStatsManager.SystemForcedReasons;
+import android.app.usage.UsageStatsManagerInternal;
 import android.appwidget.AppWidgetManager;
 import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
@@ -128,9 +129,10 @@ import java.util.concurrent.CountDownLatch;
  * Manages the standby state of an app, listening to various events.
  *
  * Unit test:
-   atest com.android.server.usage.AppStandbyControllerTests
+ * atest com.android.server.usage.AppStandbyControllerTests
  */
-public class AppStandbyController implements AppStandbyInternal {
+public class AppStandbyController
+        implements AppStandbyInternal, UsageStatsManagerInternal.UsageEventListener {
 
     private static final String TAG = "AppStandbyController";
     // Do not submit with true.
@@ -468,10 +470,21 @@ public class AppStandbyController implements AppStandbyInternal {
 
     @VisibleForTesting
     void setAppIdleEnabled(boolean enabled) {
+        // Don't call out to USM with the lock held. Also, register the listener before we
+        // change our internal state so no events fall through the cracks.
+        final UsageStatsManagerInternal usmi =
+                LocalServices.getService(UsageStatsManagerInternal.class);
+        if (enabled) {
+            usmi.registerListener(this);
+        } else {
+            usmi.unregisterListener(this);
+        }
+
         synchronized (mAppIdleLock) {
             if (mAppIdleEnabled != enabled) {
                 final boolean oldParoleState = isInParole();
                 mAppIdleEnabled = enabled;
+
                 if (isInParole() != oldParoleState) {
                     postParoleStateChanged();
                 }
@@ -489,6 +502,11 @@ public class AppStandbyController implements AppStandbyInternal {
         mInjector.onBootPhase(phase);
         if (phase == PHASE_SYSTEM_SERVICES_READY) {
             Slog.d(TAG, "Setting app idle enabled state");
+
+            if (mAppIdleEnabled) {
+                LocalServices.getService(UsageStatsManagerInternal.class).registerListener(this);
+            }
+
             // Observe changes to the threshold
             ConstantsObserver settingsObserver = new ConstantsObserver(mHandler);
             settingsObserver.start();
@@ -912,8 +930,10 @@ public class AppStandbyController implements AppStandbyInternal {
         }
     }
 
-    @Override
-    public void reportEvent(UsageEvents.Event event, int userId) {
+    /**
+     * Callback to inform listeners of a new event.
+     */
+    public void onUsageEvent(int userId, @NonNull UsageEvents.Event event) {
         if (!mAppIdleEnabled) return;
         final int eventType = event.getEventType();
         if ((eventType == UsageEvents.Event.ACTIVITY_RESUMED
@@ -1750,9 +1770,18 @@ public class AppStandbyController implements AppStandbyInternal {
             final int userId = getSendingUserId();
             if (Intent.ACTION_PACKAGE_ADDED.equals(action)
                     || Intent.ACTION_PACKAGE_CHANGED.equals(action)) {
-                clearCarrierPrivilegedApps();
-                // ACTION_PACKAGE_ADDED is called even for system app downgrades.
-                evaluateSystemAppException(pkgName, userId);
+                final String[] cmpList = intent.getStringArrayExtra(
+                        Intent.EXTRA_CHANGED_COMPONENT_NAME_LIST);
+                // If this is PACKAGE_ADDED (cmpList == null), or if it's a whole-package
+                // enable/disable event (cmpList is just the package name itself), drop
+                // our carrier privileged app & system-app caches and let them refresh
+                if (cmpList == null
+                        || (cmpList.length == 1 && pkgName.equals(cmpList[0]))) {
+                    clearCarrierPrivilegedApps();
+                    evaluateSystemAppException(pkgName, userId);
+                }
+                // component-level enable/disable can affect bucketing, so we always
+                // reevaluate that for any PACKAGE_CHANGED
                 mHandler.obtainMessage(MSG_CHECK_PACKAGE_IDLE_STATE, userId, -1, pkgName)
                     .sendToTarget();
             }

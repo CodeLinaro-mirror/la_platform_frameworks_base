@@ -18,6 +18,7 @@ package android.media;
 
 import android.annotation.IntDef;
 import android.annotation.NonNull;
+import android.annotation.RequiresPermission;
 import android.annotation.TestApi;
 import android.bluetooth.BluetoothCodecConfig;
 import android.compat.annotation.UnsupportedAppUsage;
@@ -29,6 +30,8 @@ import android.os.Build;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 import android.util.Pair;
+
+import com.android.internal.annotations.GuardedBy;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -709,6 +712,40 @@ public class AudioSystem
             cb.onRecordingConfigurationChanged(event, riid, uid, session, source, portId, silenced,
                                         recordingFormat, clientEffects, effects, activeSource, "");
         }
+    }
+
+    /**
+     * @hide
+     * Handles events from the audio policy manager about routing events
+     */
+    public interface RoutingUpdateCallback {
+        /**
+         * Callback to notify a routing update event occurred
+         */
+        void onRoutingUpdated();
+    }
+
+    @GuardedBy("AudioSystem.class")
+    private static RoutingUpdateCallback sRoutingUpdateCallback;
+
+    /** @hide */
+    public static void setRoutingCallback(RoutingUpdateCallback cb) {
+        synchronized (AudioSystem.class) {
+            sRoutingUpdateCallback = cb;
+            native_register_routing_callback();
+        }
+    }
+
+    private static void routingCallbackFromNative() {
+        final RoutingUpdateCallback cb;
+        synchronized (AudioSystem.class) {
+            cb = sRoutingUpdateCallback;
+        }
+        if (cb == null) {
+            Log.e(TAG, "routing update from APM was not captured");
+            return;
+        }
+        cb.onRoutingUpdated();
     }
 
     /*
@@ -1550,9 +1587,11 @@ public class AudioSystem
 
     /** @hide returns master balance value in range -1.f -> 1.f, where 0.f is dead center. */
     @TestApi
+    @RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_SETTINGS)
     public static native float getMasterBalance();
     /** @hide Changes the audio balance of the device. */
     @TestApi
+    @RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_SETTINGS)
     public static native int setMasterBalance(float balance);
 
     // helpers for android.media.AudioManager.getProperty(), see description there for meaning
@@ -1594,6 +1633,8 @@ public class AudioSystem
     private static native final void native_register_dynamic_policy_callback();
     // declare this instance as having a recording configuration update callback handler
     private static native final void native_register_recording_callback();
+    // declare this instance as having a routing update callback handler
+    private static native void native_register_routing_callback();
 
     // must be kept in sync with value in include/system/audio.h
     /** @hide */ public static final int AUDIO_HW_SYNC_INVALID = 0;
@@ -1636,13 +1677,22 @@ public class AudioSystem
      */
     public static native int setAllowedCapturePolicy(int uid, int flags);
 
-    static boolean isOffloadSupported(@NonNull AudioFormat format, @NonNull AudioAttributes attr) {
-        return native_is_offload_supported(format.getEncoding(), format.getSampleRate(),
+    /**
+     * @hide
+     * Compressed audio offload decoding modes supported by audio HAL implementation.
+     * Keep in sync with system/media/include/media/audio.h.
+     */
+    public static final int OFFLOAD_NOT_SUPPORTED = 0;
+    public static final int OFFLOAD_SUPPORTED = 1;
+    public static final int OFFLOAD_GAPLESS_SUPPORTED = 2;
+
+    static int getOffloadSupport(@NonNull AudioFormat format, @NonNull AudioAttributes attr) {
+        return native_get_offload_support(format.getEncoding(), format.getSampleRate(),
                 format.getChannelMask(), format.getChannelIndexMask(),
                 attr.getVolumeControlStream());
     }
 
-    private static native boolean native_is_offload_supported(int encoding, int sampleRate,
+    private static native int native_get_offload_support(int encoding, int sampleRate,
             int channelMask, int channelIndexMask, int streamType);
 
     /** @hide */
@@ -1718,7 +1768,7 @@ public class AudioSystem
         int[] types = new int[devices.size()];
         String[] addresses = new String[devices.size()];
         for (int i = 0; i < devices.size(); ++i) {
-            types[i] = AudioDeviceInfo.convertDeviceTypeToInternalDevice(devices.get(i).getType());
+            types[i] = devices.get(i).getInternalType();
             addresses[i] = devices.get(i).getAddress();
         }
         return setDevicesRoleForStrategy(strategy, role, types, addresses);

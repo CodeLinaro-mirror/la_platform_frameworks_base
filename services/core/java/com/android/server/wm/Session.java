@@ -18,8 +18,10 @@ package com.android.server.wm;
 
 import static android.Manifest.permission.DEVICE_POWER;
 import static android.Manifest.permission.HIDE_NON_SYSTEM_OVERLAY_WINDOWS;
+import static android.Manifest.permission.HIDE_OVERLAY_WINDOWS;
 import static android.Manifest.permission.INTERNAL_SYSTEM_WINDOW;
 import static android.Manifest.permission.START_TASKS_FROM_RECENTS;
+import static android.Manifest.permission.SYSTEM_APPLICATION_OVERLAY;
 import static android.app.ActivityTaskManager.INVALID_TASK_ID;
 import static android.content.ClipDescription.MIMETYPE_APPLICATION_ACTIVITY;
 import static android.content.ClipDescription.MIMETYPE_APPLICATION_SHORTCUT;
@@ -38,7 +40,6 @@ import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_TASK_POSITION
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
 
 import android.annotation.Nullable;
-import android.app.ActivityManagerInternal;
 import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ClipDescription;
@@ -56,11 +57,11 @@ import android.os.Process;
 import android.os.RemoteException;
 import android.os.Trace;
 import android.os.UserHandle;
+import android.service.attestation.ImpressionToken;
 import android.text.TextUtils;
 import android.util.ArraySet;
 import android.util.MergedConfiguration;
 import android.util.Slog;
-import android.view.DisplayCutout;
 import android.view.IWindow;
 import android.view.IWindowId;
 import android.view.IWindowSession;
@@ -104,6 +105,7 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
     // If non-system overlays from this process can be hidden by the user or app using
     // HIDE_NON_SYSTEM_OVERLAY_WINDOWS.
     final boolean mOverlaysCanBeHidden;
+    final boolean mCanCreateSystemApplicationOverlay;
     final boolean mCanHideNonSystemOverlayWindows;
     final boolean mCanAcquireSleepToken;
     private AlertWindowNotification mAlertWindowNotification;
@@ -124,7 +126,12 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
         mCanAddInternalSystemWindow = service.mContext.checkCallingOrSelfPermission(
                 INTERNAL_SYSTEM_WINDOW) == PERMISSION_GRANTED;
         mCanHideNonSystemOverlayWindows = service.mContext.checkCallingOrSelfPermission(
-                HIDE_NON_SYSTEM_OVERLAY_WINDOWS) == PERMISSION_GRANTED;
+                HIDE_NON_SYSTEM_OVERLAY_WINDOWS) == PERMISSION_GRANTED
+                || service.mContext.checkCallingOrSelfPermission(HIDE_OVERLAY_WINDOWS)
+                == PERMISSION_GRANTED;
+        mCanCreateSystemApplicationOverlay =
+                service.mContext.checkCallingOrSelfPermission(SYSTEM_APPLICATION_OVERLAY)
+                        == PERMISSION_GRANTED;
         mOverlaysCanBeHidden = !mCanAddInternalSystemWindow
                 && !mService.mAtmInternal.isCallerRecents(mUid);
         mCanAcquireSleepToken = service.mContext.checkCallingOrSelfPermission(DEVICE_POWER)
@@ -182,22 +189,21 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
     @Override
     public int addToDisplay(IWindow window, WindowManager.LayoutParams attrs,
             int viewVisibility, int displayId, InsetsState requestedVisibility, Rect outFrame,
-            DisplayCutout.ParcelableWrapper outDisplayCutout, InputChannel outInputChannel,
-            InsetsState outInsetsState, InsetsSourceControl[] outActiveControls) {
+            InputChannel outInputChannel, InsetsState outInsetsState,
+            InsetsSourceControl[] outActiveControls) {
         return mService.addWindow(this, window, attrs, viewVisibility, displayId,
-                UserHandle.getUserId(mUid), requestedVisibility, outFrame, outDisplayCutout,
-                outInputChannel, outInsetsState, outActiveControls);
+                UserHandle.getUserId(mUid), requestedVisibility, outFrame, outInputChannel,
+                outInsetsState, outActiveControls);
     }
 
 
     @Override
     public int addToDisplayAsUser(IWindow window, WindowManager.LayoutParams attrs,
             int viewVisibility, int displayId, int userId, InsetsState requestedVisibility,
-            Rect outFrame, DisplayCutout.ParcelableWrapper outDisplayCutout,
-            InputChannel outInputChannel, InsetsState outInsetsState,
+            Rect outFrame, InputChannel outInputChannel, InsetsState outInsetsState,
             InsetsSourceControl[] outActiveControls) {
         return mService.addWindow(this, window, attrs, viewVisibility, displayId, userId,
-                requestedVisibility, outFrame, outDisplayCutout, outInputChannel, outInsetsState,
+                requestedVisibility, outFrame, outInputChannel, outInsetsState,
                 outActiveControls);
     }
 
@@ -206,8 +212,8 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
             int viewVisibility, int displayId, InsetsState outInsetsState) {
         return mService.addWindow(this, window, attrs, viewVisibility, displayId,
                 UserHandle.getUserId(mUid), mDummyRequestedVisibility,
-                new Rect() /* outFrame */, new DisplayCutout.ParcelableWrapper() /* cutout */,
-                null /* outInputChannel */, outInsetsState, mDummyControls);
+                new Rect() /* outFrame */, null /* outInputChannel */, outInsetsState,
+                mDummyControls);
     }
 
     @Override
@@ -672,8 +678,8 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
 
         boolean changed;
 
-        if (mOverlaysCanBeHidden) {
-            // We want to track non-system signature apps adding alert windows so we can post an
+        if (mOverlaysCanBeHidden && !mCanCreateSystemApplicationOverlay) {
+            // We want to track non-system apps adding alert windows so we can post an
             // on-going notification for the user to control their visibility.
             if (visible) {
                 changed = mAlertWindowSurfaces.add(surfaceController);
@@ -846,6 +852,17 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
             }
         } finally {
             Binder.restoreCallingIdentity(identity);
+        }
+    }
+
+    @Override
+    public ImpressionToken generateImpressionToken(IWindow window, Rect boundsInWindow,
+            String hashAlgorithm) {
+        final long origId = Binder.clearCallingIdentity();
+        try {
+            return mService.generateImpressionToken(this, window, boundsInWindow, hashAlgorithm);
+        } finally {
+            Binder.restoreCallingIdentity(origId);
         }
     }
 }

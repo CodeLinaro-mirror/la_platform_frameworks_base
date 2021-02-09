@@ -48,10 +48,10 @@ import com.android.internal.colorextraction.ColorExtractor.GradientColors;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.systemui.DejankUtils;
 import com.android.systemui.SysuiTestCase;
-import com.android.systemui.colorextraction.SysuiColorExtractor;
 import com.android.systemui.dock.DockManager;
 import com.android.systemui.statusbar.BlurUtils;
 import com.android.systemui.statusbar.ScrimView;
+import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.util.wakelock.DelayedWakeLock;
 import com.android.systemui.utils.os.FakeHandler;
@@ -99,11 +99,11 @@ public class ScrimControllerTest extends SysuiTestCase {
     @Mock
     KeyguardUpdateMonitor mKeyguardUpdateMonitor;
     @Mock
-    private SysuiColorExtractor mSysuiColorExtractor;
-    @Mock
     private DockManager mDockManager;
     @Mock
     private BlurUtils mBlurUtils;
+    @Mock
+    private ConfigurationController mConfigurationController;
 
 
     private static class AnimatorListener implements Animator.AnimatorListener {
@@ -196,6 +196,7 @@ public class ScrimControllerTest extends SysuiTestCase {
 
         when(mDozeParamenters.getAlwaysOn()).thenAnswer(invocation -> mAlwaysOnEnabled);
         when(mDozeParamenters.getDisplayNeedsBlanking()).thenReturn(true);
+        when(mBlurUtils.supportsBlursOnWindows()).thenReturn(true);
 
         doAnswer((Answer<Void>) invocation -> {
             mScrimState = invocation.getArgument(0);
@@ -211,14 +212,12 @@ public class ScrimControllerTest extends SysuiTestCase {
                 .thenReturn(mDelayedWakeLockBuilder);
         when(mDelayedWakeLockBuilder.build()).thenReturn(mWakeLock);
 
-        when(mSysuiColorExtractor.getNeutralColors()).thenReturn(new GradientColors());
-
         when(mDockManager.isDocked()).thenReturn(false);
 
         mScrimController = new ScrimController(mLightBarController,
                 mDozeParamenters, mAlarmManager, mKeyguardStateController, mDelayedWakeLockBuilder,
-                new FakeHandler(mLooper.getLooper()), mKeyguardUpdateMonitor, mSysuiColorExtractor,
-                mDockManager, mBlurUtils);
+                new FakeHandler(mLooper.getLooper()), mKeyguardUpdateMonitor,
+                mDockManager, mBlurUtils, mConfigurationController);
         mScrimController.setScrimVisibleListener(visible -> mScrimVisibility = visible);
         mScrimController.attachViews(mScrimBehind, mScrimInFront, mScrimForBubble);
         mScrimController.setAnimatorListener(mAnimatorListener);
@@ -246,6 +245,20 @@ public class ScrimControllerTest extends SysuiTestCase {
 
         assertScrimTint(true /* front */,
                 true /* behind */,
+                false /* bubble */);
+    }
+
+    @Test
+    public void transitionToShadeLocked() {
+        mScrimController.transitionTo(ScrimState.SHADE_LOCKED);
+        finishAnimationsImmediately();
+
+        assertScrimAlpha(TRANSPARENT /* front */,
+                OPAQUE /* back */,
+                TRANSPARENT /* bubble */);
+
+        assertScrimTint(false /* front */,
+                false /* behind */,
                 false /* bubble */);
     }
 
@@ -465,7 +478,7 @@ public class ScrimControllerTest extends SysuiTestCase {
         // Front scrim should be transparent
         // Back scrim should be visible without tint
         assertScrimAlpha(TRANSPARENT /* front */,
-                SEMI_TRANSPARENT /* back */,
+                OPAQUE /* back */,
                 TRANSPARENT /* bubble */);
 
         assertScrimTint(false /* front */,
@@ -479,7 +492,7 @@ public class ScrimControllerTest extends SysuiTestCase {
         finishAnimationsImmediately();
         // Front scrim should be transparent
         // Back scrim should be visible without tint
-        assertScrimAlpha(SEMI_TRANSPARENT /* front */,
+        assertScrimAlpha(OPAQUE /* front */,
                 TRANSPARENT /* back */,
                 TRANSPARENT /* bubble */);
         assertScrimTint(false /* front */,
@@ -523,8 +536,8 @@ public class ScrimControllerTest extends SysuiTestCase {
         Assert.assertEquals(ScrimController.BUSY_SCRIM_ALPHA,
                 mScrimBehind.getViewAlpha(), 0.0f);
         // Bubble scrim should be visible
-        Assert.assertEquals(ScrimController.BUSY_SCRIM_ALPHA,
-                mScrimBehind.getViewAlpha(), 0.0f);
+        Assert.assertEquals(ScrimController.BUBBLE_SCRIM_ALPHA,
+                mScrimForBubble.getViewAlpha(), 0.0f);
     }
 
     @Test
@@ -562,6 +575,15 @@ public class ScrimControllerTest extends SysuiTestCase {
 
         Assert.assertEquals("Scrim alpha should change after setPanelExpansion",
                 mScrimBehindAlpha, mScrimBehind.getViewAlpha(), 0.01f);
+    }
+
+    @Test
+    public void qsExpansion() {
+        reset(mScrimBehind);
+        mScrimController.setQsExpansion(1f);
+        finishAnimationsImmediately();
+
+        assertScrimAlpha(TRANSPARENT, OPAQUE, TRANSPARENT);
     }
 
     @Test
@@ -889,7 +911,7 @@ public class ScrimControllerTest extends SysuiTestCase {
         HashSet<ScrimState> regularStates = new HashSet<>(Arrays.asList(
                 ScrimState.UNINITIALIZED, ScrimState.KEYGUARD, ScrimState.BOUNCER,
                 ScrimState.BOUNCER_SCRIMMED, ScrimState.BRIGHTNESS_MIRROR, ScrimState.UNLOCKED,
-                ScrimState.BUBBLE_EXPANDED));
+                ScrimState.BUBBLE_EXPANDED, ScrimState.SHADE_LOCKED));
 
         for (ScrimState state : ScrimState.values()) {
             if (!lowPowerModeStates.contains(state) && !regularStates.contains(state)) {

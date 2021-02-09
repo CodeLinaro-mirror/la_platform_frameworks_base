@@ -1769,8 +1769,8 @@ class SettingsProtoDumpUtil {
                 Settings.Secure.ACCESSIBILITY_HIGH_TEXT_CONTRAST_ENABLED,
                 SecureSettingsProto.Accessibility.HIGH_TEXT_CONTRAST_ENABLED);
         dumpSetting(s, p,
-                Settings.Secure.FORCE_BOLD_TEXT,
-                SecureSettingsProto.FORCE_BOLD_TEXT);
+                Settings.Secure.FONT_WEIGHT_ADJUSTMENT,
+                SecureSettingsProto.FONT_WEIGHT_ADJUSTMENT);
         dumpSetting(s, p,
                 Settings.Secure.ACCESSIBILITY_LARGE_POINTER_ICON,
                 SecureSettingsProto.Accessibility.LARGE_POINTER_ICON);
@@ -1810,6 +1810,18 @@ class SettingsProtoDumpUtil {
         dumpSetting(s, p,
                 Settings.Secure.ACCESSIBILITY_MAGNIFICATION_CAPABILITY,
                 SecureSettingsProto.Accessibility.ACCESSIBILITY_MAGNIFICATION_CAPABILITY);
+        dumpSetting(s, p,
+                Settings.Secure.ACCESSIBILITY_BUTTON_MODE,
+                SecureSettingsProto.Accessibility.ACCESSIBILITY_BUTTON_MODE);
+        dumpSetting(s, p,
+                Settings.Secure.ACCESSIBILITY_FLOATING_MENU_SIZE,
+                SecureSettingsProto.Accessibility.ACCESSIBILITY_FLOATING_MENU_SIZE);
+        dumpSetting(s, p,
+                Settings.Secure.ACCESSIBILITY_FLOATING_MENU_ICON_TYPE,
+                SecureSettingsProto.Accessibility.ACCESSIBILITY_FLOATING_MENU_ICON_TYPE);
+        dumpSetting(s, p,
+                Settings.Secure.ACCESSIBILITY_FLOATING_MENU_OPACITY,
+                SecureSettingsProto.Accessibility.ACCESSIBILITY_FLOATING_MENU_OPACITY);
         p.end(accessibilityToken);
 
         final long adaptiveSleepToken = p.start(SecureSettingsProto.ADAPTIVE_SLEEP);

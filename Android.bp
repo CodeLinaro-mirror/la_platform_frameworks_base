@@ -22,9 +22,12 @@ java_defaults {
     ],
     errorprone: {
         javacflags: [
-            "-Xep:AndroidFrameworkBinderIdentity:ERROR",
+            // "-Xep:AndroidFrameworkBinderIdentity:ERROR",
             "-Xep:AndroidFrameworkCompatChange:ERROR",
-            "-Xep:AndroidFrameworkUid:ERROR",
+            // "-Xep:AndroidFrameworkUid:ERROR",
+            // NOTE: only enable to generate local patchfiles
+            // "-XepPatchChecks:refaster:frameworks/base/errorprone/refaster/EfficientXml.java.refaster",
+            // "-XepPatchLocation:/tmp/refaster/",
         ],
     },
 }
@@ -41,6 +44,7 @@ java_defaults {
             "-Xep:AndroidFrameworkEfficientCollections:OFF",
             "-Xep:AndroidFrameworkEfficientParcelable:OFF",
             "-Xep:AndroidFrameworkEfficientStrings:OFF",
+            "-Xep:AndroidFrameworkEfficientXml:OFF",
         ],
     },
 }
@@ -219,6 +223,9 @@ filegroup {
         "media/java/**/*.java",
         "media/java/**/*.aidl",
     ],
+    exclude_srcs: [
+        ":framework-media-tv-tunerresourcemanager-sources-aidl",
+    ],
     path: "media/java",
 }
 
@@ -326,6 +333,7 @@ filegroup {
     srcs: [
         // Java/AIDL sources under frameworks/base
         ":framework-blobstore-sources",
+        ":framework-connectivity-sources", // framework-connectivity is not yet a module
         ":framework-core-sources",
         ":framework-drm-sources",
         ":framework-graphics-nonupdatable-sources",
@@ -345,6 +353,7 @@ filegroup {
         ":framework-telecomm-sources",
         ":framework-telephony-common-sources",
         ":framework-telephony-sources",
+        ":framework-vcn-util-sources",
         ":framework-wifi-annotations",
         ":framework-wifi-non-updatable-sources",
         ":PacProcessor-aidl-sources",
@@ -380,6 +389,7 @@ filegroup {
         // etc.
         ":framework-javastream-protos",
         ":statslog-framework-java-gen", // FrameworkStatsLog.java
+        ":audio_policy_configuration_V7_0",
     ],
 }
 
@@ -515,12 +525,17 @@ java_library {
         "android.hardware.usb-V1.1-java-constants",
         "android.hardware.usb-V1.2-java-constants",
         "android.hardware.usb.gadget-V1.0-java",
+        "android.hardware.usb.gadget-V1.1-java",
+        "android.hardware.usb.gadget-V1.2-java",
         "android.hardware.vibrator-V1.0-java",
         "android.hardware.vibrator-V1.1-java",
         "android.hardware.vibrator-V1.2-java",
         "android.hardware.vibrator-V1.3-java",
+        "android.security.apc-java",
+        "android.security.authorization-java",
         "android.system.keystore2-java",
         "android.system.suspend.control.internal-java",
+        "cameraprotosnano",
         "devicepolicyprotosnano",
 
         "com.android.sysprop.apex",
@@ -596,8 +611,9 @@ java_defaults {
     ],
     required: [
         "framework-platform-compat-config",
-        // TODO: remove gps_debug and protolog.conf.json when the build system propagates "required" properly.
+        // TODO: remove gps_debug, cec_config.xml and protolog.conf.json when the build system propagates "required" properly.
         "gps_debug.conf",
+        "cec_config.xml",
         "icu4j-platform-compat-config",
         "libcore-platform-compat-config",
         "protolog.conf.json.gz",
@@ -618,8 +634,9 @@ java_defaults {
         // in favor of an API stubs dependency in java_library "framework" below.
         "mimemap",
         "av-types-aidl-java",
-        "mediatranscoding_aidl_interface-java",
+        "tv_tuner_resource_manager_aidl_interface-java",
         "soundtrigger_middleware-aidl-java",
+        "modules-utils-os",
     ],
 }
 
@@ -738,6 +755,7 @@ gensrcs {
 
     srcs: [
         ":ipconnectivity-proto-src",
+        ":libstats_atom_enum_protos",
         "core/proto/**/*.proto",
         "libs/incident/**/*.proto",
     ],
@@ -764,6 +782,7 @@ gensrcs {
 
     srcs: [
         ":ipconnectivity-proto-src",
+        ":libstats_atom_enum_protos",
         "core/proto/**/*.proto",
         "libs/incident/**/*.proto",
     ],
@@ -813,6 +832,7 @@ filegroup {
         "core/java/com/android/internal/util/IState.java",
         "core/java/com/android/internal/util/State.java",
         "core/java/com/android/internal/util/StateMachine.java",
+        "services/core/java/com/android/server/vcn/util/PersistableBundleUtils.java",
         "telephony/java/android/telephony/Annotation.java",
     ],
 }
@@ -902,17 +922,24 @@ java_library_host {
     name: "platformprotos",
     srcs: [
         ":ipconnectivity-proto-src",
+        ":libstats_atom_enum_protos",
+        ":libstats_internal_protos",
+        ":statsd_internal_protos",
         "cmds/am/proto/instrumentation_data.proto",
         "cmds/statsd/src/**/*.proto",
         "core/proto/**/*.proto",
         "libs/incident/proto/**/*.proto",
     ],
     proto: {
-        include_dirs: ["external/protobuf/src"],
+        include_dirs: [
+            "external/protobuf/src",
+            "frameworks/proto_logging/stats",
+        ],
         type: "full",
     },
+    // Protos have lots of MissingOverride and similar.
     errorprone: {
-        javacflags: ["-Xep:MissingOverride:OFF"], // b/72714520
+        javacflags: ["-XepDisableAllChecks"],
     },
 }
 
@@ -932,6 +959,7 @@ java_library {
     sdk_version: "9",
     srcs: [
         ":ipconnectivity-proto-src",
+        ":libstats_atom_enum_protos",
         "core/proto/**/*.proto",
         "libs/incident/proto/android/os/**/*.proto",
     ],
@@ -947,6 +975,7 @@ java_library {
 
     srcs: [
         ":ipconnectivity-proto-src",
+        ":libstats_atom_enum_protos",
         "core/proto/**/*.proto",
         "libs/incident/proto/android/os/**/*.proto",
     ],
@@ -968,7 +997,9 @@ cc_defaults {
 
     proto: {
         export_proto_headers: true,
-        include_dirs: ["external/protobuf/src"],
+        include_dirs: [
+            "external/protobuf/src",
+        ],
     },
 
     cflags: [
@@ -979,6 +1010,7 @@ cc_defaults {
 
     srcs: [
         ":ipconnectivity-proto-src",
+        ":libstats_atom_enum_protos",
         "core/proto/**/*.proto",
     ],
 }
@@ -1088,6 +1120,7 @@ filegroup {
         "core/java/android/os/incremental/IStorageLoadingProgressListener.aidl",
         "core/java/android/os/incremental/IncrementalNewFileParams.aidl",
         "core/java/android/os/incremental/IStorageHealthListener.aidl",
+        "core/java/android/os/incremental/PerUidReadTimeouts.aidl",
         "core/java/android/os/incremental/StorageHealthCheckParams.aidl",
     ],
     path: "core/java",
@@ -1259,7 +1292,6 @@ aidl_mapping {
 filegroup {
     name: "framework-telephony-common-shared-srcs",
     srcs: [
-        "core/java/android/os/BasicShellCommandHandler.java",
         "core/java/android/os/RegistrantList.java",
         "core/java/android/os/Registrant.java",
         "core/java/android/util/IndentingPrintWriter.java",
@@ -1311,8 +1343,6 @@ java_library {
     sdk_version: "module_current",
     min_sdk_version: "30",
     srcs: [
-        "core/java/android/content/pm/BaseParceledListSlice.java",
-        "core/java/android/content/pm/ParceledListSlice.java",
         "core/java/android/os/HandlerExecutor.java",
         "core/java/com/android/internal/util/AsyncChannel.java",
         "core/java/com/android/internal/util/AsyncService.java",
@@ -1328,13 +1358,8 @@ java_library {
     visibility: [
         "//frameworks/base/wifi",
         "//frameworks/base/services/net",
+        "//packages/modules/Wifi/framework",
     ],
-}
-
-filegroup {
-    name: "framework-wifi-util-lib-aidls",
-    srcs: ["core/java/android/content/pm/ParceledListSlice.aidl"],
-    path: "core/java",
 }
 
 // utility classes statically linked into wifi-service
@@ -1342,7 +1367,6 @@ filegroup {
     name: "framework-wifi-service-shared-srcs",
     srcs: [
         "core/java/android/net/InterfaceConfiguration.java",
-        "core/java/android/os/BasicShellCommandHandler.java",
         "core/java/android/util/BackupUtils.java",
         "core/java/android/util/Rational.java",
         "core/java/com/android/internal/util/FastXmlSerializer.java",
@@ -1353,13 +1377,16 @@ filegroup {
         "core/java/com/android/internal/util/StateMachine.java",
         "core/java/com/android/internal/util/WakeupMessage.java",
     ],
-    visibility: ["//frameworks/opt/net/wifi/service"],
+    visibility: [
+        "//frameworks/opt/net/wifi/service",
+        "//packages/modules/Wifi/service",
+    ],
 }
 
 // TODO(b/145644363): move this to under StubLibraries.bp or ApiDocs.bp
 metalava_framework_docs_args = "--manifest $(location core/res/AndroidManifest.xml) " +
-    "--ignore-classes-on-classpath " +
     "--hide-package com.android.server " +
+    "--hide-package android.audio.policy.configuration.V7_0 " +
     "--error UnhiddenSystemApi " +
     "--hide RequiresPermission " +
     "--hide CallbackInterface " +

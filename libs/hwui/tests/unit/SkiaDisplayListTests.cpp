@@ -38,12 +38,13 @@ TEST(SkiaDisplayList, create) {
 }
 
 TEST(SkiaDisplayList, reset) {
-    std::unique_ptr<SkiaDisplayList> skiaDL;
+    DisplayList displayList;
     {
         SkiaRecordingCanvas canvas{nullptr, 1, 1};
         canvas.drawColor(0, SkBlendMode::kSrc);
-        skiaDL.reset(canvas.finishRecording());
+        displayList = canvas.finishRecording();
     }
+    SkiaDisplayList* skiaDL = displayList.asSkiaDl();
 
     SkCanvas dummyCanvas;
     RenderNodeDrawable drawable(nullptr, &dummyCanvas);
@@ -84,7 +85,7 @@ TEST(SkiaDisplayList, reuseDisplayList) {
 
     // attach a displayList for reuse
     SkiaDisplayList skiaDL;
-    ASSERT_TRUE(skiaDL.reuseDisplayList(renderNode.get(), nullptr));
+    ASSERT_TRUE(skiaDL.reuseDisplayList(renderNode.get()));
 
     // detach the list that you just attempted to reuse
     availableList = renderNode->detachAvailableList();
@@ -263,10 +264,10 @@ RENDERTHREAD_SKIA_PIPELINE_TEST(SkiaDisplayList, prepareListAndChildren_vdOffscr
     }
 
     // Another way to be offscreen: a matrix from the draw call.
-    for (const SkMatrix translate : { SkMatrix::MakeTrans(width, 0),
-                                      SkMatrix::MakeTrans(0, height),
-                                      SkMatrix::MakeTrans(-width, 0),
-                                      SkMatrix::MakeTrans(0, -height)}) {
+    for (const SkMatrix translate : { SkMatrix::Translate(width, 0),
+                                      SkMatrix::Translate(0, height),
+                                      SkMatrix::Translate(-width, 0),
+                                      SkMatrix::Translate(0, -height)}) {
         SkiaDisplayList skiaDL;
         VectorDrawableRoot dirtyVD(new VectorDrawable::Group());
         dirtyVD.mutateProperties()->setBounds(bounds);
@@ -291,7 +292,7 @@ RENDERTHREAD_SKIA_PIPELINE_TEST(SkiaDisplayList, prepareListAndChildren_vdOffscr
         SkiaDisplayList skiaDL;
         VectorDrawableRoot dirtyVD(new VectorDrawable::Group());
         dirtyVD.mutateProperties()->setBounds(bounds);
-        SkMatrix translate = SkMatrix::MakeTrans(50, 50);
+        SkMatrix translate = SkMatrix::Translate(50, 50);
         skiaDL.appendVD(&dirtyVD, translate);
 
         ASSERT_TRUE(dirtyVD.isDirty());

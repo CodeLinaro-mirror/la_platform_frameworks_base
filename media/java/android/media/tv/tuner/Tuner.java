@@ -44,9 +44,9 @@ import android.media.tv.tuner.frontend.FrontendStatus.FrontendStatusType;
 import android.media.tv.tuner.frontend.OnTuneEventListener;
 import android.media.tv.tuner.frontend.ScanCallback;
 import android.media.tv.tunerresourcemanager.ResourceClientProfile;
+import android.media.tv.tunerresourcemanager.TunerCiCamRequest;
 import android.media.tv.tunerresourcemanager.TunerDemuxRequest;
 import android.media.tv.tunerresourcemanager.TunerDescramblerRequest;
-import android.media.tv.tunerresourcemanager.TunerFrontendInfo;
 import android.media.tv.tunerresourcemanager.TunerFrontendRequest;
 import android.media.tv.tunerresourcemanager.TunerLnbRequest;
 import android.media.tv.tunerresourcemanager.TunerResourceManager;
@@ -60,6 +60,7 @@ import com.android.internal.util.FrameworkStatsLog;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -166,13 +167,13 @@ public class Tuner implements AutoCloseable  {
     public static final int INVALID_LNB_ID =
             android.hardware.tv.tuner.V1_1.Constants.Constant.INVALID_LNB_ID;
     /**
-     * Invalid key token. It is used to remove the current key from descrambler.
+     * A void key token. It is used to remove the current key from descrambler.
      *
      * <p>If the current keyToken comes from a MediaCas session, App is recommended to
      * to use this constant to remove current key before closing MediaCas session.
      */
     @NonNull
-    public static final byte[] INVALID_KEYTOKEN =
+    public static final byte[] VOID_KEYTOKEN =
             {android.hardware.tv.tuner.V1_1.Constants.Constant.INVALID_KEYTOKEN};
 
     /** @hide */
@@ -278,6 +279,7 @@ public class Tuner implements AutoCloseable  {
     @Nullable
     private FrontendInfo mFrontendInfo;
     private Integer mFrontendHandle;
+    private Boolean mIsSharedFrontend = false;
     private int mFrontendType = FrontendSettings.TYPE_UNDEFINED;
     private int mUserId;
     private Lnb mLnb;
@@ -296,8 +298,10 @@ public class Tuner implements AutoCloseable  {
     private Executor mOnResourceLostListenerExecutor;
 
     private Integer mDemuxHandle;
-    private Map<Integer, Descrambler> mDescramblers = new HashMap<>();
-    private List<Filter> mFilters = new ArrayList<>();
+    private Integer mFrontendCiCamHandle;
+    private Integer mFrontendCiCamId;
+    private Map<Integer, WeakReference<Descrambler>> mDescramblers = new HashMap<>();
+    private List<WeakReference<Filter>> mFilters = new ArrayList<WeakReference<Filter>>();
 
     private final TunerResourceManager.ResourcesReclaimListener mResourceListener =
             new TunerResourceManager.ResourcesReclaimListener() {
@@ -308,6 +312,7 @@ public class Tuner implements AutoCloseable  {
                                 .write(FrameworkStatsLog.TV_TUNER_STATE_CHANGED, mUserId,
                                     FrameworkStatsLog.TV_TUNER_STATE_CHANGED__STATE__UNKNOWN);
                     }
+                    releaseAll();
                     mHandler.sendMessage(mHandler.obtainMessage(MSG_RESOURCE_LOST));
                 }
             };
@@ -340,34 +345,14 @@ public class Tuner implements AutoCloseable  {
 
         mHandler = createEventHandler();
         int[] clientId = new int[1];
-        ResourceClientProfile profile = new ResourceClientProfile(tvInputSessionId, useCase);
+        ResourceClientProfile profile = new ResourceClientProfile();
+        profile.tvInputSessionId = tvInputSessionId;
+        profile.useCase = useCase;
         mTunerResourceManager.registerClientProfile(
                 profile, new HandlerExecutor(mHandler), mResourceListener, clientId);
         mClientId = clientId[0];
 
         mUserId = ActivityManager.getCurrentUser();
-
-        setFrontendInfoList();
-        setLnbIds();
-    }
-
-    private void setFrontendInfoList() {
-        List<Integer> ids = getFrontendIds();
-        if (ids == null) {
-            return;
-        }
-        TunerFrontendInfo[] infos = new TunerFrontendInfo[ids.size()];
-        for (int i = 0; i < ids.size(); i++) {
-            int id = ids.get(i);
-            FrontendInfo frontendInfo = getFrontendInfoById(id);
-            if (frontendInfo == null) {
-                continue;
-            }
-            TunerFrontendInfo tunerFrontendInfo = new TunerFrontendInfo(
-                    id, frontendInfo.getType(), frontendInfo.getExclusiveGroupId());
-            infos[i] = tunerFrontendInfo;
-        }
-        mTunerResourceManager.setFrontendInfoList(infos);
     }
 
     /**
@@ -402,14 +387,6 @@ public class Tuner implements AutoCloseable  {
         return nativeGetFrontendIds();
     }
 
-    private void setLnbIds() {
-        int[] ids = nativeGetLnbIds();
-        if (ids == null) {
-            return;
-        }
-        mTunerResourceManager.setLnbInfoList(ids);
-    }
-
     /**
      * Sets the listener for resource lost.
      *
@@ -439,8 +416,11 @@ public class Tuner implements AutoCloseable  {
      */
     public void shareFrontendFromTuner(@NonNull Tuner tuner) {
         mTunerResourceManager.shareFrontend(mClientId, tuner.mClientId);
-        mFrontendHandle = tuner.mFrontendHandle;
-        mFrontend = nativeOpenFrontendByHandle(mFrontendHandle);
+        synchronized (mIsSharedFrontend) {
+            mFrontendHandle = tuner.mFrontendHandle;
+            mFrontend = tuner.mFrontend;
+            mIsSharedFrontend = true;
+        }
     }
 
     /**
@@ -448,10 +428,12 @@ public class Tuner implements AutoCloseable  {
      *
      * <p>Tuner resource manager (TRM) uses the client priority value to decide whether it is able
      * to reclaim insufficient resources from another client.
+     *
      * <p>The nice value represents how much the client intends to give up the resource when an
      * insufficient resource situation happens.
      *
-     * @param priority the new priority.
+     * @param priority the new priority. Any negative value would cause no-op on priority setting
+     *                 and the API would only process nice value setting in that case.
      * @param niceValue the nice value.
      */
     public void updateResourcePriority(int priority, int niceValue) {
@@ -471,32 +453,55 @@ public class Tuner implements AutoCloseable  {
 
     private void releaseAll() {
         if (mFrontendHandle != null) {
-            int res = nativeCloseFrontend(mFrontendHandle);
-            if (res != Tuner.RESULT_SUCCESS) {
-                TunerUtils.throwExceptionForResult(res, "failed to close frontend");
+            synchronized (mIsSharedFrontend) {
+                if (!mIsSharedFrontend) {
+                    int res = nativeCloseFrontend(mFrontendHandle);
+                    if (res != Tuner.RESULT_SUCCESS) {
+                        TunerUtils.throwExceptionForResult(res, "failed to close frontend");
+                    }
+                }
+                mIsSharedFrontend = false;
             }
             mTunerResourceManager.releaseFrontend(mFrontendHandle, mClientId);
             FrameworkStatsLog
                     .write(FrameworkStatsLog.TV_TUNER_STATE_CHANGED, mUserId,
-                        FrameworkStatsLog.TV_TUNER_STATE_CHANGED__STATE__UNKNOWN);
+                    FrameworkStatsLog.TV_TUNER_STATE_CHANGED__STATE__UNKNOWN);
             mFrontendHandle = null;
             mFrontend = null;
         }
         if (mLnb != null) {
             mLnb.close();
         }
-        if (!mDescramblers.isEmpty()) {
-            for (Map.Entry<Integer, Descrambler> d : mDescramblers.entrySet()) {
-                d.getValue().close();
-                mTunerResourceManager.releaseDescrambler(d.getKey(), mClientId);
+        if (mFrontendCiCamHandle != null) {
+            int result = nativeUnlinkCiCam(mFrontendCiCamId);
+            if (result == RESULT_SUCCESS) {
+                mTunerResourceManager.releaseCiCam(mFrontendCiCamHandle, mClientId);
+                mFrontendCiCamId = null;
+                mFrontendCiCamHandle = null;
             }
-            mDescramblers.clear();
         }
-        if (!mFilters.isEmpty()) {
-            for (Filter f : mFilters) {
-                f.close();
+        synchronized (mDescramblers) {
+            if (!mDescramblers.isEmpty()) {
+                for (Map.Entry<Integer, WeakReference<Descrambler>> d : mDescramblers.entrySet()) {
+                    Descrambler descrambler = d.getValue().get();
+                    if (descrambler != null) {
+                        descrambler.close();
+                    }
+                    mTunerResourceManager.releaseDescrambler(d.getKey(), mClientId);
+                }
+                mDescramblers.clear();
             }
-            mFilters.clear();
+        }
+        synchronized (mFilters) {
+            if (!mFilters.isEmpty()) {
+                for (WeakReference<Filter> weakFilter : mFilters) {
+                    Filter filter = weakFilter.get();
+                    if (filter != null) {
+                        filter.close();
+                    }
+                }
+                mFilters.clear();
+            }
         }
         if (mDemuxHandle != null) {
             int res = nativeCloseDemux(mDemuxHandle);
@@ -534,12 +539,11 @@ public class Tuner implements AutoCloseable  {
      */
     private native Frontend nativeOpenFrontendByHandle(int handle);
     @Result
-    private native int nativeCloseFrontendByHandle(int handle);
     private native int nativeTune(int type, FrontendSettings settings);
     private native int nativeStopTune();
     private native int nativeScan(int settingsType, FrontendSettings settings, int scanType);
     private native int nativeStopScan();
-    private native int nativeSetLnb(int lnbId);
+    private native int nativeSetLnb(Lnb lnb);
     private native int nativeSetLna(boolean enable);
     private native FrontendStatus nativeGetFrontendStatus(int[] statusTypes);
     private native Integer nativeGetAvSyncHwId(Filter filter);
@@ -552,7 +556,6 @@ public class Tuner implements AutoCloseable  {
     private native Filter nativeOpenFilter(int type, int subType, long bufferSize);
     private native TimeFilter nativeOpenTimeFilter();
 
-    private native int[] nativeGetLnbIds();
     private native Lnb nativeOpenLnbByHandle(int handle);
     private native Lnb nativeOpenLnbByName(String name);
 
@@ -610,7 +613,6 @@ public class Tuner implements AutoCloseable  {
                     break;
                 }
                 case MSG_RESOURCE_LOST: {
-                    releaseAll();
                     if (mOnResourceLostListener != null
                                 && mOnResourceLostListenerExecutor != null) {
                         mOnResourceLostListenerExecutor.execute(
@@ -666,7 +668,7 @@ public class Tuner implements AutoCloseable  {
      *
      * <p>Tuner resource manager (TRM) uses the client priority value to decide whether it is able
      * to get frontend resource. If the client can't get the resource, this call returns {@link
-     * Result#RESULT_UNAVAILABLE}.
+     * #RESULT_UNAVAILABLE}.
      *
      * <p>
      * This locks the frontend to a frequency by providing signal
@@ -680,7 +682,7 @@ public class Tuner implements AutoCloseable  {
      *
      * <p>Tuning with {@link android.media.tv.tuner.frontend.DtmbFrontendSettings} is only
      * supported in Tuner 1.1 or higher version. Unsupported version will cause no-op. Use {@link
-     * TunerVersionChecker.getTunerVersion()} to get the version information.
+     * TunerVersionChecker#getTunerVersion()} to get the version information.
      *
      * @param settings Signal delivery information the frontend uses to
      *                 search and lock the signal.
@@ -729,7 +731,7 @@ public class Tuner implements AutoCloseable  {
      *
      * <p>Scanning with {@link android.media.tv.tuner.frontend.DtmbFrontendSettings} is only
      * supported in Tuner 1.1 or higher version. Unsupported version will cause no-op. Use {@link
-     * TunerVersionChecker.getTunerVersion()} to get the version information.
+     * TunerVersionChecker#getTunerVersion()} to get the version information.
      *
      * @param settings A {@link FrontendSettings} to configure the frontend.
      * @param scanType The scan type.
@@ -793,7 +795,9 @@ public class Tuner implements AutoCloseable  {
 
     private boolean requestFrontend() {
         int[] feHandle = new int[1];
-        TunerFrontendRequest request = new TunerFrontendRequest(mClientId, mFrontendType);
+        TunerFrontendRequest request = new TunerFrontendRequest();
+        request.clientId = mClientId;
+        request.frontendType = mFrontendType;
         boolean granted = mTunerResourceManager.requestFrontend(request, feHandle);
         if (granted) {
             mFrontendHandle = feHandle[0];
@@ -814,7 +818,7 @@ public class Tuner implements AutoCloseable  {
      */
     @Result
     private int setLnb(@NonNull Lnb lnb) {
-        return nativeSetLnb(lnb.mId);
+        return nativeSetLnb(lnb);
     }
 
     /**
@@ -835,7 +839,7 @@ public class Tuner implements AutoCloseable  {
      * <p>This retrieve the statuses of the frontend for given status types.
      *
      * @param statusTypes an array of status types which the caller requests. Any types that are not
-     *        in {@link FrontendInfo.getStatusCapabilities()} would be ignored.
+     *        in {@link FrontendInfo#getStatusCapabilities()} would be ignored.
      * @return statuses which response the caller's requests. {@code null} if the operation failed.
      */
     @Nullable
@@ -878,10 +882,13 @@ public class Tuner implements AutoCloseable  {
     }
 
     /**
-     * Connects Conditional Access Modules (CAM) through Common Interface (CI)
+     * Connects Conditional Access Modules (CAM) through Common Interface (CI).
      *
      * <p>The demux uses the output from the frontend as the input by default, and must change to
      * use the output from CI-CAM as the input after this call.
+     *
+     * <p> Note that this API is used to connect the CI-CAM to the Demux module while
+     * {@link #connectFrontendToCiCam(int)} is used to connect CI-CAM to the Frontend module.
      *
      * @param ciCamId specify CI-CAM Id to connect.
      * @return result status of the operation.
@@ -895,26 +902,34 @@ public class Tuner implements AutoCloseable  {
     }
 
     /**
-     * Link Conditional Access Modules (CAM) Frontend to support Common Interface (CI) by-pass mode.
+     * Connect Conditional Access Modules (CAM) Frontend to support Common Interface (CI)
+     * by-pass mode.
      *
      * <p>It is used by the client to link CI-CAM to a Frontend. CI by-pass mode requires that
      * the CICAM also receives the TS concurrently from the frontend when the Demux is receiving
      * the TS directly from the frontend.
      *
-     * <p>Use {@link #unlinkFrontendToCicam(int)} to disconnect.
+     * <p> Note that this API is used to connect the CI-CAM to the Frontend module while
+     * {@link #connectCiCam(int)} is used to connect CI-CAM to the Demux module.
+     *
+     * <p>Use {@link #disconnectFrontendToCiCam(int)} to disconnect.
      *
      * <p>This API is only supported by Tuner HAL 1.1 or higher. Unsupported version would cause
-     * no-op and return {@link INVALID_LTS_ID}. Use {@link TunerVersionChecker.getTunerVersion()} to
-     * check the version.
+     * no-op and return {@link #INVALID_LTS_ID}. Use {@link TunerVersionChecker#getTunerVersion()}
+     * to check the version.
      *
-     * @param ciCamId specify CI-CAM Id to link.
+     * @param ciCamId specify CI-CAM Id, which is the id of the Conditional Access Modules (CAM)
+     *                Common Interface (CI), to link.
      * @return Local transport stream id when connection is successfully established. Failed
-     *         operation returns {@link INVALID_LTS_ID}.
+     *         operation returns {@link #INVALID_LTS_ID} while unsupported version also returns
+     *         {@link #INVALID_LTS_ID}. Check the current HAL version using
+     *         {@link TunerVersionChecker#getTunerVersion()}.
      */
-    public int linkFrontendToCiCam(int ciCamId) {
+    public int connectFrontendToCiCam(int ciCamId) {
         if (TunerVersionChecker.checkHigherOrEqualVersionTo(TunerVersionChecker.TUNER_VERSION_1_1,
                 "linkFrontendToCiCam")) {
-            if (checkResource(TunerResourceManager.TUNER_RESOURCE_TYPE_FRONTEND)) {
+            if (checkResource(TunerResourceManager.TUNER_RESOURCE_TYPE_FRONTEND)
+                    && checkCiCamResource(ciCamId)) {
                 return nativeLinkCiCam(ciCamId);
             }
         }
@@ -922,46 +937,62 @@ public class Tuner implements AutoCloseable  {
     }
 
     /**
-     * Disconnects Conditional Access Modules (CAM)
+     * Disconnects Conditional Access Modules (CAM).
      *
      * <p>The demux will use the output from the frontend as the input after this call.
+     *
+     * <p> Note that this API is used to disconnect the CI-CAM to the Demux module while
+     * {@link #disconnectFrontendToCiCam(int)} is used to disconnect CI-CAM to the Frontend module.
      *
      * @return result status of the operation.
      */
     @Result
     public int disconnectCiCam() {
-        if (checkResource(TunerResourceManager.TUNER_RESOURCE_TYPE_DEMUX)) {
+        if (mDemuxHandle != null) {
             return nativeDisconnectCiCam();
         }
         return RESULT_UNAVAILABLE;
     }
 
     /**
-     * Unlink Conditional Access Modules (CAM) Frontend.
+     * Disconnect Conditional Access Modules (CAM) Frontend.
      *
      * <p>It is used by the client to unlink CI-CAM to a Frontend.
      *
-     * <p>This API is only supported by Tuner HAL 1.1 or higher. Unsupported version would cause
-     * no-op. Use {@link TunerVersionChecker.getTunerVersion()} to check the version.
+     * <p> Note that this API is used to disconnect the CI-CAM to the Demux module while
+     * {@link #disconnectCiCam(int)} is used to disconnect CI-CAM to the Frontend module.
      *
-     * @param ciCamId specify CI-CAM Id to unlink.
-     * @return result status of the operation.
+     * <p>This API is only supported by Tuner HAL 1.1 or higher. Unsupported version would cause
+     * no-op. Use {@link TunerVersionChecker#getTunerVersion()} to check the version.
+     *
+     * @param ciCamId specify CI-CAM Id, which is the id of the Conditional Access Modules (CAM)
+     *                Common Interface (CI), to disconnect.
+     * @return result status of the operation. Unsupported version would return
+     *         {@link #RESULT_UNAVAILABLE}
      */
     @Result
-    public int unlinkFrontendToCiCam(int ciCamId) {
+    public int disconnectFrontendToCiCam(int ciCamId) {
         if (TunerVersionChecker.checkHigherOrEqualVersionTo(TunerVersionChecker.TUNER_VERSION_1_1,
                 "unlinkFrontendToCiCam")) {
-            if (checkResource(TunerResourceManager.TUNER_RESOURCE_TYPE_FRONTEND)) {
-                return nativeUnlinkCiCam(ciCamId);
+            if (mFrontendCiCamHandle != null && mFrontendCiCamId == ciCamId) {
+                int result = nativeUnlinkCiCam(ciCamId);
+                if (result == RESULT_SUCCESS) {
+                    mTunerResourceManager.releaseCiCam(mFrontendCiCamHandle, mClientId);
+                    mFrontendCiCamId = null;
+                    mFrontendCiCamHandle = null;
+                }
+                return result;
             }
         }
         return RESULT_UNAVAILABLE;
     }
 
     /**
-     * Gets the initialized frontend information.
+     * Gets the currently initialized and activated frontend information. To get all the available
+     * frontend info on the device, use {@link getAvailableFrontendInfos()}.
      *
-     * @return The frontend information. {@code null} if the operation failed.
+     * @return The active frontend information. {@code null} if the operation failed.
+     * @throws IllegalStateException if there is no active frontend currently.
      */
     @Nullable
     public FrontendInfo getFrontendInfo() {
@@ -978,13 +1009,20 @@ public class Tuner implements AutoCloseable  {
     }
 
     /**
-     * Get a list all the existed frontend information.
+     * Gets a list of all the available frontend information on the device. To get the information
+     * of the currently active frontend, use {@link getFrontendInfo()}. The active frontend
+     * information is also included in the list of the available frontend information.
      *
-     * @return The list of all the frontend information. {@code null} if the operation failed.
+     * @return The list of all the available frontend information. {@code null} if the operation
+     * failed.
      */
     @Nullable
-    public List<FrontendInfo> getFrontendInfoList() {
-        return Arrays.asList(getFrontendInfoListInternal());
+    public List<FrontendInfo> getAvailableFrontendInfos() {
+        FrontendInfo[] feInfoList = getFrontendInfoListInternal();
+        if (feInfoList == null) {
+            return null;
+        }
+        return Arrays.asList(feInfoList);
     }
 
     /** @hide */
@@ -1165,7 +1203,10 @@ public class Tuner implements AutoCloseable  {
             if (mHandler == null) {
                 mHandler = createEventHandler();
             }
-            mFilters.add(filter);
+            synchronized (mFilters) {
+                WeakReference<Filter> weakFilter = new WeakReference<Filter>(filter);
+                mFilters.add(weakFilter);
+            }
         }
         return filter;
     }
@@ -1226,7 +1267,8 @@ public class Tuner implements AutoCloseable  {
 
     private boolean requestLnb() {
         int[] lnbHandle = new int[1];
-        TunerLnbRequest request = new TunerLnbRequest(mClientId);
+        TunerLnbRequest request = new TunerLnbRequest();
+        request.clientId = mClientId;
         boolean granted = mTunerResourceManager.requestLnb(request, lnbHandle);
         if (granted) {
             mLnbHandle = lnbHandle[0];
@@ -1251,7 +1293,7 @@ public class Tuner implements AutoCloseable  {
     /**
      * Opens a Descrambler in tuner.
      *
-     * @return  a {@link Descrambler} object.
+     * @return a {@link Descrambler} object.
      */
     @RequiresPermission(android.Manifest.permission.ACCESS_TV_DESCRAMBLER)
     @Nullable
@@ -1314,7 +1356,8 @@ public class Tuner implements AutoCloseable  {
 
     private boolean requestDemux() {
         int[] demuxHandle = new int[1];
-        TunerDemuxRequest request = new TunerDemuxRequest(mClientId);
+        TunerDemuxRequest request = new TunerDemuxRequest();
+        request.clientId = mClientId;
         boolean granted = mTunerResourceManager.requestDemux(request, demuxHandle);
         if (granted) {
             mDemuxHandle = demuxHandle[0];
@@ -1325,7 +1368,8 @@ public class Tuner implements AutoCloseable  {
 
     private Descrambler requestDescrambler() {
         int[] descramblerHandle = new int[1];
-        TunerDescramblerRequest request = new TunerDescramblerRequest(mClientId);
+        TunerDescramblerRequest request = new TunerDescramblerRequest();
+        request.clientId = mClientId;
         boolean granted = mTunerResourceManager.requestDescrambler(request, descramblerHandle);
         if (!granted) {
             return null;
@@ -1333,11 +1377,26 @@ public class Tuner implements AutoCloseable  {
         int handle = descramblerHandle[0];
         Descrambler descrambler = nativeOpenDescramblerByHandle(handle);
         if (descrambler != null) {
-            mDescramblers.put(handle, descrambler);
+            synchronized (mDescramblers) {
+                WeakReference weakDescrambler = new WeakReference<Descrambler>(descrambler);
+                mDescramblers.put(handle, weakDescrambler);
+            }
         } else {
             mTunerResourceManager.releaseDescrambler(handle, mClientId);
         }
         return descrambler;
+    }
+
+    private boolean requestFrontendCiCam(int ciCamId) {
+        int[] ciCamHandle = new int[1];
+        TunerCiCamRequest request = new TunerCiCamRequest();
+        request.clientId = mClientId;
+        request.ciCamId = ciCamId;
+        boolean granted = mTunerResourceManager.requestCiCam(request, ciCamHandle);
+        if (granted) {
+            mFrontendCiCamHandle = ciCamHandle[0];
+        }
+        return granted;
     }
 
     private boolean checkResource(int resourceType)  {
@@ -1362,6 +1421,13 @@ public class Tuner implements AutoCloseable  {
             }
             default:
                 return false;
+        }
+        return true;
+    }
+
+    private boolean checkCiCamResource(int ciCamId) {
+        if (mFrontendCiCamHandle == null && !requestFrontendCiCam(ciCamId)) {
+            return false;
         }
         return true;
     }

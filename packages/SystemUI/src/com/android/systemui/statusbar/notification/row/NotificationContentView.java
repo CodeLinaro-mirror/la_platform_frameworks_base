@@ -33,6 +33,7 @@ import android.provider.Settings;
 import android.util.ArrayMap;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.NotificationHeaderView;
@@ -318,30 +319,13 @@ public class NotificationContentView extends FrameLayout {
         // We need to update the expanded and the collapsed header to have exactly the same with to
         // have the expand buttons laid out at the same location.
         NotificationHeaderView contractedHeader = mContractedWrapper.getNotificationHeader();
-        if (contractedHeader != null) {
-            if (mExpandedChild != null
-                    && mExpandedWrapper.getNotificationHeader() != null) {
-                NotificationHeaderView expandedHeader = mExpandedWrapper.getNotificationHeader();
-
-                int headerTextMargin = expandedHeader.getHeaderTextMarginEnd();
-                if (headerTextMargin != contractedHeader.getHeaderTextMarginEnd()) {
-                    contractedHeader.setHeaderTextMarginEnd(headerTextMargin);
-                    return true;
-                }
-            } else {
-                int paddingEnd = mNotificationContentMarginEnd;
-                if (contractedHeader.getPaddingEnd() != paddingEnd) {
-                    contractedHeader.setPadding(
-                            contractedHeader.isLayoutRtl()
-                                    ? paddingEnd
-                                    : contractedHeader.getPaddingLeft(),
-                            contractedHeader.getPaddingTop(),
-                            contractedHeader.isLayoutRtl()
-                                    ? contractedHeader.getPaddingLeft()
-                                    : paddingEnd,
-                            contractedHeader.getPaddingBottom());
-                    return true;
-                }
+        if (contractedHeader != null && mExpandedWrapper != null
+                && mExpandedWrapper.getNotificationHeader() != null) {
+            NotificationHeaderView expandedHeader = mExpandedWrapper.getNotificationHeader();
+            int headerTextMargin = expandedHeader.getTopLineExtraMarginEnd();
+            if (headerTextMargin != contractedHeader.getTopLineExtraMarginEnd()) {
+                contractedHeader.setTopLineExtraMarginEnd(headerTextMargin);
+                return true;
             }
         }
         return false;
@@ -1386,16 +1370,8 @@ public class NotificationContentView extends FrameLayout {
             bubbleButton.setOnClickListener(mContainingNotification.getBubbleClickListener());
             bubbleButton.setVisibility(VISIBLE);
             actionContainer.setVisibility(VISIBLE);
-
-            int paddingEnd = getResources().getDimensionPixelSize(
-                    com.android.internal.R.dimen.bubble_visible_padding_end);
-            actionContainerLayout.setPaddingRelative(0, 0, paddingEnd, 0);
         } else  {
             bubbleButton.setVisibility(GONE);
-
-            int paddingEnd = getResources().getDimensionPixelSize(
-                    com.android.internal.R.dimen.bubble_gone_padding_end);
-            actionContainerLayout.setPaddingRelative(0, 0, paddingEnd, 0);
         }
     }
 
@@ -1611,15 +1587,15 @@ public class NotificationContentView extends FrameLayout {
         return null;
     }
 
-    public void showFeedbackIcon(boolean show) {
+    public void showFeedbackIcon(boolean show, Pair<Integer, Integer> resIds) {
         if (mContractedChild != null) {
-            mContractedWrapper.showFeedbackIcon(show);
+            mContractedWrapper.showFeedbackIcon(show, resIds);
         }
         if (mExpandedChild != null) {
-            mExpandedWrapper.showFeedbackIcon(show);
+            mExpandedWrapper.showFeedbackIcon(show, resIds);
         }
         if (mHeadsUpChild != null) {
-            mHeadsUpWrapper.showFeedbackIcon(show);
+            mHeadsUpWrapper.showFeedbackIcon(show, resIds);
         }
     }
 

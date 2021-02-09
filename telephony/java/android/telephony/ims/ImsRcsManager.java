@@ -26,10 +26,10 @@ import android.content.Intent;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.os.ServiceSpecificException;
 import android.provider.Settings;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.BinderCacheManager;
-import android.telephony.CarrierConfigManager;
 import android.telephony.TelephonyFrameworkInitializer;
 import android.telephony.ims.aidl.IImsCapabilityCallback;
 import android.telephony.ims.aidl.IImsRcsController;
@@ -61,9 +61,10 @@ public class ImsRcsManager {
      * been enabled by the user can be queried using {@link RcsUceAdapter#isUceSettingEnabled()}.
      * <p>
      * This intent will always be handled by the system, however the application should only send
-     * this Intent if the carrier supports RCS contact discovery, which can be queried using the key
-     * {@link CarrierConfigManager#KEY_USE_RCS_PRESENCE_BOOL}. Otherwise, the RCS contact discovery
-     * opt-in dialog will not be shown.
+     * this Intent if the carrier supports bulk RCS contact exchange, which will be true if either
+     * key {@link android.telephony.CarrierConfigManager.Ims#KEY_RCS_BULK_CAPABILITY_EXCHANGE_BOOL}
+     * or {@link android.telephony.CarrierConfigManager#KEY_USE_RCS_PRESENCE_BOOL} is set to true.
+     * Otherwise, the RCS contact discovery opt-in dialog will not be shown.
      * <p>
      * Input: A mandatory {@link Settings#EXTRA_SUB_ID} extra containing the subscription that the
      * setting will be be shown for.
@@ -198,6 +199,8 @@ public class ImsRcsManager {
         c.setExecutor(executor);
         try {
             imsRcsController.registerImsRegistrationCallback(mSubId, c.getBinder());
+        } catch (ServiceSpecificException e) {
+            throw new ImsException(e.toString(), e.errorCode);
         } catch (RemoteException | IllegalStateException e) {
             throw new ImsException(e.getMessage(), ImsException.CODE_ERROR_SERVICE_UNAVAILABLE);
         }
@@ -333,6 +336,9 @@ public class ImsRcsManager {
         c.setExecutor(executor);
         try {
             imsRcsController.registerRcsAvailabilityCallback(mSubId, c.getBinder());
+
+        } catch (ServiceSpecificException e) {
+            throw new ImsException(e.toString(), e.errorCode);
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling IImsRcsController#registerRcsAvailabilityCallback", e);
             throw new ImsException("Remote IMS Service is not available",
@@ -384,12 +390,14 @@ public class ImsRcsManager {
      * @param capability The RCS capability to query.
      * @param radioTech The radio tech that this capability failed for, defined as
      * {@link ImsRegistrationImplBase#REGISTRATION_TECH_LTE} or
+     * {@link ImsRegistrationImplBase#REGISTRATION_TECH_CROSS_SIM} or
      * {@link ImsRegistrationImplBase#REGISTRATION_TECH_IWLAN}.
      * @return true if the RCS capability is capable for this subscription, false otherwise. This
      * does not necessarily mean that we are registered for IMS and the capability is available, but
      * rather the subscription is capable of this service over IMS.
      * @see #isAvailable(int)
      * @see android.telephony.CarrierConfigManager#KEY_USE_RCS_PRESENCE_BOOL
+     * @see android.telephony.CarrierConfigManager.Ims#KEY_ENABLE_PRESENCE_CAPABILITY_EXCHANGE_BOOL
      * @throws ImsException if the IMS service is not available when calling this method.
      * See {@link ImsException#getCode()} for more information on the error codes.
      * @hide

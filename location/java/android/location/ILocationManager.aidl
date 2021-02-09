@@ -21,22 +21,24 @@ import android.location.Address;
 import android.location.Criteria;
 import android.location.GeocoderParams;
 import android.location.Geofence;
+import android.location.GnssAntennaInfo;
+import android.location.GnssCapabilities;
 import android.location.GnssMeasurementCorrections;
-import android.location.GnssRequest;
+import android.location.GnssMeasurementRequest;
 import android.location.IGeocodeListener;
-import android.location.IGnssAntennaInfoListener;
 import android.location.IGnssMeasurementsListener;
 import android.location.IGnssStatusListener;
 import android.location.IGnssNavigationMessageListener;
+import android.location.IGnssNmeaListener;
 import android.location.ILocationCallback;
 import android.location.ILocationListener;
+import android.location.LastLocationRequest;
 import android.location.Location;
 import android.location.LocationRequest;
 import android.location.LocationTime;
+import android.location.provider.ProviderProperties;
 import android.os.Bundle;
 import android.os.ICancellationSignal;
-
-import com.android.internal.location.ProviderProperties;
 
 /**
  * System private API for talking with the location service.
@@ -45,7 +47,7 @@ import com.android.internal.location.ProviderProperties;
  */
 interface ILocationManager
 {
-    @nullable Location getLastLocation(String provider, String packageName, String attributionTag);
+    @nullable Location getLastLocation(String provider, in LastLocationRequest request, String packageName, String attributionTag);
     @nullable ICancellationSignal getCurrentLocation(String provider, in LocationRequest request, in ILocationCallback callback, String packageName, String attributionTag, String listenerId);
 
     void registerLocationListener(String provider, in LocationRequest request, in ILocationListener listener, String packageName, String attributionTag, String listenerId);
@@ -70,19 +72,21 @@ interface ILocationManager
         double upperRightLatitude, double upperRightLongitude, int maxResults,
         in GeocoderParams params, in IGeocodeListener listener);
 
-    long getGnssCapabilities();
+    GnssCapabilities getGnssCapabilities();
     int getGnssYearOfHardware();
     String getGnssHardwareModelName();
+
+    @nullable List<GnssAntennaInfo> getGnssAntennaInfos();
 
     void registerGnssStatusCallback(in IGnssStatusListener callback, String packageName, String attributionTag);
     void unregisterGnssStatusCallback(in IGnssStatusListener callback);
 
-    void addGnssMeasurementsListener(in GnssRequest request, in IGnssMeasurementsListener listener, String packageName, String attributionTag);
+    void registerGnssNmeaCallback(in IGnssNmeaListener callback, String packageName, String attributionTag);
+    void unregisterGnssNmeaCallback(in IGnssNmeaListener callback);
+
+    void addGnssMeasurementsListener(in GnssMeasurementRequest request, in IGnssMeasurementsListener listener, String packageName, String attributionTag);
     void removeGnssMeasurementsListener(in IGnssMeasurementsListener listener);
     void injectGnssMeasurementCorrections(in GnssMeasurementCorrections corrections);
-
-    void addGnssAntennaInfoListener(in IGnssAntennaInfoListener listener, String packageName, String attributionTag);
-    void removeGnssAntennaInfoListener(in IGnssAntennaInfoListener listener);
 
     void addGnssNavigationMessageListener(in IGnssNavigationMessageListener listener, String packageName, String attributionTag);
     void removeGnssNavigationMessageListener(in IGnssNavigationMessageListener listener);
@@ -92,6 +96,7 @@ interface ILocationManager
     void flushGnssBatch();
     void stopGnssBatch();
 
+    boolean hasProvider(String provider);
     List<String> getAllProviders();
     List<String> getProviders(in Criteria criteria, boolean enabledOnly);
     String getBestProvider(in Criteria criteria, boolean enabledOnly);

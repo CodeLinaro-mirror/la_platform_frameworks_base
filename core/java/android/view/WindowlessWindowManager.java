@@ -24,6 +24,7 @@ import android.graphics.Rect;
 import android.graphics.Region;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.service.attestation.ImpressionToken;
 import android.util.Log;
 import android.util.MergedConfiguration;
 import android.window.ClientWindowFrames;
@@ -125,20 +126,24 @@ public class WindowlessWindowManager implements IWindowSession {
         }
     }
 
+    protected void attachToParentSurface(SurfaceControl.Builder b) {
+        b.setParent(mRootSurface);
+    }
+
     /**
      * IWindowSession implementation.
      */
     @Override
     public int addToDisplay(IWindow window, WindowManager.LayoutParams attrs,
             int viewVisibility, int displayId, InsetsState requestedVisibility, Rect outFrame,
-            DisplayCutout.ParcelableWrapper outDisplayCutout, InputChannel outInputChannel,
-            InsetsState outInsetsState, InsetsSourceControl[] outActiveControls) {
+            InputChannel outInputChannel, InsetsState outInsetsState,
+            InsetsSourceControl[] outActiveControls) {
         final SurfaceControl.Builder b = new SurfaceControl.Builder(mSurfaceSession)
-                .setParent(mRootSurface)
                 .setFormat(attrs.format)
                 .setBufferSize(getSurfaceWidth(attrs), getSurfaceHeight(attrs))
                 .setName(attrs.getTitle().toString())
                 .setCallsite("WindowlessWindowManager.addToDisplay");
+        attachToParentSurface(b);
         final SurfaceControl sc = b.build();
 
         if (((attrs.inputFeatures &
@@ -166,11 +171,10 @@ public class WindowlessWindowManager implements IWindowSession {
     @Override
     public int addToDisplayAsUser(IWindow window, WindowManager.LayoutParams attrs,
             int viewVisibility, int displayId, int userId, InsetsState requestedVisibility,
-            Rect outFrame, DisplayCutout.ParcelableWrapper outDisplayCutout,
-            InputChannel outInputChannel, InsetsState outInsetsState,
+            Rect outFrame, InputChannel outInputChannel, InsetsState outInsetsState,
             InsetsSourceControl[] outActiveControls) {
         return addToDisplay(window, attrs, viewVisibility, displayId, requestedVisibility,
-                outFrame, outDisplayCutout, outInputChannel, outInsetsState, outActiveControls);
+                outFrame, outInputChannel, outInsetsState, outActiveControls);
     }
 
     @Override
@@ -207,12 +211,19 @@ public class WindowlessWindowManager implements IWindowSession {
     }
 
     /** @hide */
+    @Nullable
     protected SurfaceControl getSurfaceControl(View rootView) {
         final ViewRootImpl root = rootView.getViewRootImpl();
         if (root == null) {
             return null;
         }
-        final State s = mStateForWindow.get(root.mWindow.asBinder());
+        return getSurfaceControl(root.mWindow);
+    }
+
+    /** @hide */
+    @Nullable
+    protected SurfaceControl getSurfaceControl(IWindow window) {
+        final State s = mStateForWindow.get(window.asBinder());
         if (s == null) {
             return null;
         }
@@ -452,5 +463,11 @@ public class WindowlessWindowManager implements IWindowSession {
     @Override
     public void grantEmbeddedWindowFocus(IWindow callingWindow, IBinder targetInputToken,
                                          boolean grantFocus) {
+    }
+
+    @Override
+    public ImpressionToken generateImpressionToken(IWindow window, Rect boundsInWindow,
+            String hashAlgorithm) {
+        return null;
     }
 }

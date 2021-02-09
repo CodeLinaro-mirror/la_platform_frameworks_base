@@ -27,6 +27,8 @@ import com.android.server.wm.flicker.helpers.ImeAppAutoFocusHelper
 import com.android.server.wm.flicker.helpers.buildTestTag
 import com.android.server.wm.flicker.helpers.setRotation
 import com.android.server.wm.flicker.helpers.wakeUpAndGoToHomeScreen
+import com.android.server.wm.flicker.visibleWindowsShownMoreThanOneConsecutiveEntry
+import com.android.server.wm.flicker.visibleLayersShownMoreThanOneConsecutiveEntry
 import com.android.server.wm.flicker.navBarLayerIsAlwaysVisible
 import com.android.server.wm.flicker.navBarLayerRotatesAndScales
 import com.android.server.wm.flicker.navBarWindowIsAlwaysVisible
@@ -59,15 +61,18 @@ class CloseImeAutoOpenWindowToAppTest(
         @JvmStatic
         fun getParams(): List<Array<Any>> {
             val instrumentation = InstrumentationRegistry.getInstrumentation()
-            val testApp = ImeAppAutoFocusHelper(instrumentation)
 
             return FlickerTestRunnerFactory(instrumentation)
                 .buildTest { configuration ->
+                    val testApp = ImeAppAutoFocusHelper(instrumentation,
+                        configuration.startRotation)
                     withTag { buildTestTag("imeToAppAutoOpen", testApp, configuration) }
                     repeat { configuration.repetitions }
                     setup {
-                        eachRun {
+                        test {
                             device.wakeUpAndGoToHomeScreen()
+                        }
+                        eachRun {
                             this.setRotation(configuration.startRotation)
                             testApp.open()
                             testApp.openIME(device)
@@ -80,14 +85,15 @@ class CloseImeAutoOpenWindowToAppTest(
                         }
                     }
                     transitions {
-                        device.pressBack()
-                        device.waitForIdle()
+                        testApp.closeIME(device)
                     }
                     assertions {
                         windowManagerTrace {
                             navBarWindowIsAlwaysVisible()
                             statusBarWindowIsAlwaysVisible()
-                            imeAppWindowIsAlwaysVisible(testApp, bugId = 141458352)
+                            visibleWindowsShownMoreThanOneConsecutiveEntry(listOf("InputMethod"))
+
+                            imeAppWindowIsAlwaysVisible(testApp)
                         }
 
                         layersTrace {
@@ -96,8 +102,10 @@ class CloseImeAutoOpenWindowToAppTest(
                             noUncoveredRegions(configuration.startRotation)
                             navBarLayerRotatesAndScales(configuration.startRotation)
                             statusBarLayerRotatesScales(configuration.startRotation)
+                            visibleLayersShownMoreThanOneConsecutiveEntry()
+
                             imeLayerBecomesInvisible(bugId = 141458352)
-                            imeAppLayerIsAlwaysVisible(testApp, bugId = 141458352)
+                            imeAppLayerIsAlwaysVisible(testApp)
                         }
                     }
                 }

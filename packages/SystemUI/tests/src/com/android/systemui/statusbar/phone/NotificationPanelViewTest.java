@@ -40,6 +40,7 @@ import android.os.PowerManager;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.util.DisplayMetrics;
+import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -60,10 +61,11 @@ import com.android.keyguard.dagger.KeyguardStatusViewComponent;
 import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.biometrics.AuthController;
+import com.android.systemui.classifier.FalsingCollectorFake;
 import com.android.systemui.classifier.FalsingManagerFake;
 import com.android.systemui.doze.DozeLog;
+import com.android.systemui.media.MediaDataManager;
 import com.android.systemui.media.MediaHierarchyManager;
-import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.qs.QSDetailDisplayer;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.KeyguardAffordanceView;
@@ -83,7 +85,6 @@ import com.android.systemui.statusbar.notification.stack.NotificationStackScroll
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
-import com.android.systemui.util.InjectionInflationController;
 import com.android.wm.shell.animation.FlingAnimationUtils;
 
 import org.junit.Before;
@@ -132,15 +133,13 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     @Mock
     private KeyguardUpdateMonitor mUpdateMonitor;
     @Mock
-    private FalsingManager mFalsingManager;
-    @Mock
     private KeyguardBypassController mKeyguardBypassController;
     @Mock
     private DozeParameters mDozeParameters;
     @Mock
     private NotificationPanelView mView;
     @Mock
-    private InjectionInflationController mInjectionInflationController;
+    private LayoutInflater mLayoutInflater;
     @Mock
     private DynamicPrivacyController mDynamicPrivacyController;
     @Mock
@@ -199,6 +198,10 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     private NotificationStackScrollLayoutController mNotificationStackScrollLayoutController;
     @Mock
     private AuthController mAuthController;
+    @Mock
+    private ScrimController mScrimController;
+    @Mock
+    private MediaDataManager mMediaDataManager;
 
     private NotificationPanelViewController mNotificationPanelViewController;
     private View.AccessibilityDelegate mAccessibiltyDelegate;
@@ -231,6 +234,7 @@ public class NotificationPanelViewTest extends SysuiTestCase {
         when(mView.findViewById(R.id.qs_frame)).thenReturn(mQsFrame);
         when(mView.findViewById(R.id.keyguard_status_view))
                 .thenReturn(mock(KeyguardStatusView.class));
+        when(mView.findViewById(R.id.keyguard_header)).thenReturn(mKeyguardStatusBar);
         FlingAnimationUtils.Builder flingAnimationUtilsBuilder = new FlingAnimationUtils.Builder(
                 mDisplayMetrics);
 
@@ -251,7 +255,7 @@ public class NotificationPanelViewTest extends SysuiTestCase {
                 mKeyguardBypassController, mHeadsUpManager,
                 mock(NotificationRoundnessManager.class),
                 mStatusBarStateController,
-                new FalsingManagerFake());
+                new FalsingManagerFake(), new FalsingCollectorFake());
         when(mKeyguardStatusViewComponentFactory.build(any()))
                 .thenReturn(mKeyguardStatusViewComponent);
         when(mKeyguardStatusViewComponent.getKeyguardClockSwitchController())
@@ -260,15 +264,15 @@ public class NotificationPanelViewTest extends SysuiTestCase {
                 .thenReturn(mKeyguardStatusViewController);
         mNotificationPanelViewController = new NotificationPanelViewController(mView,
                 mResources,
-                mInjectionInflationController,
+                mLayoutInflater,
                 coordinator, expansionHandler, mDynamicPrivacyController, mKeyguardBypassController,
-                mFalsingManager, mShadeController,
+                new FalsingManagerFake(), new FalsingCollectorFake(), mShadeController,
                 mNotificationLockscreenUserManager, mNotificationEntryManager,
                 mKeyguardStateController, mStatusBarStateController, mDozeLog,
                 mDozeParameters, mCommandQueue, mVibratorHelper,
                 mLatencyTracker, mPowerManager, mAccessibilityManager, 0, mUpdateMonitor,
                 mMetricsLogger, mActivityManager, mConfigurationController,
-                flingAnimationUtilsBuilder, mStatusBarTouchableRegionManager,
+                () -> flingAnimationUtilsBuilder, mStatusBarTouchableRegionManager,
                 mConversationNotificationManager, mMediaHiearchyManager,
                 mBiometricUnlockController, mStatusBarKeyguardViewManager,
                 mNotificationStackScrollLayoutController,
@@ -276,7 +280,9 @@ public class NotificationPanelViewTest extends SysuiTestCase {
                 mGroupManager,
                 mNotificationAreaController,
                 mAuthController,
-                new QSDetailDisplayer());
+                new QSDetailDisplayer(),
+                mScrimController,
+                mMediaDataManager);
         mNotificationPanelViewController.initDependencies(
                 mStatusBar,
                 mNotificationShelfController);

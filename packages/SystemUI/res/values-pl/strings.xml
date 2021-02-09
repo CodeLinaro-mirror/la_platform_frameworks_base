@@ -83,8 +83,9 @@
     <string name="screenshot_saved_title" msgid="8893267638659083153">"Zrzut ekranu został zapisany"</string>
     <string name="screenshot_saved_text" msgid="7778833104901642442">"Kliknij, by zobaczyć zrzut ekranu"</string>
     <string name="screenshot_failed_title" msgid="3259148215671936891">"Nie udało się zapisać zrzutu ekranu"</string>
+    <string name="screenshot_failed_to_save_user_locked_text" msgid="6156607948256936920">"Przed zapisaniem zrzutu ekranu musisz odblokować urządzenie"</string>
     <string name="screenshot_failed_to_save_unknown_text" msgid="1506621600548684129">"Spróbuj jeszcze raz wykonać zrzut ekranu"</string>
-    <string name="screenshot_failed_to_save_text" msgid="8344173457344027501">"Nie można zapisać zrzutu ekranu, bo brakuje miejsca w pamięci"</string>
+    <string name="screenshot_failed_to_save_text" msgid="7232739948999195960">"Nie można zapisać zrzutu ekranu."</string>
     <string name="screenshot_failed_to_capture_text" msgid="7818288545874407451">"Nie możesz wykonać zrzutu ekranu, bo nie zezwala na to aplikacja lub Twoja organizacja."</string>
     <string name="screenshot_edit_label" msgid="8754981973544133050">"Edytuj"</string>
     <string name="screenshot_edit_description" msgid="3333092254706788906">"Edytuj zrzut ekranu"</string>
@@ -186,16 +187,6 @@
     <string name="accessibility_battery_three_bars" msgid="118341923832368291">"Bateria: trzy paski."</string>
     <string name="accessibility_battery_full" msgid="1480463938961288494">"Bateria naładowana."</string>
     <string name="accessibility_battery_unknown" msgid="1807789554617976440">"Poziom naładowania baterii jest nieznany."</string>
-    <string name="accessibility_no_phone" msgid="8828412144430247025">"Brak sygnału telefonu."</string>
-    <string name="accessibility_phone_one_bar" msgid="8786055123727785588">"Telefon: jeden pasek."</string>
-    <string name="accessibility_phone_two_bars" msgid="3316909612598670674">"Telefon: dwa paski."</string>
-    <string name="accessibility_phone_three_bars" msgid="5670937367300884534">"Telefon: trzy paski."</string>
-    <string name="accessibility_phone_signal_full" msgid="1103449569988869971">"Telefon: pełna moc sygnału."</string>
-    <string name="accessibility_no_data" msgid="2124768255213392359">"Brak danych."</string>
-    <string name="accessibility_data_one_bar" msgid="3226985124149387055">"Dane: jeden pasek."</string>
-    <string name="accessibility_data_two_bars" msgid="4576231688545173059">"Dane: dwa paski."</string>
-    <string name="accessibility_data_three_bars" msgid="3036562180893930325">"Dane: trzy paski."</string>
-    <string name="accessibility_data_signal_full" msgid="283507058258113551">"Dane: pełna moc sygnału."</string>
     <string name="accessibility_wifi_name" msgid="4863440268606851734">"Połączono z <xliff:g id="WIFI">%s</xliff:g>."</string>
     <string name="accessibility_bluetooth_name" msgid="7300973230214067678">"Połączono z <xliff:g id="BLUETOOTH">%s</xliff:g>."</string>
     <string name="accessibility_cast_name" msgid="7344437925388773685">"Połączono z urządzeniem <xliff:g id="CAST">%s</xliff:g>."</string>
@@ -204,8 +195,6 @@
     <string name="accessibility_wimax_two_bars" msgid="7335485192390018939">"WiMAX: dwa paski"</string>
     <string name="accessibility_wimax_three_bars" msgid="2773714362377629938">"WiMAX: trzy paski"</string>
     <string name="accessibility_wimax_signal_full" msgid="3101861561730624315">"WiMAX: pełna moc sygnału"</string>
-    <string name="accessibility_ethernet_disconnected" msgid="2097190491174968655">"Rozłączono z siecią Ethernet."</string>
-    <string name="accessibility_ethernet_connected" msgid="3988347636883115213">"Połączono z siecią Ethernet."</string>
     <string name="accessibility_no_signal" msgid="1115622734914921920">"Brak sygnału."</string>
     <string name="accessibility_not_connected" msgid="4061305616351042142">"Nie połączono."</string>
     <string name="accessibility_zero_bars" msgid="1364823964848784827">"Zero pasków."</string>
@@ -217,30 +206,17 @@
     <string name="accessibility_desc_off" msgid="8055389500285421408">"Wył."</string>
     <string name="accessibility_desc_connected" msgid="3082590384032624233">"Połączono."</string>
     <string name="accessibility_desc_connecting" msgid="8011433412112903614">"Łączę..."</string>
-    <string name="data_connection_gprs" msgid="2752584037409568435">"GPRS"</string>
     <string name="data_connection_hspa" msgid="6096234094857660873">"HSPA"</string>
-    <string name="data_connection_3g" msgid="1215807817895516914">"3G"</string>
-    <string name="data_connection_3_5g" msgid="4097346596394846450">"H"</string>
-    <string name="data_connection_3_5g_plus" msgid="8938598386721354697">"H+"</string>
-    <string name="data_connection_4g" msgid="5770196771037980730">"4G"</string>
-    <string name="data_connection_4g_plus" msgid="780615287092000279">"4G+"</string>
-    <string name="data_connection_lte" msgid="557021044282539923">"LTE"</string>
-    <string name="data_connection_lte_plus" msgid="4799302403782283178">"LTE+"</string>
-    <string name="data_connection_cdma" msgid="7678457855627313518">"1X"</string>
     <string name="data_connection_roaming" msgid="375650836665414797">"Roaming"</string>
-    <string name="data_connection_edge" msgid="6316755666481405762">"EDGE"</string>
     <string name="accessibility_data_connection_wifi" msgid="4422160347472742434">"Wi-Fi"</string>
     <string name="accessibility_no_sim" msgid="1140839832913084973">"Brak karty SIM."</string>
     <string name="accessibility_cell_data" msgid="172950885786007392">"Mobilna transmisja danych"</string>
     <string name="accessibility_cell_data_on" msgid="691666434519443162">"Mobilna transmisja danych włączona"</string>
-    <string name="cell_data_off_content_description" msgid="9165555931499878044">"Wyłączona"</string>
-    <string name="not_default_data_content_description" msgid="6757881730711522517">"Nie skonfigurowano do transmisji danych"</string>
     <string name="cell_data_off" msgid="4886198950247099526">"Wył."</string>
     <string name="accessibility_bluetooth_tether" msgid="6327291292208790599">"Thethering przez Bluetooth."</string>
     <string name="accessibility_airplane_mode" msgid="1899529214045998505">"Tryb samolotowy."</string>
     <string name="accessibility_vpn_on" msgid="8037549696057288731">"Sieć VPN włączona."</string>
     <string name="accessibility_no_sims" msgid="5711270400476534667">"Brak karty SIM."</string>
-    <string name="carrier_network_change_mode" msgid="5174141476991149918">"Zmiana sieci operatora"</string>
     <string name="accessibility_battery_details" msgid="6184390274150865789">"Zobacz szczegóły baterii"</string>
     <string name="accessibility_battery_level" msgid="5143715405241138822">"Bateria: <xliff:g id="NUMBER">%d</xliff:g> procent."</string>
     <string name="accessibility_battery_level_with_estimate" msgid="4843119982547599452">"Bateria <xliff:g id="PERCENTAGE">%1$s</xliff:g> procent, jeszcze <xliff:g id="TIME">%2$s</xliff:g> (na podstawie Twojego sposobu korzystania)"</string>
@@ -370,6 +346,10 @@
     <string name="quick_settings_ime_label" msgid="3351174938144332051">"Metoda wprowadzania"</string>
     <string name="quick_settings_location_label" msgid="2621868789013389163">"Lokalizacja"</string>
     <string name="quick_settings_location_off_label" msgid="7923929131443915919">"Lokalizacja wyłączona"</string>
+    <!-- no translation found for quick_settings_camera_label (1367149596242401934) -->
+    <skip />
+    <!-- no translation found for quick_settings_mic_label (8245831073612564953) -->
+    <skip />
     <string name="quick_settings_media_device_label" msgid="8034019242363789941">"Urządzenie multimedialne"</string>
     <string name="quick_settings_rssi_label" msgid="3397615415140356701">"RSSI"</string>
     <string name="quick_settings_rssi_emergency_only" msgid="7499207215265078598">"Tylko połączenia alarmowe"</string>
@@ -379,6 +359,13 @@
     <string name="quick_settings_user_title" msgid="8673045967216204537">"Użytkownik"</string>
     <string name="quick_settings_user_new_user" msgid="3347905871336069666">"Nowy użytkownik"</string>
     <string name="quick_settings_wifi_label" msgid="2879507532983487244">"Wi-Fi"</string>
+    <string name="quick_settings_internet_label" msgid="6603068555872455463">"Internet"</string>
+    <!-- no translation found for quick_settings_airplane_safe_label (2665758539772645899) -->
+    <skip />
+    <!-- no translation found for quick_settings_networks_available (1875138606855420438) -->
+    <skip />
+    <!-- no translation found for quick_settings_networks_unavailable (1167847013337940082) -->
+    <skip />
     <string name="quick_settings_wifi_not_connected" msgid="4071097522427039160">"Brak połączenia"</string>
     <string name="quick_settings_wifi_no_network" msgid="6003178398713839313">"Brak sieci"</string>
     <string name="quick_settings_wifi_off_label" msgid="4003379736176547594">"Wi-Fi wyłączone"</string>
@@ -426,7 +413,7 @@
     <string name="quick_settings_night_secondary_label_until_sunrise" msgid="4063448287758262485">"Do wschodu słońca"</string>
     <string name="quick_settings_night_secondary_label_on_at" msgid="3584738542293528235">"Włącz o <xliff:g id="TIME">%s</xliff:g>"</string>
     <string name="quick_settings_secondary_label_until" msgid="1883981263191927372">"Do <xliff:g id="TIME">%s</xliff:g>"</string>
-    <string name="quick_settings_ui_mode_night_label" msgid="1398928270610780470">"Tryb ciemny"</string>
+    <string name="quick_settings_ui_mode_night_label" msgid="1398928270610780470">"Ciemny motyw"</string>
     <string name="quick_settings_dark_mode_secondary_label_battery_saver" msgid="4990712734503013251">"Oszczędzanie baterii"</string>
     <string name="quick_settings_dark_mode_secondary_label_on_at_sunset" msgid="6017379738102015710">"Włącz o zachodzie"</string>
     <string name="quick_settings_dark_mode_secondary_label_until_sunrise" msgid="4404885070316716472">"Do wschodu słońca"</string>
@@ -482,9 +469,9 @@
     <string name="accessibility_multi_user_switch_quick_contact" msgid="4504508915324898576">"Pokaż profil"</string>
     <string name="user_add_user" msgid="4336657383006913022">"Dodaj użytkownika"</string>
     <string name="user_new_user_name" msgid="2019166282704195789">"Nowy użytkownik"</string>
-    <string name="guest_exit_guest_dialog_title" msgid="5015697561580641422">"Usunąć gościa?"</string>
+    <string name="guest_exit_guest_dialog_title" msgid="2034481024623462357">"Zakończyć sesję gościa?"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"Wszystkie aplikacje i dane w tej sesji zostaną usunięte."</string>
-    <string name="guest_exit_guest_dialog_remove" msgid="7505817591242703757">"Usuń"</string>
+    <string name="guest_exit_guest_dialog_remove" msgid="8533184512885775423">"Zakończ sesję"</string>
     <string name="guest_wipe_session_title" msgid="7147965814683990944">"Witaj ponownie, gościu!"</string>
     <string name="guest_wipe_session_message" msgid="3393823610257065457">"Chcesz kontynuować sesję?"</string>
     <string name="guest_wipe_session_wipe" msgid="8056836584445473309">"Rozpocznij nową"</string>
@@ -538,8 +525,8 @@
     <string name="quick_settings_disclosure_named_management" msgid="3476472755775165827">"Właściciel tego urządzenia: <xliff:g id="ORGANIZATION_NAME">%1$s</xliff:g>"</string>
     <string name="quick_settings_disclosure_management_vpns" msgid="371835422690053154">"To urządzenie należy do Twojej organizacji i jest połączone z sieciami VPN"</string>
     <string name="quick_settings_disclosure_named_management_vpns" msgid="4046375645500668555">"To urządzenie należy do organizacji <xliff:g id="ORGANIZATION_NAME">%1$s</xliff:g> i jest połączone z sieciami VPN"</string>
-    <string name="quick_settings_disclosure_managed_profile_monitoring" msgid="1423899084754272514">"Twoja organizacja może monitorować ruch w sieci w Twoim profilu do pracy"</string>
-    <string name="quick_settings_disclosure_named_managed_profile_monitoring" msgid="8321469176706219860">"Organizacja <xliff:g id="ORGANIZATION_NAME">%1$s</xliff:g> może monitorować ruch w sieci w Twoim profilu do pracy"</string>
+    <string name="quick_settings_disclosure_managed_profile_monitoring" msgid="1423899084754272514">"Twoja organizacja może monitorować ruch w sieci w Twoim profilu służbowym"</string>
+    <string name="quick_settings_disclosure_named_managed_profile_monitoring" msgid="8321469176706219860">"Organizacja <xliff:g id="ORGANIZATION_NAME">%1$s</xliff:g> może monitorować ruch w sieci w Twoim profilu służbowym"</string>
     <string name="quick_settings_disclosure_monitoring" msgid="8548019955631378680">"Sieć może być monitorowana"</string>
     <string name="quick_settings_disclosure_vpns" msgid="7213546797022280246">"To urządzenie jest połączone z sieciami VPN"</string>
     <string name="quick_settings_disclosure_managed_profile_named_vpn" msgid="8117568745060010789">"Twój profil służbowy jest połączony z siecią <xliff:g id="VPN_APP">%1$s</xliff:g>"</string>
@@ -558,7 +545,7 @@
     <string name="monitoring_description_named_management" msgid="505833016545056036">"To urządzenie należy do organizacji <xliff:g id="ORGANIZATION_NAME">%1$s</xliff:g>.\n\nAdministrator IT może monitorować ustawienia, firmowe uprawnienia dostępu, aplikacje, dane dotyczące urządzenia i lokalizacji oraz nimi zarządzać.\n\nAby dowiedzieć się więcej, skontaktuj się z administratorem IT."</string>
     <string name="monitoring_description_management" msgid="4308879039175729014">"To urządzenie należy do Twojej organizacji.\n\nAdministrator IT może monitorować ustawienia, firmowe uprawnienia dostępu, aplikacje, dane dotyczące urządzenia i lokalizacji oraz nimi zarządzać.\n\nAby dowiedzieć się więcej, skontaktuj się z administratorem IT."</string>
     <string name="monitoring_description_management_ca_certificate" msgid="7785013130658110130">"Twoja organizacja zainstalowała urząd certyfikacji na tym urządzeniu. Zabezpieczony ruch w sieci może być monitorowany i zmieniany."</string>
-    <string name="monitoring_description_managed_profile_ca_certificate" msgid="7904323416598435647">"Twoja organizacja zainstalowała urząd certyfikacji w Twoim profilu do pracy. Zabezpieczony ruch w sieci może być monitorowany i zmieniany."</string>
+    <string name="monitoring_description_managed_profile_ca_certificate" msgid="7904323416598435647">"Twoja organizacja zainstalowała urząd certyfikacji w Twoim profilu służbowym. Zabezpieczony ruch w sieci może być monitorowany i zmieniany."</string>
     <string name="monitoring_description_ca_certificate" msgid="448923057059097497">"Urząd certyfikacji zainstalowany na tym urządzeniu. Twój zabezpieczony ruch w sieci może być monitorowany i zmieniany."</string>
     <string name="monitoring_description_management_network_logging" msgid="216983105036994771">"Administrator włączył rejestrowanie sieciowe, które pozwala monitorować ruch na Twoim urządzeniu."</string>
     <string name="monitoring_description_named_vpn" msgid="5749932930634037027">"Łączysz się z aplikacją <xliff:g id="VPN_APP">%1$s</xliff:g>, która może monitorować Twoją aktywność w sieci, w tym e-maile, aplikacje i strony internetowe."</string>
@@ -577,14 +564,14 @@
     <string name="monitoring_description_ca_cert_settings" msgid="8329781950135541003">"Otwórz zaufane certyfikaty"</string>
     <string name="monitoring_description_network_logging" msgid="577305979174002252">"Administrator włączył rejestrowanie sieciowe, które pozwala monitorować ruch na Twoim urządzeniu.\n\nAby dowiedzieć się więcej, skontaktuj się z administratorem."</string>
     <string name="monitoring_description_vpn" msgid="1685428000684586870">"Aplikacja otrzymała od Ciebie uprawnienia do konfigurowania połączenia VPN.\n\nMoże ona monitorować Twoją aktywność na urządzeniu i w sieci, w tym e-maile, aplikacje i strony internetowe."</string>
-    <string name="monitoring_description_vpn_profile_owned" msgid="4964237035412372751">"Twoim profilem do pracy zarządza <xliff:g id="ORGANIZATION">%1$s</xliff:g>.\n\nAdministrator może monitorować Twoją aktywność w sieci, w tym e-maile, aplikacje i strony internetowe.\n\nAby dowiedzieć się więcej, skontaktuj się z administratorem.\n\nŁączysz się też z siecią VPN, która może monitorować Twoją aktywność w sieci."</string>
+    <string name="monitoring_description_vpn_profile_owned" msgid="4964237035412372751">"Twoim profilem służbowym zarządza <xliff:g id="ORGANIZATION">%1$s</xliff:g>.\n\nAdministrator może monitorować Twoją aktywność w sieci, w tym e-maile, aplikacje i strony internetowe.\n\nAby dowiedzieć się więcej, skontaktuj się z administratorem.\n\nŁączysz się też z siecią VPN, która może monitorować Twoją aktywność w sieci."</string>
     <string name="monitoring_description_parental_controls" msgid="8184693528917051626">"Tym urządzeniem zarządza Twój rodzic. Rodzic może zobaczyć różne informacje, np. o aplikacjach, których używasz, lokalizacji i czasie korzystania z urządzenia, a także zarządzać tymi danymi."</string>
     <string name="legacy_vpn_name" msgid="4174223520162559145">"VPN"</string>
     <string name="monitoring_description_app" msgid="376868879287922929">"Łączysz się z aplikacją <xliff:g id="APPLICATION">%1$s</xliff:g>, która może monitorować Twoją aktywność w sieci, w tym e-maile, aplikacje i strony internetowe."</string>
     <string name="monitoring_description_app_personal" msgid="1970094872688265987">"Masz połączenie z aplikacją <xliff:g id="APPLICATION">%1$s</xliff:g>, która może monitorować Twoją prywatną aktywność w sieci, w tym e-maile, aplikacje i strony internetowe."</string>
     <string name="branded_monitoring_description_app_personal" msgid="1703511985892688885">"Masz połączenie z aplikacją <xliff:g id="APPLICATION">%1$s</xliff:g>, która może monitorować Twoją prywatną aktywność w sieci, w tym e-maile, aplikacje i strony internetowe."</string>
-    <string name="monitoring_description_app_work" msgid="3713084153786663662">"Organizacja <xliff:g id="ORGANIZATION">%1$s</xliff:g> zarządza Twoim profilem do pracy. Profil jest połączony z aplikacją <xliff:g id="APPLICATION">%2$s</xliff:g>, która może monitorować Twoją aktywność w sieci, w tym e-maile, aplikacje i strony internetowe.\n\nSkontaktuj się z administratorem, aby uzyskać więcej informacji."</string>
-    <string name="monitoring_description_app_personal_work" msgid="6175816356939166101">"Organizacja <xliff:g id="ORGANIZATION">%1$s</xliff:g> zarządza Twoim profilem do pracy. Profil jest połączony z aplikacją <xliff:g id="APPLICATION_WORK">%2$s</xliff:g>, która może monitorować Twoją aktywność w sieci, w tym e-maile, aplikacje i strony internetowe.\n\nMasz też połączenie z aplikacją <xliff:g id="APPLICATION_PERSONAL">%3$s</xliff:g>, która może monitorować Twoją osobistą aktywność w sieci."</string>
+    <string name="monitoring_description_app_work" msgid="3713084153786663662">"Organizacja <xliff:g id="ORGANIZATION">%1$s</xliff:g> zarządza Twoim profilem służbowym. Profil jest połączony z aplikacją <xliff:g id="APPLICATION">%2$s</xliff:g>, która może monitorować Twoją aktywność w sieci, w tym e-maile, aplikacje i strony internetowe.\n\nSkontaktuj się z administratorem, aby uzyskać więcej informacji."</string>
+    <string name="monitoring_description_app_personal_work" msgid="6175816356939166101">"Organizacja <xliff:g id="ORGANIZATION">%1$s</xliff:g> zarządza Twoim profilem służbowym. Profil jest połączony z aplikacją <xliff:g id="APPLICATION_WORK">%2$s</xliff:g>, która może monitorować Twoją aktywność w sieci, w tym e-maile, aplikacje i strony internetowe.\n\nMasz też połączenie z aplikacją <xliff:g id="APPLICATION_PERSONAL">%3$s</xliff:g>, która może monitorować Twoją osobistą aktywność w sieci."</string>
     <string name="keyguard_indication_trust_unlocked" msgid="7395154975733744547">"Blokada anulowana przez agenta zaufania"</string>
     <string name="keyguard_indication_trust_disabled" msgid="6820793704816727918">"Urządzenie pozostanie zablokowane, aż odblokujesz je ręcznie"</string>
     <string name="keyguard_indication_trust_unlocked_plugged_in" msgid="2323452175329362855">"<xliff:g id="KEYGUARD_INDICATION">%1$s</xliff:g>\n<xliff:g id="POWER_INDICATION">%2$s</xliff:g>"</string>
@@ -728,6 +715,10 @@
     <string name="notification_channel_summary_default_with_bubbles" msgid="1782419896613644568">"Może włączyć dzwonek lub wibracje w zależności od ustawień telefonu. Rozmowy z aplikacji <xliff:g id="APP_NAME">%1$s</xliff:g> są domyślnie wyświetlane jako dymki."</string>
     <string name="notification_channel_summary_bubble" msgid="7235935211580860537">"Przyciąga uwagę dzięki pływającym skrótom do treści."</string>
     <string name="notification_channel_summary_automatic" msgid="5813109268050235275">"Pozwól systemowi decydować, czy o powiadomieniu powinien informować dźwięk czy wibracja"</string>
+    <string name="notification_channel_summary_automatic_alerted" msgid="954166812246932240">"&lt;b&gt;Stan:&lt;/b&gt; zmieniony na Domyślny"</string>
+    <string name="notification_channel_summary_automatic_silenced" msgid="7403004439649872047">"&lt;b&gt;Stan:&lt;/b&gt; zmieniono na Ciche"</string>
+    <string name="notification_channel_summary_automatic_promoted" msgid="1301710305149590426">"&lt;b&gt;Stan:&lt;/b&gt; podniesiono ważność"</string>
+    <string name="notification_channel_summary_automatic_demoted" msgid="1831303964660807700">"&lt;b&gt;Stan:&lt;/b&gt; obniżono ważność"</string>
     <string name="notification_channel_summary_priority" msgid="7952654515769021553">"Wyświetla się jako pływający dymek u góry sekcji rozmów, pokazuje zdjęcie profilowe na ekranie blokady"</string>
     <string name="notification_conversation_channel_settings" msgid="2409977688430606835">"Ustawienia"</string>
     <string name="notification_priority_title" msgid="2079708866333537093">"Priorytet"</string>
@@ -746,9 +737,10 @@
     <string name="appops_camera_mic_overlay" msgid="5584311236445644095">"Ta aplikacja wyświetla się nad innymi aplikacjami na ekranie i używa mikrofonu oraz aparatu."</string>
     <string name="notification_appops_settings" msgid="5208974858340445174">"Ustawienia"</string>
     <string name="notification_appops_ok" msgid="2177609375872784124">"OK"</string>
-    <string name="feedback_silenced" msgid="5382212321253328247">"System wyciszył to powiadomienie."</string>
-    <string name="feedback_promoted" msgid="8075757485407091976">"System zmienił ważność tego powiadomienia na wyższą."</string>
-    <string name="feedback_demoted" msgid="5848066008939031913">"System zmienił ważność tego powiadomienia na niższą."</string>
+    <string name="feedback_alerted" msgid="5192459808484271208">"To powiadomienie zostało automatycznie &lt;b&gt;zmienione na Domyślne&lt;/b&gt; przez system."</string>
+    <string name="feedback_silenced" msgid="9116540317466126457">"To powiadomienie zostało automatycznie &lt;b&gt;zmienione na Ciche&lt;/b&gt; przez system."</string>
+    <string name="feedback_promoted" msgid="2125562787759780807">"Ważność tego powiadomienia została automatycznie &lt;b&gt;podniesiona&lt;/b&gt; przez system."</string>
+    <string name="feedback_demoted" msgid="951884763467110604">"Ważność tego powiadomienia została automatycznie &lt;b&gt;obniżona&lt;/b&gt; przez system."</string>
     <string name="feedback_prompt" msgid="2278631214125128281">"Czy to było prawidłowe?"</string>
     <string name="feedback_response" msgid="4671729244976641339">"Dziękujemy za opinię"</string>
     <string name="feedback_ok" msgid="6481426753298857144">"OK"</string>

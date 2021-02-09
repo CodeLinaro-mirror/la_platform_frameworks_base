@@ -47,7 +47,6 @@ import android.util.Log;
 import android.util.SparseArray;
 import android.util.SparseIntArray;
 import android.util.SparseSetArray;
-import android.util.imetracing.ImeTracing;
 import android.util.proto.ProtoOutputStream;
 import android.view.InsetsState.InternalInsetsSide;
 import android.view.SyncRtSurfaceTransactionApplier.SurfaceParams;
@@ -136,10 +135,6 @@ public class InsetsAnimationControlImpl implements WindowInsetsAnimationControll
         mTranslator = translator;
         mController.startAnimation(this, listener, types, mAnimation,
                 new Bounds(mHiddenInsets, mShownInsets));
-
-        if ((mTypes & WindowInsets.Type.ime()) != 0) {
-            ImeTracing.getInstance().triggerDump();
-        }
     }
 
     private boolean calculatePerceptible(Insets currentInsets, float currentAlpha) {
@@ -339,8 +334,7 @@ public class InsetsAnimationControlImpl implements WindowInsetsAnimationControll
     private Insets getInsetsFromState(InsetsState state, Rect frame,
             @Nullable @InternalInsetsSide SparseIntArray typeSideMap) {
         return state.calculateInsets(frame, null /* ignoringVisibilityState */,
-                false /* isScreenRound */,
-                false /* alwaysConsumeSystemBars */, null /* displayCutout */,
+                false /* isScreenRound */, false /* alwaysConsumeSystemBars */,
                 LayoutParams.SOFT_INPUT_ADJUST_RESIZE /* legacySoftInputMode*/,
                 0 /* legacyWindowFlags */, 0 /* legacySystemUiFlags */, TYPE_APPLICATION,
                 WINDOWING_MODE_UNDEFINED, typeSideMap).getInsets(mTypes);

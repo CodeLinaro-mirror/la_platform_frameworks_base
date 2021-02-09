@@ -858,6 +858,20 @@ public interface InputConnection {
     boolean reportFullscreenMode(boolean enabled);
 
     /**
+     * Have the editor perform spell checking around the current selection.
+     *
+     * <p>The editor can ignore this method call if it does not support spell checking.
+     *
+     * @return For editor authors, the return value will always be ignored. For IME authors, this
+     *         method returns true if the spell check request was sent (whether or not the
+     *         associated editor supports spell checking), false if the input connection is no
+     *         longer valid.
+     */
+    default boolean performSpellCheck() {
+        return false;
+    }
+
+    /**
      * API to send private commands from an input method to its
      * connected editor. This can be used to provide domain-specific
      * features that are only known between certain input methods and
@@ -988,4 +1002,22 @@ public interface InputConnection {
      */
     boolean commitContent(@NonNull InputContentInfo inputContentInfo, int flags,
             @Nullable Bundle opts);
+
+    /**
+     * Called by the input method to indicate that it temporarily consumes all input for itself,
+     * or no longer does so.
+     *
+     * <p>Editors should reflect that they are temporarily not receiving input by hiding the
+     * cursor if {@code imeTemporarilyConsumesInput} is {@code true}, and resume showing the
+     * cursor if it is {@code false}.
+     *
+     * @param imeTemporarilyConsumesInput {@code true} when the IME is temporarily consuming input
+     * and the cursor should be hidden, {@code false} when input to the editor resumes and the
+     * cursor should be shown again.
+     * @return {@code true} on success, {@code false} if the input connection is no longer valid, or
+     * the protocol is not supported.
+     */
+    default boolean setImeTemporarilyConsumesInput(boolean imeTemporarilyConsumesInput) {
+        return false;
+    }
 }

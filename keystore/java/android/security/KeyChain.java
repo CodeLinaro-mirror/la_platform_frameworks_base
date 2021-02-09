@@ -15,10 +15,15 @@
  */
 package android.security;
 
+import static android.security.Credentials.ACTION_MANAGE_CREDENTIALS;
+
+import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.RequiresPermission;
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
+import android.annotation.TestApi;
 import android.annotation.WorkerThread;
 import android.app.Activity;
 import android.app.PendingIntent;
@@ -29,6 +34,7 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.net.Uri;
 import android.os.Binder;
+import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Process;
@@ -38,6 +44,7 @@ import android.os.UserManager;
 import android.security.keystore.AndroidKeyStoreProvider;
 import android.security.keystore.KeyPermanentlyInvalidatedException;
 import android.security.keystore.KeyProperties;
+import android.util.Log;
 
 import com.android.org.conscrypt.TrustedCertificateStore;
 
@@ -102,6 +109,11 @@ import javax.security.auth.x500.X500Principal;
 public final class KeyChain {
 
     /**
+     * @hide
+     */
+    public static final String LOG = "KeyChain";
+
+    /**
      * @hide Also used by KeyChainService implementation
      */
     public static final String ACCOUNT_TYPE = "com.android.keychain";
@@ -120,6 +132,11 @@ public final class KeyChain {
      * Package name for the Certificate Installer.
      */
     private static final String CERT_INSTALLER_PACKAGE = "com.android.certinstaller";
+
+    /**
+     * Package name for Settings.
+     */
+    private static final String SETTINGS_PACKAGE = "com.android.settings";
 
     /**
      * Extra for use with {@link #ACTION_CHOOSER}
@@ -200,6 +217,20 @@ public final class KeyChain {
      */
     // Compatible with old android.security.Credentials.PKCS12
     public static final String EXTRA_PKCS12 = "PKCS12";
+
+    /**
+     * Extra used by {@link #createManageCredentialsIntent(AppUriAuthenticationPolicy)} to specify
+     * the authentication policy of the credential management app.
+     *
+     * <p>The authentication policy declares which alias for a private key and certificate pair
+     * should be used for authentication, given a list of apps and URIs.
+     *
+     * <p>The extra value should be a {@link AppUriAuthenticationPolicy}.
+     *
+     * @hide
+     */
+    public static final String EXTRA_AUTHENTICATION_POLICY =
+            "android.security.extra.AUTHENTICATION_POLICY";
 
     /**
      * Broadcast Action: Indicates the trusted storage has changed. Sent when
@@ -386,6 +417,23 @@ public final class KeyChain {
     }
 
     /**
+     * Returns an {@code Intent} that should be used by an app to request to manage the user's
+     * credentials. This is limited to unmanaged devices. The authentication policy must be
+     * provided to be able to make this request successfully.
+     *
+     * @param policy The authentication policy determines which alias for a private key and
+     *               certificate pair should be used for authentication.
+     */
+    @NonNull
+    public static Intent createManageCredentialsIntent(@NonNull AppUriAuthenticationPolicy policy) {
+        Intent intent = new Intent(ACTION_MANAGE_CREDENTIALS);
+        intent.setComponent(ComponentName.createRelative(SETTINGS_PACKAGE,
+                ".security.RequestManageCredentials"));
+        intent.putExtra(EXTRA_AUTHENTICATION_POLICY, policy);
+        return intent;
+    }
+
+    /**
      * Launches an {@code Activity} for the user to select the alias
      * for a private key and certificate pair for authentication. The
      * selected alias or null will be returned via the
@@ -538,6 +586,55 @@ public final class KeyChain {
         intent.putExtra(EXTRA_SENDER, PendingIntent.getActivity(activity, 0, new Intent(),
                 PendingIntent.FLAG_IMMUTABLE));
         activity.startActivity(intent);
+    }
+
+    /**
+     * Set a credential management app. The credential management app has the ability to manage
+     * the user's KeyChain credentials on unmanaged devices.
+     *
+     * <p>There can only be one credential management on the device. If another app requests to
+     * become the credential management app, then the existing credential management app will
+     * no longer be able to manage credentials.
+     *
+     * @param packageName The package name of the credential management app
+     * @param authenticationPolicy The authentication policy of the credential management app. This
+     *                             policy determines which alias for a private key and certificate
+     *                             pair should be used for authentication.
+     * @return {@code true} if the credential management app was successfully added.
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(Manifest.permission.MANAGE_CREDENTIAL_MANAGEMENT_APP)
+    public static boolean setCredentialManagementApp(@NonNull Context context,
+            @NonNull String packageName, @NonNull AppUriAuthenticationPolicy authenticationPolicy) {
+        try (KeyChainConnection keyChainConnection = KeyChain.bind(context)) {
+            keyChainConnection.getService()
+                    .setCredentialManagementApp(packageName, authenticationPolicy);
+            return true;
+        } catch (RemoteException | InterruptedException e) {
+            Log.w(LOG, "Set credential management app failed", e);
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    /**
+     * Remove the user's KeyChain credentials on unmanaged devices.
+     *
+     * @return {@code true} if the credential management app was successfully removed.
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(Manifest.permission.MANAGE_CREDENTIAL_MANAGEMENT_APP)
+    public static boolean removeCredentialManagementApp(@NonNull Context context) {
+        try (KeyChainConnection keyChainConnection = KeyChain.bind(context)) {
+            keyChainConnection.getService().removeCredentialManagementApp();
+            return true;
+        } catch (RemoteException | InterruptedException e) {
+            Log.w(LOG, "Remove credential management app failed", e);
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private static class AliasResponse extends IKeyChainAliasCallback.Stub {
@@ -816,10 +913,26 @@ public final class KeyChain {
     @WorkerThread
     public static KeyChainConnection bindAsUser(@NonNull Context context, UserHandle user)
             throws InterruptedException {
+        return bindAsUser(context, null, user);
+    }
+
+    /**
+     * Bind to KeyChainService in the target user.
+     * Caller should call unbindService on the result when finished.
+     *
+     * @throws InterruptedException if interrupted during binding.
+     * @throws AssertionError if unable to bind to KeyChainService.
+     * @hide
+     */
+    public static KeyChainConnection bindAsUser(@NonNull Context context, @Nullable Handler handler,
+            UserHandle user) throws InterruptedException {
+
         if (context == null) {
             throw new NullPointerException("context == null");
         }
-        ensureNotOnMainThread(context);
+        if (handler == null) {
+            ensureNotOnMainThread(context);
+        }
         if (!UserManager.get(context).isUserUnlocked(user)) {
             throw new IllegalStateException("User must be unlocked");
         }
@@ -846,9 +959,19 @@ public final class KeyChain {
         };
         Intent intent = new Intent(IKeyChainService.class.getName());
         ComponentName comp = intent.resolveSystemService(context.getPackageManager(), 0);
+        if (comp == null) {
+            throw new AssertionError("could not resolve KeyChainService");
+        }
         intent.setComponent(comp);
-        if (comp == null || !context.bindServiceAsUser(
-                intent, keyChainServiceConnection, Context.BIND_AUTO_CREATE, user)) {
+        final boolean bindSucceed;
+        if (handler != null) {
+            bindSucceed = context.bindServiceAsUser(
+                    intent, keyChainServiceConnection, Context.BIND_AUTO_CREATE, handler, user);
+        } else {
+            bindSucceed = context.bindServiceAsUser(
+                    intent, keyChainServiceConnection, Context.BIND_AUTO_CREATE, user);
+        }
+        if (!bindSucceed) {
             throw new AssertionError("could not bind to KeyChainService");
         }
         countDownLatch.await();

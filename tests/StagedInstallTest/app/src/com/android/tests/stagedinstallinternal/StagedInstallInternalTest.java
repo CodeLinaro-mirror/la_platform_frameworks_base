@@ -127,6 +127,34 @@ public class StagedInstallInternalTest {
         InstallUtils.getPackageInstaller().abandonSession(id4);
     }
 
+    @Test
+    public void testStagedInstallationShouldCleanUpOnValidationFailure() throws Exception {
+        InstallUtils.commitExpectingFailure(AssertionError.class, "INSTALL_FAILED_INVALID_APK",
+                Install.single(TestApp.AIncompleteSplit).setStaged());
+    }
+
+    @Test
+    public void testStagedInstallationShouldCleanUpOnValidationFailureMultiPackage()
+            throws Exception {
+        InstallUtils.commitExpectingFailure(AssertionError.class, "INSTALL_FAILED_INVALID_APK",
+                Install.multi(TestApp.AIncompleteSplit, TestApp.B1, TestApp.Apex1).setStaged());
+    }
+
+    @Test
+    public void testFailStagedSessionIfStagingDirectoryDeleted_Commit() throws Exception {
+        int sessionId = Install.multi(TestApp.A1, TestApp.Apex1).setStaged().commit();
+        assertSessionReady(sessionId);
+        storeSessionId(sessionId);
+    }
+
+    @Test
+    public void testFailStagedSessionIfStagingDirectoryDeleted_Verify() throws Exception {
+        int sessionId = retrieveLastSessionId();
+        PackageInstaller.SessionInfo info =
+                InstallUtils.getPackageInstaller().getSessionInfo(sessionId);
+        assertThat(info.isStagedSessionFailed()).isTrue();
+    }
+
     private static void assertSessionReady(int sessionId) {
         assertSessionState(sessionId,
                 (session) -> assertThat(session.isStagedSessionReady()).isTrue());

@@ -208,6 +208,13 @@ public class ArrayUtils {
     }
 
     /**
+     * Length of the given map or 0 if it's null.
+     */
+    public static int size(@Nullable Map<?, ?> map) {
+        return map == null ? 0 : map.size();
+    }
+
+    /**
      * Checks that value is present as at least one of the elements of the array.
      * @param array the array to check in
      * @param value the value to check for
@@ -734,6 +741,25 @@ public class ArrayUtils {
     public static void checkBounds(int len, int index) {
         if (index < 0 || len <= index) {
             throw new ArrayIndexOutOfBoundsException("length=" + len + "; index=" + index);
+        }
+    }
+
+    /**
+     * Throws {@link ArrayIndexOutOfBoundsException} if the range is out of bounds.
+     * @param len length of the array. Must be non-negative
+     * @param offset start index of the range. Must be non-negative
+     * @param count length of the range. Must be non-negative
+     * @throws ArrayIndexOutOfBoundsException if the range from {@code offset} with length
+     * {@code count} is out of bounds of the array
+     */
+    public static void throwsIfOutOfBounds(int len, int offset, int count) {
+        if (len < 0) {
+            throw new ArrayIndexOutOfBoundsException("Negative length: " + len);
+        }
+
+        if ((offset | count) < 0 || offset > len - count) {
+            throw new ArrayIndexOutOfBoundsException(
+                    "length=" + len + "; regionStart=" + offset + "; regionLength=" + count);
         }
     }
 

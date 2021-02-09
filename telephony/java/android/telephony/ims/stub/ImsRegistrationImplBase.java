@@ -38,6 +38,9 @@ import java.lang.annotation.RetentionPolicy;
 /**
  * Controls IMS registration for this ImsService and notifies the framework when the IMS
  * registration for this ImsService has changed status.
+ * <p>
+ * Note: There is no guarantee on the thread that the calls from the framework will be called on. It
+ * is the implementors responsibility to handle moving the calls to a working thread if required.
  * @hide
  */
 @SystemApi
@@ -49,11 +52,11 @@ public class ImsRegistrationImplBase {
      * @hide
      */
     // Defines the underlying radio technology type that we have registered for IMS over.
-    @IntDef(flag = true,
-            value = {
+    @IntDef(value = {
                     REGISTRATION_TECH_NONE,
                     REGISTRATION_TECH_LTE,
-                    REGISTRATION_TECH_IWLAN
+                    REGISTRATION_TECH_IWLAN,
+                    REGISTRATION_TECH_CROSS_SIM
             })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ImsRegistrationTech {}
@@ -69,6 +72,11 @@ public class ImsRegistrationImplBase {
      * IMS is registered to IMS via IWLAN.
      */
     public static final int REGISTRATION_TECH_IWLAN = 1;
+
+    /**
+     * IMS is registered to IMS via internet over second subscription.
+     */
+    public static final int REGISTRATION_TECH_CROSS_SIM = 2;
 
     // Registration states, used to notify new ImsRegistrationImplBase#Callbacks of the current
     // state.
@@ -92,6 +100,21 @@ public class ImsRegistrationImplBase {
         @Override
         public void removeRegistrationCallback(IImsRegistrationCallback c) throws RemoteException {
             ImsRegistrationImplBase.this.removeRegistrationCallback(c);
+        }
+
+        @Override
+        public void triggerFullNetworkRegistration(int sipCode, String sipReason) {
+            ImsRegistrationImplBase.this.triggerFullNetworkRegistration(sipCode, sipReason);
+        }
+
+        @Override
+        public void triggerUpdateSipDelegateRegistration() {
+            ImsRegistrationImplBase.this.updateSipDelegateRegistration();
+        }
+
+        @Override
+        public void triggerSipDelegateDeregistration() {
+            ImsRegistrationImplBase.this.triggerSipDelegateDeregistration();
         }
     };
 
@@ -134,7 +157,6 @@ public class ImsRegistrationImplBase {
      * If the SIP delegate feature tag configuration has changed, then this method will be
      * called in order to let the ImsService know that it can pick up these changes in the IMS
      * registration.
-     * @hide
      */
     public void updateSipDelegateRegistration() {
         // Stub implementation, ImsService should implement this
@@ -151,7 +173,6 @@ public class ImsRegistrationImplBase {
      * <p>
      * This should not affect the registration of features managed by the ImsService itself, such as
      * feature tags related to MMTEL registration.
-     * @hide
      */
     public void triggerSipDelegateDeregistration() {
         // Stub implementation, ImsService should implement this
@@ -170,9 +191,8 @@ public class ImsRegistrationImplBase {
      *    be carrier specific.
      * @param sipReason The reason associated with the SIP error code. {@code null} if there was no
      *    reason associated with the error.
-     * @hide
      */
-    public void triggerNetworkReregistration(@IntRange(from = 100, to = 699) int sipCode,
+    public void triggerFullNetworkRegistration(@IntRange(from = 100, to = 699) int sipCode,
             @Nullable String sipReason) {
         // Stub implementation, ImsService should implement this
     }
@@ -182,7 +202,8 @@ public class ImsRegistrationImplBase {
      * Notify the framework that the device is connected to the IMS network.
      *
      * @param imsRadioTech the radio access technology. Valid values are defined as
-     * {@link #REGISTRATION_TECH_LTE} and {@link #REGISTRATION_TECH_IWLAN}.
+     * {@link #REGISTRATION_TECH_LTE}, {@link #REGISTRATION_TECH_IWLAN} and
+     * {@link #REGISTRATION_TECH_CROSS_SIM}.
      */
     public final void onRegistered(@ImsRegistrationTech int imsRadioTech) {
         updateToState(imsRadioTech, RegistrationManager.REGISTRATION_STATE_REGISTERED);
@@ -200,7 +221,8 @@ public class ImsRegistrationImplBase {
      * Notify the framework that the device is trying to connect the IMS network.
      *
      * @param imsRadioTech the radio access technology. Valid values are defined as
-     * {@link #REGISTRATION_TECH_LTE} and {@link #REGISTRATION_TECH_IWLAN}.
+     * {@link #REGISTRATION_TECH_LTE}, {@link #REGISTRATION_TECH_IWLAN} and
+     * {@link #REGISTRATION_TECH_CROSS_SIM}.
      */
     public final void onRegistering(@ImsRegistrationTech int imsRadioTech) {
         updateToState(imsRadioTech, RegistrationManager.REGISTRATION_STATE_REGISTERING);
@@ -248,7 +270,8 @@ public class ImsRegistrationImplBase {
      * Notify the framework that the handover from the current radio technology to the technology
      * defined in {@code imsRadioTech} has failed.
      * @param imsRadioTech The technology that has failed to be changed. Valid values are
-     * {@link #REGISTRATION_TECH_LTE} and {@link #REGISTRATION_TECH_IWLAN}.
+     * {@link #REGISTRATION_TECH_LTE}, {@link #REGISTRATION_TECH_IWLAN} and
+     * {@link #REGISTRATION_TECH_CROSS_SIM}.
      * @param info The {@link ImsReasonInfo} for the failure to change technology.
      */
     public final void onTechnologyChangeFailed(@ImsRegistrationTech int imsRadioTech,
@@ -315,7 +338,8 @@ public class ImsRegistrationImplBase {
 
     /**
      * @return the current registration connection type. Valid values are
-     * {@link #REGISTRATION_TECH_LTE} and {@link #REGISTRATION_TECH_IWLAN}
+     * {@link #REGISTRATION_TECH_LTE}, {@link #REGISTRATION_TECH_IWLAN} and
+     * {@link #REGISTRATION_TECH_CROSS_SIM}.
      * @hide
      */
     @VisibleForTesting

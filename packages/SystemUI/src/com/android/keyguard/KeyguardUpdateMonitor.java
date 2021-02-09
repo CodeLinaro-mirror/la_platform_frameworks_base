@@ -182,6 +182,7 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
     private static final int MSG_USER_REMOVED = 341;
     private static final int MSG_KEYGUARD_GOING_AWAY = 342;
     private static final int MSG_LOCK_SCREEN_MODE = 343;
+    private static final int MSG_TIME_FORMAT_UPDATE = 344;
 
     public static final int LOCK_SCREEN_MODE_NORMAL = 0;
     public static final int LOCK_SCREEN_MODE_LAYOUT_1 = 1;
@@ -280,6 +281,7 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
             mCallbacks = Lists.newArrayList();
     private ContentObserver mDeviceProvisionedObserver;
     private ContentObserver mLockScreenModeObserver;
+    private ContentObserver mTimeFormatChangeObserver;
 
     private boolean mSwitchingUser;
 
@@ -1721,6 +1723,9 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
                     case MSG_LOCK_SCREEN_MODE:
                         handleLockScreenMode();
                         break;
+                    case MSG_TIME_FORMAT_UPDATE:
+                        handleTimeFormatUpdate((String) msg.obj);
+                        break;
                     default:
                         super.handleMessage(msg);
                         break;
@@ -1861,23 +1866,52 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
             @Override
             public void onChange(boolean selfChange) {
                 updateLockScreenMode();
-                mHandler.sendEmptyMessage(MSG_LOCK_SCREEN_MODE);
             }
         };
         mContext.getContentResolver().registerContentObserver(
                 Settings.Global.getUriFor(Settings.Global.SHOW_NEW_LOCKSCREEN),
                 false, mLockScreenModeObserver);
+
+        mTimeFormatChangeObserver = new ContentObserver(mHandler) {
+            @Override
+            public void onChange(boolean selfChange) {
+                mHandler.sendMessage(mHandler.obtainMessage(
+                        MSG_TIME_FORMAT_UPDATE,
+                        Settings.System.getString(
+                                mContext.getContentResolver(),
+                                Settings.System.TIME_12_24)));
+            }
+        };
+        mContext.getContentResolver().registerContentObserver(
+                Settings.System.getUriFor(Settings.System.TIME_12_24),
+                false, mTimeFormatChangeObserver, UserHandle.USER_ALL);
     }
 
     private void updateLockScreenMode() {
-        mLockScreenMode = Settings.Global.getInt(mContext.getContentResolver(),
-                Settings.Global.SHOW_NEW_LOCKSCREEN,
-                isUdfpsEnrolled() ? 1 : 0);
+        final int newMode = Settings.Global.getInt(mContext.getContentResolver(),
+                Settings.Global.SHOW_NEW_LOCKSCREEN, LOCK_SCREEN_MODE_LAYOUT_1);
+        if (newMode != mLockScreenMode) {
+            mLockScreenMode = newMode;
+            mHandler.sendEmptyMessage(MSG_LOCK_SCREEN_MODE);
+        }
     }
 
     private void updateUdfpsEnrolled(int userId) {
         mIsUdfpsEnrolled = mAuthController.isUdfpsEnrolled(userId);
     }
+
+    /**
+     * Whether to show the lock icon on lock screen and bouncer. This depends on the enrolled
+     * biometrics to the device.
+     */
+    public boolean shouldShowLockIcon() {
+        return isFaceAuthEnabledForUser(KeyguardUpdateMonitor.getCurrentUser())
+                && !isUdfpsEnrolled();
+    }
+
+    /**
+     * @return true if there's at least one udfps enrolled
+     */
     public boolean isUdfpsEnrolled() {
         return mIsUdfpsEnrolled;
     }
@@ -1917,6 +1951,8 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
             return;
         }
 
+        // TODO: Add support for multiple fingerprint sensors, b/173730729
+        updateUdfpsEnrolled(getCurrentUser());
         boolean shouldListenForFingerprint =
                 isUdfpsEnrolled() ? shouldListenForUdfps() : shouldListenForFingerprint();
         boolean runningOrRestarting = mFingerprintRunningState == BIOMETRIC_STATE_RUNNING
@@ -2129,7 +2165,6 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
         }
         if (DEBUG) Log.v(TAG, "startListeningForFingerprint()");
         int userId = getCurrentUser();
-        updateUdfpsEnrolled(userId);
         if (isUnlockWithFingerprintPossible(userId)) {
             if (mFingerprintCancelSignal != null) {
                 mFingerprintCancelSignal.cancel();
@@ -2141,7 +2176,8 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
                         userId);
             } else {
                 mFpm.authenticate(null /* crypto */, mFingerprintCancelSignal,
-                        mFingerprintAuthenticationCallback, null /* handler */, userId);
+                        mFingerprintAuthenticationCallback, null /* handler */,
+                        FingerprintManager.SENSOR_ID_ANY, userId);
             }
             setFingerprintRunningState(BIOMETRIC_STATE_RUNNING);
         }
@@ -2442,6 +2478,22 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
     }
 
     /**
+     * Handle (@line #MSG_TIME_FORMAT_UPDATE}
+     *
+     * @param timeFormat "12" for 12-hour format, "24" for 24-hour format
+     */
+    private void handleTimeFormatUpdate(String timeFormat) {
+        Assert.isMainThread();
+        if (DEBUG) Log.d(TAG, "handleTimeFormatUpdate timeFormat=" + timeFormat);
+        for (int i = 0; i < mCallbacks.size(); i++) {
+            KeyguardUpdateMonitorCallback cb = mCallbacks.get(i).get();
+            if (cb != null) {
+                cb.onTimeFormatChanged(timeFormat);
+            }
+        }
+    }
+
+    /**
      * Handle {@link #MSG_BATTERY_UPDATE}
      */
     private void handleBatteryUpdate(BatteryStatus status) {
@@ -2618,7 +2670,6 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
         Assert.isMainThread();
         if (DEBUG) Log.d(TAG, "handleKeyguardBouncerChanged(" + bouncerVisible + ")");
         mBouncer = bouncerVisible == 1;
-
         if (mBouncer) {
             // If the bouncer is shown, always clear this flag. This can happen in the following
             // situations: 1) Default camera with SHOW_WHEN_LOCKED is not chosen yet. 2) Secure
@@ -2676,6 +2727,11 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
 
         // Battery either showed up or disappeared
         if (wasPresent != nowPresent) {
+            return true;
+        }
+
+        // change in battery overheat
+        if (current.health != old.health) {
             return true;
         }
 
@@ -3045,6 +3101,10 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
 
         if (mLockScreenModeObserver != null) {
             mContext.getContentResolver().unregisterContentObserver(mLockScreenModeObserver);
+        }
+
+        if (mTimeFormatChangeObserver != null) {
+            mContext.getContentResolver().unregisterContentObserver(mTimeFormatChangeObserver);
         }
 
         try {

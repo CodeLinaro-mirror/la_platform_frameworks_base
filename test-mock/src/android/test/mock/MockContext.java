@@ -817,6 +817,11 @@ public class MockContext extends Context {
     }
 
     @Override
+    public @NonNull Context createWindowContext(Display display, int type, Bundle options) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean isRestricted() {
         throw new UnsupportedOperationException();
     }
@@ -883,6 +888,12 @@ public class MockContext extends Context {
     @SystemApi
     @Override
     public Context createCredentialProtectedStorageContext() {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public Context createTokenContext(@NonNull IBinder token, @NonNull Display display) {
         throw new UnsupportedOperationException();
     }
 
