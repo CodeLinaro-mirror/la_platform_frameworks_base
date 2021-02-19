@@ -354,6 +354,9 @@ public class MobileSignalController extends SignalController<
         mNetworkToIconLookup.put(toDisplayIconKey(
                 TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE),
                 TelephonyIcons.NR_5G_PLUS);
+        mNetworkToIconLookup.put(toIconKey(
+                TelephonyManager.NETWORK_TYPE_NR),
+                TelephonyIcons.NR_5G);
     }
 
     private String getIconKey() {
@@ -376,9 +379,9 @@ public class MobileSignalController extends SignalController<
             case TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_ADVANCED_PRO:
                 return toIconKey(TelephonyManager.NETWORK_TYPE_LTE) + "_CA_Plus";
             case TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA:
-                return "5G";
+                return toIconKey(TelephonyManager.NETWORK_TYPE_NR);
             case TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE:
-                return "5G_Plus";
+                return toIconKey(TelephonyManager.NETWORK_TYPE_NR) + "_Plus";
             default:
                 return "unsupported";
         }
@@ -585,6 +588,10 @@ public class MobileSignalController extends SignalController<
         return (mServiceState != null && mServiceState.isEmergencyOnly());
     }
 
+    public boolean isInService() {
+        return Utils.isInService(mServiceState);
+    }
+
     private boolean isRoaming() {
         // During a carrier change, roaming indications need to be supressed.
         if (isCarrierNetworkChangeActive()) {
@@ -789,15 +796,21 @@ public class MobileSignalController extends SignalController<
             if ( mFiveGState.isNrIconTypeValid() ) {
                 mCurrentState.iconGroup = mFiveGState.getIconGroup();
             }else {
-                int iconType = TelephonyManager.NETWORK_TYPE_UNKNOWN;
                 if (mCurrentState.connected) {
                     if (isDataNetworkTypeAvailable()) {
-                        iconType = mTelephonyDisplayInfo.getNetworkType();
+                        int type = mTelephonyDisplayInfo.getOverrideNetworkType();
+                        if (type == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE
+                                || type == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA_MMWAVE
+                                || type == TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA ) {
+                            iconKey = toIconKey(mTelephonyDisplayInfo.getNetworkType());
+                        }else {
+                            iconKey = toDisplayIconKey(type);
+                        }
                     } else {
-                        iconType = getVoiceNetworkType();
+                        iconKey = toIconKey(getVoiceNetworkType());
                     }
                 }
-                mCurrentState.iconGroup = mNetworkToIconLookup.getOrDefault(toIconKey(iconType),
+                mCurrentState.iconGroup = mNetworkToIconLookup.getOrDefault(iconKey,
                         mDefaultIcons);
             }
         }
@@ -939,11 +952,11 @@ public class MobileSignalController extends SignalController<
     }
 
     private int getEnhancementDataRatIcon() {
-        return showDataRatIcon() ? getRatIconGroup().mDataType : 0;
+        return showDataRatIcon() && mCurrentState.connected ? getRatIconGroup().mDataType : 0;
     }
 
     private int getEnhancementDdsRatIcon() {
-        return mCurrentState.dataSim ? getRatIconGroup().mDataType : 0;
+        return mCurrentState.dataSim && mCurrentState.connected ? getRatIconGroup().mDataType : 0;
     }
 
     private MobileIconGroup getRatIconGroup() {
