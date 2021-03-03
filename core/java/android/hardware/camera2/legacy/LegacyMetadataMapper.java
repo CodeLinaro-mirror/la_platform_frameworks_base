@@ -58,6 +58,7 @@ public class LegacyMetadataMapper {
     private static final boolean DEBUG = false;
 
     private static final long NS_PER_MS = 1000000;
+    private static final byte DEFAULT_JPEG_QUALITY = 85;
 
     // from graphics.h
     public static final int HAL_PIXEL_FORMAT_RGBA_8888 = PixelFormat.RGBA_8888;
@@ -1444,6 +1445,9 @@ public class LegacyMetadataMapper {
         // jpeg.thumbnailSize - set smallest non-zero size if possible
         Size[] sizes = c.get(CameraCharacteristics.JPEG_AVAILABLE_THUMBNAIL_SIZES);
         m.set(CaptureRequest.JPEG_THUMBNAIL_SIZE, (sizes.length > 1) ? sizes[1] : sizes[0]);
+
+        // jpeg.quality
+        m.set(CaptureRequest.JPEG_QUALITY, (byte)DEFAULT_JPEG_QUALITY);
 
         // TODO: map other request template values
         return m;
