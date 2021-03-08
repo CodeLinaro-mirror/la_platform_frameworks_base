@@ -24,6 +24,7 @@ import android.hardware.camera2.impl.CameraDeviceImpl;
 import android.hardware.camera2.utils.SubmitInfo;
 import android.hardware.camera2.utils.SizeAreaComparator;
 import android.hardware.camera2.impl.CameraMetadataNative;
+import android.hardware.camera2.CameraDevice;
 import android.os.ConditionVariable;
 import android.os.Handler;
 import android.os.Message;
@@ -1110,17 +1111,33 @@ public class RequestThreadManager {
         condition.block();
     }
 
+    public boolean isValidAudioRestriction(int mode) {
+        switch (mode) {
+            case CameraDevice.AUDIO_RESTRICTION_NONE:
+            case CameraDevice.AUDIO_RESTRICTION_VIBRATION:
+            case CameraDevice.AUDIO_RESTRICTION_VIBRATION_SOUND:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     public void setAudioRestriction(int mode) {
         if (mCamera != null) {
             mCamera.setAudioRestriction(mode);
+            if (!isValidAudioRestriction(mode)) {
+                 throw new IllegalArgumentException("Invalid mode");
+            }
+        } else {
+            throw new IllegalStateException("Camera has been released!");
         }
-        throw new IllegalStateException("Camera has been released!");
     }
 
     public int getAudioRestriction() {
         if (mCamera != null) {
             return mCamera.getAudioRestriction();
+        } else {
+             throw new IllegalStateException("Camera has been released!");
         }
-        throw new IllegalStateException("Camera has been released!");
     }
 }
