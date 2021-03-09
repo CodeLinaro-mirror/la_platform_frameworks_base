@@ -804,7 +804,7 @@ public class ParameterUtils {
                     bestZoomIndex = i;
                     reportedCropRegion = availableReportedCropRegions.get(i);
                     previewCropRegion = availablePreviewCropRegions.get(i);
-                    reportedZoomRatio = zoomRatios.get(i);
+                    reportedZoomRatio = zoomRatios.get(i) * 1.0f / ZOOM_RATIO_MULTIPLIER;
                 } else {
                     break;
                 }
