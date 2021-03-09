@@ -777,7 +777,13 @@ public class CameraDeviceUserShim implements ICameraDeviceUser {
             throw new ServiceSpecificException(ICameraService.ERROR_DISCONNECTED, err);
         }
 
-        mLegacyDevice.setAudioRestriction(mode);
+        try {
+            mLegacyDevice.setAudioRestriction(mode);
+        } catch (IllegalArgumentException e) {
+            String err = "setCameraAudioRestriction - invalid mode";
+            Log.e(TAG, err);
+            throw new ServiceSpecificException(ICameraService.ERROR_ILLEGAL_ARGUMENT, err);
+        }
     }
 
     @Override
