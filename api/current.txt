@@ -7984,7 +7984,9 @@ package android.bluetooth {
     method @RequiresPermission(android.Manifest.permission.BLUETOOTH) public android.bluetooth.BluetoothServerSocket listenUsingInsecureRfcommWithServiceRecord(String, java.util.UUID) throws java.io.IOException;
     method @RequiresPermission(android.Manifest.permission.BLUETOOTH) @NonNull public android.bluetooth.BluetoothServerSocket listenUsingL2capChannel() throws java.io.IOException;
     method @RequiresPermission(android.Manifest.permission.BLUETOOTH) public android.bluetooth.BluetoothServerSocket listenUsingRfcommWithServiceRecord(String, java.util.UUID) throws java.io.IOException;
+    method @RequiresPermission(android.Manifest.permission.BLUETOOTH) public boolean setClockSyncConfig(boolean, int, int, int, int, int);
     method @RequiresPermission(android.Manifest.permission.BLUETOOTH_ADMIN) public boolean setName(String);
+    method @RequiresPermission(android.Manifest.permission.BLUETOOTH) public boolean startClockSync();
     method @RequiresPermission(android.Manifest.permission.BLUETOOTH_ADMIN) public boolean startDiscovery();
     method @Deprecated @RequiresPermission(android.Manifest.permission.BLUETOOTH_ADMIN) public boolean startLeScan(android.bluetooth.BluetoothAdapter.LeScanCallback);
     method @Deprecated @RequiresPermission(android.Manifest.permission.BLUETOOTH_ADMIN) public boolean startLeScan(java.util.UUID[], android.bluetooth.BluetoothAdapter.LeScanCallback);
