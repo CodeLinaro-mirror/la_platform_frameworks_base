@@ -661,6 +661,12 @@ public final class BluetoothAdapter {
      */
     public static final String EXTRA_LOCAL_OOB_DATA = "android.bluetooth.adapter.extra.LOCAL_OOB_DATA";
 
+    /**
+     * Used as a int extra field in {@link #ACTION_LOCAL_OOB_DATA}
+     * intents to report the local oob data result.
+     * @hide
+     */
+    public static final String EXTRA_OOB_RESULT = "android.bluetooth.adapter.extra.EXTRA_OOB_RESULT";
 
     /** @hide */
     public static final String BLUETOOTH_MANAGER_SERVICE = "bluetooth_manager";
