@@ -68,6 +68,7 @@ public class LegacyMetadataMapper {
 
     // for metadata
     private static final float LENS_INFO_MINIMUM_FOCUS_DISTANCE_FIXED_FOCUS = 0.0f;
+    private static final float LENS_APERTURE_DEFAULT = 2.0f;
 
     private static final int REQUEST_MAX_NUM_OUTPUT_STREAMS_COUNT_RAW = 0; // no raw support
     private static final int REQUEST_MAX_NUM_OUTPUT_STREAMS_COUNT_PROC = 3; // preview, video, cb
@@ -713,6 +714,13 @@ public class LegacyMetadataMapper {
 
         float[] focalLengths = new float[] { p.getFocalLength() };
         m.set(LENS_INFO_AVAILABLE_FOCAL_LENGTHS, focalLengths);
+
+        /*
+         * lens.aperture
+         */
+        float[] lensAperture = new float[]{LENS_APERTURE_DEFAULT};
+        m.set(LENS_INFO_AVAILABLE_APERTURES, lensAperture);
+
     }
 
     private static void mapFlash(CameraMetadataNative m, Camera.Parameters p) {
