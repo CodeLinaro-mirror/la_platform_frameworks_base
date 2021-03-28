@@ -6509,6 +6509,28 @@ public class WifiManager {
         }
     }
 
+    /**
+     * Set congestion report parameters
+     *
+     * when disable, threshold and interval would be ignored.
+     *
+     * @param ifname is the interface to report congestion event
+     * @param enable true to enable, false to disable
+     * @param threshold, the threshold to report congestion, value should be [0, 100]
+     * @param interval, the interval to report, value should be [1, 255]
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS)
+    public boolean setCongestionReport(String ifname, boolean enable, int threshold, int interval) {
+        if (ifname == null) throw new IllegalArgumentException("ifname cannot be null");
+        Log.v(TAG, "setCongestionReport: ifname=" + ifname + ", enable=" + enable + ", threshold="
+                + threshold + ", interval=" + interval);
+        try {
+            return mService.setCongestionReport(ifname, enable, threshold, interval);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
     /* QTI specific changes - END */
 
 }

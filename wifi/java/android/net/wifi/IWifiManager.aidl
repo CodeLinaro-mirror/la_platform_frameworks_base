@@ -297,4 +297,6 @@ interface IWifiManager
 
     List<String> getAvailableInterfaces();
 
+    boolean setCongestionReport(String ifname, boolean enable, int threshold, int interval);
+
 }
