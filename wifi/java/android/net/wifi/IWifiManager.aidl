@@ -71,9 +71,15 @@ interface IWifiManager
 
     boolean addOrUpdatePasspointConfiguration(in PasspointConfiguration config, String packageName);
 
+    boolean addOrUpdatePasspointConfiguration2(in PasspointConfiguration config, String packageName, int staId);
+
     boolean removePasspointConfiguration(in String fqdn, String packageName);
 
+    boolean removePasspointConfiguration2(in String fqdn, String packageName, int staId);
+
     List<PasspointConfiguration> getPasspointConfigurations(in String packageName);
+
+    List<PasspointConfiguration> getPasspointConfigurations2(in String packageName, int staId);
 
     List<WifiConfiguration> getWifiConfigsForPasspointProfiles(in List<String> fqdnList);
 

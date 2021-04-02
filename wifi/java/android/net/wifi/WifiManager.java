@@ -2046,6 +2046,33 @@ public class WifiManager {
     }
 
     /**
+     * Add or update a Passpoint configuration for second station.The configuration provides a credential
+     * for connecting to Passpoint networks that are operated by the Passpoint
+     * service provider specified in the configuration.
+     *
+     * Each configuration is uniquely identified by a unique key which depends on the contents of
+     * the configuration. This allows the caller to install multiple profiles with the same FQDN
+     * (Fully qualified domain name). Therefore, in order to update an existing profile, it is
+     * first required to remove it using {@link WifiManager#removePasspointConfiguration(String)}.
+     * Otherwise, a new profile will be added with both configuration.
+     *
+     * @param config The Passpoint configuration to be added
+     * @param staId Indicate that is for second station, use STA_SECONDARY
+     * @throws IllegalArgumentException if configuration is invalid or Passpoint is not enabled on
+     *                                  the device.
+     * @hide
+     */
+    public void addOrUpdatePasspointConfiguration(PasspointConfiguration config, int staId) {
+        try {
+            if (!mService.addOrUpdatePasspointConfiguration2(config, mContext.getOpPackageName(), staId)) {
+                throw new IllegalArgumentException();
+            }
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Remove the Passpoint configuration identified by its FQDN (Fully Qualified Domain Name) added
      * by the caller.
      *
@@ -2070,6 +2097,33 @@ public class WifiManager {
     }
 
     /**
+     * Remove the second STA Passpoint configuration identified by its FQDN (Fully Qualified Domain Name)
+     * added by the caller.
+     *
+     * @param fqdn The FQDN of the Passpoint configuration added by the caller to be removed
+     * @param staId use STA_SECONDARY to indicate remove second STA's passpoint configuration
+     * @throws IllegalArgumentException if no configuration is associated with the given FQDN or
+     *                                  Passpoint is not enabled on the device.
+     * @deprecated This will be non-functional in a future release.
+     *
+     * @hide
+     */
+    @Deprecated
+    @RequiresPermission(anyOf = {
+            android.Manifest.permission.NETWORK_SETTINGS,
+            android.Manifest.permission.NETWORK_CARRIER_PROVISIONING
+    })
+    public void removePasspointConfiguration(String fqdn, int staId) {
+        try {
+            if (!mService.removePasspointConfiguration2(fqdn, mContext.getOpPackageName(), staId)) {
+                throw new IllegalArgumentException();
+            }
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Return the list of installed Passpoint configurations added by the caller.
      *
      * An empty list will be returned when no configurations are installed.
@@ -2085,6 +2139,31 @@ public class WifiManager {
     public List<PasspointConfiguration> getPasspointConfigurations() {
         try {
             return mService.getPasspointConfigurations(mContext.getOpPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Return the list of installed Passpoint configurations for second STA added by
+     * the caller.
+     *
+     * An empty list will be returned when no configurations are installed.
+     *
+     * @param staId use STA_SECONDARY to indicate second STA
+     * @return A list of {@link PasspointConfiguration} added by the caller
+     * @deprecated This will be non-functional in a future release.
+     *
+     * @hide
+     */
+    @Deprecated
+    @RequiresPermission(anyOf = {
+            android.Manifest.permission.NETWORK_SETTINGS,
+            android.Manifest.permission.NETWORK_SETUP_WIZARD
+    })
+    public List<PasspointConfiguration> getPasspointConfigurations(int staId) {
+        try {
+            return mService.getPasspointConfigurations2(mContext.getOpPackageName(), staId);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
