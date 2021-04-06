@@ -6499,6 +6499,16 @@ public class WifiManager {
         }
     }
 
+    /** @hide */
+    @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS)
+    @Nullable public List<String> getAvailableInterfaces() {
+        try {
+            return mService.getAvailableInterfaces();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
     /* QTI specific changes - END */
 
 }
