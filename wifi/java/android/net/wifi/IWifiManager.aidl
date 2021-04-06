@@ -295,4 +295,6 @@ interface IWifiManager
 
     void unregisterForWifiNotification(int staId, int callbackIdentifier);
 
+    List<String> getAvailableInterfaces();
+
 }
