@@ -7702,6 +7702,8 @@ package android.bluetooth {
     method public android.bluetooth.BluetoothServerSocket listenUsingRfcommWithServiceRecord(java.lang.String, java.util.UUID) throws java.io.IOException;
     method public boolean setName(java.lang.String);
     method public boolean startDiscovery();
+    method public boolean setClockSyncConfig(boolean, int, int, int, int, int);
+    method public boolean startClockSync();
     method public deprecated boolean startLeScan(android.bluetooth.BluetoothAdapter.LeScanCallback);
     method public deprecated boolean startLeScan(java.util.UUID[], android.bluetooth.BluetoothAdapter.LeScanCallback);
     method public deprecated void stopLeScan(android.bluetooth.BluetoothAdapter.LeScanCallback);
