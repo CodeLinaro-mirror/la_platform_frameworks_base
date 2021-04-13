@@ -114,6 +114,7 @@ import com.android.server.SystemService;
 import com.android.server.am.UserState;
 import com.android.server.storage.DeviceStorageMonitorInternal;
 import com.android.server.utils.TimingsTraceAndSlog;
+import com.android.server.wm.ActivityTaskManagerInternal;
 
 import libcore.io.IoUtils;
 
@@ -3955,6 +3956,19 @@ public class UserManagerService extends IUserManager.Stub {
 
     void finishRemoveUser(final @UserIdInt int userId) {
         if (DBG) Slog.i(LOG_TAG, "finishRemoveUser " + userId);
+
+        UserInfo user;
+        synchronized (mUsersLock) {
+            user = getUserInfoLU(userId);
+        }
+        if (user != null && user.preCreated) {
+            Slog.i(LOG_TAG, "Removing a precreated user with user id: " + userId);
+            // Don't want to fire ACTION_USER_REMOVED, so cleanup the state and exit early.
+            LocalServices.getService(ActivityTaskManagerInternal.class).onUserStopped(userId);
+            removeUserState(userId);
+            return;
+        }
+
         // Let other services shutdown any activity and clean up their state before completely
         // wiping the user's system directory and removing from the user list
         long ident = Binder.clearCallingIdentity();
