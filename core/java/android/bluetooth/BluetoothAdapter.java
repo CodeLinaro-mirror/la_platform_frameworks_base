@@ -1201,12 +1201,15 @@ public final class BluetoothAdapter {
     public boolean factoryReset() {
         try {
             mServiceLock.readLock().lock();
-            if (mService != null && mService.factoryReset()
-                    && mManagerService != null && mManagerService.onFactoryReset()) {
-                return true;
+            if (mManagerService != null) {
+                Log.w(TAG, "factoryReset():Setting persist.bluetooth.factoryreset"
+                            + " to reset bt config");
+                SystemProperties.set("persist.bluetooth.factoryreset", "true");
+                /* factoryReset handles both bluetooth reset and config remove
+                 * functionality, hence remove onFactoryReset call to avoid redundant code
+                 */
+                return mManagerService.factoryReset();
             }
-            Log.e(TAG, "factoryReset(): Setting persist.bluetooth.factoryreset to retry later");
-            SystemProperties.set("persist.bluetooth.factoryreset", "true");
         } catch (RemoteException e) {
             Log.e(TAG, "", e);
         } finally {
@@ -2169,6 +2172,61 @@ public final class BluetoothAdapter {
      */
     public BluetoothServerSocket listenUsingRfcommOn(int channel) throws IOException {
         return listenUsingRfcommOn(channel, false, false);
+    }
+
+    /**
+     * Enable/disable clock sync protocol
+     *
+     * @param enable 0 - disable, 1 -enable
+     * @param mode 0x00 - GPIO sync, 0x01 - VSC sync
+     * @param adv_interval advertising interval, 0xA0 ~ 0x4000
+     * @param channel BIT0: channel 37, BIT1: channel 38, BIT2: channel 39
+     * @param jitter 0~8, 0 - random jitter, other - (jitter-1)*1.25
+     * @param offset -32768~32767us, timing between sync pulse and advert
+     * @return true or false
+     *
+     */
+    @RequiresPermission(Manifest.permission.BLUETOOTH)
+    public boolean setClockSyncConfig(boolean enable, int mode, int adv_interval,
+        int channel, int jitter, int offset) {
+        if (getState() != STATE_ON) {
+            return false;
+        }
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null) {
+                return mService.setClockSyncConfig(enable, mode, adv_interval,
+                    channel, jitter, offset);
+            }
+        } catch (RemoteException e) {
+            Log.e(TAG, "", e);
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+        return false;
+    }
+
+    /**
+     * Start clock sync protocol
+     * @return true or false
+     *
+     */
+    @RequiresPermission(Manifest.permission.BLUETOOTH)
+    public boolean startClockSync() {
+        if (getState() != STATE_ON) {
+            return false;
+        }
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null) {
+                return mService.startClockSync();
+            }
+        } catch (RemoteException e) {
+            Log.e(TAG, "", e);
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+        return false;
     }
 
     /**
