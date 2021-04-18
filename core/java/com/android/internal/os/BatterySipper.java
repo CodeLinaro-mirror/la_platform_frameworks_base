@@ -35,6 +35,8 @@ public class BatterySipper implements Comparable<BatterySipper> {
     /**
      * Smeared power from screen usage.
      * We split the screen usage power and smear them among apps, based on activity time.
+     * The actual screen usage power may be measured or estimated, affecting the granularity and
+     * accuracy of the smearing, but the smearing algorithm is essentially the same.
      */
     public double screenPowerMah;
 
@@ -131,6 +133,12 @@ public class BatterySipper implements Comparable<BatterySipper> {
     public double wakeLockPowerMah;
     public double wifiPowerMah;
     public double systemServiceCpuPowerMah;
+    public double[] customMeasuredPowerMah;
+
+    // Power that is re-attributed to other sippers. For example, for System Server
+    // this represents the power attributed to apps requesting system services.
+    // The value should be negative or zero.
+    public double powerReattributedToOtherSippersMah;
 
     // Do not include this sipper in results because it is included
     // in an aggregate sipper.
@@ -249,6 +257,18 @@ public class BatterySipper implements Comparable<BatterySipper> {
         proportionalSmearMah += other.proportionalSmearMah;
         totalSmearedPowerMah += other.totalSmearedPowerMah;
         systemServiceCpuPowerMah += other.systemServiceCpuPowerMah;
+        if (other.customMeasuredPowerMah != null) {
+            if (customMeasuredPowerMah == null) {
+                customMeasuredPowerMah = new double[other.customMeasuredPowerMah.length];
+            }
+            if (customMeasuredPowerMah.length == other.customMeasuredPowerMah.length) {
+                // This should always be true.
+                for (int idx = 0; idx < other.customMeasuredPowerMah.length; idx++) {
+                    customMeasuredPowerMah[idx] += other.customMeasuredPowerMah[idx];
+                }
+            }
+        }
+        powerReattributedToOtherSippersMah += other.powerReattributedToOtherSippersMah;
     }
 
     /**
@@ -262,6 +282,15 @@ public class BatterySipper implements Comparable<BatterySipper> {
                 sensorPowerMah + mobileRadioPowerMah + wakeLockPowerMah + cameraPowerMah +
                 flashlightPowerMah + bluetoothPowerMah + audioPowerMah + videoPowerMah
                 + systemServiceCpuPowerMah;
+        if (customMeasuredPowerMah != null) {
+            for (int idx = 0; idx < customMeasuredPowerMah.length; idx++) {
+                totalPowerMah += customMeasuredPowerMah[idx];
+            }
+        }
+
+        // powerAttributedToOtherSippersMah is negative or zero
+        totalPowerMah = totalPowerMah + powerReattributedToOtherSippersMah;
+
         totalSmearedPowerMah = totalPowerMah + screenPowerMah + proportionalSmearMah;
 
         return totalPowerMah;

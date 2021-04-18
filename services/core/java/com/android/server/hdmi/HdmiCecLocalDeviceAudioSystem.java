@@ -373,7 +373,8 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
     @ServiceThreadOnly
     protected boolean handleGiveAudioStatus(HdmiCecMessage message) {
         assertRunOnServiceThread();
-        if (isSystemAudioControlFeatureEnabled() && mService.isHdmiCecVolumeControlEnabled()) {
+        if (isSystemAudioControlFeatureEnabled() && mService.getHdmiCecVolumeControl()
+                == HdmiControlManager.VOLUME_CONTROL_ENABLED) {
             reportAudioStatus(message.getSource());
         } else {
             mService.maySendFeatureAbortCommand(message, Constants.ABORT_REFUSED);
@@ -694,7 +695,6 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
 
     @ServiceThreadOnly
     void setArcStatus(boolean enabled) {
-        // TODO(shubang): add tests
         assertRunOnServiceThread();
 
         HdmiLogger.debug("Set Arc Status[old:%b new:%b]", mArcEstablished, enabled);
@@ -723,7 +723,8 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
 
     void reportAudioStatus(int source) {
         assertRunOnServiceThread();
-        if (!mService.isHdmiCecVolumeControlEnabled()) {
+        if (mService.getHdmiCecVolumeControl()
+                == HdmiControlManager.VOLUME_CONTROL_DISABLED) {
             return;
         }
 

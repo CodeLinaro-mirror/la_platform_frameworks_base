@@ -16,8 +16,12 @@
 
 package android.os;
 
+import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * Contains power consumption data attributed to a specific UID.
@@ -26,22 +30,40 @@ import android.annotation.Nullable;
  */
 public final class UidBatteryConsumer extends BatteryConsumer implements Parcelable {
 
-    private final int mUid;
-    @Nullable
-    private final String mPackageWithHighestDrain;
-    private boolean mSystemComponent;
-
-    public int getUid() {
-        return mUid;
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef({
+            STATE_FOREGROUND,
+            STATE_BACKGROUND
+    })
+    public @interface State {
     }
 
     /**
-     * Returns true if this battery consumer is considered to be a part of the operating
-     * system itself. For example, the UidBatteryConsumer with the UID {@link Process#BLUETOOTH_UID}
-     * is a system component.
+     * The state of an application when it is either running a foreground (top) activity
+     * or a foreground service.
      */
-    public boolean isSystemComponent() {
-        return mSystemComponent;
+    public static final int STATE_FOREGROUND = 0;
+
+    /**
+     * The state of an application when it is running in the background, including the following
+     * states:
+     *
+     * {@link android.app.ActivityManager#PROCESS_STATE_IMPORTANT_BACKGROUND},
+     * {@link android.app.ActivityManager#PROCESS_STATE_TRANSIENT_BACKGROUND},
+     * {@link android.app.ActivityManager#PROCESS_STATE_BACKUP},
+     * {@link android.app.ActivityManager#PROCESS_STATE_SERVICE},
+     * {@link android.app.ActivityManager#PROCESS_STATE_RECEIVER}.
+     */
+    public static final int STATE_BACKGROUND = 1;
+
+    private final int mUid;
+    @Nullable
+    private final String mPackageWithHighestDrain;
+    private final long mTimeInForegroundMs;
+    private final long mTimeInBackgroundMs;
+
+    public int getUid() {
+        return mUid;
     }
 
     @Nullable
@@ -49,17 +71,33 @@ public final class UidBatteryConsumer extends BatteryConsumer implements Parcela
         return mPackageWithHighestDrain;
     }
 
+    /**
+     * Returns the amount of time in milliseconds this UID spent in the specified state.
+     */
+    public long getTimeInStateMs(@State int state) {
+        switch (state) {
+            case STATE_BACKGROUND:
+                return mTimeInBackgroundMs;
+            case STATE_FOREGROUND:
+                return mTimeInForegroundMs;
+        }
+        return 0;
+    }
+
     private UidBatteryConsumer(@NonNull Builder builder) {
         super(builder.mPowerComponentsBuilder.build());
         mUid = builder.mUid;
-        mSystemComponent = builder.mSystemComponent;
         mPackageWithHighestDrain = builder.mPackageWithHighestDrain;
+        mTimeInForegroundMs = builder.mTimeInForegroundMs;
+        mTimeInBackgroundMs = builder.mTimeInBackgroundMs;
     }
 
     private UidBatteryConsumer(@NonNull Parcel source) {
         super(new PowerComponents(source));
         mUid = source.readInt();
         mPackageWithHighestDrain = source.readString();
+        mTimeInForegroundMs = source.readLong();
+        mTimeInBackgroundMs = source.readLong();
     }
 
     /**
@@ -70,6 +108,8 @@ public final class UidBatteryConsumer extends BatteryConsumer implements Parcela
         super.writeToParcel(dest, flags);
         dest.writeInt(mUid);
         dest.writeString(mPackageWithHighestDrain);
+        dest.writeLong(mTimeInForegroundMs);
+        dest.writeLong(mTimeInBackgroundMs);
     }
 
     @NonNull
@@ -95,29 +135,24 @@ public final class UidBatteryConsumer extends BatteryConsumer implements Parcela
         private final BatteryStats.Uid mBatteryStatsUid;
         private final int mUid;
         private String mPackageWithHighestDrain;
-        private boolean mSystemComponent;
+        public long mTimeInForegroundMs;
+        public long mTimeInBackgroundMs;
+        private boolean mExcludeFromBatteryUsageStats;
 
         public Builder(int customPowerComponentCount, int customTimeComponentCount,
-                boolean includeModeledComponents, BatteryStats.Uid batteryStatsUid) {
-            super(customPowerComponentCount, customTimeComponentCount, includeModeledComponents);
+                @NonNull BatteryStats.Uid batteryStatsUid) {
+            super(customPowerComponentCount, customTimeComponentCount);
             mBatteryStatsUid = batteryStatsUid;
             mUid = batteryStatsUid.getUid();
         }
 
+        @NonNull
         public BatteryStats.Uid getBatteryStatsUid() {
             return mBatteryStatsUid;
         }
 
         public int getUid() {
             return mUid;
-        }
-
-        /**
-         * Creates a read-only object out of the Builder values.
-         */
-        @NonNull
-        public UidBatteryConsumer build() {
-            return new UidBatteryConsumer(this);
         }
 
         /**
@@ -131,12 +166,46 @@ public final class UidBatteryConsumer extends BatteryConsumer implements Parcela
         }
 
         /**
-         * Marks the UidBatteryConsumer as part of the system. For example,
-         * the UidBatteryConsumer with the UID {@link Process#BLUETOOTH_UID} is considered
-         * as a system component.
+         * Sets the duration, in milliseconds, that this UID was active in a particular state,
+         * such as foreground or background.
          */
-        public void setSystemComponent(boolean systemComponent) {
-            mSystemComponent = systemComponent;
+        @NonNull
+        public Builder setTimeInStateMs(@State int state, long timeInStateMs) {
+            switch (state) {
+                case STATE_FOREGROUND:
+                    mTimeInForegroundMs = timeInStateMs;
+                    break;
+                case STATE_BACKGROUND:
+                    mTimeInBackgroundMs = timeInStateMs;
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported state: " + state);
+            }
+            return this;
+        }
+
+        /**
+         * Marks the UidBatteryConsumer for exclusion from the result set.
+         */
+        public Builder excludeFromBatteryUsageStats() {
+            mExcludeFromBatteryUsageStats = true;
+            return this;
+        }
+
+        /**
+         * Returns true if this UidBatteryConsumer must be excluded from the
+         * BatteryUsageStats.
+         */
+        public boolean isExcludedFromBatteryUsageStats() {
+            return mExcludeFromBatteryUsageStats;
+        }
+
+        /**
+         * Creates a read-only object out of the Builder values.
+         */
+        @NonNull
+        public UidBatteryConsumer build() {
+            return new UidBatteryConsumer(this);
         }
     }
 }

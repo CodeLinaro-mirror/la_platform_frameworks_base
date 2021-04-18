@@ -619,7 +619,9 @@ abstract class HdmiCecLocalDevice {
         } else if (mService.isPowerStandbyOrTransient() && isPowerOnOrToggleCommand(message)) {
             mService.wakeUp();
             return true;
-        } else if (!mService.isHdmiCecVolumeControlEnabled() && isVolumeOrMuteCommand(message)) {
+        } else if (mService.getHdmiCecVolumeControl()
+                == HdmiControlManager.VOLUME_CONTROL_DISABLED && isVolumeOrMuteCommand(
+                message)) {
             return false;
         }
 
@@ -652,7 +654,9 @@ abstract class HdmiCecLocalDevice {
                     FOLLOWER_SAFETY_TIMEOUT);
             return true;
         }
-        return false;
+
+        mService.maySendFeatureAbortCommand(message, Constants.ABORT_INVALID_OPERAND);
+        return true;
     }
 
     @ServiceThreadOnly
@@ -664,9 +668,8 @@ abstract class HdmiCecLocalDevice {
             final long upTime = SystemClock.uptimeMillis();
             injectKeyEvent(upTime, KeyEvent.ACTION_UP, mLastKeycode, 0);
             mLastKeycode = HdmiCecKeycode.UNSUPPORTED_KEYCODE;
-            return true;
         }
-        return false;
+        return true;
     }
 
     static void injectKeyEvent(long time, int action, int keycode, int repeat) {
@@ -786,10 +789,7 @@ abstract class HdmiCecLocalDevice {
     }
 
     protected boolean handleRecordTvScreen(HdmiCecMessage message) {
-        // The default behavior of <Record TV Screen> is replying <Feature Abort> with
-        // "Cannot provide source".
-        mService.maySendFeatureAbortCommand(message, Constants.ABORT_CANNOT_PROVIDE_SOURCE);
-        return true;
+        return false;
     }
 
     protected boolean handleTimerClearedStatus(HdmiCecMessage message) {
@@ -953,8 +953,6 @@ abstract class HdmiCecLocalDevice {
             throw new IllegalStateException("Should run on service thread.");
         }
     }
-
-    void setAutoDeviceOff(boolean enabled) {}
 
     /**
      * Called when a hot-plug event issued.
@@ -1142,7 +1140,8 @@ abstract class HdmiCecLocalDevice {
     @ServiceThreadOnly
     protected void sendVolumeKeyEvent(int keyCode, boolean isPressed) {
         assertRunOnServiceThread();
-        if (!mService.isHdmiCecVolumeControlEnabled()) {
+        if (mService.getHdmiCecVolumeControl()
+                == HdmiControlManager.VOLUME_CONTROL_DISABLED) {
             return;
         }
         if (!HdmiCecKeycode.isVolumeKeycode(keyCode)) {

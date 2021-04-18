@@ -44,8 +44,8 @@ public class WindowTokenClient extends IWindowToken.Stub {
      * Attaches {@code context} to this {@link WindowTokenClient}. Each {@link WindowTokenClient}
      * can only attach one {@link Context}.
      * <p>This method must be called before invoking
-     * {@link android.view.IWindowManager#addWindowTokenWithOptions(IBinder, int, int, Bundle,
-     * String)}.<p/>
+     * {@link android.view.IWindowManager#registerWindowContextListener(IBinder, int, int,
+     * Bundle, boolean)}.<p/>
      *
      * @param context context to be attached
      * @throws IllegalStateException if attached context has already existed.
@@ -85,8 +85,10 @@ public class WindowTokenClient extends IWindowToken.Stub {
             context.destroy();
             mContextRef.clear();
         }
-        // If a secondary display is detached, release all views attached to this token.
-        WindowManagerGlobal.getInstance().closeAll(this, mContextRef.getClass().getName(),
-                "WindowContext");
+        ActivityThread.currentActivityThread().getHandler().post(() -> {
+            // If the tracked window token is detached, release all views attached to this token.
+            WindowManagerGlobal.getInstance().closeAll(WindowTokenClient.this,
+                    "#onWindowTokenRemoved()", "WindowTokenClient");
+        });
     }
 }

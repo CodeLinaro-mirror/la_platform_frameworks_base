@@ -17,6 +17,8 @@
 package android.os;
 
 import static junit.framework.Assert.assertEquals;
+import static junit.framework.Assert.assertFalse;
+import static junit.framework.Assert.assertTrue;
 
 import static org.testng.Assert.assertThrows;
 
@@ -31,7 +33,6 @@ import java.util.Arrays;
 @Presubmit
 @RunWith(JUnit4.class)
 public class CombinedVibrationEffectTest {
-
     private static final VibrationEffect VALID_EFFECT = VibrationEffect.createOneShot(10, 255);
     private static final VibrationEffect INVALID_EFFECT = new VibrationEffect.OneShot(-1, -1);
 
@@ -114,6 +115,92 @@ public class CombinedVibrationEffectTest {
                 () -> CombinedVibrationEffect.startSynced().combine());
         assertThrows(IllegalStateException.class,
                 () -> CombinedVibrationEffect.startSequential().combine());
+    }
+
+    @Test
+    public void testDurationMono() {
+        assertEquals(1, CombinedVibrationEffect.createSynced(
+                VibrationEffect.createOneShot(1, 1)).getDuration());
+        assertEquals(-1, CombinedVibrationEffect.createSynced(
+                VibrationEffect.get(VibrationEffect.EFFECT_CLICK)).getDuration());
+        assertEquals(Long.MAX_VALUE, CombinedVibrationEffect.createSynced(
+                VibrationEffect.createWaveform(
+                        new long[]{1, 2, 3}, new int[]{1, 2, 3}, 0)).getDuration());
+    }
+
+    @Test
+    public void testDurationStereo() {
+        assertEquals(6, CombinedVibrationEffect.startSynced()
+                .addVibrator(1, VibrationEffect.createOneShot(1, 1))
+                .addVibrator(2,
+                        VibrationEffect.createWaveform(new long[]{1, 2, 3}, new int[]{1, 2, 3}, -1))
+                .combine()
+                .getDuration());
+        assertEquals(-1, CombinedVibrationEffect.startSynced()
+                .addVibrator(1, VibrationEffect.get(VibrationEffect.EFFECT_CLICK))
+                .addVibrator(2,
+                        VibrationEffect.createWaveform(new long[]{1, 2, 3}, new int[]{1, 2, 3}, -1))
+                .combine()
+                .getDuration());
+        assertEquals(Long.MAX_VALUE, CombinedVibrationEffect.startSynced()
+                .addVibrator(1, VibrationEffect.get(VibrationEffect.EFFECT_CLICK))
+                .addVibrator(2,
+                        VibrationEffect.createWaveform(new long[]{1, 2, 3}, new int[]{1, 2, 3}, 0))
+                .combine()
+                .getDuration());
+    }
+
+    @Test
+    public void testDurationSequential() {
+        assertEquals(26, CombinedVibrationEffect.startSequential()
+                .addNext(1, VibrationEffect.createOneShot(10, 10), 10)
+                .addNext(2,
+                        VibrationEffect.createWaveform(new long[]{1, 2, 3}, new int[]{1, 2, 3}, -1))
+                .combine()
+                .getDuration());
+        assertEquals(-1, CombinedVibrationEffect.startSequential()
+                .addNext(1, VibrationEffect.get(VibrationEffect.EFFECT_CLICK))
+                .addNext(2,
+                        VibrationEffect.createWaveform(new long[]{1, 2, 3}, new int[]{1, 2, 3}, -1))
+                .combine()
+                .getDuration());
+        assertEquals(Long.MAX_VALUE, CombinedVibrationEffect.startSequential()
+                .addNext(1, VibrationEffect.get(VibrationEffect.EFFECT_CLICK))
+                .addNext(2,
+                        VibrationEffect.createWaveform(new long[]{1, 2, 3}, new int[]{1, 2, 3}, 0))
+                .combine()
+                .getDuration());
+    }
+
+    @Test
+    public void testHasVibratorMono_returnsTrueForAnyVibrator() {
+        CombinedVibrationEffect effect = CombinedVibrationEffect.createSynced(
+                VibrationEffect.get(VibrationEffect.EFFECT_CLICK));
+        assertTrue(effect.hasVibrator(0));
+        assertTrue(effect.hasVibrator(1));
+    }
+
+    @Test
+    public void testHasVibratorStereo_returnsOnlyTheIdsSet() {
+        CombinedVibrationEffect effect = CombinedVibrationEffect.startSynced()
+                .addVibrator(1, VibrationEffect.get(VibrationEffect.EFFECT_CLICK))
+                .combine();
+        assertFalse(effect.hasVibrator(0));
+        assertTrue(effect.hasVibrator(1));
+        assertFalse(effect.hasVibrator(2));
+    }
+
+    @Test
+    public void testHasVibratorSequential_returnsNestedVibrators() {
+        CombinedVibrationEffect effect = CombinedVibrationEffect.startSequential()
+                .addNext(1, VibrationEffect.get(VibrationEffect.EFFECT_CLICK))
+                .addNext(CombinedVibrationEffect.startSynced()
+                        .addVibrator(2, VibrationEffect.get(VibrationEffect.EFFECT_TICK))
+                        .combine())
+                .combine();
+        assertFalse(effect.hasVibrator(0));
+        assertTrue(effect.hasVibrator(1));
+        assertTrue(effect.hasVibrator(2));
     }
 
     @Test

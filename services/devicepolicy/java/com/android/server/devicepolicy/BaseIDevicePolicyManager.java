@@ -16,9 +16,13 @@
 package com.android.server.devicepolicy;
 
 import android.annotation.NonNull;
+import android.annotation.UserIdInt;
 import android.app.admin.DevicePolicySafetyChecker;
+import android.app.admin.FullyManagedDeviceProvisioningParams;
 import android.app.admin.IDevicePolicyManager;
+import android.app.admin.ManagedProfileProvisioningParams;
 import android.content.ComponentName;
+import android.os.UserHandle;
 import android.util.Slog;
 
 import com.android.server.SystemService;
@@ -115,4 +119,38 @@ abstract class BaseIDevicePolicyManager extends IDevicePolicyManager.Stub {
 
     public void setOrganizationIdForUser(
             @NonNull String callerPackage, @NonNull String enterpriseId, int userId) {}
+
+    public UserHandle createAndProvisionManagedProfile(
+            @NonNull ManagedProfileProvisioningParams provisioningParams, String callerPackage) {
+        return null;
+    }
+
+    public void provisionFullyManagedDevice(
+            FullyManagedDeviceProvisioningParams provisioningParams, String callerPackage) {
+    }
+
+    @Override
+    public void setDeviceOwnerType(@NonNull ComponentName admin, int deviceOwnerType) {
+    }
+
+    @Override
+    public int getDeviceOwnerType(@NonNull ComponentName admin) {
+        return 0;
+    }
+
+    public void resetDefaultCrossProfileIntentFilters(@UserIdInt int userId) {}
+
+    public boolean canAdminGrantSensorsPermissionsForUser(int userId) {
+        return false;
+    }
+
+    @Override
+    public boolean setKeyGrantToWifiAuth(String callerPackage, String alias, boolean hasGrant) {
+        return false;
+    }
+
+    @Override
+    public boolean isKeyPairGrantedToWifiAuth(String callerPackage, String alias) {
+        return false;
+    }
 }

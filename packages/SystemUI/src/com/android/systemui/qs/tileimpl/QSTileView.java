@@ -36,7 +36,7 @@ import java.util.Objects;
 
 /** View that represents a standard quick settings tile. **/
 public class QSTileView extends QSTileBaseView {
-    private static final int MAX_LABEL_LINES = 2;
+    protected int mMaxLabelLines = 2;
     private View mDivider;
     protected TextView mLabel;
     protected TextView mSecondLine;
@@ -105,15 +105,25 @@ public class QSTileView extends QSTileBaseView {
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        mLabel.setSingleLine(false);
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
 
-        // Remeasure view if the primary label requires more then 2 lines or the secondary label
-        // text will be cut off.
-        if (mLabel.getLineCount() > MAX_LABEL_LINES || !TextUtils.isEmpty(mSecondLine.getText())
-                        && mSecondLine.getLineHeight() > mSecondLine.getHeight()) {
+        // Remeasure view if the primary label requires more than mMaxLabelLines lines or the
+        // secondary label text will be cut off.
+        if (shouldLabelBeSingleLine()) {
             mLabel.setSingleLine();
             super.onMeasure(widthMeasureSpec, heightMeasureSpec);
         }
+    }
+
+    private boolean shouldLabelBeSingleLine() {
+        if (mLabel.getLineCount() > mMaxLabelLines) {
+            return true;
+        } else if (!TextUtils.isEmpty(mSecondLine.getText())
+                && mLabel.getLineCount() > mMaxLabelLines - 1) {
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -165,8 +175,7 @@ public class QSTileView extends QSTileBaseView {
         mLabelContainer.setLongClickable(false);
     }
 
-    @Override
-    public void setShowLabels(boolean show) {
-        mHandler.post(() -> mLabelContainer.setVisibility(show ? VISIBLE : GONE));
+    public TextView getAppLabel() {
+        return mSecondLine;
     }
 }

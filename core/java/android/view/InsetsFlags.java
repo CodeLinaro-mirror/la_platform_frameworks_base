@@ -21,7 +21,9 @@ import static android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS;
 import static android.view.WindowInsetsController.APPEARANCE_LOW_PROFILE_BARS;
 import static android.view.WindowInsetsController.APPEARANCE_OPAQUE_NAVIGATION_BARS;
 import static android.view.WindowInsetsController.APPEARANCE_OPAQUE_STATUS_BARS;
-import static android.view.WindowInsetsController.BEHAVIOR_SHOW_BARS_BY_SWIPE;
+import static android.view.WindowInsetsController.APPEARANCE_SEMI_TRANSPARENT_NAVIGATION_BARS;
+import static android.view.WindowInsetsController.APPEARANCE_SEMI_TRANSPARENT_STATUS_BARS;
+import static android.view.WindowInsetsController.BEHAVIOR_DEFAULT;
 import static android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE;
 
 import android.view.WindowInsetsController.Appearance;
@@ -54,19 +56,27 @@ public class InsetsFlags {
             @ViewDebug.FlagToString(
                     mask = APPEARANCE_LIGHT_NAVIGATION_BARS,
                     equals = APPEARANCE_LIGHT_NAVIGATION_BARS,
-                    name = "LIGHT_NAVIGATION_BARS")
+                    name = "LIGHT_NAVIGATION_BARS"),
+            @ViewDebug.FlagToString(
+                    mask = APPEARANCE_SEMI_TRANSPARENT_STATUS_BARS,
+                    equals = APPEARANCE_SEMI_TRANSPARENT_STATUS_BARS,
+                    name = "SEMI_TRANSPARENT_STATUS_BARS"),
+            @ViewDebug.FlagToString(
+                    mask = APPEARANCE_SEMI_TRANSPARENT_NAVIGATION_BARS,
+                    equals = APPEARANCE_SEMI_TRANSPARENT_NAVIGATION_BARS,
+                    name = "SEMI_TRANSPARENT_NAVIGATION_BARS")
     })
     public @Appearance int appearance;
 
     @ViewDebug.ExportedProperty(flagMapping = {
             @ViewDebug.FlagToString(
-                    mask = BEHAVIOR_SHOW_BARS_BY_SWIPE,
-                    equals = BEHAVIOR_SHOW_BARS_BY_SWIPE,
-                    name = "SHOW_BARS_BY_SWIPE"),
+                    mask = BEHAVIOR_DEFAULT,
+                    equals = BEHAVIOR_DEFAULT,
+                    name = "DEFAULT"),
             @ViewDebug.FlagToString(
                     mask = BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE,
                     equals = BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE,
                     name = "SHOW_TRANSIENT_BARS_BY_SWIPE")
     })
-    public @Behavior int behavior;
+    public @Behavior int behavior = BEHAVIOR_DEFAULT;
 }

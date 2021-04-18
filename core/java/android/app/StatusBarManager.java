@@ -27,6 +27,7 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.os.Binder;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -35,6 +36,7 @@ import android.util.Slog;
 import android.view.View;
 
 import com.android.internal.statusbar.IStatusBarService;
+import com.android.internal.statusbar.NotificationVisibility;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -256,6 +258,45 @@ public class StatusBarManager {
             final IStatusBarService svc = getService();
             if (svc != null) {
                 svc.disable2ForUser(what, mToken, mContext.getPackageName(), userId);
+            }
+        } catch (RemoteException ex) {
+            throw ex.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Simulate notification click for testing
+     *
+     * @hide
+     */
+    @TestApi
+    public void clickNotification(@Nullable String key, int rank, int count, boolean visible) {
+        clickNotificationInternal(key, rank, count, visible);
+    }
+
+    private void clickNotificationInternal(String key, int rank, int count, boolean visible) {
+        try {
+            final IStatusBarService svc = getService();
+            if (svc != null) {
+                svc.onNotificationClick(key,
+                        NotificationVisibility.obtain(key, rank, count, visible));
+            }
+        } catch (RemoteException ex) {
+            throw ex.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Simulate notification feedback for testing
+     *
+     * @hide
+     */
+    @TestApi
+    public void sendNotificationFeedback(@Nullable String key, @Nullable Bundle feedback) {
+        try {
+            final IStatusBarService svc = getService();
+            if (svc != null) {
+                svc.onNotificationFeedbackReceived(key, feedback);
             }
         } catch (RemoteException ex) {
             throw ex.rethrowFromSystemServer();

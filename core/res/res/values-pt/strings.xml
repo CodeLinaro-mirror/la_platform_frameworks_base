@@ -57,8 +57,7 @@
     <string name="imei" msgid="2157082351232630390">"IMEI"</string>
     <string name="meid" msgid="3291227361605924674">"MEID"</string>
     <string name="ClipMmi" msgid="4110549342447630629">"Identificador de chamadas recebidas"</string>
-    <!-- no translation found for ClirMmi (6752346475055446417) -->
-    <skip />
+    <string name="ClirMmi" msgid="6752346475055446417">"Ocultar identificador de chamadas realizadas"</string>
     <string name="ColpMmi" msgid="4736462893284419302">"ID de linha conectada"</string>
     <string name="ColrMmi" msgid="5889782479745764278">"Restrição de ID de linha conectada"</string>
     <string name="CfMmi" msgid="8390012691099787178">"Encaminhamento de chamada"</string>
@@ -149,7 +148,7 @@
     <string name="wfc_mode_wifi_only_summary" msgid="104951993894678665">"Somente Wi-Fi"</string>
     <!-- no translation found for crossSimFormat_spn (9125246077491634262) -->
     <skip />
-    <string name="crossSimFormat_spn_cross_sim_calling" msgid="779976494687695991">"Chamadas entre chips da <xliff:g id="SPN">%s</xliff:g>"</string>
+    <string name="crossSimFormat_spn_cross_sim_calling" msgid="5620807020002879057">"Chamadas alternativas da <xliff:g id="SPN">%s</xliff:g>"</string>
     <string name="cfTemplateNotForwarded" msgid="862202427794270501">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: Não encaminhado"</string>
     <string name="cfTemplateForwarded" msgid="9132506315842157860">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: <xliff:g id="DIALING_NUMBER">{1}</xliff:g>"</string>
     <string name="cfTemplateForwardedTime" msgid="735042369233323609">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: <xliff:g id="DIALING_NUMBER">{1}</xliff:g> após <xliff:g id="TIME_DELAY">{2}</xliff:g> segundos"</string>
@@ -204,6 +203,7 @@
     <string name="sensor_notification_service" msgid="7474531979178682676">"Serviço de notificações do sensor"</string>
     <string name="twilight_service" msgid="8964898045693187224">"Serviço de crepúsculo"</string>
     <string name="offline_location_time_zone_detection_service_attribution" msgid="303754195048744816">"Detector de fuso horário (sem conectividade)"</string>
+    <string name="gnss_time_update_service" msgid="9039489496037616095">"Serviço de atualização de horário do Sistema Global de Navegação por Satélites (GNSS, na sigla em inglês)"</string>
     <string name="factory_reset_warning" msgid="6858705527798047809">"Seu dispositivo será limpo"</string>
     <string name="factory_reset_message" msgid="2657049595153992213">"Não é possível usar o aplicativo para administrador. Seu dispositivo passará por uma limpeza agora.\n\nEm caso de dúvidas, entre em contato com o administrador da sua organização."</string>
     <string name="printing_disabled_by" msgid="3517499806528864633">"Impressão desativada por <xliff:g id="OWNER_APP">%s</xliff:g>."</string>
@@ -550,13 +550,18 @@
     <string name="permdesc_imagesWrite" msgid="5195054463269193317">"Permite que o app modifique sua coleção de fotos."</string>
     <string name="permlab_mediaLocation" msgid="7368098373378598066">"ler locais na sua coleção de mídias"</string>
     <string name="permdesc_mediaLocation" msgid="597912899423578138">"Permite que o app leia os locais na sua coleção de mídias."</string>
+    <string name="biometric_app_setting_name" msgid="3339209978734534457">"Usar biometria"</string>
+    <string name="biometric_or_screen_lock_app_setting_name" msgid="5348462421758257752">"Usar biometria ou bloqueio de tela"</string>
     <string name="biometric_dialog_default_title" msgid="55026799173208210">"Confirme que é você"</string>
+    <string name="biometric_dialog_default_subtitle" msgid="8457232339298571992">"Use seus dados biométricos para continuar"</string>
     <string name="biometric_error_hw_unavailable" msgid="2494077380540615216">"Hardware biométrico indisponível"</string>
     <string name="biometric_error_user_canceled" msgid="6732303949695293730">"Autenticação cancelada"</string>
     <string name="biometric_not_recognized" msgid="5106687642694635888">"Não reconhecido"</string>
     <string name="biometric_error_canceled" msgid="8266582404844179778">"Autenticação cancelada"</string>
     <string name="biometric_error_device_not_secured" msgid="3129845065043995924">"Nenhum PIN, padrão ou senha configurado"</string>
     <string name="biometric_error_generic" msgid="6784371929985434439">"Erro na autenticação"</string>
+    <string name="screen_lock_app_setting_name" msgid="6054944352976789228">"Usar bloqueio de tela"</string>
+    <string name="screen_lock_dialog_default_subtitle" msgid="8638638125397857315">"Insira as credenciais do dispositivo para continuar"</string>
     <string name="fingerprint_acquired_partial" msgid="8532380671091299342">"Impressão digital parcial detectada. Tente novamente."</string>
     <string name="fingerprint_acquired_insufficient" msgid="2545149524031515411">"Não foi possível processar a impressão digital. Tente novamente."</string>
     <string name="fingerprint_acquired_imager_dirty" msgid="4694800187151533990">"O sensor de impressão digital está sujo. Limpe-o e tente novamente."</string>
@@ -579,6 +584,9 @@
     <string name="fingerprint_error_hw_not_present" msgid="578914350967423382">"Este dispositivo não tem um sensor de impressão digital."</string>
     <string name="fingerprint_error_security_update_required" msgid="7750187320640856433">"Sensor desativado temporariamente."</string>
     <string name="fingerprint_name_template" msgid="8941662088160289778">"Dedo <xliff:g id="FINGERID">%d</xliff:g>"</string>
+    <string name="fingerprint_app_setting_name" msgid="4253767877095495844">"Usar impressão digital"</string>
+    <string name="fingerprint_or_screen_lock_app_setting_name" msgid="3501743523487644907">"Usar impressão digital ou bloqueio de tela"</string>
+    <string name="fingerprint_dialog_default_subtitle" msgid="3879832845486835905">"Use sua impressão digital para continuar"</string>
   <string-array name="fingerprint_error_vendor">
   </string-array>
     <string name="fingerprint_icon_content_description" msgid="4741068463175388817">"Ícone de impressão digital"</string>
@@ -605,7 +613,7 @@
     <string name="face_acquired_too_different" msgid="4699657338753282542">"O rosto não é mais reconhecido. Tente novamente."</string>
     <string name="face_acquired_too_similar" msgid="7684650785108399370">"Muito parecido, mude de posição."</string>
     <string name="face_acquired_pan_too_extreme" msgid="7822191262299152527">"Incline a cabeça um pouco menos."</string>
-    <string name="face_acquired_tilt_too_extreme" msgid="8119978324129248059">"Incline a cabeça um pouco menos."</string>
+    <string name="face_acquired_tilt_too_extreme" msgid="8618210742620248049">"Incline a cabeça um pouco menos."</string>
     <string name="face_acquired_roll_too_extreme" msgid="1442830503572636825">"Incline a cabeça um pouco menos."</string>
     <string name="face_acquired_obscured" msgid="4917643294953326639">"Remova tudo que esteja ocultando seu rosto."</string>
     <string name="face_acquired_sensor_dirty" msgid="8968391891086721678">"Limpe a parte superior da tela, inclusive a barra preta"</string>
@@ -623,6 +631,9 @@
     <string name="face_error_hw_not_present" msgid="1070600921591729944">"O desbloqueio facial não é compatível com este dispositivo."</string>
     <string name="face_error_security_update_required" msgid="5076017208528750161">"Sensor desativado temporariamente."</string>
     <string name="face_name_template" msgid="3877037340223318119">"Rosto <xliff:g id="FACEID">%d</xliff:g>"</string>
+    <string name="face_app_setting_name" msgid="8130135875458467243">"Usar desbloqueio facial"</string>
+    <string name="face_or_screen_lock_app_setting_name" msgid="1603149075605709106">"Usar reconhecimento facial ou bloqueio de tela"</string>
+    <string name="face_dialog_default_subtitle" msgid="4979205739418564856">"Use o desbloqueio facial para continuar"</string>
   <string-array name="face_error_vendor">
   </string-array>
     <string name="face_icon_content_description" msgid="465030547475916280">"Ícone facial"</string>
@@ -684,6 +695,8 @@
     <string name="permdesc_access_notification_policy" msgid="8538374112403845013">"Permitir que o app leia e grave a configuração \"Não perturbe\"."</string>
     <string name="permlab_startViewPermissionUsage" msgid="1504564328641112341">"iniciar uso da permissão para visualização"</string>
     <string name="permdesc_startViewPermissionUsage" msgid="2820325605959586538">"Permite que o sistema inicie o uso de permissão para um app. Não deve ser necessário para apps comuns."</string>
+    <string name="permlab_highSamplingRateSensors" msgid="3941068435726317070">"acessar os dados do sensor em uma taxa de amostragem elevada"</string>
+    <string name="permdesc_highSamplingRateSensors" msgid="8430061978931155995">"Permite que o app receba amostras de dados do sensor em uma taxa maior que 200 Hz"</string>
     <string name="policylab_limitPassword" msgid="4851829918814422199">"Definir regras para senha"</string>
     <string name="policydesc_limitPassword" msgid="4105491021115793793">"Controla o tamanho e os caracteres permitidos nos PINs e nas senhas do bloqueio de tela."</string>
     <string name="policylab_watchLogin" msgid="7599669460083719504">"Monitorar tentativas de desbloqueio de tela"</string>
@@ -864,7 +877,7 @@
     <string name="lockscreen_transport_pause_description" msgid="6705284702135372494">"Pausar"</string>
     <string name="lockscreen_transport_play_description" msgid="106868788691652733">"Reproduzir"</string>
     <string name="lockscreen_transport_stop_description" msgid="1449552232598355348">"Parar"</string>
-    <string name="lockscreen_transport_rew_description" msgid="7680106856221622779">"Retroceder"</string>
+    <string name="lockscreen_transport_rew_description" msgid="7680106856221622779">"Voltar"</string>
     <string name="lockscreen_transport_ffw_description" msgid="4763794746640196772">"Avançar"</string>
     <string name="emergency_calls_only" msgid="3057351206678279851">"Só chamadas de emergência"</string>
     <string name="lockscreen_network_locked_message" msgid="2814046965899249635">"Rede bloqueada"</string>
@@ -1664,6 +1677,7 @@
     <string name="leave_accessibility_shortcut_on" msgid="6543362062336990814">"Usar atalho"</string>
     <string name="color_inversion_feature_name" msgid="326050048927789012">"Inversão de cores"</string>
     <string name="color_correction_feature_name" msgid="3655077237805422597">"Correção de cor"</string>
+    <string name="reduce_bright_colors_feature_name" msgid="8978255324027479398">"Reduzir brilho"</string>
     <string name="accessibility_shortcut_enabling_service" msgid="5473495203759847687">"Teclas de volume pressionadas. Serviço <xliff:g id="SERVICE_NAME">%1$s</xliff:g> ativado."</string>
     <string name="accessibility_shortcut_disabling_service" msgid="8675244165062700619">"Teclas de volume pressionadas. <xliff:g id="SERVICE_NAME">%1$s</xliff:g> desativado."</string>
     <string name="accessibility_shortcut_spoken_feedback" msgid="4228997042855695090">"Toque nos dois botões de volume e os mantenha pressionados por três segundo para usar o <xliff:g id="SERVICE_NAME">%1$s</xliff:g>"</string>
@@ -1867,8 +1881,10 @@
     <string name="stk_cc_ss_to_dial_video" msgid="1324194624384312664">"Solicitação SS alterada para videochamada"</string>
     <string name="stk_cc_ss_to_ussd" msgid="8417905193112944760">"Solicitação SS alterada para solicitação USSD"</string>
     <string name="stk_cc_ss_to_ss" msgid="132040645206514450">"Alterada para uma nova solicitação SS"</string>
+    <string name="notification_phishing_alert_content_description" msgid="494227305355958790">"Alerta de phishing"</string>
     <string name="notification_work_profile_content_description" msgid="5296477955677725799">"Perfil de trabalho"</string>
     <string name="notification_alerted_content_description" msgid="6139691253611265992">"Alertado"</string>
+    <string name="notification_verified_content_description" msgid="6401483602782359391">"Verificada"</string>
     <string name="expand_button_content_description_collapsed" msgid="3873368935659010279">"Expandir"</string>
     <string name="expand_button_content_description_expanded" msgid="7484217944948667489">"Recolher"</string>
     <string name="expand_action_accessibility" msgid="1947657036871746627">"alternar expansão"</string>
@@ -1880,6 +1896,12 @@
     <string name="maximize_button_text" msgid="4258922519914732645">"Maximizar"</string>
     <string name="close_button_text" msgid="10603510034455258">"Fechar"</string>
     <string name="notification_messaging_title_template" msgid="772857526770251989">"<xliff:g id="CONVERSATION_TITLE">%1$s</xliff:g>: <xliff:g id="SENDER_NAME">%2$s</xliff:g>"</string>
+    <string name="call_notification_answer_action" msgid="5999246836247132937">"Atender"</string>
+    <string name="call_notification_decline_action" msgid="3700345945214000726">"Recusar"</string>
+    <string name="call_notification_hang_up_action" msgid="9130720590159188131">"Desligar"</string>
+    <string name="call_notification_incoming_text" msgid="6143109825406638201">"Chamada recebida"</string>
+    <string name="call_notification_ongoing_text" msgid="3880832933933020875">"Chamada em andamento"</string>
+    <string name="call_notification_screening_text" msgid="8396931408268940208">"Filtrando uma chamada recebida"</string>
     <plurals name="selected_count" formatted="false" msgid="3946212171128200491">
       <item quantity="one"><xliff:g id="COUNT_1">%1$d</xliff:g> selecionado</item>
       <item quantity="other"><xliff:g id="COUNT_1">%1$d</xliff:g> selecionados</item>
@@ -1934,6 +1956,7 @@
     <string name="app_category_news" msgid="1172762719574964544">"Notícias e revistas"</string>
     <string name="app_category_maps" msgid="6395725487922533156">"Mapas e navegação"</string>
     <string name="app_category_productivity" msgid="1844422703029557883">"Produtividade"</string>
+    <string name="app_category_accessibility" msgid="6643521607848547683">"Acessibilidade"</string>
     <string name="device_storage_monitor_notification_channel" msgid="5164244565844470758">"Armazenamento do dispositivo"</string>
     <string name="adb_debugging_notification_channel_tv" msgid="4764046459631031496">"Depuração USB"</string>
     <string name="time_picker_hour_label" msgid="4208590187662336864">"hora"</string>
@@ -2204,4 +2227,10 @@
     <string name="window_magnification_prompt_content" msgid="4166711383253283838">"Agora você pode ampliar uma ou todas as suas telas"</string>
     <string name="turn_on_magnification_settings_action" msgid="8521433346684847700">"Ativar nas Configurações"</string>
     <string name="dismiss_action" msgid="1728820550388704784">"Dispensar"</string>
+    <string name="sensor_privacy_start_use_mic_notification_content" msgid="8063355861118105607">"Para continuar, o app &lt;b&gt;‎‏‎‎‏‏‎<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; precisa acessar o microfone do dispositivo."</string>
+    <string name="sensor_privacy_start_use_camera_notification_content" msgid="4738005643315863736">"Para continuar, o app &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; precisa acessar a câmera do dispositivo."</string>
+    <string name="sensor_privacy_start_use_dialog_turn_on_button" msgid="7921147002346108119">"Ativar"</string>
+    <string name="sensor_privacy_notification_channel_label" msgid="936036783155261349">"Privacidade do sensor"</string>
+    <string name="splash_screen_view_icon_description" msgid="180638751260598187">"Ícone do aplicativo"</string>
+    <string name="splash_screen_view_branding_description" msgid="7911129347402728216">"Imagem da marca do aplicativo"</string>
 </resources>

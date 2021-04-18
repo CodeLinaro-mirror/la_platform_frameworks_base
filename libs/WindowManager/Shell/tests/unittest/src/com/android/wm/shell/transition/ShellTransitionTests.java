@@ -41,13 +41,14 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import android.app.ActivityManager.RunningTaskInfo;
+import android.content.Context;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.RemoteException;
-import android.view.IRemoteAnimationFinishedCallback;
 import android.view.SurfaceControl;
 import android.view.WindowManager;
 import android.window.IRemoteTransition;
+import android.window.IRemoteTransitionFinishedCallback;
 import android.window.TransitionFilter;
 import android.window.TransitionInfo;
 import android.window.TransitionRequestInfo;
@@ -58,6 +59,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SmallTest;
+import androidx.test.platform.app.InstrumentationRegistry;
 
 import com.android.wm.shell.TestShellExecutor;
 import com.android.wm.shell.common.ShellExecutor;
@@ -78,6 +80,8 @@ public class ShellTransitionTests {
 
     private final WindowOrganizer mOrganizer = mock(WindowOrganizer.class);
     private final TransactionPool mTransactionPool = mock(TransactionPool.class);
+    private final Context mContext =
+            InstrumentationRegistry.getInstrumentation().getTargetContext();
     private final TestShellExecutor mMainExecutor = new TestShellExecutor();
     private final ShellExecutor mAnimExecutor = new TestShellExecutor();
     private final TestTransitionHandler mDefaultHandler = new TestTransitionHandler();
@@ -90,8 +94,8 @@ public class ShellTransitionTests {
 
     @Test
     public void testBasicTransitionFlow() {
-        Transitions transitions = new Transitions(mOrganizer, mTransactionPool, mMainExecutor,
-                mAnimExecutor);
+        Transitions transitions = new Transitions(mOrganizer, mTransactionPool, mContext,
+                mMainExecutor, mAnimExecutor);
         transitions.replaceDefaultHandlerForTest(mDefaultHandler);
 
         IBinder transitToken = new Binder();
@@ -109,8 +113,8 @@ public class ShellTransitionTests {
 
     @Test
     public void testNonDefaultHandler() {
-        Transitions transitions = new Transitions(mOrganizer, mTransactionPool, mMainExecutor,
-                mAnimExecutor);
+        Transitions transitions = new Transitions(mOrganizer, mTransactionPool, mContext,
+                mMainExecutor, mAnimExecutor);
         transitions.replaceDefaultHandlerForTest(mDefaultHandler);
 
         final WindowContainerTransaction handlerWCT = new WindowContainerTransaction();
@@ -119,7 +123,8 @@ public class ShellTransitionTests {
         TestTransitionHandler testHandler = new TestTransitionHandler() {
             @Override
             public boolean startAnimation(@NonNull IBinder transition, @NonNull TransitionInfo info,
-                    @NonNull SurfaceControl.Transaction t, @NonNull Runnable finishCallback) {
+                    @NonNull SurfaceControl.Transaction t,
+                    @NonNull Transitions.TransitionFinishCallback finishCallback) {
                 for (TransitionInfo.Change chg : info.getChanges()) {
                     if (chg.getMode() == TRANSIT_CHANGE) {
                         return super.startAnimation(transition, info, t, finishCallback);
@@ -187,17 +192,18 @@ public class ShellTransitionTests {
 
     @Test
     public void testRequestRemoteTransition() {
-        Transitions transitions = new Transitions(mOrganizer, mTransactionPool, mMainExecutor,
-                mAnimExecutor);
+        Transitions transitions = new Transitions(mOrganizer, mTransactionPool, mContext,
+                mMainExecutor, mAnimExecutor);
         transitions.replaceDefaultHandlerForTest(mDefaultHandler);
 
         final boolean[] remoteCalled = new boolean[]{false};
+        final WindowContainerTransaction remoteFinishWCT = new WindowContainerTransaction();
         IRemoteTransition testRemote = new IRemoteTransition.Stub() {
             @Override
             public void startAnimation(TransitionInfo info, SurfaceControl.Transaction t,
-                    IRemoteAnimationFinishedCallback finishCallback) throws RemoteException {
+                    IRemoteTransitionFinishedCallback finishCallback) throws RemoteException {
                 remoteCalled[0] = true;
-                finishCallback.onAnimationFinished();
+                finishCallback.onTransitionFinished(remoteFinishWCT);
             }
         };
         IBinder transitToken = new Binder();
@@ -211,7 +217,7 @@ public class ShellTransitionTests {
         assertTrue(remoteCalled[0]);
         mDefaultHandler.finishAll();
         mMainExecutor.flushAll();
-        verify(mOrganizer, times(1)).finishTransition(eq(transitToken), any(), any());
+        verify(mOrganizer, times(1)).finishTransition(eq(transitToken), eq(remoteFinishWCT), any());
     }
 
     @Test
@@ -253,17 +259,17 @@ public class ShellTransitionTests {
 
     @Test
     public void testRegisteredRemoteTransition() {
-        Transitions transitions = new Transitions(mOrganizer, mTransactionPool, mMainExecutor,
-                mAnimExecutor);
+        Transitions transitions = new Transitions(mOrganizer, mTransactionPool, mContext,
+                mMainExecutor, mAnimExecutor);
         transitions.replaceDefaultHandlerForTest(mDefaultHandler);
 
         final boolean[] remoteCalled = new boolean[]{false};
         IRemoteTransition testRemote = new IRemoteTransition.Stub() {
             @Override
             public void startAnimation(TransitionInfo info, SurfaceControl.Transaction t,
-                    IRemoteAnimationFinishedCallback finishCallback) throws RemoteException {
+                    IRemoteTransitionFinishedCallback finishCallback) throws RemoteException {
                 remoteCalled[0] = true;
-                finishCallback.onAnimationFinished();
+                finishCallback.onTransitionFinished(null /* wct */);
             }
         };
 
@@ -317,11 +323,12 @@ public class ShellTransitionTests {
     }
 
     class TestTransitionHandler implements Transitions.TransitionHandler {
-        final ArrayList<Runnable> mFinishes = new ArrayList<>();
+        final ArrayList<Transitions.TransitionFinishCallback> mFinishes = new ArrayList<>();
 
         @Override
         public boolean startAnimation(@NonNull IBinder transition, @NonNull TransitionInfo info,
-                @NonNull SurfaceControl.Transaction t, @NonNull Runnable finishCallback) {
+                @NonNull SurfaceControl.Transaction t,
+                @NonNull Transitions.TransitionFinishCallback finishCallback) {
             mFinishes.add(finishCallback);
             return true;
         }
@@ -335,7 +342,7 @@ public class ShellTransitionTests {
 
         void finishAll() {
             for (int i = mFinishes.size() - 1; i >= 0; --i) {
-                mFinishes.get(i).run();
+                mFinishes.get(i).onTransitionFinished(null /* wct */, null /* wctCB */);
             }
             mFinishes.clear();
         }

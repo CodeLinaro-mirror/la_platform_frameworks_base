@@ -22,6 +22,7 @@ import android.content.Context;
 import android.util.MathUtils;
 
 import com.android.systemui.R;
+import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.statusbar.NotificationShelf;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
@@ -30,9 +31,12 @@ import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow
 import com.android.systemui.statusbar.notification.row.ExpandableView;
 import com.android.systemui.statusbar.notification.stack.StackScrollAlgorithm.SectionProvider;
 
+import javax.inject.Inject;
+
 /**
  * A global state to track all input states for the algorithm.
  */
+@SysUISingleton
 public class AmbientState {
 
     private static final float MAX_PULSE_HEIGHT = 100000f;
@@ -78,10 +82,12 @@ public class AmbientState {
     private ExpandableNotificationRow mTrackedHeadsUpRow;
     private float mAppearFraction;
     private boolean mIsShadeOpening;
+    private float mSectionPadding;
 
     /** Tracks the state from AlertingNotificationManager#hasNotifications() */
     private boolean mHasAlertEntries;
 
+    @Inject
     public AmbientState(
             Context context,
             @NonNull SectionProvider sectionProvider) {
@@ -97,12 +103,20 @@ public class AmbientState {
         mBaseZHeight = getBaseHeight(mZDistanceBetweenElements);
     }
 
-    void setIsShadeOpening(boolean isOpening) {
+    public void setIsShadeOpening(boolean isOpening) {
         mIsShadeOpening = isOpening;
     }
 
     public boolean isShadeOpening() {
         return mIsShadeOpening;
+    }
+
+    void setSectionPadding(float padding) {
+        mSectionPadding = padding;
+    }
+
+    float getSectionPadding() {
+        return mSectionPadding;
     }
 
     private static int getZDistanceBetweenElements(Context context) {
@@ -119,7 +133,7 @@ public class AmbientState {
      */
     public static int getNotificationLaunchHeight(Context context) {
         int zDistance = getZDistanceBetweenElements(context);
-        return getBaseHeight(zDistance) * 2;
+        return NOTIFICATIONS_HAVE_SHADOWS ? 2 * getBaseHeight(zDistance) : 4 * zDistance;
     }
 
     /**

@@ -29,7 +29,9 @@ import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardDisplayManager;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.KeyguardViewController;
+import com.android.keyguard.dagger.KeyguardQsUserSwitchComponent;
 import com.android.keyguard.dagger.KeyguardStatusViewComponent;
+import com.android.keyguard.dagger.KeyguardUserSwitcherComponent;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.classifier.FalsingCollector;
 import com.android.systemui.classifier.FalsingModule;
@@ -43,6 +45,7 @@ import com.android.systemui.keyguard.KeyguardViewMediator;
 import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
+import com.android.systemui.statusbar.phone.DozeParameters;
 import com.android.systemui.statusbar.phone.KeyguardLiftController;
 import com.android.systemui.statusbar.phone.StatusBar;
 import com.android.systemui.util.DeviceConfigProxy;
@@ -60,7 +63,8 @@ import dagger.Provides;
 /**
  * Dagger Module providing {@link StatusBar}.
  */
-@Module(subcomponents = {KeyguardStatusViewComponent.class},
+@Module(subcomponents = {KeyguardStatusViewComponent.class,
+        KeyguardQsUserSwitchComponent.class, KeyguardUserSwitcherComponent.class},
         includes = {FalsingModule.class})
 public class KeyguardModule {
     /**
@@ -82,7 +86,9 @@ public class KeyguardModule {
             @UiBackground Executor uiBgExecutor,
             DeviceConfigProxy deviceConfig,
             NavigationModeController navigationModeController,
-            KeyguardDisplayManager keyguardDisplayManager) {
+            KeyguardDisplayManager keyguardDisplayManager,
+            DozeParameters dozeParameters,
+            StatusBarStateController statusBarStateController) {
         return new KeyguardViewMediator(
                 context,
                 falsingCollector,
@@ -97,7 +103,9 @@ public class KeyguardModule {
                 trustManager,
                 deviceConfig,
                 navigationModeController,
-                keyguardDisplayManager
+                keyguardDisplayManager,
+                dozeParameters,
+                statusBarStateController
         );
     }
 

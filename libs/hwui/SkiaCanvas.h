@@ -53,9 +53,8 @@ public:
         LOG_ALWAYS_FATAL("SkiaCanvas cannot be reset as a recording canvas");
     }
 
-    virtual uirenderer::DisplayList finishRecording() override {
+    virtual void finishRecording(uirenderer::RenderNode*) override {
         LOG_ALWAYS_FATAL("SkiaCanvas does not produce a DisplayList");
-        return uirenderer::DisplayList();
     }
     virtual void enableZ(bool enableZ) override {
         LOG_ALWAYS_FATAL("SkiaCanvas does not support enableZ");
@@ -170,73 +169,35 @@ protected:
                                   const Paint& paint, const SkPath& path, size_t start,
                                   size_t end) override;
 
-    /** This class acts as a copy on write SkPaint.
-     *
-     *  Initially this will be the SkPaint passed to the contructor.
-     *  The first time writable() is called this will become a copy of the
-     *  initial SkPaint (or a default SkPaint if nullptr).
-     */
-    struct PaintCoW {
-        PaintCoW(const SkPaint& that) : mPtr(&that) {}
-        PaintCoW(const SkPaint* ptr) : mPtr(ptr) {}
-        PaintCoW(const PaintCoW&) = delete;
-        PaintCoW(PaintCoW&&) = delete;
-        PaintCoW& operator=(const PaintCoW&) = delete;
-        PaintCoW& operator=(PaintCoW&&) = delete;
-        SkPaint& writeable() {
-            if (!mStorage) {
-                if (!mPtr) {
-                    mStorage.emplace();
-                } else {
-                    mStorage.emplace(*mPtr);
-                }
-                mPtr = &*mStorage;
-            }
-            return *mStorage;
-        }
-        operator const SkPaint*() const { return mPtr; }
-        const SkPaint* operator->() const { assert(mPtr); return mPtr; }
-        explicit operator bool() { return mPtr != nullptr; }
-    private:
-        const SkPaint* mPtr;
-        std::optional<SkPaint> mStorage;
-    };
+    void onFilterPaint(SkPaint& paint);
 
-    /** Filters the paint using the current paint filter.
-     *
-     *  @param paint the paint to filter. Will be initialized with the default
-     *      SkPaint before filtering if filtering is required.
-     */
-    PaintCoW&& filterPaint(PaintCoW&& paint) const;
+    SkPaint filterPaint(const SkPaint& src) {
+        SkPaint dst(src);
+        this->onFilterPaint(dst);
+        return dst;
+    }
 
-    template <typename Proc> void apply_looper(const Paint* paint, Proc proc) {
-        SkPaint skp;
-        SkDrawLooper* looper = nullptr;
-        if (paint) {
-            skp = *filterPaint(paint);
-            looper = paint->getLooper();
+    // proc(const SkPaint& modifiedPaint)
+    template <typename Proc>
+    void applyLooper(const Paint* paint, Proc proc, void (*preFilter)(SkPaint&) = nullptr) {
+        BlurDrawLooper* looper = paint ? paint->getLooper() : nullptr;
+        const SkPaint* skpPtr = paint;
+        SkPaint skp = skpPtr ? *skpPtr : SkPaint();
+        if (preFilter) {
+            preFilter(skp);
         }
+        this->onFilterPaint(skp);
         if (looper) {
-            SkSTArenaAlloc<256> alloc;
-            SkDrawLooper::Context* ctx = looper->makeContext(&alloc);
-            if (ctx) {
-                SkDrawLooper::Context::Info info;
-                for (;;) {
-                    SkPaint p = skp;
-                    if (!ctx->next(&info, &p)) {
-                        break;
-                    }
-                    mCanvas->save();
-                    mCanvas->translate(info.fTranslate.fX, info.fTranslate.fY);
-                    proc(p);
-                    mCanvas->restore();
-                }
-            }
+            looper->apply(skp, [&](SkPoint offset, const SkPaint& modifiedPaint) {
+                mCanvas->save();
+                mCanvas->translate(offset.fX, offset.fY);
+                proc(modifiedPaint);
+                mCanvas->restore();
+            });
         } else {
             proc(skp);
         }
     }
-
 
 private:
     struct SaveRec {

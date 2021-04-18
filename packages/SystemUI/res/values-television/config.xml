@@ -28,6 +28,7 @@
     <string-array name="config_systemUIServiceComponents" translatable="false">
         <item>com.android.systemui.util.NotificationChannels</item>
         <item>com.android.systemui.volume.VolumeUI</item>
+        <item>com.android.systemui.privacy.television.TvOngoingPrivacyChip</item>
         <item>com.android.systemui.statusbar.tv.TvStatusBar</item>
         <item>com.android.systemui.statusbar.tv.notifications.TvNotificationPanel</item>
         <item>com.android.systemui.statusbar.tv.notifications.TvNotificationHandler</item>
@@ -39,10 +40,10 @@
         <item>com.android.systemui.shortcut.ShortcutKeyDispatcher</item>
         <item>@string/config_systemUIVendorServiceComponent</item>
         <item>com.android.systemui.SliceBroadcastRelayHandler</item>
-        <item>com.android.systemui.SizeCompatModeActivityController</item>
         <item>com.android.systemui.statusbar.notification.InstantAppNotifier</item>
         <item>com.android.systemui.toast.ToastUI</item>
         <item>com.android.systemui.wmshell.WMShell</item>
+        <item>com.android.systemui.media.systemsounds.HomeSoundEffectController</item>
     </string-array>
 
     <!-- Svelte specific logic, see RecentsConfiguration.SVELTE_* constants. -->

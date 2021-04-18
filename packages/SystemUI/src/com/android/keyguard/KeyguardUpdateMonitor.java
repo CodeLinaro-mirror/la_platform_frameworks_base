@@ -60,6 +60,7 @@ import android.hardware.face.FaceSensorPropertiesInternal;
 import android.hardware.fingerprint.FingerprintManager;
 import android.hardware.fingerprint.FingerprintManager.AuthenticationCallback;
 import android.hardware.fingerprint.FingerprintManager.AuthenticationResult;
+import android.nfc.NfcAdapter;
 import android.os.Build;
 import android.os.CancellationSignal;
 import android.os.Handler;
@@ -103,6 +104,7 @@ import com.android.systemui.dump.DumpManager;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.shared.system.TaskStackChangeListener;
 import com.android.systemui.shared.system.TaskStackChangeListeners;
+import com.android.systemui.statusbar.FeatureFlags;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.util.Assert;
@@ -183,6 +185,7 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
     private static final int MSG_KEYGUARD_GOING_AWAY = 342;
     private static final int MSG_LOCK_SCREEN_MODE = 343;
     private static final int MSG_TIME_FORMAT_UPDATE = 344;
+    private static final int MSG_REQUIRE_NFC_UNLOCK = 345;
 
     public static final int LOCK_SCREEN_MODE_NORMAL = 0;
     public static final int LOCK_SCREEN_MODE_LAYOUT_1 = 1;
@@ -280,7 +283,6 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
     private final ArrayList<WeakReference<KeyguardUpdateMonitorCallback>>
             mCallbacks = Lists.newArrayList();
     private ContentObserver mDeviceProvisionedObserver;
-    private ContentObserver mLockScreenModeObserver;
     private ContentObserver mTimeFormatChangeObserver;
 
     private boolean mSwitchingUser;
@@ -303,6 +305,7 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
     private boolean mLogoutEnabled;
     // cached value to avoid IPCs
     private boolean mIsUdfpsEnrolled;
+    private boolean mKeyguardQsUserSwitchEnabled;
     // If the user long pressed the lock icon, disabling face auth for the current session.
     private boolean mLockIconPressed;
     private int mActiveMobileDataSubscription = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
@@ -1259,6 +1262,8 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
             } else if (ACTION_USER_REMOVED.equals(action)) {
                 mHandler.sendMessage(mHandler.obtainMessage(MSG_USER_REMOVED,
                         intent.getIntExtra(Intent.EXTRA_USER_HANDLE, -1), 0));
+            } else if (NfcAdapter.ACTION_REQUIRE_UNLOCK_FOR_NFC.equals(action)) {
+                mHandler.sendEmptyMessage(MSG_REQUIRE_NFC_UNLOCK);
             }
         }
     };
@@ -1313,6 +1318,16 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
         @Override
         public void onAuthenticationAcquired(int acquireInfo) {
             handleFingerprintAcquired(acquireInfo);
+        }
+
+        @Override
+        public void onUdfpsPointerDown(int sensorId) {
+            Log.d(TAG, "onUdfpsPointerDown, sensorId: " + sensorId);
+        }
+
+        @Override
+        public void onUdfpsPointerUp(int sensorId) {
+            Log.d(TAG, "onUdfpsPointerUp, sensorId: " + sensorId);
         }
     };
 
@@ -1598,7 +1613,8 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
             @Background Executor backgroundExecutor,
             StatusBarStateController statusBarStateController,
             LockPatternUtils lockPatternUtils,
-            AuthController authController) {
+            AuthController authController,
+            FeatureFlags featureFlags) {
         mContext = context;
         mSubscriptionManager = SubscriptionManager.from(context);
         mDeviceProvisioned = isDeviceProvisionedInSettingsDb();
@@ -1725,6 +1741,8 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
                         break;
                     case MSG_TIME_FORMAT_UPDATE:
                         handleTimeFormatUpdate((String) msg.obj);
+                    case MSG_REQUIRE_NFC_UNLOCK:
+                        handleRequireUnlockForNfc();
                         break;
                     default:
                         super.handleMessage(msg);
@@ -1787,6 +1805,7 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
         allUserFilter.addAction(ACTION_USER_UNLOCKED);
         allUserFilter.addAction(ACTION_USER_STOPPED);
         allUserFilter.addAction(ACTION_USER_REMOVED);
+        allUserFilter.addAction(NfcAdapter.ACTION_REQUIRE_UNLOCK_FOR_NFC);
         mBroadcastDispatcher.registerReceiverWithHandler(mBroadcastAllReceiver, allUserFilter,
                 mHandler, UserHandle.ALL);
 
@@ -1861,16 +1880,7 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
             }
         }
 
-        updateLockScreenMode();
-        mLockScreenModeObserver = new ContentObserver(mHandler) {
-            @Override
-            public void onChange(boolean selfChange) {
-                updateLockScreenMode();
-            }
-        };
-        mContext.getContentResolver().registerContentObserver(
-                Settings.Global.getUriFor(Settings.Global.SHOW_NEW_LOCKSCREEN),
-                false, mLockScreenModeObserver);
+        updateLockScreenMode(featureFlags.isKeyguardLayoutEnabled());
 
         mTimeFormatChangeObserver = new ContentObserver(mHandler) {
             @Override
@@ -1887,9 +1897,8 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
                 false, mTimeFormatChangeObserver, UserHandle.USER_ALL);
     }
 
-    private void updateLockScreenMode() {
-        final int newMode = Settings.Global.getInt(mContext.getContentResolver(),
-                Settings.Global.SHOW_NEW_LOCKSCREEN, LOCK_SCREEN_MODE_LAYOUT_1);
+    private void updateLockScreenMode(boolean isEnabled) {
+        final int newMode = isEnabled ? LOCK_SCREEN_MODE_LAYOUT_1 : LOCK_SCREEN_MODE_NORMAL;
         if (newMode != mLockScreenMode) {
             mLockScreenMode = newMode;
             mHandler.sendEmptyMessage(MSG_LOCK_SCREEN_MODE);
@@ -1901,12 +1910,14 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
     }
 
     /**
-     * Whether to show the lock icon on lock screen and bouncer. This depends on the enrolled
-     * biometrics to the device.
+     * Whether to show the lock icon on lock screen and bouncer.
      */
-    public boolean shouldShowLockIcon() {
-        return isFaceAuthEnabledForUser(KeyguardUpdateMonitor.getCurrentUser())
-                && !isUdfpsEnrolled();
+    public boolean canShowLockIcon() {
+        if (mLockScreenMode == LOCK_SCREEN_MODE_LAYOUT_1) {
+            return isFaceAuthEnabledForUser(KeyguardUpdateMonitor.getCurrentUser())
+                    && !isUdfpsEnrolled();
+        }
+        return !isKeyguardQsUserSwitchEnabled();
     }
 
     /**
@@ -1914,6 +1925,17 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
      */
     public boolean isUdfpsEnrolled() {
         return mIsUdfpsEnrolled;
+    }
+
+    /**
+     * @return true if the keyguard qs user switcher shortcut is enabled
+     */
+    public boolean isKeyguardQsUserSwitchEnabled() {
+        return mKeyguardQsUserSwitchEnabled;
+    }
+
+    public void setKeyguardQsUserSwitchEnabled(boolean enabled) {
+        mKeyguardQsUserSwitchEnabled = enabled;
     }
 
     private final UserSwitchObserver mUserSwitchObserver = new UserSwitchObserver() {
@@ -2055,8 +2077,6 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
     boolean shouldListenForUdfps() {
         return shouldListenForFingerprint()
                 && !mBouncer
-                && mStatusBarState != StatusBarState.SHADE_LOCKED
-                && mStatusBarState != StatusBarState.FULLSCREEN_USER_SWITCHER
                 && mStrongAuthTracker.hasUserAuthenticatedSinceBoot();
     }
 
@@ -2690,6 +2710,19 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
     }
 
     /**
+     * Handle {@link #MSG_REQUIRE_NFC_UNLOCK}
+     */
+    private void handleRequireUnlockForNfc() {
+        Assert.isMainThread();
+        for (int i = 0; i < mCallbacks.size(); i++) {
+            KeyguardUpdateMonitorCallback cb = mCallbacks.get(i).get();
+            if (cb != null) {
+                cb.onRequireUnlockForNfc();
+            }
+        }
+    }
+
+    /**
      * Handle {@link #MSG_REPORT_EMERGENCY_CALL_ACTION}
      */
     private void handleReportEmergencyCallAction() {
@@ -3097,10 +3130,6 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
 
         if (mDeviceProvisionedObserver != null) {
             mContext.getContentResolver().unregisterContentObserver(mDeviceProvisionedObserver);
-        }
-
-        if (mLockScreenModeObserver != null) {
-            mContext.getContentResolver().unregisterContentObserver(mLockScreenModeObserver);
         }
 
         if (mTimeFormatChangeObserver != null) {

@@ -36,6 +36,7 @@
     <string name="wifi_no_internet_no_reconnect" msgid="821591791066497347">"অটোমেটিক কানেক্ট করবে না"</string>
     <string name="wifi_no_internet" msgid="1774198889176926299">"ইন্টারনেট অ্যাক্সেস নেই"</string>
     <string name="saved_network" msgid="7143698034077223645">"<xliff:g id="NAME">%1$s</xliff:g> দ্বারা সেভ করা"</string>
+    <string name="connected_to_metered_access_point" msgid="9179693207918156341">"মিটার্ড নেটওয়ার্কের সঙ্গে কানেক্ট করা"</string>
     <string name="connected_via_network_scorer" msgid="7665725527352893558">"স্বয়ংক্রিয়ভাবে %1$s এর মাধ্যমে কানেক্ট হয়েছে"</string>
     <string name="connected_via_network_scorer_default" msgid="7973529709744526285">"নেটওয়ার্কের রেটিং প্রদানকারীর মাধ্যমে অটোমেটিক কানেক্ট"</string>
     <string name="connected_via_passpoint" msgid="7735442932429075684">"%1$s মাধ্যমে কানেক্ট হয়েছে"</string>
@@ -403,6 +404,7 @@
     <string name="transcode_user_control" msgid="6176368544817731314">"ট্রান্সকোডিং ডিফল্ট সেটিংস ওভাররাইড করুন"</string>
     <string name="transcode_enable_all" msgid="2411165920039166710">"ট্রান্সকোডিং চালু করুন"</string>
     <string name="transcode_default" msgid="3784803084573509491">"অ্যাপ মর্ডার্ন ফর্ম্যাটে কাজ করবে বলে ধরে নিন"</string>
+    <string name="transcode_notification" msgid="5560515979793436168">"ট্রান্সকোডিং বিজ্ঞপ্তি দেখুন"</string>
     <string name="runningservices_settings_title" msgid="6460099290493086515">"এখন চলছে যে পরিষেবাগুলি"</string>
     <string name="runningservices_settings_summary" msgid="1046080643262665743">"বর্তমান চলমান পরিষেবাগুলি দেখুন এবং নিয়ন্ত্রণ করুন"</string>
     <string name="select_webview_provider_title" msgid="3917815648099445503">"ওয়েবভিউ প্রয়োগ"</string>
@@ -422,7 +424,8 @@
     <string name="daltonizer_mode_protanomaly" msgid="7805583306666608440">"প্রোটানোম্যালি (লাল-সবুজ)"</string>
     <string name="daltonizer_mode_tritanomaly" msgid="7135266249220732267">"ট্রিট্যানোম্যালি (নীল-হলুদ)"</string>
     <string name="accessibility_display_daltonizer_preference_title" msgid="1810693571332381974">"রঙ সংশোধন"</string>
-    <string name="accessibility_display_daltonizer_preference_subtitle" msgid="1284746051652993443">"ডিভাইসে রঙগুলি কেমনভাবে দেখানো হবে তা অ্যাডজাস্ট করতে \'রঙ সংশোধন করুন\' বিকল্প ব্যবহার করা যেতে পারে"</string>
+    <!-- no translation found for accessibility_display_daltonizer_preference_subtitle (8625527799885140826) -->
+    <skip />
     <string name="daltonizer_type_overridden" msgid="4509604753672535721">"<xliff:g id="TITLE">%1$s</xliff:g> এর দ্বারা ওভাররাইড করা হয়েছে"</string>
     <string name="power_remaining_settings_home_page" msgid="4885165789445462557">"<xliff:g id="PERCENTAGE">%1$s</xliff:g> - <xliff:g id="TIME_STRING">%2$s</xliff:g>"</string>
     <string name="power_remaining_duration_only" msgid="8264199158671531431">"আর আনুমানিক <xliff:g id="TIME_REMAINING">%1$s</xliff:g> চলবে"</string>
@@ -513,6 +516,8 @@
     <string name="zen_mode_forever" msgid="3339224497605461291">"যতক্ষণ না আপনি বন্ধ করছেন"</string>
     <string name="time_unit_just_now" msgid="3006134267292728099">"এখনই"</string>
     <string name="media_transfer_this_device_name" msgid="2716555073132169240">"ফোনের স্পিকার"</string>
+    <!-- no translation found for media_transfer_this_phone (7194341457812151531) -->
+    <skip />
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"কানেক্ট করতে সমস্যা হচ্ছে। ডিভাইস বন্ধ করে আবার চালু করুন"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"ওয়্যার অডিও ডিভাইস"</string>
     <string name="help_label" msgid="3528360748637781274">"সহায়তা ও মতামত"</string>
@@ -553,7 +558,7 @@
     <string name="creating_new_user_dialog_message" msgid="7232880257538970375">"নতুন ব্যবহারকারী তৈরি করা হচ্ছে…"</string>
     <string name="user_nickname" msgid="262624187455825083">"বিশেষ নাম"</string>
     <string name="guest_new_guest" msgid="3482026122932643557">"অতিথি যোগ করুন"</string>
-    <string name="guest_exit_guest" msgid="4754204715192830850">"গেস্ট সেশন শেষ করুন"</string>
+    <string name="guest_exit_guest" msgid="5908239569510734136">"অতিথি সরান"</string>
     <string name="guest_nickname" msgid="6332276931583337261">"অতিথি"</string>
     <string name="user_image_take_photo" msgid="467512954561638530">"ফটো তুলুন"</string>
     <string name="user_image_choose_photo" msgid="1363820919146782908">"একটি ইমেজ বেছে নিন"</string>
@@ -590,5 +595,6 @@
     <string name="accessibility_data_three_bars" msgid="2813876214466722413">"তিন দন্ড ডেটার সংকেত৷"</string>
     <string name="accessibility_data_signal_full" msgid="1808301899314382337">"পূর্ণ ডেটার সংকেত রয়েছে৷"</string>
     <string name="accessibility_ethernet_disconnected" msgid="2832501530856497489">"ইথারনেটের সংযোগ বিচ্ছিন্ন হয়েছে৷"</string>
-    <string name="accessibility_ethernet_connected" msgid="2093872142317190618">"ইথারনেট সংযুক্ত হয়েছে৷"</string>
+    <string name="accessibility_ethernet_connected" msgid="6175942685957461563">"ইথারনেট।"</string>
+    <string name="accessibility_no_calling" msgid="3540827068323895748">"কল করবেন না।"</string>
 </resources>

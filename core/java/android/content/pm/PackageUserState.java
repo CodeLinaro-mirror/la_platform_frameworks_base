@@ -31,6 +31,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
+import android.content.pm.overlay.OverlayPaths;
 import android.content.pm.parsing.component.ParsedMainComponent;
 import android.os.BaseBundle;
 import android.os.Debug;
@@ -53,7 +54,6 @@ import org.xmlpull.v1.XmlSerializer;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
 
@@ -77,8 +77,6 @@ public class PackageUserState {
     public boolean virtualPreload;
     public int enabled;
     public String lastDisableAppCaller;
-    public int domainVerificationStatus;
-    public int appLinkGeneration;
     public int categoryHint = ApplicationInfo.CATEGORY_UNDEFINED;
     public int installReason;
     public @PackageManager.UninstallReason int uninstallReason;
@@ -87,9 +85,10 @@ public class PackageUserState {
     public ArraySet<String> disabledComponents;
     public ArraySet<String> enabledComponents;
 
-    private String[] overlayPaths;
-    private ArrayMap<String, String[]> sharedLibraryOverlayPaths; // Lib name to overlay paths
-    private String[] cachedOverlayPaths;
+    private OverlayPaths overlayPaths;
+    // Maps library name to overlay paths.
+    private ArrayMap<String, OverlayPaths> sharedLibraryOverlayPaths;
+    private OverlayPaths cachedOverlayPaths;
 
     @Nullable
     private ArrayMap<ComponentName, Pair<String, Integer>> componentLabelIconOverrideMap;
@@ -100,8 +99,6 @@ public class PackageUserState {
         hidden = false;
         suspended = false;
         enabled = COMPONENT_ENABLED_STATE_DEFAULT;
-        domainVerificationStatus =
-                PackageManager.INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_UNDEFINED;
         installReason = PackageManager.INSTALL_REASON_UNKNOWN;
         uninstallReason = PackageManager.UNINSTALL_REASON_UNKNOWN;
     }
@@ -120,15 +117,12 @@ public class PackageUserState {
         virtualPreload = o.virtualPreload;
         enabled = o.enabled;
         lastDisableAppCaller = o.lastDisableAppCaller;
-        domainVerificationStatus = o.domainVerificationStatus;
-        appLinkGeneration = o.appLinkGeneration;
         categoryHint = o.categoryHint;
         installReason = o.installReason;
         uninstallReason = o.uninstallReason;
         disabledComponents = ArrayUtils.cloneOrNull(o.disabledComponents);
         enabledComponents = ArrayUtils.cloneOrNull(o.enabledComponents);
-        overlayPaths =
-            o.overlayPaths == null ? null : Arrays.copyOf(o.overlayPaths, o.overlayPaths.length);
+        overlayPaths = o.overlayPaths;
         if (o.sharedLibraryOverlayPaths != null) {
             sharedLibraryOverlayPaths = new ArrayMap<>(o.sharedLibraryOverlayPaths);
         }
@@ -138,25 +132,55 @@ public class PackageUserState {
         }
     }
 
-    public String[] getOverlayPaths() {
+    @Nullable
+    public OverlayPaths getOverlayPaths() {
         return overlayPaths;
     }
 
-    public void setOverlayPaths(String[] paths) {
-        overlayPaths = paths;
-        cachedOverlayPaths = null;
-    }
-
-    public Map<String, String[]> getSharedLibraryOverlayPaths() {
+    @Nullable
+    public Map<String, OverlayPaths> getSharedLibraryOverlayPaths() {
         return sharedLibraryOverlayPaths;
     }
 
-    public void setSharedLibraryOverlayPaths(String library, String[] paths) {
+    /**
+     * Sets the path of overlays currently enabled for this package and user combination.
+     * @return true if the path contents differ than what they were previously
+     */
+    @Nullable
+    public boolean setOverlayPaths(@Nullable OverlayPaths paths) {
+        if (Objects.equals(paths, overlayPaths)) {
+            return false;
+        }
+        if ((overlayPaths == null && paths.isEmpty())
+                || (paths == null && overlayPaths.isEmpty())) {
+            return false;
+        }
+        overlayPaths = paths;
+        cachedOverlayPaths = null;
+        return true;
+    }
+
+    /**
+     * Sets the path of overlays currently enabled for a library that this package uses.
+     *
+     * @return true if the path contents for the library differ than what they were previously
+     */
+    public boolean setSharedLibraryOverlayPaths(@NonNull String library,
+            @Nullable OverlayPaths paths) {
         if (sharedLibraryOverlayPaths == null) {
             sharedLibraryOverlayPaths = new ArrayMap<>();
         }
-        sharedLibraryOverlayPaths.put(library, paths);
+        final OverlayPaths currentPaths = sharedLibraryOverlayPaths.get(library);
+        if (Objects.equals(paths, currentPaths)) {
+            return false;
+        }
         cachedOverlayPaths = null;
+        if (paths == null || paths.isEmpty()) {
+            return sharedLibraryOverlayPaths.remove(library) != null;
+        } else {
+            sharedLibraryOverlayPaths.put(library, paths);
+            return true;
+        }
     }
 
     /**
@@ -338,35 +362,21 @@ public class PackageUserState {
         return isComponentEnabled;
     }
 
-    public String[] getAllOverlayPaths() {
+    public OverlayPaths getAllOverlayPaths() {
         if (overlayPaths == null && sharedLibraryOverlayPaths == null) {
             return null;
         }
-
         if (cachedOverlayPaths != null) {
             return cachedOverlayPaths;
         }
-
-        final LinkedHashSet<String> paths = new LinkedHashSet<>();
-        if (overlayPaths != null) {
-            final int N = overlayPaths.length;
-            for (int i = 0; i < N; i++) {
-                paths.add(overlayPaths[i]);
-            }
-        }
-
+        final OverlayPaths.Builder newPaths = new OverlayPaths.Builder();
+        newPaths.addAll(overlayPaths);
         if (sharedLibraryOverlayPaths != null) {
-            for (String[] libOverlayPaths : sharedLibraryOverlayPaths.values()) {
-                if (libOverlayPaths != null) {
-                    final int N = libOverlayPaths.length;
-                    for (int i = 0; i < N; i++) {
-                        paths.add(libOverlayPaths[i]);
-                    }
-                }
+            for (final OverlayPaths libOverlayPaths : sharedLibraryOverlayPaths.values()) {
+                newPaths.addAll(libOverlayPaths);
             }
         }
-
-        cachedOverlayPaths = paths.toArray(new String[0]);
+        cachedOverlayPaths = newPaths.build();
         return cachedOverlayPaths;
     }
 
@@ -414,12 +424,6 @@ public class PackageUserState {
         if ((lastDisableAppCaller == null && oldState.lastDisableAppCaller != null)
                 || (lastDisableAppCaller != null
                         && !lastDisableAppCaller.equals(oldState.lastDisableAppCaller))) {
-            return false;
-        }
-        if (domainVerificationStatus != oldState.domainVerificationStatus) {
-            return false;
-        }
-        if (appLinkGeneration != oldState.appLinkGeneration) {
             return false;
         }
         if (categoryHint != oldState.categoryHint) {
@@ -481,8 +485,6 @@ public class PackageUserState {
         hashCode = 31 * hashCode + Boolean.hashCode(virtualPreload);
         hashCode = 31 * hashCode + enabled;
         hashCode = 31 * hashCode + Objects.hashCode(lastDisableAppCaller);
-        hashCode = 31 * hashCode + domainVerificationStatus;
-        hashCode = 31 * hashCode + appLinkGeneration;
         hashCode = 31 * hashCode + categoryHint;
         hashCode = 31 * hashCode + installReason;
         hashCode = 31 * hashCode + uninstallReason;

@@ -22,8 +22,8 @@ import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
+import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
-import android.app.ActivityManager;
 import android.content.Context;
 import android.hardware.tv.tuner.V1_0.Constants;
 import android.media.tv.TvInputService;
@@ -54,6 +54,7 @@ import android.os.Handler;
 import android.os.HandlerExecutor;
 import android.os.Looper;
 import android.os.Message;
+import android.os.Process;
 import android.util.Log;
 
 import com.android.internal.util.FrameworkStatsLog;
@@ -64,6 +65,7 @@ import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -147,7 +149,7 @@ public class Tuner implements AutoCloseable  {
     /**
      * Invalid 64-bit filter ID.
      */
-    public static final long INVALID_FILTER_ID_64BIT =
+    public static final long INVALID_FILTER_ID_LONG =
             android.hardware.tv.tuner.V1_1.Constants.Constant64Bit.INVALID_FILTER_ID_64BIT;
     /**
      * Invalid frequency that is used as the default frontend frequency setting.
@@ -243,6 +245,8 @@ public class Tuner implements AutoCloseable  {
     private static final int MSG_ON_FILTER_EVENT = 2;
     private static final int MSG_ON_FILTER_STATUS = 3;
     private static final int MSG_ON_LNB_EVENT = 4;
+
+    private static final int FILTER_CLEANUP_THRESHOLD = 256;
 
     /** @hide */
     @IntDef(prefix = "DVR_TYPE_", value = {DVR_TYPE_RECORD, DVR_TYPE_PLAYBACK})
@@ -352,7 +356,7 @@ public class Tuner implements AutoCloseable  {
                 profile, new HandlerExecutor(mHandler), mResourceListener, clientId);
         mClientId = clientId[0];
 
-        mUserId = ActivityManager.getCurrentUser();
+        mUserId = Process.myUid();
     }
 
     /**
@@ -928,8 +932,8 @@ public class Tuner implements AutoCloseable  {
     public int connectFrontendToCiCam(int ciCamId) {
         if (TunerVersionChecker.checkHigherOrEqualVersionTo(TunerVersionChecker.TUNER_VERSION_1_1,
                 "linkFrontendToCiCam")) {
-            if (checkResource(TunerResourceManager.TUNER_RESOURCE_TYPE_FRONTEND)
-                    && checkCiCamResource(ciCamId)) {
+            if (checkCiCamResource(ciCamId)
+                    && checkResource(TunerResourceManager.TUNER_RESOURCE_TYPE_FRONTEND)) {
                 return nativeLinkCiCam(ciCamId);
             }
         }
@@ -974,7 +978,8 @@ public class Tuner implements AutoCloseable  {
     public int disconnectFrontendToCiCam(int ciCamId) {
         if (TunerVersionChecker.checkHigherOrEqualVersionTo(TunerVersionChecker.TUNER_VERSION_1_1,
                 "unlinkFrontendToCiCam")) {
-            if (mFrontendCiCamHandle != null && mFrontendCiCamId == ciCamId) {
+            if (mFrontendCiCamHandle != null && mFrontendCiCamId != null
+                    && mFrontendCiCamId == ciCamId) {
                 int result = nativeUnlinkCiCam(ciCamId);
                 if (result == RESULT_SUCCESS) {
                     mTunerResourceManager.releaseCiCam(mFrontendCiCamHandle, mClientId);
@@ -1017,6 +1022,7 @@ public class Tuner implements AutoCloseable  {
      * failed.
      */
     @Nullable
+    @SuppressLint("NullableCollection")
     public List<FrontendInfo> getAvailableFrontendInfos() {
         FrontendInfo[] feInfoList = getFrontendInfoListInternal();
         if (feInfoList == null) {
@@ -1206,6 +1212,15 @@ public class Tuner implements AutoCloseable  {
             synchronized (mFilters) {
                 WeakReference<Filter> weakFilter = new WeakReference<Filter>(filter);
                 mFilters.add(weakFilter);
+                if (mFilters.size() > FILTER_CLEANUP_THRESHOLD) {
+                    Iterator<WeakReference<Filter>> iterator = mFilters.iterator();
+                    while (iterator.hasNext()) {
+                        WeakReference<Filter> wFilter = iterator.next();
+                        if (wFilter.get() == null) {
+                            iterator.remove();
+                        }
+                    }
+                }
             }
         }
         return filter;
@@ -1395,6 +1410,7 @@ public class Tuner implements AutoCloseable  {
         boolean granted = mTunerResourceManager.requestCiCam(request, ciCamHandle);
         if (granted) {
             mFrontendCiCamHandle = ciCamHandle[0];
+            mFrontendCiCamId = ciCamId;
         }
         return granted;
     }

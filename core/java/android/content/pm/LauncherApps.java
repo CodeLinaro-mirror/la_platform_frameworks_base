@@ -167,10 +167,17 @@ public class LauncherApps {
      */
     public static final int FLAG_CACHE_BUBBLE_SHORTCUTS = 1;
 
+    /**
+     * Cache shortcuts which are used in People Tile.
+     * @hide
+     */
+    public static final int FLAG_CACHE_PEOPLE_TILE_SHORTCUTS = 2;
+
     /** @hide */
     @IntDef(flag = false, prefix = { "FLAG_CACHE_" }, value = {
             FLAG_CACHE_NOTIFICATION_SHORTCUTS,
             FLAG_CACHE_BUBBLE_SHORTCUTS,
+            FLAG_CACHE_PEOPLE_TILE_SHORTCUTS
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ShortcutCacheFlags {}
@@ -450,6 +457,7 @@ public class LauncherApps {
                 FLAG_MATCH_PINNED,
                 FLAG_MATCH_MANIFEST,
                 FLAG_MATCH_CACHED,
+                FLAG_MATCH_PINNED_BY_ANY_LAUNCHER,
                 FLAG_GET_KEY_FIELDS_ONLY,
                 FLAG_GET_PERSONS_DATA,
         })
@@ -1178,6 +1186,7 @@ public class LauncherApps {
      * <ul>
      *     <li>{@link #FLAG_CACHE_NOTIFICATION_SHORTCUTS}
      *     <li>{@link #FLAG_CACHE_BUBBLE_SHORTCUTS}
+     *     <li>{@link #FLAG_CACHE_PEOPLE_TILE_SHORTCUTS}
      * </ul>
      * @throws IllegalStateException when the user is locked, or when the {@code user} user
      * is locked or not running.
@@ -1208,6 +1217,7 @@ public class LauncherApps {
      * <ul>
      *     <li>{@link #FLAG_CACHE_NOTIFICATION_SHORTCUTS}
      *     <li>{@link #FLAG_CACHE_BUBBLE_SHORTCUTS}
+     *     <li>{@link #FLAG_CACHE_PEOPLE_TILE_SHORTCUTS}
      * </ul>
      * @throws IllegalStateException when the user is locked, or when the {@code user} user
      * is locked or not running.

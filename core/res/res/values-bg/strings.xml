@@ -57,8 +57,7 @@
     <string name="imei" msgid="2157082351232630390">"IMEI"</string>
     <string name="meid" msgid="3291227361605924674">"MEID"</string>
     <string name="ClipMmi" msgid="4110549342447630629">"Идентификация на вх. обаждания"</string>
-    <!-- no translation found for ClirMmi (6752346475055446417) -->
-    <skip />
+    <string name="ClirMmi" msgid="6752346475055446417">"Скриване на изходящия идентификатор на обаждащия се"</string>
     <string name="ColpMmi" msgid="4736462893284419302">"Идентификация на свързаната линия"</string>
     <string name="ColrMmi" msgid="5889782479745764278">"Ограничение за идентификацията на свързаната линия"</string>
     <string name="CfMmi" msgid="8390012691099787178">"Пренасочване на повиквания"</string>
@@ -149,7 +148,7 @@
     <string name="wfc_mode_wifi_only_summary" msgid="104951993894678665">"Само Wi-Fi"</string>
     <!-- no translation found for crossSimFormat_spn (9125246077491634262) -->
     <skip />
-    <string name="crossSimFormat_spn_cross_sim_calling" msgid="779976494687695991">"Обаждания през друга SIM карта от <xliff:g id="SPN">%s</xliff:g>"</string>
+    <string name="crossSimFormat_spn_cross_sim_calling" msgid="5620807020002879057">"Обаждания през друга SIM карта от <xliff:g id="SPN">%s</xliff:g>"</string>
     <string name="cfTemplateNotForwarded" msgid="862202427794270501">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: Не е пренасочено"</string>
     <string name="cfTemplateForwarded" msgid="9132506315842157860">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: <xliff:g id="DIALING_NUMBER">{1}</xliff:g>"</string>
     <string name="cfTemplateForwardedTime" msgid="735042369233323609">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: <xliff:g id="DIALING_NUMBER">{1}</xliff:g> след <xliff:g id="TIME_DELAY">{2}</xliff:g> секунди"</string>
@@ -204,6 +203,7 @@
     <string name="sensor_notification_service" msgid="7474531979178682676">"Услуга за известия за сензорите"</string>
     <string name="twilight_service" msgid="8964898045693187224">"Услуга Twilight"</string>
     <string name="offline_location_time_zone_detection_service_attribution" msgid="303754195048744816">"Инструмент за установяване на часовата зона (няма връзка)"</string>
+    <string name="gnss_time_update_service" msgid="9039489496037616095">"Услуга на GNSS за актуализиране на часа"</string>
     <string name="factory_reset_warning" msgid="6858705527798047809">"Данните на устройството ви ще бъдат изтрити"</string>
     <string name="factory_reset_message" msgid="2657049595153992213">"Приложението за администриране не може да се използва. Сега данните на устройството ви ще бъдат изтрити.\n\nАко имате въпроси, свържете се с администратора на организацията си."</string>
     <string name="printing_disabled_by" msgid="3517499806528864633">"Отпечатването е деактивиранo от <xliff:g id="OWNER_APP">%s</xliff:g>."</string>
@@ -550,13 +550,18 @@
     <string name="permdesc_imagesWrite" msgid="5195054463269193317">"Разрешава на приложението да променя колекцията ви от снимки."</string>
     <string name="permlab_mediaLocation" msgid="7368098373378598066">"да чете местоположенията от мултимедийната ви колекция"</string>
     <string name="permdesc_mediaLocation" msgid="597912899423578138">"Разрешава на приложението да чете местоположенията от мултимедийната ви колекция."</string>
+    <string name="biometric_app_setting_name" msgid="3339209978734534457">"Използване на биометр. данни"</string>
+    <string name="biometric_or_screen_lock_app_setting_name" msgid="5348462421758257752">"Използване на биометрични данни или опцията за заключване на екрана"</string>
     <string name="biometric_dialog_default_title" msgid="55026799173208210">"Потвърдете, че сте вие"</string>
+    <string name="biometric_dialog_default_subtitle" msgid="8457232339298571992">"Използвайте биометричните си данни, за да продължите"</string>
     <string name="biometric_error_hw_unavailable" msgid="2494077380540615216">"Биометричният хардуер не е налице"</string>
     <string name="biometric_error_user_canceled" msgid="6732303949695293730">"Удостоверяването бе анулирано"</string>
     <string name="biometric_not_recognized" msgid="5106687642694635888">"Не е разпознато"</string>
     <string name="biometric_error_canceled" msgid="8266582404844179778">"Удостоверяването бе анулирано"</string>
     <string name="biometric_error_device_not_secured" msgid="3129845065043995924">"Няма зададен ПИН код, фигура или парола"</string>
     <string name="biometric_error_generic" msgid="6784371929985434439">"Грешка при удостоверяването"</string>
+    <string name="screen_lock_app_setting_name" msgid="6054944352976789228">"Ползване на заключв. на екрана"</string>
+    <string name="screen_lock_dialog_default_subtitle" msgid="8638638125397857315">"Въведете идентификационните данни на устройството, за да продължите"</string>
     <string name="fingerprint_acquired_partial" msgid="8532380671091299342">"Открит е частичен отпечатък. Моля, опитайте отново."</string>
     <string name="fingerprint_acquired_insufficient" msgid="2545149524031515411">"Отпечатъкът не бе обработен. Моля, опитайте отново."</string>
     <string name="fingerprint_acquired_imager_dirty" msgid="4694800187151533990">"Сензорът за отпечатъци е мръсен. Моля, почистете го и опитайте отново."</string>
@@ -579,6 +584,9 @@
     <string name="fingerprint_error_hw_not_present" msgid="578914350967423382">"Това устройство няма сензор за отпечатъци."</string>
     <string name="fingerprint_error_security_update_required" msgid="7750187320640856433">"Сензорът е временно деактивиран."</string>
     <string name="fingerprint_name_template" msgid="8941662088160289778">"Пръст <xliff:g id="FINGERID">%d</xliff:g>"</string>
+    <string name="fingerprint_app_setting_name" msgid="4253767877095495844">"Използване на отпечатък"</string>
+    <string name="fingerprint_or_screen_lock_app_setting_name" msgid="3501743523487644907">"Използване на отпечатък или опцията за заключване на екрана"</string>
+    <string name="fingerprint_dialog_default_subtitle" msgid="3879832845486835905">"Използвайте отпечатъка си, за да продължите"</string>
   <string-array name="fingerprint_error_vendor">
   </string-array>
     <string name="fingerprint_icon_content_description" msgid="4741068463175388817">"Икона за отпечатък"</string>
@@ -605,7 +613,7 @@
     <string name="face_acquired_too_different" msgid="4699657338753282542">"Лицето не бе разпознато. Опитайте отново."</string>
     <string name="face_acquired_too_similar" msgid="7684650785108399370">"Позата ви е сходна с предишна. Моля, променете я."</string>
     <string name="face_acquired_pan_too_extreme" msgid="7822191262299152527">"Не завъртайте главата си толкова много."</string>
-    <string name="face_acquired_tilt_too_extreme" msgid="8119978324129248059">"Не завъртайте главата си толкова много."</string>
+    <string name="face_acquired_tilt_too_extreme" msgid="8618210742620248049">"Не накланяйте главата си толкова много."</string>
     <string name="face_acquired_roll_too_extreme" msgid="1442830503572636825">"Не завъртайте главата си толкова много."</string>
     <string name="face_acquired_obscured" msgid="4917643294953326639">"Премахнете всичко, което закрива лицето ви."</string>
     <string name="face_acquired_sensor_dirty" msgid="8968391891086721678">"Почистете горната част на екрана си, включително черната лента"</string>
@@ -623,6 +631,9 @@
     <string name="face_error_hw_not_present" msgid="1070600921591729944">"Отключването с лице не се поддържа на това устройство."</string>
     <string name="face_error_security_update_required" msgid="5076017208528750161">"Сензорът е временно деактивиран."</string>
     <string name="face_name_template" msgid="3877037340223318119">"Лице <xliff:g id="FACEID">%d</xliff:g>"</string>
+    <string name="face_app_setting_name" msgid="8130135875458467243">"Използване на отключв. с лице"</string>
+    <string name="face_or_screen_lock_app_setting_name" msgid="1603149075605709106">"Използване на отключването с лице или опцията за заключване на екрана"</string>
+    <string name="face_dialog_default_subtitle" msgid="4979205739418564856">"Използвайте функцията за отключване с лице, за да продължите"</string>
   <string-array name="face_error_vendor">
   </string-array>
     <string name="face_icon_content_description" msgid="465030547475916280">"Икона на лице"</string>
@@ -684,6 +695,8 @@
     <string name="permdesc_access_notification_policy" msgid="8538374112403845013">"Предоставя на приложението достъп за четене и запис до конфигурацията на „Не безпокойте“."</string>
     <string name="permlab_startViewPermissionUsage" msgid="1504564328641112341">"стартиране на прегледа на използваните разрешения"</string>
     <string name="permdesc_startViewPermissionUsage" msgid="2820325605959586538">"Разрешава на притежателя да стартира прегледа на използваните разрешения за дадено приложение. Нормалните приложения би трябвало никога да не се нуждаят от това."</string>
+    <string name="permlab_highSamplingRateSensors" msgid="3941068435726317070">"осъществяване на достъп до данните от сензорите при висока скорост на семплиране"</string>
+    <string name="permdesc_highSamplingRateSensors" msgid="8430061978931155995">"Разрешава на приложението да семплира данните от сензорите със скорост, по-висока от 200 Hz"</string>
     <string name="policylab_limitPassword" msgid="4851829918814422199">"Задаване на правила за паролата"</string>
     <string name="policydesc_limitPassword" msgid="4105491021115793793">"Контролира дължината и разрешените знаци за паролите и ПИН кодовете за заключване на екрана."</string>
     <string name="policylab_watchLogin" msgid="7599669460083719504">"Наблюдаване на опитите за отключване на екрана"</string>
@@ -1664,6 +1677,7 @@
     <string name="leave_accessibility_shortcut_on" msgid="6543362062336990814">"Използване на пряк път"</string>
     <string name="color_inversion_feature_name" msgid="326050048927789012">"Инвертиране на цветовете"</string>
     <string name="color_correction_feature_name" msgid="3655077237805422597">"Коригиране на цветовете"</string>
+    <string name="reduce_bright_colors_feature_name" msgid="8978255324027479398">"Намаляване на яркостта"</string>
     <string name="accessibility_shortcut_enabling_service" msgid="5473495203759847687">"Задържахте бутоните за силата на звука. Услугата <xliff:g id="SERVICE_NAME">%1$s</xliff:g> е включена."</string>
     <string name="accessibility_shortcut_disabling_service" msgid="8675244165062700619">"Задържахте бутоните за силата на звука. Услугата <xliff:g id="SERVICE_NAME">%1$s</xliff:g> е изключена."</string>
     <string name="accessibility_shortcut_spoken_feedback" msgid="4228997042855695090">"За да използвате <xliff:g id="SERVICE_NAME">%1$s</xliff:g>, натиснете двата бутона за силата на звука и ги задръжте за 3 секунди"</string>
@@ -1867,8 +1881,10 @@
     <string name="stk_cc_ss_to_dial_video" msgid="1324194624384312664">"SS заявката е променена на видеообаждане"</string>
     <string name="stk_cc_ss_to_ussd" msgid="8417905193112944760">"SS заявката е променена на USSD заявка"</string>
     <string name="stk_cc_ss_to_ss" msgid="132040645206514450">"Променено на нова SS заявка"</string>
+    <string name="notification_phishing_alert_content_description" msgid="494227305355958790">"Сигнал за фишинг"</string>
     <string name="notification_work_profile_content_description" msgid="5296477955677725799">"Служебен потребителски профил"</string>
     <string name="notification_alerted_content_description" msgid="6139691253611265992">"Сигналът е изпратен"</string>
+    <string name="notification_verified_content_description" msgid="6401483602782359391">"Потвърдено"</string>
     <string name="expand_button_content_description_collapsed" msgid="3873368935659010279">"Разгъване"</string>
     <string name="expand_button_content_description_expanded" msgid="7484217944948667489">"Свиване"</string>
     <string name="expand_action_accessibility" msgid="1947657036871746627">"превключване на разгъването"</string>
@@ -1880,6 +1896,12 @@
     <string name="maximize_button_text" msgid="4258922519914732645">"Увеличаване"</string>
     <string name="close_button_text" msgid="10603510034455258">"Затваряне"</string>
     <string name="notification_messaging_title_template" msgid="772857526770251989">"„<xliff:g id="CONVERSATION_TITLE">%1$s</xliff:g>“: <xliff:g id="SENDER_NAME">%2$s</xliff:g>"</string>
+    <string name="call_notification_answer_action" msgid="5999246836247132937">"Отговор"</string>
+    <string name="call_notification_decline_action" msgid="3700345945214000726">"Отхвърляне"</string>
+    <string name="call_notification_hang_up_action" msgid="9130720590159188131">"Затваряне"</string>
+    <string name="call_notification_incoming_text" msgid="6143109825406638201">"Входящо обаждане"</string>
+    <string name="call_notification_ongoing_text" msgid="3880832933933020875">"Текущо обаждане"</string>
+    <string name="call_notification_screening_text" msgid="8396931408268940208">"Преглежда се входящо обаждане"</string>
     <plurals name="selected_count" formatted="false" msgid="3946212171128200491">
       <item quantity="other">Избрахте <xliff:g id="COUNT_1">%1$d</xliff:g></item>
       <item quantity="one">Избрахте <xliff:g id="COUNT_0">%1$d</xliff:g></item>
@@ -1934,6 +1956,7 @@
     <string name="app_category_news" msgid="1172762719574964544">"Новини и списания"</string>
     <string name="app_category_maps" msgid="6395725487922533156">"Карти и навигация"</string>
     <string name="app_category_productivity" msgid="1844422703029557883">"Производителност"</string>
+    <string name="app_category_accessibility" msgid="6643521607848547683">"Достъпност"</string>
     <string name="device_storage_monitor_notification_channel" msgid="5164244565844470758">"Хранилище на устройството"</string>
     <string name="adb_debugging_notification_channel_tv" msgid="4764046459631031496">"Отстраняване на грешки през USB"</string>
     <string name="time_picker_hour_label" msgid="4208590187662336864">"час"</string>
@@ -2204,4 +2227,10 @@
     <string name="window_magnification_prompt_content" msgid="4166711383253283838">"Можете да увеличите целия екран или част от него"</string>
     <string name="turn_on_magnification_settings_action" msgid="8521433346684847700">"Включете от настройките"</string>
     <string name="dismiss_action" msgid="1728820550388704784">"Отхвърляне"</string>
+    <string name="sensor_privacy_start_use_mic_notification_content" msgid="8063355861118105607">"За да продължите, &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; се нуждае от достъп до микрофона на устройството ви."</string>
+    <string name="sensor_privacy_start_use_camera_notification_content" msgid="4738005643315863736">"За да продължите, &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; се нуждае от достъп до камерата на устройството ви."</string>
+    <string name="sensor_privacy_start_use_dialog_turn_on_button" msgid="7921147002346108119">"Включване"</string>
+    <string name="sensor_privacy_notification_channel_label" msgid="936036783155261349">"Поверителност на сензорните данни"</string>
+    <string name="splash_screen_view_icon_description" msgid="180638751260598187">"Икона на приложението"</string>
+    <string name="splash_screen_view_branding_description" msgid="7911129347402728216">"Изображение на търговската марка на приложението"</string>
 </resources>

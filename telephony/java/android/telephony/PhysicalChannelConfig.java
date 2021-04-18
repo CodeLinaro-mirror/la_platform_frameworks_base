@@ -50,7 +50,7 @@ public final class PhysicalChannelConfig implements Parcelable {
     public static final int CONNECTION_UNKNOWN = -1;
 
     /** Channel number is unknown. */
-    public static final int CHANNEL_NUMBER_UNKNOWN = -1;
+    public static final int CHANNEL_NUMBER_UNKNOWN = Integer.MAX_VALUE;
 
     /** Physical Cell Id is unknown. */
     public static final int PHYSICAL_CELL_ID_UNKNOWN = -1;
@@ -554,7 +554,8 @@ public final class PhysicalChannelConfig implements Parcelable {
         }
 
         public @NonNull Builder setFrequencyRange(int frequencyRange) {
-            if (!ServiceState.isFrequencyRangeValid(frequencyRange)) {
+            if (!ServiceState.isFrequencyRangeValid(frequencyRange)
+                    && frequencyRange != ServiceState.FREQUENCY_RANGE_UNKNOWN) {
                 throw new IllegalArgumentException("Frequency range: " + frequencyRange +
                         " is invalid.");
             }

@@ -59,6 +59,7 @@ import androidx.annotation.NonNull;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.settingslib.Utils;
 import com.android.settingslib.mobile.MobileMappings.Config;
 import com.android.settingslib.mobile.MobileStatusTracker.SubscriptionDefaults;
 import com.android.settingslib.mobile.TelephonyIcons;
@@ -75,6 +76,7 @@ import com.android.systemui.statusbar.policy.DeviceProvisionedController.DeviceP
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collections;
@@ -99,6 +101,8 @@ public class NetworkControllerImpl extends BroadcastReceiver
     private static final int EMERGENCY_VOICE_CONTROLLER = 200;
     private static final int EMERGENCY_NO_SUB = 300;
     private static final int EMERGENCY_ASSUMED_VOICE_CONTROLLER = 400;
+    private static final int HISTORY_SIZE = 16;
+    private static final SimpleDateFormat SSDF = new SimpleDateFormat("MM-dd HH:mm:ss.SSS");
 
     private final Context mContext;
     private final TelephonyManager mPhone;
@@ -149,6 +153,11 @@ public class NetworkControllerImpl extends BroadcastReceiver
     // This list holds our ordering.
     private List<SubscriptionInfo> mCurrentSubscriptions = new ArrayList<>();
 
+    // Save the previous HISTORY_SIZE states for logging.
+    private final String[] mHistory = new String[HISTORY_SIZE];
+    // Where to copy the next state into.
+    private int mHistoryIndex;
+
     @VisibleForTesting
     boolean mListening;
 
@@ -156,7 +165,7 @@ public class NetworkControllerImpl extends BroadcastReceiver
     private int mCurrentUserId;
 
     private OnSubscriptionsChangedListener mSubscriptionListener;
-
+    private NetworkCapabilities mLastDefaultNetworkCapabilities;
     // Handler that all broadcasts are received on.
     private final Handler mReceiverHandler;
     // Handler that all callbacks are made on.
@@ -294,7 +303,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
             }
         };
 
-        mWifiManager.registerScanResultsCallback(mReceiverHandler::post, scanResultsCallback);
+        if (mWifiManager != null) {
+            mWifiManager.registerScanResultsCallback(mReceiverHandler::post, scanResultsCallback);
+        }
 
         ConnectivityManager.NetworkCallback callback = new ConnectivityManager.NetworkCallback(){
             private Network mLastNetwork;
@@ -304,6 +315,13 @@ public class NetworkControllerImpl extends BroadcastReceiver
             public void onLost(Network network) {
                 mLastNetwork = null;
                 mLastNetworkCapabilities = null;
+                mLastDefaultNetworkCapabilities = null;
+                String callback = new StringBuilder()
+                        .append(SSDF.format(System.currentTimeMillis())).append(",")
+                        .append("onLost: ")
+                        .append("network=").append(network)
+                        .toString();
+                recordLastNetworkCallback(callback);
                 updateConnectivity();
             }
 
@@ -324,6 +342,14 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 }
                 mLastNetwork = network;
                 mLastNetworkCapabilities = networkCapabilities;
+                mLastDefaultNetworkCapabilities = networkCapabilities;
+                String callback = new StringBuilder()
+                        .append(SSDF.format(System.currentTimeMillis())).append(",")
+                        .append("onCapabilitiesChanged: ")
+                        .append("network=").append(network).append(",")
+                        .append("networkCapabilities=").append(networkCapabilities)
+                        .toString();
+                recordLastNetworkCallback(callback);
                 updateConnectivity();
             }
         };
@@ -521,9 +547,31 @@ public class NetworkControllerImpl extends BroadcastReceiver
         return mWifiSignalController.isCarrierMergedWifi(subId);
     }
 
-    String getNonDefaultMobileDataNetworkName(int subId) {
+    boolean isNonCarrierWifiNetworkAvailable() {
+        return !mNoNetworksAvailable;
+    }
+
+    boolean isEthernetDefault() {
+        return mConnectedTransports.get(NetworkCapabilities.TRANSPORT_ETHERNET);
+    }
+
+    String getNetworkNameForCarrierWiFi(int subId) {
         MobileSignalController controller = getControllerWithSubId(subId);
-        return controller != null ? controller.getNonDefaultCarrierName() : "";
+        return controller != null ? controller.getNetworkNameForCarrierWiFi() : "";
+    }
+
+    void notifyWifiLevelChange(int level) {
+        for (int i = 0; i < mMobileSignalControllers.size(); i++) {
+            MobileSignalController mobileSignalController = mMobileSignalControllers.valueAt(i);
+            mobileSignalController.notifyWifiLevelChange(level);
+        }
+    }
+
+    void notifyDefaultMobileLevelChange(int level) {
+        for (int i = 0; i < mMobileSignalControllers.size(); i++) {
+            MobileSignalController mobileSignalController = mMobileSignalControllers.valueAt(i);
+            mobileSignalController.notifyDefaultMobileLevelChange(level);
+        }
     }
 
     private void notifyControllersMobileDataChanged() {
@@ -595,6 +643,9 @@ public class NetworkControllerImpl extends BroadcastReceiver
         for (int i = 0; i < mMobileSignalControllers.size(); i++) {
             MobileSignalController mobileSignalController = mMobileSignalControllers.valueAt(i);
             mobileSignalController.notifyListeners(cb);
+            if (mProviderModel) {
+                mobileSignalController.refreshCallIndicator(cb);
+            }
         }
         mCallbackHandler.setListening(cb, true);
     }
@@ -861,6 +912,11 @@ public class NetworkControllerImpl extends BroadcastReceiver
         return true;
     }
 
+    @VisibleForTesting
+    void setNoNetworksAvailable(boolean noNetworksAvailable) {
+        mNoNetworksAvailable = noNetworksAvailable;
+    }
+
     private void updateAirplaneMode(boolean force) {
         boolean airplaneMode = (Settings.Global.getInt(mContext.getContentResolver(),
                 Settings.Global.AIRPLANE_MODE_ON, 0) == 1);
@@ -914,12 +970,19 @@ public class NetworkControllerImpl extends BroadcastReceiver
     private void updateConnectivity() {
         mConnectedTransports.clear();
         mValidatedTransports.clear();
-        for (NetworkCapabilities nc :
-                mConnectivityManager.getDefaultNetworkCapabilitiesForUser(mCurrentUserId)) {
-            for (int transportType : nc.getTransportTypes()) {
-                mConnectedTransports.set(transportType);
-                if (nc.hasCapability(NET_CAPABILITY_VALIDATED)) {
-                    mValidatedTransports.set(transportType);
+        if (mLastDefaultNetworkCapabilities != null) {
+            for (int transportType : mLastDefaultNetworkCapabilities.getTransportTypes()) {
+                if (transportType == NetworkCapabilities.TRANSPORT_CELLULAR
+                        && Utils.tryGetWifiInfoForVcn(mLastDefaultNetworkCapabilities) != null) {
+                    mConnectedTransports.set(NetworkCapabilities.TRANSPORT_WIFI);
+                    if (mLastDefaultNetworkCapabilities.hasCapability(NET_CAPABILITY_VALIDATED)) {
+                        mValidatedTransports.set(NetworkCapabilities.TRANSPORT_WIFI);
+                    }
+                } else {
+                    mConnectedTransports.set(transportType);
+                    if (mLastDefaultNetworkCapabilities.hasCapability(NET_CAPABILITY_VALIDATED)) {
+                        mValidatedTransports.set(transportType);
+                    }
                 }
             }
         }
@@ -981,6 +1044,19 @@ public class NetworkControllerImpl extends BroadcastReceiver
         pw.print("  mEmergencySource=");
         pw.println(emergencyToString(mEmergencySource));
 
+        pw.println("  - DefaultNetworkCallback -----");
+        int size = 0;
+        for (int i = 0; i < HISTORY_SIZE; i++) {
+            if (mHistory[i] != null) {
+                size++;
+            }
+        }
+        for (int i = mHistoryIndex + HISTORY_SIZE - 1;
+                i >= mHistoryIndex + HISTORY_SIZE - size; i--) {
+            pw.println("  Previous NetworkCallback(" + (mHistoryIndex + HISTORY_SIZE - i) + "): "
+                    + mHistory[i & (HISTORY_SIZE - 1)]);
+        }
+
         pw.println("  - config ------");
         for (int i = 0; i < mMobileSignalControllers.size(); i++) {
             MobileSignalController mobileSignalController = mMobileSignalControllers.valueAt(i);
@@ -991,6 +1067,8 @@ public class NetworkControllerImpl extends BroadcastReceiver
         mEthernetSignalController.dump(pw);
 
         mAccessPoints.dump(pw);
+
+        mCallbackHandler.dump(pw);
     }
 
     private static final String emergencyToString(int emergencySource) {
@@ -1218,6 +1296,11 @@ public class NetworkControllerImpl extends BroadcastReceiver
         List<String> s = new ArrayList<>();
         s.add(DemoMode.COMMAND_NETWORK);
         return s;
+    }
+
+    private void recordLastNetworkCallback(String callback) {
+        mHistory[mHistoryIndex] = callback;
+        mHistoryIndex = (mHistoryIndex + 1) % HISTORY_SIZE;
     }
 
     private SubscriptionInfo addSignalController(int id, int simSlotIndex) {

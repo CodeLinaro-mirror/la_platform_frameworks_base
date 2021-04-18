@@ -25,9 +25,13 @@ import static android.window.TransitionInfo.FLAG_STARTING_WINDOW_TRANSFER_RECIPI
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.content.ContentResolver;
+import android.content.Context;
+import android.database.ContentObserver;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.SystemProperties;
+import android.provider.Settings;
 import android.util.ArrayMap;
 import android.util.Log;
 import android.view.SurfaceControl;
@@ -38,10 +42,12 @@ import android.window.TransitionFilter;
 import android.window.TransitionInfo;
 import android.window.TransitionRequestInfo;
 import android.window.WindowContainerTransaction;
+import android.window.WindowContainerTransactionCallback;
 import android.window.WindowOrganizer;
 
 import androidx.annotation.BinderThread;
 
+import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.protolog.common.ProtoLog;
 import com.android.wm.shell.ShellTaskOrganizer;
@@ -62,13 +68,17 @@ public class Transitions {
             SystemProperties.getBoolean("persist.debug.shell_transit", false);
 
     private final WindowOrganizer mOrganizer;
+    private final Context mContext;
     private final ShellExecutor mMainExecutor;
     private final ShellExecutor mAnimExecutor;
     private final TransitionPlayerImpl mPlayerImpl;
     private final RemoteTransitionHandler mRemoteTransitionHandler;
+    private final RemoteTransitionImpl mImpl = new RemoteTransitionImpl();
 
     /** List of possible handlers. Ordered by specificity (eg. tapped back to front). */
     private final ArrayList<TransitionHandler> mHandlers = new ArrayList<>();
+
+    private float mTransitionAnimationScaleSetting = 1.0f;
 
     private static final class ActiveTransition {
         TransitionHandler mFirstHandler = null;
@@ -77,31 +87,67 @@ public class Transitions {
     /** Keeps track of currently tracked transitions and all the animations associated with each */
     private final ArrayMap<IBinder, ActiveTransition> mActiveTransitions = new ArrayMap<>();
 
+    public static RemoteTransitions asRemoteTransitions(Transitions transitions) {
+        return transitions.mImpl;
+    }
+
     public Transitions(@NonNull WindowOrganizer organizer, @NonNull TransactionPool pool,
-            @NonNull ShellExecutor mainExecutor, @NonNull ShellExecutor animExecutor) {
+            @NonNull Context context, @NonNull ShellExecutor mainExecutor,
+            @NonNull ShellExecutor animExecutor) {
         mOrganizer = organizer;
+        mContext = context;
         mMainExecutor = mainExecutor;
         mAnimExecutor = animExecutor;
         mPlayerImpl = new TransitionPlayerImpl();
         // The very last handler (0 in the list) should be the default one.
-        mHandlers.add(new DefaultTransitionHandler(pool, mainExecutor, animExecutor));
+        mHandlers.add(new DefaultTransitionHandler(pool, context, mainExecutor, animExecutor));
         // Next lowest priority is remote transitions.
         mRemoteTransitionHandler = new RemoteTransitionHandler(mainExecutor);
         mHandlers.add(mRemoteTransitionHandler);
+
+        ContentResolver resolver = context.getContentResolver();
+        mTransitionAnimationScaleSetting = Settings.Global.getFloat(resolver,
+                Settings.Global.TRANSITION_ANIMATION_SCALE,
+                context.getResources().getFloat(
+                        R.dimen.config_appTransitionAnimationDurationScaleDefault));
+        dispatchAnimScaleSetting(mTransitionAnimationScaleSetting);
+
+        resolver.registerContentObserver(
+                Settings.Global.getUriFor(Settings.Global.TRANSITION_ANIMATION_SCALE), false,
+                new SettingsObserver());
     }
 
     private Transitions() {
         mOrganizer = null;
+        mContext = null;
         mMainExecutor = null;
         mAnimExecutor = null;
         mPlayerImpl = null;
         mRemoteTransitionHandler = null;
     }
 
+    private void dispatchAnimScaleSetting(float scale) {
+        for (int i = mHandlers.size() - 1; i >= 0; --i) {
+            mHandlers.get(i).setAnimScaleSetting(scale);
+        }
+    }
+
     /** Create an empty/non-registering transitions object for system-ui tests. */
     @VisibleForTesting
-    public static Transitions createEmptyForTesting() {
-        return new Transitions();
+    public static RemoteTransitions createEmptyForTesting() {
+        return new RemoteTransitions() {
+            @Override
+            public void registerRemote(@androidx.annotation.NonNull TransitionFilter filter,
+                    @androidx.annotation.NonNull IRemoteTransition remoteTransition) {
+                // Do nothing
+            }
+
+            @Override
+            public void unregisterRemote(
+                    @androidx.annotation.NonNull IRemoteTransition remoteTransition) {
+                // Do nothing
+            }
+        };
     }
 
     /** Register this transition handler with Core */
@@ -133,16 +179,14 @@ public class Transitions {
     }
 
     /** Register a remote transition to be used when `filter` matches an incoming transition */
-    @ExternalThread
     public void registerRemote(@NonNull TransitionFilter filter,
             @NonNull IRemoteTransition remoteTransition) {
-        mMainExecutor.execute(() -> mRemoteTransitionHandler.addFiltered(filter, remoteTransition));
+        mRemoteTransitionHandler.addFiltered(filter, remoteTransition);
     }
 
     /** Unregisters a remote transition and all associated filters */
-    @ExternalThread
     public void unregisterRemote(@NonNull IRemoteTransition remoteTransition) {
-        mMainExecutor.execute(() -> mRemoteTransitionHandler.removeFiltered(remoteTransition));
+        mRemoteTransitionHandler.removeFiltered(remoteTransition);
     }
 
     /** @return true if the transition was triggered by opening something vs closing something */
@@ -170,8 +214,8 @@ public class Transitions {
             final SurfaceControl leash = change.getLeash();
             final int mode = info.getChanges().get(i).getMode();
 
-            // Don't move anything with an animating parent
-            if (change.getParent() != null) {
+            // Don't move anything that isn't independent within its parents
+            if (!TransitionInfo.isIndependent(change, info)) {
                 if (mode == TRANSIT_OPEN || mode == TRANSIT_TO_FRONT || mode == TRANSIT_CHANGE) {
                     t.show(leash);
                     t.setMatrix(leash, 1, 0, 0, 1);
@@ -181,9 +225,13 @@ public class Transitions {
                 continue;
             }
 
-            t.reparent(leash, info.getRootLeash());
-            t.setPosition(leash, change.getStartAbsBounds().left - info.getRootOffset().x,
-                    change.getStartAbsBounds().top - info.getRootOffset().y);
+            boolean hasParent = change.getParent() != null;
+
+            if (!hasParent) {
+                t.reparent(leash, info.getRootLeash());
+                t.setPosition(leash, change.getStartAbsBounds().left - info.getRootOffset().x,
+                        change.getStartAbsBounds().top - info.getRootOffset().y);
+            }
             // Put all the OPEN/SHOW on top
             if (mode == TRANSIT_OPEN || mode == TRANSIT_TO_FRONT) {
                 t.show(leash);
@@ -231,23 +279,33 @@ public class Transitions {
         if (!info.getRootLeash().isValid()) {
             // Invalid root-leash implies that the transition is empty/no-op, so just do
             // housekeeping and return.
+            ProtoLog.v(ShellProtoLogGroup.WM_SHELL_TRANSITIONS, "Invalid root leash (%s): %s",
+                    transitionToken, info);
             t.apply();
-            onFinish(transitionToken);
+            onFinish(transitionToken, null /* wct */, null /* wctCB */);
             return;
         }
 
         setupStartState(info, t);
 
-        final Runnable finishRunnable = () -> onFinish(transitionToken);
+        final TransitionFinishCallback finishCb = (wct, cb) -> onFinish(transitionToken, wct, cb);
         // If a handler chose to uniquely run this animation, try delegating to it.
-        if (active.mFirstHandler != null && active.mFirstHandler.startAnimation(
-                transitionToken, info, t, finishRunnable)) {
-            return;
+        if (active.mFirstHandler != null) {
+            ProtoLog.v(ShellProtoLogGroup.WM_SHELL_TRANSITIONS, " try firstHandler %s",
+                    active.mFirstHandler);
+            if (active.mFirstHandler.startAnimation(transitionToken, info, t, finishCb)) {
+                ProtoLog.v(ShellProtoLogGroup.WM_SHELL_TRANSITIONS, " animated by firstHandler");
+                return;
+            }
         }
         // Otherwise give every other handler a chance (in order)
         for (int i = mHandlers.size() - 1; i >= 0; --i) {
             if (mHandlers.get(i) == active.mFirstHandler) continue;
-            if (mHandlers.get(i).startAnimation(transitionToken, info, t, finishRunnable)) {
+            ProtoLog.v(ShellProtoLogGroup.WM_SHELL_TRANSITIONS, " try handler %s",
+                    mHandlers.get(i));
+            if (mHandlers.get(i).startAnimation(transitionToken, info, t, finishCb)) {
+                ProtoLog.v(ShellProtoLogGroup.WM_SHELL_TRANSITIONS, " animated by %s",
+                        mHandlers.get(i));
                 return;
             }
         }
@@ -255,7 +313,8 @@ public class Transitions {
                 "This shouldn't happen, maybe the default handler is broken.");
     }
 
-    private void onFinish(IBinder transition) {
+    private void onFinish(IBinder transition, @Nullable WindowContainerTransaction wct,
+            @Nullable WindowContainerTransactionCallback wctCB) {
         if (!mActiveTransitions.containsKey(transition)) {
             Log.e(TAG, "Trying to finish a non-running transition. Maybe remote crashed?");
             return;
@@ -263,7 +322,7 @@ public class Transitions {
         ProtoLog.v(ShellProtoLogGroup.WM_SHELL_TRANSITIONS,
                 "Transition animations finished, notifying core %s", transition);
         mActiveTransitions.remove(transition);
-        mOrganizer.finishTransition(transition, null, null);
+        mOrganizer.finishTransition(transition, wct, wctCB);
     }
 
     void requestStartTransition(@NonNull IBinder transitionToken,
@@ -298,6 +357,23 @@ public class Transitions {
     }
 
     /**
+     * Interface for a callback that must be called after a TransitionHandler finishes playing an
+     * animation.
+     */
+    public interface TransitionFinishCallback {
+        /**
+         * This must be called on the main thread when a transition finishes playing an animation.
+         * The transition must not touch the surfaces after this has been called.
+         *
+         * @param wct A WindowContainerTransaction to run along with the transition clean-up.
+         * @param wctCB A sync callback that will be run when the transition clean-up is done and
+         *              wct has been applied.
+         */
+        void onTransitionFinished(@Nullable WindowContainerTransaction wct,
+                @Nullable WindowContainerTransactionCallback wctCB);
+    }
+
+    /**
      * Interface for something which can handle a subset of transitions.
      */
     public interface TransitionHandler {
@@ -310,7 +386,8 @@ public class Transitions {
          * @return true if transition was handled, false if not (falls-back to default).
          */
         boolean startAnimation(@NonNull IBinder transition, @NonNull TransitionInfo info,
-                @NonNull SurfaceControl.Transaction t, @NonNull Runnable finishCallback);
+                @NonNull SurfaceControl.Transaction t,
+                @NonNull TransitionFinishCallback finishCallback);
 
         /**
          * Potentially handles a startTransition request.
@@ -323,6 +400,13 @@ public class Transitions {
         @Nullable
         WindowContainerTransaction handleRequest(@NonNull IBinder transition,
                 @NonNull TransitionRequestInfo request);
+
+        /**
+         * Sets transition animation scale settings value to handler.
+         *
+         * @param scale The setting value of transition animation scale.
+         */
+        default void setAnimScaleSetting(float scale) {}
     }
 
     @BinderThread
@@ -339,6 +423,41 @@ public class Transitions {
         public void requestStartTransition(IBinder iBinder,
                 TransitionRequestInfo request) throws RemoteException {
             mMainExecutor.execute(() -> Transitions.this.requestStartTransition(iBinder, request));
+        }
+    }
+
+    @ExternalThread
+    private class RemoteTransitionImpl implements RemoteTransitions {
+        @Override
+        public void registerRemote(@NonNull TransitionFilter filter,
+                @NonNull IRemoteTransition remoteTransition) {
+            mMainExecutor.execute(() -> {
+                Transitions.this.registerRemote(filter, remoteTransition);
+            });
+        }
+
+        @Override
+        public void unregisterRemote(@NonNull IRemoteTransition remoteTransition) {
+            mMainExecutor.execute(() -> {
+                Transitions.this.unregisterRemote(remoteTransition);
+            });
+        }
+    }
+
+    private class SettingsObserver extends ContentObserver {
+
+        SettingsObserver() {
+            super(null);
+        }
+
+        @Override
+        public void onChange(boolean selfChange) {
+            super.onChange(selfChange);
+            mTransitionAnimationScaleSetting = Settings.Global.getFloat(
+                    mContext.getContentResolver(), Settings.Global.TRANSITION_ANIMATION_SCALE,
+                    mTransitionAnimationScaleSetting);
+
+            mMainExecutor.execute(() -> dispatchAnimScaleSetting(mTransitionAnimationScaleSetting));
         }
     }
 }

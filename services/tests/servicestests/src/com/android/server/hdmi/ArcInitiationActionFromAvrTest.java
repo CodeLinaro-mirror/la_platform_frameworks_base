@@ -76,8 +76,6 @@ public class ArcInitiationActionFromAvrTest {
         when(mContextSpy.getSystemService(PowerManager.class)).thenReturn(powerManager);
         when(mIPowerManagerMock.isInteractive()).thenReturn(true);
 
-        HdmiCecConfig hdmiCecConfig = new FakeHdmiCecConfig(mContextSpy);
-
         HdmiControlService hdmiControlService =
                 new HdmiControlService(mContextSpy) {
                     @Override
@@ -105,13 +103,12 @@ public class ArcInitiationActionFromAvrTest {
                     }
 
                     @Override
-                    Looper getServiceLooper() {
-                        return mTestLooper.getLooper();
+                    protected void writeStringSystemProperty(String key, String value) {
                     }
 
                     @Override
-                    protected HdmiCecConfig getHdmiCecConfig() {
-                        return hdmiCecConfig;
+                    Looper getServiceLooper() {
+                        return mTestLooper.getLooper();
                     }
                 };
 
@@ -124,6 +121,7 @@ public class ArcInitiationActionFromAvrTest {
         mHdmiCecLocalDeviceAudioSystem.init();
         Looper looper = mTestLooper.getLooper();
         hdmiControlService.setIoLooper(looper);
+        hdmiControlService.setHdmiCecConfig(new FakeHdmiCecConfig(mContextSpy));
         mNativeWrapper = new FakeNativeWrapper();
         HdmiCecController hdmiCecController = HdmiCecController.createWithNativeWrapper(
                 hdmiControlService, mNativeWrapper, hdmiControlService.getAtomWriter());

@@ -112,9 +112,9 @@ import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.ContentUris;
 import android.content.Context;
+import android.content.IIntentSender;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.IIntentSender;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.IPackageManager;
@@ -464,7 +464,7 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
 
         // Setup managed services
         when(mNlf.isTypeAllowed(anyInt())).thenReturn(true);
-        when(mNlf.isPackageAllowed(anyString())).thenReturn(true);
+        when(mNlf.isPackageAllowed(any())).thenReturn(true);
         when(mNlf.isPackageAllowed(null)).thenReturn(true);
         when(mListeners.getNotificationListenerFilter(any())).thenReturn(mNlf);
         mListener = mListeners.new ManagedServiceInfo(
@@ -1506,20 +1506,6 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
                 mBinderService.getActiveNotifications(sbn.getPackageName());
         assertEquals(0, notifs.length);
         assertEquals(0, mService.getNotificationRecordCount());
-    }
-
-    @Test
-    public void testCancelImmediatelyAfterEnqueueNotifiesListeners_ForegroundServiceFlag()
-            throws Exception {
-        final StatusBarNotification sbn = generateNotificationRecord(null).getSbn();
-        sbn.getNotification().flags =
-                Notification.FLAG_ONGOING_EVENT | FLAG_FOREGROUND_SERVICE;
-        mBinderService.enqueueNotificationWithTag(PKG, PKG, "tag",
-                sbn.getId(), sbn.getNotification(), sbn.getUserId());
-        mBinderService.cancelNotificationWithTag(PKG, PKG, "tag", sbn.getId(), sbn.getUserId());
-        waitForIdle();
-        verify(mListeners, times(1)).notifyPostedLocked(any(), any());
-        verify(mListeners, times(1)).notifyRemovedLocked(any(), anyInt(), any());
     }
 
     @Test
@@ -3685,8 +3671,8 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
         mService.addNotification(r);
 
         final NotificationVisibility nv = NotificationVisibility.obtain(r.getKey(), 0, 1, true);
-        mService.mNotificationDelegate.onNotificationClear(mUid, 0, PKG, r.getSbn().getTag(),
-                r.getSbn().getId(), r.getUserId(), r.getKey(), NotificationStats.DISMISSAL_AOD,
+        mService.mNotificationDelegate.onNotificationClear(mUid, 0, PKG, r.getUserId(),
+                r.getKey(), NotificationStats.DISMISSAL_AOD,
                 NotificationStats.DISMISS_SENTIMENT_POSITIVE, nv);
         waitForIdle();
 
@@ -3708,8 +3694,8 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
         mService.addNotification(r);
 
         final NotificationVisibility nv = NotificationVisibility.obtain(r.getKey(), 0, 1, true);
-        mService.mNotificationDelegate.onNotificationClear(mUid, 0, PKG, r.getSbn().getTag(),
-                r.getSbn().getId(), r.getUserId(), r.getKey(), NotificationStats.DISMISSAL_AOD,
+        mService.mNotificationDelegate.onNotificationClear(mUid, 0, PKG, r.getUserId(),
+                r.getKey(), NotificationStats.DISMISSAL_AOD,
                 NotificationStats.DISMISS_SENTIMENT_NEGATIVE, nv);
         waitForIdle();
 
@@ -6221,7 +6207,8 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
         reset(mListeners);
 
         // Test: update suppression to true
-        mService.mNotificationDelegate.onBubbleNotificationSuppressionChanged(nr.getKey(), true);
+        mService.mNotificationDelegate.onBubbleNotificationSuppressionChanged(nr.getKey(), true,
+                false);
         waitForIdle();
 
         // Check
@@ -6232,7 +6219,8 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
         reset(mListeners);
 
         // Test: update suppression to false
-        mService.mNotificationDelegate.onBubbleNotificationSuppressionChanged(nr.getKey(), false);
+        mService.mNotificationDelegate.onBubbleNotificationSuppressionChanged(nr.getKey(), false,
+                false);
         waitForIdle();
 
         // Check
@@ -6707,8 +6695,7 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
         final NotificationVisibility nv = NotificationVisibility.obtain(nrSummary.getKey(), 1, 2,
                 true);
         mService.mNotificationDelegate.onNotificationClear(mUid, 0, PKG,
-                nrSummary.getSbn().getTag(),
-                nrSummary.getSbn().getId(), nrSummary.getUserId(), nrSummary.getKey(),
+                nrSummary.getUserId(), nrSummary.getKey(),
                 NotificationStats.DISMISSAL_SHADE,
                 NotificationStats.DISMISS_SENTIMENT_NEUTRAL, nv);
         waitForIdle();
@@ -7321,7 +7308,7 @@ public class NotificationManagerServiceTest extends UiServiceTestCase {
 
     @Test
     public void testIsVisibleToListener_disallowedPackage() {
-        when(mNlf.isPackageAllowed(null)).thenReturn(false);
+        when(mNlf.isPackageAllowed(any())).thenReturn(false);
 
         StatusBarNotification sbn = mock(StatusBarNotification.class);
         when(sbn.getUserId()).thenReturn(10);

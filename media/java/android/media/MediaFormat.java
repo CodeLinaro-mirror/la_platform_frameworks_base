@@ -20,7 +20,6 @@ import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
-import android.util.Log;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -981,6 +980,74 @@ public final class MediaFormat {
     public static final String KEY_BITRATE_MODE = "bitrate-mode";
 
     /**
+     * A key describing the maximum Quantization Parameter allowed for encoding video.
+     * This key applies to all three video frame types (I, P, and B). This value fills
+     * in for any of the frame-specific #KEY_VIDEO_QP_I_MAX, #KEY_VIDEO_QP_P_MAX, or
+     * #KEY_VIDEO_QP_B_MAX keys that are not specified
+     *
+     * The associated value is an integer.
+     */
+    public static final String KEY_VIDEO_QP_MAX = "video-qp-max";
+
+    /**
+     * A key describing the maximum Quantization Parameter allowed for encoding video.
+     * This key applies to all three video frame types (I, P, and B). This value fills
+     * in for any of the frame-specific #KEY_VIDEO_QP_I_MIN, #KEY_VIDEO_QP_P_MIN, or
+     * #KEY_VIDEO_QP_B_MIN keys that are not specified
+     *
+     * The associated value is an integer.
+     */
+    public static final String KEY_VIDEO_QP_MIN = "video-qp-min";
+
+    /**
+     * A key describing the maximum Quantization Parameter allowed for encoding video.
+     * This value applies to video I-frames.
+     *
+     * The associated value is an integer.
+     */
+    public static final String KEY_VIDEO_QP_I_MAX = "video-qp-i-max";
+
+    /**
+     * A key describing the minimum Quantization Parameter allowed for encoding video.
+     * This value applies to video I-frames.
+     *
+     * The associated value is an integer.
+     */
+    public static final String KEY_VIDEO_QP_I_MIN = "video-qp-i-min";
+
+    /**
+     * A key describing the maximum Quantization Parameter allowed for encoding video.
+     * This value applies to video P-frames.
+     *
+     * The associated value is an integer.
+     */
+    public static final String KEY_VIDEO_QP_P_MAX = "video-qp-p-max";
+
+    /**
+     * A key describing the minimum Quantization Parameter allowed for encoding video.
+     * This value applies to video P-frames.
+     *
+     * The associated value is an integer.
+     */
+    public static final String KEY_VIDEO_QP_P_MIN = "video-qp-p-min";
+
+    /**
+     * A key describing the maximum Quantization Parameter allowed for encoding video.
+     * This value applies to video B-frames.
+     *
+     * The associated value is an integer.
+     */
+    public static final String KEY_VIDEO_QP_B_MAX = "video-qp-b-max";
+
+    /**
+     * A key describing the minimum Quantization Parameter allowed for encoding video.
+     * This value applies to video B-frames.
+     *
+     * The associated value is an integer.
+     */
+    public static final String KEY_VIDEO_QP_B_MIN = "video-qp-b-min";
+
+    /**
      * A key describing the audio session ID of the AudioTrack associated
      * to a tunneled video codec.
      * The associated value is an integer.
@@ -1152,6 +1219,22 @@ public final class MediaFormat {
      * @see MediaCodec#PARAMETER_KEY_HDR10_PLUS_INFO
      */
     public static final String KEY_HDR10_PLUS_INFO = "hdr10-plus-info";
+
+    /**
+     * An optional key describing the opto-electronic transfer function
+     * requested for the output video content.
+     *
+     * The associated value is an integer: 0 if unspecified, or one of the
+     * COLOR_TRANSFER_ values. When unspecified the component will not touch the
+     * video content; otherwise the component will tone-map the raw video frame
+     * to match the requested transfer function.
+     *
+     * After configure, component's input format will contain this key to note
+     * whether the request is supported or not. If the value in the input format
+     * is the same as the requested value, the request is supported. The value
+     * is set to 0 if unsupported.
+     */
+    public static final String KEY_COLOR_TRANSFER_REQUEST = "color-transfer-request";
 
     /**
      * A key describing a unique ID for the content of a media track.

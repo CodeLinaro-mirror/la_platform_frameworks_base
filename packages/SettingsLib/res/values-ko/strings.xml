@@ -36,6 +36,7 @@
     <string name="wifi_no_internet_no_reconnect" msgid="821591791066497347">"자동으로 연결되지 않습니다."</string>
     <string name="wifi_no_internet" msgid="1774198889176926299">"인터넷에 연결되어 있지 않음"</string>
     <string name="saved_network" msgid="7143698034077223645">"<xliff:g id="NAME">%1$s</xliff:g>(으)로 저장됨"</string>
+    <string name="connected_to_metered_access_point" msgid="9179693207918156341">"데이터 전송량 제한이 있는 네트워크에 연결됨"</string>
     <string name="connected_via_network_scorer" msgid="7665725527352893558">"%1$s을(를) 통해 자동으로 연결됨"</string>
     <string name="connected_via_network_scorer_default" msgid="7973529709744526285">"네트워크 평가 제공업체를 통해 자동으로 연결됨"</string>
     <string name="connected_via_passpoint" msgid="7735442932429075684">"%1$s을(를) 통해 연결됨"</string>
@@ -403,6 +404,7 @@
     <string name="transcode_user_control" msgid="6176368544817731314">"트랜스코딩 기본값 재정의"</string>
     <string name="transcode_enable_all" msgid="2411165920039166710">"트랜스코딩 사용"</string>
     <string name="transcode_default" msgid="3784803084573509491">"앱이 최신 형식을 지원하는 것으로 가정"</string>
+    <string name="transcode_notification" msgid="5560515979793436168">"트랜스코딩 알림 표시"</string>
     <string name="runningservices_settings_title" msgid="6460099290493086515">"실행 중인 서비스"</string>
     <string name="runningservices_settings_summary" msgid="1046080643262665743">"현재 실행 중인 서비스 보기 및 제어"</string>
     <string name="select_webview_provider_title" msgid="3917815648099445503">"WebView 구현"</string>
@@ -422,7 +424,7 @@
     <string name="daltonizer_mode_protanomaly" msgid="7805583306666608440">"적색약(적녹)"</string>
     <string name="daltonizer_mode_tritanomaly" msgid="7135266249220732267">"청색약(청황)"</string>
     <string name="accessibility_display_daltonizer_preference_title" msgid="1810693571332381974">"색상 보정"</string>
-    <string name="accessibility_display_daltonizer_preference_subtitle" msgid="1284746051652993443">"색상 보정을 사용하면 기기에 표시되는 색상을 조절할 수 있습니다."</string>
+    <string name="accessibility_display_daltonizer_preference_subtitle" msgid="8625527799885140826">"기기에 색상이 표시되는 방식을 조정합니다. 색상을 더 정확하게 보고 싶거나 집중을 위해 일부 색상을 제거할 때 유용합니다."</string>
     <string name="daltonizer_type_overridden" msgid="4509604753672535721">"<xliff:g id="TITLE">%1$s</xliff:g> 우선 적용됨"</string>
     <string name="power_remaining_settings_home_page" msgid="4885165789445462557">"<xliff:g id="PERCENTAGE">%1$s</xliff:g>, <xliff:g id="TIME_STRING">%2$s</xliff:g>"</string>
     <string name="power_remaining_duration_only" msgid="8264199158671531431">"남은 시간 약 <xliff:g id="TIME_REMAINING">%1$s</xliff:g>"</string>
@@ -513,6 +515,7 @@
     <string name="zen_mode_forever" msgid="3339224497605461291">"사용 중지할 때까지"</string>
     <string name="time_unit_just_now" msgid="3006134267292728099">"조금 전"</string>
     <string name="media_transfer_this_device_name" msgid="2716555073132169240">"휴대전화 스피커"</string>
+    <string name="media_transfer_this_phone" msgid="7194341457812151531">"이 휴대전화"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"연결 중에 문제가 발생했습니다. 기기를 껐다가 다시 켜 보세요."</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"유선 오디오 기기"</string>
     <string name="help_label" msgid="3528360748637781274">"고객센터"</string>
@@ -553,7 +556,7 @@
     <string name="creating_new_user_dialog_message" msgid="7232880257538970375">"새로운 사용자를 만드는 중…"</string>
     <string name="user_nickname" msgid="262624187455825083">"닉네임"</string>
     <string name="guest_new_guest" msgid="3482026122932643557">"게스트 추가"</string>
-    <string name="guest_exit_guest" msgid="4754204715192830850">"게스트 세션 종료"</string>
+    <string name="guest_exit_guest" msgid="5908239569510734136">"게스트 삭제"</string>
     <string name="guest_nickname" msgid="6332276931583337261">"게스트"</string>
     <string name="user_image_take_photo" msgid="467512954561638530">"사진 찍기"</string>
     <string name="user_image_choose_photo" msgid="1363820919146782908">"이미지 선택"</string>
@@ -590,5 +593,6 @@
     <string name="accessibility_data_three_bars" msgid="2813876214466722413">"데이터 신호 막대가 세 개입니다."</string>
     <string name="accessibility_data_signal_full" msgid="1808301899314382337">"데이터 신호가 강합니다."</string>
     <string name="accessibility_ethernet_disconnected" msgid="2832501530856497489">"이더넷에서 연결 해제되었습니다."</string>
-    <string name="accessibility_ethernet_connected" msgid="2093872142317190618">"이더넷에 연결되었습니다."</string>
+    <string name="accessibility_ethernet_connected" msgid="6175942685957461563">"이더넷에 연결되었습니다."</string>
+    <string name="accessibility_no_calling" msgid="3540827068323895748">"통화 모드가 없습니다."</string>
 </resources>

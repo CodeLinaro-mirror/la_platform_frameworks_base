@@ -36,6 +36,7 @@
     <string name="wifi_no_internet_no_reconnect" msgid="821591791066497347">"Non verrà eseguita la connessione automatica"</string>
     <string name="wifi_no_internet" msgid="1774198889176926299">"Nessun accesso a Internet"</string>
     <string name="saved_network" msgid="7143698034077223645">"Salvata da <xliff:g id="NAME">%1$s</xliff:g>"</string>
+    <string name="connected_to_metered_access_point" msgid="9179693207918156341">"Connessione a rete a consumo effettuata"</string>
     <string name="connected_via_network_scorer" msgid="7665725527352893558">"Collegato automaticamente tramite %1$s"</string>
     <string name="connected_via_network_scorer_default" msgid="7973529709744526285">"Collegato automaticamente tramite fornitore di servizi di valutazione rete"</string>
     <string name="connected_via_passpoint" msgid="7735442932429075684">"Collegato tramite %1$s"</string>
@@ -403,6 +404,7 @@
     <string name="transcode_user_control" msgid="6176368544817731314">"Sostituisci impostazioni predefinite transcodifica"</string>
     <string name="transcode_enable_all" msgid="2411165920039166710">"Attiva transcodifica"</string>
     <string name="transcode_default" msgid="3784803084573509491">"Presupponi che le app supportino i formati moderni"</string>
+    <string name="transcode_notification" msgid="5560515979793436168">"Mostra notifiche relative alla transcodifica"</string>
     <string name="runningservices_settings_title" msgid="6460099290493086515">"Servizi in esecuzione"</string>
     <string name="runningservices_settings_summary" msgid="1046080643262665743">"Visualizza e controlla i servizi attualmente in esecuzione"</string>
     <string name="select_webview_provider_title" msgid="3917815648099445503">"Implementazione di WebView"</string>
@@ -422,7 +424,8 @@
     <string name="daltonizer_mode_protanomaly" msgid="7805583306666608440">"Protanomalìa (rosso-verde)"</string>
     <string name="daltonizer_mode_tritanomaly" msgid="7135266249220732267">"Tritanomalìa (blu-giallo)"</string>
     <string name="accessibility_display_daltonizer_preference_title" msgid="1810693571332381974">"Correzione del colore"</string>
-    <string name="accessibility_display_daltonizer_preference_subtitle" msgid="1284746051652993443">"La correzione del colore ti consente di regolare la visualizzazione dei colori sul tuo dispositivo"</string>
+    <!-- no translation found for accessibility_display_daltonizer_preference_subtitle (8625527799885140826) -->
+    <skip />
     <string name="daltonizer_type_overridden" msgid="4509604753672535721">"Valore sostituito da <xliff:g id="TITLE">%1$s</xliff:g>"</string>
     <string name="power_remaining_settings_home_page" msgid="4885165789445462557">"<xliff:g id="PERCENTAGE">%1$s</xliff:g> - <xliff:g id="TIME_STRING">%2$s</xliff:g>"</string>
     <string name="power_remaining_duration_only" msgid="8264199158671531431">"Tempo rimanente: <xliff:g id="TIME_REMAINING">%1$s</xliff:g> circa"</string>
@@ -513,6 +516,8 @@
     <string name="zen_mode_forever" msgid="3339224497605461291">"Fino alla disattivazione"</string>
     <string name="time_unit_just_now" msgid="3006134267292728099">"Adesso"</string>
     <string name="media_transfer_this_device_name" msgid="2716555073132169240">"Altoparlante telefono"</string>
+    <!-- no translation found for media_transfer_this_phone (7194341457812151531) -->
+    <skip />
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Problema di connessione. Spegni e riaccendi il dispositivo"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Dispositivo audio cablato"</string>
     <string name="help_label" msgid="3528360748637781274">"Guida e feedback"</string>
@@ -553,7 +558,7 @@
     <string name="creating_new_user_dialog_message" msgid="7232880257538970375">"Creazione nuovo utente…"</string>
     <string name="user_nickname" msgid="262624187455825083">"Nickname"</string>
     <string name="guest_new_guest" msgid="3482026122932643557">"Aggiungi ospite"</string>
-    <string name="guest_exit_guest" msgid="4754204715192830850">"Termina sessione Ospite"</string>
+    <string name="guest_exit_guest" msgid="5908239569510734136">"Rimuovi ospite"</string>
     <string name="guest_nickname" msgid="6332276931583337261">"Ospite"</string>
     <string name="user_image_take_photo" msgid="467512954561638530">"Scatta una foto"</string>
     <string name="user_image_choose_photo" msgid="1363820919146782908">"Scegli un\'immagine"</string>
@@ -576,7 +581,7 @@
     <string name="data_connection_4g_plus" msgid="5194902328408751020">"4G+"</string>
     <string name="data_connection_lte" msgid="7675461204366364124">"LTE"</string>
     <string name="data_connection_lte_plus" msgid="6643158654804916653">"LTE+"</string>
-    <string name="data_connection_carrier_wifi" msgid="2250268321065848954">"Wi-Fi operatore"</string>
+    <string name="data_connection_carrier_wifi" msgid="2250268321065848954">"CWF"</string>
     <string name="cell_data_off_content_description" msgid="2280700839891636498">"Dati mobili disattivati"</string>
     <string name="not_default_data_content_description" msgid="6517068332106592887">"Non impostato per l\'utilizzo dei dati"</string>
     <string name="accessibility_no_phone" msgid="2687419663127582503">"Nessun telefono."</string>
@@ -590,5 +595,6 @@
     <string name="accessibility_data_three_bars" msgid="2813876214466722413">"Dati: tre barre."</string>
     <string name="accessibility_data_signal_full" msgid="1808301899314382337">"Massimo segnale dati."</string>
     <string name="accessibility_ethernet_disconnected" msgid="2832501530856497489">"Connessione Ethernet annullata."</string>
-    <string name="accessibility_ethernet_connected" msgid="2093872142317190618">"Connessione Ethernet stabilita."</string>
+    <string name="accessibility_ethernet_connected" msgid="6175942685957461563">"Ethernet."</string>
+    <string name="accessibility_no_calling" msgid="3540827068323895748">"Chiamate non disponibili."</string>
 </resources>

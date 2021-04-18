@@ -118,8 +118,8 @@ public class BackgroundDexOptService extends JobService {
         // Schedule a one-off job which scans installed packages and updates
         // out-of-date oat files.
         js.schedule(new JobInfo.Builder(JOB_POST_BOOT_UPDATE, sDexoptServiceName)
-                    .setMinimumLatency(TimeUnit.MINUTES.toMillis(1))
-                    .setOverrideDeadline(TimeUnit.MINUTES.toMillis(1))
+                    .setMinimumLatency(TimeUnit.MINUTES.toMillis(10))
+                    .setOverrideDeadline(TimeUnit.MINUTES.toMillis(60))
                     .build());
 
         // Schedule a daily job which scans installed packages and compiles
@@ -217,7 +217,7 @@ public class BackgroundDexOptService extends JobService {
             // trade-off worth doing to save boot time work.
             int result = pm.performDexOptWithStatus(new DexoptOptions(
                     pkg,
-                    PackageManagerService.REASON_BOOT,
+                    PackageManagerService.REASON_POST_BOOT,
                     DexoptOptions.DEXOPT_BOOT_COMPLETE));
             if (result == PackageDexOptimizer.DEX_OPT_PERFORMED)  {
                 updatedPackages.add(pkg);

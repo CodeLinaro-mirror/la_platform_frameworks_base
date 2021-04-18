@@ -17,6 +17,7 @@
 package android.app;
 
 import static android.Manifest.permission.CONTROL_REMOTE_APP_TRANSITION_ANIMATIONS;
+import static android.Manifest.permission.START_TASKS_FROM_RECENTS;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_UNDEFINED;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.view.Display.INVALID_DISPLAY;
@@ -159,6 +160,12 @@ public class ActivityOptions {
     public static final String KEY_ANIM_START_LISTENER = "android:activity.animStartListener";
 
     /**
+     * Specific a theme for a splash screen window.
+     * @hide
+     */
+    public static final String KEY_SPLASH_SCREEN_THEME = "android.activity.splashScreenTheme";
+
+    /**
      * Callback for when the last frame of the animation is played.
      * @hide
      */
@@ -197,6 +204,14 @@ public class ActivityOptions {
      */
     private static final String KEY_LAUNCH_TASK_DISPLAY_AREA_TOKEN =
             "android.activity.launchTaskDisplayAreaToken";
+
+    /**
+     * The root task token the activity should be launched into.
+     * @see #setLaunchRootTask(WindowContainerToken)
+     * @hide
+     */
+    public static final String KEY_LAUNCH_ROOT_TASK_TOKEN =
+            "android.activity.launchRootTaskToken";
 
     /**
      * The windowing mode the activity should be launched into.
@@ -302,11 +317,18 @@ public class ActivityOptions {
     private static final String KEY_REMOTE_TRANSITION =
             "android:activity.remoteTransition";
 
+    private static final String KEY_OVERRIDE_TASK_TRANSITION =
+            "android:activity.overrideTaskTransition";
+
+    /** See {@link #setRemoveWithTaskOrganizer(boolean)}. */
+    private static final String KEY_REMOVE_WITH_TASK_ORGANIZER =
+            "android.activity.removeWithTaskOrganizer";
+
     /**
      * @see #setLaunchCookie
      * @hide
      */
-    private static final String KEY_LAUNCH_COOKIE = "android.activity.launchCookie";
+    public static final String KEY_LAUNCH_COOKIE = "android.activity.launchCookie";
 
     /** @hide */
     public static final int ANIM_UNDEFINED = -1;
@@ -362,6 +384,7 @@ public class ActivityOptions {
     private int mLaunchDisplayId = INVALID_DISPLAY;
     private int mCallerDisplayId = INVALID_DISPLAY;
     private WindowContainerToken mLaunchTaskDisplayArea;
+    private WindowContainerToken mLaunchRootTask;
     @WindowConfiguration.WindowingMode
     private int mLaunchWindowingMode = WINDOWING_MODE_UNDEFINED;
     @WindowConfiguration.ActivityType
@@ -384,6 +407,9 @@ public class ActivityOptions {
     private RemoteAnimationAdapter mRemoteAnimationAdapter;
     private IBinder mLaunchCookie;
     private IRemoteTransition mRemoteTransition;
+    private boolean mOverrideTaskTransition;
+    private int mSplashScreenThemeResId;
+    private boolean mRemoveWithTaskOrganizer;
 
     /**
      * Create an ActivityOptions specifying a custom animation to run when
@@ -463,6 +489,40 @@ public class ActivityOptions {
         ActivityOptions opts = makeCustomAnimation(context, enterResId, exitResId, handler,
                 startedListener);
         opts.setOnAnimationFinishedListener(handler, finishedListener);
+        return opts;
+    }
+
+    /**
+     * Create an ActivityOptions specifying a custom animation to run when the activity in the
+     * different task is displayed.
+     *
+     * @param context Who is defining this.  This is the application that the
+     * animation resources will be loaded from.
+     * @param enterResId A resource ID of the animation resource to use for
+     * the incoming activity.  Use 0 for no animation.
+     * @param exitResId A resource ID of the animation resource to use for
+     * the outgoing activity.  Use 0 for no animation.
+     * @param handler If <var>listener</var> is non-null this must be a valid
+     * Handler on which to dispatch the callback; otherwise it should be null.
+     * @param startedListener Optional OnAnimationStartedListener to find out when the
+     * requested animation has started running.  If for some reason the animation
+     * is not executed, the callback will happen immediately.
+     * @param finishedListener Optional OnAnimationFinishedListener when the animation
+     * has finished running.
+     *
+     * @return Returns a new ActivityOptions object that you can use to
+     * supply these options as the options Bundle when starting an activity.
+     * @hide
+     */
+    @RequiresPermission(START_TASKS_FROM_RECENTS)
+    @TestApi
+    public static @NonNull ActivityOptions makeCustomTaskAnimation(@NonNull Context context,
+            int enterResId, int exitResId, @Nullable Handler handler,
+            @Nullable OnAnimationStartedListener startedListener,
+            @Nullable OnAnimationFinishedListener finishedListener) {
+        ActivityOptions opts = makeCustomAnimation(context, enterResId, exitResId, handler,
+                startedListener, finishedListener);
+        opts.mOverrideTaskTransition = true;
         return opts;
     }
 
@@ -978,6 +1038,18 @@ public class ActivityOptions {
         return opts;
     }
 
+    /**
+     * Create an {@link ActivityOptions} instance that lets the application control the entire
+     * transition using a {@link IRemoteTransition}.
+     * @hide
+     */
+    @RequiresPermission(CONTROL_REMOTE_APP_TRANSITION_ANIMATIONS)
+    public static ActivityOptions makeRemoteTransition(IRemoteTransition remoteTransition) {
+        final ActivityOptions opts = new ActivityOptions();
+        opts.mRemoteTransition = remoteTransition;
+        return opts;
+    }
+
     /** @hide */
     public boolean getLaunchTaskBehind() {
         return mAnimationType == ANIM_LAUNCH_TASK_BEHIND;
@@ -1050,6 +1122,7 @@ public class ActivityOptions {
         mLaunchDisplayId = opts.getInt(KEY_LAUNCH_DISPLAY_ID, INVALID_DISPLAY);
         mCallerDisplayId = opts.getInt(KEY_CALLER_DISPLAY_ID, INVALID_DISPLAY);
         mLaunchTaskDisplayArea = opts.getParcelable(KEY_LAUNCH_TASK_DISPLAY_AREA_TOKEN);
+        mLaunchRootTask = opts.getParcelable(KEY_LAUNCH_ROOT_TASK_TOKEN);
         mLaunchWindowingMode = opts.getInt(KEY_LAUNCH_WINDOWING_MODE, WINDOWING_MODE_UNDEFINED);
         mLaunchActivityType = opts.getInt(KEY_LAUNCH_ACTIVITY_TYPE, ACTIVITY_TYPE_UNDEFINED);
         mLaunchTaskId = opts.getInt(KEY_LAUNCH_TASK_ID, -1);
@@ -1085,6 +1158,9 @@ public class ActivityOptions {
         mLaunchCookie = opts.getBinder(KEY_LAUNCH_COOKIE);
         mRemoteTransition = IRemoteTransition.Stub.asInterface(opts.getBinder(
                 KEY_REMOTE_TRANSITION));
+        mOverrideTaskTransition = opts.getBoolean(KEY_OVERRIDE_TASK_TRANSITION);
+        mSplashScreenThemeResId = opts.getInt(KEY_SPLASH_SCREEN_THEME);
+        mRemoveWithTaskOrganizer = opts.getBoolean(KEY_REMOVE_WITH_TASK_ORGANIZER);
     }
 
     /**
@@ -1271,6 +1347,14 @@ public class ActivityOptions {
     }
 
     /**
+     * Gets whether the activity want to be launched as other theme for the splash screen.
+     * @hide
+     */
+    public int getSplashScreenThemeResId() {
+        return mSplashScreenThemeResId;
+    }
+
+    /**
      * Sets whether the activity is to be launched into LockTask mode.
      *
      * Use this option to start an activity in LockTask mode. Note that only apps permitted by
@@ -1338,6 +1422,17 @@ public class ActivityOptions {
     public ActivityOptions setLaunchTaskDisplayArea(
             WindowContainerToken windowContainerToken) {
         mLaunchTaskDisplayArea = windowContainerToken;
+        return this;
+    }
+
+    /** @hide */
+    public WindowContainerToken getLaunchRootTask() {
+        return mLaunchRootTask;
+    }
+
+    /** @hide */
+    public ActivityOptions setLaunchRootTask(WindowContainerToken windowContainerToken) {
+        mLaunchRootTask = windowContainerToken;
         return this;
     }
 
@@ -1528,6 +1623,28 @@ public class ActivityOptions {
         return mLaunchCookie;
     }
 
+
+    /** @hide */
+    public boolean getOverrideTaskTransition() {
+        return mOverrideTaskTransition;
+    }
+
+    /**
+     * Sets whether to remove the task when TaskOrganizer, which is managing it, is destroyed.
+     * @hide
+     */
+    public void setRemoveWithTaskOrganizer(boolean remove) {
+        mRemoveWithTaskOrganizer = remove;
+    }
+
+    /**
+     * @return whether to remove the task when TaskOrganizer, which is managing it, is destroyed.
+     * @hide
+     */
+    public boolean getRemoveWithTaskOranizer() {
+        return mRemoveWithTaskOrganizer;
+    }
+
     /**
      * Update the current values in this ActivityOptions from those supplied
      * in <var>otherOptions</var>.  Any values
@@ -1692,6 +1809,9 @@ public class ActivityOptions {
         if (mLaunchTaskDisplayArea != null) {
             b.putParcelable(KEY_LAUNCH_TASK_DISPLAY_AREA_TOKEN, mLaunchTaskDisplayArea);
         }
+        if (mLaunchRootTask != null) {
+            b.putParcelable(KEY_LAUNCH_ROOT_TASK_TOKEN, mLaunchRootTask);
+        }
         if (mLaunchWindowingMode != WINDOWING_MODE_UNDEFINED) {
             b.putInt(KEY_LAUNCH_WINDOWING_MODE, mLaunchWindowingMode);
         }
@@ -1752,6 +1872,15 @@ public class ActivityOptions {
         }
         if (mRemoteTransition != null) {
             b.putBinder(KEY_REMOTE_TRANSITION, mRemoteTransition.asBinder());
+        }
+        if (mOverrideTaskTransition) {
+            b.putBoolean(KEY_OVERRIDE_TASK_TRANSITION, mOverrideTaskTransition);
+        }
+        if (mSplashScreenThemeResId != 0) {
+            b.putInt(KEY_SPLASH_SCREEN_THEME, mSplashScreenThemeResId);
+        }
+        if (mRemoveWithTaskOrganizer) {
+            b.putBoolean(KEY_REMOVE_WITH_TASK_ORGANIZER, mRemoveWithTaskOrganizer);
         }
         return b;
     }

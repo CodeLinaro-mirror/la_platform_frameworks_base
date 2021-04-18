@@ -56,6 +56,7 @@ import android.hardware.face.FaceSensorProperties;
 import android.hardware.face.FaceSensorPropertiesInternal;
 import android.hardware.fingerprint.FingerprintManager;
 import android.media.AudioManager;
+import android.nfc.NfcAdapter;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IRemoteCallback;
@@ -83,6 +84,7 @@ import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
+import com.android.systemui.statusbar.FeatureFlags;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.util.RingerModeTracker;
@@ -159,6 +161,8 @@ public class KeyguardUpdateMonitorTest extends SysuiTestCase {
     private StatusBarStateController mStatusBarStateController;
     @Mock
     private AuthController mAuthController;
+    @Mock
+    private FeatureFlags mFeatureFlags;
     @Captor
     private ArgumentCaptor<StatusBarStateController.StateListener> mStatusBarStateListenerCaptor;
     // Direct executor
@@ -215,6 +219,8 @@ public class KeyguardUpdateMonitorTest extends SysuiTestCase {
         mSpiedContext.addMockSystemService(TelephonyManager.class, mTelephonyManager);
 
         when(mRingerModeTracker.getRingerMode()).thenReturn(mRingerModeLiveData);
+
+        when(mFeatureFlags.isKeyguardLayoutEnabled()).thenReturn(false);
 
         mMockitoSession = ExtendedMockito.mockitoSession()
                 .spyStatic(SubscriptionManager.class).startMocking();
@@ -787,36 +793,6 @@ public class KeyguardUpdateMonitorTest extends SysuiTestCase {
     }
 
     @Test
-    public void testStartUdfpsServiceOnShadeLocked() {
-        // GIVEN
-        // - bouncer isn't showing
-        // - user has authenticated since boot
-        setKeyguardBouncerVisibility(false /* isVisible */);
-        when(mStrongAuthTracker.hasUserAuthenticatedSinceBoot()).thenReturn(true);
-
-        // WHEN the status bar state changes to SHADE_LOCKED
-        mStatusBarStateListener.onStateChanged(StatusBarState.SHADE_LOCKED);
-
-        // THEN we shouldn't listen for udfps
-        assertThat(mKeyguardUpdateMonitor.shouldListenForUdfps()).isEqualTo(false);
-    }
-
-    @Test
-    public void testStartUdfpsServiceOnFullscreenUserSwitcher() {
-        // GIVEN
-        // - bouncer isn't showing
-        // - user has authenticated since boot
-        setKeyguardBouncerVisibility(false /* isVisible */);
-        when(mStrongAuthTracker.hasUserAuthenticatedSinceBoot()).thenReturn(true);
-
-        // WHEN the status bar state changes to FULLSCREEN_USER_SWITCHER
-        mStatusBarStateListener.onStateChanged(StatusBarState.FULLSCREEN_USER_SWITCHER);
-
-        // THEN we shouldn't listen for udfps
-        assertThat(mKeyguardUpdateMonitor.shouldListenForUdfps()).isEqualTo(false);
-    }
-
-    @Test
     public void testStartUdfpsServiceNoAuthenticationSinceLastBoot() {
         // GIVEN
         // - bouncer isn't showing
@@ -844,6 +820,17 @@ public class KeyguardUpdateMonitorTest extends SysuiTestCase {
 
         // THEN we shouldn't listen for udfps
         assertThat(mKeyguardUpdateMonitor.shouldListenForUdfps()).isEqualTo(false);
+    }
+
+    @Test
+    public void testRequireUnlockForNfc_Broadcast() {
+        KeyguardUpdateMonitorCallback callback = mock(KeyguardUpdateMonitorCallback.class);
+        mKeyguardUpdateMonitor.registerCallback(callback);
+        Intent intent = new Intent(NfcAdapter.ACTION_REQUIRE_UNLOCK_FOR_NFC);
+        mKeyguardUpdateMonitor.mBroadcastAllReceiver.onReceive(getContext(), intent);
+        mTestableLooper.processAllMessages();
+
+        verify(callback, atLeastOnce()).onRequireUnlockForNfc();
     }
 
     private void setKeyguardBouncerVisibility(boolean isVisible) {
@@ -884,7 +871,7 @@ public class KeyguardUpdateMonitorTest extends SysuiTestCase {
                     mBroadcastDispatcher, mDumpManager,
                     mRingerModeTracker, mBackgroundExecutor,
                     mStatusBarStateController, mLockPatternUtils,
-                    mAuthController);
+                    mAuthController, mFeatureFlags);
             setStrongAuthTracker(KeyguardUpdateMonitorTest.this.mStrongAuthTracker);
         }
 

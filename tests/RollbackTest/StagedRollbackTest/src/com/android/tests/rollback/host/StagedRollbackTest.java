@@ -16,11 +16,11 @@
 
 package com.android.tests.rollback.host;
 
-import static com.google.common.truth.Truth.assertThat;
+import static com.android.tests.rollback.host.WatchdogEventLogger.Subject.assertThat;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
+
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeTrue;
 
@@ -62,9 +62,9 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
      * For example, <code>runPhase("testApkOnlyEnableRollback");</code>
      */
     private void runPhase(String phase) throws Exception {
-        assertTrue(runDeviceTests("com.android.tests.rollback",
+        assertThat(runDeviceTests("com.android.tests.rollback",
                     "com.android.tests.rollback.StagedRollbackTest",
-                    phase));
+                    phase)).isTrue();
     }
 
     private static final String APK_IN_APEX_TESTAPEX_NAME = "com.android.apex.apkrollback.test";
@@ -97,14 +97,20 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
     public void setUp() throws Exception {
         deleteFiles("/system/apex/" + APK_IN_APEX_TESTAPEX_NAME + "*.apex",
                 "/data/apex/active/" + APK_IN_APEX_TESTAPEX_NAME + "*.apex");
-        runPhase("testCleanUp");
+        runPhase("expireRollbacks");
         mLogger.start(getDevice());
+        getDevice().uninstallPackage("com.android.cts.install.lib.testapp.A");
+        getDevice().uninstallPackage("com.android.cts.install.lib.testapp.B");
+        getDevice().uninstallPackage("com.android.cts.install.lib.testapp.C");
     }
 
     @After
     public void tearDown() throws Exception {
+        getDevice().uninstallPackage("com.android.cts.install.lib.testapp.A");
+        getDevice().uninstallPackage("com.android.cts.install.lib.testapp.B");
+        getDevice().uninstallPackage("com.android.cts.install.lib.testapp.C");
         mLogger.stop();
-        runPhase("testCleanUp");
+        runPhase("expireRollbacks");
         deleteFiles("/system/apex/" + APK_IN_APEX_TESTAPEX_NAME + "*.apex",
                 "/data/apex/active/" + APK_IN_APEX_TESTAPEX_NAME + "*.apex",
                 apexDataDirDeSys(APK_IN_APEX_TESTAPEX_NAME) + "*",
@@ -139,38 +145,42 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         }
     }
 
+    private void waitForDeviceNotAvailable(long timeout, TimeUnit unit) {
+        assertWithMessage("waitForDeviceNotAvailable() timed out in %s %s", timeout, unit)
+                .that(getDevice().waitForDeviceNotAvailable(unit.toMillis(timeout))).isTrue();
+    }
+
     /**
      * Tests watchdog triggered staged rollbacks involving only apks.
      */
     @Test
     public void testBadApkOnly() throws Exception {
-        runPhase("testBadApkOnly_Phase1");
+        runPhase("testBadApkOnly_Phase1_Install");
         getDevice().reboot();
-        runPhase("testBadApkOnly_Phase2");
+        runPhase("testBadApkOnly_Phase2_VerifyInstall");
 
-        // Trigger rollback and wait for reboot to happen
-        runPhase("testBadApkOnly_Phase3");
-        assertTrue(getDevice().waitForDeviceNotAvailable(TimeUnit.MINUTES.toMillis(2)));
+        // Launch the app to crash to trigger rollback
+        startActivity(TESTAPP_A);
+        // Wait for reboot to happen
+        waitForDeviceNotAvailable(2, TimeUnit.MINUTES);
 
         getDevice().waitForDeviceAvailable();
 
-        runPhase("testBadApkOnly_Phase4");
+        runPhase("testBadApkOnly_Phase3_VerifyRollback");
 
-        assertTrue(mLogger.watchdogEventOccurred(ROLLBACK_INITIATE, null,
-                REASON_APP_CRASH, TESTAPP_A));
-        assertTrue(mLogger.watchdogEventOccurred(ROLLBACK_BOOT_TRIGGERED, null,
-                null, null));
-        assertTrue(mLogger.watchdogEventOccurred(ROLLBACK_SUCCESS, null, null, null));
+        assertThat(mLogger).eventOccurred(ROLLBACK_INITIATE, null, REASON_APP_CRASH, TESTAPP_A);
+        assertThat(mLogger).eventOccurred(ROLLBACK_BOOT_TRIGGERED, null, null, null);
+        assertThat(mLogger).eventOccurred(ROLLBACK_SUCCESS, null, null, null);
     }
 
     @Test
     public void testNativeWatchdogTriggersRollback() throws Exception {
-        runPhase("testNativeWatchdogTriggersRollback_Phase1");
+        runPhase("testNativeWatchdogTriggersRollback_Phase1_Install");
 
         // Reboot device to activate staged package
         getDevice().reboot();
 
-        runPhase("testNativeWatchdogTriggersRollback_Phase2");
+        runPhase("testNativeWatchdogTriggersRollback_Phase2_VerifyInstall");
 
         // crash system_server enough times to trigger a rollback
         crashProcess("system_server", NATIVE_CRASHES_THRESHOLD);
@@ -183,17 +193,15 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         // 3. Staged rollback session becomes ready.
         // 4. Device actually reboots.
         // So we give a generous timeout here.
-        assertTrue(getDevice().waitForDeviceNotAvailable(TimeUnit.MINUTES.toMillis(5)));
+        waitForDeviceNotAvailable(5, TimeUnit.MINUTES);
         getDevice().waitForDeviceAvailable();
 
         // verify rollback committed
-        runPhase("testNativeWatchdogTriggersRollback_Phase3");
+        runPhase("testNativeWatchdogTriggersRollback_Phase3_VerifyRollback");
 
-        assertTrue(mLogger.watchdogEventOccurred(ROLLBACK_INITIATE, null,
-                        REASON_NATIVE_CRASH, null));
-        assertTrue(mLogger.watchdogEventOccurred(ROLLBACK_BOOT_TRIGGERED, null,
-                null, null));
-        assertTrue(mLogger.watchdogEventOccurred(ROLLBACK_SUCCESS, null, null, null));
+        assertThat(mLogger).eventOccurred(ROLLBACK_INITIATE, null, REASON_NATIVE_CRASH, null);
+        assertThat(mLogger).eventOccurred(ROLLBACK_BOOT_TRIGGERED, null, null, null);
+        assertThat(mLogger).eventOccurred(ROLLBACK_SUCCESS, null, null, null);
     }
 
     @Test
@@ -202,15 +210,15 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         assumeTrue(isCheckpointSupported());
 
         // Install a package with rollback enabled.
-        runPhase("testNativeWatchdogTriggersRollbackForAll_Phase1");
+        runPhase("testNativeWatchdogTriggersRollbackForAll_Phase1_InstallA");
         getDevice().reboot();
 
         // Once previous staged install is applied, install another package
-        runPhase("testNativeWatchdogTriggersRollbackForAll_Phase2");
+        runPhase("testNativeWatchdogTriggersRollbackForAll_Phase2_InstallB");
         getDevice().reboot();
 
         // Verify the new staged install has also been applied successfully.
-        runPhase("testNativeWatchdogTriggersRollbackForAll_Phase3");
+        runPhase("testNativeWatchdogTriggersRollbackForAll_Phase3_VerifyInstall");
 
         // crash system_server enough times to trigger a rollback
         crashProcess("system_server", NATIVE_CRASHES_THRESHOLD);
@@ -223,17 +231,15 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         // 3. Staged rollback session becomes ready.
         // 4. Device actually reboots.
         // So we give a generous timeout here.
-        assertTrue(getDevice().waitForDeviceNotAvailable(TimeUnit.MINUTES.toMillis(5)));
+        waitForDeviceNotAvailable(5, TimeUnit.MINUTES);
         getDevice().waitForDeviceAvailable();
 
         // verify all available rollbacks have been committed
-        runPhase("testNativeWatchdogTriggersRollbackForAll_Phase4");
+        runPhase("testNativeWatchdogTriggersRollbackForAll_Phase4_VerifyRollback");
 
-        assertTrue(mLogger.watchdogEventOccurred(ROLLBACK_INITIATE, null,
-                        REASON_NATIVE_CRASH, null));
-        assertTrue(mLogger.watchdogEventOccurred(ROLLBACK_BOOT_TRIGGERED, null,
-                null, null));
-        assertTrue(mLogger.watchdogEventOccurred(ROLLBACK_SUCCESS, null, null, null));
+        assertThat(mLogger).eventOccurred(ROLLBACK_INITIATE, null, REASON_NATIVE_CRASH, null);
+        assertThat(mLogger).eventOccurred(ROLLBACK_BOOT_TRIGGERED, null, null, null);
+        assertThat(mLogger).eventOccurred(ROLLBACK_SUCCESS, null, null, null);
     }
 
     /**
@@ -241,33 +247,33 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
      */
     @Test
     public void testPreviouslyAbandonedRollbacks() throws Exception {
-        runPhase("testPreviouslyAbandonedRollbacks_Phase1");
+        runPhase("testPreviouslyAbandonedRollbacks_Phase1_InstallAndAbandon");
         getDevice().reboot();
-        runPhase("testPreviouslyAbandonedRollbacks_Phase2");
+        runPhase("testPreviouslyAbandonedRollbacks_Phase2_Rollback");
         getDevice().reboot();
-        runPhase("testPreviouslyAbandonedRollbacks_Phase3");
+        runPhase("testPreviouslyAbandonedRollbacks_Phase3_VerifyRollback");
     }
 
     /**
-     * Tests we can enable rollback for a whitelisted app.
+     * Tests we can enable rollback for a allowlisted app.
      */
     @Test
-    public void testRollbackWhitelistedApp() throws Exception {
+    public void testRollbackAllowlistedApp() throws Exception {
         assumeTrue(hasMainlineModule());
-        runPhase("testRollbackWhitelistedApp_Phase1");
+        runPhase("testRollbackAllowlistedApp_Phase1_Install");
         getDevice().reboot();
-        runPhase("testRollbackWhitelistedApp_Phase2");
+        runPhase("testRollbackAllowlistedApp_Phase2_VerifyInstall");
     }
 
     @Test
     public void testRollbackDataPolicy() throws Exception {
         List<String> before = getSnapshotDirectories("/data/misc_ce/0/rollback");
 
-        runPhase("testRollbackDataPolicy_Phase1");
+        runPhase("testRollbackDataPolicy_Phase1_Install");
         getDevice().reboot();
-        runPhase("testRollbackDataPolicy_Phase2");
+        runPhase("testRollbackDataPolicy_Phase2_Rollback");
         getDevice().reboot();
-        runPhase("testRollbackDataPolicy_Phase3");
+        runPhase("testRollbackDataPolicy_Phase3_VerifyRollback");
 
         // Verify snapshots are deleted after restoration
         List<String> after = getSnapshotDirectories("/data/misc_ce/0/rollback");
@@ -283,13 +289,12 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
      */
     @Test
     public void testRollbackApexWithApk() throws Exception {
-        getDevice().uninstallPackage("com.android.cts.install.lib.testapp.A");
         pushTestApex();
-        runPhase("testRollbackApexWithApk_Phase1");
+        runPhase("testRollbackApexWithApk_Phase1_Install");
         getDevice().reboot();
-        runPhase("testRollbackApexWithApk_Phase2");
+        runPhase("testRollbackApexWithApk_Phase2_Rollback");
         getDevice().reboot();
-        runPhase("testRollbackApexWithApk_Phase3");
+        runPhase("testRollbackApexWithApk_Phase3_VerifyRollback");
     }
 
     /**
@@ -297,25 +302,24 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
      */
     @Test
     public void testRollbackApexWithApkCrashing() throws Exception {
-        getDevice().uninstallPackage("com.android.cts.install.lib.testapp.A");
         pushTestApex();
 
         // Install an apex with apk that crashes
-        runPhase("testRollbackApexWithApkCrashing_Phase1");
+        runPhase("testRollbackApexWithApkCrashing_Phase1_Install");
         getDevice().reboot();
         // Verify apex was installed and then crash the apk
-        runPhase("testRollbackApexWithApkCrashing_Phase2");
-        // Wait for crash to trigger rollback
-        assertTrue(getDevice().waitForDeviceNotAvailable(TimeUnit.MINUTES.toMillis(5)));
+        runPhase("testRollbackApexWithApkCrashing_Phase2_Crash");
+        // Launch the app to crash to trigger rollback
+        startActivity(TESTAPP_A);
+        // Wait for reboot to happen
+        waitForDeviceNotAvailable(2, TimeUnit.MINUTES);
         getDevice().waitForDeviceAvailable();
         // Verify rollback occurred due to crash of apk-in-apex
-        runPhase("testRollbackApexWithApkCrashing_Phase3");
+        runPhase("testRollbackApexWithApkCrashing_Phase3_VerifyRollback");
 
-        assertTrue(mLogger.watchdogEventOccurred(ROLLBACK_INITIATE, null,
-                REASON_APP_CRASH, TESTAPP_A));
-        assertTrue(mLogger.watchdogEventOccurred(ROLLBACK_BOOT_TRIGGERED, null,
-                null, null));
-        assertTrue(mLogger.watchdogEventOccurred(ROLLBACK_SUCCESS, null, null, null));
+        assertThat(mLogger).eventOccurred(ROLLBACK_INITIATE, null, REASON_APP_CRASH, TESTAPP_A);
+        assertThat(mLogger).eventOccurred(ROLLBACK_BOOT_TRIGGERED, null, null, null);
+        assertThat(mLogger).eventOccurred(ROLLBACK_SUCCESS, null, null, null);
     }
 
     /**
@@ -331,12 +335,12 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         String oldFilePath2 =
                 apexDataDirDeSys(APK_IN_APEX_TESTAPEX_NAME) + TEST_SUBDIR + TEST_FILENAME_2;
         runAsRoot(() -> {
-            assertThat(getDevice().pushString(TEST_STRING_1, oldFilePath1)).isTrue();
-            assertThat(getDevice().pushString(TEST_STRING_2, oldFilePath2)).isTrue();
+            pushString(TEST_STRING_1, oldFilePath1);
+            pushString(TEST_STRING_2, oldFilePath2);
         });
 
         // Install new version of the APEX with rollback enabled
-        runPhase("testRollbackApexDataDirectories_Phase1");
+        runPhase("testRollbackApexDataDirectories_Phase1_Install");
         getDevice().reboot();
 
         // Replace files in data directory
@@ -346,20 +350,20 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         runAsRoot(() -> {
             getDevice().deleteFile(oldFilePath1);
             getDevice().deleteFile(oldFilePath2);
-            assertThat(getDevice().pushString(TEST_STRING_3, newFilePath3)).isTrue();
-            assertThat(getDevice().pushString(TEST_STRING_4, newFilePath4)).isTrue();
+            pushString(TEST_STRING_3, newFilePath3);
+            pushString(TEST_STRING_4, newFilePath4);
         });
 
         // Roll back the APEX
-        runPhase("testRollbackApexDataDirectories_Phase2");
+        runPhase("testRollbackApexDataDirectories_Phase2_Rollback");
         getDevice().reboot();
 
         // Verify that old files have been restored and new files are gone
         runAsRoot(() -> {
-            assertEquals(TEST_STRING_1, getDevice().pullFileContents(oldFilePath1));
-            assertEquals(TEST_STRING_2, getDevice().pullFileContents(oldFilePath2));
-            assertNull(getDevice().pullFile(newFilePath3));
-            assertNull(getDevice().pullFile(newFilePath4));
+            assertFileContents(TEST_STRING_1, oldFilePath1);
+            assertFileContents(TEST_STRING_2, oldFilePath2);
+            assertFileNotExists(newFilePath3);
+            assertFileNotExists(newFilePath4);
         });
 
         // Verify snapshots are deleted after restoration
@@ -385,12 +389,12 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         String oldFilePath2 =
                 apexDataDirDeUser(APK_IN_APEX_TESTAPEX_NAME, 0) + TEST_SUBDIR + TEST_FILENAME_2;
         runAsRoot(() -> {
-            assertThat(getDevice().pushString(TEST_STRING_1, oldFilePath1)).isTrue();
-            assertThat(getDevice().pushString(TEST_STRING_2, oldFilePath2)).isTrue();
+            pushString(TEST_STRING_1, oldFilePath1);
+            pushString(TEST_STRING_2, oldFilePath2);
         });
 
         // Install new version of the APEX with rollback enabled
-        runPhase("testRollbackApexDataDirectories_Phase1");
+        runPhase("testRollbackApexDataDirectories_Phase1_Install");
         getDevice().reboot();
 
         // Replace files in data directory
@@ -401,20 +405,20 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         runAsRoot(() -> {
             getDevice().deleteFile(oldFilePath1);
             getDevice().deleteFile(oldFilePath2);
-            assertThat(getDevice().pushString(TEST_STRING_3, newFilePath3)).isTrue();
-            assertThat(getDevice().pushString(TEST_STRING_4, newFilePath4)).isTrue();
+            pushString(TEST_STRING_3, newFilePath3);
+            pushString(TEST_STRING_4, newFilePath4);
         });
 
         // Roll back the APEX
-        runPhase("testRollbackApexDataDirectories_Phase2");
+        runPhase("testRollbackApexDataDirectories_Phase2_Rollback");
         getDevice().reboot();
 
         // Verify that old files have been restored and new files are gone
         runAsRoot(() -> {
-            assertEquals(TEST_STRING_1, getDevice().pullFileContents(oldFilePath1));
-            assertEquals(TEST_STRING_2, getDevice().pullFileContents(oldFilePath2));
-            assertNull(getDevice().pullFile(newFilePath3));
-            assertNull(getDevice().pullFile(newFilePath4));
+            assertFileContents(TEST_STRING_1, oldFilePath1);
+            assertFileContents(TEST_STRING_2, oldFilePath2);
+            assertFileNotExists(newFilePath3);
+            assertFileNotExists(newFilePath4);
         });
 
         // Verify snapshots are deleted after restoration
@@ -439,12 +443,12 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         String oldFilePath2 =
                 apexDataDirCe(APK_IN_APEX_TESTAPEX_NAME, 0) + TEST_SUBDIR + TEST_FILENAME_2;
         runAsRoot(() -> {
-            assertThat(getDevice().pushString(TEST_STRING_1, oldFilePath1)).isTrue();
-            assertThat(getDevice().pushString(TEST_STRING_2, oldFilePath2)).isTrue();
+            pushString(TEST_STRING_1, oldFilePath1);
+            pushString(TEST_STRING_2, oldFilePath2);
         });
 
         // Install new version of the APEX with rollback enabled
-        runPhase("testRollbackApexDataDirectories_Phase1");
+        runPhase("testRollbackApexDataDirectories_Phase1_Install");
         getDevice().reboot();
 
         // Replace files in data directory
@@ -454,20 +458,20 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         runAsRoot(() -> {
             getDevice().deleteFile(oldFilePath1);
             getDevice().deleteFile(oldFilePath2);
-            assertThat(getDevice().pushString(TEST_STRING_3, newFilePath3)).isTrue();
-            assertThat(getDevice().pushString(TEST_STRING_4, newFilePath4)).isTrue();
+            pushString(TEST_STRING_3, newFilePath3);
+            pushString(TEST_STRING_4, newFilePath4);
         });
 
         // Roll back the APEX
-        runPhase("testRollbackApexDataDirectories_Phase2");
+        runPhase("testRollbackApexDataDirectories_Phase2_Rollback");
         getDevice().reboot();
 
         // Verify that old files have been restored and new files are gone
         runAsRoot(() -> {
-            assertEquals(TEST_STRING_1, getDevice().pullFileContents(oldFilePath1));
-            assertEquals(TEST_STRING_2, getDevice().pullFileContents(oldFilePath2));
-            assertNull(getDevice().pullFile(newFilePath3));
-            assertNull(getDevice().pullFile(newFilePath4));
+            assertFileContents(TEST_STRING_1, oldFilePath1);
+            assertFileContents(TEST_STRING_2, oldFilePath2);
+            assertFileNotExists(newFilePath3);
+            assertFileNotExists(newFilePath4);
         });
 
         // Verify snapshots are deleted after restoration
@@ -485,18 +489,18 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
     @Test
     public void testRollbackApkDataDirectories_De() throws Exception {
         // Install version 1 of TESTAPP_A
-        runPhase("testRollbackApkDataDirectories_Phase1");
+        runPhase("testRollbackApkDataDirectories_Phase1_InstallV1");
 
         // Push files to apk data directory
         String oldFilePath1 = apkDataDirDe(TESTAPP_A, 0) + "/" + TEST_FILENAME_1;
         String oldFilePath2 = apkDataDirDe(TESTAPP_A, 0) + TEST_SUBDIR + TEST_FILENAME_2;
         runAsRoot(() -> {
-            assertThat(getDevice().pushString(TEST_STRING_1, oldFilePath1)).isTrue();
-            assertThat(getDevice().pushString(TEST_STRING_2, oldFilePath2)).isTrue();
+            pushString(TEST_STRING_1, oldFilePath1);
+            pushString(TEST_STRING_2, oldFilePath2);
         });
 
         // Install version 2 of TESTAPP_A with rollback enabled
-        runPhase("testRollbackApkDataDirectories_Phase2");
+        runPhase("testRollbackApkDataDirectories_Phase2_InstallV2");
         getDevice().reboot();
 
         // Replace files in data directory
@@ -505,20 +509,20 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         runAsRoot(() -> {
             getDevice().deleteFile(oldFilePath1);
             getDevice().deleteFile(oldFilePath2);
-            assertThat(getDevice().pushString(TEST_STRING_3, newFilePath3)).isTrue();
-            assertThat(getDevice().pushString(TEST_STRING_4, newFilePath4)).isTrue();
+            pushString(TEST_STRING_3, newFilePath3);
+            pushString(TEST_STRING_4, newFilePath4);
         });
 
         // Roll back the APK
-        runPhase("testRollbackApkDataDirectories_Phase3");
+        runPhase("testRollbackApkDataDirectories_Phase3_Rollback");
         getDevice().reboot();
 
         // Verify that old files have been restored and new files are gone
         runAsRoot(() -> {
-            assertEquals(TEST_STRING_1, getDevice().pullFileContents(oldFilePath1));
-            assertEquals(TEST_STRING_2, getDevice().pullFileContents(oldFilePath2));
-            assertNull(getDevice().pullFile(newFilePath3));
-            assertNull(getDevice().pullFile(newFilePath4));
+            assertFileContents(TEST_STRING_1, oldFilePath1);
+            assertFileContents(TEST_STRING_2, oldFilePath2);
+            assertFileNotExists(newFilePath3);
+            assertFileNotExists(newFilePath4);
         });
     }
 
@@ -532,12 +536,12 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         String oldFilePath2 =
                 apexDataDirCe(APK_IN_APEX_TESTAPEX_NAME, 0) + TEST_SUBDIR + TEST_FILENAME_2;
         runAsRoot(() -> {
-            assertThat(getDevice().pushString(TEST_STRING_1, oldFilePath1)).isTrue();
-            assertThat(getDevice().pushString(TEST_STRING_2, oldFilePath2)).isTrue();
+            pushString(TEST_STRING_1, oldFilePath1);
+            pushString(TEST_STRING_2, oldFilePath2);
         });
 
         // Install new version of the APEX with rollback enabled
-        runPhase("testRollbackApexDataDirectories_Phase1");
+        runPhase("testRollbackApexDataDirectories_Phase1_Install");
         getDevice().reboot();
 
         List<String> after = getSnapshotDirectories("/data/misc_ce/0/apexrollback");
@@ -546,12 +550,36 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         // There should be only one /data/misc_ce/0/apexrollback/<rollbackId> created during test
         assertThat(after).hasSize(1);
         // Expire all rollbacks and check CE snapshot directories are deleted
-        runPhase("testCleanUp");
+        runPhase("expireRollbacks");
         runAsRoot(() -> {
             for (String dir : after) {
-                assertNull(getDevice().getFileEntry(dir));
+                assertFileNotExists(dir);
             }
         });
+    }
+
+    /**
+     * Tests that packages are monitored across multiple reboots.
+     */
+    @Test
+    public void testWatchdogMonitorsAcrossReboots() throws Exception {
+        runPhase("testWatchdogMonitorsAcrossReboots_Phase1_Install");
+
+        // The first reboot will make the rollback available.
+        // Information about which packages are monitored will be persisted to a file before the
+        // second reboot, and read from disk after the second reboot.
+        getDevice().reboot();
+        getDevice().reboot();
+
+        runPhase("testWatchdogMonitorsAcrossReboots_Phase2_VerifyInstall");
+
+        // Launch the app to crash to trigger rollback
+        startActivity(TESTAPP_A);
+        // Wait for reboot to happen
+        waitForDeviceNotAvailable(2, TimeUnit.MINUTES);
+        getDevice().waitForDeviceAvailable();
+
+        runPhase("testWatchdogMonitorsAcrossReboots_Phase3_VerifyRollback");
     }
 
     private void pushTestApex() throws Exception {
@@ -561,11 +589,28 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         try {
             getDevice().enableAdbRoot();
             getDevice().remountSystemWritable();
-            assertTrue(getDevice().pushFile(apex, "/system/apex/" + fileName));
+            assertThat(getDevice().pushFile(apex, "/system/apex/" + fileName)).isTrue();
         } finally {
             getDevice().disableAdbRoot();
         }
         getDevice().reboot();
+    }
+
+    private void pushString(String contents, String path) throws Exception {
+        assertWithMessage("Failed to push file to device, content=%s path=%s", contents, path)
+                .that(getDevice().pushString(contents, path)).isTrue();
+    }
+
+    private void assertFileContents(String expectedContents, String path) throws Exception {
+        String actualContents = getDevice().pullFileContents(path);
+        assertWithMessage("Failed to retrieve file=%s", path).that(actualContents).isNotNull();
+        assertWithMessage("Mismatched file contents, path=%s", path)
+                .that(actualContents).isEqualTo(expectedContents);
+    }
+
+    private void assertFileNotExists(String path) throws Exception {
+        assertWithMessage("File shouldn't exist, path=%s", path)
+                .that(getDevice().getFileEntry(path)).isNull();
     }
 
     private static String apexDataDirDeSys(String apexName) {
@@ -607,13 +652,20 @@ public class StagedRollbackTest extends BaseHostJUnit4Test {
         try {
             getDevice().enableAdbRoot();
             IFileEntry file = getDevice().getFileEntry(path);
-            assertTrue("Not a directory: " + path, file.isDirectory());
-            assertTrue("Directory not empty: " + path, file.getChildren(false).isEmpty());
+            assertWithMessage("Not a directory: " + path).that(file.isDirectory()).isTrue();
+            assertWithMessage("Directory not empty: " + path)
+                    .that(file.getChildren(false)).isEmpty();
         } catch (DeviceNotAvailableException e) {
             fail("Can't access directory: " + path);
         } finally {
             getDevice().disableAdbRoot();
         }
+    }
+
+    private void startActivity(String packageName) throws Exception {
+        String cmd = "am start -S -a android.intent.action.MAIN "
+                + "-c android.intent.category.LAUNCHER " + packageName;
+        getDevice().executeShellCommand(cmd);
     }
 
     private void crashProcess(String processName, int numberOfCrashes) throws Exception {

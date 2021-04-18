@@ -247,6 +247,10 @@
     <string name="screenshot_dismiss_description">Dismiss screenshot</string>
     <!-- Content description indicating that the view is a preview of the screenshot that was just taken [CHAR LIMIT=NONE] -->
     <string name="screenshot_preview_description">Screenshot preview</string>
+    <!-- Content description for the top boundary of the screenshot being cropped [CHAR LIMIT=NONE] -->
+    <string name="screenshot_top_boundary">Top boundary</string>
+    <!-- Content description for the bottom boundary of the screenshot being cropped [CHAR LIMIT=NONE] -->
+    <string name="screenshot_bottom_boundary">Bottom boundary</string>
 
     <!-- Notification title displayed for screen recording [CHAR LIMIT=50]-->
     <string name="screenrecord_name">Screen Recorder</string>
@@ -290,8 +294,10 @@
     <string name="screenrecord_share_label">Share</string>
     <!-- A toast message shown after successfully canceling a screen recording [CHAR LIMIT=NONE] -->
     <string name="screenrecord_cancel_success">Screen recording canceled</string>
-    <!-- Notification text shown after saving a screen recording to prompt the user to view it [CHAR LIMIT=100] -->
-    <string name="screenrecord_save_message">Screen recording saved, tap to view</string>
+    <!-- Notification text shown after saving a screen recording [CHAR LIMIT=100] -->
+    <string name="screenrecord_save_title">Screen recording saved</string>
+    <!-- Subtext for a notification shown after saving a screen recording to prompt the user to view it [CHAR_LIMIT=100] -->
+    <string name="screenrecord_save_text">Tap to view</string>
     <!-- A toast message shown when there is an error deleting a screen recording [CHAR LIMIT=NONE] -->
     <string name="screenrecord_delete_error">Error deleting screen recording</string>
     <!-- A toast message shown when the screen recording cannot be started due to insufficient permissions [CHAR LIMIT=NONE] -->
@@ -954,11 +960,8 @@
     <string name="quick_settings_dark_mode_secondary_label_on_at">On at <xliff:g id="time" example="10 pm">%s</xliff:g></string>
     <!-- QuickSettings: Secondary text for when the Dark theme or some other tile will be on until some user-selected time. [CHAR LIMIT=20] -->
     <string name="quick_settings_dark_mode_secondary_label_until">Until <xliff:g id="time" example="7 am">%s</xliff:g></string>
-    <!-- TODO(b/170970602): remove translatable=false when RBC has official name and strings -->
-    <!-- QuickSettings: Label for the toggle that controls whether Reduce Bright Colors is enabled. [CHAR LIMIT=NONE] -->
-    <string name="quick_settings_reduce_bright_colors_label" translatable="false">Reduce Bright Colors</string>
-        <!-- QuickSettings: Secondary text for intensity level of Reduce Bright Colors. [CHAR LIMIT=NONE] -->
-    <string name="quick_settings_reduce_bright_colors_secondary_label" translatable="false"> <xliff:g id="intensity" example="50">%d</xliff:g>%% reduction</string>
+    <!-- QuickSettings: Label for the toggle that controls whether Reduce Brightness is enabled. [CHAR LIMIT=NONE] -->
+    <string name="quick_settings_reduce_bright_colors_label">Reduce brightness</string>
 
     <!-- QuickSettings: NFC tile [CHAR LIMIT=NONE] -->
     <string name="quick_settings_nfc_label">NFC</string>
@@ -973,6 +976,11 @@
     <string name="quick_settings_screen_record_start">Start</string>
     <!-- QuickSettings: Text to prompt the user to stop an ongoing recording [CHAR LIMIT=20] -->
     <string name="quick_settings_screen_record_stop">Stop</string>
+
+    <!--- Content of dialog triggered if the microphone is disabled but an app tried to access it. [CHAR LIMIT=NONE] -->
+    <string name="sensor_privacy_start_use_mic_dialog_content">To continue, &lt;b&gt;<xliff:g id="app" example="Gmail">%s</xliff:g>&lt;/b&gt; needs access to your device microphone.</string>
+    <!--- Content of dialog triggered if the camera is disabled but an app tried to access it. [CHAR LIMIT=NONE] -->
+    <string name="sensor_privacy_start_use_camera_dialog_content">To continue, &lt;b&gt;<xliff:g id="app" example="Gmail">%s</xliff:g>&lt;/b&gt; needs access to your device’s camera.</string>
 
     <!-- Default name for the media device shown in the output switcher when the name is not available [CHAR LIMIT=30] -->
     <string name="media_seamless_remote_device">Device</string>
@@ -1039,11 +1047,17 @@
     <!-- Message shown when face authentication fails and the pin pad is visible. [CHAR LIMIT=60] -->
     <string name="keyguard_retry">Swipe up to try again</string>
 
+    <!-- Message shown when notifying user to unlock in order to use NFC. [CHAR LIMIT=60] -->
+    <string name="require_unlock_for_nfc">Unlock to use NFC</string>
+
     <!-- Text on keyguard screen and in Quick Settings footer indicating that the user's device belongs to their organization. [CHAR LIMIT=60] -->
     <string name="do_disclosure_generic">This device belongs to your organization</string>
 
     <!-- Text on keyguard screen and in Quick Settings footer indicating that user's device belongs to their organization. [CHAR LIMIT=40] -->
     <string name="do_disclosure_with_name">This device belongs to <xliff:g id="organization_name" example="Foo, Inc.">%s</xliff:g></string>
+
+    <!-- Text on keyguard screen and in Quick Settings footer indicating that the user's device is provided by the Creditor. [CHAR LIMIT=60] -->
+    <string name="do_financed_disclosure_with_name">This device is provided by <xliff:g id="organization_name" example="Foo, Inc.">%s</xliff:g></string>
 
     <!-- Shows when people have clicked on the phone icon [CHAR LIMIT=60] -->
     <string name="phone_hint">Swipe from icon for phone</string>
@@ -1108,13 +1122,13 @@
     <string name="user_new_user_name">New user</string>
 
     <!-- Title of the confirmation dialog when exiting guest session [CHAR LIMIT=NONE] -->
-    <string name="guest_exit_guest_dialog_title">End guest session?</string>
+    <string name="guest_exit_guest_dialog_title">Remove guest?</string>
 
     <!-- Message of the confirmation dialog when exiting guest session [CHAR LIMIT=NONE] -->
     <string name="guest_exit_guest_dialog_message">All apps and data in this session will be deleted.</string>
 
     <!-- Label for button in confirmation dialog when exiting guest session [CHAR LIMIT=35] -->
-    <string name="guest_exit_guest_dialog_remove">End session</string>
+    <string name="guest_exit_guest_dialog_remove">Remove</string>
 
     <!-- Title of the notification when resuming an existing guest session [CHAR LIMIT=NONE] -->
     <string name="guest_wipe_session_title">Welcome back, guest!</string>
@@ -1333,6 +1347,9 @@
     <!-- Monitoring dialog: Description of Network Logging. [CHAR LIMIT=NONE]-->
     <string name="monitoring_description_management_network_logging">Your admin has turned on network logging, which monitors traffic on your device.</string>
 
+    <!-- Monitoring dialog: Description of Network Logging in the work profile. [CHAR LIMIT=NONE]-->
+    <string name="monitoring_description_managed_profile_network_logging">Your admin has turned on network logging, which monitors traffic in your work profile but not in your personal profile.</string>
+
     <!-- Monitoring dialog: Description of an active VPN. [CHAR LIMIT=NONE]-->
     <string name="monitoring_description_named_vpn">You\'re connected to <xliff:g id="vpn_app" example="Foo VPN App">%1$s</xliff:g>, which can monitor your network activity, including emails, apps, and websites.</string>
 
@@ -1542,6 +1559,8 @@
     <string name="volume_stream_content_description_mute">%1$s. Tap to mute. Accessibility services may be muted.</string>
     <string name="volume_stream_content_description_vibrate_a11y">%1$s. Tap to set to vibrate.</string>
     <string name="volume_stream_content_description_mute_a11y">%1$s. Tap to mute.</string>
+
+    <string name="volume_ringer_change">Tap to change ringer mode</string>
 
     <!-- Hint for accessibility. For example: double tap to mute [CHAR_LIMIT=NONE] -->
     <string name="volume_ringer_hint_mute">mute</string>
@@ -1880,7 +1899,7 @@
     <!-- Notification Inline controls: describes how the notification was adjusted [CHAR_LIMIT=NONE] -->
     <string name="feedback_demoted">This notification was automatically &lt;b>ranked lower&lt;/b> in your shade.</string>
     <!-- Notification Inline controls: prompts the user for feedback [CHAR_LIMIT=NONE] -->
-    <string name="feedback_prompt">Was this correct?</string>
+    <string name="feedback_prompt">Let the developer know your feedback. Was this correct?</string>
     <!-- Notification Inline controls: responds to user provided feedback [CHAR_LIMIT=NONE] -->
     <string name="feedback_response">Thanks for your feedback!</string>
     <string name="feedback_ok">OK</string>
@@ -2248,6 +2267,12 @@
     <!-- Accessibility description indicating the currently selected tile's position. Only used for tiles that are currently in use [CHAR LIMIT=NONE] -->
     <string name="accessibility_qs_edit_position">Position <xliff:g id="position" example="5">%1$d</xliff:g></string>
 
+    <!-- Accessibility announcement after a tile has been added [CHAR LIMIT=NONE] -->
+    <string name="accessibility_qs_edit_tile_added">Tile added</string>
+
+    <!-- Accessibility announcement after a tile has been added [CHAR LIMIT=NONE] -->
+    <string name="accessibility_qs_edit_tile_removed">Tile removed</string>
+
     <!-- Accessibility label for window when QS editing is happening [CHAR LIMIT=NONE] -->
     <string name="accessibility_desc_quick_settings_edit">Quick settings editor.</string>
 
@@ -2286,6 +2311,9 @@
 
     <!-- accessibility label for button to edit quick settings [CHAR LIMIT=NONE] -->
     <string name="accessibility_quick_settings_edit">Edit order of settings.</string>
+
+    <!-- accessibility label for button to open power menu [CHAR LIMIT=NONE] -->
+    <string name="accessibility_quick_settings_power_menu">Power menu</string>
 
     <!-- accessibility label for paging indicator in quick settings [CHAR LIMITi=NONE] -->
     <string name="accessibility_quick_settings_page">Page <xliff:g name="current_page" example="1">%1$d</xliff:g> of <xliff:g name="num_pages" example="2">%2$d</xliff:g></string>
@@ -2539,6 +2567,21 @@
     <!-- Separator for types, before last type. Include spaces before and after if needed [CHAR LIMIT=10] -->
     <string name="ongoing_privacy_dialog_last_separator">\u0020and\u0020</string>
 
+    <!-- Text for privacy dialog, using sensitive app op (one of camera, location, microphone) right now [CHAR LIMIT=NONE] -->
+    <string name="ongoing_privacy_dialog_using_op"><xliff:g id="application_name" example="Photos">%1$s</xliff:g> is using the <xliff:g id="app_opp_name" example="camera">%2$s</xliff:g></string>
+
+    <!-- Text for privacy dialog, recently used sensitive app op (one of camera, location, microphone) [CHAR LIMIT=NONE] -->
+    <string name="ongoing_privacy_dialog_recent_op"><xliff:g id="application_name" example="Photos">%1$s</xliff:g> used the <xliff:g id="app_opp_name" example="camera">%2$s</xliff:g> recently</string>
+
+    <!-- Text for privacy dialog, indicating that the application is the enterprise version [CHAR LIMIT=NONE] -->
+    <string name="ongoing_privacy_dialog_enterprise">(enterprise)</string>
+
+    <!-- Text for privacy dialog, identifying the phone call app [CHAR LIMIT=NONE]-->
+    <string name="ongoing_privacy_dialog_phonecall">Phone call</string>
+
+    <!-- Text for privacy dialog, indicating that an app is using an op on behalf of another [CHAR LIMIT=NONE] -->
+    <string name="ongoing_privacy_dialog_attribution_text">(through <xliff:g id="attribution" example="Special app">%s</xliff:g>)</string>
+
     <!-- Text for camera app op [CHAR LIMIT=20]-->
     <string name="privacy_type_camera">camera</string>
 
@@ -2556,9 +2599,6 @@
 
     <!-- What to show on the ambient display player when song doesn't have a title. [CHAR LIMIT=20] -->
     <string name="music_controls_no_title">No title</string>
-
-    <!-- Description of the restart button in the hint of size compatibility mode. [CHAR LIMIT=NONE] -->
-    <string name="restart_button_description">Tap to restart this app and go full screen.</string>
 
     <!-- Action in accessibility menu to move the stack of bubbles [CHAR LIMIT=20] -->
     <string name="bubble_accessibility_action_move">Move</string>
@@ -2684,6 +2724,9 @@
     <!-- Controls dialog confirmation [CHAR LIMIT=30] -->
     <string name="controls_dialog_confirmation">Controls updated</string>
 
+    <!-- Controls tile secondary label when device is locked and user does not want access to controls from lockscreen [CHAR LIMIT=20] -->
+    <string name="controls_tile_locked">Device locked</string>
+
     <!-- Controls PIN entry dialog, switch to alphanumeric keyboard [CHAR LIMIT=100] -->
     <string name="controls_pin_use_alphanumeric">PIN contains letters or symbols</string>
     <!-- Controls PIN entry dialog, title [CHAR LIMIT=30] -->
@@ -2748,13 +2791,6 @@
     <!-- Controls menu, edit [CHAR_LIMIT=30] -->
     <string name="controls_menu_edit">Edit controls</string>
 
-    <!-- Device-specific path to the node for enabling/disabling the high-brightness mode -->
-    <string name="udfps_hbm_sysfs_path" translatable="false"></string>
-    <!-- Device-specific payload for enabling the high-brightness mode -->
-    <string name="udfps_hbm_enable_command" translatable="false"></string>
-    <!-- Device-specific payload for disabling the high-brightness mode -->
-    <string name="udfps_hbm_disable_command" translatable="false"></string>
-
     <!-- Title for the media output group dialog with media related devices [CHAR LIMIT=50] -->
     <string name="media_output_dialog_add_output">Add outputs</string>
     <!-- Title for the media output slice with group devices [CHAR LIMIT=50] -->
@@ -2791,8 +2827,28 @@
     <string name="less_than_timestamp" translatable="false">Less than <xliff:g id="duration" example="5 hours">%1$s</xliff:g> ago</string>
     <!-- Timestamp for notification when over a certain time window [CHAR LIMIT=120] -->
     <string name="over_timestamp" translatable="false">Over <xliff:g id="duration" example="1 week">%1$s</xliff:g> ago</string>
-    <!-- Status text for a birthday today [CHAR LIMIT=120] -->
-    <string name="birthday_status" translatable="false">Today is their birthday!</string>
+    <!-- Status text for a birthday today [CHAR LIMIT=30] -->
+    <string name="birthday_status" translatable="false">Birthday</string>
+    <!-- Status text for an upcoming birthday [CHAR LIMIT=30] -->
+    <string name="upcoming_birthday_status" translatable="false">Birthday soon</string>
+    <!-- Status text for an anniversary [CHAR LIMIT=30] -->
+    <string name="anniversary_status" translatable="false">Anniversary</string>
+    <!-- Status text for sharing location [CHAR LIMIT=30] -->
+    <string name="location_status" translatable="false">Sharing location</string>
+    <!-- Status text for a new story posted [CHAR LIMIT=30] -->
+    <string name="new_story_status" translatable="false">New story</string>
+    <!-- Status text for watching a video [CHAR LIMIT=30] -->
+    <string name="video_status" translatable="false">Watching</string>
+    <!-- Status text for listening to audio [CHAR LIMIT=30] -->
+    <string name="audio_status" translatable="false">Listening</string>
+    <!-- Status text for playing a game [CHAR LIMIT=30] -->
+    <string name="game_status" translatable="false">Playing</string>
+    <!-- Empty user name before user has selected a friend [CHAR LIMIT=30] -->
+    <string name="empty_user_name" translatable="false">Your friend</string>
+    <!-- Empty status shown before user has selected a friend [CHAR LIMIT=30] -->
+    <string name="empty_status" translatable="false">Their status</string>
+    <!-- Default text for missed call notifications [CHAR LIMIT=30] -->
+    <string name="missed_call" translatable="false">Missed call</string>
 
     <!-- Title to display in a notification when ACTION_BATTERY_CHANGED.EXTRA_PRESENT field is false
     [CHAR LIMIT=NONE] -->
@@ -2800,4 +2856,12 @@
     <!-- Text to display in a notification when ACTION_BATTERY_CHANGED.EXTRA_PRESENT field is false
     [CHAR LIMIT=NONE] -->
     <string name="battery_state_unknown_notification_text">Tap for more information</string>
+
+    <!-- No translation [CHAR LIMIT=0] -->
+    <string name="qs_remove_labels" translatable="false"></string>
+
+    <string name="qs_tile_label_fontFamily" translatable="false">@*android:string/config_headlineFontFamily</string>
+
+    <!-- Secondary label for alarm tile when there is no next alarm information [CHAR LIMIT=20] -->
+    <string name="qs_alarm_tile_no_alarm">No alarm set</string>
 </resources>

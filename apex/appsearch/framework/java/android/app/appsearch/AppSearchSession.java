@@ -41,10 +41,11 @@ import java.util.function.Consumer;
  * Represents a connection to an AppSearch storage system where {@link GenericDocument}s can be
  * placed and queried.
  *
- * This class is thread safe.
+ * <p>This class is thread safe.
  */
 public final class AppSearchSession implements Closeable {
     private static final String TAG = "AppSearchSession";
+    private final String mPackageName;
     private final String mDatabaseName;
     @UserIdInt
     private final int mUserId;
@@ -52,14 +53,20 @@ public final class AppSearchSession implements Closeable {
     private boolean mIsMutated = false;
     private boolean mIsClosed = false;
 
+
+    /**
+     * Creates a search session for the client, defined by the {@code userId} and
+     * {@code packageName}.
+     */
     static void createSearchSession(
             @NonNull AppSearchManager.SearchContext searchContext,
             @NonNull IAppSearchManager service,
             @UserIdInt int userId,
+            @NonNull String packageName,
             @NonNull @CallbackExecutor Executor executor,
             @NonNull Consumer<AppSearchResult<AppSearchSession>> callback) {
         AppSearchSession searchSession =
-                new AppSearchSession(service, userId, searchContext.mDatabaseName);
+                new AppSearchSession(service, userId, packageName, searchContext.mDatabaseName);
         searchSession.initialize(executor, callback);
     }
 
@@ -87,74 +94,35 @@ public final class AppSearchSession implements Closeable {
     }
 
     private AppSearchSession(@NonNull IAppSearchManager service, @UserIdInt int userId,
-            @NonNull String databaseName) {
-        mDatabaseName = databaseName;
+            @NonNull String packageName, @NonNull String databaseName) {
         mService = service;
         mUserId = userId;
+        mPackageName = packageName;
+        mDatabaseName = databaseName;
     }
 
     /**
-     * Sets the schema that will be used by documents provided to the {@link #putDocuments} method.
+     * Sets the schema that represents the organizational structure of data within the AppSearch
+     * database.
      *
-     * <p>The schema provided here is compared to the stored copy of the schema previously supplied
-     * to {@link #setSchema}, if any, to determine how to treat existing documents. The following
-     * types of schema modifications are always safe and are made without deleting any existing
-     * documents:
-     * <ul>
-     *     <li>Addition of new types
-     *     <li>Addition of new
-     *         {@link AppSearchSchema.PropertyConfig#CARDINALITY_OPTIONAL OPTIONAL} or
-     *         {@link AppSearchSchema.PropertyConfig#CARDINALITY_REPEATED REPEATED} properties to a
-     *         type
-     *     <li>Changing the cardinality of a data type to be less restrictive (e.g. changing an
-     *         {@link AppSearchSchema.PropertyConfig#CARDINALITY_OPTIONAL OPTIONAL} property into a
-     *         {@link AppSearchSchema.PropertyConfig#CARDINALITY_REPEATED REPEATED} property.
-     * </ul>
+     * <p>Upon creating an {@link AppSearchSession}, {@link #setSchema} should be called. If the
+     * schema needs to be updated, or it has not been previously set, then the provided schema will
+     * be saved and persisted to disk. Otherwise, {@link #setSchema} is handled efficiently as a
+     * no-op call.
      *
-     * <p>The following types of schema changes are not backwards-compatible:
-     * <ul>
-     *     <li>Removal of an existing type
-     *     <li>Removal of a property from a type
-     *     <li>Changing the data type ({@code boolean}, {@code long}, etc.) of an existing property
-     *     <li>For properties of {@code Document} type, changing the schema type of
-     *         {@code Document}s of that property
-     *     <li>Changing the cardinality of a data type to be more restrictive (e.g. changing an
-     *         {@link AppSearchSchema.PropertyConfig#CARDINALITY_OPTIONAL OPTIONAL} property into a
-     *         {@link AppSearchSchema.PropertyConfig#CARDINALITY_REQUIRED REQUIRED} property).
-     *     <li>Adding a
-     *         {@link AppSearchSchema.PropertyConfig#CARDINALITY_REQUIRED REQUIRED} property.
-     * </ul>
-     * <p>Supplying a schema with such changes will, by default, result in this call returning an
-     * {@link AppSearchResult} with a code of {@link AppSearchResult#RESULT_INVALID_SCHEMA} and an
-     * error message describing the incompatibility. In this case the previously set schema will
-     * remain active.
-     *
-     * <p>If you need to make non-backwards-compatible changes as described above, you can set the
-     * {@link SetSchemaRequest.Builder#setForceOverride} method to {@code true}. In this case,
-     * instead of returning an {@link AppSearchResult} with the
-     * {@link AppSearchResult#RESULT_INVALID_SCHEMA} error code, all documents which are not
-     * compatible with the new schema will be deleted and the incompatible schema will be applied.
-     *
-     * <p>It is a no-op to set the same schema as has been previously set; this is handled
-     * efficiently.
-     *
-     * <p>By default, documents are visible on platform surfaces. To opt out, call {@code
-     * SetSchemaRequest.Builder#setPlatformSurfaceable} with {@code surfaceable} as false. Any
-     * visibility settings apply only to the schemas that are included in the {@code request}.
-     * Visibility settings for a schema type do not apply or persist across
-     * {@link SetSchemaRequest}s.
-     *
-     * @param request The schema update request.
+     * @param request the schema to set or update the AppSearch database to.
      * @param executor Executor on which to invoke the callback.
      * @param callback Callback to receive errors resulting from setting the schema. If the
      *                 operation succeeds, the callback will be invoked with {@code null}.
+     * @see android.app.appsearch.AppSearchSchema.Migrator
+     * @see android.app.appsearch.AppSearchMigrationHelper.Transformer
      */
     // TODO(b/169883602): Change @code references to @link when setPlatformSurfaceable APIs are
     //  exposed.
     public void setSchema(
             @NonNull SetSchemaRequest request,
             @NonNull @CallbackExecutor Executor executor,
-            @NonNull Consumer<AppSearchResult<Void>> callback) {
+            @NonNull Consumer<AppSearchResult<SetSchemaResponse>> callback) {
         Objects.requireNonNull(request);
         Objects.requireNonNull(executor);
         Objects.requireNonNull(callback);
@@ -175,15 +143,25 @@ public final class AppSearchSession implements Closeable {
         }
         try {
             mService.setSchema(
+                    mPackageName,
                     mDatabaseName,
                     schemaBundles,
-                    new ArrayList<>(request.getSchemasNotVisibleToSystemUi()),
+                    new ArrayList<>(request.getSchemasNotDisplayedBySystem()),
                     schemasPackageAccessibleBundles,
                     request.isForceOverride(),
                     mUserId,
                     new IAppSearchResultCallback.Stub() {
                         public void onResult(AppSearchResult result) {
-                            executor.execute(() -> callback.accept(result));
+                            executor.execute(() -> {
+                                if (result.isSuccess()) {
+                                    callback.accept(
+                                            // TODO(b/177266929) implement Migration in platform.
+                                            AppSearchResult.newSuccessfulResult(
+                                                    new SetSchemaResponse.Builder().build()));
+                                } else {
+                                    callback.accept(result);
+                                }
+                            });
                         }
                     });
             mIsMutated = true;
@@ -206,6 +184,7 @@ public final class AppSearchSession implements Closeable {
         Preconditions.checkState(!mIsClosed, "AppSearchSession has already been closed");
         try {
             mService.getSchema(
+                    mPackageName,
                     mDatabaseName,
                     mUserId,
                     new IAppSearchResultCallback.Stub() {
@@ -232,12 +211,13 @@ public final class AppSearchSession implements Closeable {
     }
 
     /**
-     * Indexes documents into AppSearch.
+     * Indexes documents into the {@link AppSearchSession} database.
      *
-     * <p>Each {@link GenericDocument}'s {@code schemaType} field must be set to the name of a
-     * schema type previously registered via the {@link #setSchema} method.
+     * <p>Each {@link GenericDocument} object must have a {@code schemaType} field set to an {@link
+     * AppSearchSchema} type that has been previously registered by calling the {@link #setSchema}
+     * method.
      *
-     * @param request  {@link PutDocumentsRequest} containing documents to be indexed
+     * @param request containing documents to be indexed.
      * @param executor Executor on which to invoke the callback.
      * @param callback Callback to receive pending result of performing this operation. The keys
      *                 of the returned {@link AppSearchBatchResult} are the URIs of the input
@@ -247,7 +227,7 @@ public final class AppSearchSession implements Closeable {
      *                 {@link Throwable} if an unexpected internal error occurred in AppSearch
      *                 service.
      */
-    public void putDocuments(
+    public void put(
             @NonNull PutDocumentsRequest request,
             @NonNull @CallbackExecutor Executor executor,
             @NonNull BatchResultCallback<String, Void> callback) {
@@ -255,13 +235,13 @@ public final class AppSearchSession implements Closeable {
         Objects.requireNonNull(executor);
         Objects.requireNonNull(callback);
         Preconditions.checkState(!mIsClosed, "AppSearchSession has already been closed");
-        List<GenericDocument> documents = request.getDocuments();
+        List<GenericDocument> documents = request.getGenericDocuments();
         List<Bundle> documentBundles = new ArrayList<>(documents.size());
         for (int i = 0; i < documents.size(); i++) {
             documentBundles.add(documents.get(i).getBundle());
         }
         try {
-            mService.putDocuments(mDatabaseName, documentBundles, mUserId,
+            mService.putDocuments(mPackageName, mDatabaseName, documentBundles, mUserId,
                     new IAppSearchBatchResultCallback.Stub() {
                         public void onResult(AppSearchBatchResult result) {
                             executor.execute(() -> callback.onResult(result));
@@ -278,9 +258,10 @@ public final class AppSearchSession implements Closeable {
     }
 
     /**
-     * Retrieves {@link GenericDocument}s by URI.
+     * Gets {@link GenericDocument} objects by URIs and namespace from the {@link AppSearchSession}
+     * database.
      *
-     * @param request {@link GetByUriRequest} containing URIs to be retrieved.
+     * @param request a request containing URIs and namespace to get documents for.
      * @param executor Executor on which to invoke the callback.
      * @param callback Callback to receive the pending result of performing this operation. The keys
      *                 of the returned {@link AppSearchBatchResult} are the input URIs. The values
@@ -301,8 +282,13 @@ public final class AppSearchSession implements Closeable {
         Objects.requireNonNull(callback);
         Preconditions.checkState(!mIsClosed, "AppSearchSession has already been closed");
         try {
-            mService.getDocuments(mDatabaseName, request.getNamespace(),
-                    new ArrayList<>(request.getUris()), mUserId,
+            mService.getDocuments(
+                    mPackageName,
+                    mDatabaseName,
+                    request.getNamespace(),
+                    new ArrayList<>(request.getUris()),
+                    request.getProjectionsInternal(),
+                    mUserId,
                     new IAppSearchBatchResultCallback.Stub() {
                         public void onResult(AppSearchBatchResult result) {
                             executor.execute(() -> {
@@ -353,66 +339,129 @@ public final class AppSearchSession implements Closeable {
     }
 
     /**
-     * Searches a document based on a given query string.
+     * Retrieves documents from the open {@link AppSearchSession} that match a given query string
+     * and type of search provided.
      *
-     * <p>Currently we support following features in the raw query format:
+     * <p>Query strings can be empty, contain one term with no operators, or contain multiple terms
+     * and operators.
+     *
+     * <p>For query strings that are empty, all documents that match the {@link SearchSpec} will be
+     * returned.
+     *
+     * <p>For query strings with a single term and no operators, documents that match the provided
+     * query string and {@link SearchSpec} will be returned.
+     *
+     * <p>The following operators are supported:
+     *
      * <ul>
-     *     <li>AND
-     *     <p>AND joins (e.g. “match documents that have both the terms ‘dog’ and
-     *     ‘cat’”).
-     *     Example: hello world matches documents that have both ‘hello’ and ‘world’
-     *     <li>OR
-     *     <p>OR joins (e.g. “match documents that have either the term ‘dog’ or
-     *     ‘cat’”).
-     *     Example: dog OR puppy
-     *     <li>Exclusion
-     *     <p>Exclude a term (e.g. “match documents that do
-     *     not have the term ‘dog’”).
-     *     Example: -dog excludes the term ‘dog’
-     *     <li>Grouping terms
-     *     <p>Allow for conceptual grouping of subqueries to enable hierarchical structures (e.g.
-     *     “match documents that have either ‘dog’ or ‘puppy’, and either ‘cat’ or ‘kitten’”).
-     *     Example: (dog puppy) (cat kitten) two one group containing two terms.
-     *     <li>Property restricts
-     *     <p> Specifies which properties of a document to specifically match terms in (e.g.
-     *     “match documents where the ‘subject’ property contains ‘important’”).
-     *     Example: subject:important matches documents with the term ‘important’ in the
-     *     ‘subject’ property
-     *     <li>Schema type restricts
-     *     <p>This is similar to property restricts, but allows for restricts on top-level document
-     *     fields, such as schema_type. Clients should be able to limit their query to documents of
-     *     a certain schema_type (e.g. “match documents that are of the ‘Email’ schema_type”).
-     *     Example: { schema_type_filters: “Email”, “Video”,query: “dog” } will match documents
-     *     that contain the query term ‘dog’ and are of either the ‘Email’ schema type or the
-     *     ‘Video’ schema type.
+     *   <li>AND (implicit)
+     *       <p>AND is an operator that matches documents that contain <i>all</i> provided terms.
+     *       <p><b>NOTE:</b> A space between terms is treated as an "AND" operator. Explicitly
+     *       including "AND" in a query string will treat "AND" as a term, returning documents that
+     *       also contain "AND".
+     *       <p>Example: "apple AND banana" matches documents that contain the terms "apple", "and",
+     *       "banana".
+     *       <p>Example: "apple banana" matches documents that contain both "apple" and "banana".
+     *       <p>Example: "apple banana cherry" matches documents that contain "apple", "banana", and
+     *       "cherry".
+     *   <li>OR
+     *       <p>OR is an operator that matches documents that contain <i>any</i> provided term.
+     *       <p>Example: "apple OR banana" matches documents that contain either "apple" or
+     *       "banana".
+     *       <p>Example: "apple OR banana OR cherry" matches documents that contain any of "apple",
+     *       "banana", or "cherry".
+     *   <li>Exclusion (-)
+     *       <p>Exclusion (-) is an operator that matches documents that <i>do not</i> contain the
+     *       provided term.
+     *       <p>Example: "-apple" matches documents that do not contain "apple".
+     *   <li>Grouped Terms
+     *       <p>For queries that require multiple operators and terms, terms can be grouped into
+     *       subqueries. Subqueries are contained within an open "(" and close ")" parenthesis.
+     *       <p>Example: "(donut OR bagel) (coffee OR tea)" matches documents that contain either
+     *       "donut" or "bagel" and either "coffee" or "tea".
+     *   <li>Property Restricts
+     *       <p>For queries that require a term to match a specific {@link AppSearchSchema} property
+     *       of a document, a ":" must be included between the property name and the term.
+     *       <p>Example: "subject:important" matches documents that contain the term "important" in
+     *       the "subject" property.
      * </ul>
      *
-     * <p> This method is lightweight. The heavy work will be done in
-     * {@link SearchResults#getNextPage}.
+     * <p>Additional search specifications, such as filtering by {@link AppSearchSchema} type or
+     * adding projection, can be set by calling the corresponding {@link SearchSpec.Builder} setter.
      *
-     * @param queryExpression Query String to search.
-     * @param searchSpec      Spec for setting filters, raw query etc.
-     * @param executor        Executor on which to invoke the callback of the following request
-     *                        {@link SearchResults#getNextPage}.
-     * @return The search result of performing this operation.
+     * <p>This method is lightweight. The heavy work will be done in {@link
+     * SearchResults#getNextPage}.
+     *
+     * @param queryExpression query string to search.
+     * @param searchSpec spec for setting document filters, adding projection, setting term match
+     *     type, etc.
+     * @return a {@link SearchResults} object for retrieved matched documents.
      */
     @NonNull
-    public SearchResults query(
-            @NonNull String queryExpression,
-            @NonNull SearchSpec searchSpec,
-            @NonNull @CallbackExecutor Executor executor) {
+    public SearchResults search(@NonNull String queryExpression, @NonNull SearchSpec searchSpec) {
         Objects.requireNonNull(queryExpression);
         Objects.requireNonNull(searchSpec);
-        Objects.requireNonNull(executor);
         Preconditions.checkState(!mIsClosed, "AppSearchSession has already been closed");
-        return new SearchResults(mService, mDatabaseName, queryExpression, searchSpec, mUserId,
-                executor);
+        return new SearchResults(mService, mPackageName, mDatabaseName, queryExpression,
+                searchSpec, mUserId);
     }
 
     /**
-     * Removes {@link GenericDocument}s from the index by URI.
+     * Reports usage of a particular document by URI and namespace.
      *
-     * @param request Request containing URIs to be removed.
+     * <p>A usage report represents an event in which a user interacted with or viewed a document.
+     *
+     * <p>For each call to {@link #reportUsage}, AppSearch updates usage count and usage recency
+     * metrics for that particular document. These metrics are used for ordering {@link #search}
+     * results by the {@link SearchSpec#RANKING_STRATEGY_USAGE_COUNT} and {@link
+     * SearchSpec#RANKING_STRATEGY_USAGE_LAST_USED_TIMESTAMP} ranking strategies.
+     *
+     * <p>Reporting usage of a document is optional.
+     *
+     * @param request The usage reporting request.
+     * @param executor Executor on which to invoke the callback.
+     * @param callback Callback to receive errors. If the operation succeeds, the callback will be
+     *                 invoked with {@code null}.
+     */
+    public void reportUsage(
+            @NonNull ReportUsageRequest request,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull Consumer<AppSearchResult<Void>> callback) {
+        Objects.requireNonNull(request);
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(callback);
+        Preconditions.checkState(!mIsClosed, "AppSearchSession has already been closed");
+        try {
+            mService.reportUsage(
+                    mPackageName,
+                    mDatabaseName,
+                    request.getNamespace(),
+                    request.getUri(),
+                    request.getUsageTimeMillis(),
+                    mUserId,
+                    new IAppSearchResultCallback.Stub() {
+                        public void onResult(AppSearchResult result) {
+                            executor.execute(() -> callback.accept(result));
+                        }
+                    });
+            mIsMutated = true;
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Removes {@link GenericDocument} objects by URIs and namespace from the {@link
+     * AppSearchSession} database.
+     *
+     * <p>Removed documents will no longer be surfaced by {@link #search} or {@link #getByUri}
+     * calls.
+     *
+     * <p><b>NOTE:</b>By default, documents are removed via a soft delete operation. Once the
+     * document crosses the count threshold or byte usage threshold, the documents will be removed
+     * from disk.
+     *
+     * @param request {@link RemoveByUriRequest} with URIs and namespace to remove from the index.
      * @param executor Executor on which to invoke the callback.
      * @param callback Callback to receive the pending result of performing this operation. The keys
      *                 of the returned {@link AppSearchBatchResult} are the input URIs. The values
@@ -423,7 +472,7 @@ public final class AppSearchSession implements Closeable {
      *                 {@link Throwable} if an unexpected internal error occurred in AppSearch
      *                 service.
      */
-    public void removeByUri(
+    public void remove(
             @NonNull RemoveByUriRequest request,
             @NonNull @CallbackExecutor Executor executor,
             @NonNull BatchResultCallback<String, Void> callback) {
@@ -432,7 +481,7 @@ public final class AppSearchSession implements Closeable {
         Objects.requireNonNull(callback);
         Preconditions.checkState(!mIsClosed, "AppSearchSession has already been closed");
         try {
-            mService.removeByUri(mDatabaseName, request.getNamespace(),
+            mService.removeByUri(mPackageName, mDatabaseName, request.getNamespace(),
                     new ArrayList<>(request.getUris()), mUserId,
                     new IAppSearchBatchResultCallback.Stub() {
                         public void onResult(AppSearchBatchResult result) {
@@ -451,24 +500,25 @@ public final class AppSearchSession implements Closeable {
 
     /**
      * Removes {@link GenericDocument}s from the index by Query. Documents will be removed if they
-     * match the {@code queryExpression} in given namespaces and schemaTypes which is set via
-     * {@link SearchSpec.Builder#addNamespace} and {@link SearchSpec.Builder#addSchemaType}.
+     * match the {@code queryExpression} in given namespaces and schemaTypes which is set via {@link
+     * SearchSpec.Builder#addFilterNamespaces} and {@link SearchSpec.Builder#addFilterSchemas}.
      *
-     * <p> An empty {@code queryExpression} matches all documents.
+     * <p>An empty {@code queryExpression} matches all documents.
      *
-     * <p> An empty set of namespaces or schemaTypes matches all namespaces or schemaTypes in
-     * the current database.
+     * <p>An empty set of namespaces or schemaTypes matches all namespaces or schemaTypes in the
+     * current database.
      *
      * @param queryExpression Query String to search.
-     * @param searchSpec      Spec containing schemaTypes, namespaces and query expression indicates
-     *                        how document will be removed. All specific about how to scoring,
-     *                        ordering, snippeting and resulting will be ignored.
+     * @param searchSpec Spec containing schemaTypes, namespaces and query expression indicates how
+     *     document will be removed. All specific about how to scoring, ordering, snippeting and
+     *     resulting will be ignored.
      * @param executor        Executor on which to invoke the callback.
      * @param callback        Callback to receive errors resulting from removing the documents. If
      *                        the operation succeeds, the callback will be invoked with
      *                        {@code null}.
      */
-    public void removeByQuery(@NonNull String queryExpression,
+    public void remove(
+            @NonNull String queryExpression,
             @NonNull SearchSpec searchSpec,
             @NonNull @CallbackExecutor Executor executor,
             @NonNull Consumer<AppSearchResult<Void>> callback) {
@@ -478,7 +528,8 @@ public final class AppSearchSession implements Closeable {
         Objects.requireNonNull(callback);
         Preconditions.checkState(!mIsClosed, "AppSearchSession has already been closed");
         try {
-            mService.removeByQuery(mDatabaseName, queryExpression, searchSpec.getBundle(), mUserId,
+            mService.removeByQuery(mPackageName, mDatabaseName, queryExpression,
+                    searchSpec.getBundle(), mUserId,
                     new IAppSearchResultCallback.Stub() {
                         public void onResult(AppSearchResult result) {
                             executor.execute(() -> callback.accept(result));

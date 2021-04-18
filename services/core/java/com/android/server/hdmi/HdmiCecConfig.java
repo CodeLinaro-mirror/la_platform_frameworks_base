@@ -37,7 +37,9 @@ import android.provider.Settings.Global;
 import android.util.ArrayMap;
 import android.util.Slog;
 
+import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.util.ConcurrentUtils;
 import com.android.server.hdmi.cec.config.CecSettings;
 import com.android.server.hdmi.cec.config.Setting;
 import com.android.server.hdmi.cec.config.Value;
@@ -54,7 +56,9 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.Executor;
 
 import javax.xml.datatype.DatatypeConfigurationException;
 
@@ -95,7 +99,10 @@ public class HdmiCecConfig {
     @Nullable private final CecSettings mSystemConfig;
     @Nullable private final CecSettings mVendorOverride;
 
-    private final ArrayMap<Setting, Set<SettingChangeListener>>
+    private final Object mLock = new Object();
+
+    @GuardedBy("mLock")
+    private final ArrayMap<Setting, ArrayMap<SettingChangeListener, Executor>>
             mSettingChangeListeners = new ArrayMap<>();
 
     private SettingsObserver mSettingsObserver;
@@ -288,12 +295,31 @@ public class HdmiCecConfig {
             case HdmiControlManager.CEC_SETTING_NAME_HDMI_CEC_ENABLED:
                 return STORAGE_GLOBAL_SETTINGS;
             case HdmiControlManager.CEC_SETTING_NAME_HDMI_CEC_VERSION:
-                return STORAGE_GLOBAL_SETTINGS;
+                return STORAGE_SHARED_PREFS;
             case HdmiControlManager.CEC_SETTING_NAME_POWER_CONTROL_MODE:
+                return STORAGE_GLOBAL_SETTINGS;
+            case HdmiControlManager.CEC_SETTING_NAME_VOLUME_CONTROL_MODE:
                 return STORAGE_GLOBAL_SETTINGS;
             case HdmiControlManager.CEC_SETTING_NAME_POWER_STATE_CHANGE_ON_ACTIVE_SOURCE_LOST:
                 return STORAGE_SHARED_PREFS;
             case HdmiControlManager.CEC_SETTING_NAME_SYSTEM_AUDIO_MODE_MUTING:
+                return STORAGE_SHARED_PREFS;
+            case HdmiControlManager.CEC_SETTING_NAME_TV_WAKE_ON_ONE_TOUCH_PLAY:
+                return STORAGE_GLOBAL_SETTINGS;
+            case HdmiControlManager.CEC_SETTING_NAME_TV_SEND_STANDBY_ON_SLEEP:
+                return STORAGE_GLOBAL_SETTINGS;
+            case HdmiControlManager.CEC_SETTING_NAME_RC_PROFILE_TV:
+                return STORAGE_SHARED_PREFS;
+            case HdmiControlManager.CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_ROOT_MENU:
+                return STORAGE_SHARED_PREFS;
+            case HdmiControlManager.CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_SETUP_MENU:
+                return STORAGE_SHARED_PREFS;
+            case HdmiControlManager.CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_CONTENTS_MENU:
+                return STORAGE_SHARED_PREFS;
+            case HdmiControlManager.CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_TOP_MENU:
+                return STORAGE_SHARED_PREFS;
+            case HdmiControlManager
+                    .CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_MEDIA_CONTEXT_SENSITIVE_MENU:
                 return STORAGE_SHARED_PREFS;
             default:
                 throw new RuntimeException("Invalid CEC setting '" + setting.getName()
@@ -306,12 +332,31 @@ public class HdmiCecConfig {
             case HdmiControlManager.CEC_SETTING_NAME_HDMI_CEC_ENABLED:
                 return Global.HDMI_CONTROL_ENABLED;
             case HdmiControlManager.CEC_SETTING_NAME_HDMI_CEC_VERSION:
-                return Global.HDMI_CEC_VERSION;
+                return setting.getName();
             case HdmiControlManager.CEC_SETTING_NAME_POWER_CONTROL_MODE:
                 return Global.HDMI_CONTROL_SEND_STANDBY_ON_SLEEP;
+            case HdmiControlManager.CEC_SETTING_NAME_VOLUME_CONTROL_MODE:
+                return Global.HDMI_CONTROL_VOLUME_CONTROL_ENABLED;
             case HdmiControlManager.CEC_SETTING_NAME_POWER_STATE_CHANGE_ON_ACTIVE_SOURCE_LOST:
                 return setting.getName();
             case HdmiControlManager.CEC_SETTING_NAME_SYSTEM_AUDIO_MODE_MUTING:
+                return setting.getName();
+            case HdmiControlManager.CEC_SETTING_NAME_TV_WAKE_ON_ONE_TOUCH_PLAY:
+                return Global.HDMI_CONTROL_AUTO_WAKEUP_ENABLED;
+            case HdmiControlManager.CEC_SETTING_NAME_TV_SEND_STANDBY_ON_SLEEP:
+                return Global.HDMI_CONTROL_AUTO_DEVICE_OFF_ENABLED;
+            case HdmiControlManager.CEC_SETTING_NAME_RC_PROFILE_TV:
+                return setting.getName();
+            case HdmiControlManager.CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_ROOT_MENU:
+                return setting.getName();
+            case HdmiControlManager.CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_SETUP_MENU:
+                return setting.getName();
+            case HdmiControlManager.CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_CONTENTS_MENU:
+                return setting.getName();
+            case HdmiControlManager.CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_TOP_MENU:
+                return setting.getName();
+            case HdmiControlManager
+                    .CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_MEDIA_CONTEXT_SENSITIVE_MENU:
                 return setting.getName();
             default:
                 throw new RuntimeException("Invalid CEC setting '" + setting.getName()
@@ -323,13 +368,13 @@ public class HdmiCecConfig {
         @Storage int storage = getStorage(setting);
         String storageKey = getStorageKey(setting);
         if (storage == STORAGE_SYSPROPS) {
-            Slog.d(TAG, "Reading '" + storageKey + "' sysprop.");
+            HdmiLogger.debug("Reading '" + storageKey + "' sysprop.");
             return mStorageAdapter.retrieveSystemProperty(storageKey, defaultValue);
         } else if (storage == STORAGE_GLOBAL_SETTINGS) {
-            Slog.d(TAG, "Reading '" + storageKey + "' global setting.");
+            HdmiLogger.debug("Reading '" + storageKey + "' global setting.");
             return mStorageAdapter.retrieveGlobalSetting(storageKey, defaultValue);
         } else if (storage == STORAGE_SHARED_PREFS) {
-            Slog.d(TAG, "Reading '" + storageKey + "' shared preference.");
+            HdmiLogger.debug("Reading '" + storageKey + "' shared preference.");
             return mStorageAdapter.retrieveSharedPref(storageKey, defaultValue);
         }
         return null;
@@ -339,13 +384,13 @@ public class HdmiCecConfig {
         @Storage int storage = getStorage(setting);
         String storageKey = getStorageKey(setting);
         if (storage == STORAGE_SYSPROPS) {
-            Slog.d(TAG, "Setting '" + storageKey + "' sysprop.");
+            HdmiLogger.debug("Setting '" + storageKey + "' sysprop.");
             mStorageAdapter.storeSystemProperty(storageKey, value);
         } else if (storage == STORAGE_GLOBAL_SETTINGS) {
-            Slog.d(TAG, "Setting '" + storageKey + "' global setting.");
+            HdmiLogger.debug("Setting '" + storageKey + "' global setting.");
             mStorageAdapter.storeGlobalSetting(storageKey, value);
         } else if (storage == STORAGE_SHARED_PREFS) {
-            Slog.d(TAG, "Setting '" + storageKey + "' shared pref.");
+            HdmiLogger.debug("Setting '" + storageKey + "' shared pref.");
             mStorageAdapter.storeSharedPref(storageKey, value);
             notifySettingChanged(setting);
         }
@@ -360,11 +405,17 @@ public class HdmiCecConfig {
             case Global.HDMI_CONTROL_ENABLED:
                 notifySettingChanged(HdmiControlManager.CEC_SETTING_NAME_HDMI_CEC_ENABLED);
                 break;
-            case Global.HDMI_CEC_VERSION:
-                notifySettingChanged(HdmiControlManager.CEC_SETTING_NAME_HDMI_CEC_VERSION);
-                break;
             case Global.HDMI_CONTROL_SEND_STANDBY_ON_SLEEP:
                 notifySettingChanged(HdmiControlManager.CEC_SETTING_NAME_POWER_CONTROL_MODE);
+                break;
+            case Global.HDMI_CONTROL_VOLUME_CONTROL_ENABLED:
+                notifySettingChanged(HdmiControlManager.CEC_SETTING_NAME_VOLUME_CONTROL_MODE);
+                break;
+            case Global.HDMI_CONTROL_AUTO_WAKEUP_ENABLED:
+                notifySettingChanged(HdmiControlManager.CEC_SETTING_NAME_TV_WAKE_ON_ONE_TOUCH_PLAY);
+                break;
+            case Global.HDMI_CONTROL_AUTO_DEVICE_OFF_ENABLED:
+                notifySettingChanged(HdmiControlManager.CEC_SETTING_NAME_TV_SEND_STANDBY_ON_SLEEP);
                 break;
         }
     }
@@ -378,12 +429,22 @@ public class HdmiCecConfig {
     }
 
     private void notifySettingChanged(@NonNull Setting setting) {
-        Set<SettingChangeListener> listeners = mSettingChangeListeners.get(setting);
-        if (listeners == null) {
-            return;  // No listeners registered, do nothing.
-        }
-        for (SettingChangeListener listener: listeners) {
-            listener.onChange(setting.getName());
+        synchronized (mLock) {
+            ArrayMap<SettingChangeListener, Executor> listeners =
+                    mSettingChangeListeners.get(setting);
+            if (listeners == null) {
+                return;  // No listeners registered, do nothing.
+            }
+            for (Entry<SettingChangeListener, Executor> entry: listeners.entrySet()) {
+                SettingChangeListener listener = entry.getKey();
+                Executor executor = entry.getValue();
+                executor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        listener.onChange(setting.getName());
+                    }
+                });
+            }
         }
     }
 
@@ -397,8 +458,10 @@ public class HdmiCecConfig {
         ContentResolver resolver = mContext.getContentResolver();
         String[] settings = new String[] {
                 Global.HDMI_CONTROL_ENABLED,
-                Global.HDMI_CEC_VERSION,
                 Global.HDMI_CONTROL_SEND_STANDBY_ON_SLEEP,
+                Global.HDMI_CONTROL_VOLUME_CONTROL_ENABLED,
+                Global.HDMI_CONTROL_AUTO_WAKEUP_ENABLED,
+                Global.HDMI_CONTROL_AUTO_DEVICE_OFF_ENABLED,
         };
         for (String setting: settings) {
             resolver.registerContentObserver(Global.getUriFor(setting), false,
@@ -415,10 +478,19 @@ public class HdmiCecConfig {
     }
 
     /**
-     * Register change listener for a given setting name.
+     * Register change listener for a given setting name using DirectExecutor.
      */
     public void registerChangeListener(@NonNull @CecSettingName String name,
                                        SettingChangeListener listener) {
+        registerChangeListener(name, listener, ConcurrentUtils.DIRECT_EXECUTOR);
+    }
+
+    /**
+     * Register change listener for a given setting name and executor.
+     */
+    public void registerChangeListener(@NonNull @CecSettingName String name,
+                                       SettingChangeListener listener,
+                                       Executor executor) {
         Setting setting = getSetting(name);
         if (setting == null) {
             throw new IllegalArgumentException("Setting '" + name + "' does not exist.");
@@ -428,10 +500,12 @@ public class HdmiCecConfig {
             throw new IllegalArgumentException("Change listeners for setting '" + name
                     + "' not supported.");
         }
-        if (!mSettingChangeListeners.containsKey(setting)) {
-            mSettingChangeListeners.put(setting, new HashSet<>());
+        synchronized (mLock) {
+            if (!mSettingChangeListeners.containsKey(setting)) {
+                mSettingChangeListeners.put(setting, new ArrayMap<>());
+            }
+            mSettingChangeListeners.get(setting).put(listener, executor);
         }
-        mSettingChangeListeners.get(setting).add(listener);
     }
 
     /**
@@ -443,11 +517,14 @@ public class HdmiCecConfig {
         if (setting == null) {
             throw new IllegalArgumentException("Setting '" + name + "' does not exist.");
         }
-        if (mSettingChangeListeners.containsKey(setting)) {
-            Set<SettingChangeListener> listeners = mSettingChangeListeners.get(setting);
-            listeners.remove(listener);
-            if (listeners.isEmpty()) {
-                mSettingChangeListeners.remove(setting);
+        synchronized (mLock) {
+            if (mSettingChangeListeners.containsKey(setting)) {
+                ArrayMap<SettingChangeListener, Executor> listeners =
+                        mSettingChangeListeners.get(setting);
+                listeners.remove(listener);
+                if (listeners.isEmpty()) {
+                    mSettingChangeListeners.remove(setting);
+                }
             }
         }
     }
@@ -597,7 +674,7 @@ public class HdmiCecConfig {
             throw new IllegalArgumentException("Setting '" + name
                     + "' is not a string-type setting.");
         }
-        Slog.d(TAG, "Getting CEC setting value '" + name + "'.");
+        HdmiLogger.debug("Getting CEC setting value '" + name + "'.");
         return retrieveValue(setting, setting.getDefaultValue().getStringValue());
     }
 
@@ -613,7 +690,7 @@ public class HdmiCecConfig {
             throw new IllegalArgumentException("Setting '" + name
                     + "' is not a int-type setting.");
         }
-        Slog.d(TAG, "Getting CEC setting value '" + name + "'.");
+        HdmiLogger.debug("Getting CEC setting value '" + name + "'.");
         String defaultValue = Integer.toString(getIntValue(setting.getDefaultValue()));
         String value = retrieveValue(setting, defaultValue);
         return Integer.parseInt(value);
@@ -638,7 +715,7 @@ public class HdmiCecConfig {
             throw new IllegalArgumentException("Invalid CEC setting '" + name
                                                + "' value: '" + value + "'.");
         }
-        Slog.d(TAG, "Updating CEC setting '" + name + "' to '" + value + "'.");
+        HdmiLogger.debug("Updating CEC setting '" + name + "' to '" + value + "'.");
         storeValue(setting, value);
     }
 
@@ -661,7 +738,7 @@ public class HdmiCecConfig {
             throw new IllegalArgumentException("Invalid CEC setting '" + name
                                                + "' value: '" + value + "'.");
         }
-        Slog.d(TAG, "Updating CEC setting '" + name + "' to '" + value + "'.");
+        HdmiLogger.debug("Updating CEC setting '" + name + "' to '" + value + "'.");
         storeValue(setting, Integer.toString(value));
     }
 }

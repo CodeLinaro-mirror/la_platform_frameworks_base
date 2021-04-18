@@ -66,6 +66,7 @@ import android.os.RemoteException;
 import android.os.StrictMode;
 import android.os.SystemProperties;
 import android.text.TextUtils;
+import android.util.ArrayMap;
 import android.util.Log;
 import android.util.Pair;
 import android.view.Display;
@@ -107,6 +108,8 @@ public class WallpaperManager {
     private static boolean DEBUG = false;
     private float mWallpaperXStep = -1;
     private float mWallpaperYStep = -1;
+    private static final @NonNull RectF LOCAL_COLOR_BOUNDS =
+            new RectF(0, 0, 1, 1);
 
     /** {@hide} */
     private static final String PROP_WALLPAPER = "ro.config.wallpaper";
@@ -114,6 +117,9 @@ public class WallpaperManager {
     private static final String PROP_LOCK_WALLPAPER = "ro.config.lock_wallpaper";
     /** {@hide} */
     private static final String PROP_WALLPAPER_COMPONENT = "ro.config.wallpaper_component";
+    /** {@hide} */
+    private static final String VALUE_CMF_COLOR =
+            android.os.SystemProperties.get("ro.boot.hardware.color");
 
     /**
      * Activity Action: Show settings for choosing wallpaper. Do not use directly to construct
@@ -309,6 +315,8 @@ public class WallpaperManager {
         private int mCachedWallpaperUserId;
         private Bitmap mDefaultWallpaper;
         private Handler mMainLooperHandler;
+        private ArrayMap<LocalWallpaperColorConsumer, ILocalWallpaperColorConsumer>
+                mLocalColorCallbacks = new ArrayMap<>();
 
         Globals(IWallpaperManager service, Looper looper) {
             mService = service;
@@ -347,6 +355,40 @@ public class WallpaperManager {
                     }
                 }
                 mColorListeners.add(new Pair<>(callback, handler));
+            }
+        }
+
+        private ILocalWallpaperColorConsumer wrap(LocalWallpaperColorConsumer callback) {
+            ILocalWallpaperColorConsumer callback2 = new ILocalWallpaperColorConsumer.Stub() {
+                @Override
+                public void onColorsChanged(RectF area, WallpaperColors colors) {
+                    callback.onColorsChanged(area, colors);
+                }
+            };
+            mLocalColorCallbacks.put(callback, callback2);
+            return callback2;
+        }
+
+        public void addOnColorsChangedListener(@NonNull LocalWallpaperColorConsumer callback,
+                @NonNull List<RectF> regions, int which, int userId, int displayId) {
+            try {
+                mService.addOnLocalColorsChangedListener(wrap(callback) , regions, which,
+                                                         userId, displayId);
+            } catch (RemoteException e) {
+                // Can't get colors, connection lost.
+            }
+        }
+
+        public void removeOnColorsChangedListener(
+                @NonNull LocalWallpaperColorConsumer callback, int which, int userId,
+                int displayId) {
+            ILocalWallpaperColorConsumer callback2 = mLocalColorCallbacks.remove(callback);
+            if (callback2 == null) return;
+            try {
+                mService.removeOnLocalColorsChangedListener(
+                        callback2, which, userId, displayId);
+            } catch (RemoteException e) {
+                // Can't get colors, connection lost.
             }
         }
 
@@ -608,7 +650,6 @@ public class WallpaperManager {
      */
     @RequiresPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE)
     public Drawable getDrawable() {
-        assertUiContext("getDrawable");
         final ColorManagementProxy cmProxy = getColorManagementProxy();
         Bitmap bm = sGlobals.peekWallpaperBitmap(mContext, true, FLAG_SYSTEM, cmProxy);
         if (bm != null) {
@@ -676,7 +717,6 @@ public class WallpaperManager {
      */
     public Drawable getBuiltInDrawable(int outWidth, int outHeight, boolean scaleToFit,
             float horizontalAlignment, float verticalAlignment, @SetWallpaperFlags int which) {
-        assertUiContext("getBuiltInDrawable");
         if (sGlobals.mService == null) {
             Log.w(TAG, "WallpaperService not running");
             throw new RuntimeException(new DeadSystemException());
@@ -842,7 +882,6 @@ public class WallpaperManager {
      * null pointer if these is none.
      */
     public Drawable peekDrawable() {
-        assertUiContext("peekDrawable");
         final ColorManagementProxy cmProxy = getColorManagementProxy();
         Bitmap bm = sGlobals.peekWallpaperBitmap(mContext, false, FLAG_SYSTEM, cmProxy);
         if (bm != null) {
@@ -885,7 +924,6 @@ public class WallpaperManager {
      */
     @RequiresPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE)
     public Drawable peekFastDrawable() {
-        assertUiContext("peekFastDrawable");
         final ColorManagementProxy cmProxy = getColorManagementProxy();
         Bitmap bm = sGlobals.peekWallpaperBitmap(mContext, false, FLAG_SYSTEM, cmProxy);
         if (bm != null) {
@@ -1042,6 +1080,7 @@ public class WallpaperManager {
         return getWallpaperColors(which, mContext.getUserId());
     }
 
+    // TODO(b/181083333): add multiple root display area support on this API.
     /**
      * Get the primary colors of the wallpaper configured in the given user.
      * @param which wallpaper type. Must be either {@link #FLAG_SYSTEM} or
@@ -1052,8 +1091,31 @@ public class WallpaperManager {
      */
     @UnsupportedAppUsage
     public @Nullable WallpaperColors getWallpaperColors(int which, int userId) {
-        assertUiContext("getWallpaperColors");
+        StrictMode.assertUiContext(mContext, "getWallpaperColors");
         return sGlobals.getWallpaperColors(which, userId, mContext.getDisplayId());
+    }
+
+    /**
+     * @hide
+     */
+    public void addOnColorsChangedListener(@NonNull LocalWallpaperColorConsumer callback,
+            List<RectF> regions) throws IllegalArgumentException {
+        for (RectF region : regions) {
+            if (!LOCAL_COLOR_BOUNDS.contains(region)) {
+                throw new IllegalArgumentException("Regions must be within bounds "
+                        + LOCAL_COLOR_BOUNDS);
+            }
+        }
+        sGlobals.addOnColorsChangedListener(callback, regions, FLAG_SYSTEM,
+                                                 mContext.getUserId(), mContext.getDisplayId());
+    }
+
+    /**
+     * @hide
+     */
+    public void removeOnColorsChangedListener(@NonNull LocalWallpaperColorConsumer callback) {
+        sGlobals.removeOnColorsChangedListener(callback, FLAG_SYSTEM, mContext.getUserId(),
+                mContext.getDisplayId());
     }
 
     /**
@@ -1268,7 +1330,6 @@ public class WallpaperManager {
     @RequiresPermission(android.Manifest.permission.SET_WALLPAPER)
     public int setResource(@RawRes int resid, @SetWallpaperFlags int which)
             throws IOException {
-        assertUiContext("setResource");
         if (sGlobals.mService == null) {
             Log.w(TAG, "WallpaperService not running");
             throw new RuntimeException(new DeadSystemException());
@@ -1572,6 +1633,7 @@ public class WallpaperManager {
         }
     }
 
+    // TODO(b/181083333): add multiple root display area support on this API.
     /**
      * Returns the desired minimum width for the wallpaper. Callers of
      * {@link #setBitmap(android.graphics.Bitmap)} or
@@ -1589,7 +1651,7 @@ public class WallpaperManager {
      * @see #getDesiredMinimumHeight()
      */
     public int getDesiredMinimumWidth() {
-        assertUiContext("getDesiredMinimumWidth");
+        StrictMode.assertUiContext(mContext, "getDesiredMinimumWidth");
         if (sGlobals.mService == null) {
             Log.w(TAG, "WallpaperService not running");
             throw new RuntimeException(new DeadSystemException());
@@ -1601,6 +1663,7 @@ public class WallpaperManager {
         }
     }
 
+    // TODO(b/181083333): add multiple root display area support on this API.
     /**
      * Returns the desired minimum height for the wallpaper. Callers of
      * {@link #setBitmap(android.graphics.Bitmap)} or
@@ -1618,7 +1681,7 @@ public class WallpaperManager {
      * @see #getDesiredMinimumWidth()
      */
     public int getDesiredMinimumHeight() {
-        assertUiContext("getDesiredMinimumHeight");
+        StrictMode.assertUiContext(mContext, "getDesiredMinimumHeight");
         if (sGlobals.mService == null) {
             Log.w(TAG, "WallpaperService not running");
             throw new RuntimeException(new DeadSystemException());
@@ -1630,6 +1693,7 @@ public class WallpaperManager {
         }
     }
 
+    // TODO(b/181083333): add multiple root display area support on this API.
     /**
      * For use only by the current home application, to specify the size of
      * wallpaper it would like to use.  This allows such applications to have
@@ -1649,7 +1713,7 @@ public class WallpaperManager {
      * @param minimumHeight Desired minimum height
      */
     public void suggestDesiredDimensions(int minimumWidth, int minimumHeight) {
-        assertUiContext("suggestDesiredDimensions");
+        StrictMode.assertUiContext(mContext, "suggestDesiredDimensions");
         try {
             /**
              * The framework makes no attempt to limit the window size
@@ -1692,6 +1756,7 @@ public class WallpaperManager {
         }
     }
 
+    // TODO(b/181083333): add multiple root display area support on this API.
     /**
      * Specify extra padding that the wallpaper should have outside of the display.
      * That is, the given padding supplies additional pixels the wallpaper should extend
@@ -1705,7 +1770,7 @@ public class WallpaperManager {
      */
     @RequiresPermission(android.Manifest.permission.SET_WALLPAPER_HINTS)
     public void setDisplayPadding(Rect padding) {
-        assertUiContext("setDisplayPadding");
+        StrictMode.assertUiContext(mContext, "setDisplayPadding");
         try {
             if (sGlobals.mService == null) {
                 Log.w(TAG, "WallpaperService not running");
@@ -1958,7 +2023,6 @@ public class WallpaperManager {
      */
     @RequiresPermission(android.Manifest.permission.SET_WALLPAPER)
     public void clear() throws IOException {
-        assertUiContext("clear");
         setStream(openDefaultWallpaper(mContext, FLAG_SYSTEM), null, false);
     }
 
@@ -2002,7 +2066,11 @@ public class WallpaperManager {
             return null;
         } else {
             whichProp = PROP_WALLPAPER;
-            defaultResId = com.android.internal.R.drawable.default_wallpaper;
+            final int defaultColorResId = context.getResources().getIdentifier(
+                    "default_wallpaper_" + VALUE_CMF_COLOR, "drawable", "android");
+            defaultResId =
+                    defaultColorResId == 0 ? com.android.internal.R.drawable.default_wallpaper
+                            : defaultColorResId;
         }
         final String path = SystemProperties.get(whichProp);
         if (!TextUtils.isEmpty(path)) {
@@ -2107,10 +2175,6 @@ public class WallpaperManager {
         return mCmProxy;
     }
 
-    private void assertUiContext(final String methodName) {
-        StrictMode.assertUiContext(mContext, methodName);
-    }
-
     /**
      * A hidden class to help {@link Globals#getCurrentWallpaperLocked} handle color management.
      * @hide
@@ -2201,5 +2265,19 @@ public class WallpaperManager {
         default void onColorsChanged(WallpaperColors colors, int which, int userId) {
             onColorsChanged(colors, which);
         }
+    }
+
+    /**
+     * Callback to update a consumer with a local color change
+     * @hide
+     */
+    public interface LocalWallpaperColorConsumer {
+
+        /**
+         * Gets called when a color of an area gets updated
+         * @param area
+         * @param colors
+         */
+        void onColorsChanged(RectF area, WallpaperColors colors);
     }
 }

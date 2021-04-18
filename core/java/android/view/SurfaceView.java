@@ -544,6 +544,7 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
         // recreate this Surface, so only release it when we are fully
         // detached.
         if (mSurfacePackage != null) {
+            mTmpTransaction.reparent(mSurfacePackage.getSurfaceControl(), null).apply();
             mSurfacePackage.release();
             mSurfacePackage = null;
         }
@@ -877,6 +878,10 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
 
         synchronized (mSurfaceControlLock) {
             mSurface.release();
+            if (mBlastBufferQueue != null) {
+                mBlastBufferQueue.destroy();
+                mBlastBufferQueue = null;
+            }
 
             if (mRtHandlingPositionUpdates) {
                 mRtReleaseSurfaces = true;
@@ -900,10 +905,6 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
         if (mBlastSurfaceControl != null) {
             transaction.remove(mBlastSurfaceControl);
             mBlastSurfaceControl = null;
-        }
-        if (mBlastBufferQueue != null) {
-            mBlastBufferQueue.destroy();
-            mBlastBufferQueue = null;
         }
     }
 
@@ -1083,7 +1084,12 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
 
                 if (creating) {
                     updateOpaqueFlag();
-                    mDeferredDestroySurfaceControl = createSurfaceControls(viewRoot);
+                    final String name = "SurfaceView[" + viewRoot.getTitle().toString() + "]";
+                    if (mUseBlastAdapter) {
+                        createBlastSurfaceControls(viewRoot, name);
+                    } else {
+                        mDeferredDestroySurfaceControl = createSurfaceControls(viewRoot, name);
+                    }
                 } else if (mSurfaceControl == null) {
                     return;
                 }
@@ -1193,11 +1199,9 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
 
     private void setBufferSize(Transaction transaction) {
         if (mUseBlastAdapter) {
-            mBlastBufferQueue.update(mBlastSurfaceControl, mSurfaceWidth,
-                    mSurfaceHeight);
+            mBlastBufferQueue.update(mBlastSurfaceControl, mSurfaceWidth, mSurfaceHeight, mFormat);
         } else {
-            transaction.setBufferSize(mSurfaceControl, mSurfaceWidth,
-                    mSurfaceHeight);
+            transaction.setBufferSize(mSurfaceControl, mSurfaceWidth, mSurfaceHeight);
         }
     }
 
@@ -1222,54 +1226,77 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
      * out, the old surface can be persevered until the new one has drawn by keeping the reference
      * of the old SurfaceControl alive.
      */
-    private SurfaceControl createSurfaceControls(ViewRootImpl viewRoot) {
-        final String name = "SurfaceView[" + viewRoot.getTitle().toString() + "]";
-
-        SurfaceControl.Builder builder = new SurfaceControl.Builder(mSurfaceSession)
+    private SurfaceControl createSurfaceControls(ViewRootImpl viewRoot, String name) {
+        final SurfaceControl previousSurfaceControl = mSurfaceControl;
+        mSurfaceControl = new SurfaceControl.Builder(mSurfaceSession)
                 .setName(name)
                 .setLocalOwnerView(this)
                 .setParent(viewRoot.getBoundsLayer())
-                .setCallsite("SurfaceView.updateSurface");
+                .setCallsite("SurfaceView.updateSurface")
+                .setBufferSize(mSurfaceWidth, mSurfaceHeight)
+                .setFlags(mSurfaceFlags)
+                .setFormat(mFormat)
+                .build();
+        mBackgroundControl = createBackgroundControl(name);
+        return previousSurfaceControl;
+    }
 
-        final SurfaceControl previousSurfaceControl;
-        if (mUseBlastAdapter) {
-            mSurfaceControl = builder
+    private SurfaceControl createBackgroundControl(String name) {
+        return new SurfaceControl.Builder(mSurfaceSession)
+        .setName("Background for " + name)
+        .setLocalOwnerView(this)
+        .setOpaque(true)
+        .setColorLayer()
+        .setParent(mSurfaceControl)
+        .setCallsite("SurfaceView.updateSurface")
+        .build();
+    }
+
+    // We don't recreate the surface controls but only recreate the adapter. Since the blast layer
+    // is still alive, the old buffers will continue to be presented until replaced by buffers from
+    // the new adapter. This means we do not need to track the old surface control and destroy it
+    // after the client has drawn to avoid any flickers.
+    private void createBlastSurfaceControls(ViewRootImpl viewRoot, String name) {
+        if (mSurfaceControl == null) {
+            mSurfaceControl = new SurfaceControl.Builder(mSurfaceSession)
+                    .setName(name)
+                    .setLocalOwnerView(this)
+                    .setParent(viewRoot.getBoundsLayer())
+                    .setCallsite("SurfaceView.updateSurface")
                     .setContainerLayer()
                     .build();
-            previousSurfaceControl = mBlastSurfaceControl;
+        }
+
+        if (mBlastSurfaceControl == null) {
             mBlastSurfaceControl = new SurfaceControl.Builder(mSurfaceSession)
                     .setName(name + "(BLAST)")
                     .setLocalOwnerView(this)
-                    .setBufferSize(mSurfaceWidth, mSurfaceHeight)
-                    .setFormat(mFormat)
                     .setParent(mSurfaceControl)
                     .setFlags(mSurfaceFlags)
                     .setHidden(false)
                     .setBLASTLayer()
                     .setCallsite("SurfaceView.updateSurface")
                     .build();
-            mBlastBufferQueue = new BLASTBufferQueue(name,
-                    mBlastSurfaceControl, mSurfaceWidth, mSurfaceHeight, true /* TODO */);
         } else {
-            previousSurfaceControl = mSurfaceControl;
-            mSurfaceControl = builder
-                    .setBufferSize(mSurfaceWidth, mSurfaceHeight)
-                    .setFlags(mSurfaceFlags)
-                    .setFormat(mFormat)
-                    .build();
-            mBlastSurfaceControl = null;
-            mBlastBufferQueue = null;
+            // update blast layer
+            mTmpTransaction
+                    .setOpaque(mBlastSurfaceControl, (mSurfaceFlags & SurfaceControl.OPAQUE) != 0)
+                    .setSecure(mBlastSurfaceControl, (mSurfaceFlags & SurfaceControl.SECURE) != 0)
+                    .show(mBlastSurfaceControl)
+                    .apply();
         }
-        mBackgroundControl = new SurfaceControl.Builder(mSurfaceSession)
-            .setName("Background for " + name)
-            .setLocalOwnerView(this)
-            .setOpaque(true)
-            .setColorLayer()
-            .setParent(mSurfaceControl)
-            .setCallsite("SurfaceView.updateSurface")
-            .build();
 
-        return previousSurfaceControl;
+        if (mBackgroundControl == null) {
+            mBackgroundControl = createBackgroundControl(name);
+        }
+
+        // Always recreate the IGBP for compatibility. This can be optimized in the future but
+        // the behavior change will need to be gated by SDK version.
+        if (mBlastBufferQueue != null) {
+            mBlastBufferQueue.destroy();
+        }
+        mBlastBufferQueue = new BLASTBufferQueue(name, mBlastSurfaceControl, mSurfaceWidth,
+                mSurfaceHeight, mFormat, true /* TODO */);
     }
 
     private void onDrawFinished() {
@@ -1415,6 +1442,14 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
             } catch (Exception ex) {
                 Log.e(TAG, "Exception from repositionChild", ex);
             }
+        }
+
+        @Override
+        public void applyStretch(long frameNumber, float left, float top, float right,
+                float bottom, float vecX, float vecY, float maxStretch) {
+            mRtTransaction.setStretchEffect(mSurfaceControl, left, top, right, bottom, vecX, vecY,
+                    maxStretch);
+            applyRtTransaction(frameNumber);
         }
 
         @Override

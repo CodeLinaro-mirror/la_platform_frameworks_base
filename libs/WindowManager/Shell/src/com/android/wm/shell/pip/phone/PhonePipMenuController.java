@@ -30,15 +30,18 @@ import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.Debug;
+import android.os.Handler;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Log;
+import android.util.Size;
 import android.view.MotionEvent;
 import android.view.SurfaceControl;
 import android.view.SyncRtSurfaceTransactionApplier;
 import android.view.SyncRtSurfaceTransactionApplier.SurfaceParams;
 import android.view.WindowManagerGlobal;
 
+import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.common.SystemWindows;
 import com.android.wm.shell.pip.PipMediaController;
 import com.android.wm.shell.pip.PipMediaController.ActionListener;
@@ -97,6 +100,8 @@ public class PhonePipMenuController implements PipMenuController {
     private final RectF mTmpDestinationRectF = new RectF();
     private final Context mContext;
     private final PipMediaController mMediaController;
+    private final ShellExecutor mMainExecutor;
+    private final Handler mMainHandler;
 
     private final ArrayList<Listener> mListeners = new ArrayList<>();
     private final SystemWindows mSystemWindows;
@@ -116,11 +121,14 @@ public class PhonePipMenuController implements PipMenuController {
         }
     };
 
-    public PhonePipMenuController(Context context,
-            PipMediaController mediaController, SystemWindows systemWindows) {
+    public PhonePipMenuController(Context context, PipMediaController mediaController,
+            SystemWindows systemWindows, ShellExecutor mainExecutor,
+            Handler mainHandler) {
         mContext = context;
         mMediaController = mediaController;
         mSystemWindows = systemWindows;
+        mMainExecutor = mainExecutor;
+        mMainHandler = mainHandler;
     }
 
     public boolean isMenuVisible() {
@@ -156,7 +164,7 @@ public class PhonePipMenuController implements PipMenuController {
         if (mPipMenuView != null) {
             detachPipMenuView();
         }
-        mPipMenuView = new PipMenuView(mContext, this);
+        mPipMenuView = new PipMenuView(mContext, this, mMainExecutor, mMainHandler);
         mSystemWindows.addView(mPipMenuView,
                 getPipMenuLayoutParams(MENU_WINDOW_TITLE, 0 /* width */, 0 /* height */),
                 0, SHELL_ROOT_LAYER_PIP);
@@ -190,8 +198,7 @@ public class PhonePipMenuController implements PipMenuController {
      * {@code null}), it will get the leash that the WindowlessWM has assigned to it.
      */
     public SurfaceControl getSurfaceControl() {
-        SurfaceControl sf = mPipMenuView.getWindowSurfaceControl();
-        return sf != null ? sf : mSystemWindows.getViewSurface(mPipMenuView);
+        return mSystemWindows.getViewSurface(mPipMenuView);
     }
 
     /**
@@ -201,6 +208,11 @@ public class PhonePipMenuController implements PipMenuController {
         if (!mListeners.contains(listener)) {
             mListeners.add(listener);
         }
+    }
+
+    @Nullable
+    Size getEstimatedMinMenuSize() {
+        return mPipMenuView == null ? null : mPipMenuView.getEstimatedMinMenuSize();
     }
 
     /**
@@ -217,13 +229,13 @@ public class PhonePipMenuController implements PipMenuController {
      * Similar to {@link #showMenu(int, Rect, boolean, boolean, boolean)} but only show the menu
      * upon PiP window transition is finished.
      */
-    public void showMenuWithDelay(int menuState, Rect stackBounds, boolean allowMenuTimeout,
+    public void showMenuWithPossibleDelay(int menuState, Rect stackBounds, boolean allowMenuTimeout,
             boolean willResizeMenu, boolean showResizeHandle) {
         // hide all visible controls including close button and etc. first, this is to ensure
         // menu is totally invisible during the transition to eliminate unpleasant artifacts
         fadeOutMenu();
         showMenuInternal(menuState, stackBounds, allowMenuTimeout, willResizeMenu,
-                true /* withDelay */, showResizeHandle);
+                willResizeMenu /* withDelay=willResizeMenu here */, showResizeHandle);
     }
 
     /**
@@ -363,17 +375,29 @@ public class PhonePipMenuController implements PipMenuController {
     }
 
     /**
-     * Hides the menu activity.
+     * Hides the menu view.
      */
     public void hideMenu() {
+        hideMenu(true /* animate */, true /* resize */);
+    }
+
+    /**
+     * Hides the menu view.
+     *
+     * @param animate whether to animate the menu fadeout
+     * @param resize whether or not to resize the PiP with the state change
+     */
+    public void hideMenu(boolean animate, boolean resize) {
         final boolean isMenuVisible = isMenuVisible();
         if (DEBUG) {
             Log.d(TAG, "hideMenu() state=" + mMenuState
                     + " isMenuVisible=" + isMenuVisible
+                    + " animate=" + animate
+                    + " resize=" + resize
                     + " callers=\n" + Debug.getCallers(5, "    "));
         }
         if (isMenuVisible) {
-            mPipMenuView.hideMenu();
+            mPipMenuView.hideMenu(animate, resize);
         }
     }
 
@@ -389,15 +413,6 @@ public class PhonePipMenuController implements PipMenuController {
             }
             mPipMenuView.hideMenu(onEndCallback);
         }
-    }
-
-    /**
-     * Preemptively mark the menu as invisible, used when we are directly manipulating the pinned
-     * stack and don't want to trigger a resize which can animate the stack in a conflicting way
-     * (ie. when manually expanding or dismissing).
-     */
-    public void hideMenuWithoutResize() {
-        onMenuStateChanged(MENU_STATE_NONE, false /* resize */, null /* callback */);
     }
 
     /**

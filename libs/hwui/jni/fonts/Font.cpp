@@ -34,6 +34,7 @@
 #include <hwui/Typeface.h>
 #include <minikin/FontFamily.h>
 #include <minikin/FontFileParser.h>
+#include <minikin/LocaleList.h>
 #include <ui/FatVector.h>
 
 #include <memory>
@@ -79,7 +80,8 @@ static void Font_Builder_addAxis(CRITICAL_JNI_PARAMS_COMMA jlong builderPtr, jin
 
 // Regular JNI
 static jlong Font_Builder_build(JNIEnv* env, jobject clazz, jlong builderPtr, jobject buffer,
-        jstring filePath, jint weight, jboolean italic, jint ttcIndex) {
+                                jstring filePath, jstring langTags, jint weight, jboolean italic,
+                                jint ttcIndex) {
     NPE_CHECK_RETURN_ZERO(env, buffer);
     std::unique_ptr<NativeFontBuilder> builder(toBuilder(builderPtr));
     const void* fontPtr = env->GetDirectBufferAddress(buffer);
@@ -94,6 +96,7 @@ static jlong Font_Builder_build(JNIEnv* env, jobject clazz, jlong builderPtr, jo
         return 0;
     }
     ScopedUtfChars fontPath(env, filePath);
+    ScopedUtfChars langTagStr(env, langTags);
     jobject fontRef = MakeGlobalRefOrDie(env, buffer);
     sk_sp<SkData> data(SkData::MakeWithProc(fontPtr, fontSize,
             release_global_ref, reinterpret_cast<void*>(fontRef)));
@@ -105,8 +108,13 @@ static jlong Font_Builder_build(JNIEnv* env, jobject clazz, jlong builderPtr, jo
                           "Failed to create internal object. maybe invalid font data.");
         return 0;
     }
-    std::shared_ptr<minikin::Font> font = minikin::Font::Builder(minikinFont).setWeight(weight)
-                    .setSlant(static_cast<minikin::FontStyle::Slant>(italic)).build();
+    uint32_t localeListId = minikin::registerLocaleList(langTagStr.c_str());
+    std::shared_ptr<minikin::Font> font =
+            minikin::Font::Builder(minikinFont)
+                    .setWeight(weight)
+                    .setSlant(static_cast<minikin::FontStyle::Slant>(italic))
+                    .setLocaleListId(localeListId)
+                    .build();
     return reinterpret_cast<jlong>(new FontWrapper(std::move(font)));
 }
 
@@ -129,12 +137,9 @@ static jlong Font_Builder_clone(JNIEnv* env, jobject clazz, jlong fontPtr, jlong
     sk_sp<SkTypeface> newTypeface = minikinSkia->GetSkTypeface()->makeClone(args);
 
     std::shared_ptr<minikin::MinikinFont> newMinikinFont = std::make_shared<MinikinFontSkia>(
-        std::move(newTypeface),
-        minikinSkia->GetFontData(),
-        minikinSkia->GetFontSize(),
-        minikinSkia->getFilePath(),
-        minikinSkia->GetFontIndex(),
-        builder->axes);
+            std::move(newTypeface), minikinSkia->GetSourceId(), minikinSkia->GetFontData(),
+            minikinSkia->GetFontSize(), minikinSkia->getFilePath(), minikinSkia->GetFontIndex(),
+            builder->axes);
     std::shared_ptr<minikin::Font> newFont = minikin::Font::Builder(newMinikinFont)
               .setWeight(weight)
               .setSlant(static_cast<minikin::FontStyle::Slant>(italic))
@@ -142,12 +147,8 @@ static jlong Font_Builder_clone(JNIEnv* env, jobject clazz, jlong fontPtr, jlong
     return reinterpret_cast<jlong>(new FontWrapper(std::move(newFont)));
 }
 
-// Critical Native
-static jlong Font_Builder_getReleaseNativeFont(CRITICAL_JNI_PARAMS) {
-    return reinterpret_cast<jlong>(releaseFont);
-}
-
 ///////////////////////////////////////////////////////////////////////////////
+// Font JNI functions
 
 // Fast Native
 static jfloat Font_getGlyphBounds(JNIEnv* env, jobject, jlong fontHandle, jint glyphId,
@@ -188,51 +189,98 @@ static jfloat Font_getFontMetrics(JNIEnv* env, jobject, jlong fontHandle, jlong 
 }
 
 // Critical Native
-static jlong Font_getNativeFontPtr(CRITICAL_JNI_PARAMS_COMMA jlong fontHandle) {
-    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontHandle);
-    return reinterpret_cast<jlong>(font->font.get());
+static jlong Font_getMinikinFontPtr(CRITICAL_JNI_PARAMS_COMMA jlong fontPtr) {
+    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontPtr);
+    return reinterpret_cast<jlong>(font->font->typeface().get());
 }
 
 // Critical Native
-static jlong Font_GetBufferAddress(CRITICAL_JNI_PARAMS_COMMA jlong fontHandle) {
-    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontHandle);
-    const void* bufferPtr = font->font->typeface()->GetFontData();
-    return reinterpret_cast<jlong>(bufferPtr);
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-struct FontBufferWrapper {
-    FontBufferWrapper(const std::shared_ptr<minikin::MinikinFont>& font) : minikinFont(font) {}
-    // MinikinFont holds a shared pointer of SkTypeface which has reference to font data.
-    std::shared_ptr<minikin::MinikinFont> minikinFont;
-};
-
-static void unrefBuffer(jlong nativePtr) {
-    FontBufferWrapper* wrapper = reinterpret_cast<FontBufferWrapper*>(nativePtr);
-    delete wrapper;
-}
-
-// Critical Native
-static jlong FontBufferHelper_refFontBuffer(CRITICAL_JNI_PARAMS_COMMA jlong fontHandle) {
-    const minikin::Font* font = reinterpret_cast<minikin::Font*>(fontHandle);
-    return reinterpret_cast<jlong>(new FontBufferWrapper(font->typeface()));
+static jlong Font_cloneFont(CRITICAL_JNI_PARAMS_COMMA jlong fontPtr) {
+    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontPtr);
+    std::shared_ptr<minikin::Font> ref = font->font;
+    return reinterpret_cast<jlong>(new FontWrapper(std::move(ref)));
 }
 
 // Fast Native
-static jobject FontBufferHelper_wrapByteBuffer(JNIEnv* env, jobject, jlong nativePtr) {
-    FontBufferWrapper* wrapper = reinterpret_cast<FontBufferWrapper*>(nativePtr);
-    return env->NewDirectByteBuffer(
-        const_cast<void*>(wrapper->minikinFont->GetFontData()),
-        wrapper->minikinFont->GetFontSize());
+static jobject Font_newByteBuffer(JNIEnv* env, jobject, jlong fontPtr) {
+    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontPtr);
+    const std::shared_ptr<minikin::MinikinFont>& minikinFont = font->font->typeface();
+    return env->NewDirectByteBuffer(const_cast<void*>(minikinFont->GetFontData()),
+                                    minikinFont->GetFontSize());
 }
 
 // Critical Native
-static jlong FontBufferHelper_getReleaseFunc(CRITICAL_JNI_PARAMS) {
-    return reinterpret_cast<jlong>(unrefBuffer);
+static jlong Font_getBufferAddress(CRITICAL_JNI_PARAMS_COMMA jlong fontPtr) {
+    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontPtr);
+    return reinterpret_cast<jlong>(font->font->typeface()->GetFontData());
 }
 
-///////////////////////////////////////////////////////////////////////////////
+// Critical Native
+static jlong Font_getReleaseNativeFontFunc(CRITICAL_JNI_PARAMS) {
+    return reinterpret_cast<jlong>(releaseFont);
+}
+
+// Fast Native
+static jstring Font_getFontPath(JNIEnv* env, jobject, jlong fontPtr) {
+    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontPtr);
+    const std::shared_ptr<minikin::MinikinFont>& minikinFont = font->font->typeface();
+    const std::string& path = minikinFont->GetFontPath();
+    if (path.empty()) {
+        return nullptr;
+    }
+    return env->NewStringUTF(path.c_str());
+}
+
+// Fast Native
+static jstring Font_getLocaleList(JNIEnv* env, jobject, jlong fontPtr) {
+    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontPtr);
+    uint32_t localeListId = font->font->getLocaleListId();
+    if (localeListId == 0) {
+        return nullptr;
+    }
+    std::string langTags = minikin::getLocaleString(localeListId);
+    if (langTags.empty()) {
+        return nullptr;
+    }
+    return env->NewStringUTF(langTags.c_str());
+}
+
+// Critical Native
+static jint Font_getPackedStyle(CRITICAL_JNI_PARAMS_COMMA jlong fontPtr) {
+    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontPtr);
+    uint32_t weight = font->font->style().weight();
+    uint32_t isItalic = font->font->style().slant() == minikin::FontStyle::Slant::ITALIC ? 1 : 0;
+    return (isItalic << 16) | weight;
+}
+
+// Critical Native
+static jint Font_getIndex(CRITICAL_JNI_PARAMS_COMMA jlong fontPtr) {
+    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontPtr);
+    const std::shared_ptr<minikin::MinikinFont>& minikinFont = font->font->typeface();
+    return minikinFont->GetFontIndex();
+}
+
+// Critical Native
+static jint Font_getAxisCount(CRITICAL_JNI_PARAMS_COMMA jlong fontPtr) {
+    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontPtr);
+    const std::shared_ptr<minikin::MinikinFont>& minikinFont = font->font->typeface();
+    return minikinFont->GetAxes().size();
+}
+
+// Critical Native
+static jlong Font_getAxisInfo(CRITICAL_JNI_PARAMS_COMMA jlong fontPtr, jint index) {
+    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontPtr);
+    const std::shared_ptr<minikin::MinikinFont>& minikinFont = font->font->typeface();
+    minikin::FontVariation var = minikinFont->GetAxes().at(index);
+    uint32_t floatBinary = *reinterpret_cast<const uint32_t*>(&var.value);
+    return (static_cast<uint64_t>(var.axisTag) << 32) | static_cast<uint64_t>(floatBinary);
+}
+
+// Critical Native
+static jint Font_getSourceId(CRITICAL_JNI_PARAMS_COMMA jlong fontPtr) {
+    FontWrapper* font = reinterpret_cast<FontWrapper*>(fontPtr);
+    return font->font->typeface()->GetSourceId();
+}
 
 // Fast Native
 static jlong FontFileUtil_getFontRevision(JNIEnv* env, jobject, jobject buffer, jint index) {
@@ -277,33 +325,62 @@ static jstring FontFileUtil_getFontPostScriptName(JNIEnv* env, jobject, jobject 
     }
     return env->NewStringUTF(psName->c_str());
 }
+
+static jint FontFileUtil_isPostScriptType1Font(JNIEnv* env, jobject, jobject buffer, jint index) {
+    NPE_CHECK_RETURN_ZERO(env, buffer);
+    const void* fontPtr = env->GetDirectBufferAddress(buffer);
+    if (fontPtr == nullptr) {
+        jniThrowException(env, "java/lang/IllegalArgumentException", "Not a direct buffer");
+        return -1;
+    }
+    jlong fontSize = env->GetDirectBufferCapacity(buffer);
+    if (fontSize <= 0) {
+        jniThrowException(env, "java/lang/IllegalArgumentException",
+                          "buffer size must not be zero or negative");
+        return -1;
+    }
+    minikin::FontFileParser parser(fontPtr, fontSize, index);
+    std::optional<bool> isType1 = parser.isPostScriptType1Font();
+    if (!isType1.has_value()) {
+        return -1;  // not an OpenType font. HarfBuzz failed to parse it.
+    }
+    return isType1.value();
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 static const JNINativeMethod gFontBuilderMethods[] = {
-    { "nInitBuilder", "()J", (void*) Font_Builder_initBuilder },
-    { "nAddAxis", "(JIF)V", (void*) Font_Builder_addAxis },
-    { "nBuild", "(JLjava/nio/ByteBuffer;Ljava/lang/String;IZI)J", (void*) Font_Builder_build },
-    { "nClone", "(JJIZI)J", (void*) Font_Builder_clone },
-    { "nGetReleaseNativeFont", "()J", (void*) Font_Builder_getReleaseNativeFont },
+        {"nInitBuilder", "()J", (void*)Font_Builder_initBuilder},
+        {"nAddAxis", "(JIF)V", (void*)Font_Builder_addAxis},
+        {"nBuild", "(JLjava/nio/ByteBuffer;Ljava/lang/String;Ljava/lang/String;IZI)J",
+         (void*)Font_Builder_build},
+        {"nClone", "(JJIZI)J", (void*)Font_Builder_clone},
 };
 
 static const JNINativeMethod gFontMethods[] = {
-    { "nGetGlyphBounds", "(JIJLandroid/graphics/RectF;)F", (void*) Font_getGlyphBounds },
-    { "nGetFontMetrics", "(JJLandroid/graphics/Paint$FontMetrics;)F", (void*) Font_getFontMetrics },
-    { "nGetNativeFontPtr", "(J)J", (void*) Font_getNativeFontPtr },
-    { "nGetFontBufferAddress", "(J)J", (void*) Font_GetBufferAddress },
-};
-
-static const JNINativeMethod gFontBufferHelperMethods[] = {
-    { "nRefFontBuffer", "(J)J", (void*) FontBufferHelper_refFontBuffer },
-    { "nWrapByteBuffer", "(J)Ljava/nio/ByteBuffer;", (void*) FontBufferHelper_wrapByteBuffer },
-    { "nGetReleaseFunc", "()J", (void*) FontBufferHelper_getReleaseFunc },
+        {"nGetMinikinFontPtr", "(J)J", (void*)Font_getMinikinFontPtr},
+        {"nCloneFont", "(J)J", (void*)Font_cloneFont},
+        {"nNewByteBuffer", "(J)Ljava/nio/ByteBuffer;", (void*)Font_newByteBuffer},
+        {"nGetBufferAddress", "(J)J", (void*)Font_getBufferAddress},
+        {"nGetReleaseNativeFont", "()J", (void*)Font_getReleaseNativeFontFunc},
+        {"nGetGlyphBounds", "(JIJLandroid/graphics/RectF;)F", (void*)Font_getGlyphBounds},
+        {"nGetFontMetrics", "(JJLandroid/graphics/Paint$FontMetrics;)F",
+         (void*)Font_getFontMetrics},
+        {"nGetFontPath", "(J)Ljava/lang/String;", (void*)Font_getFontPath},
+        {"nGetLocaleList", "(J)Ljava/lang/String;", (void*)Font_getLocaleList},
+        {"nGetPackedStyle", "(J)I", (void*)Font_getPackedStyle},
+        {"nGetIndex", "(J)I", (void*)Font_getIndex},
+        {"nGetAxisCount", "(J)I", (void*)Font_getAxisCount},
+        {"nGetAxisInfo", "(JI)J", (void*)Font_getAxisInfo},
+        {"nGetSourceId", "(J)I", (void*)Font_getSourceId},
 };
 
 static const JNINativeMethod gFontFileUtilMethods[] = {
     { "nGetFontRevision", "(Ljava/nio/ByteBuffer;I)J", (void*) FontFileUtil_getFontRevision },
     { "nGetFontPostScriptName", "(Ljava/nio/ByteBuffer;I)Ljava/lang/String;",
         (void*) FontFileUtil_getFontPostScriptName },
+    { "nIsPostScriptType1Font", "(Ljava/nio/ByteBuffer;I)I",
+        (void*) FontFileUtil_isPostScriptType1Font },
 };
 
 int register_android_graphics_fonts_Font(JNIEnv* env) {
@@ -311,8 +388,6 @@ int register_android_graphics_fonts_Font(JNIEnv* env) {
             NELEM(gFontBuilderMethods)) +
             RegisterMethodsOrDie(env, "android/graphics/fonts/Font", gFontMethods,
             NELEM(gFontMethods)) +
-            RegisterMethodsOrDie(env, "android/graphics/fonts/NativeFontBufferHelper",
-            gFontBufferHelperMethods, NELEM(gFontBufferHelperMethods)) +
             RegisterMethodsOrDie(env, "android/graphics/fonts/FontFileUtil", gFontFileUtilMethods,
             NELEM(gFontFileUtilMethods));
 }
@@ -338,8 +413,13 @@ std::shared_ptr<minikin::MinikinFont> createMinikinFontSkia(
     if (face == nullptr) {
         return nullptr;
     }
-    return std::make_shared<MinikinFontSkia>(std::move(face), fontPtr, fontSize,
+    return std::make_shared<MinikinFontSkia>(std::move(face), getNewSourceId(), fontPtr, fontSize,
                                              fontPath, ttcIndex, axes);
+}
+
+int getNewSourceId() {
+    static std::atomic<int> sSourceId = {0};
+    return sSourceId++;
 }
 
 }  // namespace fonts

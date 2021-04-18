@@ -32,6 +32,7 @@ import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertFalse;
 import static junit.framework.Assert.assertTrue;
 
+import android.content.Context;
 import android.hardware.hdmi.HdmiControlManager;
 import android.hardware.hdmi.HdmiPortInfo;
 import android.os.test.TestLooper;
@@ -124,8 +125,11 @@ public class HdmiCecLocalDeviceTest {
 
     @Before
     public void SetUp() {
+
+        Context context = InstrumentationRegistry.getTargetContext();
+
         mHdmiControlService =
-                new HdmiControlService(InstrumentationRegistry.getTargetContext()) {
+                new HdmiControlService(context) {
                     @Override
                     boolean isControlEnabled() {
                         return isControlEnabled;
@@ -159,6 +163,7 @@ public class HdmiCecLocalDeviceTest {
                     }
                 };
         mHdmiControlService.setIoLooper(mTestLooper.getLooper());
+        mHdmiControlService.setHdmiCecConfig(new FakeHdmiCecConfig(context));
         mNativeWrapper = new FakeNativeWrapper();
         mHdmiCecController = HdmiCecController.createWithNativeWrapper(
                 mHdmiControlService, mNativeWrapper, mHdmiControlService.getAtomWriter());
@@ -244,7 +249,8 @@ public class HdmiCecLocalDeviceTest {
 
     @Test
     public void handleUserControlPressed_volumeUp() {
-        mHdmiControlService.setHdmiCecVolumeControlEnabled(true);
+        mHdmiControlService.setHdmiCecVolumeControlEnabledInternal(
+                HdmiControlManager.VOLUME_CONTROL_ENABLED);
         boolean result = mHdmiLocalDevice.handleUserControlPressed(
                 HdmiCecMessageBuilder.buildUserControlPressed(ADDR_PLAYBACK_1, ADDR_TV,
                         HdmiCecKeycode.CEC_KEYCODE_VOLUME_UP));
@@ -254,7 +260,8 @@ public class HdmiCecLocalDeviceTest {
 
     @Test
     public void handleUserControlPressed_volumeDown() {
-        mHdmiControlService.setHdmiCecVolumeControlEnabled(true);
+        mHdmiControlService.setHdmiCecVolumeControlEnabledInternal(
+                HdmiControlManager.VOLUME_CONTROL_ENABLED);
         boolean result = mHdmiLocalDevice.handleUserControlPressed(
                 HdmiCecMessageBuilder.buildUserControlPressed(ADDR_PLAYBACK_1, ADDR_TV,
                         HdmiCecKeycode.CEC_KEYCODE_VOLUME_DOWN));
@@ -264,7 +271,8 @@ public class HdmiCecLocalDeviceTest {
 
     @Test
     public void handleUserControlPressed_volumeMute() {
-        mHdmiControlService.setHdmiCecVolumeControlEnabled(true);
+        mHdmiControlService.setHdmiCecVolumeControlEnabledInternal(
+                HdmiControlManager.VOLUME_CONTROL_ENABLED);
         boolean result = mHdmiLocalDevice.handleUserControlPressed(
                 HdmiCecMessageBuilder.buildUserControlPressed(ADDR_PLAYBACK_1, ADDR_TV,
                         HdmiCecKeycode.CEC_KEYCODE_MUTE));
@@ -274,7 +282,8 @@ public class HdmiCecLocalDeviceTest {
 
     @Test
     public void handleUserControlPressed_volumeUp_disabled() {
-        mHdmiControlService.setHdmiCecVolumeControlEnabled(false);
+        mHdmiControlService.setHdmiCecVolumeControlEnabledInternal(
+                HdmiControlManager.VOLUME_CONTROL_DISABLED);
         boolean result = mHdmiLocalDevice.handleUserControlPressed(
                 HdmiCecMessageBuilder.buildUserControlPressed(ADDR_PLAYBACK_1, ADDR_TV,
                         HdmiCecKeycode.CEC_KEYCODE_VOLUME_UP));
@@ -284,7 +293,8 @@ public class HdmiCecLocalDeviceTest {
 
     @Test
     public void handleUserControlPressed_volumeDown_disabled() {
-        mHdmiControlService.setHdmiCecVolumeControlEnabled(false);
+        mHdmiControlService.setHdmiCecVolumeControlEnabledInternal(
+                HdmiControlManager.VOLUME_CONTROL_DISABLED);
         boolean result = mHdmiLocalDevice.handleUserControlPressed(
                 HdmiCecMessageBuilder.buildUserControlPressed(ADDR_PLAYBACK_1, ADDR_TV,
                         HdmiCecKeycode.CEC_KEYCODE_VOLUME_DOWN));
@@ -294,7 +304,8 @@ public class HdmiCecLocalDeviceTest {
 
     @Test
     public void handleUserControlPressed_volumeMute_disabled() {
-        mHdmiControlService.setHdmiCecVolumeControlEnabled(false);
+        mHdmiControlService.setHdmiCecVolumeControlEnabledInternal(
+                HdmiControlManager.VOLUME_CONTROL_DISABLED);
         boolean result = mHdmiLocalDevice.handleUserControlPressed(
                 HdmiCecMessageBuilder.buildUserControlPressed(ADDR_PLAYBACK_1, ADDR_TV,
                         HdmiCecKeycode.CEC_KEYCODE_MUTE));

@@ -43,6 +43,7 @@ import static com.android.internal.policy.DecorView.NAVIGATION_BAR_COLOR_VIEW_AT
 import static com.android.internal.policy.DecorView.STATUS_BAR_COLOR_VIEW_ATTRIBUTES;
 import static com.android.internal.policy.DecorView.getNavigationBarRect;
 
+import android.annotation.BinderThread;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.ActivityManager.TaskDescription;
@@ -121,6 +122,7 @@ public class TaskSnapshotWindow {
     private final Window mWindow;
     private final Surface mSurface;
     private final Runnable mClearWindowHandler;
+    private final ShellExecutor mSplashScreenExecutor;
     private SurfaceControl mSurfaceControl;
     private SurfaceControl mChildSurfaceControl;
     private final IWindowSession mSession;
@@ -213,16 +215,15 @@ public class TaskSnapshotWindow {
         final TaskSnapshotWindow snapshotSurface = new TaskSnapshotWindow(
                 surfaceControl, snapshot, layoutParams.getTitle(), taskDescription, appearance,
                 windowFlags, windowPrivateFlags, taskBounds, orientation, activityType,
-                topWindowInsetsState, clearWindowHandler);
+                topWindowInsetsState, clearWindowHandler, mainExecutor);
         final Window window = snapshotSurface.mWindow;
 
         final InsetsState mTmpInsetsState = new InsetsState();
         final InputChannel tmpInputChannel = new InputChannel();
         mainExecutor.execute(() -> {
             try {
-                final int res = session.addToDisplay(window, layoutParams, View.GONE,
-                        displayId, mTmpInsetsState, tmpFrames.frame, tmpInputChannel,
-                        mTmpInsetsState, mTempControls);
+                final int res = session.addToDisplay(window, layoutParams, View.GONE, displayId,
+                        mTmpInsetsState, tmpInputChannel, mTmpInsetsState, mTempControls);
                 if (res < 0) {
                     Slog.w(TAG, "Failed to add snapshot starting window res=" + res);
                     return;
@@ -230,7 +231,7 @@ public class TaskSnapshotWindow {
             } catch (RemoteException e) {
                 snapshotSurface.clearWindowSynced();
             }
-            window.setOuter(snapshotSurface, mainExecutor);
+            window.setOuter(snapshotSurface);
             try {
                 session.relayout(window, layoutParams, -1, -1, View.VISIBLE, 0, -1,
                         tmpFrames, tmpMergedConfiguration, surfaceControl, mTmpInsetsState,
@@ -250,7 +251,8 @@ public class TaskSnapshotWindow {
             TaskSnapshot snapshot, CharSequence title, TaskDescription taskDescription,
             int appearance, int windowFlags, int windowPrivateFlags, Rect taskBounds,
             int currentOrientation, int activityType, InsetsState topWindowInsetsState,
-            Runnable clearWindowHandler) {
+            Runnable clearWindowHandler, ShellExecutor splashScreenExecutor) {
+        mSplashScreenExecutor = splashScreenExecutor;
         mSurface = new Surface();
         mSession = WindowManagerGlobal.getWindowSession();
         mWindow = new Window();
@@ -287,28 +289,26 @@ public class TaskSnapshotWindow {
         mSystemBarBackgroundPainter.drawNavigationBarBackground(c);
     }
 
-    void remove(ShellExecutor mainExecutor) {
+    void remove() {
         final long now = SystemClock.uptimeMillis();
         if (mSizeMismatch && now - mShownTime < SIZE_MISMATCH_MINIMUM_TIME_MS
                 // Show the latest content as soon as possible for unlocking to home.
                 && mActivityType != ACTIVITY_TYPE_HOME) {
             final long delayTime = mShownTime + SIZE_MISMATCH_MINIMUM_TIME_MS - now;
-            mainExecutor.executeDelayed(() -> remove(mainExecutor), delayTime);
+            mSplashScreenExecutor.executeDelayed(() -> remove(), delayTime);
             if (DEBUG) {
                 Slog.d(TAG, "Defer removing snapshot surface in " + delayTime);
             }
             return;
         }
-        mainExecutor.execute(() -> {
-            try {
-                if (DEBUG) {
-                    Slog.d(TAG, "Removing snapshot surface, mHasDrawn: " + mHasDrawn);
-                }
-                mSession.remove(mWindow);
-            } catch (RemoteException e) {
-                // nothing
+        try {
+            if (DEBUG) {
+                Slog.d(TAG, "Removing snapshot surface, mHasDrawn: " + mHasDrawn);
             }
-        });
+            mSession.remove(mWindow);
+        } catch (RemoteException e) {
+            // nothing
+        }
     }
 
     /**
@@ -498,13 +498,12 @@ public class TaskSnapshotWindow {
         }
     }
 
+    @BinderThread
     static class Window extends BaseIWindow {
         private TaskSnapshotWindow mOuter;
-        private ShellExecutor mMainExecutor;
 
-        public void setOuter(TaskSnapshotWindow outer, ShellExecutor mainExecutor) {
+        public void setOuter(TaskSnapshotWindow outer) {
             mOuter = outer;
-            mMainExecutor = mainExecutor;
         }
 
         @Override
@@ -512,22 +511,20 @@ public class TaskSnapshotWindow {
                 MergedConfiguration mergedConfiguration, boolean forceLayout,
                 boolean alwaysConsumeSystemBars, int displayId) {
             if (mOuter != null) {
-                if (mergedConfiguration != null
-                        && mOuter.mOrientationOnCreation
-                        != mergedConfiguration.getMergedConfiguration().orientation) {
-                    // The orientation of the screen is changing. We better remove the snapshot ASAP
-                    // as we are going to wait on the new window in any case to unfreeze the screen,
-                    // and the starting window is not needed anymore.
-                    mMainExecutor.execute(() -> {
+                mOuter.mSplashScreenExecutor.execute(() -> {
+                    if (mergedConfiguration != null
+                            && mOuter.mOrientationOnCreation
+                            != mergedConfiguration.getMergedConfiguration().orientation) {
+                        // The orientation of the screen is changing. We better remove the snapshot
+                        // ASAP as we are going to wait on the new window in any case to unfreeze
+                        // the screen, and the starting window is not needed anymore.
                         mOuter.clearWindowSynced();
-                    });
-                } else if (reportDraw) {
-                    mMainExecutor.execute(() -> {
+                    } else if (reportDraw) {
                         if (mOuter.mHasDrawn) {
                             mOuter.reportDrawn();
                         }
-                    });
-                }
+                    }
+                });
             }
         }
     }

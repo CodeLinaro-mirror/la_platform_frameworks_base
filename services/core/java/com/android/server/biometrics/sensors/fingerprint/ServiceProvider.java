@@ -20,6 +20,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.hardware.biometrics.IInvalidationCallback;
 import android.hardware.biometrics.ITestSession;
+import android.hardware.biometrics.ITestSessionCallback;
 import android.hardware.fingerprint.Fingerprint;
 import android.hardware.fingerprint.FingerprintManager;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
@@ -28,6 +29,7 @@ import android.hardware.fingerprint.IUdfpsOverlayController;
 import android.os.IBinder;
 import android.util.proto.ProtoOutputStream;
 
+import com.android.server.biometrics.sensors.BaseClientMonitor;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.LockoutTracker;
 
@@ -78,7 +80,7 @@ public interface ServiceProvider {
 
     void scheduleEnroll(int sensorId, @NonNull IBinder token, byte[] hardwareAuthToken, int userId,
             @NonNull IFingerprintServiceReceiver receiver, @NonNull String opPackageName,
-            boolean shouldLogMetrics);
+            @FingerprintManager.EnrollReason int enrollReason);
 
     void cancelEnrollment(int sensorId, @NonNull IBinder token);
 
@@ -98,7 +100,12 @@ public interface ServiceProvider {
             @NonNull IFingerprintServiceReceiver receiver, int fingerId, int userId,
             @NonNull String opPackageName);
 
-    void scheduleInternalCleanup(int sensorId, int userId);
+    void scheduleRemoveAll(int sensorId, @NonNull IBinder token,
+            @NonNull IFingerprintServiceReceiver receiver, int userId,
+            @NonNull String opPackageName);
+
+    void scheduleInternalCleanup(int sensorId, int userId,
+            @Nullable BaseClientMonitor.Callback callback);
 
     boolean isHardwareDetected(int sensorId);
 
@@ -114,11 +121,8 @@ public interface ServiceProvider {
      * Requests for the authenticatorId (whose source of truth is in the TEE or equivalent) to
      * be invalidated. See {@link com.android.server.biometrics.sensors.InvalidationRequesterClient}
      */
-    default void scheduleInvalidateAuthenticatorId(int sensorId, int userId,
-            @NonNull IInvalidationCallback callback) {
-        throw new IllegalStateException("Providers that support invalidation must override"
-                + " this method");
-    }
+    void scheduleInvalidateAuthenticatorId(int sensorId, int userId,
+            @NonNull IInvalidationCallback callback);
 
     long getAuthenticatorId(int sensorId, int userId);
 
@@ -128,12 +132,14 @@ public interface ServiceProvider {
 
     void setUdfpsOverlayController(@NonNull IUdfpsOverlayController controller);
 
-    void dumpProtoState(int sensorId, @NonNull ProtoOutputStream proto);
+    void dumpProtoState(int sensorId, @NonNull ProtoOutputStream proto,
+            boolean clearSchedulerBuffer);
 
     void dumpProtoMetrics(int sensorId, @NonNull FileDescriptor fd);
 
     void dumpInternal(int sensorId, @NonNull PrintWriter pw);
 
     @NonNull
-    ITestSession createTestSession(int sensorId, @NonNull String opPackageName);
+    ITestSession createTestSession(int sensorId, @NonNull ITestSessionCallback callback,
+            @NonNull String opPackageName);
 }

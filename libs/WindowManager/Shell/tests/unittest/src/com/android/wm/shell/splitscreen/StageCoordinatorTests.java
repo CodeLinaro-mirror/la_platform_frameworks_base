@@ -19,7 +19,7 @@ package com.android.wm.shell.splitscreen;
 import static android.view.Display.DEFAULT_DISPLAY;
 import static android.window.DisplayAreaOrganizer.FEATURE_DEFAULT_TASK_CONTAINER;
 
-import static com.android.wm.shell.splitscreen.SplitScreen.SIDE_STAGE_POSITION_BOTTOM_OR_RIGHT;
+import static com.android.wm.shell.splitscreen.SplitScreen.STAGE_POSITION_BOTTOM_OR_RIGHT;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -41,6 +41,7 @@ import com.android.wm.shell.RootTaskDisplayAreaOrganizer;
 import com.android.wm.shell.ShellTaskOrganizer;
 import com.android.wm.shell.ShellTestCase;
 import com.android.wm.shell.TestRunningTaskInfoBuilder;
+import com.android.wm.shell.common.DisplayImeController;
 import com.android.wm.shell.common.SyncTransactionQueue;
 
 import org.junit.Before;
@@ -58,20 +59,21 @@ public class StageCoordinatorTests extends ShellTestCase {
     @Mock private RootTaskDisplayAreaOrganizer mRootTDAOrganizer;
     @Mock private MainStage mMainStage;
     @Mock private SideStage mSideStage;
+    @Mock private DisplayImeController mDisplayImeController;
     private StageCoordinator mStageCoordinator;
 
     @Before
     public void setup() {
         MockitoAnnotations.initMocks(this);
         mStageCoordinator = new TestStageCoordinator(mContext, DEFAULT_DISPLAY, mSyncQueue,
-                mRootTDAOrganizer, mTaskOrganizer, mMainStage, mSideStage);
+                mRootTDAOrganizer, mTaskOrganizer, mMainStage, mSideStage, mDisplayImeController);
     }
 
     @Test
     public void testMoveToSideStage() {
         final ActivityManager.RunningTaskInfo task = new TestRunningTaskInfoBuilder().build();
 
-        mStageCoordinator.moveToSideStage(task, SIDE_STAGE_POSITION_BOTTOM_OR_RIGHT);
+        mStageCoordinator.moveToSideStage(task, STAGE_POSITION_BOTTOM_OR_RIGHT);
 
         verify(mMainStage).activate(any(Rect.class), any(WindowContainerTransaction.class));
         verify(mSideStage).addTask(eq(task), any(Rect.class),
@@ -94,9 +96,9 @@ public class StageCoordinatorTests extends ShellTestCase {
 
         TestStageCoordinator(Context context, int displayId, SyncTransactionQueue syncQueue,
                 RootTaskDisplayAreaOrganizer rootTDAOrganizer, ShellTaskOrganizer taskOrganizer,
-                MainStage mainStage, SideStage sideStage) {
+                MainStage mainStage, SideStage sideStage, DisplayImeController imeController) {
             super(context, displayId, syncQueue, rootTDAOrganizer, taskOrganizer, mainStage,
-                    sideStage);
+                    sideStage, imeController);
 
             // Prepare default TaskDisplayArea for testing.
             mDisplayAreaInfo = new DisplayAreaInfo(

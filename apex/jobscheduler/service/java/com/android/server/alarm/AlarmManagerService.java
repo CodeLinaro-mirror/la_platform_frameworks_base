@@ -20,11 +20,18 @@ import static android.app.ActivityManagerInternal.ALLOW_NON_FULL;
 import static android.app.AlarmManager.ELAPSED_REALTIME;
 import static android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP;
 import static android.app.AlarmManager.FLAG_ALLOW_WHILE_IDLE;
+import static android.app.AlarmManager.FLAG_ALLOW_WHILE_IDLE_COMPAT;
 import static android.app.AlarmManager.FLAG_ALLOW_WHILE_IDLE_UNRESTRICTED;
 import static android.app.AlarmManager.FLAG_IDLE_UNTIL;
+import static android.app.AlarmManager.FLAG_WAKE_FROM_IDLE;
+import static android.app.AlarmManager.INTERVAL_DAY;
+import static android.app.AlarmManager.INTERVAL_HOUR;
 import static android.app.AlarmManager.RTC;
 import static android.app.AlarmManager.RTC_WAKEUP;
 import static android.content.pm.PackageManager.MATCH_SYSTEM_ONLY;
+import static android.os.PowerWhitelistManager.REASON_ALARM_MANAGER_WHILE_IDLE;
+import static android.os.PowerWhitelistManager.TEMPORARY_ALLOWLIST_TYPE_FOREGROUND_SERVICE_ALLOWED;
+import static android.os.PowerWhitelistManager.TEMPORARY_ALLOWLIST_TYPE_FOREGROUND_SERVICE_NOT_ALLOWED;
 import static android.os.UserHandle.USER_SYSTEM;
 
 import static com.android.server.alarm.Alarm.APP_STANDBY_POLICY_INDEX;
@@ -32,6 +39,7 @@ import static com.android.server.alarm.Alarm.BATTERY_SAVER_POLICY_INDEX;
 import static com.android.server.alarm.Alarm.DEVICE_IDLE_POLICY_INDEX;
 import static com.android.server.alarm.Alarm.REQUESTER_POLICY_INDEX;
 
+import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.UserIdInt;
 import android.app.Activity;
@@ -43,12 +51,14 @@ import android.app.IAlarmCompleteListener;
 import android.app.IAlarmListener;
 import android.app.IAlarmManager;
 import android.app.PendingIntent;
+import android.app.compat.CompatChanges;
 import android.app.usage.UsageStatsManager;
 import android.app.usage.UsageStatsManagerInternal;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.PermissionChecker;
 import android.content.pm.PackageManagerInternal;
 import android.net.Uri;
 import android.os.BatteryManager;
@@ -65,6 +75,7 @@ import android.os.PowerManager;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.ResultReceiver;
+import android.os.ServiceManager;
 import android.os.ShellCallback;
 import android.os.ShellCommand;
 import android.os.SystemClock;
@@ -78,7 +89,6 @@ import android.provider.Settings;
 import android.system.Os;
 import android.text.TextUtils;
 import android.text.format.DateFormat;
-import android.text.format.DateUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.IndentingPrintWriter;
@@ -90,12 +100,13 @@ import android.util.Slog;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.util.SparseIntArray;
-import android.util.SparseLongArray;
 import android.util.TimeUtils;
 import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.app.IAppOpsCallback;
+import com.android.internal.app.IAppOpsService;
 import com.android.internal.util.DumpUtils;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.LocalLog;
@@ -152,12 +163,12 @@ public class AlarmManagerService extends SystemService {
     static final boolean DEBUG_BG_LIMIT = localLOGV || false;
     static final boolean DEBUG_STANDBY = localLOGV || false;
     static final boolean RECORD_ALARMS_IN_HISTORY = true;
-    static final boolean RECORD_DEVICE_IDLE_ALARMS = false;
+    // TODO(b/178484639) : Turn off once alarms and reminders work is complete.
+    static final boolean RECORD_DEVICE_IDLE_ALARMS = true;
     static final String TIMEZONE_PROPERTY = "persist.sys.timezone";
 
     static final int TICK_HISTORY_DEPTH = 10;
-    static final long MILLIS_IN_DAY = 24 * 60 * 60 * 1000;
-    static final long INDEFINITE_DELAY = 365 * MILLIS_IN_DAY;
+    static final long INDEFINITE_DELAY = 365 * INTERVAL_DAY;
 
     // Indices into the KEYS_APP_STANDBY_QUOTAS array.
     static final int ACTIVE_INDEX = 0;
@@ -177,6 +188,7 @@ public class AlarmManagerService extends SystemService {
     final LocalLog mLog = new LocalLog(TAG);
 
     AppOpsManager mAppOps;
+    IAppOpsService mAppOpsService;
     DeviceIdleInternal mLocalDeviceIdleController;
     private UsageStatsManagerInternal mUsageStatsManagerInternal;
     private ActivityManagerInternal mActivityManagerInternal;
@@ -208,6 +220,7 @@ public class AlarmManagerService extends SystemService {
             new ArrayList<>();
     AlarmHandler mHandler;
     AppWakeupHistory mAppWakeupHistory;
+    AppWakeupHistory mAllowWhileIdleHistory;
     ClockReceiver mClockReceiver;
     final DeliveryTracker mDeliveryTracker = new DeliveryTracker();
     IBinder.DeathRecipient mListenerDeathRecipient;
@@ -229,19 +242,6 @@ public class AlarmManagerService extends SystemService {
      * At boot we use SYSTEM_UI_SELF_PERMISSION to look up the definer's uid.
      */
     int mSystemUiUid;
-
-    /**
-     * For each uid, this is the last time we dispatched an "allow while idle" alarm,
-     * used to determine the earliest we can dispatch the next such alarm. Times are in the
-     * 'elapsed' timebase.
-     */
-    final SparseLongArray mLastAllowWhileIdleDispatch = new SparseLongArray();
-
-    /**
-     * For each uid, we store whether the last allow-while-idle alarm was dispatched while
-     * the uid was in foreground or not. We will use the allow_while_idle_short_time in such cases.
-     */
-    final SparseBooleanArray mUseAllowWhileIdleShortTime = new SparseBooleanArray();
 
     static boolean isTimeTickAlarm(Alarm a) {
         return a.uid == Process.SYSTEM_UID && TIME_TICK_TAG.equals(a.listenerTag);
@@ -265,10 +265,8 @@ public class AlarmManagerService extends SystemService {
             "REORDER_ALARMS_FOR_STANDBY",
     });
 
-    /**
-     * Broadcast options to use for FLAG_ALLOW_WHILE_IDLE.
-     */
-    Bundle mIdleOptions;
+    BroadcastOptions mOptsWithFgs = BroadcastOptions.makeBasic();
+    BroadcastOptions mOptsWithoutFgs = BroadcastOptions.makeBasic();
 
     // TODO(b/172085676): Move inside alarm store.
     private final SparseArray<AlarmManager.AlarmClockInfo> mNextAlarmClockForUser =
@@ -290,9 +288,11 @@ public class AlarmManagerService extends SystemService {
     private boolean mAppStandbyParole;
 
     /**
-     * A rolling window history of previous times when an alarm was sent to a package.
+     * A container to keep rolling window history of previous times when an alarm was sent to
+     * a package.
      */
-    private static class AppWakeupHistory {
+    @VisibleForTesting
+    static class AppWakeupHistory {
         private ArrayMap<Pair<String, Integer>, LongArrayQueue> mPackageHistory =
                 new ArrayMap<>();
         private long mWindowSize;
@@ -353,7 +353,6 @@ public class AlarmManagerService extends SystemService {
         }
 
         void dump(IndentingPrintWriter pw, long nowElapsed) {
-            pw.println("App Alarm history:");
             pw.increaseIndent();
             for (int i = 0; i < mPackageHistory.size(); i++) {
                 final Pair<String, Integer> packageUser = mPackageHistory.keyAt(i);
@@ -389,10 +388,6 @@ public class AlarmManagerService extends SystemService {
         @VisibleForTesting
         static final String KEY_MAX_INTERVAL = "max_interval";
         @VisibleForTesting
-        static final String KEY_ALLOW_WHILE_IDLE_SHORT_TIME = "allow_while_idle_short_time";
-        @VisibleForTesting
-        static final String KEY_ALLOW_WHILE_IDLE_LONG_TIME = "allow_while_idle_long_time";
-        @VisibleForTesting
         static final String KEY_ALLOW_WHILE_IDLE_WHITELIST_DURATION
                 = "allow_while_idle_whitelist_duration";
         @VisibleForTesting
@@ -422,11 +417,22 @@ public class AlarmManagerService extends SystemService {
         private static final String KEY_TIME_TICK_ALLOWED_WHILE_IDLE =
                 "time_tick_allowed_while_idle";
 
+        @VisibleForTesting
+        static final String KEY_ALLOW_WHILE_IDLE_QUOTA = "allow_while_idle_quota";
+
+        @VisibleForTesting
+        static final String KEY_ALLOW_WHILE_IDLE_COMPAT_QUOTA = "allow_while_idle_compat_quota";
+
+        @VisibleForTesting
+        static final String KEY_ALLOW_WHILE_IDLE_WINDOW = "allow_while_idle_window";
+        @VisibleForTesting
+        static final String KEY_ALLOW_WHILE_IDLE_COMPAT_WINDOW = "allow_while_idle_compat_window";
+
+        private static final String KEY_CRASH_NON_CLOCK_APPS = "crash_non_clock_apps";
+
         private static final long DEFAULT_MIN_FUTURITY = 5 * 1000;
         private static final long DEFAULT_MIN_INTERVAL = 60 * 1000;
-        private static final long DEFAULT_MAX_INTERVAL = 365 * DateUtils.DAY_IN_MILLIS;
-        private static final long DEFAULT_ALLOW_WHILE_IDLE_SHORT_TIME = DEFAULT_MIN_FUTURITY;
-        private static final long DEFAULT_ALLOW_WHILE_IDLE_LONG_TIME = 9 * 60 * 1000;
+        private static final long DEFAULT_MAX_INTERVAL = 365 * INTERVAL_DAY;
         private static final long DEFAULT_ALLOW_WHILE_IDLE_WHITELIST_DURATION = 10 * 1000;
         private static final long DEFAULT_LISTENER_TIMEOUT = 5 * 1000;
         private static final int DEFAULT_MAX_ALARMS_PER_UID = 500;
@@ -442,10 +448,23 @@ public class AlarmManagerService extends SystemService {
                 0       // Never
         };
         private static final int DEFAULT_APP_STANDBY_RESTRICTED_QUOTA = 1;
-        private static final long DEFAULT_APP_STANDBY_RESTRICTED_WINDOW = MILLIS_IN_DAY;
+        private static final long DEFAULT_APP_STANDBY_RESTRICTED_WINDOW = INTERVAL_DAY;
 
         private static final boolean DEFAULT_LAZY_BATCHING = true;
         private static final boolean DEFAULT_TIME_TICK_ALLOWED_WHILE_IDLE = true;
+
+        /**
+         * Default quota for pre-S apps. The same as allowing an alarm slot once
+         * every ALLOW_WHILE_IDLE_LONG_DELAY, which was 9 minutes.
+         */
+        private static final int DEFAULT_ALLOW_WHILE_IDLE_COMPAT_QUOTA = 1;
+        private static final int DEFAULT_ALLOW_WHILE_IDLE_QUOTA = 72;
+
+        private static final long DEFAULT_ALLOW_WHILE_IDLE_WINDOW = 60 * 60 * 1000; // 1 hour.
+        private static final long DEFAULT_ALLOW_WHILE_IDLE_COMPAT_WINDOW = 9 * 60 * 1000; // 9 mins.
+
+        // TODO (b/171306433): Change to true by default.
+        private static final boolean DEFAULT_CRASH_NON_CLOCK_APPS = false;
 
         // Minimum futurity of a new alarm
         public long MIN_FUTURITY = DEFAULT_MIN_FUTURITY;
@@ -455,12 +474,6 @@ public class AlarmManagerService extends SystemService {
 
         // Maximum alarm recurrence interval
         public long MAX_INTERVAL = DEFAULT_MAX_INTERVAL;
-
-        // Minimum time between ALLOW_WHILE_IDLE alarms when system is not idle.
-        public long ALLOW_WHILE_IDLE_SHORT_TIME = DEFAULT_ALLOW_WHILE_IDLE_SHORT_TIME;
-
-        // Minimum time between ALLOW_WHILE_IDLE alarms when system is idling.
-        public long ALLOW_WHILE_IDLE_LONG_TIME = DEFAULT_ALLOW_WHILE_IDLE_LONG_TIME;
 
         // BroadcastOptions.setTemporaryAppWhitelistDuration() to use for FLAG_ALLOW_WHILE_IDLE.
         public long ALLOW_WHILE_IDLE_WHITELIST_DURATION
@@ -477,6 +490,33 @@ public class AlarmManagerService extends SystemService {
 
         public boolean LAZY_BATCHING = DEFAULT_LAZY_BATCHING;
         public boolean TIME_TICK_ALLOWED_WHILE_IDLE = DEFAULT_TIME_TICK_ALLOWED_WHILE_IDLE;
+
+        public int ALLOW_WHILE_IDLE_QUOTA = DEFAULT_ALLOW_WHILE_IDLE_QUOTA;
+
+        /**
+         * Used to provide backwards compatibility to pre-S apps with a quota equivalent to the
+         * earlier delay throttling mechanism.
+         */
+        public int ALLOW_WHILE_IDLE_COMPAT_QUOTA = DEFAULT_ALLOW_WHILE_IDLE_COMPAT_QUOTA;
+
+        /**
+         * The window used for enforcing {@link #ALLOW_WHILE_IDLE_COMPAT_QUOTA}.
+         * Can be configured, but only recommended for testing.
+         */
+        public long ALLOW_WHILE_IDLE_COMPAT_WINDOW = DEFAULT_ALLOW_WHILE_IDLE_COMPAT_WINDOW;
+
+        /**
+         * The window used for enforcing {@link #ALLOW_WHILE_IDLE_COMPAT_QUOTA}.
+         * Can be configured, but only recommended for testing.
+         */
+        public long ALLOW_WHILE_IDLE_WINDOW = DEFAULT_ALLOW_WHILE_IDLE_WINDOW;
+
+        /**
+         * Whether or not to crash callers that use setExactAndAllowWhileIdle or setAlarmClock
+         * but don't hold the required permission. This is useful to catch broken
+         * apps and reverting to a softer failure in case of broken apps.
+         */
+        public boolean CRASH_NON_CLOCK_APPS = DEFAULT_CRASH_NON_CLOCK_APPS;
 
         private long mLastAllowWhileIdleWhitelistDuration = -1;
 
@@ -495,9 +535,13 @@ public class AlarmManagerService extends SystemService {
         public void updateAllowWhileIdleWhitelistDurationLocked() {
             if (mLastAllowWhileIdleWhitelistDuration != ALLOW_WHILE_IDLE_WHITELIST_DURATION) {
                 mLastAllowWhileIdleWhitelistDuration = ALLOW_WHILE_IDLE_WHITELIST_DURATION;
-                BroadcastOptions opts = BroadcastOptions.makeBasic();
-                opts.setTemporaryAppWhitelistDuration(ALLOW_WHILE_IDLE_WHITELIST_DURATION);
-                mIdleOptions = opts.toBundle();
+
+                mOptsWithFgs.setTemporaryAppAllowlist(ALLOW_WHILE_IDLE_WHITELIST_DURATION,
+                        TEMPORARY_ALLOWLIST_TYPE_FOREGROUND_SERVICE_ALLOWED,
+                        REASON_ALARM_MANAGER_WHILE_IDLE, "");
+                mOptsWithoutFgs.setTemporaryAppAllowlist(ALLOW_WHILE_IDLE_WHITELIST_DURATION,
+                        TEMPORARY_ALLOWLIST_TYPE_FOREGROUND_SERVICE_NOT_ALLOWED,
+                        REASON_ALARM_MANAGER_WHILE_IDLE, "");
             }
         }
 
@@ -523,15 +567,50 @@ public class AlarmManagerService extends SystemService {
                             MAX_INTERVAL = properties.getLong(
                                     KEY_MAX_INTERVAL, DEFAULT_MAX_INTERVAL);
                             break;
-                        case KEY_ALLOW_WHILE_IDLE_SHORT_TIME:
-                            ALLOW_WHILE_IDLE_SHORT_TIME = properties.getLong(
-                                    KEY_ALLOW_WHILE_IDLE_SHORT_TIME,
-                                    DEFAULT_ALLOW_WHILE_IDLE_SHORT_TIME);
+                        case KEY_ALLOW_WHILE_IDLE_QUOTA:
+                            ALLOW_WHILE_IDLE_QUOTA = properties.getInt(KEY_ALLOW_WHILE_IDLE_QUOTA,
+                                    DEFAULT_ALLOW_WHILE_IDLE_QUOTA);
+                            if (ALLOW_WHILE_IDLE_QUOTA <= 0) {
+                                Slog.w(TAG, "Must have positive allow_while_idle quota");
+                                ALLOW_WHILE_IDLE_QUOTA = 1;
+                            }
                             break;
-                        case KEY_ALLOW_WHILE_IDLE_LONG_TIME:
-                            ALLOW_WHILE_IDLE_LONG_TIME = properties.getLong(
-                                    KEY_ALLOW_WHILE_IDLE_LONG_TIME,
-                                    DEFAULT_ALLOW_WHILE_IDLE_LONG_TIME);
+                        case KEY_ALLOW_WHILE_IDLE_COMPAT_QUOTA:
+                            ALLOW_WHILE_IDLE_COMPAT_QUOTA = properties.getInt(
+                                    KEY_ALLOW_WHILE_IDLE_COMPAT_QUOTA,
+                                    DEFAULT_ALLOW_WHILE_IDLE_COMPAT_QUOTA);
+                            if (ALLOW_WHILE_IDLE_COMPAT_QUOTA <= 0) {
+                                Slog.w(TAG, "Must have positive allow_while_idle_compat quota");
+                                ALLOW_WHILE_IDLE_COMPAT_QUOTA = 1;
+                            }
+                            break;
+                        case KEY_ALLOW_WHILE_IDLE_WINDOW:
+                            ALLOW_WHILE_IDLE_WINDOW = properties.getLong(
+                                    KEY_ALLOW_WHILE_IDLE_WINDOW, DEFAULT_ALLOW_WHILE_IDLE_WINDOW);
+
+                            if (ALLOW_WHILE_IDLE_WINDOW > INTERVAL_HOUR) {
+                                Slog.w(TAG, "Cannot have allow_while_idle_window > "
+                                        + INTERVAL_HOUR);
+                                ALLOW_WHILE_IDLE_WINDOW = INTERVAL_HOUR;
+                            } else if (ALLOW_WHILE_IDLE_WINDOW != DEFAULT_ALLOW_WHILE_IDLE_WINDOW) {
+                                Slog.w(TAG, "Using a non-default allow_while_idle_window = "
+                                        + ALLOW_WHILE_IDLE_WINDOW);
+                            }
+                            break;
+                        case KEY_ALLOW_WHILE_IDLE_COMPAT_WINDOW:
+                            ALLOW_WHILE_IDLE_COMPAT_WINDOW = properties.getLong(
+                                    KEY_ALLOW_WHILE_IDLE_COMPAT_WINDOW,
+                                    DEFAULT_ALLOW_WHILE_IDLE_COMPAT_WINDOW);
+
+                            if (ALLOW_WHILE_IDLE_COMPAT_WINDOW > INTERVAL_HOUR) {
+                                Slog.w(TAG, "Cannot have allow_while_idle_compat_window > "
+                                        + INTERVAL_HOUR);
+                                ALLOW_WHILE_IDLE_COMPAT_WINDOW = INTERVAL_HOUR;
+                            } else if (ALLOW_WHILE_IDLE_COMPAT_WINDOW
+                                    != DEFAULT_ALLOW_WHILE_IDLE_COMPAT_WINDOW) {
+                                Slog.w(TAG, "Using a non-default allow_while_idle_compat_window = "
+                                        + ALLOW_WHILE_IDLE_COMPAT_WINDOW);
+                            }
                             break;
                         case KEY_ALLOW_WHILE_IDLE_WHITELIST_DURATION:
                             ALLOW_WHILE_IDLE_WHITELIST_DURATION = properties.getLong(
@@ -568,6 +647,10 @@ public class AlarmManagerService extends SystemService {
                             TIME_TICK_ALLOWED_WHILE_IDLE = properties.getBoolean(
                                     KEY_TIME_TICK_ALLOWED_WHILE_IDLE,
                                     DEFAULT_TIME_TICK_ALLOWED_WHILE_IDLE);
+                            break;
+                        case KEY_CRASH_NON_CLOCK_APPS:
+                            CRASH_NON_CLOCK_APPS = properties.getBoolean(KEY_CRASH_NON_CLOCK_APPS,
+                                    DEFAULT_CRASH_NON_CLOCK_APPS);
                             break;
                         default:
                             if (name.startsWith(KEY_PREFIX_STANDBY_QUOTA) && !standbyQuotaUpdated) {
@@ -660,14 +743,20 @@ public class AlarmManagerService extends SystemService {
             TimeUtils.formatDuration(LISTENER_TIMEOUT, pw);
             pw.println();
 
-            pw.print(KEY_ALLOW_WHILE_IDLE_SHORT_TIME);
-            pw.print("=");
-            TimeUtils.formatDuration(ALLOW_WHILE_IDLE_SHORT_TIME, pw);
+            pw.print(KEY_ALLOW_WHILE_IDLE_QUOTA, ALLOW_WHILE_IDLE_QUOTA);
             pw.println();
 
-            pw.print(KEY_ALLOW_WHILE_IDLE_LONG_TIME);
+            pw.print(KEY_ALLOW_WHILE_IDLE_WINDOW);
             pw.print("=");
-            TimeUtils.formatDuration(ALLOW_WHILE_IDLE_LONG_TIME, pw);
+            TimeUtils.formatDuration(ALLOW_WHILE_IDLE_WINDOW, pw);
+            pw.println();
+
+            pw.print(KEY_ALLOW_WHILE_IDLE_COMPAT_QUOTA, ALLOW_WHILE_IDLE_COMPAT_QUOTA);
+            pw.println();
+
+            pw.print(KEY_ALLOW_WHILE_IDLE_COMPAT_WINDOW);
+            pw.print("=");
+            TimeUtils.formatDuration(ALLOW_WHILE_IDLE_COMPAT_WINDOW, pw);
             pw.println();
 
             pw.print(KEY_ALLOW_WHILE_IDLE_WHITELIST_DURATION);
@@ -675,9 +764,8 @@ public class AlarmManagerService extends SystemService {
             TimeUtils.formatDuration(ALLOW_WHILE_IDLE_WHITELIST_DURATION, pw);
             pw.println();
 
-            pw.print(KEY_MAX_ALARMS_PER_UID);
-            pw.print("=");
-            pw.println(MAX_ALARMS_PER_UID);
+            pw.print(KEY_MAX_ALARMS_PER_UID, MAX_ALARMS_PER_UID);
+            pw.println();
 
             pw.print(KEY_APP_STANDBY_WINDOW);
             pw.print("=");
@@ -685,14 +773,12 @@ public class AlarmManagerService extends SystemService {
             pw.println();
 
             for (int i = 0; i < KEYS_APP_STANDBY_QUOTAS.length; i++) {
-                pw.print(KEYS_APP_STANDBY_QUOTAS[i]);
-                pw.print("=");
-                pw.println(APP_STANDBY_QUOTAS[i]);
+                pw.print(KEYS_APP_STANDBY_QUOTAS[i], APP_STANDBY_QUOTAS[i]);
+                pw.println();
             }
 
-            pw.print(KEY_APP_STANDBY_RESTRICTED_QUOTA);
-            pw.print("=");
-            pw.println(APP_STANDBY_RESTRICTED_QUOTA);
+            pw.print(KEY_APP_STANDBY_RESTRICTED_QUOTA, APP_STANDBY_RESTRICTED_QUOTA);
+            pw.println();
 
             pw.print(KEY_APP_STANDBY_RESTRICTED_WINDOW);
             pw.print("=");
@@ -705,6 +791,9 @@ public class AlarmManagerService extends SystemService {
             pw.print(KEY_TIME_TICK_ALLOWED_WHILE_IDLE, TIME_TICK_ALLOWED_WHILE_IDLE);
             pw.println();
 
+            pw.print(KEY_CRASH_NON_CLOCK_APPS, CRASH_NON_CLOCK_APPS);
+            pw.println();
+
             pw.decreaseIndent();
         }
 
@@ -715,10 +804,6 @@ public class AlarmManagerService extends SystemService {
             proto.write(ConstantsProto.MIN_INTERVAL_DURATION_MS, MIN_INTERVAL);
             proto.write(ConstantsProto.MAX_INTERVAL_DURATION_MS, MAX_INTERVAL);
             proto.write(ConstantsProto.LISTENER_TIMEOUT_DURATION_MS, LISTENER_TIMEOUT);
-            proto.write(ConstantsProto.ALLOW_WHILE_IDLE_SHORT_DURATION_MS,
-                    ALLOW_WHILE_IDLE_SHORT_TIME);
-            proto.write(ConstantsProto.ALLOW_WHILE_IDLE_LONG_DURATION_MS,
-                    ALLOW_WHILE_IDLE_LONG_TIME);
             proto.write(ConstantsProto.ALLOW_WHILE_IDLE_WHITELIST_DURATION_MS,
                     ALLOW_WHILE_IDLE_WHITELIST_DURATION);
 
@@ -857,7 +942,15 @@ public class AlarmManagerService extends SystemService {
         if (futurity < MIN_FUZZABLE_INTERVAL) {
             futurity = 0;
         }
-        return clampPositive(triggerAtTime + (long) (.75 * futurity));
+        long maxElapsed = triggerAtTime + (long) (0.75 * futurity);
+        // For non-repeating alarms, window is capped at a maximum of one hour from the requested
+        // delivery time. This allows for inexact-while-idle alarms to be slightly more reliable.
+        // In practice, the delivery window should generally be much smaller than that
+        // when the device is not idling.
+        if (interval == 0) {
+            maxElapsed = Math.min(maxElapsed, triggerAtTime + INTERVAL_HOUR);
+        }
+        return clampPositive(maxElapsed);
     }
 
     // The RTC clock has moved arbitrarily, so we need to recalculate all the RTC alarm deliveries.
@@ -1025,7 +1118,7 @@ public class AlarmManagerService extends SystemService {
                 setImplLocked(alarm.type, alarm.origWhen + delta, nextElapsed,
                         nextMaxElapsed - nextElapsed, alarm.repeatInterval, alarm.operation, null,
                         null, alarm.flags, alarm.workSource, alarm.alarmClock, alarm.uid,
-                        alarm.packageName);
+                        alarm.packageName, null);
                 // Kernel alarms will be rescheduled as needed in setImplLocked
             }
         }
@@ -1268,6 +1361,7 @@ public class AlarmManagerService extends SystemService {
             mAlarmStore.setAlarmClockRemovalListener(mAlarmClockUpdater);
 
             mAppWakeupHistory = new AppWakeupHistory(Constants.DEFAULT_APP_STANDBY_WINDOW);
+            mAllowWhileIdleHistory = new AppWakeupHistory(INTERVAL_HOUR);
 
             mNextWakeup = mNextNonWakeup = 0;
 
@@ -1353,6 +1447,28 @@ public class AlarmManagerService extends SystemService {
             synchronized (mLock) {
                 mConstants.start();
                 mAppOps = (AppOpsManager) getContext().getSystemService(Context.APP_OPS_SERVICE);
+                mAppOpsService = mInjector.getAppOpsService();
+                try {
+                    mAppOpsService.startWatchingMode(AppOpsManager.OP_SCHEDULE_EXACT_ALARM, null,
+                            new IAppOpsCallback.Stub() {
+                                @Override
+                                public void opChanged(int op, int uid, String packageName)
+                                        throws RemoteException {
+                                    if (op != AppOpsManager.OP_SCHEDULE_EXACT_ALARM) {
+                                        return;
+                                    }
+                                    final int mode = mAppOpsService.checkOperation(op, uid,
+                                            packageName);
+                                    if (mode != AppOpsManager.MODE_ALLOWED
+                                            && mode != AppOpsManager.MODE_DEFAULT) {
+                                        mHandler.obtainMessage(AlarmHandler.REMOVE_EXACT_ALARMS,
+                                                uid, 0, packageName).sendToTarget();
+                                    }
+                                }
+                            });
+                } catch (RemoteException e) {
+                }
+
                 mLocalDeviceIdleController =
                         LocalServices.getService(DeviceIdleInternal.class);
                 mUsageStatsManagerInternal =
@@ -1454,7 +1570,7 @@ public class AlarmManagerService extends SystemService {
     void setImpl(int type, long triggerAtTime, long windowLength, long interval,
             PendingIntent operation, IAlarmListener directReceiver, String listenerTag,
             int flags, WorkSource workSource, AlarmManager.AlarmClockInfo alarmClock,
-            int callingUid, String callingPackage) {
+            int callingUid, String callingPackage, Bundle idleOptions) {
         if ((operation == null && directReceiver == null)
                 || (operation != null && directReceiver != null)) {
             Slog.w(TAG, "Alarms must either supply a PendingIntent or an AlarmReceiver");
@@ -1545,17 +1661,18 @@ public class AlarmManagerService extends SystemService {
             }
             setImplLocked(type, triggerAtTime, triggerElapsed, windowLength, interval, operation,
                     directReceiver, listenerTag, flags, workSource, alarmClock, callingUid,
-                    callingPackage);
+                    callingPackage, idleOptions);
         }
     }
 
     private void setImplLocked(int type, long when, long whenElapsed, long windowLength,
             long interval, PendingIntent operation, IAlarmListener directReceiver,
             String listenerTag, int flags, WorkSource workSource,
-            AlarmManager.AlarmClockInfo alarmClock, int callingUid, String callingPackage) {
+            AlarmManager.AlarmClockInfo alarmClock, int callingUid, String callingPackage,
+            Bundle idleOptions) {
         final Alarm a = new Alarm(type, when, whenElapsed, windowLength, interval,
                 operation, directReceiver, listenerTag, workSource, flags, alarmClock,
-                callingUid, callingPackage);
+                callingUid, callingPackage, idleOptions);
         if (mActivityManagerInternal.isAppStartModeDisabled(callingUid, callingPackage)) {
             Slog.w(TAG, "Not setting alarm from " + callingUid + ":" + a
                     + " -- package not allowed to start");
@@ -1631,30 +1748,51 @@ public class AlarmManagerService extends SystemService {
             return false;
         }
 
-        if (!(mAppStateTracker != null && mAppStateTracker.areAlarmsRestrictedByBatterySaver(
-                alarm.creatorUid, alarm.sourcePackage))) {
+        if (mAppStateTracker == null || !mAppStateTracker.areAlarmsRestrictedByBatterySaver(
+                alarm.creatorUid, alarm.sourcePackage)) {
             return alarm.setPolicyElapsed(BATTERY_SAVER_POLICY_INDEX, nowElapsed);
         }
 
-        final long batterSaverPolicyElapsed;
-        if ((alarm.flags & (AlarmManager.FLAG_ALLOW_WHILE_IDLE_UNRESTRICTED)) != 0) {
+        final long batterySaverPolicyElapsed;
+        if ((alarm.flags & (FLAG_ALLOW_WHILE_IDLE_UNRESTRICTED)) != 0) {
             // Unrestricted.
-            batterSaverPolicyElapsed = nowElapsed;
-        } else if ((alarm.flags & AlarmManager.FLAG_ALLOW_WHILE_IDLE) != 0) {
+            batterySaverPolicyElapsed = nowElapsed;
+        } else if (isAllowedWhileIdleRestricted(alarm)) {
             // Allowed but limited.
-            final long minDelay;
-            if (mUseAllowWhileIdleShortTime.get(alarm.creatorUid)) {
-                minDelay = mConstants.ALLOW_WHILE_IDLE_SHORT_TIME;
+            final int userId = UserHandle.getUserId(alarm.creatorUid);
+            final int quota;
+            final long window;
+            if ((alarm.flags & FLAG_ALLOW_WHILE_IDLE) != 0) {
+                quota = mConstants.ALLOW_WHILE_IDLE_QUOTA;
+                window = mConstants.ALLOW_WHILE_IDLE_WINDOW;
             } else {
-                minDelay = mConstants.ALLOW_WHILE_IDLE_LONG_TIME;
+                quota = mConstants.ALLOW_WHILE_IDLE_COMPAT_QUOTA;
+                window = mConstants.ALLOW_WHILE_IDLE_COMPAT_WINDOW;
             }
-            final long lastDispatch = mLastAllowWhileIdleDispatch.get(alarm.creatorUid, 0);
-            batterSaverPolicyElapsed = (lastDispatch == 0) ? nowElapsed : lastDispatch + minDelay;
+            final int dispatchesInWindow = mAllowWhileIdleHistory.getTotalWakeupsInWindow(
+                    alarm.sourcePackage, userId);
+            if (dispatchesInWindow < quota) {
+                // fine to go out immediately.
+                batterySaverPolicyElapsed = nowElapsed;
+            } else {
+                batterySaverPolicyElapsed = mAllowWhileIdleHistory.getNthLastWakeupForPackage(
+                        alarm.sourcePackage, userId, quota) + window;
+            }
         } else {
             // Not allowed.
-            batterSaverPolicyElapsed = nowElapsed + INDEFINITE_DELAY;
+            batterySaverPolicyElapsed = nowElapsed + INDEFINITE_DELAY;
         }
-        return alarm.setPolicyElapsed(BATTERY_SAVER_POLICY_INDEX, batterSaverPolicyElapsed);
+        return alarm.setPolicyElapsed(BATTERY_SAVER_POLICY_INDEX, batterySaverPolicyElapsed);
+    }
+
+    /**
+     * Returns {@code true} if the given alarm has the flag
+     * {@link AlarmManager#FLAG_ALLOW_WHILE_IDLE} or
+     * {@link AlarmManager#FLAG_ALLOW_WHILE_IDLE_COMPAT}
+     *
+     */
+    private static boolean isAllowedWhileIdleRestricted(Alarm a) {
+        return (a.flags & (FLAG_ALLOW_WHILE_IDLE | FLAG_ALLOW_WHILE_IDLE_COMPAT)) != 0;
     }
 
     /**
@@ -1670,15 +1808,31 @@ public class AlarmManagerService extends SystemService {
         }
 
         final long deviceIdlePolicyTime;
-        if ((alarm.flags & (AlarmManager.FLAG_ALLOW_WHILE_IDLE_UNRESTRICTED
-                | AlarmManager.FLAG_WAKE_FROM_IDLE)) != 0) {
+        if ((alarm.flags & (FLAG_ALLOW_WHILE_IDLE_UNRESTRICTED | FLAG_WAKE_FROM_IDLE)) != 0) {
             // Unrestricted.
             deviceIdlePolicyTime = nowElapsed;
-        } else if ((alarm.flags & AlarmManager.FLAG_ALLOW_WHILE_IDLE) != 0) {
+        } else if (isAllowedWhileIdleRestricted(alarm)) {
             // Allowed but limited.
-            final long lastDispatch = mLastAllowWhileIdleDispatch.get(alarm.creatorUid, 0);
-            deviceIdlePolicyTime = (lastDispatch == 0) ? nowElapsed
-                    : lastDispatch + mConstants.ALLOW_WHILE_IDLE_LONG_TIME;
+            final int userId = UserHandle.getUserId(alarm.creatorUid);
+            final int quota;
+            final long window;
+            if ((alarm.flags & FLAG_ALLOW_WHILE_IDLE) != 0) {
+                quota = mConstants.ALLOW_WHILE_IDLE_QUOTA;
+                window = mConstants.ALLOW_WHILE_IDLE_WINDOW;
+            } else {
+                quota = mConstants.ALLOW_WHILE_IDLE_COMPAT_QUOTA;
+                window = mConstants.ALLOW_WHILE_IDLE_COMPAT_WINDOW;
+            }
+            final int dispatchesInWindow = mAllowWhileIdleHistory.getTotalWakeupsInWindow(
+                    alarm.sourcePackage, userId);
+            if (dispatchesInWindow < quota) {
+                // fine to go out immediately.
+                deviceIdlePolicyTime = nowElapsed;
+            } else {
+                final long whenInQuota = mAllowWhileIdleHistory.getNthLastWakeupForPackage(
+                        alarm.sourcePackage, userId, quota) + window;
+                deviceIdlePolicyTime = Math.min(whenInQuota, mPendingIdleUntil.getWhenElapsed());
+            }
         } else {
             // Not allowed.
             deviceIdlePolicyTime = mPendingIdleUntil.getWhenElapsed();
@@ -1723,11 +1877,11 @@ public class AlarmManagerService extends SystemService {
             if (wakeupsInWindow >= quotaForBucket) {
                 final long minElapsed;
                 if (quotaForBucket <= 0) {
-                    // Just keep deferring for a day till the quota changes
-                    minElapsed = nowElapsed + MILLIS_IN_DAY;
+                    // Just keep deferring indefinitely till the quota changes.
+                    minElapsed = nowElapsed + INDEFINITE_DELAY;
                 } else {
                     // Suppose the quota for window was q, and the qth last delivery time for this
-                    // package was t(q) then the next delivery must be after t(q) + <window_size>
+                    // package was t(q) then the next delivery must be after t(q) + <window_size>.
                     final long t = mAppWakeupHistory.getNthLastWakeupForPackage(
                             sourcePackage, sourceUserId, quotaForBucket);
                     minElapsed = t + mConstants.APP_STANDBY_WINDOW;
@@ -1746,19 +1900,12 @@ public class AlarmManagerService extends SystemService {
             if (RECORD_DEVICE_IDLE_ALARMS) {
                 IdleDispatchEntry ent = new IdleDispatchEntry();
                 ent.uid = a.uid;
-                ent.pkg = a.operation.getCreatorPackage();
-                ent.tag = a.operation.getTag("");
-                ent.op = "SET";
+                ent.pkg = a.sourcePackage;
+                ent.tag = a.statsTag;
+                ent.op = "START IDLE";
                 ent.elapsedRealtime = mInjector.getElapsedRealtime();
                 ent.argRealtime = a.getWhenElapsed();
                 mAllowWhileIdleDispatches.add(ent);
-                if (mPendingIdleUntil == null) {
-                    IdleDispatchEntry ent2 = new IdleDispatchEntry();
-                    ent2.uid = 0;
-                    ent2.pkg = "START IDLE";
-                    ent2.elapsedRealtime = mInjector.getElapsedRealtime();
-                    mAllowWhileIdleDispatches.add(ent2);
-                }
             }
             if ((mPendingIdleUntil != a) && (mPendingIdleUntil != null)) {
                 Slog.wtfStack(TAG, "setImplLocked: idle until changed from " + mPendingIdleUntil
@@ -1770,7 +1917,7 @@ public class AlarmManagerService extends SystemService {
         } else if (mPendingIdleUntil != null) {
             adjustDeliveryTimeBasedOnDeviceIdle(a);
         }
-        if ((a.flags & AlarmManager.FLAG_WAKE_FROM_IDLE) != 0) {
+        if ((a.flags & FLAG_WAKE_FROM_IDLE) != 0) {
             if (mNextWakeFromIdle == null || mNextWakeFromIdle.getWhenElapsed()
                     > a.getWhenElapsed()) {
                 mNextWakeFromIdle = a;
@@ -1831,6 +1978,15 @@ public class AlarmManagerService extends SystemService {
     }
 
     /**
+     * Returns true if the given uid does not require SCHEDULE_EXACT_ALARM to set exact,
+     * allow-while-idle alarms.
+     */
+    boolean isExemptFromPermission(int uid) {
+        return (UserHandle.isSameApp(mSystemUiUid, uid) || mLocalDeviceIdleController == null
+                || mLocalDeviceIdleController.isAppOnWhitelist(UserHandle.getAppId(uid)));
+    }
+
+    /**
      * Public-facing binder interface
      */
     private final IBinder mService = new IAlarmManager.Stub() {
@@ -1844,6 +2000,60 @@ public class AlarmManagerService extends SystemService {
             // make sure the caller is not lying about which package should be blamed for
             // wakelock time spent in alarm delivery
             mAppOps.checkPackage(callingUid, callingPackage);
+
+            final boolean allowWhileIdle = (flags & FLAG_ALLOW_WHILE_IDLE) != 0;
+
+            Bundle idleOptions = null;
+            if (alarmClock != null || allowWhileIdle) {
+                // make sure the caller is allowed to use the requested kind of alarm, and also
+                // decide what broadcast options to use.
+                final boolean needsPermission;
+                boolean lowQuota;
+                if (CompatChanges.isChangeEnabled(AlarmManager.REQUIRE_EXACT_ALARM_PERMISSION,
+                        callingPackage, UserHandle.getUserHandleForUid(callingUid))) {
+                    if (windowLength != AlarmManager.WINDOW_EXACT) {
+                        needsPermission = false;
+                        lowQuota = true;
+                        idleOptions = isExemptFromPermission(callingUid) ? mOptsWithFgs.toBundle()
+                                : mOptsWithoutFgs.toBundle();
+                    } else if (alarmClock != null) {
+                        needsPermission = true;
+                        lowQuota = false;
+                        idleOptions = mOptsWithFgs.toBundle();
+                    } else {
+                        needsPermission = true;
+                        lowQuota = false;
+                        idleOptions = mOptsWithFgs.toBundle();
+                    }
+                } else {
+                    needsPermission = false;
+                    lowQuota = allowWhileIdle;
+                    idleOptions = allowWhileIdle ? mOptsWithFgs.toBundle() : null;
+                }
+                if (needsPermission && !canScheduleExactAlarms()) {
+                    if (alarmClock == null && isExemptFromPermission(callingUid)) {
+                        // If the app is on the full system allow-list (not except-idle), we still
+                        // allow the alarms, but with a lower quota to keep pre-S compatibility.
+                        lowQuota = true;
+                    } else {
+                        final String errorMessage = "Caller " + callingPackage + " needs to hold "
+                                + Manifest.permission.SCHEDULE_EXACT_ALARM + " to set "
+                                + ((allowWhileIdle) ? "exact, allow-while-idle" : "alarm-clock")
+                                + " alarms.";
+                        if (mConstants.CRASH_NON_CLOCK_APPS) {
+                            throw new SecurityException(errorMessage);
+                        } else {
+                            Slog.wtf(TAG, errorMessage);
+                            idleOptions = mOptsWithoutFgs.toBundle();
+                            lowQuota = allowWhileIdle;
+                        }
+                    }
+                }
+                if (lowQuota) {
+                    flags &= ~FLAG_ALLOW_WHILE_IDLE;
+                    flags |= FLAG_ALLOW_WHILE_IDLE_COMPAT;
+                }
+            }
 
             // Repeating alarms must use PendingIntent, not direct listener
             if (interval != 0) {
@@ -1861,8 +2071,7 @@ public class AlarmManagerService extends SystemService {
 
             // No incoming callers can request either WAKE_FROM_IDLE or
             // ALLOW_WHILE_IDLE_UNRESTRICTED -- we will apply those later as appropriate.
-            flags &= ~(AlarmManager.FLAG_WAKE_FROM_IDLE
-                    | AlarmManager.FLAG_ALLOW_WHILE_IDLE_UNRESTRICTED);
+            flags &= ~(FLAG_WAKE_FROM_IDLE | FLAG_ALLOW_WHILE_IDLE_UNRESTRICTED);
 
             // Only the system can use FLAG_IDLE_UNTIL -- this is used to tell the alarm
             // manager when to come out of idle mode, which is only for DeviceIdleController.
@@ -1878,22 +2087,32 @@ public class AlarmManagerService extends SystemService {
             // If this alarm is for an alarm clock, then it must be standalone and we will
             // use it to wake early from idle if needed.
             if (alarmClock != null) {
-                flags |= AlarmManager.FLAG_WAKE_FROM_IDLE | AlarmManager.FLAG_STANDALONE;
+                flags |= FLAG_WAKE_FROM_IDLE | AlarmManager.FLAG_STANDALONE;
 
             // If the caller is a core system component or on the user's whitelist, and not calling
             // to do work on behalf of someone else, then always set ALLOW_WHILE_IDLE_UNRESTRICTED.
             // This means we will allow these alarms to go off as normal even while idle, with no
             // timing restrictions.
-            } else if (workSource == null && (callingUid < Process.FIRST_APPLICATION_UID
+            } else if (workSource == null && (UserHandle.isCore(callingUid)
                     || UserHandle.isSameApp(callingUid, mSystemUiUid)
                     || ((mAppStateTracker != null)
                         && mAppStateTracker.isUidPowerSaveUserExempt(callingUid)))) {
-                flags |= AlarmManager.FLAG_ALLOW_WHILE_IDLE_UNRESTRICTED;
-                flags &= ~AlarmManager.FLAG_ALLOW_WHILE_IDLE;
+                flags |= FLAG_ALLOW_WHILE_IDLE_UNRESTRICTED;
+                flags &= ~FLAG_ALLOW_WHILE_IDLE;
+                flags &= ~FLAG_ALLOW_WHILE_IDLE_COMPAT;
+                idleOptions = null;
             }
 
             setImpl(type, triggerAtTime, windowLength, interval, operation, directReceiver,
-                    listenerTag, flags, workSource, alarmClock, callingUid, callingPackage);
+                    listenerTag, flags, workSource, alarmClock, callingUid, callingPackage,
+                    idleOptions);
+        }
+
+        @Override
+        public boolean canScheduleExactAlarms() {
+            return PermissionChecker.checkCallingOrSelfPermissionForPreflight(getContext(),
+                    Manifest.permission.SCHEDULE_EXACT_ALARM)
+                    == PermissionChecker.PERMISSION_GRANTED;
         }
 
         @Override
@@ -2182,6 +2401,7 @@ public class AlarmManagerService extends SystemService {
             pw.println("]");
             pw.println();
 
+            pw.println("App Alarm history:");
             mAppWakeupHistory.dump(pw, nowELAPSED);
 
             if (mPendingIdleUntil != null) {
@@ -2259,30 +2479,8 @@ public class AlarmManagerService extends SystemService {
                 pw.println();
             }
 
-            if (mLastAllowWhileIdleDispatch.size() > 0) {
-                pw.println("Last allow while idle dispatch times:");
-                pw.increaseIndent();
-                for (int i = 0; i < mLastAllowWhileIdleDispatch.size(); i++) {
-                    pw.print("UID ");
-                    final int uid = mLastAllowWhileIdleDispatch.keyAt(i);
-                    UserHandle.formatUid(pw, uid);
-                    pw.print(": ");
-                    final long lastTime = mLastAllowWhileIdleDispatch.valueAt(i);
-                    TimeUtils.formatDuration(lastTime, nowELAPSED, pw);
-                    pw.println();
-                }
-                pw.decreaseIndent();
-            }
-
-            pw.print("mUseAllowWhileIdleShortTime: [");
-            for (int i = 0; i < mUseAllowWhileIdleShortTime.size(); i++) {
-                if (mUseAllowWhileIdleShortTime.valueAt(i)) {
-                    UserHandle.formatUid(pw, mUseAllowWhileIdleShortTime.keyAt(i));
-                    pw.print(" ");
-                }
-            }
-            pw.println("]");
-            pw.println();
+            pw.println("Allow while idle history:");
+            mAllowWhileIdleHistory.dump(pw, nowELAPSED);
 
             if (mLog.dump(pw, "Recent problems:")) {
                 pw.println();
@@ -2531,25 +2729,6 @@ public class AlarmManagerService extends SystemService {
 
             for (InFlight f : mInFlight) {
                 f.dumpDebug(proto, AlarmManagerServiceDumpProto.OUTSTANDING_DELIVERIES);
-            }
-
-            for (int i = 0; i < mLastAllowWhileIdleDispatch.size(); ++i) {
-                final long token = proto.start(
-                        AlarmManagerServiceDumpProto.LAST_ALLOW_WHILE_IDLE_DISPATCH_TIMES);
-                final int uid = mLastAllowWhileIdleDispatch.keyAt(i);
-                final long lastTime = mLastAllowWhileIdleDispatch.valueAt(i);
-
-                proto.write(AlarmManagerServiceDumpProto.LastAllowWhileIdleDispatch.UID, uid);
-                proto.write(AlarmManagerServiceDumpProto.LastAllowWhileIdleDispatch.TIME_MS,
-                        lastTime);
-                proto.end(token);
-            }
-
-            for (int i = 0; i < mUseAllowWhileIdleShortTime.size(); i++) {
-                if (mUseAllowWhileIdleShortTime.valueAt(i)) {
-                    proto.write(AlarmManagerServiceDumpProto.USE_ALLOW_WHILE_IDLE_SHORT_TIME,
-                            mUseAllowWhileIdleShortTime.keyAt(i));
-                }
             }
 
             mLog.dumpDebug(proto, AlarmManagerServiceDumpProto.RECENT_PROBLEMS);
@@ -2816,6 +2995,77 @@ public class AlarmManagerService extends SystemService {
         }
     }
 
+    /**
+     * Called when an app loses {@link Manifest.permission#SCHEDULE_EXACT_ALARM} to remove alarms
+     * that the app is no longer eligible to use.
+     * TODO (b/179541791): Revisit and write tests once UX is final.
+     */
+    void removeExactAlarmsOnPermissionRevokedLocked(int uid, String packageName) {
+        if (UserHandle.isCore(uid) || uid == mSystemUiUid) {
+            return;
+        }
+        if (isExemptFromPermission(uid)) {
+            return;
+        }
+        if (!CompatChanges.isChangeEnabled(
+                AlarmManager.REQUIRE_EXACT_ALARM_PERMISSION,
+                packageName, UserHandle.getUserHandleForUid(uid))) {
+            return;
+        }
+
+        final Predicate<Alarm> whichAlarms =
+                a -> (a.uid == uid && a.packageName.equals(packageName)
+                        && ((a.flags & FLAG_ALLOW_WHILE_IDLE) != 0 || a.alarmClock != null));
+        final ArrayList<Alarm> removed = mAlarmStore.remove(whichAlarms);
+        final boolean didRemove = !removed.isEmpty();
+        if (didRemove) {
+            decrementAlarmCount(uid, removed.size());
+        }
+
+        for (int i = mPendingBackgroundAlarms.size() - 1; i >= 0; i--) {
+            final ArrayList<Alarm> alarmsForUid = mPendingBackgroundAlarms.valueAt(i);
+            for (int j = alarmsForUid.size() - 1; j >= 0; j--) {
+                final Alarm alarm = alarmsForUid.get(j);
+                if (whichAlarms.test(alarm)) {
+                    // Don't set didRemove, since this doesn't impact the scheduled alarms.
+                    alarmsForUid.remove(j);
+                    decrementAlarmCount(alarm.uid, 1);
+                }
+            }
+            if (alarmsForUid.size() == 0) {
+                mPendingBackgroundAlarms.removeAt(i);
+            }
+        }
+        for (int i = mPendingNonWakeupAlarms.size() - 1; i >= 0; i--) {
+            final Alarm a = mPendingNonWakeupAlarms.get(i);
+            if (whichAlarms.test(a)) {
+                // Don't set didRemove, since this doesn't impact the scheduled alarms.
+                mPendingNonWakeupAlarms.remove(i);
+                decrementAlarmCount(a.uid, 1);
+            }
+        }
+
+        if (didRemove) {
+            if (mNextWakeFromIdle != null && whichAlarms.test(mNextWakeFromIdle)) {
+                mNextWakeFromIdle = mAlarmStore.getNextWakeFromIdleAlarm();
+                if (mPendingIdleUntil != null) {
+                    final boolean idleUntilUpdated = mAlarmStore.updateAlarmDeliveries(alarm -> {
+                        if (alarm != mPendingIdleUntil) {
+                            return false;
+                        }
+                        return adjustIdleUntilTime(alarm);
+                    });
+                    if (idleUntilUpdated) {
+                        mAlarmStore.updateAlarmDeliveries(
+                                alarm -> adjustDeliveryTimeBasedOnDeviceIdle(alarm));
+                    }
+                }
+            }
+            rescheduleKernelAlarmsLocked();
+            updateNextAlarmClockLocked();
+        }
+    }
+
     void removeLocked(PendingIntent operation, IAlarmListener directReceiver) {
         if (operation == null && directReceiver == null) {
             if (localLOGV) {
@@ -3049,11 +3299,6 @@ public class AlarmManagerService extends SystemService {
                 mPendingBackgroundAlarms.removeAt(i);
             }
         }
-        for (int i = mLastAllowWhileIdleDispatch.size() - 1; i >= 0; i--) {
-            if (UserHandle.getUserId(mLastAllowWhileIdleDispatch.keyAt(i)) == userHandle) {
-                mLastAllowWhileIdleDispatch.removeAt(i);
-            }
-        }
         if (mNextWakeFromIdle != null && whichAlarms.test(mNextWakeFromIdle)) {
             mNextWakeFromIdle = mAlarmStore.getNextWakeFromIdleAlarm();
             if (mPendingIdleUntil != null) {
@@ -3148,7 +3393,7 @@ public class AlarmManagerService extends SystemService {
         }
     }
 
-    private boolean isExemptFromBatterySaver(Alarm alarm) {
+    private static boolean isExemptFromBatterySaver(Alarm alarm) {
         if (alarm.alarmClock != null) {
             return true;
         }
@@ -3208,13 +3453,23 @@ public class AlarmManagerService extends SystemService {
 
             alarm.count = 1;
             triggerList.add(alarm);
-            if ((alarm.flags & AlarmManager.FLAG_WAKE_FROM_IDLE) != 0) {
+            if ((alarm.flags & FLAG_WAKE_FROM_IDLE) != 0) {
                 EventLogTags.writeDeviceIdleWakeFromIdle(mPendingIdleUntil != null ? 1 : 0,
                         alarm.statsTag);
             }
             if (mPendingIdleUntil == alarm) {
                 mPendingIdleUntil = null;
                 mAlarmStore.updateAlarmDeliveries(a -> adjustDeliveryTimeBasedOnDeviceIdle(a));
+                if (RECORD_DEVICE_IDLE_ALARMS) {
+                    IdleDispatchEntry ent = new IdleDispatchEntry();
+                    ent.uid = alarm.uid;
+                    ent.pkg = alarm.sourcePackage;
+                    ent.tag = alarm.statsTag;
+                    ent.op = "END IDLE";
+                    ent.elapsedRealtime = mInjector.getElapsedRealtime();
+                    ent.argRealtime = alarm.getWhenElapsed();
+                    mAllowWhileIdleDispatches.add(ent);
+                }
             }
             if (mNextWakeFromIdle == alarm) {
                 mNextWakeFromIdle = mAlarmStore.getNextWakeFromIdleAlarm();
@@ -3236,7 +3491,7 @@ public class AlarmManagerService extends SystemService {
                 setImplLocked(alarm.type, alarm.origWhen + delta, nextElapsed,
                         nextMaxElapsed - nextElapsed, alarm.repeatInterval, alarm.operation, null,
                         null, alarm.flags, alarm.workSource, alarm.alarmClock, alarm.uid,
-                        alarm.packageName);
+                        alarm.packageName, null);
             }
 
             if (alarm.wakeup) {
@@ -3313,7 +3568,6 @@ public class AlarmManagerService extends SystemService {
         mLastAlarmDeliveryTime = nowELAPSED;
         for (int i = 0; i < triggerList.size(); i++) {
             Alarm alarm = triggerList.get(i);
-            final boolean allowWhileIdle = (alarm.flags & AlarmManager.FLAG_ALLOW_WHILE_IDLE) != 0;
             if (alarm.wakeup) {
                 Trace.traceBegin(Trace.TRACE_TAG_POWER,
                         "Dispatch wakeup alarm to " + alarm.packageName);
@@ -3329,7 +3583,7 @@ public class AlarmManagerService extends SystemService {
                     mActivityManagerInternal.noteAlarmStart(alarm.operation, alarm.workSource,
                             alarm.uid, alarm.statsTag);
                 }
-                mDeliveryTracker.deliverLocked(alarm, nowELAPSED, allowWhileIdle);
+                mDeliveryTracker.deliverLocked(alarm, nowELAPSED);
             } catch (RuntimeException e) {
                 Slog.w(TAG, "Failure sending alarm.", e);
             }
@@ -3338,9 +3592,10 @@ public class AlarmManagerService extends SystemService {
         }
     }
 
-    private boolean isExemptFromAppStandby(Alarm a) {
+    @VisibleForTesting
+    static boolean isExemptFromAppStandby(Alarm a) {
         return a.alarmClock != null || UserHandle.isCore(a.creatorUid)
-                || (a.flags & FLAG_ALLOW_WHILE_IDLE_UNRESTRICTED) != 0;
+                || (a.flags & (FLAG_ALLOW_WHILE_IDLE_UNRESTRICTED | FLAG_ALLOW_WHILE_IDLE)) != 0;
     }
 
     @VisibleForTesting
@@ -3422,6 +3677,11 @@ public class AlarmManagerService extends SystemService {
             PackageManagerInternal pm = LocalServices.getService(PackageManagerInternal.class);
             return pm.getPackageUid(pm.getSystemUiServiceComponent().getPackageName(),
                     MATCH_SYSTEM_ONLY, USER_SYSTEM);
+        }
+
+        IAppOpsService getAppOpsService() {
+            return IAppOpsService.Stub.asInterface(
+                    ServiceManager.getService(Context.APP_OPS_SERVICE));
         }
 
         ClockReceiver getClockReceiver(AlarmManagerService service) {
@@ -3622,6 +3882,7 @@ public class AlarmManagerService extends SystemService {
         public static final int APP_STANDBY_BUCKET_CHANGED = 5;
         public static final int CHARGING_STATUS_CHANGED = 6;
         public static final int REMOVE_FOR_CANCELED = 7;
+        public static final int REMOVE_EXACT_ALARMS = 8;
 
         AlarmHandler() {
             super(Looper.myLooper());
@@ -3701,6 +3962,14 @@ public class AlarmManagerService extends SystemService {
                     }
                     break;
 
+                case REMOVE_EXACT_ALARMS:
+                    final int uid = msg.arg1;
+                    final String packageName = (String) msg.obj;
+                    synchronized (mLock) {
+                        removeExactAlarmsOnPermissionRevokedLocked(uid, packageName);
+                    }
+                    break;
+
                 default:
                     // nope, just ignore it
                     break;
@@ -3776,7 +4045,7 @@ public class AlarmManagerService extends SystemService {
 
             setImpl(ELAPSED_REALTIME, mInjector.getElapsedRealtime() + tickEventDelay, 0,
                     0, null, mTimeTickTrigger, TIME_TICK_TAG, flags, workSource, null,
-                    Process.myUid(), "android");
+                    Process.myUid(), "android", null);
 
             // Finally, remember when we set the tick alarm
             synchronized (mLock) {
@@ -3796,7 +4065,7 @@ public class AlarmManagerService extends SystemService {
             final WorkSource workSource = null; // Let system take blame for date change events.
             setImpl(RTC, calendar.getTimeInMillis(), 0, 0, mDateChangeSender, null, null,
                     AlarmManager.FLAG_STANDALONE, workSource, null,
-                    Process.myUid(), "android");
+                    Process.myUid(), "android", null);
         }
     }
 
@@ -3829,7 +4098,6 @@ public class AlarmManagerService extends SystemService {
             IntentFilter sdFilter = new IntentFilter();
             sdFilter.addAction(Intent.ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE);
             sdFilter.addAction(Intent.ACTION_USER_STOPPED);
-            sdFilter.addAction(Intent.ACTION_UID_REMOVED);
             getContext().registerReceiver(this, sdFilter);
         }
 
@@ -3856,12 +4124,7 @@ public class AlarmManagerService extends SystemService {
                         if (userHandle >= 0) {
                             removeUserLocked(userHandle);
                             mAppWakeupHistory.removeForUser(userHandle);
-                        }
-                        return;
-                    case Intent.ACTION_UID_REMOVED:
-                        if (uid >= 0) {
-                            mLastAllowWhileIdleDispatch.delete(uid);
-                            mUseAllowWhileIdleShortTime.delete(uid);
+                            mAllowWhileIdleHistory.removeForUser(userHandle);
                         }
                         return;
                     case Intent.ACTION_PACKAGE_REMOVED:
@@ -3885,6 +4148,7 @@ public class AlarmManagerService extends SystemService {
                         if (uid >= 0) {
                             // package-removed and package-restarted case
                             mAppWakeupHistory.removeForPackage(pkg, UserHandle.getUserId(uid));
+                            mAllowWhileIdleHistory.removeForPackage(pkg, UserHandle.getUserId(uid));
                             removeLocked(uid);
                         } else {
                             // external-applications-unavailable case
@@ -3976,23 +4240,6 @@ public class AlarmManagerService extends SystemService {
             // Called when user turns off FAS for this (uid, package).
             synchronized (mLock) {
                 sendPendingBackgroundAlarmsLocked(uid, packageName);
-            }
-        }
-
-        @Override
-        public void onUidForeground(int uid, boolean foreground) {
-            synchronized (mLock) {
-                if (foreground) {
-                    mUseAllowWhileIdleShortTime.put(uid, true);
-                    if (mAlarmStore.updateAlarmDeliveries(a -> {
-                        if (a.creatorUid != uid || (a.flags & FLAG_ALLOW_WHILE_IDLE) == 0) {
-                            return false;
-                        }
-                        return adjustDeliveryTimeBasedOnBatterySaver(a);
-                    })) {
-                        rescheduleKernelAlarmsLocked();
-                    }
-                }
             }
         }
 
@@ -4190,7 +4437,7 @@ public class AlarmManagerService extends SystemService {
          * Deliver an alarm and set up the post-delivery handling appropriately
          */
         @GuardedBy("mLock")
-        public void deliverLocked(Alarm alarm, long nowELAPSED, boolean allowWhileIdle) {
+        public void deliverLocked(Alarm alarm, long nowELAPSED) {
             final long workSourceToken = ThreadLocalWorkSource.setUid(
                     getAlarmAttributionUid(alarm));
             try {
@@ -4200,10 +4447,8 @@ public class AlarmManagerService extends SystemService {
 
                     try {
                         alarm.operation.send(getContext(), 0,
-                                mBackgroundIntent.putExtra(
-                                        Intent.EXTRA_ALARM_COUNT, alarm.count),
-                                mDeliveryTracker, mHandler, null,
-                                allowWhileIdle ? mIdleOptions : null);
+                                mBackgroundIntent.putExtra(Intent.EXTRA_ALARM_COUNT, alarm.count),
+                                mDeliveryTracker, mHandler, null, alarm.mIdleOptions);
                     } catch (PendingIntent.CanceledException e) {
                         if (alarm.repeatInterval > 0) {
                             // This IntentSender is no longer valid, but this
@@ -4272,23 +4517,23 @@ public class AlarmManagerService extends SystemService {
             if (inflight.isBroadcast()) {
                 notifyBroadcastAlarmPendingLocked(alarm.uid);
             }
-            if (allowWhileIdle) {
-                // Record the last time this uid handled an ALLOW_WHILE_IDLE alarm.
-                mLastAllowWhileIdleDispatch.put(alarm.creatorUid, nowELAPSED);
-                if ((mAppStateTracker == null)
-                        || mAppStateTracker.isUidInForeground(alarm.creatorUid)) {
-                    mUseAllowWhileIdleShortTime.put(alarm.creatorUid, true);
-                } else {
-                    mUseAllowWhileIdleShortTime.put(alarm.creatorUid, false);
+            if (isAllowedWhileIdleRestricted(alarm)) {
+                final boolean doze = (mPendingIdleUntil != null);
+                final boolean batterySaver = (mAppStateTracker != null
+                        && mAppStateTracker.isForceAllAppsStandbyEnabled());
+                if (doze || batterySaver) {
+                    // Record the last time this uid handled an ALLOW_WHILE_IDLE alarm while the
+                    // device was in doze or battery saver.
+                    mAllowWhileIdleHistory.recordAlarmForPackage(alarm.sourcePackage,
+                            UserHandle.getUserId(alarm.creatorUid), nowELAPSED);
+                    mAlarmStore.updateAlarmDeliveries(a -> {
+                        if (a.creatorUid != alarm.creatorUid || !isAllowedWhileIdleRestricted(a)) {
+                            return false;
+                        }
+                        return (doze && adjustDeliveryTimeBasedOnDeviceIdle(a))
+                                || (batterySaver && adjustDeliveryTimeBasedOnBatterySaver(a));
+                    });
                 }
-                mAlarmStore.updateAlarmDeliveries(a -> {
-                    if (a.creatorUid != alarm.creatorUid
-                            || (a.flags & FLAG_ALLOW_WHILE_IDLE) == 0) {
-                        return false;
-                    }
-                    return adjustDeliveryTimeBasedOnDeviceIdle(a)
-                            | adjustDeliveryTimeBasedOnBatterySaver(a);
-                });
                 if (RECORD_DEVICE_IDLE_ALARMS) {
                     IdleDispatchEntry ent = new IdleDispatchEntry();
                     ent.uid = alarm.uid;
@@ -4300,8 +4545,6 @@ public class AlarmManagerService extends SystemService {
                 }
             }
             if (!isExemptFromAppStandby(alarm)) {
-                final Pair<String, Integer> packageUser = Pair.create(alarm.sourcePackage,
-                        UserHandle.getUserId(alarm.creatorUid));
                 mAppWakeupHistory.recordAlarmForPackage(alarm.sourcePackage,
                         UserHandle.getUserId(alarm.creatorUid), nowELAPSED);
             }

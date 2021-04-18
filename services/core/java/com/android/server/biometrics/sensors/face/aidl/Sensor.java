@@ -22,6 +22,9 @@ import android.content.Context;
 import android.content.pm.UserInfo;
 import android.hardware.biometrics.BiometricsProtoEnums;
 import android.hardware.biometrics.ITestSession;
+import android.hardware.biometrics.ITestSessionCallback;
+import android.hardware.biometrics.face.AuthenticationFrame;
+import android.hardware.biometrics.face.EnrollmentFrame;
 import android.hardware.biometrics.face.Error;
 import android.hardware.biometrics.face.IFace;
 import android.hardware.biometrics.face.ISession;
@@ -31,7 +34,6 @@ import android.hardware.face.FaceManager;
 import android.hardware.face.FaceSensorPropertiesInternal;
 import android.hardware.keymaster.HardwareAuthToken;
 import android.os.Handler;
-import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.UserManager;
 import android.util.Slog;
@@ -43,7 +45,6 @@ import com.android.server.biometrics.SensorServiceStateProto;
 import com.android.server.biometrics.SensorStateProto;
 import com.android.server.biometrics.UserStateProto;
 import com.android.server.biometrics.Utils;
-import com.android.server.biometrics.sensors.AcquisitionClient;
 import com.android.server.biometrics.sensors.AuthenticationConsumer;
 import com.android.server.biometrics.sensors.BaseClientMonitor;
 import com.android.server.biometrics.sensors.BiometricScheduler;
@@ -62,7 +63,7 @@ import java.util.Map;
 /**
  * Maintains the state of a single sensor within an instance of the {@link IFace} HAL.
  */
-public class Sensor implements IBinder.DeathRecipient {
+public class Sensor {
 
     private boolean mTestHalEnabled;
 
@@ -167,17 +168,40 @@ public class Sensor implements IBinder.DeathRecipient {
         }
 
         @Override
-        public void onAcquired(byte info, int vendorCode) {
+        public void onAuthenticationFrame(AuthenticationFrame frame) {
             mHandler.post(() -> {
                 final BaseClientMonitor client = mScheduler.getCurrentClient();
-                if (!(client instanceof AcquisitionClient)) {
-                    Slog.e(mTag, "onAcquired for non-acquisition client: "
+                if (!(client instanceof FaceAuthenticationClient)) {
+                    Slog.e(mTag, "onAuthenticationFrame for incompatible client: "
+                            + Utils.getClientName(client));
+                    return;
+
+                }
+                if (frame == null) {
+                    Slog.e(mTag, "Received null authentication frame for client: "
                             + Utils.getClientName(client));
                     return;
                 }
+                ((FaceAuthenticationClient) client).onAuthenticationFrame(
+                        AidlConversionUtils.convert(frame));
+            });
+        }
 
-                final AcquisitionClient<?> acquisitionClient = (AcquisitionClient<?>) client;
-                acquisitionClient.onAcquired(info, vendorCode);
+        @Override
+        public void onEnrollmentFrame(EnrollmentFrame frame) {
+            mHandler.post(() -> {
+                final BaseClientMonitor client = mScheduler.getCurrentClient();
+                if (!(client instanceof FaceEnrollClient)) {
+                    Slog.e(mTag, "onEnrollmentFrame for incompatible client: "
+                            + Utils.getClientName(client));
+                    return;
+                }
+                if (frame == null) {
+                    Slog.e(mTag, "Received null enrollment frame for client: "
+                            + Utils.getClientName(client));
+                    return;
+                }
+                ((FaceEnrollClient) client).onEnrollmentFrame(AidlConversionUtils.convert(frame));
             });
         }
 
@@ -338,6 +362,16 @@ public class Sensor implements IBinder.DeathRecipient {
         }
 
         @Override
+        public void onFeaturesRetrieved(byte[] features, int enrollmentId) {
+
+        }
+
+        @Override
+        public void onFeatureSet(int enrollmentId, byte feature) {
+
+        }
+
+        @Override
         public void onEnrollmentsRemoved(int[] enrollmentIds) {
             mHandler.post(() -> {
                 final BaseClientMonitor client = mScheduler.getCurrentClient();
@@ -402,13 +436,7 @@ public class Sensor implements IBinder.DeathRecipient {
         mScheduler = new BiometricScheduler(tag, null /* gestureAvailabilityDispatcher */);
         mLockoutCache = new LockoutCache();
         mAuthenticatorIds = new HashMap<>();
-        mLazySession = () -> {
-            if (mTestHalEnabled) {
-                return new TestSession(mCurrentSession.mHalSessionCallback);
-            } else {
-                return mCurrentSession != null ? mCurrentSession.mSession : null;
-            }
-        };
+        mLazySession = () -> mCurrentSession != null ? mCurrentSession.mSession : null;
     }
 
     @NonNull HalClientMonitor.LazyDaemon<ISession> getLazySession() {
@@ -432,8 +460,9 @@ public class Sensor implements IBinder.DeathRecipient {
         }
     }
 
-    @NonNull ITestSession createTestSession() {
-        return new BiometricTestSessionImpl(mContext, mSensorProperties.sensorId, mProvider, this);
+    @NonNull ITestSession createTestSession(@NonNull ITestSessionCallback callback) {
+        return new BiometricTestSessionImpl(mContext, mSensorProperties.sensorId, callback,
+                mProvider, this);
     }
 
     void createNewSession(@NonNull IFace daemon, int sensorId, int userId)
@@ -447,7 +476,6 @@ public class Sensor implements IBinder.DeathRecipient {
                 mTag, mScheduler, sensorId, userId, callback);
 
         final ISession newSession = daemon.createSession(sensorId, userId, resultController);
-        newSession.asBinder().linkToDeath(this, 0 /* flags */);
         mCurrentSession = new Session(mTag, newSession, userId, resultController);
     }
 
@@ -464,15 +492,21 @@ public class Sensor implements IBinder.DeathRecipient {
     }
 
     void setTestHalEnabled(boolean enabled) {
+        Slog.w(mTag, "setTestHalEnabled: " + enabled);
+        if (enabled != mTestHalEnabled) {
+            // The framework should retrieve a new session from the HAL.
+            mCurrentSession = null;
+        }
         mTestHalEnabled = enabled;
     }
 
-    void dumpProtoState(int sensorId, @NonNull ProtoOutputStream proto) {
+    void dumpProtoState(int sensorId, @NonNull ProtoOutputStream proto,
+            boolean clearSchedulerBuffer) {
         final long sensorToken = proto.start(SensorServiceStateProto.SENSOR_STATES);
 
         proto.write(SensorStateProto.SENSOR_ID, mSensorProperties.sensorId);
         proto.write(SensorStateProto.MODALITY, SensorStateProto.FACE);
-        proto.write(SensorStateProto.IS_BUSY, mScheduler.getCurrentClient() != null);
+        proto.write(SensorStateProto.SCHEDULER, mScheduler.dumpProtoState(clearSchedulerBuffer));
 
         for (UserInfo user : UserManager.get(mContext).getUsers()) {
             final int userId = user.getUserHandle().getIdentifier();
@@ -488,24 +522,21 @@ public class Sensor implements IBinder.DeathRecipient {
         proto.end(sensorToken);
     }
 
-    @Override
-    public void binderDied() {
-        Slog.e(mTag, "Binder died");
-        mHandler.post(() -> {
-            final BaseClientMonitor client = mScheduler.getCurrentClient();
-            if (client instanceof Interruptable) {
-                Slog.e(mTag, "Sending ERROR_HW_UNAVAILABLE for client: " + client);
-                final Interruptable interruptable = (Interruptable) client;
-                interruptable.onError(FaceManager.FACE_ERROR_HW_UNAVAILABLE,
-                        0 /* vendorCode */);
+    public void onBinderDied() {
+        final BaseClientMonitor client = mScheduler.getCurrentClient();
+        if (client instanceof Interruptable) {
+            Slog.e(mTag, "Sending ERROR_HW_UNAVAILABLE for client: " + client);
+            final Interruptable interruptable = (Interruptable) client;
+            interruptable.onError(FaceManager.FACE_ERROR_HW_UNAVAILABLE,
+                    0 /* vendorCode */);
 
-                mScheduler.recordCrashState();
+            FrameworkStatsLog.write(FrameworkStatsLog.BIOMETRIC_SYSTEM_HEALTH_ISSUE_DETECTED,
+                    BiometricsProtoEnums.MODALITY_FACE,
+                    BiometricsProtoEnums.ISSUE_HAL_DEATH);
+        }
 
-                FrameworkStatsLog.write(FrameworkStatsLog.BIOMETRIC_SYSTEM_HEALTH_ISSUE_DETECTED,
-                        BiometricsProtoEnums.MODALITY_FACE,
-                        BiometricsProtoEnums.ISSUE_HAL_DEATH);
-                mCurrentSession = null;
-            }
-        });
+        mScheduler.recordCrashState();
+        mScheduler.reset();
+        mCurrentSession = null;
     }
 }

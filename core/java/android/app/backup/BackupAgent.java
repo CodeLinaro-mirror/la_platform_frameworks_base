@@ -401,8 +401,9 @@ public abstract class BackupAgent extends ContextWrapper {
      * @see #onRestoreFile(ParcelFileDescriptor, long, File, int, long, long)
      */
     public void onFullBackup(FullBackupDataOutput data) throws IOException {
-        FullBackup.BackupScheme backupScheme = FullBackup.getBackupScheme(this);
-        if (!isDeviceToDeviceMigration() && !backupScheme.isFullBackupContentEnabled()) {
+        FullBackup.BackupScheme backupScheme = FullBackup.getBackupScheme(this,
+                mOperationType);
+        if (!backupScheme.isFullBackupEnabled(data.getTransportFlags())) {
             return;
         }
 
@@ -563,10 +564,6 @@ public abstract class BackupAgent extends ContextWrapper {
     @VisibleForTesting
     public IncludeExcludeRules getIncludeExcludeRules(FullBackup.BackupScheme backupScheme)
             throws IOException, XmlPullParserException {
-        if (isDeviceToDeviceMigration()) {
-            return IncludeExcludeRules.emptyRules();
-        }
-
         Map<String, Set<PathWithRequiredFlags>> manifestIncludeMap;
         ArraySet<PathWithRequiredFlags> manifestExcludeSet;
 
@@ -624,7 +621,8 @@ public abstract class BackupAgent extends ContextWrapper {
         if (includeMap == null || includeMap.size() == 0) {
             // Do entire sub-tree for the provided token.
             fullBackupFileTree(packageName, domainToken,
-                    FullBackup.getBackupScheme(this).tokenToDirectoryPath(domainToken),
+                    FullBackup.getBackupScheme(this, mOperationType)
+                            .tokenToDirectoryPath(domainToken),
                     filterSet, traversalExcludeSet, data);
         } else if (includeMap.get(domainToken) != null) {
             // This will be null if the xml parsing didn't yield any rules for
@@ -795,7 +793,8 @@ public abstract class BackupAgent extends ContextWrapper {
                                             ArraySet<String> systemExcludes,
             FullBackupDataOutput output) {
         // Pull out the domain and set it aside to use when making the tarball.
-        String domainPath = FullBackup.getBackupScheme(this).tokenToDirectoryPath(domain);
+        String domainPath = FullBackup.getBackupScheme(this, mOperationType)
+                .tokenToDirectoryPath(domain);
         if (domainPath == null) {
             // Should never happen.
             return;
@@ -911,8 +910,8 @@ public abstract class BackupAgent extends ContextWrapper {
             return true;
         }
 
-        FullBackup.BackupScheme bs = FullBackup.getBackupScheme(this);
-        if (!bs.isFullBackupContentEnabled()) {
+        FullBackup.BackupScheme bs = FullBackup.getBackupScheme(this, mOperationType);
+        if (!bs.isFullRestoreEnabled()) {
             if (Log.isLoggable(FullBackup.TAG_XML_PARSER, Log.VERBOSE)) {
                 Log.v(FullBackup.TAG_XML_PARSER,
                         "onRestoreFile \"" + destination.getCanonicalPath()
@@ -985,7 +984,8 @@ public abstract class BackupAgent extends ContextWrapper {
                 + " domain=" + domain + " relpath=" + path + " mode=" + mode
                 + " mtime=" + mtime);
 
-        basePath = FullBackup.getBackupScheme(this).tokenToDirectoryPath(domain);
+        basePath = FullBackup.getBackupScheme(this, mOperationType).tokenToDirectoryPath(
+                domain);
         if (domain.equals(FullBackup.MANAGED_EXTERNAL_TREE_TOKEN)) {
             mode = -1;  // < 0 is a token to skip attempting a chmod()
         }

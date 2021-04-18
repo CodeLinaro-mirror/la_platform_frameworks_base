@@ -16,7 +16,7 @@
 
 package com.android.server.wm;
 
-import static android.os.IInputConstants.DEFAULT_DISPATCHING_TIMEOUT_MILLIS;
+import static android.os.InputConstants.DEFAULT_DISPATCHING_TIMEOUT_MILLIS;
 
 import android.graphics.Point;
 import android.graphics.Rect;
@@ -132,7 +132,7 @@ class InputConsumerImpl implements IBinder.DeathRecipient {
         t.hide(mInputSurface);
     }
 
-    void show(SurfaceControl.Transaction t, WindowState w) {
+    void show(SurfaceControl.Transaction t, WindowContainer w) {
         t.show(mInputSurface);
         t.setInputWindowInfo(mInputSurface, mWindowHandle);
         t.setRelativeLayer(mInputSurface, w.getSurfaceControl(), 1);

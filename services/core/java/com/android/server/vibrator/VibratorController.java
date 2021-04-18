@@ -32,8 +32,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import libcore.util.NativeAllocationRegistry;
 
 /** Controls a single vibrator. */
-// TODO(b/159207608): Make this package-private once vibrator services are moved to this package
-public final class VibratorController {
+final class VibratorController {
     private static final String TAG = "VibratorController";
 
     private final Object mLock = new Object();
@@ -88,8 +87,8 @@ public final class VibratorController {
     static native long vibratorPerformEffect(
             long nativePtr, long effect, long strength, long vibrationId);
 
-    static native void vibratorPerformComposedEffect(long nativePtr,
-            VibrationEffect.Composition.PrimitiveEffect[] effect, long vibrationId);
+    static native long vibratorPerformComposedEffect(
+            long nativePtr, VibrationEffect.Composition.PrimitiveEffect[] effect, long vibrationId);
 
     static native void vibratorSetExternalControl(long nativePtr, boolean enabled);
 
@@ -99,12 +98,12 @@ public final class VibratorController {
 
     static native void vibratorAlwaysOnDisable(long nativePtr, long id);
 
-    public VibratorController(int vibratorId, OnVibrationCompleteListener listener) {
+    VibratorController(int vibratorId, OnVibrationCompleteListener listener) {
         this(vibratorId, listener, new NativeWrapper());
     }
 
     @VisibleForTesting
-    public VibratorController(int vibratorId, OnVibrationCompleteListener listener,
+    VibratorController(int vibratorId, OnVibrationCompleteListener listener,
             NativeWrapper nativeWrapper) {
         mNativeWrapper = nativeWrapper;
         mNativeWrapper.init(vibratorId, listener);
@@ -140,11 +139,6 @@ public final class VibratorController {
                 Binder.restoreCallingIdentity(token);
             }
         }
-    }
-
-    @VisibleForTesting
-    public NativeWrapper getNativeWrapper() {
-        return mNativeWrapper;
     }
 
     /** Return the {@link VibratorInfo} representing the vibrator controlled by this instance. */
@@ -272,12 +266,14 @@ public final class VibratorController {
             return 0;
         }
         synchronized (mLock) {
-            mNativeWrapper.compose(effect.getPrimitiveEffects().toArray(
-                    new VibrationEffect.Composition.PrimitiveEffect[0]), vibrationId);
-            notifyVibratorOnLocked();
-            // Compose don't actually give us an estimated duration, so we just guess here.
-            // TODO(b/177807015): use exposed durations from IVibrator here instead
-            return 20 * effect.getPrimitiveEffects().size();
+            VibrationEffect.Composition.PrimitiveEffect[] primitives =
+                    effect.getPrimitiveEffects().toArray(
+                            new VibrationEffect.Composition.PrimitiveEffect[0]);
+            long duration = mNativeWrapper.compose(primitives, vibrationId);
+            if (duration > 0) {
+                notifyVibratorOnLocked();
+            }
+            return duration;
         }
     }
 
@@ -393,9 +389,9 @@ public final class VibratorController {
         }
 
         /** Turns vibrator on to perform one of the supported composed effects. */
-        public void compose(
+        public long compose(
                 VibrationEffect.Composition.PrimitiveEffect[] effect, long vibrationId) {
-            VibratorController.vibratorPerformComposedEffect(mNativePtr, effect,
+            return VibratorController.vibratorPerformComposedEffect(mNativePtr, effect,
                     vibrationId);
         }
 

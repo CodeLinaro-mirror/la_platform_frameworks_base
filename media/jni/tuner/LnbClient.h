@@ -17,14 +17,19 @@
 #ifndef _ANDROID_MEDIA_TV_LNB_CLIENT_H_
 #define _ANDROID_MEDIA_TV_LNB_CLIENT_H_
 
-//#include <aidl/android/media/tv/tuner/ITunerLnb.h>
+#include <aidl/android/media/tv/tuner/BnTunerLnbCallback.h>
+#include <aidl/android/media/tv/tuner/ITunerLnb.h>
 #include <android/hardware/tv/tuner/1.0/ILnb.h>
 #include <android/hardware/tv/tuner/1.0/ILnbCallback.h>
 #include <android/hardware/tv/tuner/1.1/types.h>
 
+#include "ClientHelper.h"
 #include "LnbClientCallback.h"
 
-//using ::aidl::android::media::tv::tuner::ITunerLnb;
+using Status = ::ndk::ScopedAStatus;
+
+using ::aidl::android::media::tv::tuner::BnTunerLnbCallback;
+using ::aidl::android::media::tv::tuner::ITunerLnb;
 
 using ::android::hardware::Return;
 using ::android::hardware::Void;
@@ -41,18 +46,17 @@ using namespace std;
 
 namespace android {
 
-// TODO: pending aidl interface
-/*class TunerLnbCallback : public BnTunerLnbCallback {
+class TunerLnbCallback : public BnTunerLnbCallback {
 
 public:
     TunerLnbCallback(sp<LnbClientCallback> lnbClientCallback);
 
     Status onEvent(int lnbEventType);
-    Status onDiseqcMessage(vector<uint8_t> diseqcMessage);
+    Status onDiseqcMessage(const vector<uint8_t>& diseqcMessage);
 
 private:
     sp<LnbClientCallback> mLnbClientCallback;
-};*/
+};
 
 struct HidlLnbCallback : public ILnbCallback {
 
@@ -68,8 +72,7 @@ private:
 struct LnbClient : public RefBase {
 
 public:
-    // TODO: add TunerLnb as parameter.
-    LnbClient();
+    LnbClient(shared_ptr<ITunerLnb> tunerLnb);
     ~LnbClient();
 
     // TODO: remove after migration to Tuner Service is done.
@@ -105,7 +108,7 @@ public:
      */
     Result close();
 
-    //shared_ptr<ITunerLnb> getAidlLnb() { return mTunerLnb; }
+    shared_ptr<ITunerLnb> getAidlLnb() { return mTunerLnb; }
     void setId(LnbId id) { mId = id; }
     LnbId getId() { return mId; }
 
@@ -114,8 +117,7 @@ private:
      * An AIDL Tuner Lnb Singleton assigned at the first time the Tuner Client
      * opens an Lnb. Default null when lnb is not opened.
      */
-    // TODO: pending on aidl interface
-    //shared_ptr<ITunerLnb> mTunerLnb;
+    shared_ptr<ITunerLnb> mTunerLnb;
 
     /**
      * A Lnb HAL interface that is ready before migrating to the TunerLnb.
@@ -123,9 +125,6 @@ private:
      * Default null when the HAL service does not exist.
      */
     sp<ILnb> mLnb;
-
-    //shared_ptr<TunerLnbCallback> mAidlCallback;
-    sp<HidlLnbCallback> mHidlCallback;
 
     LnbId mId;
 };

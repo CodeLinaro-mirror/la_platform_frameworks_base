@@ -17,7 +17,9 @@
 package com.android.server.security;
 
 import android.annotation.NonNull;
+import android.os.Build;
 import android.os.SharedMemory;
+import android.os.SystemProperties;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
@@ -57,6 +59,11 @@ abstract public class VerityUtils {
 
     private static final boolean DEBUG = false;
 
+    public static boolean isFsVeritySupported() {
+        return Build.VERSION.FIRST_SDK_INT >= Build.VERSION_CODES.R
+                || SystemProperties.getInt("ro.apk_verity.mode", 0) == 2;
+    }
+
     /** Returns true if the given file looks like containing an fs-verity signature. */
     public static boolean isFsveritySignatureFile(File file) {
         return file.getName().endsWith(FSVERITY_SIGNATURE_FILE_EXTENSION);
@@ -73,7 +80,12 @@ abstract public class VerityUtils {
         if (Files.size(Paths.get(signaturePath)) > MAX_SIGNATURE_FILE_SIZE_BYTES) {
             throw new SecurityException("Signature file is unexpectedly large: " + signaturePath);
         }
-        byte[] pkcs7Signature = Files.readAllBytes(Paths.get(signaturePath));
+        setUpFsverity(filePath, Files.readAllBytes(Paths.get(signaturePath)));
+    }
+
+    /** Enables fs-verity for the file with a PKCS#7 detached signature bytes. */
+    public static void setUpFsverity(@NonNull String filePath, @NonNull byte[] pkcs7Signature)
+            throws IOException {
         // This will fail if the public key is not already in .fs-verity kernel keyring.
         int errno = enableFsverityNative(filePath, pkcs7Signature);
         if (errno != 0) {

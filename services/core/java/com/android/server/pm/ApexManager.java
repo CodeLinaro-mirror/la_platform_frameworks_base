@@ -30,9 +30,9 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
-import android.content.pm.PackageParser;
 import android.content.pm.PackageParser.PackageParserException;
 import android.content.pm.parsing.PackageInfoWithoutStateUtils;
+import android.content.pm.parsing.ParsingPackageUtils;
 import android.os.Binder;
 import android.os.Environment;
 import android.os.RemoteException;
@@ -43,6 +43,7 @@ import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Singleton;
 import android.util.Slog;
+import android.util.SparseArray;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -224,6 +225,12 @@ public abstract class ApexManager {
      */
     @Nullable
     abstract ApexSessionInfo getStagedSessionInfo(int sessionId);
+
+    /**
+     * Returns array of all staged sessions known to apexd.
+     */
+    @NonNull
+    abstract SparseArray<ApexSessionInfo> getSessions();
 
     /**
      * Submit a staged session to apex service. This causes the apex service to perform some initial
@@ -508,7 +515,8 @@ public abstract class ApexManager {
 
             for (ApexInfo ai : allPkgs) {
                 File apexFile = new File(ai.modulePath);
-                parallelPackageParser.submit(apexFile, PackageParser.PARSE_COLLECT_CERTIFICATES);
+                parallelPackageParser.submit(apexFile,
+                        ParsingPackageUtils.PARSE_COLLECT_CERTIFICATES);
                 parsingApexInfo.put(apexFile, ai);
             }
 
@@ -683,6 +691,21 @@ public abstract class ApexManager {
                     return null;
                 }
                 return apexSessionInfo;
+            } catch (RemoteException re) {
+                Slog.e(TAG, "Unable to contact apexservice", re);
+                throw new RuntimeException(re);
+            }
+        }
+
+        @Override
+        SparseArray<ApexSessionInfo> getSessions() {
+            try {
+                final ApexSessionInfo[] sessions = waitForApexService().getSessions();
+                final SparseArray<ApexSessionInfo> result = new SparseArray<>(sessions.length);
+                for (int i = 0; i < sessions.length; i++) {
+                    result.put(sessions[i].sessionId, sessions[i]);
+                }
+                return result;
             } catch (RemoteException re) {
                 Slog.e(TAG, "Unable to contact apexservice", re);
                 throw new RuntimeException(re);
@@ -1079,6 +1102,11 @@ public abstract class ApexManager {
         @Override
         ApexSessionInfo getStagedSessionInfo(int sessionId) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        SparseArray<ApexSessionInfo> getSessions() {
+            return new SparseArray<>(0);
         }
 
         @Override

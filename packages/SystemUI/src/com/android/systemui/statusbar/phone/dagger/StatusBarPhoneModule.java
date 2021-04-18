@@ -47,6 +47,7 @@ import com.android.systemui.recents.ScreenPinningRequest;
 import com.android.systemui.settings.brightness.BrightnessSlider;
 import com.android.systemui.shared.plugins.PluginManager;
 import com.android.systemui.statusbar.CommandQueue;
+import com.android.systemui.statusbar.FeatureFlags;
 import com.android.systemui.statusbar.KeyguardIndicationController;
 import com.android.systemui.statusbar.NotificationLockscreenUserManager;
 import com.android.systemui.statusbar.NotificationMediaManager;
@@ -77,7 +78,6 @@ import com.android.systemui.statusbar.phone.KeyguardDismissUtil;
 import com.android.systemui.statusbar.phone.KeyguardLiftController;
 import com.android.systemui.statusbar.phone.LightBarController;
 import com.android.systemui.statusbar.phone.LightsOutNotifController;
-import com.android.systemui.statusbar.phone.LockscreenLockIconController;
 import com.android.systemui.statusbar.phone.LockscreenWallpaper;
 import com.android.systemui.statusbar.phone.NotificationIconAreaController;
 import com.android.systemui.statusbar.phone.PhoneStatusBarPolicy;
@@ -167,7 +167,6 @@ public interface StatusBarPhoneModule {
             Lazy<AssistManager> assistManagerLazy,
             ConfigurationController configurationController,
             NotificationShadeWindowController notificationShadeWindowController,
-            LockscreenLockIconController lockscreenLockIconController,
             DozeParameters dozeParameters,
             ScrimController scrimController,
             @Nullable KeyguardLiftController keyguardLiftController,
@@ -202,7 +201,8 @@ public interface StatusBarPhoneModule {
             DismissCallbackRegistry dismissCallbackRegistry,
             StatusBarTouchableRegionManager statusBarTouchableRegionManager,
             NotificationIconAreaController notificationIconAreaController,
-            BrightnessSlider.Factory brightnessSliderFactory) {
+            BrightnessSlider.Factory brightnessSliderFactory,
+            FeatureFlags featureFlags) {
         return new StatusBar(
                 context,
                 notificationsController,
@@ -248,7 +248,6 @@ public interface StatusBarPhoneModule {
                 assistManagerLazy,
                 configurationController,
                 notificationShadeWindowController,
-                lockscreenLockIconController,
                 dozeParameters,
                 scrimController,
                 keyguardLiftController,
@@ -282,6 +281,7 @@ public interface StatusBarPhoneModule {
                 notificationShadeDepthController,
                 statusBarTouchableRegionManager,
                 notificationIconAreaController,
-                brightnessSliderFactory);
+                brightnessSliderFactory,
+                featureFlags);
     }
 }

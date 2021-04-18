@@ -115,7 +115,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -750,7 +749,7 @@ public final class InputMethodManager {
         @Override
         public boolean hasActiveConnection(View view) {
             synchronized (mH) {
-                if (!hasServedByInputMethodLocked(view)) {
+                if (!hasServedByInputMethodLocked(view) || mCurMethod == null) {
                     return false;
                 }
 
@@ -764,6 +763,17 @@ public final class InputMethodManager {
     /** @hide */
     public DelegateImpl getDelegate() {
         return mDelegate;
+    }
+
+    /**
+     * Checks whether the active input connection (if any) is for the given view.
+     *
+     * @hide
+     * @see ImeFocusController#getImmDelegate()#hasActiveInputConnection(View)
+     */
+    @TestApi
+    public boolean hasActiveInputConnection(@Nullable View view) {
+        return mDelegate.hasActiveConnection(view);
     }
 
     private View getServedViewLocked() {
@@ -1080,19 +1090,6 @@ public final class InputMethodManager {
                     == getLooper()) {
                 ((DumpableInputConnection) getInputConnection()).dumpDebug(proto, fieldId);
             }
-        }
-    }
-
-    private static class ImeThreadFactory implements ThreadFactory {
-        private final String mThreadName;
-
-        ImeThreadFactory(String name) {
-            mThreadName = name;
-        }
-
-        @Override
-        public Thread newThread(Runnable r) {
-            return new Thread(r, mThreadName);
         }
     }
 
@@ -2307,7 +2304,9 @@ public final class InputMethodManager {
     public void removeImeSurface(IBinder windowToken) {
         synchronized (mH) {
             try {
-                mService.removeImeSurfaceFromWindow(windowToken);
+                final Completable.Void value = Completable.createVoid();
+                mService.removeImeSurfaceFromWindow(windowToken, ResultCallbacks.of(value));
+                Completable.getResult(value);
             } catch (RemoteException e) {
                 throw e.rethrowFromSystemServer();
             }
@@ -2926,7 +2925,10 @@ public final class InputMethodManager {
                 ? SHOW_IM_PICKER_MODE_INCLUDE_AUXILIARY_SUBTYPES
                 : SHOW_IM_PICKER_MODE_EXCLUDE_AUXILIARY_SUBTYPES;
         try {
-            mService.showInputMethodPickerFromSystem(mClient, mode, displayId);
+            final Completable.Void value = Completable.createVoid();
+            mService.showInputMethodPickerFromSystem(
+                    mClient, mode, displayId, ResultCallbacks.of(value));
+            Completable.getResult(value);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -2934,7 +2936,10 @@ public final class InputMethodManager {
 
     private void showInputMethodPickerLocked() {
         try {
-            mService.showInputMethodPickerFromClient(mClient, SHOW_IM_PICKER_MODE_AUTO);
+            final Completable.Void value = Completable.createVoid();
+            mService.showInputMethodPickerFromClient(
+                    mClient, SHOW_IM_PICKER_MODE_AUTO, ResultCallbacks.of(value));
+            Completable.getResult(value);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -2970,7 +2975,10 @@ public final class InputMethodManager {
      */
     public void showInputMethodAndSubtypeEnabler(String imiId) {
         try {
-            mService.showInputMethodAndSubtypeEnablerFromClient(mClient, imiId);
+            final Completable.Void value = Completable.createVoid();
+            mService.showInputMethodAndSubtypeEnablerFromClient(
+                    mClient, imiId, ResultCallbacks.of(value));
+            Completable.getResult(value);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -3132,7 +3140,10 @@ public final class InputMethodManager {
                 matrixValues = new float[9];
                 matrix.getValues(matrixValues);
             }
-            mService.reportActivityView(mClient, childDisplayId, matrixValues);
+            final Completable.Void value = Completable.createVoid();
+            mService.reportActivityView(
+                    mClient, childDisplayId, matrixValues, ResultCallbacks.of(value));
+            Completable.getResult(value);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -3227,7 +3238,9 @@ public final class InputMethodManager {
     @Deprecated
     public void setAdditionalInputMethodSubtypes(String imiId, InputMethodSubtype[] subtypes) {
         try {
-            mService.setAdditionalInputMethodSubtypes(imiId, subtypes);
+            final Completable.Void value = Completable.createVoid();
+            mService.setAdditionalInputMethodSubtypes(imiId, subtypes, ResultCallbacks.of(value));
+            Completable.getResult(value);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

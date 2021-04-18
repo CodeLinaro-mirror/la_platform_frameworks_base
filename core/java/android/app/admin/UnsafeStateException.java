@@ -15,15 +15,23 @@
  */
 package android.app.admin;
 
+import static android.app.admin.DevicePolicyManager.isValidOperationSafetyReason;
+
 import android.annotation.NonNull;
 import android.annotation.TestApi;
 import android.app.admin.DevicePolicyManager.DevicePolicyOperation;
+import android.app.admin.DevicePolicyManager.OperationSafetyReason;
 import android.os.Parcel;
 import android.os.Parcelable;
 
+import com.android.internal.util.Preconditions;
+
+import java.util.Arrays;
+import java.util.List;
+
 /**
- * Exception thrown when a {@link DevicePolicyManager} operation failed because it was not safe
- * to be executed at that moment.
+ * Exception thrown when a {@link android.app.admin.DevicePolicyManager} operation failed because it
+ * was not safe to be executed at that moment.
  *
  * <p>For example, it can be thrown on
  * {@link android.content.pm.PackageManager#FEATURE_AUTOMOTIVE automotive devices} when the vehicle
@@ -33,18 +41,40 @@ import android.os.Parcelable;
 public final class UnsafeStateException extends IllegalStateException implements Parcelable {
 
     private final @DevicePolicyOperation int mOperation;
+    private final @OperationSafetyReason int mReason;
 
     /** @hide */
-    public UnsafeStateException(@DevicePolicyOperation int operation) {
+    @TestApi
+    public UnsafeStateException(@DevicePolicyOperation int operation,
+            @OperationSafetyReason int reason) {
         super();
-
+        Preconditions.checkArgument(isValidOperationSafetyReason(reason), "invalid reason %d",
+                reason);
         mOperation = operation;
+        mReason = reason;
     }
 
     /** @hide */
     @TestApi
     public @DevicePolicyOperation int getOperation() {
         return mOperation;
+    }
+
+    /**
+     * Gets the reasons the operation is unsafe.
+     *
+     * @return currently, only valid reason is
+     * {@link android.app.admin.DevicePolicyManager#OPERATION_SAFETY_REASON_DRIVING_DISTRACTION}.
+     */
+    @NonNull
+    public List<Integer> getReasons() {
+        return Arrays.asList(mReason);
+    }
+
+    /** @hide */
+    @Override
+    public String getMessage() {
+        return DevicePolicyManager.operationSafetyReasonToString(mReason);
     }
 
     @Override
@@ -55,6 +85,7 @@ public final class UnsafeStateException extends IllegalStateException implements
     @Override
     public void writeToParcel(@NonNull Parcel dest, int flags) {
         dest.writeInt(mOperation);
+        dest.writeInt(mReason);
     }
 
     @NonNull
@@ -63,7 +94,7 @@ public final class UnsafeStateException extends IllegalStateException implements
 
         @Override
         public UnsafeStateException createFromParcel(Parcel source) {
-            return new UnsafeStateException(source.readInt());
+            return new UnsafeStateException(source.readInt(), source.readInt());
         }
 
         @Override

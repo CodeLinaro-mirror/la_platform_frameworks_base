@@ -25,6 +25,8 @@ import android.app.admin.SystemUpdateInfo;
 import android.app.admin.SystemUpdatePolicy;
 import android.app.admin.PasswordMetrics;
 import android.app.admin.FactoryResetProtectionPolicy;
+import android.app.admin.ManagedProfileProvisioningParams;
+import android.app.admin.FullyManagedDeviceProvisioningParams;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -73,7 +75,7 @@ interface IDevicePolicyManager {
     void setPasswordMinimumNonLetter(in ComponentName who, int length, boolean parent);
     int getPasswordMinimumNonLetter(in ComponentName who, int userHandle, boolean parent);
 
-    PasswordMetrics getPasswordMinimumMetrics(int userHandle);
+    PasswordMetrics getPasswordMinimumMetrics(int userHandle, boolean deviceWideOnly);
 
     void setPasswordHistoryLength(in ComponentName who, int length, boolean parent);
     int getPasswordHistoryLength(in ComponentName who, int userHandle, boolean parent);
@@ -90,7 +92,7 @@ interface IDevicePolicyManager {
     int getPasswordComplexity(boolean parent);
     void setRequiredPasswordComplexity(int passwordComplexity, boolean parent);
     int getRequiredPasswordComplexity(boolean parent);
-    int getAggregatedPasswordComplexityForUser(int userId);
+    int getAggregatedPasswordComplexityForUser(int userId, boolean deviceWideOnly);
     boolean isUsingUnifiedPassword(in ComponentName admin);
     int getCurrentFailedPasswordAttempts(int userHandle, boolean parent);
     int getProfileWithMinimumFailedPasswordsForWipe(int userHandle, boolean parent);
@@ -232,10 +234,10 @@ interface IDevicePolicyManager {
     List getPermittedAccessibilityServicesForUser(int userId);
     boolean isAccessibilityServicePermittedByAdmin(in ComponentName admin, String packageName, int userId);
 
-    boolean setPermittedInputMethods(in ComponentName admin,in List packageList);
-    List getPermittedInputMethods(in ComponentName admin);
+    boolean setPermittedInputMethods(in ComponentName admin,in List packageList, boolean parent);
+    List getPermittedInputMethods(in ComponentName admin, boolean parent);
     List getPermittedInputMethodsForCurrentUser();
-    boolean isInputMethodPermittedByAdmin(in ComponentName admin, String packageName, int userId);
+    boolean isInputMethodPermittedByAdmin(in ComponentName admin, String packageName, int userId, boolean parent);
 
     boolean setPermittedCrossProfileNotificationListeners(in ComponentName admin, in List<String> packageList);
     List<String> getPermittedCrossProfileNotificationListeners(in ComponentName admin);
@@ -264,6 +266,9 @@ interface IDevicePolicyManager {
 
     void setSecondaryLockscreenEnabled(in ComponentName who, boolean enabled);
     boolean isSecondaryLockscreenEnabled(in UserHandle userHandle);
+
+    void setNetworkSlicingEnabled(in boolean enabled);
+    boolean isNetworkSlicingEnabled(int userHandle);
 
     void setLockTaskPackages(in ComponentName who, in String[] packages);
     String[] getLockTaskPackages(in ComponentName who);
@@ -474,6 +479,8 @@ interface IDevicePolicyManager {
 
     boolean setKeyGrantForApp(in ComponentName admin, String callerPackage, String alias, String packageName, boolean hasGrant);
     List<String> getKeyPairGrants(in String callerPackage, in String alias);
+    boolean setKeyGrantToWifiAuth(String callerPackage, String alias, boolean hasGrant);
+    boolean isKeyPairGrantedToWifiAuth(String callerPackage, String alias);
 
     void setUserControlDisabledPackages(in ComponentName admin, in List<String> packages);
 
@@ -489,8 +496,25 @@ interface IDevicePolicyManager {
     void setManagedProfileMaximumTimeOff(in ComponentName admin, long timeoutMs);
     boolean canProfileOwnerResetPasswordWhenLocked(int userId);
 
-    void setNextOperationSafety(int operation, boolean safe);
+    void setNextOperationSafety(int operation, int reason);
+    boolean isSafeOperation(int reason);
 
     String getEnrollmentSpecificId(String callerPackage);
     void setOrganizationIdForUser(in String callerPackage, in String enterpriseId, int userId);
+
+    UserHandle createAndProvisionManagedProfile(in ManagedProfileProvisioningParams provisioningParams, in String callerPackage);
+    void provisionFullyManagedDevice(in FullyManagedDeviceProvisioningParams provisioningParams, in String callerPackage);
+
+    void setDeviceOwnerType(in ComponentName admin, in int deviceOwnerType);
+    int getDeviceOwnerType(in ComponentName admin);
+
+    void resetDefaultCrossProfileIntentFilters(int userId);
+    boolean canAdminGrantSensorsPermissionsForUser(int userId);
+
+    void setUsbDataSignalingEnabled(String callerPackage, boolean enabled);
+    boolean isUsbDataSignalingEnabled(String callerPackage);
+    boolean isUsbDataSignalingEnabledForUser(int userId);
+    boolean canUsbDataSignalingBeDisabled();
+
+    List<UserHandle> listForegroundAffiliatedUsers();
 }

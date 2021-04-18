@@ -28,6 +28,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
+import android.os.Process;
 import android.os.RemoteException;
 import android.util.Log;
 
@@ -50,7 +51,9 @@ public abstract class RecognitionService extends Service {
     /**
      * Name under which a RecognitionService component publishes information about itself.
      * This meta-data should reference an XML resource containing a
-     * <code>&lt;{@link android.R.styleable#RecognitionService recognition-service}&gt;</code> tag.
+     * <code>&lt;{@link android.R.styleable#RecognitionService recognition-service}&gt;</code> or
+     * <code>&lt;{@link android.R.styleable#RecognitionService on-device-recognition-service}
+     * &gt;</code> tag.
      */
     public static final String SERVICE_META_DATA = "android.speech";
 
@@ -102,17 +105,6 @@ public abstract class RecognitionService extends Service {
             int callingUid) {
         if (mCurrentCallback == null) {
             if (DBG) Log.d(TAG, "created new mCurrentCallback, listener = " + listener.asBinder());
-            try {
-                listener.asBinder().linkToDeath(new IBinder.DeathRecipient() {
-                    @Override
-                    public void binderDied() {
-                        mHandler.sendMessage(mHandler.obtainMessage(MSG_CANCEL, listener));
-                    }
-                }, 0);
-            } catch (RemoteException re) {
-                Log.e(TAG, "dead listener on startListening");
-                return;
-            }
             mCurrentCallback = new Callback(listener, callingUid);
             RecognitionService.this.onStartListening(intent, mCurrentCallback);
         } else {
@@ -182,6 +174,13 @@ public abstract class RecognitionService extends Service {
     private boolean checkPermissions(IRecognitionListener listener, boolean forDataDelivery,
             @NonNull String packageName, @Nullable String featureId) {
         if (DBG) Log.d(TAG, "checkPermissions");
+
+        final int callingUid = Binder.getCallingUid();
+        if (callingUid == Process.SYSTEM_UID) {
+            // Assuming system has verified permissions of the caller.
+            return true;
+        }
+
         if (forDataDelivery) {
             if (PermissionChecker.checkCallingOrSelfPermissionForDataDelivery(this,
                     android.Manifest.permission.RECORD_AUDIO, packageName, featureId,
@@ -357,7 +356,7 @@ public abstract class RecognitionService extends Service {
 
         @Override
         public void startListening(Intent recognizerIntent, IRecognitionListener listener,
-                String packageName, String featureId) {
+                String packageName, String featureId, int callingUid) {
             Preconditions.checkNotNull(packageName);
 
             if (DBG) Log.d(TAG, "startListening called by:" + listener.asBinder());
@@ -366,7 +365,7 @@ public abstract class RecognitionService extends Service {
                     packageName, featureId)) {
                 service.mHandler.sendMessage(Message.obtain(service.mHandler,
                         MSG_START_LISTENING, service.new StartListeningArgs(
-                                recognizerIntent, listener, Binder.getCallingUid())));
+                                recognizerIntent, listener, callingUid)));
             }
         }
 
@@ -386,7 +385,7 @@ public abstract class RecognitionService extends Service {
 
         @Override
         public void cancel(IRecognitionListener listener, String packageName,
-                String featureId) {
+                String featureId, boolean isShutdown) {
             Preconditions.checkNotNull(packageName);
 
             if (DBG) Log.d(TAG, "cancel called by:" + listener.asBinder());

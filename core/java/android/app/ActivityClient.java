@@ -26,6 +26,8 @@ import android.os.RemoteException;
 import android.util.Singleton;
 import android.view.RemoteAnimationDefinition;
 
+import com.android.internal.policy.IKeyguardDismissCallback;
+
 /**
  * Provides the activity associated operations that communicate with system.
  *
@@ -44,9 +46,9 @@ public class ActivityClient {
     }
 
     /** Reports {@link Activity#onResume()} is done. */
-    public void activityResumed(IBinder token) {
+    public void activityResumed(IBinder token, boolean handleSplashScreenExit) {
         try {
-            getActivityClientController().activityResumed(token);
+            getActivityClientController().activityResumed(token, handleSplashScreenExit);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
         }
@@ -431,6 +433,37 @@ public class ActivityClient {
         }
     }
 
+    /**
+     * Restart the process and activity to adopt the latest configuration for size compat mode.
+     * This only takes effect for visible activity because invisible background activity can be
+     * restarted naturally when it becomes visible.
+     */
+    public void restartActivityProcessIfVisible(IBinder token) {
+        try {
+            getActivityClientController().restartActivityProcessIfVisible(token);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    /** Removes the snapshot of home task. */
+    public void invalidateHomeTaskSnapshot(IBinder homeToken) {
+        try {
+            getActivityClientController().invalidateHomeTaskSnapshot(homeToken);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    void dismissKeyguard(IBinder token, IKeyguardDismissCallback callback,
+            CharSequence message) {
+        try {
+            getActivityClientController().dismissKeyguard(token, callback, message);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
     void registerRemoteAnimations(IBinder token, RemoteAnimationDefinition definition) {
         try {
             getActivityClientController().registerRemoteAnimations(token, definition);
@@ -447,9 +480,20 @@ public class ActivityClient {
         }
     }
 
-    void onBackPressedOnTaskRoot(IBinder token) {
+    void onBackPressedOnTaskRoot(IBinder token, IRequestFinishCallback callback) {
         try {
-            getActivityClientController().onBackPressedOnTaskRoot(token);
+            getActivityClientController().onBackPressedOnTaskRoot(token, callback);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Reports the splash screen view has attached to client.
+     */
+    void reportSplashScreenAttached(IBinder token) {
+        try {
+            getActivityClientController().splashScreenAttached(token);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
         }

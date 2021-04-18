@@ -20,12 +20,14 @@
 #include <android/content/pm/DataLoaderParamsParcel.h>
 #include <android/content/pm/FileSystemControlParcel.h>
 #include <android/content/pm/IDataLoaderStatusListener.h>
+#include <android/os/incremental/BnIncrementalService.h>
 #include <android/os/incremental/BnIncrementalServiceConnector.h>
 #include <android/os/incremental/BnStorageHealthListener.h>
 #include <android/os/incremental/BnStorageLoadingProgressListener.h>
 #include <android/os/incremental/PerUidReadTimeouts.h>
 #include <android/os/incremental/StorageHealthCheckParams.h>
 #include <binder/IAppOpsCallback.h>
+#include <binder/PersistableBundle.h>
 #include <utils/String16.h>
 #include <utils/StrongPointer.h>
 #include <ziparchive/zip_archive.h>
@@ -113,6 +115,10 @@ public:
         bool started() const { return totalBlocks > 0; }
         bool fullyLoaded() const { return !isError() && (totalBlocks == filledBlocks); }
 
+        int blocksRemainingOrError() const {
+            return totalBlocks <= 0 ? totalBlocks : totalBlocks - filledBlocks;
+        }
+
         float getProgress() const {
             return totalBlocks < 0
                     ? totalBlocks
@@ -130,14 +136,17 @@ public:
     void onSystemReady();
 
     StorageId createStorage(std::string_view mountPoint,
-                            content::pm::DataLoaderParamsParcel&& dataLoaderParams,
-                            CreateOptions options, const DataLoaderStatusListener& statusListener,
-                            StorageHealthCheckParams&& healthCheckParams,
-                            const StorageHealthListener& healthListener,
-                            const std::vector<PerUidReadTimeouts>& perUidReadTimeouts);
+                            const content::pm::DataLoaderParamsParcel& dataLoaderParams,
+                            CreateOptions options);
     StorageId createLinkedStorage(std::string_view mountPoint, StorageId linkedStorage,
                                   CreateOptions options = CreateOptions::Default);
     StorageId openStorage(std::string_view path);
+
+    bool startLoading(StorageId storage, content::pm::DataLoaderParamsParcel&& dataLoaderParams,
+                      const DataLoaderStatusListener& statusListener,
+                      StorageHealthCheckParams&& healthCheckParams,
+                      const StorageHealthListener& healthListener,
+                      const std::vector<PerUidReadTimeouts>& perUidReadTimeouts);
 
     int bind(StorageId storage, std::string_view source, std::string_view target, BindKind kind);
     int unbind(StorageId storage, std::string_view target);
@@ -156,7 +165,9 @@ public:
     int unlink(StorageId storage, std::string_view path);
 
     int isFileFullyLoaded(StorageId storage, std::string_view filePath) const;
-    LoadingProgress getLoadingProgress(StorageId storage) const;
+
+    LoadingProgress getLoadingProgress(StorageId storage, bool stopOnFirstIncomplete) const;
+
     bool registerLoadingProgressListener(StorageId storage,
                                          const StorageLoadingProgressListener& progressListener);
     bool unregisterLoadingProgressListener(StorageId storage);
@@ -167,12 +178,12 @@ public:
     RawMetadata getMetadata(StorageId storage, std::string_view path) const;
     RawMetadata getMetadata(StorageId storage, FileId node) const;
 
-    bool startLoading(StorageId storage) const;
-
     bool configureNativeBinaries(StorageId storage, std::string_view apkFullPath,
                                  std::string_view libDirRelativePath, std::string_view abi,
                                  bool extractNativeLibs);
     bool waitForNativeBinariesExtraction(StorageId storage);
+
+    void getMetrics(int32_t storageId, android::os::PersistableBundle* _aidl_return);
 
     class AppOpsListener : public android::BnAppOpsCallback {
     public:
@@ -222,10 +233,13 @@ private:
         const content::pm::DataLoaderParamsParcel& params() const { return mParams; }
         void setHealthListener(StorageHealthCheckParams&& healthCheckParams,
                                const StorageHealthListener* healthListener);
+        long elapsedMsSinceOldestPendingRead();
 
     private:
         binder::Status onStatusChanged(MountId mount, int newStatus) final;
         binder::Status reportStreamHealth(MountId mount, int newStatus) final;
+
+        void setCurrentStatus(int newStatus);
 
         sp<content::pm::IDataLoader> getDataLoader();
 
@@ -238,7 +252,6 @@ private:
         void setTargetStatusLocked(int status);
 
         bool fsmStep();
-        bool fsmStep(int currentStatus, int targetStatus);
 
         void onHealthStatus(StorageHealthListener healthListener, int healthStatus);
         void updateHealthStatus(bool baseline = false);
@@ -251,6 +264,10 @@ private:
         void resetHealthControl();
 
         BootClockTsUs getOldestPendingReadTs();
+        BootClockTsUs getOldestTsFromLastPendingReads();
+        Milliseconds elapsedMsSinceKernelTs(TimePoint now, BootClockTsUs kernelTsUs);
+
+        Milliseconds updateBindDelay();
 
         void registerForPendingReads();
         void unregisterFromPendingReads();
@@ -268,6 +285,9 @@ private:
         int mCurrentStatus = content::pm::IDataLoaderStatusListener::DATA_LOADER_DESTROYED;
         int mTargetStatus = content::pm::IDataLoaderStatusListener::DATA_LOADER_DESTROYED;
         TimePoint mTargetStatusTs = {};
+
+        TimePoint mPreviousBindTs = {};
+        Milliseconds mPreviousBindDelay = {};
 
         std::string mHealthPath;
         incfs::UniqueControl mHealthControl;
@@ -363,6 +383,8 @@ private:
     void addBindMountRecordLocked(IncFsMount& ifs, StorageId storage, std::string&& metadataName,
                                   std::string&& source, std::string&& target, BindKind kind);
 
+    bool needStartDataLoaderLocked(IncFsMount& ifs);
+
     DataLoaderStubPtr prepareDataLoader(IncFsMount& ifs,
                                         content::pm::DataLoaderParamsParcel&& params,
                                         const DataLoaderStatusListener* statusListener = nullptr,
@@ -388,7 +410,8 @@ private:
     binder::Status applyStorageParams(IncFsMount& ifs, bool enableReadLogs);
 
     int isFileFullyLoadedFromPath(const IncFsMount& ifs, std::string_view filePath) const;
-    LoadingProgress getLoadingProgressFromPath(const IncFsMount& ifs, std::string_view path) const;
+    LoadingProgress getLoadingProgressFromPath(const IncFsMount& ifs, std::string_view path,
+                                               bool stopOnFirstIncomplete) const;
 
     int setFileContent(const IfsMountPtr& ifs, const incfs::FileId& fileId,
                        std::string_view debugFilePath, std::span<const uint8_t> data) const;
@@ -408,6 +431,7 @@ private:
     bool removeTimedJobs(TimedQueueWrapper& timedQueue, MountId id);
     bool updateLoadingProgress(int32_t storageId,
                                const StorageLoadingProgressListener& progressListener);
+    long getMillsSinceOldestPendingRead(StorageId storage);
 
 private:
     const std::unique_ptr<VoldServiceWrapper> mVold;

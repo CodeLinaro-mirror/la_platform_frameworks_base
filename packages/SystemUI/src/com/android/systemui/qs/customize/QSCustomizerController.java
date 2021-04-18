@@ -17,7 +17,6 @@
 package com.android.systemui.qs.customize;
 
 import static com.android.systemui.qs.customize.QSCustomizer.EXTRA_QS_CUSTOMIZING;
-import static com.android.systemui.qs.customize.QSCustomizer.MENU_REMOVE_LABELS;
 import static com.android.systemui.qs.customize.QSCustomizer.MENU_RESET;
 
 import android.content.res.Configuration;
@@ -37,7 +36,6 @@ import com.android.systemui.keyguard.ScreenLifecycle;
 import com.android.systemui.plugins.qs.QSTile;
 import com.android.systemui.qs.QSEditEvent;
 import com.android.systemui.qs.QSFragment;
-import com.android.systemui.qs.QSPanelController;
 import com.android.systemui.qs.QSTileHost;
 import com.android.systemui.qs.dagger.QSScope;
 import com.android.systemui.statusbar.phone.LightBarController;
@@ -45,7 +43,6 @@ import com.android.systemui.statusbar.phone.NotificationsQuickSettingsContainer;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.ConfigurationController.ConfigurationListener;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
-import com.android.systemui.tuner.TunerService;
 import com.android.systemui.util.ViewController;
 
 import java.util.ArrayList;
@@ -65,7 +62,6 @@ public class QSCustomizerController extends ViewController<QSCustomizer> {
     private final ConfigurationController mConfigurationController;
     private final UiEventLogger mUiEventLogger;
     private final Toolbar mToolbar;
-    private final TunerService mTunerService;
 
     private final OnMenuItemClickListener mOnMenuItemClickListener = new OnMenuItemClickListener() {
         @Override
@@ -73,11 +69,6 @@ public class QSCustomizerController extends ViewController<QSCustomizer> {
             if (item.getItemId() == MENU_RESET) {
                 mUiEventLogger.log(QSEditEvent.QS_EDIT_RESET);
                 reset();
-            } else if (item.getItemId() == MENU_REMOVE_LABELS) {
-                item.setChecked(!item.isChecked());
-                mTunerService.setValue(
-                        QSPanelController.QS_REMOVE_LABELS, item.isChecked() ? "1" : "0");
-                return false;
             }
             return false;
         }
@@ -99,14 +90,12 @@ public class QSCustomizerController extends ViewController<QSCustomizer> {
         public void onConfigChanged(Configuration newConfig) {
             mView.updateNavBackDrop(newConfig, mLightBarController);
             mView.updateResources();
-        }
-    };
-
-    private final TunerService.Tunable mTunable = new TunerService.Tunable() {
-        @Override
-        public void onTuningChanged(String key, String newValue) {
-            mToolbar.getMenu().findItem(MENU_REMOVE_LABELS)
-                    .setChecked(newValue != null && !("0".equals(newValue)));
+            if (mTileAdapter.updateNumColumns()) {
+                RecyclerView.LayoutManager lm = mView.getRecyclerView().getLayoutManager();
+                if (lm instanceof GridLayoutManager) {
+                    ((GridLayoutManager) lm).setSpanCount(mTileAdapter.getNumColumns());
+                }
+            }
         }
     };
 
@@ -114,8 +103,7 @@ public class QSCustomizerController extends ViewController<QSCustomizer> {
     protected QSCustomizerController(QSCustomizer view, TileQueryHelper tileQueryHelper,
             QSTileHost qsTileHost, TileAdapter tileAdapter, ScreenLifecycle screenLifecycle,
             KeyguardStateController keyguardStateController, LightBarController lightBarController,
-            ConfigurationController configurationController, UiEventLogger uiEventLogger,
-            TunerService tunerService) {
+            ConfigurationController configurationController, UiEventLogger uiEventLogger) {
         super(view);
         mTileQueryHelper = tileQueryHelper;
         mQsTileHost = qsTileHost;
@@ -127,14 +115,12 @@ public class QSCustomizerController extends ViewController<QSCustomizer> {
         mUiEventLogger = uiEventLogger;
 
         mToolbar = mView.findViewById(com.android.internal.R.id.action_bar);
-
-        mTunerService = tunerService;
     }
+
 
     @Override
     protected void onViewAttached() {
         mView.updateNavBackDrop(getResources().getConfiguration(), mLightBarController);
-        mTunerService.addTunable(mTunable, QSPanelController.QS_REMOVE_LABELS);
 
         mConfigurationController.addCallback(mConfigurationListener);
 
@@ -146,7 +132,8 @@ public class QSCustomizerController extends ViewController<QSCustomizer> {
         RecyclerView recyclerView = mView.getRecyclerView();
         recyclerView.setAdapter(mTileAdapter);
         mTileAdapter.getItemTouchHelper().attachToRecyclerView(recyclerView);
-        GridLayoutManager layout = new GridLayoutManager(getContext(), TileAdapter.NUM_COLUMNS) {
+        GridLayoutManager layout =
+                new GridLayoutManager(getContext(), mTileAdapter.getNumColumns()) {
             @Override
             public void onInitializeAccessibilityNodeInfoForItem(RecyclerView.Recycler recycler,
                     RecyclerView.State state, View host, AccessibilityNodeInfoCompat info) {
@@ -164,7 +151,6 @@ public class QSCustomizerController extends ViewController<QSCustomizer> {
 
     @Override
     protected void onViewDetached() {
-        mTunerService.removeTunable(mTunable);
         mTileQueryHelper.setListener(null);
         mToolbar.setOnMenuItemClickListener(null);
         mConfigurationController.removeCallback(mConfigurationListener);

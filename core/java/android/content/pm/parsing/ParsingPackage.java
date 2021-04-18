@@ -252,9 +252,15 @@ public interface ParsingPackage extends ParsingPackageRead {
 
     ParsingPackage setGwpAsanMode(int gwpAsanMode);
 
+    ParsingPackage setMemtagMode(int memtagMode);
+
+    ParsingPackage setNativeHeapZeroInit(@Nullable Boolean nativeHeapZeroInit);
+
     ParsingPackage setCrossProfile(boolean crossProfile);
 
     ParsingPackage setFullBackupContent(int fullBackupContent);
+
+    ParsingPackage setDataExtractionRules(int dataExtractionRules);
 
     ParsingPackage setHasDomainUrls(boolean hasDomainUrls);
 

@@ -25,9 +25,11 @@ import android.content.Context;
 import android.content.pm.UserInfo;
 import android.hardware.biometrics.IInvalidationCallback;
 import android.hardware.biometrics.ITestSession;
+import android.hardware.biometrics.ITestSessionCallback;
 import android.hardware.biometrics.fingerprint.IFingerprint;
 import android.hardware.biometrics.fingerprint.SensorProps;
 import android.hardware.fingerprint.Fingerprint;
+import android.hardware.fingerprint.FingerprintManager;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
 import android.hardware.fingerprint.IFingerprintServiceReceiver;
 import android.hardware.fingerprint.IUdfpsOverlayController;
@@ -96,7 +98,8 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
                         Slog.e(getTag(), "Task stack changed for client: " + client);
                         continue;
                     }
-                    if (Utils.isKeyguard(mContext, client.getOwnerString())) {
+                    if (Utils.isKeyguard(mContext, client.getOwnerString())
+                            || Utils.isSystem(mContext, client.getOwnerString())) {
                         continue; // Keyguard is always allowed
                     }
 
@@ -183,7 +186,8 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
         for (int i = 0; i < mSensors.size(); i++) {
             final int sensorId = mSensors.keyAt(i);
             scheduleLoadAuthenticatorIds(sensorId);
-            scheduleInternalCleanup(sensorId, ActivityManager.getCurrentUser());
+            scheduleInternalCleanup(sensorId, ActivityManager.getCurrentUser(),
+                    null /* callback */);
         }
 
         return mDaemon;
@@ -365,7 +369,7 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
     @Override
     public void scheduleEnroll(int sensorId, @NonNull IBinder token, byte[] hardwareAuthToken,
             int userId, @NonNull IFingerprintServiceReceiver receiver,
-            @NonNull String opPackageName, boolean shouldLogMetrics) {
+            @NonNull String opPackageName, @FingerprintManager.EnrollReason int enrollReason) {
         mHandler.post(() -> {
             final IFingerprint daemon = getHalInstance();
             if (daemon == null) {
@@ -387,7 +391,7 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
                         mSensors.get(sensorId).getLazySession(), token,
                         new ClientMonitorCallbackConverter(receiver), userId, hardwareAuthToken,
                         opPackageName, FingerprintUtils.getInstance(sensorId), sensorId,
-                        mUdfpsOverlayController, maxTemplatesPerUser, shouldLogMetrics);
+                        mUdfpsOverlayController, maxTemplatesPerUser, enrollReason);
                 scheduleForSensor(sensorId, client, new BaseClientMonitor.Callback() {
                     @Override
                     public void onClientFinished(@NonNull BaseClientMonitor clientMonitor,
@@ -466,7 +470,7 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
                         operationId, restricted, opPackageName, cookie,
                         false /* requireConfirmation */, sensorId, isStrongBiometric, statsClient,
                         mTaskStackListener, mSensors.get(sensorId).getLockoutCache(),
-                        mUdfpsOverlayController);
+                        mUdfpsOverlayController, isKeyguard);
                 mSensors.get(sensorId).getScheduler().scheduleClientMonitor(client);
             } catch (RemoteException e) {
                 Slog.e(getTag(), "Remote exception when scheduling authenticate", e);
@@ -488,6 +492,27 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
     public void scheduleRemove(int sensorId, @NonNull IBinder token,
             @NonNull IFingerprintServiceReceiver receiver, int fingerId, int userId,
             @NonNull String opPackageName) {
+        scheduleRemoveSpecifiedIds(sensorId, token, new int[] {fingerId}, userId, receiver,
+                opPackageName);
+    }
+
+    @Override
+    public void scheduleRemoveAll(int sensorId, @NonNull IBinder token,
+            @NonNull IFingerprintServiceReceiver receiver, int userId,
+            @NonNull String opPackageName) {
+        final List<Fingerprint> fingers = FingerprintUtils.getInstance(sensorId)
+                .getBiometricsForUser(mContext, userId);
+        final int[] fingerIds = new int[fingers.size()];
+        for (int i = 0; i < fingers.size(); i++) {
+            fingerIds[i] = fingers.get(i).getBiometricId();
+        }
+
+        scheduleRemoveSpecifiedIds(sensorId, token, fingerIds, userId, receiver, opPackageName);
+    }
+
+    private void scheduleRemoveSpecifiedIds(int sensorId, @NonNull IBinder token,
+            int[] fingerprintIds, int userId, @NonNull IFingerprintServiceReceiver receiver,
+            @NonNull String opPackageName) {
         mHandler.post(() -> {
             final IFingerprint daemon = getHalInstance();
             if (daemon == null) {
@@ -505,7 +530,7 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
 
                 final FingerprintRemovalClient client = new FingerprintRemovalClient(mContext,
                         mSensors.get(sensorId).getLazySession(), token,
-                        new ClientMonitorCallbackConverter(receiver), fingerId, userId,
+                        new ClientMonitorCallbackConverter(receiver), fingerprintIds, userId,
                         opPackageName, FingerprintUtils.getInstance(sensorId), sensorId,
                         mSensors.get(sensorId).getAuthenticatorIds());
                 mSensors.get(sensorId).getScheduler().scheduleClientMonitor(client);
@@ -516,7 +541,8 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
     }
 
     @Override
-    public void scheduleInternalCleanup(int sensorId, int userId) {
+    public void scheduleInternalCleanup(int sensorId, int userId,
+            @Nullable BaseClientMonitor.Callback callback) {
         mHandler.post(() -> {
             final IFingerprint daemon = getHalInstance();
             if (daemon == null) {
@@ -536,7 +562,7 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
                                 mContext.getOpPackageName(), sensorId, enrolledList,
                                 FingerprintUtils.getInstance(sensorId),
                                 mSensors.get(sensorId).getAuthenticatorIds());
-                mSensors.get(sensorId).getScheduler().scheduleClientMonitor(client);
+                mSensors.get(sensorId).getScheduler().scheduleClientMonitor(client, callback);
             } catch (RemoteException e) {
                 Slog.e(getTag(), "Remote exception when scheduling internal cleanup", e);
             }
@@ -627,9 +653,10 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
     }
 
     @Override
-    public void dumpProtoState(int sensorId, @NonNull ProtoOutputStream proto) {
+    public void dumpProtoState(int sensorId, @NonNull ProtoOutputStream proto,
+            boolean clearSchedulerBuffer) {
         if (mSensors.contains(sensorId)) {
-            mSensors.get(sensorId).dumpProtoState(sensorId, proto);
+            mSensors.get(sensorId).dumpProtoState(sensorId, proto, clearSchedulerBuffer);
         }
     }
 
@@ -680,8 +707,9 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
 
     @NonNull
     @Override
-    public ITestSession createTestSession(int sensorId, @NonNull String opPackageName) {
-        return mSensors.get(sensorId).createTestSession();
+    public ITestSession createTestSession(int sensorId, @NonNull ITestSessionCallback callback,
+            @NonNull String opPackageName) {
+        return mSensors.get(sensorId).createTestSession(callback);
     }
 
     @Override
@@ -694,8 +722,7 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
                 final Sensor sensor = mSensors.valueAt(i);
                 final int sensorId = mSensors.keyAt(i);
                 PerformanceTracker.getInstanceForSensorId(sensorId).incrementHALDeathCount();
-                sensor.getScheduler().recordCrashState();
-                sensor.getScheduler().reset();
+                sensor.onBinderDied();
             }
         });
     }

@@ -36,6 +36,7 @@
     <string name="wifi_no_internet_no_reconnect" msgid="821591791066497347">"No se conectará automáticamente"</string>
     <string name="wifi_no_internet" msgid="1774198889176926299">"No hay acceso a Internet"</string>
     <string name="saved_network" msgid="7143698034077223645">"Guardada por <xliff:g id="NAME">%1$s</xliff:g>"</string>
+    <string name="connected_to_metered_access_point" msgid="9179693207918156341">"Conectado a la red de uso medido"</string>
     <string name="connected_via_network_scorer" msgid="7665725527352893558">"Conexión automática mediante %1$s"</string>
     <string name="connected_via_network_scorer_default" msgid="7973529709744526285">"Conectado automáticamente mediante proveedor de calificación de red"</string>
     <string name="connected_via_passpoint" msgid="7735442932429075684">"Conexión a través de %1$s"</string>
@@ -116,8 +117,8 @@
     <string name="bluetooth_pairing_accept_all_caps" msgid="2734383073450506220">"SINCRONIZAR"</string>
     <string name="bluetooth_pairing_decline" msgid="6483118841204885890">"Cancelar"</string>
     <string name="bluetooth_pairing_will_share_phonebook" msgid="3064334458659165176">"La sincronización te permite acceder a los contactos y al historial de llamadas cuando el dispositivo está conectado."</string>
-    <string name="bluetooth_pairing_error_message" msgid="6626399020672335565">"No se pudo sincronizar con <xliff:g id="DEVICE_NAME">%1$s</xliff:g>."</string>
-    <string name="bluetooth_pairing_pin_error_message" msgid="264422127613704940">"No se pudo sincronizar con <xliff:g id="DEVICE_NAME">%1$s</xliff:g> debido a que el PIN o la clave de acceso son incorrectos."</string>
+    <string name="bluetooth_pairing_error_message" msgid="6626399020672335565">"No se pudo vincular con <xliff:g id="DEVICE_NAME">%1$s</xliff:g>."</string>
+    <string name="bluetooth_pairing_pin_error_message" msgid="264422127613704940">"No se pudo vincular con <xliff:g id="DEVICE_NAME">%1$s</xliff:g> debido a que el PIN o la clave de acceso son incorrectos."</string>
     <string name="bluetooth_pairing_device_down_error_message" msgid="2554424863101358857">"No se puede establecer la comunicación con <xliff:g id="DEVICE_NAME">%1$s</xliff:g>."</string>
     <string name="bluetooth_pairing_rejected_error_message" msgid="5943444352777314442">"Vínculo rechazado por <xliff:g id="DEVICE_NAME">%1$s</xliff:g>"</string>
     <string name="bluetooth_talkback_computer" msgid="3736623135703893773">"Computadora"</string>
@@ -219,7 +220,7 @@
     <string name="adb_wireless_device_connected_summary" msgid="3039660790249148713">"Conectado actualmente"</string>
     <string name="adb_wireless_device_details_title" msgid="7129369670526565786">"Detalles del dispositivo"</string>
     <string name="adb_device_forget" msgid="193072400783068417">"Olvidar"</string>
-    <string name="adb_device_fingerprint_title_format" msgid="291504822917843701">"Huellas digitales del dispositivo: <xliff:g id="FINGERPRINT_PARAM">%1$s</xliff:g>"</string>
+    <string name="adb_device_fingerprint_title_format" msgid="291504822917843701">"Huellas dactilares del dispositivo: <xliff:g id="FINGERPRINT_PARAM">%1$s</xliff:g>"</string>
     <string name="adb_wireless_connection_failed_title" msgid="664211177427438438">"Error de conexión"</string>
     <string name="adb_wireless_connection_failed_message" msgid="9213896700171602073">"Asegúrate de que <xliff:g id="DEVICE_NAME">%1$s</xliff:g> esté conectado a la red correcta."</string>
     <string name="adb_pairing_device_dialog_title" msgid="7141739231018530210">"Vincular con dispositivo"</string>
@@ -403,6 +404,7 @@
     <string name="transcode_user_control" msgid="6176368544817731314">"Anular los valores predeterminados de transcodificación"</string>
     <string name="transcode_enable_all" msgid="2411165920039166710">"Habilitar la transcodificación"</string>
     <string name="transcode_default" msgid="3784803084573509491">"Suponer que las apps admiten formatos modernos"</string>
+    <string name="transcode_notification" msgid="5560515979793436168">"Mostrar notificaciones de transcodificación"</string>
     <string name="runningservices_settings_title" msgid="6460099290493086515">"En ejecución"</string>
     <string name="runningservices_settings_summary" msgid="1046080643262665743">"Ver y controlar servicios actuales en ejecución"</string>
     <string name="select_webview_provider_title" msgid="3917815648099445503">"Implementación de WebView"</string>
@@ -422,7 +424,8 @@
     <string name="daltonizer_mode_protanomaly" msgid="7805583306666608440">"Protanomalía (rojo-verde)"</string>
     <string name="daltonizer_mode_tritanomaly" msgid="7135266249220732267">"Tritanomalía (azul-amarillo)"</string>
     <string name="accessibility_display_daltonizer_preference_title" msgid="1810693571332381974">"Corrección de color"</string>
-    <string name="accessibility_display_daltonizer_preference_subtitle" msgid="1284746051652993443">"La corrección de color te permite ajustar la manera en que se muestran los colores en el dispositivo"</string>
+    <!-- no translation found for accessibility_display_daltonizer_preference_subtitle (8625527799885140826) -->
+    <skip />
     <string name="daltonizer_type_overridden" msgid="4509604753672535721">"Reemplazado por <xliff:g id="TITLE">%1$s</xliff:g>"</string>
     <string name="power_remaining_settings_home_page" msgid="4885165789445462557">"<xliff:g id="PERCENTAGE">%1$s</xliff:g> - <xliff:g id="TIME_STRING">%2$s</xliff:g>"</string>
     <string name="power_remaining_duration_only" msgid="8264199158671531431">"Tiempo restante: aproximadamente <xliff:g id="TIME_REMAINING">%1$s</xliff:g>"</string>
@@ -513,6 +516,8 @@
     <string name="zen_mode_forever" msgid="3339224497605461291">"Hasta que lo desactives"</string>
     <string name="time_unit_just_now" msgid="3006134267292728099">"Recién"</string>
     <string name="media_transfer_this_device_name" msgid="2716555073132169240">"Altavoz del teléfono"</string>
+    <!-- no translation found for media_transfer_this_phone (7194341457812151531) -->
+    <skip />
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Error al establecer la conexión. Apaga el dispositivo y vuelve a encenderlo."</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Dispositivo de audio con cable"</string>
     <string name="help_label" msgid="3528360748637781274">"Ayuda y comentarios"</string>
@@ -553,7 +558,7 @@
     <string name="creating_new_user_dialog_message" msgid="7232880257538970375">"Creando usuario nuevo…"</string>
     <string name="user_nickname" msgid="262624187455825083">"Sobrenombre"</string>
     <string name="guest_new_guest" msgid="3482026122932643557">"Agregar invitado"</string>
-    <string name="guest_exit_guest" msgid="4754204715192830850">"Finalizar sesión de invitado"</string>
+    <string name="guest_exit_guest" msgid="5908239569510734136">"Quitar invitado"</string>
     <string name="guest_nickname" msgid="6332276931583337261">"Invitado"</string>
     <string name="user_image_take_photo" msgid="467512954561638530">"Tomar una foto"</string>
     <string name="user_image_choose_photo" msgid="1363820919146782908">"Elegir una imagen"</string>
@@ -590,5 +595,6 @@
     <string name="accessibility_data_three_bars" msgid="2813876214466722413">"Tres barras de datos"</string>
     <string name="accessibility_data_signal_full" msgid="1808301899314382337">"Señal de datos completa"</string>
     <string name="accessibility_ethernet_disconnected" msgid="2832501530856497489">"Ethernet desconectada"</string>
-    <string name="accessibility_ethernet_connected" msgid="2093872142317190618">"Ethernet conectada"</string>
+    <string name="accessibility_ethernet_connected" msgid="6175942685957461563">"Ethernet."</string>
+    <string name="accessibility_no_calling" msgid="3540827068323895748">"Sin llamadas."</string>
 </resources>

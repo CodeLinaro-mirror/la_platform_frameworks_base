@@ -20,6 +20,7 @@ import android.app.WallpaperManager;
 import android.content.ContentResolver;
 import android.content.res.Resources;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.text.format.DateFormat;
 import android.view.View;
 import android.view.ViewGroup;
@@ -28,6 +29,7 @@ import android.widget.FrameLayout;
 import com.android.internal.colorextraction.ColorExtractor;
 import com.android.keyguard.clock.ClockManager;
 import com.android.systemui.R;
+import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.colorextraction.SysuiColorExtractor;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.ClockPlugin;
@@ -56,6 +58,7 @@ public class KeyguardClockSwitchController extends ViewController<KeyguardClockS
     private final ClockManager mClockManager;
     private final KeyguardSliceViewController mKeyguardSliceViewController;
     private final NotificationIconAreaController mNotificationIconAreaController;
+    private final BroadcastDispatcher mBroadcastDispatcher;
 
     /**
      * Gradient clock for usage when mode != KeyguardUpdateMonitor.LOCK_SCREEN_MODE_NORMAL.
@@ -101,7 +104,8 @@ public class KeyguardClockSwitchController extends ViewController<KeyguardClockS
             SysuiColorExtractor colorExtractor, ClockManager clockManager,
             KeyguardSliceViewController keyguardSliceViewController,
             NotificationIconAreaController notificationIconAreaController,
-            ContentResolver contentResolver) {
+            ContentResolver contentResolver,
+            BroadcastDispatcher broadcastDispatcher) {
         super(keyguardClockSwitch);
         mResources = resources;
         mStatusBarStateController = statusBarStateController;
@@ -109,6 +113,7 @@ public class KeyguardClockSwitchController extends ViewController<KeyguardClockS
         mClockManager = clockManager;
         mKeyguardSliceViewController = keyguardSliceViewController;
         mNotificationIconAreaController = notificationIconAreaController;
+        mBroadcastDispatcher = broadcastDispatcher;
         mTimeFormat = Settings.System.getString(contentResolver, Settings.System.TIME_12_24);
     }
 
@@ -208,10 +213,10 @@ public class KeyguardClockSwitchController extends ViewController<KeyguardClockS
      * keep the clock centered.
      */
     void updatePosition(int x, float scale, AnimationProperties props, boolean animate) {
-        x = Math.abs(x);
+        x = getCurrentLayoutDirection() == View.LAYOUT_DIRECTION_RTL ? -x : x;
         if (mNewLockScreenClockFrame != null) {
             PropertyAnimator.setProperty(mNewLockScreenClockFrame, AnimatableProperty.TRANSLATION_X,
-                    -x, props, animate);
+                    x, props, animate);
             PropertyAnimator.setProperty(mNewLockScreenLargeClockFrame, AnimatableProperty.SCALE_X,
                     scale, props, animate);
             PropertyAnimator.setProperty(mNewLockScreenLargeClockFrame, AnimatableProperty.SCALE_Y,
@@ -231,12 +236,14 @@ public class KeyguardClockSwitchController extends ViewController<KeyguardClockS
                 mNewLockScreenClockViewController =
                         new AnimatableClockController(
                                 mView.findViewById(R.id.animatable_clock_view),
-                                mStatusBarStateController);
+                                mStatusBarStateController,
+                                mBroadcastDispatcher);
                 mNewLockScreenClockViewController.init();
                 mNewLockScreenLargeClockViewController =
                         new AnimatableClockController(
                                 mView.findViewById(R.id.animatable_clock_view_large),
-                                mStatusBarStateController);
+                                mStatusBarStateController,
+                                mBroadcastDispatcher);
                 mNewLockScreenLargeClockViewController.init();
             }
         } else {
@@ -269,15 +276,6 @@ public class KeyguardClockSwitchController extends ViewController<KeyguardClockS
 
     void refreshFormat() {
         refreshFormat(mTimeFormat);
-    }
-
-    float getClockTextTopPadding() {
-        if (mLockScreenMode == KeyguardUpdateMonitor.LOCK_SCREEN_MODE_LAYOUT_1
-                && mNewLockScreenClockViewController != null) {
-            return mNewLockScreenClockViewController.getClockTextTopPadding();
-        }
-
-        return mView.getClockTextTopPadding();
     }
 
     private void updateAodIcons() {
@@ -330,5 +328,9 @@ public class KeyguardClockSwitchController extends ViewController<KeyguardClockS
 
             sCacheKey = key;
         }
+    }
+
+    private int getCurrentLayoutDirection() {
+        return TextUtils.getLayoutDirectionFromLocale(Locale.getDefault());
     }
 }

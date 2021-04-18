@@ -21,7 +21,6 @@
 #include <SaveFlags.h>
 
 #include <androidfw/ResourceTypes.h>
-#include "DisplayList.h"
 #include "Properties.h"
 #include "utils/Macros.h"
 
@@ -61,6 +60,14 @@ class AnimatedImageDrawable;
 class Bitmap;
 class Paint;
 struct Typeface;
+
+enum class DrawTextBlobMode {
+    Normal,
+    HctOutline,
+    HctInner,
+};
+
+inline DrawTextBlobMode gDrawTextBlobMode = DrawTextBlobMode::Normal;
 
 class ANDROID_API Canvas {
 public:
@@ -118,7 +125,7 @@ public:
 
     virtual void resetRecording(int width, int height,
                                 uirenderer::RenderNode* renderNode = nullptr) = 0;
-    [[nodiscard]] virtual uirenderer::DisplayList finishRecording() = 0;
+    virtual void finishRecording(uirenderer::RenderNode* destination) = 0;
     virtual void enableZ(bool enableZ) = 0;
 
     bool isHighContrastText() const { return uirenderer::Properties::enableHighContrastText; }

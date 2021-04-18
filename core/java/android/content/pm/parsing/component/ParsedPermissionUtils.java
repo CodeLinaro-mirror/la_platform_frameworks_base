@@ -90,6 +90,38 @@ public class ParsedPermissionUtils {
             permission.flags = sa.getInt(
                     R.styleable.AndroidManifestPermission_permissionFlags, 0);
 
+            final int knownCertsResource = sa.getResourceId(
+                    R.styleable.AndroidManifestPermission_knownCerts, 0);
+            if (knownCertsResource != 0) {
+                // The knownCerts attribute supports both a string array resource as well as a
+                // string resource for the case where the permission should only be granted to a
+                // single known signer.
+                final String resourceType = res.getResourceTypeName(knownCertsResource);
+                if (resourceType.equals("array")) {
+                    final String[] knownCerts = res.getStringArray(knownCertsResource);
+                    if (knownCerts != null) {
+                        permission.setKnownCerts(knownCerts);
+                    }
+                } else {
+                    final String knownCert = res.getString(knownCertsResource);
+                    if (knownCert != null) {
+                        permission.setKnownCert(knownCert);
+                    }
+                }
+                if (permission.knownCerts == null) {
+                    Slog.w(TAG, packageName + " defines a knownSigner permission but"
+                            + " the provided knownCerts resource is null");
+                }
+            } else {
+                // If the knownCerts resource ID is null check if the app specified a string
+                // value for the attribute representing a single trusted signer.
+                final String knownCert = sa.getString(
+                        R.styleable.AndroidManifestPermission_knownCerts);
+                if (knownCert != null) {
+                    permission.setKnownCert(knownCert);
+                }
+            }
+
             // For now only platform runtime permissions can be restricted
             if (!permission.isRuntime() || !"android".equals(permission.getPackageName())) {
                 permission.flags &= ~PermissionInfo.FLAG_HARD_RESTRICTED;
@@ -108,17 +140,14 @@ public class ParsedPermissionUtils {
 
         permission.protectionLevel = PermissionInfo.fixProtectionLevel(permission.protectionLevel);
 
-        if (permission.getProtectionFlags() != 0) {
-            if ((permission.protectionLevel & PermissionInfo.PROTECTION_FLAG_INSTANT) == 0
-                    && (permission.protectionLevel & PermissionInfo.PROTECTION_FLAG_RUNTIME_ONLY)
-                    == 0
-                    && (permission.protectionLevel & PermissionInfo.PROTECTION_MASK_BASE)
-                    != PermissionInfo.PROTECTION_SIGNATURE
-                    && (permission.protectionLevel & PermissionInfo.PROTECTION_MASK_BASE)
-                    != PermissionInfo.PROTECTION_INTERNAL) {
-                return input.error("<permission>  protectionLevel specifies a non-instant flag "
-                        + "but is not based on signature or internal type");
-            }
+        final int otherProtectionFlags = permission.getProtectionFlags()
+                & ~(PermissionInfo.PROTECTION_FLAG_APPOP | PermissionInfo.PROTECTION_FLAG_INSTANT
+                | PermissionInfo.PROTECTION_FLAG_RUNTIME_ONLY);
+        if (otherProtectionFlags != 0
+                && permission.getProtection() != PermissionInfo.PROTECTION_SIGNATURE
+                && permission.getProtection() != PermissionInfo.PROTECTION_INTERNAL) {
+            return input.error("<permission> protectionLevel specifies a non-instant, non-appop,"
+                    + " non-runtimeOnly flag but is not based on signature or internal type");
         }
 
         return ComponentParseUtils.parseAllMetaData(pkg, res, parser, tag, permission, input);

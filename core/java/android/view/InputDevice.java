@@ -22,9 +22,11 @@ import android.annotation.RequiresPermission;
 import android.annotation.TestApi;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
+import android.hardware.Battery;
 import android.hardware.SensorManager;
 import android.hardware.input.InputDeviceIdentifier;
 import android.hardware.input.InputManager;
+import android.hardware.lights.LightsManager;
 import android.os.Build;
 import android.os.NullVibrator;
 import android.os.Parcel;
@@ -73,6 +75,7 @@ public final class InputDevice implements Parcelable {
     private final boolean mHasMicrophone;
     private final boolean mHasButtonUnderPad;
     private final boolean mHasSensor;
+    private final boolean mHasBattery;
     private final ArrayList<MotionRange> mMotionRanges = new ArrayList<MotionRange>();
 
     @GuardedBy("mMotionRanges")
@@ -83,6 +86,12 @@ public final class InputDevice implements Parcelable {
 
     @GuardedBy("mMotionRanges")
     private SensorManager mSensorManager;
+
+    @GuardedBy("mMotionRanges")
+    private Battery mBattery;
+
+    @GuardedBy("mMotionRanges")
+    private LightsManager mLightsManager;
 
     /**
      * A mask for input source classes.
@@ -323,6 +332,13 @@ public final class InputDevice implements Parcelable {
     public static final int SOURCE_HDMI = 0x02000000 | SOURCE_CLASS_BUTTON;
 
     /**
+     * The input source is a sensor associated with the input device.
+     *
+     * @see #SOURCE_CLASS_NONE
+     */
+    public static final int SOURCE_SENSOR = 0x04000000 | SOURCE_CLASS_NONE;
+
+    /**
      * A special input source constant that is used when filtering input devices
      * to match devices that provide any type of input source.
      */
@@ -443,12 +459,11 @@ public final class InputDevice implements Parcelable {
      * Called by native code
      * @hide
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @VisibleForTesting
     public InputDevice(int id, int generation, int controllerNumber, String name, int vendorId,
             int productId, String descriptor, boolean isExternal, int sources, int keyboardType,
             KeyCharacterMap keyCharacterMap, boolean hasVibrator, boolean hasMicrophone,
-            boolean hasButtonUnderPad, boolean hasSensor) {
+            boolean hasButtonUnderPad, boolean hasSensor, boolean hasBattery) {
         mId = id;
         mGeneration = generation;
         mControllerNumber = controllerNumber;
@@ -464,6 +479,7 @@ public final class InputDevice implements Parcelable {
         mHasMicrophone = hasMicrophone;
         mHasButtonUnderPad = hasButtonUnderPad;
         mHasSensor = hasSensor;
+        mHasBattery = hasBattery;
         mIdentifier = new InputDeviceIdentifier(descriptor, vendorId, productId);
     }
 
@@ -483,6 +499,7 @@ public final class InputDevice implements Parcelable {
         mHasMicrophone = in.readInt() != 0;
         mHasButtonUnderPad = in.readInt() != 0;
         mHasSensor = in.readInt() != 0;
+        mHasBattery = in.readInt() != 0;
         mIdentifier = new InputDeviceIdentifier(mDescriptor, mVendorId, mProductId);
 
         int numRanges = in.readInt();
@@ -830,6 +847,37 @@ public final class InputDevice implements Parcelable {
     }
 
     /**
+     * Gets the battery object associated with the device, if there is one.
+     * Even if the device does not have a battery, the result is never null.
+     * Use {@link Battery#hasBattery} to determine whether a battery is
+     * present.
+     *
+     * @return The battery object associated with the device, never null.
+     */
+    @NonNull
+    public Battery getBattery() {
+        if (mBattery == null) {
+            mBattery = InputManager.getInstance().getInputDeviceBattery(mId, mHasBattery);
+        }
+        return mBattery;
+    }
+
+    /**
+     * Gets the lights manager associated with the device, if there is one.
+     * Even if the device does not have lights, the result is never null.
+     * Use {@link LightsManager#getLights} to determine whether any lights is
+     * present.
+     *
+     * @return The lights manager associated with the device, never null.
+     */
+    public @NonNull LightsManager getLightsManager() {
+        if (mLightsManager == null) {
+            mLightsManager = InputManager.getInstance().getInputDeviceLightsManager(mId);
+        }
+        return mLightsManager;
+    }
+
+    /**
      * Gets the sensor manager service associated with the input device.
      * Even if the device does not have a sensor, the result is never null.
      * Use {@link SensorManager#getSensorList} to get a full list of all supported sensors.
@@ -1051,6 +1099,7 @@ public final class InputDevice implements Parcelable {
         out.writeInt(mHasMicrophone ? 1 : 0);
         out.writeInt(mHasButtonUnderPad ? 1 : 0);
         out.writeInt(mHasSensor ? 1 : 0);
+        out.writeInt(mHasBattery ? 1 : 0);
 
         final int numRanges = mMotionRanges.size();
         out.writeInt(numRanges);
@@ -1096,6 +1145,8 @@ public final class InputDevice implements Parcelable {
         description.append("  Has Vibrator: ").append(mHasVibrator).append("\n");
 
         description.append("  Has Sensor: ").append(mHasSensor).append("\n");
+
+        description.append("  Has battery: ").append(mHasBattery).append("\n");
 
         description.append("  Has mic: ").append(mHasMicrophone).append("\n");
 

@@ -29,6 +29,7 @@ import com.android.systemui.qs.QSPanel.QSTileLayout;
 import com.android.systemui.qs.TouchAnimator.Builder;
 import com.android.systemui.qs.TouchAnimator.Listener;
 import com.android.systemui.qs.dagger.QSScope;
+import com.android.systemui.statusbar.FeatureFlags;
 import com.android.systemui.tuner.TunerService;
 import com.android.systemui.tuner.TunerService.Tunable;
 
@@ -54,7 +55,8 @@ public class QSAnimator implements Callback, PageListener, Listener, OnLayoutCha
     private final ArrayList<View> mAllViews = new ArrayList<>();
     /**
      * List of {@link View}s representing Quick Settings that are being animated from the quick QS
-     * position to the normal QS panel.
+     * position to the normal QS panel. These views will only show once the animation is complete,
+     * to prevent overlapping of semi transparent views
      */
     private final ArrayList<View> mQuickQsViews = new ArrayList<>();
     private final QuickQSPanel mQuickQsPanel;
@@ -87,11 +89,13 @@ public class QSAnimator implements Callback, PageListener, Listener, OnLayoutCha
     private final Executor mExecutor;
     private final TunerService mTunerService;
     private boolean mShowCollapsedOnKeyguard;
+    private final FeatureFlags mFeatureFlags;
 
     @Inject
     public QSAnimator(QS qs, QuickQSPanel quickPanel, QSPanelController qsPanelController,
             QuickQSPanelController quickQSPanelController, QSTileHost qsTileHost,
-            QSSecurityFooter securityFooter, @Main Executor executor, TunerService tunerService) {
+            QSSecurityFooter securityFooter, @Main Executor executor, TunerService tunerService,
+            FeatureFlags featureFlags) {
         mQs = qs;
         mQuickQsPanel = quickPanel;
         mQsPanelController = qsPanelController;
@@ -100,6 +104,7 @@ public class QSAnimator implements Callback, PageListener, Listener, OnLayoutCha
         mHost = qsTileHost;
         mExecutor = executor;
         mTunerService = tunerService;
+        mFeatureFlags = featureFlags;
         mHost.addCallback(this);
         mQsPanelController.addOnAttachStateChangeListener(this);
         qs.getView().addOnLayoutChangeListener(this);
@@ -260,7 +265,11 @@ public class QSAnimator implements Callback, PageListener, Listener, OnLayoutCha
                             translationX);
                 }
 
-                mQuickQsViews.add(tileView.getIconWithBackground());
+                if (mFeatureFlags.isQSLabelsEnabled()) {
+                    mQuickQsViews.add(tileView);
+                } else {
+                    mQuickQsViews.add(tileView.getIconWithBackground());
+                }
                 mAllViews.add(tileView.getIcon());
                 mAllViews.add(quickTileView);
             } else if (mFullRows && isIconInAnimatedRow(count)) {
@@ -351,7 +360,7 @@ public class QSAnimator implements Callback, PageListener, Listener, OnLayoutCha
         if(view == parent || view == null) return;
         // Ignore tile pages as they can have some offset we don't want to take into account in
         // RTL.
-        if (!(view instanceof PagedTileLayout.TilePage)) {
+        if (!isAPage(view)) {
             loc1[0] += view.getLeft();
             loc1[1] += view.getTop();
         }
@@ -361,6 +370,16 @@ public class QSAnimator implements Callback, PageListener, Listener, OnLayoutCha
             loc1[1] -= view.getScrollY();
         }
         getRelativePositionInt(loc1, (View) view.getParent(), parent);
+    }
+
+    // Returns true if the view is a possible page in PagedTileLayout
+    private boolean isAPage(View view) {
+        if (view instanceof PagedTileLayout.TilePage) {
+            return true;
+        } else if (view instanceof SideLabelTileLayout) {
+            return !(view instanceof QuickQSPanel.QQSSideLabelTileLayout);
+        }
+        return false;
     }
 
     public void setPosition(float position) {

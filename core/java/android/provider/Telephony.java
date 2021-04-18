@@ -5282,11 +5282,33 @@ public final class Telephony {
         public static final String COLUMN_ALLOWED_NETWORK_TYPES = "allowed_network_types";
 
         /**
+         * TelephonyProvider column name for allowed network types with all of reasons. Indicate
+         * which network types are allowed for
+         * {@link TelephonyManager#ALLOWED_NETWORK_TYPES_REASON_USER},
+         * {@link TelephonyManager#ALLOWED_NETWORK_TYPES_REASON_POWER},
+         * {@link TelephonyManager#ALLOWED_NETWORK_TYPES_REASON_CARRIER},
+         * {@link TelephonyManager#ALLOWED_NETWORK_TYPES_REASON_ENABLE_2G}.
+         * <P>Type: TEXT </P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_ALLOWED_NETWORK_TYPES_FOR_REASONS =
+                "allowed_network_types_for_reasons";
+
+        /**
          * TelephonyProvider column name for RCS configuration.
          * <p>TYPE: BLOB
          *
          * @hide
          */
         public static final String COLUMN_RCS_CONFIG = "rcs_config";
+
+        /**
+         * TelephonyProvider column name for VoIMS provisioning. Default is 0.
+         * <P>Type: INTEGER </P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_VOIMS_OPT_IN_STATUS = "voims_opt_in_status";
     }
 }

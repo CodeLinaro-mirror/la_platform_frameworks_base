@@ -350,6 +350,9 @@ public class FontsContract {
             return cachedTypeface;
         }
 
+        Log.w(TAG, "Platform version of downloadable fonts is deprecated. Please use"
+                + " androidx version instead.");
+
         synchronized (sLock) {
             // It is possible that Font is loaded during the thread sleep time
             // re-check the cache to avoid re-loading the font
@@ -362,7 +365,8 @@ public class FontsContract {
             // the font provider takes too much time. For now, request the font data to ensure
             // it is in the cache next time and return.
             if (sHandler == null) {
-                sThread = new HandlerThread("fonts", Process.THREAD_PRIORITY_BACKGROUND);
+                // Use FOREGROUND priority as this thread will block UI thread.
+                sThread = new HandlerThread("fonts", Process.THREAD_PRIORITY_FOREGROUND);
                 sThread.start();
                 sHandler = new Handler(sThread.getLooper());
             }

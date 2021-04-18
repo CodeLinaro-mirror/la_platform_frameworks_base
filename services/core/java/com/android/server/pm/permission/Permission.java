@@ -38,6 +38,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Collection;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Permission definition.
@@ -238,10 +239,6 @@ public final class Permission {
         return (mPermissionInfo.flags & PermissionInfo.FLAG_IMMUTABLY_RESTRICTED) != 0;
     }
 
-    public boolean isInstallerExemptIgnored() {
-        return (mPermissionInfo.flags & PermissionInfo.FLAG_INSTALLER_EXEMPT_IGNORED) != 0;
-    }
-
     public boolean isSignature() {
         return (mPermissionInfo.protectionLevel & PermissionInfo.PROTECTION_MASK_BASE)
                 == PermissionInfo.PROTECTION_SIGNATURE;
@@ -307,10 +304,6 @@ public final class Permission {
                 & PermissionInfo.PROTECTION_FLAG_SYSTEM_TEXT_CLASSIFIER) != 0;
     }
 
-    public boolean isWellbeing() {
-        return (mPermissionInfo.protectionLevel & PermissionInfo.PROTECTION_FLAG_WELLBEING) != 0;
-    }
-
     public boolean isDocumenter() {
         return (mPermissionInfo.protectionLevel & PermissionInfo.PROTECTION_FLAG_DOCUMENTER) != 0;
     }
@@ -343,6 +336,14 @@ public final class Permission {
 
     public boolean isRole() {
         return (mPermissionInfo.protectionLevel & PermissionInfo.PROTECTION_FLAG_ROLE) != 0;
+    }
+
+    public boolean isKnownSigner() {
+        return (mPermissionInfo.protectionLevel & PermissionInfo.PROTECTION_FLAG_KNOWN_SIGNER) != 0;
+    }
+
+    public Set<String> getKnownCerts() {
+        return mPermissionInfo.knownCerts;
     }
 
     public void transfer(@NonNull String oldPackageName, @NonNull String newPackageName) {

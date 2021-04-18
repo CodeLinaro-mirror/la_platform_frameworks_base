@@ -24,15 +24,23 @@ import static com.android.server.wm.ActivityTaskSupervisor.PRESERVE_WINDOWS;
 
 import android.app.ActivityManager;
 import android.app.AppGlobals;
+import android.app.compat.CompatChanges;
+import android.compat.annotation.ChangeId;
+import android.compat.annotation.Disabled;
+import android.compat.annotation.EnabledSince;
+import android.compat.annotation.Overridable;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.IPackageManager;
 import android.content.res.CompatibilityInfo;
 import android.content.res.Configuration;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
+import android.os.UserHandle;
 import android.util.AtomicFile;
+import android.util.DisplayMetrics;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.TypedXmlPullParser;
@@ -63,6 +71,69 @@ public final class CompatModePackages {
     // Compatibility state: compatibility mode is enabled.
     private static final int COMPAT_FLAG_ENABLED = 1<<1;
 
+    /**
+     * CompatModePackages#DOWNSCALED is the gatekeeper of all per-app buffer downscaling
+     * changes.  Disabling this change will prevent the following scaling factors from working:
+     * CompatModePackages#DOWNSCALE_87_5
+     * CompatModePackages#DOWNSCALE_75
+     * CompatModePackages#DOWNSCALE_62_5
+     * CompatModePackages#DOWNSCALE_50
+     *
+     * If CompatModePackages#DOWNSCALED is enabled for an app package, then the app will be forcibly
+     * resized to the highest enabled scaling factor e.g. 87.5% if both 87.5% and 75% were
+     * enabled.
+     */
+    @ChangeId
+    @Disabled
+    private static final long DOWNSCALED = 168419799L;
+
+    /**
+     * With CompatModePackages#DOWNSCALED enabled, subsequently enabling change-id
+     * CompatModePackages#DOWNSCALE_87_5 for a package will force the app to assume it's
+     * running on a display with 87.5% the vertical and horizontal resolution of the real display.
+     */
+    @ChangeId
+    @Disabled
+    private static final long DOWNSCALE_87_5 = 176926753L;
+
+    /**
+     * With CompatModePackages#DOWNSCALED enabled, subsequently enabling change-id
+     * CompatModePackages#DOWNSCALE_75 for a package will force the app to assume it's
+     * running on a display with 75% the vertical and horizontal resolution of the real display.
+     */
+    @ChangeId
+    @Disabled
+    private static final long DOWNSCALE_75 = 176926829L;
+
+    /**
+     * With CompatModePackages#DOWNSCALED enabled, subsequently enabling change-id
+     * CompatModePackages#DOWNSCALE_62_5 for a package will force the app to assume it's
+     * running on a display with 62.5% the vertical and horizontal resolution of the real display.
+     */
+    @ChangeId
+    @Disabled
+    private static final long DOWNSCALE_62_5 = 176926771L;
+
+    /**
+     * With CompatModePackages#DOWNSCALED enabled, subsequently enabling change-id
+     * CompatModePackages#DOWNSCALE_50 for a package will force the app to assume it's
+     * running on a display with 50% vertical and horizontal resolution of the real display.
+     */
+    @ChangeId
+    @Disabled
+    private static final long DOWNSCALE_50 = 176926741L;
+
+    /**
+     * On Android TV applications that target pre-S are not expecting to receive a Window larger
+     * than 1080p, so if needed we are downscaling their Windows to 1080p.
+     * However, applications that target S and greater release version are expected to be able to
+     * handle any Window size, so we should not downscale their Windows.
+     */
+    @ChangeId
+    @Overridable
+    @EnabledSince(targetSdkVersion = Build.VERSION_CODES.S)
+    private static final long DO_NOT_DOWNSCALE_TO_1080P_ON_TV = 157629738L; // This is a Bug ID.
+
     private final HashMap<String, Integer> mPackages = new HashMap<String, Integer>();
 
     private static final int MSG_WRITE = 300;
@@ -82,7 +153,7 @@ public final class CompatModePackages {
                     break;
             }
         }
-    };
+    }
 
     public CompatModePackages(ActivityTaskManagerService service, File systemDir, Handler handler) {
         mService = service;
@@ -192,26 +263,52 @@ public final class CompatModePackages {
     }
 
     public CompatibilityInfo compatibilityInfoForPackageLocked(ApplicationInfo ai) {
-        final Configuration globalConfig = mService.getGlobalConfiguration();
-        CompatibilityInfo ci = new CompatibilityInfo(ai, globalConfig.screenLayout,
-                globalConfig.smallestScreenWidthDp,
-                (getPackageFlags(ai.packageName)&COMPAT_FLAG_ENABLED) != 0);
-        //Slog.i(TAG, "*********** COMPAT FOR PKG " + ai.packageName + ": " + ci);
-        return ci;
+        final boolean forceCompat = getPackageCompatModeEnabledLocked(ai);
+        final float compatScale = getCompatScale(ai.packageName, ai.uid);
+        final Configuration config = mService.getGlobalConfiguration();
+        return new CompatibilityInfo(ai, config.screenLayout, config.smallestScreenWidthDp,
+                forceCompat, compatScale);
+    }
+
+    float getCompatScale(String packageName, int uid) {
+        final UserHandle userHandle = UserHandle.getUserHandleForUid(uid);
+        if (CompatChanges.isChangeEnabled(DOWNSCALED, packageName, userHandle)) {
+            if (CompatChanges.isChangeEnabled(DOWNSCALE_87_5, packageName, userHandle)) {
+                return 8f / 7f; // 1.14285714286
+            }
+            if (CompatChanges.isChangeEnabled(DOWNSCALE_75, packageName, userHandle)) {
+                return 4f / 3f; // 1.333333333
+            }
+            if (CompatChanges.isChangeEnabled(DOWNSCALE_62_5, packageName, userHandle)) {
+                return /* 1 / 0.625 */ 1.6f;
+            }
+            if (CompatChanges.isChangeEnabled(DOWNSCALE_50, packageName, userHandle)) {
+                return /* 1 / 0.5 */ 2f;
+            }
+        }
+
+        if (mService.mHasLeanbackFeature) {
+            final Configuration config = mService.getGlobalConfiguration();
+            final float density = config.densityDpi / (float) DisplayMetrics.DENSITY_DEFAULT;
+            final int smallestScreenWidthPx = (int) (config.smallestScreenWidthDp * density + .5f);
+            if (smallestScreenWidthPx > 1080 && !CompatChanges.isChangeEnabled(
+                    DO_NOT_DOWNSCALE_TO_1080P_ON_TV, packageName, userHandle)) {
+                return smallestScreenWidthPx / 1080f;
+            }
+        }
+
+        return 1f;
     }
 
     public int computeCompatModeLocked(ApplicationInfo ai) {
-        final boolean enabled = (getPackageFlags(ai.packageName)&COMPAT_FLAG_ENABLED) != 0;
-        final Configuration globalConfig = mService.getGlobalConfiguration();
-        final CompatibilityInfo info = new CompatibilityInfo(ai, globalConfig.screenLayout,
-                globalConfig.smallestScreenWidthDp, enabled);
+        final CompatibilityInfo info = compatibilityInfoForPackageLocked(ai);
         if (info.alwaysSupportsScreen()) {
             return ActivityManager.COMPAT_MODE_NEVER;
         }
         if (info.neverSupportsScreen()) {
             return ActivityManager.COMPAT_MODE_ALWAYS;
         }
-        return enabled ? ActivityManager.COMPAT_MODE_ENABLED
+        return getPackageCompatModeEnabledLocked(ai) ? ActivityManager.COMPAT_MODE_ENABLED
                 : ActivityManager.COMPAT_MODE_DISABLED;
     }
 
@@ -221,6 +318,10 @@ public final class CompatModePackages {
 
     public void setPackageAskCompatModeLocked(String packageName, boolean ask) {
         setPackageFlagLocked(packageName, COMPAT_FLAG_DONT_ASK, ask);
+    }
+
+    private boolean getPackageCompatModeEnabledLocked(ApplicationInfo ai) {
+        return (getPackageFlags(ai.packageName) & COMPAT_FLAG_ENABLED) != 0;
     }
 
     private void setPackageFlagLocked(String packageName, int flag, boolean set) {
@@ -313,8 +414,8 @@ public final class CompatModePackages {
 
             scheduleWrite();
 
-            final Task stack = mService.getTopDisplayFocusedRootTask();
-            ActivityRecord starting = stack.restartPackage(packageName);
+            final Task rootTask = mService.getTopDisplayFocusedRootTask();
+            ActivityRecord starting = rootTask.restartPackage(packageName);
 
             // Tell all processes that loaded this package about the change.
             SparseArray<WindowProcessController> pidMap = mService.mProcessMap.getPidMap();
@@ -338,7 +439,7 @@ public final class CompatModePackages {
                         false /* preserveWindow */);
                 // And we need to make sure at this point that all other activities
                 // are made visible with the correct configuration.
-                stack.ensureActivitiesVisible(starting, 0, !PRESERVE_WINDOWS);
+                rootTask.ensureActivitiesVisible(starting, 0, !PRESERVE_WINDOWS);
             }
         }
     }
@@ -359,9 +460,6 @@ public final class CompatModePackages {
             out.startTag(null, "compat-packages");
 
             final IPackageManager pm = AppGlobals.getPackageManager();
-            final Configuration globalConfig = mService.getGlobalConfiguration();
-            final int screenLayout = globalConfig.screenLayout;
-            final int smallestScreenWidthDp = globalConfig.smallestScreenWidthDp;
             final Iterator<Map.Entry<String, Integer>> it = pkgs.entrySet().iterator();
             while (it.hasNext()) {
                 Map.Entry<String, Integer> entry = it.next();
@@ -378,8 +476,7 @@ public final class CompatModePackages {
                 if (ai == null) {
                     continue;
                 }
-                CompatibilityInfo info = new CompatibilityInfo(ai, screenLayout,
-                        smallestScreenWidthDp, false);
+                final CompatibilityInfo info = compatibilityInfoForPackageLocked(ai);
                 if (info.alwaysSupportsScreen()) {
                     continue;
                 }

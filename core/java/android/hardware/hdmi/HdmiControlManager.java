@@ -454,6 +454,240 @@ public final class HdmiControlManager {
     @Retention(RetentionPolicy.SOURCE)
     public @interface SystemAudioModeMuting {}
 
+    // -- Whether the HDMI CEC volume control is enabled or disabled.
+    /**
+     * HDMI CEC enabled.
+     *
+     * @see HdmiControlManager#CEC_SETTING_NAME_VOLUME_CONTROL_MODE
+     * @hide
+     */
+    public static final int VOLUME_CONTROL_ENABLED = 1;
+    /**
+     * HDMI CEC disabled.
+     *
+     * @see HdmiControlManager#CEC_SETTING_NAME_VOLUME_CONTROL_MODE
+     * @hide
+     */
+    public static final int VOLUME_CONTROL_DISABLED = 0;
+    /**
+     * @see HdmiControlManager#CEC_SETTING_NAME_VOLUME_CONTROL_MODE
+     * @hide
+     */
+    @IntDef(prefix = { "VOLUME_CONTROL_" }, value = {
+            VOLUME_CONTROL_ENABLED,
+            VOLUME_CONTROL_DISABLED
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface VolumeControl {}
+
+    // -- Whether TV Wake on One Touch Play is enabled or disabled.
+    /**
+     * TV Wake on One Touch Play enabled.
+     *
+     * @hide
+     */
+    public static final int TV_WAKE_ON_ONE_TOUCH_PLAY_ENABLED = 1;
+    /**
+     * TV Wake on One Touch Play disabled.
+     *
+     * @hide
+     */
+    public static final int TV_WAKE_ON_ONE_TOUCH_PLAY_DISABLED = 0;
+    /**
+     * @hide
+     */
+    @IntDef(prefix = { "TV_WAKE_ON_ONE_TOUCH_PLAY_" }, value = {
+            TV_WAKE_ON_ONE_TOUCH_PLAY_ENABLED,
+            TV_WAKE_ON_ONE_TOUCH_PLAY_DISABLED
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface TvWakeOnOneTouchPlay {}
+
+    // -- Whether TV should send &lt;Standby&gt; on sleep.
+    /**
+     * Sending &lt;Standby&gt; on sleep.
+     *
+     * @hide
+     */
+    public static final int TV_SEND_STANDBY_ON_SLEEP_ENABLED = 1;
+    /**
+     * Not sending &lt;Standby&gt; on sleep.
+     *
+     * @hide
+     */
+    public static final int TV_SEND_STANDBY_ON_SLEEP_DISABLED = 0;
+    /**
+     * @hide
+     */
+    @IntDef(prefix = { "TV_SEND_STANDBY_ON_SLEEP_" }, value = {
+            TV_SEND_STANDBY_ON_SLEEP_ENABLED,
+            TV_SEND_STANDBY_ON_SLEEP_DISABLED
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface TvSendStandbyOnSleep {}
+
+    // -- The RC profile of a TV panel.
+    /**
+     * RC profile none.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_TV_NONE = 0x0;
+    /**
+     * RC profile 1.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_TV_ONE = 0x2;
+    /**
+     * RC profile 2.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_TV_TWO = 0x6;
+    /**
+     * RC profile 3.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_TV_THREE = 0xA;
+    /**
+     * RC profile 4.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_TV_FOUR = 0xE;
+    /**
+     * @hide
+     */
+    @IntDef(prefix = { "RC_PROFILE_TV_" }, value = {
+            RC_PROFILE_TV_NONE,
+            RC_PROFILE_TV_ONE,
+            RC_PROFILE_TV_TWO,
+            RC_PROFILE_TV_THREE,
+            RC_PROFILE_TV_FOUR
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface RcProfileTv {}
+
+    // -- RC profile parameter defining if a source handles the root menu.
+    /**
+     * Handles the root menu.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_SOURCE_ROOT_MENU_HANDLED = 1;
+    /**
+     * Doesn't handle the root menu.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_SOURCE_ROOT_MENU_NOT_HANDLED = 0;
+    /**
+     * @hide
+     */
+    @IntDef(prefix = { "RC_PROFILE_SOURCE_ROOT_MENU_" }, value = {
+            RC_PROFILE_SOURCE_ROOT_MENU_HANDLED,
+            RC_PROFILE_SOURCE_ROOT_MENU_NOT_HANDLED
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface RcProfileSourceHandlesRootMenu {}
+
+    // -- RC profile parameter defining if a source handles the setup menu.
+    /**
+     * Handles the setup menu.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_SOURCE_SETUP_MENU_HANDLED = 1;
+    /**
+     * Doesn't handle the setup menu.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_SOURCE_SETUP_MENU_NOT_HANDLED = 0;
+    /**
+     * @hide
+     */
+    @IntDef(prefix = { "RC_PROFILE_SOURCE_SETUP_MENU_" }, value = {
+            RC_PROFILE_SOURCE_SETUP_MENU_HANDLED,
+            RC_PROFILE_SOURCE_SETUP_MENU_NOT_HANDLED
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface RcProfileSourceHandlesSetupMenu {}
+
+
+    // -- RC profile parameter defining if a source handles the contents menu.
+    /**
+     * Handles the contents menu.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_SOURCE_CONTENTS_MENU_HANDLED = 1;
+    /**
+     * Doesn't handle the contents menu.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_SOURCE_CONTENTS_MENU_NOT_HANDLED = 0;
+    /**
+     * @hide
+     */
+    @IntDef(prefix = { "RC_PROFILE_SOURCE_CONTENTS_MENU_" }, value = {
+            RC_PROFILE_SOURCE_CONTENTS_MENU_HANDLED,
+            RC_PROFILE_SOURCE_CONTENTS_MENU_NOT_HANDLED
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface RcProfileSourceHandlesContentsMenu {}
+
+
+    // -- RC profile parameter defining if a source handles the top menu.
+    /**
+     * Handles the top menu.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_SOURCE_TOP_MENU_HANDLED = 1;
+    /**
+     * Doesn't handle the top menu.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_SOURCE_TOP_MENU_NOT_HANDLED = 0;
+    /**
+     * @hide
+     */
+    @IntDef(prefix = { "RC_PROFILE_SOURCE_TOP_MENU_" }, value = {
+            RC_PROFILE_SOURCE_TOP_MENU_HANDLED,
+            RC_PROFILE_SOURCE_TOP_MENU_NOT_HANDLED
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface RcProfileSourceHandlesTopMenu {}
+
+
+    // -- RC profile parameter defining if a source handles the media context sensitive menu.
+    /**
+     * Handles the media context sensitive menu.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_SOURCE_MEDIA_CONTEXT_SENSITIVE_MENU_HANDLED = 1;
+    /**
+     * Doesn't handle the media context sensitive menu.
+     *
+     * @hide
+     */
+    public static final int RC_PROFILE_SOURCE_MEDIA_CONTEXT_SENSITIVE_MENU_NOT_HANDLED = 0;
+    /**
+     * @hide
+     */
+    @IntDef(prefix = { "RC_PROFILE_SOURCE_MEDIA_CONTEXT_SENSITIVE_" }, value = {
+            RC_PROFILE_SOURCE_MEDIA_CONTEXT_SENSITIVE_MENU_HANDLED,
+            RC_PROFILE_SOURCE_MEDIA_CONTEXT_SENSITIVE_MENU_NOT_HANDLED
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface RcProfileSourceHandlesMediaContextSensitiveMenu {}
+
     // -- Settings available in the CEC Configuration.
     /**
      * Name of a setting deciding whether the CEC is enabled.
@@ -493,6 +727,105 @@ public final class HdmiControlManager {
     public static final String CEC_SETTING_NAME_SYSTEM_AUDIO_MODE_MUTING =
             "system_audio_mode_muting";
     /**
+     * Controls whether volume control commands via HDMI CEC are enabled.
+     *
+     * <p>Effects on different device types:
+     * <table>
+     *     <tr><th>HDMI CEC device type</th><th>0: disabled</th><th>1: enabled</th></tr>
+     *     <tr>
+     *         <td>TV (type: 0)</td>
+     *         <td>Per CEC specification.</td>
+     *         <td>TV changes system volume. TV no longer reacts to incoming volume changes
+     *         via {@code <User Control Pressed>}. TV no longer handles {@code <Report Audio
+     *         Status>}.</td>
+     *     </tr>
+     *     <tr>
+     *         <td>Playback device (type: 4)</td>
+     *         <td>Device sends volume commands to TV/Audio system via {@code <User Control
+     *         Pressed>}</td>
+     *         <td>Device does not send volume commands via {@code <User Control Pressed>}.</td>
+     *     </tr>
+     *     <tr>
+     *         <td>Audio device (type: 5)</td>
+     *         <td>Full "System Audio Control" capabilities.</td>
+     *         <td>Audio device no longer reacts to incoming {@code <User Control Pressed>}
+     *         volume commands. Audio device no longer reports volume changes via {@code
+     *         <Report Audio Status>}.</td>
+     *     </tr>
+     * </table>
+     *
+     * <p> Due to the resulting behavior, usage on TV and Audio devices is discouraged.
+     *
+     * @hide
+     * @see android.hardware.hdmi.HdmiControlManager#setHdmiCecVolumeControlEnabled(int)
+     */
+    public static final String CEC_SETTING_NAME_VOLUME_CONTROL_MODE =
+            "volume_control_enabled";
+    /**
+     * Name of a setting deciding whether the TV will automatically turn on upon reception
+     * of the CEC command &lt;Text View On&gt; or &lt;Image View On&gt;.
+     *
+     * @hide
+     */
+    public static final String CEC_SETTING_NAME_TV_WAKE_ON_ONE_TOUCH_PLAY =
+            "tv_wake_on_one_touch_play";
+    /**
+     * Name of a setting deciding whether the device will also turn off other CEC devices
+     * when it goes to standby mode.
+     *
+     * @hide
+     */
+    public static final String CEC_SETTING_NAME_TV_SEND_STANDBY_ON_SLEEP =
+            "tv_send_standby_on_sleep";
+    /**
+     * Name of a setting representing the RC profile of a TV panel.
+     *
+     * @hide
+     */
+    public static final String CEC_SETTING_NAME_RC_PROFILE_TV =
+            "rc_profile_tv";
+    /**
+     * Name of a setting representing the RC profile parameter defining if a source handles the root
+     * menu.
+     *
+     * @hide
+     */
+    public static final String CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_ROOT_MENU =
+            "rc_profile_source_handles_root_menu";
+    /**
+     * Name of a setting representing the RC profile parameter defining if a source handles the
+     * setup menu.
+     *
+     * @hide
+     */
+    public static final String CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_SETUP_MENU =
+            "rc_profile_source_handles_setup_menu";
+    /**
+     * Name of a setting representing the RC profile parameter defining if a source handles the
+     * contents menu.
+     *
+     * @hide
+     */
+    public static final String CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_CONTENTS_MENU =
+            "rc_profile_source_handles_contents_menu";
+    /**
+     * Name of a setting representing the RC profile parameter defining if a source handles the top
+     * menu.
+     *
+     * @hide
+     */
+    public static final String CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_TOP_MENU =
+            "rc_profile_source_handles_top_menu";
+    /**
+     * Name of a setting representing the RC profile parameter defining if a source handles the
+     * media context sensitive menu.
+     *
+     * @hide
+     */
+    public static final String
+            CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_MEDIA_CONTEXT_SENSITIVE_MENU =
+            "rc_profile_source_handles_media_context_sensitive_menu";
+    /**
      * @hide
      */
     @StringDef(prefix = { "CEC_SETTING_NAME_" }, value = {
@@ -501,6 +834,15 @@ public final class HdmiControlManager {
         CEC_SETTING_NAME_POWER_CONTROL_MODE,
         CEC_SETTING_NAME_POWER_STATE_CHANGE_ON_ACTIVE_SOURCE_LOST,
         CEC_SETTING_NAME_SYSTEM_AUDIO_MODE_MUTING,
+        CEC_SETTING_NAME_VOLUME_CONTROL_MODE,
+        CEC_SETTING_NAME_TV_WAKE_ON_ONE_TOUCH_PLAY,
+        CEC_SETTING_NAME_TV_SEND_STANDBY_ON_SLEEP,
+        CEC_SETTING_NAME_RC_PROFILE_TV,
+        CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_ROOT_MENU,
+        CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_SETUP_MENU,
+        CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_CONTENTS_MENU,
+        CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_TOP_MENU,
+        CEC_SETTING_NAME_RC_PROFILE_SOURCE_HANDLES_MEDIA_CONTEXT_SENSITIVE_MENU,
     })
     public @interface CecSettingName {}
 
@@ -913,14 +1255,16 @@ public final class HdmiControlManager {
      *
      * <p> Due to the resulting behavior, usage on TV and Audio devices is discouraged.
      *
-     * @param isHdmiCecVolumeControlEnabled target state of HDMI CEC volume control.
-     * @see Settings.Global.HDMI_CONTROL_VOLUME_CONTROL_ENABLED
+     * @param hdmiCecVolumeControlEnabled target state of HDMI CEC volume control.
+     * @see HdmiControlManager#CEC_SETTING_NAME_VOLUME_CONTROL_MODE
      * @hide
      */
     @RequiresPermission(android.Manifest.permission.HDMI_CEC)
-    public void setHdmiCecVolumeControlEnabled(boolean isHdmiCecVolumeControlEnabled) {
+    public void setHdmiCecVolumeControlEnabled(
+            @VolumeControl int hdmiCecVolumeControlEnabled) {
         try {
-            mService.setHdmiCecVolumeControlEnabled(isHdmiCecVolumeControlEnabled);
+            mService.setCecSettingIntValue(CEC_SETTING_NAME_VOLUME_CONTROL_MODE,
+                    hdmiCecVolumeControlEnabled);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -931,9 +1275,10 @@ public final class HdmiControlManager {
      * @hide
      */
     @RequiresPermission(android.Manifest.permission.HDMI_CEC)
-    public boolean isHdmiCecVolumeControlEnabled() {
+    @VolumeControl
+    public int getHdmiCecVolumeControlEnabled() {
         try {
-            return mService.isHdmiCecVolumeControlEnabled();
+            return mService.getCecSettingIntValue(CEC_SETTING_NAME_VOLUME_CONTROL_MODE);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -1042,7 +1387,8 @@ public final class HdmiControlManager {
          *
          * Note: Value of isCecAvailable is only valid when isCecEnabled is true.
          **/
-        void onStatusChange(boolean isCecEnabled, boolean isCecAvailable);
+        void onStatusChange(@HdmiControlManager.HdmiCecControl int isCecEnabled,
+                boolean isCecAvailable);
     }
 
     private final ArrayMap<HdmiControlStatusChangeListener, IHdmiControlStatusChangeListener>
@@ -1056,10 +1402,10 @@ public final class HdmiControlManager {
         /**
          * Called when the HDMI Control (CEC) volume control feature is enabled/disabled.
          *
-         * @param enabled status of HDMI CEC volume control feature
-         * @see {@link HdmiControlManager#setHdmiCecVolumeControlEnabled(boolean)} ()}
+         * @param hdmiCecVolumeControl status of HDMI CEC volume control feature
+         * @see {@link HdmiControlManager#setHdmiCecVolumeControlEnabled(int)} ()}
          **/
-        void onHdmiCecVolumeControlFeature(boolean enabled);
+        void onHdmiCecVolumeControlFeature(@VolumeControl int hdmiCecVolumeControl);
     }
 
     private final ArrayMap<HdmiCecVolumeControlFeatureListener,
@@ -1283,7 +1629,7 @@ public final class HdmiControlManager {
             Executor executor, final HdmiControlStatusChangeListener listener) {
         return new IHdmiControlStatusChangeListener.Stub() {
             @Override
-            public void onStatusChange(boolean isCecEnabled, boolean isCecAvailable) {
+            public void onStatusChange(@HdmiCecControl int isCecEnabled, boolean isCecAvailable) {
                 final long token = Binder.clearCallingIdentity();
                 try {
                     executor.execute(() -> listener.onStatusChange(isCecEnabled, isCecAvailable));
@@ -1360,7 +1706,7 @@ public final class HdmiControlManager {
             Executor executor, final HdmiCecVolumeControlFeatureListener listener) {
         return new android.hardware.hdmi.IHdmiCecVolumeControlFeatureListener.Stub() {
             @Override
-            public void onHdmiCecVolumeControlFeature(boolean enabled) {
+            public void onHdmiCecVolumeControlFeature(int enabled) {
                 final long token = Binder.clearCallingIdentity();
                 try {
                     executor.execute(() -> listener.onHdmiCecVolumeControlFeature(enabled));
@@ -1796,6 +2142,94 @@ public final class HdmiControlManager {
         }
         try {
             return mService.getCecSettingIntValue(CEC_SETTING_NAME_SYSTEM_AUDIO_MODE_MUTING);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Set the current status of TV Wake on One Touch Play.
+     *
+     * <p>Sets whether the TV should wake up upon reception of &lt;Text View On&gt;
+     * or &lt;Image View On&gt;.
+     *
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.HDMI_CEC)
+    public void setTvWakeOnOneTouchPlay(@NonNull @TvWakeOnOneTouchPlay int value) {
+        if (mService == null) {
+            Log.e(TAG, "HdmiControlService is not available");
+            throw new RuntimeException("HdmiControlService is not available");
+        }
+        try {
+            mService.setCecSettingIntValue(CEC_SETTING_NAME_TV_WAKE_ON_ONE_TOUCH_PLAY, value);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Get the current status of TV Wake on One Touch Play.
+     *
+     * <p>Reflects whether the TV should wake up upon reception of &lt;Text View On&gt;
+     * or &lt;Image View On&gt;.
+     *
+     * @hide
+     */
+    @NonNull
+    @TvWakeOnOneTouchPlay
+    @RequiresPermission(android.Manifest.permission.HDMI_CEC)
+    public int getTvWakeOnOneTouchPlay() {
+        if (mService == null) {
+            Log.e(TAG, "HdmiControlService is not available");
+            throw new RuntimeException("HdmiControlService is not available");
+        }
+        try {
+            return mService.getCecSettingIntValue(CEC_SETTING_NAME_TV_WAKE_ON_ONE_TOUCH_PLAY);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Set the current status of TV send &lt;Standby&gt; on Sleep.
+     *
+     * <p>Sets whether the device will also turn off other CEC devices
+     * when it goes to standby mode.
+     *
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.HDMI_CEC)
+    public void setTvSendStandbyOnSleep(@NonNull @TvSendStandbyOnSleep int value) {
+        if (mService == null) {
+            Log.e(TAG, "HdmiControlService is not available");
+            throw new RuntimeException("HdmiControlService is not available");
+        }
+        try {
+            mService.setCecSettingIntValue(CEC_SETTING_NAME_TV_SEND_STANDBY_ON_SLEEP, value);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Get the current status of TV send &lt;Standby&gt; on Sleep.
+     *
+     * <p>Reflects whether the device will also turn off other CEC devices
+     * when it goes to standby mode.
+     *
+     * @hide
+     */
+    @NonNull
+    @TvSendStandbyOnSleep
+    @RequiresPermission(android.Manifest.permission.HDMI_CEC)
+    public int getTvSendStandbyOnSleep() {
+        if (mService == null) {
+            Log.e(TAG, "HdmiControlService is not available");
+            throw new RuntimeException("HdmiControlService is not available");
+        }
+        try {
+            return mService.getCecSettingIntValue(CEC_SETTING_NAME_TV_SEND_STANDBY_ON_SLEEP);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

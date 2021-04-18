@@ -295,23 +295,29 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
         synchronized (mSessions) {
             for (int i = 0; i < mSessions.size(); i++) {
                 final PackageInstallerSession session = mSessions.valueAt(i);
-                if (session.isStaged()) {
-                    stagedSessionsToRestore.add(session.mStagedSession);
+                if (!session.isStaged()) {
+                    continue;
+                }
+                StagingManager.StagedSession stagedSession = session.mStagedSession;
+                if (!stagedSession.isInTerminalState() && stagedSession.hasParentSessionId()
+                        && getSession(stagedSession.getParentSessionId()) == null) {
+                    stagedSession.setSessionFailed(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED,
+                            "An orphan staged session " + stagedSession.sessionId() + " is found, "
+                                + "parent " + stagedSession.getParentSessionId() + " is missing");
+                    continue;
+                }
+                if (!stagedSession.hasParentSessionId() && stagedSession.isCommitted()
+                        && !stagedSession.isInTerminalState()) {
+                    // StagingManager.restoreSessions expects a list of committed, non-finalized
+                    // parent staged sessions.
+                    stagedSessionsToRestore.add(stagedSession);
                 }
             }
         }
-        // Don't hold mSessions lock when calling restoreSession, since it might trigger an APK
+        // Don't hold mSessions lock when calling restoreSessions, since it might trigger an APK
         // atomic install which needs to query sessions, which requires lock on mSessions.
-        boolean isDeviceUpgrading = mPm.isDeviceUpgrading();
-        for (StagingManager.StagedSession session : stagedSessionsToRestore) {
-            if (!session.isInTerminalState() && session.hasParentSessionId()
-                    && getSession(session.getParentSessionId()) == null) {
-                session.setSessionFailed(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED,
-                        "An orphan staged session " + session.sessionId() + " is found, "
-                                + "parent " + session.getParentSessionId() + " is missing");
-            }
-            mStagingManager.restoreSession(session, isDeviceUpgrading);
-        }
+        // Note: restoreSessions mutates content of stagedSessionsToRestore.
+        mStagingManager.restoreSessions(stagedSessionsToRestore, mPm.isDeviceUpgrading());
     }
 
     @GuardedBy("mSessions")
@@ -522,14 +528,6 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
 
         if (mPm.isUserRestricted(userId, UserManager.DISALLOW_INSTALL_APPS)) {
             throw new SecurityException("User restriction prevents installing");
-        }
-
-        if (params.dataLoaderParams != null
-                && mContext.checkCallingOrSelfPermission(Manifest.permission.USE_INSTALLER_V2)
-                        != PackageManager.PERMISSION_GRANTED) {
-            throw new SecurityException("You need the "
-                    + "com.android.permission.USE_INSTALLER_V2 permission "
-                    + "to use a data loader");
         }
 
         // INSTALL_REASON_ROLLBACK allows an app to be rolled back without requiring the ROLLBACK

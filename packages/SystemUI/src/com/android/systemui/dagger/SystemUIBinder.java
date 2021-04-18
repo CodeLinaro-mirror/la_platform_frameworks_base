@@ -18,7 +18,6 @@ package com.android.systemui.dagger;
 
 import com.android.systemui.LatencyTester;
 import com.android.systemui.ScreenDecorations;
-import com.android.systemui.SizeCompatModeActivityController;
 import com.android.systemui.SliceBroadcastRelayHandler;
 import com.android.systemui.SystemUI;
 import com.android.systemui.accessibility.SystemActions;
@@ -27,7 +26,9 @@ import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.globalactions.GlobalActionsComponent;
 import com.android.systemui.keyguard.KeyguardViewMediator;
 import com.android.systemui.keyguard.dagger.KeyguardModule;
+import com.android.systemui.media.systemsounds.HomeSoundEffectController;
 import com.android.systemui.power.PowerUI;
+import com.android.systemui.privacy.television.TvOngoingPrivacyChip;
 import com.android.systemui.recents.Recents;
 import com.android.systemui.recents.RecentsModule;
 import com.android.systemui.shortcut.ShortcutKeyDispatcher;
@@ -112,13 +113,6 @@ public abstract class SystemUIBinder {
     @ClassKey(ShortcutKeyDispatcher.class)
     public abstract SystemUI bindsShortcutKeyDispatcher(ShortcutKeyDispatcher sysui);
 
-    /** Inject into SizeCompatModeActivityController. */
-    @Binds
-    @IntoMap
-    @ClassKey(SizeCompatModeActivityController.class)
-    public abstract SystemUI bindsSizeCompatModeActivityController(
-            SizeCompatModeActivityController sysui);
-
     /** Inject into SliceBroadcastRelayHandler. */
     @Binds
     @IntoMap
@@ -161,6 +155,12 @@ public abstract class SystemUIBinder {
     @ClassKey(TvNotificationPanel.class)
     public abstract SystemUI bindsTvNotificationPanel(TvNotificationPanel sysui);
 
+    /** Inject into TvOngoingPrivacyChip. */
+    @Binds
+    @IntoMap
+    @ClassKey(TvOngoingPrivacyChip.class)
+    public abstract SystemUI bindsTvOngoingPrivacyChip(TvOngoingPrivacyChip sysui);
+
     /** Inject into VolumeUI. */
     @Binds
     @IntoMap
@@ -178,4 +178,10 @@ public abstract class SystemUIBinder {
     @IntoMap
     @ClassKey(WMShell.class)
     public abstract SystemUI bindWMShell(WMShell sysui);
+
+    /** Inject into HomeSoundEffectController. */
+    @Binds
+    @IntoMap
+    @ClassKey(HomeSoundEffectController.class)
+    public abstract SystemUI bindHomeSoundEffectController(HomeSoundEffectController sysui);
 }

@@ -16,6 +16,7 @@
 
 package com.android.systemui.navigationbar.buttons;
 
+import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -25,6 +26,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.res.Configuration;
+import android.graphics.Rect;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper.RunWithLooper;
 import android.view.MotionEvent;
@@ -39,6 +41,8 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import java.util.Map;
+
 @RunWith(AndroidTestingRunner.class)
 @RunWithLooper
 @SmallTest
@@ -51,6 +55,7 @@ public class NearestTouchFrameTest extends SysuiTestCase {
         Configuration c = new Configuration(mContext.getResources().getConfiguration());
         c.smallestScreenWidthDp = 500;
         mNearestTouchFrame = new NearestTouchFrame(mContext, null, c);
+        mNearestTouchFrame.layout(0, 0, 100, 100);
     }
 
     @Test
@@ -64,7 +69,7 @@ public class NearestTouchFrameTest extends SysuiTestCase {
 
         mNearestTouchFrame.addView(left);
         mNearestTouchFrame.addView(right);
-        mNearestTouchFrame.onMeasure(0, 0);
+        mNearestTouchFrame.layout(0, 0, 30, 30);
 
         MotionEvent ev = MotionEvent.obtain(0, 0, 0,
                 12 /* x */, 5 /* y */, 0);
@@ -81,7 +86,7 @@ public class NearestTouchFrameTest extends SysuiTestCase {
 
         mNearestTouchFrame.addView(left);
         mNearestTouchFrame.addView(right);
-        mNearestTouchFrame.onMeasure(0, 0);
+        mNearestTouchFrame.layout(0, 0, 30, 30);
 
         MotionEvent ev = MotionEvent.obtain(0, 0, 0,
                 12 /* x */, 5 /* y */, 0);
@@ -100,7 +105,7 @@ public class NearestTouchFrameTest extends SysuiTestCase {
 
         mNearestTouchFrame.addView(left);
         mNearestTouchFrame.addView(right);
-        mNearestTouchFrame.onMeasure(0, 0);
+        mNearestTouchFrame.layout(0, 0, 30, 30);
 
         // Would go to left view if attached, but goes to right instead as left should be detached.
         MotionEvent ev = MotionEvent.obtain(0, 0, 0,
@@ -117,7 +122,7 @@ public class NearestTouchFrameTest extends SysuiTestCase {
 
         mNearestTouchFrame.addView(left);
         mNearestTouchFrame.addView(right);
-        mNearestTouchFrame.onMeasure(0, 0);
+        mNearestTouchFrame.layout(0, 0, 30, 30);
 
         MotionEvent ev = MotionEvent.obtain(0, 0, 0,
                 12 /* x */, 5 /* y */, 0);
@@ -133,7 +138,7 @@ public class NearestTouchFrameTest extends SysuiTestCase {
 
         mNearestTouchFrame.addView(left);
         mNearestTouchFrame.addView(right);
-        mNearestTouchFrame.onMeasure(0, 0);
+        mNearestTouchFrame.layout(0, 0, 30, 30);
 
         MotionEvent ev = MotionEvent.obtain(0, 0, 0,
                 18 /* x */, 5 /* y */, 0);
@@ -146,10 +151,10 @@ public class NearestTouchFrameTest extends SysuiTestCase {
     public void testVerticalSelection_Top() {
         View top = mockViewAt(0, 0, 10, 10);
         View bottom = mockViewAt(0, 20, 10, 10);
-
+        mNearestTouchFrame.setIsVertical(true);
         mNearestTouchFrame.addView(top);
         mNearestTouchFrame.addView(bottom);
-        mNearestTouchFrame.onMeasure(0, 0);
+        mNearestTouchFrame.layout(0, 0, 30, 30);
 
         MotionEvent ev = MotionEvent.obtain(0, 0, 0,
                 5 /* x */, 12 /* y */, 0);
@@ -162,10 +167,10 @@ public class NearestTouchFrameTest extends SysuiTestCase {
     public void testVerticalSelection_Bottom() {
         View top = mockViewAt(0, 0, 10, 10);
         View bottom = mockViewAt(0, 20, 10, 10);
-
+        mNearestTouchFrame.setIsVertical(true);
         mNearestTouchFrame.addView(top);
         mNearestTouchFrame.addView(bottom);
-        mNearestTouchFrame.onMeasure(0, 0);
+        mNearestTouchFrame.layout(0, 0, 30, 30);
 
         MotionEvent ev = MotionEvent.obtain(0, 0, 0,
                 5 /* x */, 18 /* y */, 0);
@@ -179,12 +184,62 @@ public class NearestTouchFrameTest extends SysuiTestCase {
         View view = mockViewAt(0, 20, 10, 10);
         when(view.isAttachedToWindow()).thenReturn(false);
         mNearestTouchFrame.addView(view);
-        mNearestTouchFrame.onMeasure(0, 0);
+        mNearestTouchFrame.layout(0, 0, 30, 30);
 
         MotionEvent ev = MotionEvent.obtain(0, 0, 0, 5 /* x */, 18 /* y */, 0);
         mNearestTouchFrame.onTouchEvent(ev);
         verify(view, never()).onTouchEvent(eq(ev));
         ev.recycle();
+    }
+
+    @Test
+    public void testViewMiddleChildNotAttachedCrash() {
+        View view1 = mockViewAt(0, 20, 10, 10);
+        View view2 = mockViewAt(11, 20, 10, 10);
+        View view3 = mockViewAt(21, 20, 10, 10);
+        when(view2.isAttachedToWindow()).thenReturn(false);
+        mNearestTouchFrame.addView(view1);
+        mNearestTouchFrame.addView(view2);
+        mNearestTouchFrame.addView(view3);
+        mNearestTouchFrame.layout(0, 0, 30, 30);
+
+        MotionEvent ev = MotionEvent.obtain(0, 0, 0, 5 /* x */, 18 /* y */, 0);
+        mNearestTouchFrame.onTouchEvent(ev);
+        verify(view2, never()).onTouchEvent(eq(ev));
+        ev.recycle();
+    }
+
+    @Test
+    public void testCachedRegionsSplit_horizontal() {
+        View left = mockViewAt(0, 0, 5, 20);
+        View right = mockViewAt(15, 0, 5, 20);
+        mNearestTouchFrame.addView(left);
+        mNearestTouchFrame.addView(right);
+        mNearestTouchFrame.layout(0, 0, 20, 20);
+
+        Map<View, Rect> childRegions = mNearestTouchFrame.getFullTouchableChildRegions();
+        assertEquals(2, childRegions.size());
+        Rect leftRegion = childRegions.get(left);
+        Rect rightRegion = childRegions.get(right);
+        assertEquals(new Rect(0, 0, 9, 20), leftRegion);
+        assertEquals(new Rect(10, 0, 20, 20), rightRegion);
+    }
+
+    @Test
+    public void testCachedRegionsSplit_vertical() {
+        View top = mockViewAt(0, 0, 20, 5);
+        View bottom = mockViewAt(0, 15, 20, 5);
+        mNearestTouchFrame.addView(top);
+        mNearestTouchFrame.addView(bottom);
+        mNearestTouchFrame.setIsVertical(true);
+        mNearestTouchFrame.layout(0, 0, 20, 20);
+
+        Map<View, Rect> childRegions = mNearestTouchFrame.getFullTouchableChildRegions();
+        assertEquals(2, childRegions.size());
+        Rect topRegion = childRegions.get(top);
+        Rect bottomRegion = childRegions.get(bottom);
+        assertEquals(new Rect(0, 0, 20, 9), topRegion);
+        assertEquals(new Rect(0, 10, 20, 20), bottomRegion);
     }
 
     private View mockViewAt(int x, int y, int width, int height) {
@@ -197,6 +252,8 @@ public class NearestTouchFrameTest extends SysuiTestCase {
         }).when(v).getLocationInWindow(any());
         when(v.isClickable()).thenReturn(true);
         when(v.isAttachedToWindow()).thenReturn(true);
+        when(v.getWidth()).thenReturn(width);
+        when(v.getHeight()).thenReturn(height);
 
         // Stupid final methods.
         v.setLeft(0);

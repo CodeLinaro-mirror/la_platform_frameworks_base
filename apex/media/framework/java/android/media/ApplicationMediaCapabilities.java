@@ -22,7 +22,6 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.util.AndroidException;
 import android.util.Log;
 
 import org.xmlpull.v1.XmlPullParser;
@@ -36,50 +35,52 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * ApplicationMediaCapabilities is an immutable class that encapsulates an application's
- * capabilities for handling newer video codec format and media features.
- *
- * The ApplicationMediaCapabilities class is used by the platform to represent an application's
- * media capabilities as defined in their manifest(TODO: Add link) in order to determine
- * whether modern media files need to be transcoded for that application (TODO: Add link).
- *
- * ApplicationMediaCapabilities objects can also be built by applications at runtime for use with
- * {@link ContentResolver#openTypedAssetFileDescriptor(Uri, String, Bundle)} to provide more
- * control over the transcoding that is built into the platform. ApplicationMediaCapabilities
- * provided by applications at runtime like this override the default manifest capabilities for that
- * media access.
- *
- * <h3> Video Codec Support</h3>
- * Newer video codes include HEVC, VP9 and AV1. Application only needs to indicate their support
- * for newer format with this class as they are assumed to support older format like h.264.
- *
- * <h4>Capability of handling HDR(high dynamic range) video</h4>
- * There are four types of HDR video(Dolby-Vision, HDR10, HDR10+, HLG) supported by the platform,
- * application will only need to specify individual types they supported.
- *
- * <h4>Capability of handling Slow Motion video</h4>
- * There is no standard format for slow motion yet. If an application indicates support for slow
- * motion, it is application's responsibility to parse the slow motion videos using their own parser
- * or using support library.
+ ApplicationMediaCapabilities is an immutable class that encapsulates an application's capabilities
+ for handling newer video codec format and media features.
+
+ <p>
+ Android 12 introduces Compatible media transcoding feature.  See
+ <a href="https://developer.android.com/about/versions/12/features#compatible_media_transcoding">
+ Compatible media transcoding</a>. By default, Android assumes apps can support playback of all
+ media formats. Apps that would like to request that media be transcoded into a more compatible
+ format should declare their media capabilities in a media_capabilities.xml resource file and add it
+ as a property tag in the AndroidManifest.xml file. Here is a example:
+ <pre>
+ {@code
+ <media-capabilities xmlns:android="http://schemas.android.com/apk/res/android">
+     <format android:name="HEVC" supported="true"/>
+     <format android:name="HDR10" supported="false"/>
+     <format android:name="HDR10Plus" supported="false"/>
+ </media-capabilities>
+ }
+ </pre>
+ The ApplicationMediaCapabilities class is generated from this xml and used by the platform to
+ represent an application's media capabilities in order to determine whether modern media files need
+ to be transcoded for that application.
+ </p>
+
+ <p>
+ ApplicationMediaCapabilities objects can also be built by applications at runtime for use with
+ {@link ContentResolver#openTypedAssetFileDescriptor(Uri, String, Bundle)} to provide more
+ control over the transcoding that is built into the platform. ApplicationMediaCapabilities
+ provided by applications at runtime like this override the default manifest capabilities for that
+ media access.The object could be build either through {@link #createFromXml(XmlPullParser)} or
+ through the builder class {@link ApplicationMediaCapabilities.Builder}
+
+ <h3> Video Codec Support</h3>
+ <p>
+ Newer video codes include HEVC, VP9 and AV1. Application only needs to indicate their support
+ for newer format with this class as they are assumed to support older format like h.264.
+
+ <h3>Capability of handling HDR(high dynamic range) video</h3>
+ <p>
+ There are four types of HDR video(Dolby-Vision, HDR10, HDR10+, HLG) supported by the platform,
+ application will only need to specify individual types they supported.
  */
-// TODO(huang): Correct openTypedAssetFileDescriptor with the new API after it is added.
-// TODO(hkuang): Add a link to seamless transcoding detail when it is published
-// TODO(hkuang): Add code sample on how to build a capability object with MediaCodecList
-// TODO(hkuang): Add the support library page on parsing slow motion video.
 public final class ApplicationMediaCapabilities implements Parcelable {
     private static final String TAG = "ApplicationMediaCapabilities";
 
-    /**
-     * This exception is thrown when a given format is not specified in the media capabilities.
-     */
-    public static class FormatNotFoundException extends AndroidException {
-        public FormatNotFoundException(@NonNull String format) {
-            super(format);
-        }
-    }
-
     /** List of supported video codec mime types. */
-    // TODO: init it with avc and mpeg4 as application is assuming to support them.
     private Set<String> mSupportedVideoMimeTypes = new HashSet<>();
 
     /** List of unsupported video codec mime types. */
@@ -103,39 +104,54 @@ public final class ApplicationMediaCapabilities implements Parcelable {
 
     /**
      * Query if a video codec format is supported by the application.
+     * <p>
+     * If the application has not specified supporting the format or not, this will return false.
+     * Use {@link #isFormatSpecified(String)} to query if a format is specified or not.
+     *
      * @param videoMime The mime type of the video codec format. Must be the one used in
      * {@link MediaFormat#KEY_MIME}.
      * @return true if application supports the video codec format, false otherwise.
-     * @throws FormatNotFoundException if the application did not specify the codec either in the
-     * supported or unsupported formats.
      */
     public boolean isVideoMimeTypeSupported(
-            @NonNull String videoMime) throws FormatNotFoundException {
-        if (mUnsupportedVideoMimeTypes.contains(videoMime)) {
-            return false;
-        } else if (mSupportedVideoMimeTypes.contains(videoMime)) {
+            @NonNull String videoMime) {
+        if (mSupportedVideoMimeTypes.contains(videoMime.toLowerCase())) {
             return true;
-        } else {
-            throw new FormatNotFoundException(videoMime);
         }
+        return false;
     }
 
     /**
      * Query if a HDR type is supported by the application.
+     * <p>
+     * If the application has not specified supporting the format or not, this will return false.
+     * Use {@link #isFormatSpecified(String)} to query if a format is specified or not.
+     *
      * @param hdrType The type of the HDR format.
      * @return true if application supports the HDR format, false otherwise.
-     * @throws FormatNotFoundException if the application did not specify the format either in the
-     * supported or unsupported formats.
      */
     public boolean isHdrTypeSupported(
-            @NonNull @MediaFeature.MediaHdrType String hdrType) throws FormatNotFoundException {
-        if (mUnsupportedHdrTypes.contains(hdrType)) {
-            return false;
-        } else if (mSupportedHdrTypes.contains(hdrType)) {
+            @NonNull @MediaFeature.MediaHdrType String hdrType) {
+        if (mSupportedHdrTypes.contains(hdrType)) {
             return true;
-        } else {
-            throw new FormatNotFoundException(hdrType);
         }
+        return false;
+    }
+
+    /**
+     * Query if a format is specified by the application.
+     * <p>
+     * The format could be either the video format or the hdr format.
+     *
+     * @param format The name of the format.
+     * @return true if application specifies the format, false otherwise.
+     */
+    public boolean isFormatSpecified(@NonNull String format) {
+        if (mSupportedVideoMimeTypes.contains(format) || mUnsupportedVideoMimeTypes.contains(format)
+                || mSupportedHdrTypes.contains(format) || mUnsupportedHdrTypes.contains(format)) {
+            return true;
+
+        }
+        return false;
     }
 
     @Override
@@ -192,10 +208,23 @@ public final class ApplicationMediaCapabilities implements Parcelable {
                     for (int readCount = 0; readCount < count; ++readCount) {
                         builder.addSupportedVideoMimeType(in.readString());
                     }
+
+                    // Parse unsupported video codec mime types.
+                    count = in.readInt();
+                    for (int readCount = 0; readCount < count; ++readCount) {
+                        builder.addUnsupportedVideoMimeType(in.readString());
+                    }
+
                     // Parse supported hdr types.
                     count = in.readInt();
                     for (int readCount = 0; readCount < count; ++readCount) {
                         builder.addSupportedHdrType(in.readString());
+                    }
+
+                    // Parse unsupported hdr types.
+                    count = in.readInt();
+                    for (int readCount = 0; readCount < count; ++readCount) {
+                        builder.addUnsupportedHdrType(in.readString());
                     }
 
                     boolean supported = in.readBoolean();
@@ -224,7 +253,7 @@ public final class ApplicationMediaCapabilities implements Parcelable {
      */
     @NonNull
     public List<String> getUnsupportedVideoMimeTypes() {
-        return new ArrayList<>(mSupportedVideoMimeTypes);
+        return new ArrayList<>(mUnsupportedVideoMimeTypes);
     }
 
     /*
@@ -247,6 +276,7 @@ public final class ApplicationMediaCapabilities implements Parcelable {
 
     /*
      * Whether handling of slow-motion video is supported
+     * @hide
      */
     public boolean isSlowMotionSupported() {
         return mIsSlowMotionSupported;
@@ -254,11 +284,27 @@ public final class ApplicationMediaCapabilities implements Parcelable {
 
     /**
      * Creates {@link ApplicationMediaCapabilities} from an xml.
+     *
+     * The xml's syntax is the same as the media_capabilities.xml used by the AndroidManifest.xml.
+     * <p> Here is an example:
+     *
+     * <pre>
+     * {@code
+     * <media-capabilities xmlns:android="http://schemas.android.com/apk/res/android">
+     *     <format android:name="HEVC" supported="true"/>
+     *     <format android:name="HDR10" supported="false"/>
+     *     <format android:name="HDR10Plus" supported="false"/>
+     * </media-capabilities>
+     * }
+     * </pre>
+     * <p>
+     *
      * @param xmlParser The underlying {@link XmlPullParser} that will read the xml.
      * @return An ApplicationMediaCapabilities object.
      * @throws UnsupportedOperationException if the capabilities in xml config are invalid or
      * incompatible.
      */
+    // TODO: Add developer.android.com link for the format of the xml.
     @NonNull
     public static ApplicationMediaCapabilities createFromXml(@NonNull XmlPullParser xmlParser) {
         ApplicationMediaCapabilities.Builder builder = new ApplicationMediaCapabilities.Builder();
@@ -422,7 +468,7 @@ public final class ApplicationMediaCapabilities implements Parcelable {
                         mIsSlowMotionSupported = isSupported;
                         break;
                     default:
-                        throw new UnsupportedOperationException("Invalid format name " + name);
+                        Log.w(TAG, "Invalid format name " + name);
                 }
                 // Save the name and isSupported into the map for validate later.
                 mFormatSupportedMap.put(name, isSupported);
@@ -565,6 +611,7 @@ public final class ApplicationMediaCapabilities implements Parcelable {
          * If an application indicates support for slow-motion, it is application's responsibility
          * to parse the slow-motion videos using their own parser or using support library.
          * @see android.media.MediaFormat#KEY_SLOW_MOTION_MARKERS
+         * @hide
          */
         @NonNull
         public Builder setSlowMotionSupported(boolean slowMotionSupported) {

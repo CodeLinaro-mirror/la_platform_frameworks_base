@@ -51,8 +51,6 @@ import com.android.server.hdmi.DeviceDiscoveryAction.DeviceDiscoveryCallback;
 import com.android.server.hdmi.HdmiAnnotations.ServiceThreadOnly;
 import com.android.server.hdmi.HdmiControlService.SendMessageCallback;
 
-import com.google.android.collect.Lists;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -90,12 +88,6 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
 
     @GuardedBy("mLock")
     private boolean mSystemAudioMute = false;
-
-    // If true, TV going to standby mode puts other devices also to standby.
-    private boolean mAutoDeviceOff;
-
-    // If true, TV wakes itself up when receiving <Text/Image View On>.
-    private boolean mAutoWakeup;
 
     private final HdmiCecStandbyModeHandler mStandbyHandler;
 
@@ -161,9 +153,6 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
     HdmiCecLocalDeviceTv(HdmiControlService service) {
         super(service, HdmiDeviceInfo.DEVICE_TV);
         mPrevPortId = Constants.INVALID_PORT_ID;
-        mAutoDeviceOff = mService.readBooleanSetting(Global.HDMI_CONTROL_AUTO_DEVICE_OFF_ENABLED,
-                true);
-        mAutoWakeup = mService.readBooleanSetting(Global.HDMI_CONTROL_AUTO_WAKEUP_ENABLED, true);
         mSystemAudioControlFeatureEnabled =
                 mService.readBooleanSetting(Global.HDMI_SYSTEM_AUDIO_CONTROL_ENABLED, true);
         mStandbyHandler = new HdmiCecStandbyModeHandler(service, this);
@@ -618,7 +607,8 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
     @ServiceThreadOnly
     protected boolean handleReportAudioStatus(HdmiCecMessage message) {
         assertRunOnServiceThread();
-        if (!mService.isHdmiCecVolumeControlEnabled()) {
+        if (mService.getHdmiCecVolumeControl()
+                == HdmiControlManager.VOLUME_CONTROL_DISABLED) {
             return false;
         }
 
@@ -640,7 +630,7 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
         // implemented in such a way that Android system is not really put to standby mode
         // but only the display is set to blank. Then the command leads to the effect of
         // turning on the display by the invocation of PowerManager.wakeUp().
-        if (mService.isPowerStandbyOrTransient() && mAutoWakeup) {
+        if (mService.isPowerStandbyOrTransient() && getAutoWakeup()) {
             mService.wakeUp();
         }
         return true;
@@ -676,8 +666,19 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
                         mSelectRequestBuffer.process();
                         resetSelectRequestBuffer();
 
-                        addAndStartAction(new HotplugDetectionAction(HdmiCecLocalDeviceTv.this));
-                        addAndStartAction(new PowerStatusMonitorAction(HdmiCecLocalDeviceTv.this));
+                        List<HotplugDetectionAction> hotplugActions
+                                = getActions(HotplugDetectionAction.class);
+                        if (hotplugActions.isEmpty()) {
+                            addAndStartAction(
+                                    new HotplugDetectionAction(HdmiCecLocalDeviceTv.this));
+                        }
+
+                        List<PowerStatusMonitorAction> powerStatusActions
+                                = getActions(PowerStatusMonitorAction.class);
+                        if (powerStatusActions.isEmpty()) {
+                            addAndStartAction(
+                                    new PowerStatusMonitorAction(HdmiCecLocalDeviceTv.this));
+                        }
 
                         HdmiDeviceInfo avr = getAvrDeviceInfo();
                         if (avr != null) {
@@ -897,7 +898,8 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
     }
 
     void setAudioStatus(boolean mute, int volume) {
-        if (!isSystemAudioActivated() || !mService.isHdmiCecVolumeControlEnabled()) {
+        if (!isSystemAudioActivated() || mService.getHdmiCecVolumeControl()
+                == HdmiControlManager.VOLUME_CONTROL_DISABLED) {
             return;
         }
         synchronized (mLock) {
@@ -919,7 +921,8 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
             // On initialization process, getAvrDeviceInfo() may return null and cause exception
             return;
         }
-        if (delta == 0 || !isSystemAudioActivated() || !mService.isHdmiCecVolumeControlEnabled()) {
+        if (delta == 0 || !isSystemAudioActivated() || mService.getHdmiCecVolumeControl()
+                == HdmiControlManager.VOLUME_CONTROL_DISABLED) {
             return;
         }
 
@@ -948,7 +951,8 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
     @ServiceThreadOnly
     void changeMute(boolean mute) {
         assertRunOnServiceThread();
-        if (getAvrDeviceInfo() == null || !mService.isHdmiCecVolumeControlEnabled()) {
+        if (getAvrDeviceInfo() == null || mService.getHdmiCecVolumeControl()
+                == HdmiControlManager.VOLUME_CONTROL_DISABLED) {
             // On initialization process, getAvrDeviceInfo() may return null and cause exception
             return;
         }
@@ -1069,7 +1073,21 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
             // Ignore this message.
             return true;
         }
-        setSystemAudioMode(HdmiUtils.parseCommandParamSystemAudioStatus(message));
+        boolean tvSystemAudioMode = isSystemAudioControlFeatureEnabled();
+        boolean avrSystemAudioMode = HdmiUtils.parseCommandParamSystemAudioStatus(message);
+        // Set System Audio Mode according to TV's settings.
+        // Handle <System Audio Mode Status> here only when
+        // SystemAudioAutoInitiationAction timeout
+        HdmiDeviceInfo avr = getAvrDeviceInfo();
+        if (avr == null) {
+            setSystemAudioMode(false);
+        } else if (avrSystemAudioMode != tvSystemAudioMode) {
+            addAndStartAction(new SystemAudioActionFromTv(this, avr.getLogicalAddress(),
+                    tvSystemAudioMode, null));
+        } else {
+            setSystemAudioMode(tvSystemAudioMode);
+        }
+
         return true;
     }
 
@@ -1086,7 +1104,10 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
                         message.getSource(),
                         HdmiControlManager.ONE_TOUCH_RECORD_PREVIOUS_RECORDING_IN_PROGRESS);
             }
-            return super.handleRecordTvScreen(message);
+            // The default behavior of <Record TV Screen> is replying <Feature Abort> with
+            // "Cannot provide source".
+            mService.maySendFeatureAbortCommand(message, Constants.ABORT_CANNOT_PROVIDE_SOURCE);
+            return true;
         }
 
         int recorderAddress = message.getSource();
@@ -1204,23 +1225,12 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
         }
     }
 
-    @Override
-    @ServiceThreadOnly
-    void setAutoDeviceOff(boolean enabled) {
-        assertRunOnServiceThread();
-        mAutoDeviceOff = enabled;
-    }
-
-    @ServiceThreadOnly
-    void setAutoWakeup(boolean enabled) {
-        assertRunOnServiceThread();
-        mAutoWakeup = enabled;
-    }
-
     @ServiceThreadOnly
     boolean getAutoWakeup() {
         assertRunOnServiceThread();
-        return mAutoWakeup;
+        return mService.getHdmiCecConfig().getIntValue(
+                  HdmiControlManager.CEC_SETTING_NAME_TV_WAKE_ON_ONE_TOUCH_PLAY)
+                    == HdmiControlManager.TV_WAKE_ON_ONE_TOUCH_PLAY_ENABLED;
     }
 
     @Override
@@ -1292,7 +1302,11 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
         if (!mService.isControlEnabled()) {
             return;
         }
-        if (!initiatedByCec && mAutoDeviceOff) {
+        boolean sendStandbyOnSleep =
+                mService.getHdmiCecConfig().getIntValue(
+                    HdmiControlManager.CEC_SETTING_NAME_TV_SEND_STANDBY_ON_SLEEP)
+                        == HdmiControlManager.TV_SEND_STANDBY_ON_SLEEP_ENABLED;
+        if (!initiatedByCec && sendStandbyOnSleep) {
             mService.sendCecCommand(HdmiCecMessageBuilder.buildStandby(
                     mAddress, Constants.ADDR_BROADCAST));
         }
@@ -1490,7 +1504,11 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
 
     @Override
     protected List<Integer> getRcFeatures() {
-        return Lists.newArrayList(Constants.RC_PROFILE_TV_NONE);
+        List<Integer> features = new ArrayList<>();
+        @HdmiControlManager.RcProfileTv int profile = mService.getHdmiCecConfig().getIntValue(
+                        HdmiControlManager.CEC_SETTING_NAME_RC_PROFILE_TV);
+        features.add(profile);
+        return features;
     }
 
     @Override
@@ -1547,8 +1565,6 @@ final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
         pw.println("mArcFeatureEnabled: " + mArcFeatureEnabled);
         pw.println("mSystemAudioMute: " + mSystemAudioMute);
         pw.println("mSystemAudioControlFeatureEnabled: " + mSystemAudioControlFeatureEnabled);
-        pw.println("mAutoDeviceOff: " + mAutoDeviceOff);
-        pw.println("mAutoWakeup: " + mAutoWakeup);
         pw.println("mSkipRoutingControl: " + mSkipRoutingControl);
         pw.println("mPrevPortId: " + mPrevPortId);
     }

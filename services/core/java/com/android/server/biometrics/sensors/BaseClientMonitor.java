@@ -24,6 +24,8 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Slog;
 
+import com.android.internal.annotations.VisibleForTesting;
+
 import java.util.NoSuchElementException;
 
 /**
@@ -78,6 +80,18 @@ public abstract class BaseClientMonitor extends LoggableMonitor
     boolean mAlreadyDone;
 
     @NonNull protected Callback mCallback;
+
+    /**
+     * @return A ClientMonitorEnum constant defined in biometrics.proto
+     */
+    public abstract int getProtoEnum();
+
+    /**
+     * @return True if the ClientMonitor should cancel any current and pending interruptable clients
+     */
+    public boolean interruptsPrecedingClients() {
+        return false;
+    }
 
     /**
      * @param context    system_server context
@@ -195,10 +209,16 @@ public abstract class BaseClientMonitor extends LoggableMonitor
         return mSensorId;
     }
 
+    @VisibleForTesting
+    public Callback getCallback() {
+        return mCallback;
+    }
+
     @Override
     public String toString() {
         return "{[" + mSequentialId + "] "
                 + this.getClass().getSimpleName()
+                + ", " + getProtoEnum()
                 + ", " + getOwnerString()
                 + ", " + getCookie() + "}";
     }

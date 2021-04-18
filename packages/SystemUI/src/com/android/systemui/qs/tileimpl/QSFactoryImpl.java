@@ -14,6 +14,8 @@
 
 package com.android.systemui.qs.tileimpl;
 
+import static com.android.systemui.qs.dagger.QSFlagsModule.QS_LABELS_FLAG;
+
 import android.content.Context;
 import android.os.Build;
 import android.util.Log;
@@ -28,6 +30,7 @@ import com.android.systemui.plugins.qs.QSTileView;
 import com.android.systemui.qs.QSHost;
 import com.android.systemui.qs.external.CustomTile;
 import com.android.systemui.qs.tiles.AirplaneModeTile;
+import com.android.systemui.qs.tiles.AlarmTile;
 import com.android.systemui.qs.tiles.BatterySaverTile;
 import com.android.systemui.qs.tiles.BluetoothTile;
 import com.android.systemui.qs.tiles.CameraToggleTile;
@@ -35,6 +38,7 @@ import com.android.systemui.qs.tiles.CastTile;
 import com.android.systemui.qs.tiles.CellularTile;
 import com.android.systemui.qs.tiles.ColorInversionTile;
 import com.android.systemui.qs.tiles.DataSaverTile;
+import com.android.systemui.qs.tiles.DeviceControlsTile;
 import com.android.systemui.qs.tiles.DndTile;
 import com.android.systemui.qs.tiles.FlashlightTile;
 import com.android.systemui.qs.tiles.HotspotTile;
@@ -51,9 +55,9 @@ import com.android.systemui.qs.tiles.UserTile;
 import com.android.systemui.qs.tiles.WifiTile;
 import com.android.systemui.qs.tiles.WorkModeTile;
 import com.android.systemui.util.leak.GarbageMonitor;
-import com.android.systemui.util.settings.SecureSettings;
 
 import javax.inject.Inject;
+import javax.inject.Named;
 import javax.inject.Provider;
 
 import dagger.Lazy;
@@ -87,6 +91,8 @@ public class QSFactoryImpl implements QSFactory {
     private final Provider<ReduceBrightColorsTile> mReduceBrightColorsTileProvider;
     private final Provider<CameraToggleTile> mCameraToggleTileProvider;
     private final Provider<MicrophoneToggleTile> mMicrophoneToggleTileProvider;
+    private final Provider<DeviceControlsTile> mDeviceControlsTileProvider;
+    private final Provider<AlarmTile> mAlarmTileProvider;
 
     private final Lazy<QSHost> mQsHostLazy;
     private final Provider<CustomTile.Builder> mCustomTileBuilderProvider;
@@ -96,7 +102,7 @@ public class QSFactoryImpl implements QSFactory {
     @Inject
     public QSFactoryImpl(
             Lazy<QSHost> qsHostLazy,
-            SecureSettings settings,
+            @Named(QS_LABELS_FLAG) boolean useSideLabels,
             Provider<CustomTile.Builder> customTileBuilderProvider,
             Provider<WifiTile> wifiTileProvider,
             Provider<InternetTile> internetTileProvider,
@@ -121,11 +127,13 @@ public class QSFactoryImpl implements QSFactory {
             Provider<ScreenRecordTile> screenRecordTileProvider,
             Provider<ReduceBrightColorsTile> reduceBrightColorsTileProvider,
             Provider<CameraToggleTile> cameraToggleTileProvider,
-            Provider<MicrophoneToggleTile> microphoneToggleTileProvider) {
+            Provider<MicrophoneToggleTile> microphoneToggleTileProvider,
+            Provider<DeviceControlsTile> deviceControlsTileProvider,
+            Provider<AlarmTile> alarmTileProvider) {
         mQsHostLazy = qsHostLazy;
         mCustomTileBuilderProvider = customTileBuilderProvider;
 
-        mSideLabels = settings.getInt("sysui_side_labels", 0) != 0;
+        mSideLabels = useSideLabels;
 
         mWifiTileProvider = wifiTileProvider;
         mInternetTileProvider = internetTileProvider;
@@ -151,6 +159,8 @@ public class QSFactoryImpl implements QSFactory {
         mReduceBrightColorsTileProvider = reduceBrightColorsTileProvider;
         mCameraToggleTileProvider = cameraToggleTileProvider;
         mMicrophoneToggleTileProvider = microphoneToggleTileProvider;
+        mDeviceControlsTileProvider = deviceControlsTileProvider;
+        mAlarmTileProvider = alarmTileProvider;
     }
 
     public QSTile createTile(String tileSpec) {
@@ -210,6 +220,10 @@ public class QSFactoryImpl implements QSFactory {
                 return mCameraToggleTileProvider.get();
             case "mictoggle":
                 return mMicrophoneToggleTileProvider.get();
+            case "controls":
+                return mDeviceControlsTileProvider.get();
+            case "alarm":
+                return mAlarmTileProvider.get();
         }
 
         // Custom tiles

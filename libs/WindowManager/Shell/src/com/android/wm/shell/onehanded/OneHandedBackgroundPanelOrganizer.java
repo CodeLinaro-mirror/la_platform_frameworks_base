@@ -16,17 +16,14 @@
 
 package com.android.wm.shell.onehanded;
 
-import static android.view.Display.DEFAULT_DISPLAY;
-
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.PixelFormat;
-import android.graphics.Point;
 import android.graphics.Rect;
-import android.os.Handler;
 import android.util.Log;
 import android.view.SurfaceControl;
 import android.view.SurfaceSession;
+import android.view.WindowManager;
 import android.window.DisplayAreaAppearedInfo;
 import android.window.DisplayAreaInfo;
 import android.window.DisplayAreaOrganizer;
@@ -56,8 +53,8 @@ public class OneHandedBackgroundPanelOrganizer extends DisplayAreaOrganizer
     private final float[] mColor;
     private final float mAlpha;
     private final Rect mRect;
-    private final Handler mHandler;
-    private final Point mDisplaySize = new Point();
+    private final Executor mMainExecutor;
+    private final Rect mDisplaySize;
     private final OneHandedSurfaceTransactionHelper.SurfaceControlTransactionFactory
             mSurfaceControlTransactionFactory;
 
@@ -76,25 +73,25 @@ public class OneHandedBackgroundPanelOrganizer extends DisplayAreaOrganizer
                 @Override
                 public void onOneHandedAnimationStart(
                         OneHandedAnimationController.OneHandedTransitionAnimator animator) {
-                    mHandler.post(() -> showBackgroundPanelLayer());
+                    mMainExecutor.execute(() -> showBackgroundPanelLayer());
                 }
             };
 
     @Override
     public void onStopFinished(Rect bounds) {
-        mHandler.post(() -> removeBackgroundPanelLayer());
+        mMainExecutor.execute(() -> removeBackgroundPanelLayer());
     }
 
-    public OneHandedBackgroundPanelOrganizer(Context context, DisplayController displayController,
-            Executor executor) {
+    public OneHandedBackgroundPanelOrganizer(Context context, WindowManager windowManager,
+            DisplayController displayController, Executor executor) {
         super(executor);
-        displayController.getDisplay(DEFAULT_DISPLAY).getRealSize(mDisplaySize);
+        mDisplaySize = windowManager.getCurrentWindowMetrics().getBounds();
         final Resources res = context.getResources();
         final float defaultRGB = res.getFloat(R.dimen.config_one_handed_background_rgb);
         mColor = new float[]{defaultRGB, defaultRGB, defaultRGB};
         mAlpha = res.getFloat(R.dimen.config_one_handed_background_alpha);
-        mRect = new Rect(0, 0, mDisplaySize.x, mDisplaySize.y);
-        mHandler = new Handler();
+        mRect = new Rect(0, 0, mDisplaySize.width(), mDisplaySize.height());
+        mMainExecutor = executor;
         mSurfaceControlTransactionFactory = SurfaceControl.Transaction::new;
     }
 

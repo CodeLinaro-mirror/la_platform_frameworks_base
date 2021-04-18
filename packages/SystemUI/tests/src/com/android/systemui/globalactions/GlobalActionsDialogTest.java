@@ -46,16 +46,12 @@ import android.service.dreams.IDreamManager;
 import android.telephony.TelephonyManager;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
-import android.util.FeatureFlagUtils;
 import android.view.IWindowManager;
 import android.view.View;
 import android.view.WindowManagerPolicyConstants;
 import android.widget.FrameLayout;
 
 import androidx.test.filters.SmallTest;
-import androidx.test.uiautomator.By;
-import androidx.test.uiautomator.UiObject2;
-import androidx.test.uiautomator.Until;
 
 import com.android.internal.colorextraction.ColorExtractor;
 import com.android.internal.logging.MetricsLogger;
@@ -74,12 +70,14 @@ import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.GlobalActions;
 import com.android.systemui.plugins.GlobalActionsPanelPlugin;
 import com.android.systemui.settings.UserContextProvider;
+import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.NotificationShadeDepthController;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.util.RingerModeLiveData;
 import com.android.systemui.util.RingerModeTracker;
+import com.android.systemui.util.settings.SecureSettings;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -135,6 +133,8 @@ public class GlobalActionsDialogTest extends SysuiTestCase {
     @Mock GlobalActionsPanelPlugin.PanelViewController mWalletController;
     @Mock private Handler mHandler;
     @Mock private UserContextProvider mUserContextProvider;
+    @Mock private UserTracker mUserTracker;
+    @Mock private SecureSettings mSecureSettings;
     private ControlsComponent mControlsComponent;
 
     private TestableLooper mTestableLooper;
@@ -149,9 +149,14 @@ public class GlobalActionsDialogTest extends SysuiTestCase {
         when(mUserContextProvider.getUserContext()).thenReturn(mContext);
         mControlsComponent = new ControlsComponent(
                 true,
+                mContext,
                 () -> mControlsController,
                 () -> mControlsUiController,
-                () -> mControlsListingController
+                () -> mControlsListingController,
+                mLockPatternUtils,
+                mKeyguardStateController,
+                mUserTracker,
+                mSecureSettings
         );
 
         mGlobalActionsDialog = new GlobalActionsDialog(mContext,
@@ -239,22 +244,6 @@ public class GlobalActionsDialogTest extends SysuiTestCase {
                 mGlobalActionsDialog.makeScreenshotActionForTesting();
         screenshotAction.onPress();
         verifyLogPosted(GlobalActionsDialog.GlobalActionsEvent.GA_SCREENSHOT_PRESS);
-    }
-
-    @Test
-    public void testShouldLogScreenshotLongPress() {
-        FeatureFlagUtils.setEnabled(mContext, FeatureFlagUtils.SCREENRECORD_LONG_PRESS, true);
-        GlobalActionsDialog.ScreenshotAction screenshotAction =
-                mGlobalActionsDialog.makeScreenshotActionForTesting();
-        screenshotAction.onLongPress();
-        verifyLogPosted(GlobalActionsDialog.GlobalActionsEvent.GA_SCREENSHOT_LONG_PRESS);
-
-        // Dismiss ScreenRecordDialog opened by the long press above.
-        final UiObject2 cancelButton = getUiDevice().wait(
-                Until.findObject(By.text(CANCEL_BUTTON)), UI_TIMEOUT_MILLIS);
-        if (cancelButton != null) {
-            cancelButton.click();
-        }
     }
 
     @Test

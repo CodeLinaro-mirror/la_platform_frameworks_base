@@ -74,8 +74,8 @@ class DisplayFoldController {
         mHandler = handler;
 
         DeviceStateManager deviceStateManager = context.getSystemService(DeviceStateManager.class);
-        deviceStateManager.registerDeviceStateListener(new DeviceStateListener(context),
-                new HandlerExecutor(handler));
+        deviceStateManager.registerCallback(new HandlerExecutor(handler),
+                new DeviceStateListener(context));
     }
 
     void finishedGoingToSleep() {
@@ -208,17 +208,24 @@ class DisplayFoldController {
      * matches the value in the {@link com.android.internal.R.integer.config_foldedDeviceState}
      * resource.
      */
-    private class DeviceStateListener implements DeviceStateManager.DeviceStateListener {
-        private final int mFoldedDeviceState;
+    private class DeviceStateListener implements DeviceStateManager.DeviceStateCallback {
+        private final int[] mFoldedDeviceStates;
 
         DeviceStateListener(Context context) {
-            mFoldedDeviceState = context.getResources().getInteger(
-                    com.android.internal.R.integer.config_foldedDeviceState);
+            mFoldedDeviceStates = context.getResources().getIntArray(
+                    com.android.internal.R.array.config_foldedDeviceStates);
         }
 
         @Override
-        public void onDeviceStateChanged(int deviceState) {
-            setDeviceFolded(deviceState == mFoldedDeviceState);
+        public void onStateChanged(int deviceState) {
+            boolean folded = false;
+            for (int i = 0; i < mFoldedDeviceStates.length; i++) {
+                if (deviceState == mFoldedDeviceStates[i]) {
+                    folded = true;
+                    break;
+                }
+            }
+            setDeviceFolded(folded);
         }
     }
 }

@@ -27,12 +27,12 @@ import com.android.keyguard.KeyguardStatusView;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.systemui.Interpolators;
 import com.android.systemui.R;
+import com.android.systemui.statusbar.policy.KeyguardUserSwitcherListView;
 
 /**
  * Utility class to calculate the clock position and top padding of notifications on Keyguard.
  */
 public class KeyguardClockPositionAlgorithm {
-
     /**
      * How much the clock height influences the shade position.
      * 0 means nothing, 1 means move the shade up by the height of the clock
@@ -56,9 +56,22 @@ public class KeyguardClockPositionAlgorithm {
     private int mKeyguardStatusHeight;
 
     /**
+     * Height of user avatar used by the multi-user switcher. This could either be the
+     * {@link KeyguardUserSwitcherListView} when it is closed and only the current user's icon is
+     * visible, or it could be height of the avatar used by the
+     * {@link com.android.systemui.statusbar.policy.KeyguardQsUserSwitchController}.
+     */
+    private int mUserSwitchHeight;
+
+    /**
      * Preferred Y position of clock.
      */
     private int mClockPreferredY;
+
+    /**
+     * Preferred Y position of user avatar used by the multi-user switcher.
+     */
+    private int mUserSwitchPreferredY;
 
     /**
      * Whether or not there is a custom clock face on keyguard.
@@ -76,9 +89,15 @@ public class KeyguardClockPositionAlgorithm {
     private int mNotificationStackHeight;
 
     /**
-     * Minimum top margin to avoid overlap with status bar.
+     * Minimum top margin to avoid overlap with status bar, lock icon, or multi-user switcher
+     * avatar.
      */
     private int mMinTopMargin;
+
+    /**
+     * Minimum top inset (in pixels) to avoid overlap with any display cutouts.
+     */
+    private int mCutoutTopInset = 0;
 
     /**
      * Maximum bottom padding to avoid overlap with {@link KeyguardBottomAreaView} or
@@ -168,19 +187,23 @@ public class KeyguardClockPositionAlgorithm {
     /**
      * Sets up algorithm values.
      */
-    public void setup(int statusBarMinHeight, int maxShadeBottom, int notificationStackHeight,
-            float panelExpansion, int parentHeight, int keyguardStatusHeight, int clockPreferredY,
-            boolean hasCustomClock, boolean hasVisibleNotifs, float dark, float emptyDragAmount,
-            boolean bypassEnabled, int unlockedStackScrollerPadding, boolean showLockIcon,
-            float qsExpansion) {
-        mMinTopMargin = statusBarMinHeight + (showLockIcon
-                ? mContainerTopPaddingWithLockIcon : mContainerTopPaddingWithoutLockIcon);
+    public void setup(int keyguardStatusBarHeaderHeight, int maxShadeBottom,
+            int notificationStackHeight, float panelExpansion, int parentHeight,
+            int keyguardStatusHeight, int userSwitchHeight, int clockPreferredY,
+            int userSwitchPreferredY, boolean hasCustomClock, boolean hasVisibleNotifs, float dark,
+            float emptyDragAmount, boolean bypassEnabled, int unlockedStackScrollerPadding,
+            boolean showLockIcon, float qsExpansion, int cutoutTopInset) {
+        mMinTopMargin = keyguardStatusBarHeaderHeight + Math.max(showLockIcon
+                        ? mContainerTopPaddingWithLockIcon : mContainerTopPaddingWithoutLockIcon,
+                userSwitchHeight);
         mMaxShadeBottom = maxShadeBottom;
         mNotificationStackHeight = notificationStackHeight;
         mPanelExpansion = panelExpansion;
         mHeight = parentHeight;
         mKeyguardStatusHeight = keyguardStatusHeight;
+        mUserSwitchHeight = userSwitchHeight;
         mClockPreferredY = clockPreferredY;
+        mUserSwitchPreferredY = userSwitchPreferredY;
         mHasCustomClock = hasCustomClock;
         mHasVisibleNotifs = hasVisibleNotifs;
         mDarkAmount = dark;
@@ -188,16 +211,20 @@ public class KeyguardClockPositionAlgorithm {
         mBypassEnabled = bypassEnabled;
         mUnlockedStackScrollerPadding = unlockedStackScrollerPadding;
         mQsExpansion = qsExpansion;
+        mCutoutTopInset = cutoutTopInset;
     }
 
     public void run(Result result) {
-        final int y = getClockY(mPanelExpansion);
+        final int y = getClockY(mPanelExpansion, mDarkAmount);
         result.clockY = y;
+        result.userSwitchY = getUserSwitcherY(mPanelExpansion);
+        result.clockYFullyDozing = getClockY(
+                1.0f /* panelExpansion */, 1.0f /* darkAmount */);
         result.clockAlpha = getClockAlpha(y);
         result.stackScrollerPadding = mBypassEnabled ? mUnlockedStackScrollerPadding
                 : y + mKeyguardStatusHeight;
         result.stackScrollerPaddingExpanded = mBypassEnabled ? mUnlockedStackScrollerPadding
-                : getClockY(1.0f) + mKeyguardStatusHeight;
+                : getClockY(1.0f, mDarkAmount) + mKeyguardStatusHeight;
         result.clockX = (int) interpolate(0, burnInPreventionOffsetX(), mDarkAmount);
         result.clockScale = interpolate(getBurnInScale(), 1.0f, 1.0f - mDarkAmount);
     }
@@ -224,7 +251,7 @@ public class KeyguardClockPositionAlgorithm {
 
     private int getExpandedPreferredClockY() {
         if (mLockScreenMode != KeyguardUpdateMonitor.LOCK_SCREEN_MODE_NORMAL) {
-            return mMinTopMargin;
+            return mMinTopMargin + mUserSwitchHeight;
         }
         return (mHasCustomClock && (!mHasVisibleNotifs || mBypassEnabled)) ? getPreferredClockY()
                 : getExpandedClockPosition();
@@ -239,7 +266,8 @@ public class KeyguardClockPositionAlgorithm {
         final int availableHeight = mMaxShadeBottom - mMinTopMargin;
         final int containerCenter = mMinTopMargin + availableHeight / 2;
 
-        float y = containerCenter - mKeyguardStatusHeight * CLOCK_HEIGHT_WEIGHT
+        float y = containerCenter
+                - (mKeyguardStatusHeight + mUserSwitchHeight) * CLOCK_HEIGHT_WEIGHT
                 - mClockNotificationsMargin - mNotificationStackHeight / 2;
         if (y < mMinTopMargin) {
             y = mMinTopMargin;
@@ -254,7 +282,7 @@ public class KeyguardClockPositionAlgorithm {
         return (int) y;
     }
 
-    private int getClockY(float panelExpansion) {
+    private int getClockY(float panelExpansion, float darkAmount) {
         // Dark: Align the bottom edge of the clock at about half of the screen:
         float clockYDark = (mHasCustomClock ? getPreferredClockY() : getMaxClockY())
                 + burnInPreventionOffsetY();
@@ -268,14 +296,28 @@ public class KeyguardClockPositionAlgorithm {
         float clockY = MathUtils.lerp(clockYBouncer, clockYRegular, shadeExpansion);
         clockYDark = MathUtils.lerp(clockYBouncer, clockYDark, shadeExpansion);
 
-        float darkAmount = mBypassEnabled && !mHasCustomClock ? 1.0f : mDarkAmount;
+        darkAmount = mBypassEnabled && !mHasCustomClock ? 1.0f : darkAmount;
 
-        // TODO(b/12836565) - prototyping only adjustment
         if (mLockScreenMode != KeyguardUpdateMonitor.LOCK_SCREEN_MODE_NORMAL) {
-            // This will keep the clock at the top
-            clockYDark = (int) (clockY + burnInPreventionOffsetY());
+            // This will keep the clock at the top but out of the cutout area
+            float shift = 0;
+            if (clockY - mBurnInPreventionOffsetYLargeClock < mCutoutTopInset) {
+                shift = mCutoutTopInset - (clockY - mBurnInPreventionOffsetYLargeClock);
+            }
+            clockYDark = clockY + burnInPreventionOffsetY() + shift;
         }
         return (int) (MathUtils.lerp(clockY, clockYDark, darkAmount) + mEmptyDragAmount);
+    }
+
+    private int getUserSwitcherY(float panelExpansion) {
+        float userSwitchYRegular = mUserSwitchPreferredY;
+        float userSwitchYBouncer = -mKeyguardStatusHeight - mUserSwitchHeight;
+
+        // Move user-switch up while collapsing the shade
+        float shadeExpansion = Interpolators.FAST_OUT_LINEAR_IN.getInterpolation(panelExpansion);
+        float userSwitchY = MathUtils.lerp(userSwitchYBouncer, userSwitchYRegular, shadeExpansion);
+
+        return (int) (userSwitchY + mEmptyDragAmount);
     }
 
     /**
@@ -287,7 +329,7 @@ public class KeyguardClockPositionAlgorithm {
      * @return Alpha from 0 to 1.
      */
     private float getClockAlpha(int y) {
-        float alphaKeyguard = Math.max(0, y / Math.max(1f, getClockY(1f)));
+        float alphaKeyguard = Math.max(0, y / Math.max(1f, getClockY(1f, mDarkAmount)));
         alphaKeyguard *= (1f - mQsExpansion);
         alphaKeyguard = Interpolators.ACCELERATE.getInterpolation(alphaKeyguard);
         return MathUtils.lerp(alphaKeyguard, 1f, mDarkAmount);
@@ -303,8 +345,11 @@ public class KeyguardClockPositionAlgorithm {
     }
 
     private float burnInPreventionOffsetX() {
-        return getBurnInOffset(mBurnInPreventionOffsetX * 2, true /* xAxis */)
-                - mBurnInPreventionOffsetX;
+        if (mLockScreenMode == KeyguardUpdateMonitor.LOCK_SCREEN_MODE_NORMAL) {
+            return getBurnInOffset(mBurnInPreventionOffsetX * 2, true /* xAxis */)
+                    - mBurnInPreventionOffsetX;
+        }
+        return getBurnInOffset(mBurnInPreventionOffsetX, true /* xAxis */);
     }
 
     public static class Result {
@@ -318,6 +363,16 @@ public class KeyguardClockPositionAlgorithm {
          * The y translation of the clock.
          */
         public int clockY;
+
+        /**
+         * The y translation of the multi-user switch.
+         */
+        public int userSwitchY;
+
+        /**
+         * The y translation of the clock when we're fully dozing.
+         */
+        public int clockYFullyDozing;
 
         /**
          * The alpha value of the clock.

@@ -40,15 +40,14 @@ public class NotificationBigPictureTemplateViewWrapper extends NotificationTempl
     public void onContentUpdated(ExpandableNotificationRow row) {
         super.onContentUpdated(row);
         updateImageTag(row.getEntry().getSbn());
-        // Round the corners of the big picture content
-        mView.findViewById(com.android.internal.R.id.big_picture).setClipToOutline(true);
     }
 
     private void updateImageTag(StatusBarNotification notification) {
         final Bundle extras = notification.getNotification().extras;
-        Icon overRiddenIcon = extras.getParcelable(Notification.EXTRA_LARGE_ICON_BIG);
-        if (overRiddenIcon != null) {
-            mPicture.setTag(ImageTransformState.ICON_TAG, overRiddenIcon);
+        Icon overriddenIcon = extras.getParcelable(Notification.EXTRA_LARGE_ICON_BIG);
+        if (overriddenIcon != null) {
+            mRightIcon.setTag(ImageTransformState.ICON_TAG, overriddenIcon);
+            mLeftIcon.setTag(ImageTransformState.ICON_TAG, overriddenIcon);
         }
     }
 }

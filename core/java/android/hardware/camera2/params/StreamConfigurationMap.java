@@ -1575,7 +1575,7 @@ public final class StreamConfigurationMap {
         return sizes;
     }
 
-    /** Get the list of publically visible output formats; does not include IMPL_DEFINED */
+    /** Get the list of publicly visible output formats */
     private int[] getPublicFormats(boolean output) {
         int[] formats = new int[getPublicFormatCount(output)];
 
@@ -1746,6 +1746,21 @@ public final class StreamConfigurationMap {
         return sb.toString();
     }
 
+    /**
+     * Size comparison method used by size comparators.
+     *
+     * @hide
+     */
+    public static int compareSizes(int widthA, int heightA, int widthB, int heightB) {
+        long left = widthA * (long) heightA;
+        long right = widthB * (long) heightB;
+        if (left == right) {
+            left = widthA;
+            right = widthB;
+        }
+        return (left < right) ? -1 : (left > right ? 1 : 0);
+    }
+
     private void appendOutputsString(StringBuilder sb) {
         sb.append("Outputs(");
         int[] formats = getOutputFormats();
@@ -1843,7 +1858,10 @@ public final class StreamConfigurationMap {
         sb.append(")");
     }
 
-    private String formatToString(int format) {
+    /**
+     * @hide
+     */
+    public static String formatToString(int format) {
         switch (format) {
             case ImageFormat.YV12:
                 return "YV12";
@@ -1896,7 +1914,8 @@ public final class StreamConfigurationMap {
 
     // from system/core/include/system/graphics.h
     private static final int HAL_PIXEL_FORMAT_RAW16 = 0x20;
-    private static final int HAL_PIXEL_FORMAT_BLOB = 0x21;
+    /** @hide */
+    public static final int HAL_PIXEL_FORMAT_BLOB = 0x21;
     private static final int HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED = 0x22;
     private static final int HAL_PIXEL_FORMAT_YCbCr_420_888 = 0x23;
     private static final int HAL_PIXEL_FORMAT_RAW_OPAQUE = 0x24;
@@ -1910,14 +1929,24 @@ public final class StreamConfigurationMap {
     private static final int HAL_DATASPACE_RANGE_SHIFT = 27;
 
     private static final int HAL_DATASPACE_UNKNOWN = 0x0;
-    private static final int HAL_DATASPACE_V0_JFIF =
+    /** @hide */
+    public static final int HAL_DATASPACE_V0_JFIF =
             (2 << HAL_DATASPACE_STANDARD_SHIFT) |
             (3 << HAL_DATASPACE_TRANSFER_SHIFT) |
             (1 << HAL_DATASPACE_RANGE_SHIFT);
 
-    private static final int HAL_DATASPACE_DEPTH = 0x1000;
-    private static final int HAL_DATASPACE_DYNAMIC_DEPTH = 0x1002;
-    private static final int HAL_DATASPACE_HEIF = 0x1003;
+    /**
+     * @hide
+     */
+    public static final int HAL_DATASPACE_DEPTH = 0x1000;
+    /**
+     * @hide
+     */
+    public static final int HAL_DATASPACE_DYNAMIC_DEPTH = 0x1002;
+    /**
+     * @hide
+     */
+    public static final int HAL_DATASPACE_HEIF = 0x1003;
     private static final long DURATION_20FPS_NS = 50000000L;
     /**
      * @see #getDurations(int, int)

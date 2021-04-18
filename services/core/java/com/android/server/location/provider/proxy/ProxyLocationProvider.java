@@ -21,6 +21,7 @@ import static com.android.internal.util.ConcurrentUtils.DIRECT_EXECUTOR;
 import android.annotation.Nullable;
 import android.content.ComponentName;
 import android.content.Context;
+import android.location.Location;
 import android.location.LocationResult;
 import android.location.provider.ILocationProvider;
 import android.location.provider.ILocationProviderManager;
@@ -31,21 +32,28 @@ import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.util.ArraySet;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.ArrayUtils;
-import com.android.server.ServiceWatcher;
 import com.android.server.location.provider.AbstractLocationProvider;
+import com.android.server.servicewatcher.ServiceWatcher;
+import com.android.server.servicewatcher.ServiceWatcher.BoundService;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 
 /**
  * Proxy for ILocationProvider implementations.
  */
 public class ProxyLocationProvider extends AbstractLocationProvider {
+
+    private static final String KEY_EXTRA_ATTRIBUTION_TAGS = "android:location_allow_listed_tags";
+    private static final String EXTRA_ATTRIBUTION_TAGS_SEPARATOR = ";";
 
     /**
      * Creates and registers this proxy. If no suitable service is available for the proxy, returns
@@ -82,7 +90,7 @@ public class ProxyLocationProvider extends AbstractLocationProvider {
             int nonOverlayPackageResId) {
         // safe to use direct executor since our locks are not acquired in a code path invoked by
         // our owning provider
-        super(DIRECT_EXECUTOR, null, null);
+        super(DIRECT_EXECUTOR, null, null, Collections.emptySet());
 
         mContext = context;
         mServiceWatcher = new ServiceWatcher(context, action, this::onBind,
@@ -96,12 +104,22 @@ public class ProxyLocationProvider extends AbstractLocationProvider {
         return mServiceWatcher.checkServiceResolves();
     }
 
-    private void onBind(IBinder binder, ComponentName service) throws RemoteException {
+    private void onBind(IBinder binder, BoundService boundService) throws RemoteException {
         ILocationProvider provider = ILocationProvider.Stub.asInterface(binder);
 
         synchronized (mLock) {
             mProxy = new Proxy();
-            mService = service;
+            mService = boundService.component;
+
+            // update extra attribution tag info from manifest
+            if (boundService.metadata != null) {
+                String tagsList = boundService.metadata.getString(KEY_EXTRA_ATTRIBUTION_TAGS);
+                if (tagsList != null) {
+                    setExtraAttributionTags(
+                            new ArraySet<>(tagsList.split(EXTRA_ATTRIBUTION_TAGS_SEPARATOR)));
+                }
+            }
+
             provider.setLocationProviderManager(mProxy);
 
             ProviderRequest request = mRequest;
@@ -138,7 +156,7 @@ public class ProxyLocationProvider extends AbstractLocationProvider {
     }
 
     @Override
-    public void onSetRequest(ProviderRequest request) {
+    protected void onSetRequest(ProviderRequest request) {
         mRequest = request;
         mServiceWatcher.runOnBinder(binder -> {
             ILocationProvider provider = ILocationProvider.Stub.asInterface(binder);
@@ -260,13 +278,25 @@ public class ProxyLocationProvider extends AbstractLocationProvider {
 
         // executed on binder thread
         @Override
-        public void onReportLocation(LocationResult locationResult) {
+        public void onReportLocation(Location location) {
             synchronized (mLock) {
                 if (mProxy != this) {
                     return;
                 }
 
-                reportLocation(locationResult.validate());
+                reportLocation(LocationResult.wrap(location).validate());
+            }
+        }
+
+        // executed on binder thread
+        @Override
+        public void onReportLocations(List<Location> locations) {
+            synchronized (mLock) {
+                if (mProxy != this) {
+                    return;
+                }
+
+                reportLocation(LocationResult.wrap(locations).validate());
             }
         }
 

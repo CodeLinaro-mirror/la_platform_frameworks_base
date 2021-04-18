@@ -38,9 +38,7 @@ import android.view.KeyEvent;
 interface ISessionManager {
     ISession createSession(String packageName, in ISessionCallback sessionCb, String tag,
             in Bundle sessionInfo, int userId);
-    void notifySession2Created(in Session2Token sessionToken);
     List<MediaSession.Token> getSessions(in ComponentName compName, int userId);
-    ParceledListSlice getSession2Tokens(int userId);
     void dispatchMediaKeyEvent(String packageName, boolean asSystemService, in KeyEvent keyEvent,
             boolean needWakeLock);
     boolean dispatchMediaKeyEventToSessionAsSystemService(String packageName,
@@ -73,8 +71,10 @@ interface ISessionManager {
     void setOnMediaKeyListener(in IOnMediaKeyListener listener);
 
     boolean isTrusted(String controllerPackageName, int controllerPid, int controllerUid);
-    void setCustomMediaKeyDispatcherForTesting(String name);
-    void setCustomSessionPolicyProviderForTesting(String name);
+    void setCustomMediaKeyDispatcher(String name);
+    void setCustomMediaSessionPolicyProvider(String name);
+    boolean hasCustomMediaKeyDispatcher(String componentName);
+    boolean hasCustomMediaSessionPolicyProvider(String componentName);
     int getSessionPolicies(in MediaSession.Token token);
     void setSessionPolicies(in MediaSession.Token token, int policies);
 }

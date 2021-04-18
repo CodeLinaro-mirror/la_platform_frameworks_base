@@ -93,6 +93,8 @@
     <string name="screenshot_scroll_description" msgid="7855773867093272175">"لقطة شاشة موصولة"</string>
     <string name="screenshot_dismiss_description" msgid="4702341245899508786">"إغلاق لقطة الشاشة"</string>
     <string name="screenshot_preview_description" msgid="7606510140714080474">"معاينة لقطة الشاشة"</string>
+    <string name="screenshot_top_boundary" msgid="1500569103321300856">"الحد العلوي"</string>
+    <string name="screenshot_bottom_boundary" msgid="5657242629526407311">"الحد السفلي"</string>
     <string name="screenrecord_name" msgid="2596401223859996572">"مسجّل الشاشة"</string>
     <string name="screenrecord_background_processing_label" msgid="7244617554884238898">"جارٍ معالجة تسجيل الشاشة"</string>
     <string name="screenrecord_channel_description" msgid="4147077128486138351">"إشعار مستمر لجلسة تسجيل شاشة"</string>
@@ -114,7 +116,10 @@
     <string name="screenrecord_cancel_label" msgid="7850926573274483294">"إلغاء"</string>
     <string name="screenrecord_share_label" msgid="5025590804030086930">"مشاركة"</string>
     <string name="screenrecord_cancel_success" msgid="1775448688137393901">"تمّ إلغاء تسجيل الشاشة."</string>
-    <string name="screenrecord_save_message" msgid="490522052388998226">"تمّ حفظ تسجيل الشاشة، انقر لعرضه."</string>
+    <!-- no translation found for screenrecord_save_title (1886652605520893850) -->
+    <skip />
+    <!-- no translation found for screenrecord_save_text (3008973099800840163) -->
+    <skip />
     <string name="screenrecord_delete_error" msgid="2870506119743013588">"حدث خطأ أثناء حذف تسجيل الشاشة."</string>
     <string name="screenrecord_permission_error" msgid="7856841237023137686">"تعذّر الحصول على أذونات."</string>
     <string name="screenrecord_start_error" msgid="2200660692479682368">"حدث خطأ في بدء تسجيل الشاشة"</string>
@@ -348,10 +353,8 @@
     <string name="quick_settings_ime_label" msgid="3351174938144332051">"أسلوب الإدخال"</string>
     <string name="quick_settings_location_label" msgid="2621868789013389163">"الموقع الجغرافي"</string>
     <string name="quick_settings_location_off_label" msgid="7923929131443915919">"الموقع قيد الإيقاف"</string>
-    <!-- no translation found for quick_settings_camera_label (1367149596242401934) -->
-    <skip />
-    <!-- no translation found for quick_settings_mic_label (8245831073612564953) -->
-    <skip />
+    <string name="quick_settings_camera_label" msgid="1367149596242401934">"حظر الكاميرا"</string>
+    <string name="quick_settings_mic_label" msgid="8245831073612564953">"كتم صوت الميكروفون"</string>
     <string name="quick_settings_media_device_label" msgid="8034019242363789941">"جهاز الوسائط"</string>
     <string name="quick_settings_rssi_label" msgid="3397615415140356701">"RSSI"</string>
     <string name="quick_settings_rssi_emergency_only" msgid="7499207215265078598">"مكالمات طوارئ فقط"</string>
@@ -362,12 +365,9 @@
     <string name="quick_settings_user_new_user" msgid="3347905871336069666">"مستخدم جديد"</string>
     <string name="quick_settings_wifi_label" msgid="2879507532983487244">"Wi-Fi"</string>
     <string name="quick_settings_internet_label" msgid="6603068555872455463">"الإنترنت"</string>
-    <!-- no translation found for quick_settings_airplane_safe_label (2665758539772645899) -->
-    <skip />
-    <!-- no translation found for quick_settings_networks_available (1875138606855420438) -->
-    <skip />
-    <!-- no translation found for quick_settings_networks_unavailable (1167847013337940082) -->
-    <skip />
+    <string name="quick_settings_airplane_safe_label" msgid="2665758539772645899">"آمنة في الطائرة"</string>
+    <string name="quick_settings_networks_available" msgid="1875138606855420438">"الشبكات متوفرة"</string>
+    <string name="quick_settings_networks_unavailable" msgid="1167847013337940082">"الشبكات غير متوفرة"</string>
     <string name="quick_settings_wifi_not_connected" msgid="4071097522427039160">"ليست متصلة"</string>
     <string name="quick_settings_wifi_no_network" msgid="6003178398713839313">"لا تتوفر شبكة"</string>
     <string name="quick_settings_wifi_off_label" msgid="4003379736176547594">"‏إيقاف Wi-Fi"</string>
@@ -423,12 +423,15 @@
     <string name="quick_settings_dark_mode_secondary_label_until_sunrise" msgid="4404885070316716472">"حتى شروق الشمس"</string>
     <string name="quick_settings_dark_mode_secondary_label_on_at" msgid="5128758823486361279">"تفعيل الوضع في <xliff:g id="TIME">%s</xliff:g>"</string>
     <string name="quick_settings_dark_mode_secondary_label_until" msgid="2289774641256492437">"حتى <xliff:g id="TIME">%s</xliff:g>"</string>
+    <string name="quick_settings_reduce_bright_colors_label" msgid="7537352080559075175">"تقليل السطوع"</string>
     <string name="quick_settings_nfc_label" msgid="1054317416221168085">"NFC"</string>
     <string name="quick_settings_nfc_off" msgid="3465000058515424663">"تم إيقاف الاتصال القريب المدى"</string>
     <string name="quick_settings_nfc_on" msgid="1004976611203202230">"تم تفعيل الاتصال القريب المدى"</string>
     <string name="quick_settings_screen_record_label" msgid="1594046461509776676">"تسجيل الشاشة"</string>
     <string name="quick_settings_screen_record_start" msgid="1574725369331638985">"بدء"</string>
     <string name="quick_settings_screen_record_stop" msgid="8087348522976412119">"إيقاف"</string>
+    <string name="sensor_privacy_start_use_mic_dialog_content" msgid="8643239110815357707">"‏للمتابعة، يحتاج تطبيق &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; إلى الوصول إلى ميكروفون الجهاز."</string>
+    <string name="sensor_privacy_start_use_camera_dialog_content" msgid="7773612142162829116">"‏للمتابعة، يحتاج تطبيق &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; إلى الوصول إلى كاميرا الجهاز."</string>
     <string name="media_seamless_remote_device" msgid="177033467332920464">"الجهاز"</string>
     <string name="recents_swipe_up_onboarding" msgid="2820265886420993995">"مرّر سريعًا لأعلى لتبديل التطبيقات"</string>
     <string name="recents_quick_scrub_onboarding" msgid="765934300283514912">"اسحب لليسار للتبديل السريع بين التطبيقات"</string>
@@ -451,8 +454,10 @@
     <string name="notification_tap_again" msgid="4477318164947497249">"انقر مرة أخرى للفتح"</string>
     <string name="keyguard_unlock" msgid="8031975796351361601">"يمكنك الفتح بالتمرير سريعًا لأعلى."</string>
     <string name="keyguard_retry" msgid="886802522584053523">"مرِّر سريعًا للأعلى لإعادة المحاولة."</string>
+    <string name="require_unlock_for_nfc" msgid="1305686454823018831">"‏افتح قفل الشاشة لاستخدام تقنية NFC"</string>
     <string name="do_disclosure_generic" msgid="4896482821974707167">"هذا الجهاز يخص مؤسستك."</string>
     <string name="do_disclosure_with_name" msgid="2091641464065004091">"هذا الجهاز يخص <xliff:g id="ORGANIZATION_NAME">%s</xliff:g>."</string>
+    <string name="do_financed_disclosure_with_name" msgid="6723004643314467864">"توفر مؤسسة \"<xliff:g id="ORGANIZATION_NAME">%s</xliff:g>\" هذا الجهاز."</string>
     <string name="phone_hint" msgid="6682125338461375925">"يمكنك التمرير سريعًا من الرمز لتشغيل الهاتف"</string>
     <string name="voice_hint" msgid="7476017460191291417">"يمكنك التمرير سريعًا من الرمز لتشغيل المساعد الصوتي"</string>
     <string name="camera_hint" msgid="4519495795000658637">"يمكنك التمرير سريعًا من الرمز لتشغيل الكاميرا"</string>
@@ -473,9 +478,10 @@
     <string name="accessibility_multi_user_switch_quick_contact" msgid="4504508915324898576">"عرض الملف الشخصي"</string>
     <string name="user_add_user" msgid="4336657383006913022">"إضافة مستخدم"</string>
     <string name="user_new_user_name" msgid="2019166282704195789">"مستخدم جديد"</string>
-    <string name="guest_exit_guest_dialog_title" msgid="2034481024623462357">"هل تريد إنهاء جلسة الضيف؟"</string>
+    <string name="guest_exit_button" msgid="3059840571760915762">"إنهاء جلسة الضيف"</string>
+    <string name="guest_exit_guest_dialog_title" msgid="5015697561580641422">"هل تريد إزالة جلسة الضيف؟"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"سيتم حذف كل التطبيقات والبيانات في هذه الجلسة."</string>
-    <string name="guest_exit_guest_dialog_remove" msgid="8533184512885775423">"إنهاء الجلسة"</string>
+    <string name="guest_exit_guest_dialog_remove" msgid="7505817591242703757">"إزالة"</string>
     <string name="guest_wipe_session_title" msgid="7147965814683990944">"مرحبًا بك مجددًا في جلسة الضيف"</string>
     <string name="guest_wipe_session_message" msgid="3393823610257065457">"هل تريد متابعة جلستك؟"</string>
     <string name="guest_wipe_session_wipe" msgid="8056836584445473309">"البدء من جديد"</string>
@@ -554,6 +560,7 @@
     <string name="monitoring_description_managed_profile_ca_certificate" msgid="7904323416598435647">"ثبّتت مؤسستك مرجعًا مصدّقًا في ملفك الشخصي للعمل. قد تتم مراقبة حركة بيانات شبكتك الآمنة أو تعديلها."</string>
     <string name="monitoring_description_ca_certificate" msgid="448923057059097497">"تم تثبيت مرجع مصدّق على هذا الجهاز. قد تتم مراقبة حركة بيانات شبكتك الآمنة أو تعديلها."</string>
     <string name="monitoring_description_management_network_logging" msgid="216983105036994771">"شغَّل المشرف ميزة تسجيل بيانات الشبكة، والتي يتم من خلالها مراقبة حركة البيانات على جهازك."</string>
+    <string name="monitoring_description_managed_profile_network_logging" msgid="6932303843097006037">"شغَّل المشرف ميزة تسجيل بيانات الشبكة، والتي يتم من خلالها مراقبة حركة البيانات في ملفك الشخصي للعمل ولكن لا تتم مراقبتها في ملفك الشخصي."</string>
     <string name="monitoring_description_named_vpn" msgid="5749932930634037027">"لقد اتصلت بتطبيق <xliff:g id="VPN_APP">%1$s</xliff:g>، الذي يمكن أن يراقب نشاط شبكتك، بما في ذلك رسائل البريد الإلكتروني والتطبيقات والمواقع الإلكترونية."</string>
     <string name="monitoring_description_two_named_vpns" msgid="3516830755681229463">"لقد اتصلت بتطبيق <xliff:g id="VPN_APP_0">%1$s</xliff:g> و<xliff:g id="VPN_APP_1">%2$s</xliff:g> اللذين يمكنهما مراقبة نشاط شبكتك، بما في ذلك رسائل البريد الإلكتروني والتطبيقات والمواقع الإلكترونية."</string>
     <string name="monitoring_description_managed_profile_named_vpn" msgid="368812367182387320">"تم ربط الملف الشخصي للعمل بـ <xliff:g id="VPN_APP">%1$s</xliff:g>، الذي يمكنه مراقبة أنشطتك الشخصية على الشبكة، بما في ذلك الرسائل الإلكترونية والتطبيقات ومواقع الويب."</string>
@@ -634,6 +641,7 @@
     <string name="volume_stream_content_description_mute" msgid="4079046784917920984">"‏%1$s. انقر للتجاهل. قد يتم تجاهل خدمات \"سهولة الاستخدام\"."</string>
     <string name="volume_stream_content_description_vibrate_a11y" msgid="2742330052979397471">"‏%1$s. انقر للتعيين على الاهتزاز."</string>
     <string name="volume_stream_content_description_mute_a11y" msgid="5743548478357238156">"‏%1$s. انقر لكتم الصوت."</string>
+    <string name="volume_ringer_change" msgid="3574969197796055532">"انقر لتغيير وضع الرنين."</string>
     <string name="volume_ringer_hint_mute" msgid="4263821214125126614">"كتم الصوت"</string>
     <string name="volume_ringer_hint_unmute" msgid="6119086890306456976">"إعادة الصوت"</string>
     <string name="volume_ringer_hint_vibrate" msgid="6211609047099337509">"اهتزاز"</string>
@@ -747,7 +755,7 @@
     <string name="feedback_silenced" msgid="9116540317466126457">"‏تم تلقائيًا &lt;b&gt;خفض ترتيب هذا الإشعار إلى الوضع صامت&lt;/b&gt; من خلال النظام."</string>
     <string name="feedback_promoted" msgid="2125562787759780807">"‏تم تلقائيًا &lt;b&gt;زيادة ترتيب&lt;/b&gt; هذا الإشعار في مركز الإشعارات."</string>
     <string name="feedback_demoted" msgid="951884763467110604">"‏تم تلقائيًا &lt;b&gt;خفض ترتيب&lt;/b&gt; هذا الإشعار في مركز الإشعارات."</string>
-    <string name="feedback_prompt" msgid="2278631214125128281">"هل كان هذا صحيحًا؟"</string>
+    <string name="feedback_prompt" msgid="3656728972307896379">"أخبِر مطوِّر البرامج برأيك. هل كان هذا صحيحًا؟"</string>
     <string name="feedback_response" msgid="4671729244976641339">"شكرًا على تعليقك"</string>
     <string name="feedback_ok" msgid="6481426753298857144">"حسنًا"</string>
     <string name="notification_channel_controls_opened_accessibility" msgid="6111817750774381094">"تم فتح عناصر التحكم في الإشعارات لتطبيق <xliff:g id="APP_NAME">%1$s</xliff:g>"</string>
@@ -902,6 +910,8 @@
     <string name="accessibility_qs_edit_tile_move_to_position" msgid="5198161544045930556">"الانتقال إلى <xliff:g id="POSITION">%1$d</xliff:g>"</string>
     <string name="accessibility_qs_edit_tile_add_to_position" msgid="9029163095148274690">"الإضافة إلى الموضع <xliff:g id="POSITION">%1$d</xliff:g>"</string>
     <string name="accessibility_qs_edit_position" msgid="4509277359815711830">"الموضع: <xliff:g id="POSITION">%1$d</xliff:g>"</string>
+    <string name="accessibility_qs_edit_tile_added" msgid="9067146040380836334">"تمت إضافة البطاقة."</string>
+    <string name="accessibility_qs_edit_tile_removed" msgid="1175925632436612036">"تمت إزالة البطاقة."</string>
     <string name="accessibility_desc_quick_settings_edit" msgid="741658939453595297">"برنامج تعديل الإعدادات السريعة."</string>
     <string name="accessibility_desc_notification_icon" msgid="7331265967584178674">"إشعار <xliff:g id="ID_1">%1$s</xliff:g>: <xliff:g id="ID_2">%2$s</xliff:g>"</string>
     <string name="accessibility_quick_settings_settings" msgid="7098489591715844713">"فتح الإعدادات."</string>
@@ -989,13 +999,17 @@
     <string name="ongoing_privacy_chip_content_multiple_apps" msgid="8341216022442383954">"تستخدم التطبيقات <xliff:g id="TYPES_LIST">%s</xliff:g>."</string>
     <string name="ongoing_privacy_dialog_separator" msgid="1866222499727706187">"، "</string>
     <string name="ongoing_privacy_dialog_last_separator" msgid="5615876114268009767">" و "</string>
+    <string name="ongoing_privacy_dialog_using_op" msgid="4125175620929701569">"يستخدم تطبيق <xliff:g id="APPLICATION_NAME">%1$s</xliff:g> ميزة <xliff:g id="APP_OPP_NAME">%2$s</xliff:g> الآن."</string>
+    <string name="ongoing_privacy_dialog_recent_op" msgid="4255923947334262404">"استخدَم تطبيق <xliff:g id="APPLICATION_NAME">%1$s</xliff:g> ميزة <xliff:g id="APP_OPP_NAME">%2$s</xliff:g> مؤخرًا."</string>
+    <string name="ongoing_privacy_dialog_enterprise" msgid="4082735415905550729">"(للمؤسسات)"</string>
+    <string name="ongoing_privacy_dialog_phonecall" msgid="4487370562589839298">"المكالمات الهاتفية"</string>
+    <string name="ongoing_privacy_dialog_attribution_text" msgid="9186683306719924646">"(من خلال <xliff:g id="ATTRIBUTION">%s</xliff:g>)"</string>
     <string name="privacy_type_camera" msgid="7974051382167078332">"الكاميرا"</string>
     <string name="privacy_type_location" msgid="7991481648444066703">"الموقع"</string>
     <string name="privacy_type_microphone" msgid="9136763906797732428">"الميكروفون"</string>
     <string name="sensor_privacy_mode" msgid="4462866919026513692">"إيقاف أجهزة الاستشعار"</string>
     <string name="device_services" msgid="1549944177856658705">"خدمات الأجهزة"</string>
     <string name="music_controls_no_title" msgid="4166497066552290938">"بلا عنوان"</string>
-    <string name="restart_button_description" msgid="6916116576177456480">"انقر لإعادة تشغيل هذا التطبيق والانتقال إلى وضع ملء الشاشة."</string>
     <string name="bubble_accessibility_action_move" msgid="3185080443743819178">"نقل"</string>
     <string name="notification_content_system_nav_changed" msgid="5077913144844684544">"تم تحديث التنقل داخل النظام. لإجراء التغييرات، يُرجى الانتقال إلى \"الإعدادات\"."</string>
     <string name="notification_content_gesture_nav_available" msgid="4431460803004659888">"الانتقال إلى \"الإعدادات\" لتعديل التنقل داخل النظام"</string>
@@ -1053,6 +1067,7 @@
     <string name="controls_dialog_ok" msgid="2770230012857881822">"إضافة"</string>
     <string name="controls_dialog_message" msgid="342066938390663844">"اقتراح من <xliff:g id="APP">%s</xliff:g>"</string>
     <string name="controls_dialog_confirmation" msgid="586517302736263447">"تم تعديل عناصر التحكّم."</string>
+    <string name="controls_tile_locked" msgid="731547768182831938">"الجهاز مُقفل."</string>
     <string name="controls_pin_use_alphanumeric" msgid="8478371861023048414">"يشتمل رقم التعريف الشخصي على أحرف أو رموز."</string>
     <string name="controls_pin_verify" msgid="3452778292918877662">"إثبات ملكية <xliff:g id="DEVICE">%s</xliff:g>"</string>
     <string name="controls_pin_wrong" msgid="6162694056042164211">"رقم تعريف شخصي خاطئ"</string>

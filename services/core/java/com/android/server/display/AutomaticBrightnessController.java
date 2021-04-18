@@ -42,8 +42,8 @@ import android.util.MathUtils;
 import android.util.Slog;
 import android.util.TimeUtils;
 
-import com.android.internal.BrightnessSynchronizer;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.display.BrightnessSynchronizer;
 import com.android.internal.os.BackgroundThread;
 import com.android.server.EventLogTags;
 import com.android.server.display.DisplayDeviceConfig.HighBrightnessModeData;
@@ -352,6 +352,10 @@ class AutomaticBrightnessController {
         if (changed) {
             updateAutoBrightness(false /*sendUpdate*/, userInitiatedChange);
         }
+    }
+
+    public void stop() {
+        setLightSensorEnabled(false);
     }
 
     public boolean hasUserDataPoints() {

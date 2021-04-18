@@ -40,10 +40,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
-import android.content.pm.ParceledListSlice;
 import android.media.AudioManager;
 import android.media.AudioPlaybackConfiguration;
 import android.media.IRemoteSessionCallback;
+import android.media.MediaCommunicationManager;
 import android.media.Session2Token;
 import android.media.session.IActiveSessionsListener;
 import android.media.session.IOnMediaKeyEventDispatchedListener;
@@ -148,8 +148,27 @@ public class MediaSessionService extends SystemService implements Monitor {
     final RemoteCallbackList<IRemoteSessionCallback> mRemoteVolumeControllers =
             new RemoteCallbackList<>();
 
-    private SessionPolicyProvider mCustomSessionPolicyProvider;
+    private MediaSessionPolicyProvider mCustomMediaSessionPolicyProvider;
     private MediaKeyDispatcher mCustomMediaKeyDispatcher;
+
+    private MediaCommunicationManager mCommunicationManager;
+    private final MediaCommunicationManager.SessionCallback mSession2TokenCallback =
+            new MediaCommunicationManager.SessionCallback() {
+                @Override
+                public void onSession2TokenCreated(Session2Token token) {
+                    if (DEBUG) {
+                        Log.d(TAG, "Session2 is created " + token);
+                    }
+                    MediaSession2Record record = new MediaSession2Record(token,
+                            MediaSessionService.this, mRecordThread.getLooper(), 0);
+                    synchronized (mLock) {
+                        FullUserRecord user = getFullUserRecordLocked(record.getUserId());
+                        if (user != null) {
+                            user.mPriorityStack.addSession(record);
+                        }
+                    }
+                }
+            };
 
     public MediaSessionService(Context context) {
         super(context);
@@ -191,13 +210,28 @@ public class MediaSessionService extends SystemService implements Monitor {
 
         updateUser();
 
-        instantiateCustomProvider(null);
-        instantiateCustomDispatcher(null);
+        instantiateCustomProvider(mContext.getResources().getString(
+                R.string.config_customMediaSessionPolicyProvider));
+        instantiateCustomDispatcher(mContext.getResources().getString(
+                R.string.config_customMediaKeyDispatcher));
         mRecordThread.start();
 
         final IntentFilter filter = new IntentFilter(
                 NotificationManager.ACTION_NOTIFICATION_LISTENER_ENABLED_CHANGED);
         mContext.registerReceiver(mNotificationListenerEnabledChangedReceiver, filter);
+    }
+
+    @Override
+    public void onBootPhase(int phase) {
+        super.onBootPhase(phase);
+        switch (phase) {
+            // This ensures MediaCommunicationService is started
+            case PHASE_BOOT_COMPLETED:
+                mCommunicationManager = mContext.getSystemService(MediaCommunicationManager.class);
+                mCommunicationManager.registerSessionCallback(new HandlerExecutor(mHandler),
+                        mSession2TokenCallback);
+                break;
+        }
     }
 
     private final BroadcastReceiver mNotificationListenerEnabledChangedReceiver =
@@ -589,8 +623,8 @@ public class MediaSessionService extends SystemService implements Monitor {
             String callerPackageName, ISessionCallback cb, String tag, Bundle sessionInfo) {
         synchronized (mLock) {
             int policies = 0;
-            if (mCustomSessionPolicyProvider != null) {
-                policies = mCustomSessionPolicyProvider.getSessionPoliciesForApplication(
+            if (mCustomMediaSessionPolicyProvider != null) {
+                policies = mCustomMediaSessionPolicyProvider.getSessionPoliciesForApplication(
                         callerUid, callerPackageName);
             }
 
@@ -778,16 +812,13 @@ public class MediaSessionService extends SystemService implements Monitor {
         return null;
     }
 
-    private void instantiateCustomDispatcher(String nameFromTesting) {
+    private void instantiateCustomDispatcher(String componentName) {
         synchronized (mLock) {
             mCustomMediaKeyDispatcher = null;
 
-            String customDispatcherClassName = (nameFromTesting == null)
-                    ? mContext.getResources().getString(R.string.config_customMediaKeyDispatcher)
-                    : nameFromTesting;
             try {
-                if (!TextUtils.isEmpty(customDispatcherClassName)) {
-                    Class customDispatcherClass = Class.forName(customDispatcherClassName);
+                if (componentName != null && !TextUtils.isEmpty(componentName)) {
+                    Class customDispatcherClass = Class.forName(componentName);
                     Constructor constructor =
                             customDispatcherClass.getDeclaredConstructor(Context.class);
                     mCustomMediaKeyDispatcher =
@@ -801,20 +832,17 @@ public class MediaSessionService extends SystemService implements Monitor {
         }
     }
 
-    private void instantiateCustomProvider(String nameFromTesting) {
+    private void instantiateCustomProvider(String componentName) {
         synchronized (mLock) {
-            mCustomSessionPolicyProvider = null;
+            mCustomMediaSessionPolicyProvider = null;
 
-            String customProviderClassName = (nameFromTesting == null)
-                    ? mContext.getResources().getString(R.string.config_customSessionPolicyProvider)
-                    : nameFromTesting;
             try {
-                if (!TextUtils.isEmpty(customProviderClassName)) {
-                    Class customProviderClass = Class.forName(customProviderClassName);
+                if (componentName != null && !TextUtils.isEmpty(componentName)) {
+                    Class customProviderClass = Class.forName(componentName);
                     Constructor constructor =
                             customProviderClass.getDeclaredConstructor(Context.class);
-                    mCustomSessionPolicyProvider =
-                            (SessionPolicyProvider) constructor.newInstance(mContext);
+                    mCustomMediaSessionPolicyProvider =
+                            (MediaSessionPolicyProvider) constructor.newInstance(mContext);
                 }
             } catch (ClassNotFoundException | InstantiationException | InvocationTargetException
                     | IllegalAccessException | NoSuchMethodException e) {
@@ -1143,31 +1171,6 @@ public class MediaSessionService extends SystemService implements Monitor {
         }
 
         @Override
-        public void notifySession2Created(Session2Token sessionToken) throws RemoteException {
-            final int pid = Binder.getCallingPid();
-            final int uid = Binder.getCallingUid();
-            final long token = Binder.clearCallingIdentity();
-            try {
-                if (DEBUG) {
-                    Log.d(TAG, "Session2 is created " + sessionToken);
-                }
-                if (uid != sessionToken.getUid()) {
-                    throw new SecurityException("Unexpected Session2Token's UID, expected=" + uid
-                            + " but actually=" + sessionToken.getUid());
-                }
-                MediaSession2Record record = new MediaSession2Record(sessionToken,
-                        MediaSessionService.this, mRecordThread.getLooper(), 0);
-                synchronized (mLock) {
-                    FullUserRecord user = getFullUserRecordLocked(record.getUserId());
-                    user.mPriorityStack.addSession(record);
-                }
-                // Do not immediately notify changes -- do so when framework can dispatch command
-            } finally {
-                Binder.restoreCallingIdentity(token);
-            }
-        }
-
-        @Override
         public List<MediaSession.Token> getSessions(ComponentName componentName, int userId) {
             final int pid = Binder.getCallingPid();
             final int uid = Binder.getCallingUid();
@@ -1183,26 +1186,6 @@ public class MediaSessionService extends SystemService implements Monitor {
                     }
                 }
                 return tokens;
-            } finally {
-                Binder.restoreCallingIdentity(token);
-            }
-        }
-
-        @Override
-        public ParceledListSlice getSession2Tokens(int userId) {
-            final int pid = Binder.getCallingPid();
-            final int uid = Binder.getCallingUid();
-            final long token = Binder.clearCallingIdentity();
-
-            try {
-                // Check that they can make calls on behalf of the user and get the final user id
-                int resolvedUserId = handleIncomingUser(pid, uid, userId, null);
-                List<Session2Token> result;
-                synchronized (mLock) {
-                    FullUserRecord user = getFullUserRecordLocked(userId);
-                    result = user.mPriorityStack.getSession2Tokens(resolvedUserId);
-                }
-                return new ParceledListSlice(result);
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
@@ -1933,13 +1916,27 @@ public class MediaSessionService extends SystemService implements Monitor {
         }
 
         @Override
-        public void setCustomMediaKeyDispatcherForTesting(String name) {
+        public void setCustomMediaKeyDispatcher(String name) {
             instantiateCustomDispatcher(name);
         }
 
         @Override
-        public void setCustomSessionPolicyProviderForTesting(String name) {
+        public void setCustomMediaSessionPolicyProvider(String name) {
             instantiateCustomProvider(name);
+        }
+
+        @Override
+        public boolean hasCustomMediaKeyDispatcher(String componentName) {
+            return mCustomMediaKeyDispatcher == null ? false
+                    : TextUtils.equals(componentName,
+                            mCustomMediaKeyDispatcher.getClass().getName());
+        }
+
+        @Override
+        public boolean hasCustomMediaSessionPolicyProvider(String componentName) {
+            return mCustomMediaSessionPolicyProvider == null ? false
+                    : TextUtils.equals(componentName,
+                            mCustomMediaSessionPolicyProvider.getClass().getName());
         }
 
         @Override
@@ -2124,7 +2121,8 @@ public class MediaSessionService extends SystemService implements Monitor {
                             uid, asSystemService);
                     if (pi != null) {
                         mediaButtonReceiverHolder = MediaButtonReceiverHolder.create(mContext,
-                                mCurrentFullUserRecord.mFullUserId, pi);
+                                mCurrentFullUserRecord.mFullUserId, pi,
+                                /* sessionPackageName= */ "");
                     }
                 }
             }

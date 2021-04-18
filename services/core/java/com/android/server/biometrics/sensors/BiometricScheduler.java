@@ -28,8 +28,11 @@ import android.os.Looper;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.util.Slog;
+import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.server.biometrics.BiometricSchedulerProto;
+import com.android.server.biometrics.BiometricsProto;
 import com.android.server.biometrics.sensors.fingerprint.GestureAvailabilityDispatcher;
 
 import java.io.PrintWriter;
@@ -51,6 +54,8 @@ import java.util.Locale;
 public class BiometricScheduler {
 
     private static final String BASE_TAG = "BiometricScheduler";
+    // Number of recent operations to keep in our logs for dumpsys
+    private static final int LOG_NUM_RECENT_OPERATIONS = 50;
 
     /**
      * Contains all the necessary information for a HAL operation.
@@ -200,6 +205,10 @@ public class BiometricScheduler {
     @VisibleForTesting @Nullable Operation mCurrentOperation;
     @NonNull private final ArrayDeque<CrashState> mCrashStates;
 
+    private int mTotalOperationsHandled;
+    private final int mRecentOperationsLimit;
+    @NonNull private final List<Integer> mRecentOperations;
+
     // Internal callback, notified when an operation is complete. Notifies the requester
     // that the operation is complete, before performing internal scheduler work (such as
     // starting the next client).
@@ -240,7 +249,12 @@ public class BiometricScheduler {
                             mCurrentOperation.mClientMonitor.getSensorId(), false /* active */);
                 }
 
+                if (mRecentOperations.size() >= mRecentOperationsLimit) {
+                    mRecentOperations.remove(0);
+                }
+                mRecentOperations.add(mCurrentOperation.mClientMonitor.getProtoEnum());
                 mCurrentOperation = null;
+                mTotalOperationsHandled++;
                 startNextOperationIfIdle();
             });
         }
@@ -249,13 +263,15 @@ public class BiometricScheduler {
     @VisibleForTesting
     BiometricScheduler(@NonNull String tag,
             @Nullable GestureAvailabilityDispatcher gestureAvailabilityDispatcher,
-            @NonNull IBiometricService biometricService) {
+            @NonNull IBiometricService biometricService, int recentOperationsLimit) {
         mBiometricTag = tag;
         mInternalCallback = new InternalCallback();
         mGestureAvailabilityDispatcher = gestureAvailabilityDispatcher;
         mPendingOperations = new ArrayDeque<>();
         mBiometricService = biometricService;
         mCrashStates = new ArrayDeque<>();
+        mRecentOperationsLimit = recentOperationsLimit;
+        mRecentOperations = new ArrayList<>();
     }
 
     /**
@@ -267,7 +283,7 @@ public class BiometricScheduler {
     public BiometricScheduler(@NonNull String tag,
             @Nullable GestureAvailabilityDispatcher gestureAvailabilityDispatcher) {
         this(tag, gestureAvailabilityDispatcher, IBiometricService.Stub.asInterface(
-                ServiceManager.getService(Context.BIOMETRIC_SERVICE)));
+                ServiceManager.getService(Context.BIOMETRIC_SERVICE)), LOG_NUM_RECENT_OPERATIONS);
     }
 
     /**
@@ -459,14 +475,17 @@ public class BiometricScheduler {
      */
     public void scheduleClientMonitor(@NonNull BaseClientMonitor clientMonitor,
             @Nullable BaseClientMonitor.Callback clientCallback) {
-        // Mark any interruptable pending clients as canceling. Once they reach the head of the
-        // queue, the scheduler will send ERROR_CANCELED and skip the operation.
-        for (Operation operation : mPendingOperations) {
-            if (operation.mClientMonitor instanceof Interruptable
-                    && operation.mState != Operation.STATE_WAITING_IN_QUEUE_CANCELING) {
-                Slog.d(getTag(), "New client incoming, marking pending client as canceling: "
-                        + operation.mClientMonitor);
-                operation.mState = Operation.STATE_WAITING_IN_QUEUE_CANCELING;
+        // If the incoming operation should interrupt preceding clients, mark any interruptable
+        // pending clients as canceling. Once they reach the head of the queue, the scheduler will
+        // send ERROR_CANCELED and skip the operation.
+        if (clientMonitor.interruptsPrecedingClients()) {
+            for (Operation operation : mPendingOperations) {
+                if (operation.mClientMonitor instanceof Interruptable
+                        && operation.mState != Operation.STATE_WAITING_IN_QUEUE_CANCELING) {
+                    Slog.d(getTag(), "New client incoming, marking pending client as canceling: "
+                            + operation.mClientMonitor);
+                    operation.mState = Operation.STATE_WAITING_IN_QUEUE_CANCELING;
+                }
             }
         }
 
@@ -474,8 +493,11 @@ public class BiometricScheduler {
         Slog.d(getTag(), "[Added] " + clientMonitor
                 + ", new queue size: " + mPendingOperations.size());
 
-        // If the current operation is cancellable, start the cancellation process.
-        if (mCurrentOperation != null && mCurrentOperation.mClientMonitor instanceof Interruptable
+        // If the new operation should interrupt preceding clients, and if the current operation is
+        // cancellable, start the cancellation process.
+        if (clientMonitor.interruptsPrecedingClients()
+                && mCurrentOperation != null
+                && mCurrentOperation.mClientMonitor instanceof Interruptable
                 && mCurrentOperation.mState == Operation.STATE_STARTED) {
             Slog.d(getTag(), "[Cancelling Interruptable]: " + mCurrentOperation);
             cancelInternal(mCurrentOperation);
@@ -547,14 +569,26 @@ public class BiometricScheduler {
         final boolean isAuthenticating =
                 mCurrentOperation.mClientMonitor instanceof AuthenticationConsumer;
         final boolean tokenMatches = mCurrentOperation.mClientMonitor.getToken() == token;
-        if (!isAuthenticating || !tokenMatches) {
-            Slog.w(getTag(), "Not cancelling authentication"
-                    + ", current operation : " + mCurrentOperation
-                    + ", tokenMatches: " + tokenMatches);
-            return;
-        }
 
-        cancelInternal(mCurrentOperation);
+        if (isAuthenticating && tokenMatches) {
+            Slog.d(getTag(), "Cancelling authentication: " + mCurrentOperation);
+            cancelInternal(mCurrentOperation);
+        } else if (!isAuthenticating) {
+            // Look through the current queue for all authentication clients for the specified
+            // token, and mark them as STATE_WAITING_IN_QUEUE_CANCELING. Note that we're marking
+            // all of them, instead of just the first one, since the API surface currently doesn't
+            // allow us to distinguish between multiple authentication requests from the same
+            // process. However, this generally does not happen anyway, and would be a class of
+            // bugs on its own.
+            for (Operation operation : mPendingOperations) {
+                if (operation.mClientMonitor instanceof AuthenticationConsumer
+                        && operation.mClientMonitor.getToken() == token) {
+                    Slog.d(getTag(), "Marking " + operation
+                            + " as STATE_WAITING_IN_QUEUE_CANCELING");
+                    operation.mState = Operation.STATE_WAITING_IN_QUEUE_CANCELING;
+                }
+            }
+        }
     }
 
     /**
@@ -600,6 +634,29 @@ public class BiometricScheduler {
         for (CrashState crashState : mCrashStates) {
             pw.println("Crash State " + crashState);
         }
+    }
+
+    public byte[] dumpProtoState(boolean clearSchedulerBuffer) {
+        final ProtoOutputStream proto = new ProtoOutputStream();
+        proto.write(BiometricSchedulerProto.CURRENT_OPERATION, mCurrentOperation != null
+                ? mCurrentOperation.mClientMonitor.getProtoEnum() : BiometricsProto.CM_NONE);
+        proto.write(BiometricSchedulerProto.TOTAL_OPERATIONS, mTotalOperationsHandled);
+
+        if (!mRecentOperations.isEmpty()) {
+            for (int i = 0; i < mRecentOperations.size(); i++) {
+                proto.write(BiometricSchedulerProto.RECENT_OPERATIONS, mRecentOperations.get(i));
+            }
+        } else {
+            // TODO:(b/178828362) Unsure why protobuf has a problem decoding when an empty list
+            //  is returned. So, let's just add a no-op for this case.
+            proto.write(BiometricSchedulerProto.RECENT_OPERATIONS, BiometricsProto.CM_NONE);
+        }
+        proto.flush();
+
+        if (clearSchedulerBuffer) {
+            mRecentOperations.clear();
+        }
+        return proto.getBytes();
     }
 
     /**

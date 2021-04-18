@@ -16,7 +16,6 @@
 package com.android.server.audio;
 
 import android.annotation.NonNull;
-import android.app.ActivityManager;
 import android.bluetooth.BluetoothA2dp;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -37,7 +36,6 @@ import android.media.MediaMetrics;
 import android.os.Binder;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
-import android.os.UserHandle;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
@@ -664,6 +662,11 @@ public class AudioDeviceInventory {
 
     /*package*/ int removePreferredDevicesForStrategySync(int strategy) {
         final long identity = Binder.clearCallingIdentity();
+
+        AudioService.sDeviceLogger.log((new AudioEventLogger.StringEvent(
+                "removePreferredDevicesForStrategySync, strategy: "
+                + strategy)).printLog(TAG));
+
         final int status = mAudioSystem.removeDevicesRoleForStrategy(
                 strategy, AudioSystem.DEVICE_ROLE_PREFERRED);
         Binder.restoreCallingIdentity(identity);
@@ -1270,7 +1273,7 @@ public class AudioDeviceInventory {
 
         final long ident = Binder.clearCallingIdentity();
         try {
-            ActivityManager.broadcastStickyIntent(intent, UserHandle.USER_CURRENT);
+            mDeviceBroker.broadcastStickyIntentToCurrentProfileGroup(intent);
         } finally {
             Binder.restoreCallingIdentity(ident);
         }

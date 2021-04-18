@@ -26,7 +26,7 @@ import android.util.Slog;
 import android.view.Choreographer;
 import android.view.Display;
 
-import com.android.internal.BrightnessSynchronizer;
+import com.android.internal.display.BrightnessSynchronizer;
 
 import java.io.PrintWriter;
 
@@ -72,7 +72,10 @@ final class DisplayPowerState {
 
     private Runnable mCleanListener;
 
-    public DisplayPowerState(DisplayBlanker blanker, ColorFade colorFade, int displayId) {
+    private volatile boolean mStopped;
+
+    DisplayPowerState(
+            DisplayBlanker blanker, ColorFade colorFade, int displayId, int displayState) {
         mHandler = new Handler(true /*async*/);
         mChoreographer = Choreographer.getInstance();
         mBlanker = blanker;
@@ -81,14 +84,14 @@ final class DisplayPowerState {
         mPhotonicModulator.start();
         mDisplayId = displayId;
 
-        // At boot time, we know that the screen is on and the electron beam
-        // animation is not playing.  We don't know the screen's brightness though,
+        // At boot time, we don't know the screen's brightness,
         // so prepare to set it to a known state when the state is next applied.
-        // Although we set the brightness to full on here, the display power controller
+        // Although we set the brightness here, the display power controller
         // will reset the brightness to a new level immediately before the changes
         // actually have a chance to be applied.
-        mScreenState = Display.STATE_ON;
-        mScreenBrightness = PowerManager.BRIGHTNESS_MAX;
+        mScreenState = displayState;
+        mScreenBrightness = (displayState != Display.STATE_OFF) ? PowerManager.BRIGHTNESS_MAX
+                : PowerManager.BRIGHTNESS_OFF_FLOAT;
         scheduleScreenUpdate();
 
         mColorFadePrepared = false;
@@ -263,9 +266,24 @@ final class DisplayPowerState {
         }
     }
 
+    /**
+     * Interrupts all running threads; halting future work.
+     *
+     * This method should be called when the DisplayPowerState is no longer in use; i.e. when
+     * the {@link #mDisplayId display} has been removed.
+     */
+    public void stop() {
+        mStopped = true;
+        mPhotonicModulator.interrupt();
+        dismissColorFade();
+        mCleanListener = null;
+        mHandler.removeCallbacksAndMessages(null);
+    }
+
     public void dump(PrintWriter pw) {
         pw.println();
         pw.println("Display Power State:");
+        pw.println("  mStopped=" + mStopped);
         pw.println("  mScreenState=" + Display.stateToString(mScreenState));
         pw.println("  mScreenBrightness=" + mScreenBrightness);
         pw.println("  mScreenReady=" + mScreenReady);
@@ -427,7 +445,11 @@ final class DisplayPowerState {
                     if (!stateChanged && !backlightChanged) {
                         try {
                             mLock.wait();
-                        } catch (InterruptedException ex) { }
+                        } catch (InterruptedException ex) {
+                            if (mStopped) {
+                                return;
+                            }
+                        }
                         continue;
                     }
                     mActualState = state;

@@ -57,8 +57,7 @@
     <string name="imei" msgid="2157082351232630390">"IMEI"</string>
     <string name="meid" msgid="3291227361605924674">"MEID"</string>
     <string name="ClipMmi" msgid="4110549342447630629">"ഇൻകമിംഗ് വിളിച്ച നമ്പർ"</string>
-    <!-- no translation found for ClirMmi (6752346475055446417) -->
-    <skip />
+    <string name="ClirMmi" msgid="6752346475055446417">"ഔട്ട്ഗോയിംഗ് കോളർ ഐഡി മറയ്ക്കുക"</string>
     <string name="ColpMmi" msgid="4736462893284419302">"കണക്‌റ്റുചെയ്‌തിരിക്കുന്ന ലൈൻ ഐഡി"</string>
     <string name="ColrMmi" msgid="5889782479745764278">"കണക്‌റ്റുചെയ്‌തിരിക്കുന്ന ലൈൻ ഐഡി നിയന്ത്രണം"</string>
     <string name="CfMmi" msgid="8390012691099787178">"കോൾ ഫോർവേഡിംഗ്"</string>
@@ -149,7 +148,7 @@
     <string name="wfc_mode_wifi_only_summary" msgid="104951993894678665">"വൈഫൈ മാത്രം"</string>
     <!-- no translation found for crossSimFormat_spn (9125246077491634262) -->
     <skip />
-    <string name="crossSimFormat_spn_cross_sim_calling" msgid="779976494687695991">"<xliff:g id="SPN">%s</xliff:g> ക്രോസ് സിം കോളിംഗ്"</string>
+    <string name="crossSimFormat_spn_cross_sim_calling" msgid="5620807020002879057">"<xliff:g id="SPN">%s</xliff:g> ബാക്കപ്പ് കോളിംഗ്"</string>
     <string name="cfTemplateNotForwarded" msgid="862202427794270501">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: കൈമാറിയില്ല"</string>
     <string name="cfTemplateForwarded" msgid="9132506315842157860">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: <xliff:g id="DIALING_NUMBER">{1}</xliff:g>"</string>
     <string name="cfTemplateForwardedTime" msgid="735042369233323609">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: <xliff:g id="TIME_DELAY">{2}</xliff:g> നിമിഷത്തിനുശേഷം <xliff:g id="DIALING_NUMBER">{1}</xliff:g>"</string>
@@ -204,6 +203,7 @@
     <string name="sensor_notification_service" msgid="7474531979178682676">"സെൻസർ അറിയിപ്പ് സേവനം"</string>
     <string name="twilight_service" msgid="8964898045693187224">"സന്ധ്യാസമയത്തെ സേവനം"</string>
     <string name="offline_location_time_zone_detection_service_attribution" msgid="303754195048744816">"സമയമേഖല കണ്ടെത്താനുള്ള സംവിധാനം (കണക്റ്റിവിറ്റി ഇല്ല)"</string>
+    <string name="gnss_time_update_service" msgid="9039489496037616095">"GNSS സമയ അപ്ഡേറ്റ് സേവനം"</string>
     <string name="factory_reset_warning" msgid="6858705527798047809">"നിങ്ങളുടെ ഉപകരണം മായ്‌ക്കും"</string>
     <string name="factory_reset_message" msgid="2657049595153992213">"അഡ്‌മിൻ ആപ്പ് ഉപയോഗിക്കാനാകില്ല. നിങ്ങളുടെ ഉപകരണം ഇപ്പോൾ മായ്ക്കപ്പെടും.\n\nനിങ്ങൾക്ക് ചോദ്യങ്ങൾ ഉണ്ടെങ്കിൽ, നിങ്ങളുടെ സ്ഥാപനത്തിന്റെ അഡ്‌മിനെ ബന്ധപ്പെടുക."</string>
     <string name="printing_disabled_by" msgid="3517499806528864633">"<xliff:g id="OWNER_APP">%s</xliff:g> പ്രിന്റിംഗ് പ്രവർത്തനരഹിതമാക്കി."</string>
@@ -550,13 +550,18 @@
     <string name="permdesc_imagesWrite" msgid="5195054463269193317">"നിങ്ങളുടെ ഫോട്ടോ ശേഖരം പരിഷ്‌ക്കരിക്കുന്നതിന് ആപ്പിനെ അനുവദിക്കുന്നു."</string>
     <string name="permlab_mediaLocation" msgid="7368098373378598066">"നിങ്ങളുടെ മീഡിയ ശേഖരത്തിൽ നിന്നും ലൊക്കേഷനുകൾ റീഡ് ചെയ്യുക"</string>
     <string name="permdesc_mediaLocation" msgid="597912899423578138">"നിങ്ങളുടെ മീഡിയ ശേഖരത്തിൽ നിന്നും ലൊക്കേഷനുകൾ റീഡ് ചെയ്യുന്നതിന് ആപ്പിനെ അനുവദിക്കുന്നു."</string>
+    <string name="biometric_app_setting_name" msgid="3339209978734534457">"ബയോമെട്രിക്‌സ് ഉപയോഗിക്കുക"</string>
+    <string name="biometric_or_screen_lock_app_setting_name" msgid="5348462421758257752">"ബയോമെട്രിക്‌സ് അല്ലെങ്കിൽ സ്‌ക്രീൻ ലോക്ക് ഉപയോഗിക്കുക"</string>
     <string name="biometric_dialog_default_title" msgid="55026799173208210">"ഇത് നിങ്ങളാണെന്ന് പരിശോധിച്ചുറപ്പിക്കുക"</string>
+    <string name="biometric_dialog_default_subtitle" msgid="8457232339298571992">"തുടരാൻ ബയോമെട്രിക് ഉപയോഗിക്കുക"</string>
     <string name="biometric_error_hw_unavailable" msgid="2494077380540615216">"ബയോമെട്രിക് ഹാർ‌ഡ്‌വെയർ ലഭ്യമല്ല"</string>
     <string name="biometric_error_user_canceled" msgid="6732303949695293730">"പരിശോധിച്ചുറപ്പിക്കൽ റദ്ദാക്കി"</string>
     <string name="biometric_not_recognized" msgid="5106687642694635888">"തിരിച്ചറിഞ്ഞില്ല"</string>
     <string name="biometric_error_canceled" msgid="8266582404844179778">"പരിശോധിച്ചുറപ്പിക്കൽ റദ്ദാക്കി"</string>
     <string name="biometric_error_device_not_secured" msgid="3129845065043995924">"പിന്നോ പാറ്റേണോ പാസ്‌വേഡോ സജ്ജീകരിച്ചിട്ടില്ല"</string>
     <string name="biometric_error_generic" msgid="6784371929985434439">"പിശക് പരിശോധിച്ചുറപ്പിക്കുന്നു"</string>
+    <string name="screen_lock_app_setting_name" msgid="6054944352976789228">"സ്‌ക്രീൻ ലോക്ക് ഉപയോഗിക്കുക"</string>
+    <string name="screen_lock_dialog_default_subtitle" msgid="8638638125397857315">"തുടരാൻ നിങ്ങളുടെ ഉപകരണ ക്രെഡൻഷ്യലുകൾ നൽകുക"</string>
     <string name="fingerprint_acquired_partial" msgid="8532380671091299342">"ഫിംഗർപ്രിന്റ് ഭാഗികമായി തിരിച്ചറിഞ്ഞു. വീണ്ടും ശ്രമിക്കുക."</string>
     <string name="fingerprint_acquired_insufficient" msgid="2545149524031515411">"ഫിംഗർപ്രിന്റ് പ്രോസസ് ചെയ്യാനായില്ല. വീണ്ടും ശ്രമിക്കുക."</string>
     <string name="fingerprint_acquired_imager_dirty" msgid="4694800187151533990">"ഫിംഗർപ്രിന്റ് സെൻസറിൽ ചെളിയുണ്ട്. അത് വൃത്തിയാക്കി വീണ്ടും ശ്രമിക്കുക."</string>
@@ -579,6 +584,9 @@
     <string name="fingerprint_error_hw_not_present" msgid="578914350967423382">"ഈ ഉപകരണത്തിൽ ഫിംഗർപ്രിന്റ് സെൻസറില്ല."</string>
     <string name="fingerprint_error_security_update_required" msgid="7750187320640856433">"സെൻസർ താൽക്കാലികമായി പ്രവർത്തനരഹിതമാക്കി."</string>
     <string name="fingerprint_name_template" msgid="8941662088160289778">"കൈവിരൽ <xliff:g id="FINGERID">%d</xliff:g>"</string>
+    <string name="fingerprint_app_setting_name" msgid="4253767877095495844">"ഫിംഗർപ്രിന്റ് ഉപയോഗിക്കുക"</string>
+    <string name="fingerprint_or_screen_lock_app_setting_name" msgid="3501743523487644907">"ഫിംഗർപ്രിന്റ് അല്ലെങ്കിൽ സ്‌ക്രീൻ ലോക്ക് ഉപയോഗിക്കുക"</string>
+    <string name="fingerprint_dialog_default_subtitle" msgid="3879832845486835905">"തുടരുന്നതിന് നിങ്ങളുടെ ഫിംഗർപ്രിന്റ് ഉപയോഗിക്കുക"</string>
   <string-array name="fingerprint_error_vendor">
   </string-array>
     <string name="fingerprint_icon_content_description" msgid="4741068463175388817">"ഫിംഗർപ്രിന്റ് ഐക്കൺ"</string>
@@ -605,7 +613,7 @@
     <string name="face_acquired_too_different" msgid="4699657338753282542">"ഇനി മുഖം തിരിച്ചറിയാനാവില്ല. വീണ്ടും ശ്രമിക്കൂ."</string>
     <string name="face_acquired_too_similar" msgid="7684650785108399370">"വളരെയധികം സമാനത, നിങ്ങളുടെ പോസ് മാറ്റുക."</string>
     <string name="face_acquired_pan_too_extreme" msgid="7822191262299152527">"നിങ്ങളുടെ തല ഇത്ര തിരിക്കേണ്ട."</string>
-    <string name="face_acquired_tilt_too_extreme" msgid="8119978324129248059">"നിങ്ങളുടെ തല ഇത്ര തിരിക്കേണ്ട."</string>
+    <string name="face_acquired_tilt_too_extreme" msgid="8618210742620248049">"നിങ്ങളുടെ തല ചെറുതായി ടിൽറ്റ് ചെയ്യുക."</string>
     <string name="face_acquired_roll_too_extreme" msgid="1442830503572636825">"നിങ്ങളുടെ തല ഇത്ര തിരിക്കേണ്ട."</string>
     <string name="face_acquired_obscured" msgid="4917643294953326639">"നിങ്ങളുടെ മുഖം മറയ്‌ക്കുന്നത് എല്ലാം നീക്കം ചെയ്യൂ."</string>
     <string name="face_acquired_sensor_dirty" msgid="8968391891086721678">"കറുപ്പ് ബാർ ഉൾപ്പെടെ നിങ്ങളുടെ സ്ക്രീനിന്റെ മുകൾഭാഗം വൃത്തിയാക്കുക"</string>
@@ -623,6 +631,9 @@
     <string name="face_error_hw_not_present" msgid="1070600921591729944">"മുഖം തിരിച്ചറിഞ്ഞുള്ള അൺലോക്ക് ഈ ഉപകരണം പിന്തുണയ്ക്കുന്നില്ല."</string>
     <string name="face_error_security_update_required" msgid="5076017208528750161">"സെൻസർ താൽക്കാലികമായി പ്രവർത്തനരഹിതമാക്കി."</string>
     <string name="face_name_template" msgid="3877037340223318119">"മുഖം <xliff:g id="FACEID">%d</xliff:g>"</string>
+    <string name="face_app_setting_name" msgid="8130135875458467243">"മുഖം തിരിച്ചറിഞ്ഞുള്ള അൺലോക്ക് ഉപയോഗിക്കുക"</string>
+    <string name="face_or_screen_lock_app_setting_name" msgid="1603149075605709106">"മുഖം അല്ലെങ്കിൽ സ്‌ക്രീൻ ലോക്ക് ഉപയോഗിക്കുക"</string>
+    <string name="face_dialog_default_subtitle" msgid="4979205739418564856">"തുടരാൻ മുഖം തിരിച്ചറിഞ്ഞുള്ള അൺലോക്ക് ഉപയോഗിക്കുക"</string>
   <string-array name="face_error_vendor">
   </string-array>
     <string name="face_icon_content_description" msgid="465030547475916280">"മുഖത്തിന്റെ ഐക്കൺ"</string>
@@ -684,6 +695,8 @@
     <string name="permdesc_access_notification_policy" msgid="8538374112403845013">"\'ശല്യപ്പെടുത്തരുത്\' കോൺഫിഗറേഷൻ വായിക്കുന്നതിനും എഴുതുന്നതിനും ആപ്പിനെ അനുവദിക്കുന്നു."</string>
     <string name="permlab_startViewPermissionUsage" msgid="1504564328641112341">"അനുമതി ഉപയോഗം കാണാൻ ആരംഭിക്കുക"</string>
     <string name="permdesc_startViewPermissionUsage" msgid="2820325605959586538">"ഒരു ആപ്പിനുള്ള അനുമതി ഉപയോഗം ആരംഭിക്കാൻ ഹോൾഡറിനെ അനുവദിക്കുന്നു. സാധാരണ ആപ്പുകൾക്ക് ഒരിക്കലും ആവശ്യമില്ല."</string>
+    <string name="permlab_highSamplingRateSensors" msgid="3941068435726317070">"ഉയർന്ന സാം‍പ്ലിംഗ് റേറ്റിൽ സെൻസർ ഡാറ്റ ആക്സസ് ചെയ്യുക"</string>
+    <string name="permdesc_highSamplingRateSensors" msgid="8430061978931155995">"200 Hz-നേക്കാൾ ഉയർന്ന റേറ്റിൽ സെൻസർ ഡാറ്റ സാമ്പിൾ ചെയ്യാൻ ആപ്പിനെ അനുവദിക്കുന്നു"</string>
     <string name="policylab_limitPassword" msgid="4851829918814422199">"പാസ്‌വേഡ് നിയമങ്ങൾ സജ്ജീകരിക്കുക"</string>
     <string name="policydesc_limitPassword" msgid="4105491021115793793">"സ്‌ക്രീൻ ലോക്ക് പാസ്‌വേഡുകളിലും PIN-കളിലും അനുവദിച്ചിരിക്കുന്ന ദൈർഘ്യവും പ്രതീകങ്ങളും നിയന്ത്രിക്കുക."</string>
     <string name="policylab_watchLogin" msgid="7599669460083719504">"സ്‌ക്രീൻ അൺലോക്ക് ശ്രമങ്ങൾ നിരീക്ഷിക്കുക"</string>
@@ -1664,6 +1677,7 @@
     <string name="leave_accessibility_shortcut_on" msgid="6543362062336990814">"കുറുക്കുവഴി ഉപയോഗിക്കുക"</string>
     <string name="color_inversion_feature_name" msgid="326050048927789012">"വർണ്ണ വിപര്യയം"</string>
     <string name="color_correction_feature_name" msgid="3655077237805422597">"നിറം ക്രമീകരിക്കൽ"</string>
+    <string name="reduce_bright_colors_feature_name" msgid="8978255324027479398">"തെളിച്ചം കുറയ്ക്കുക"</string>
     <string name="accessibility_shortcut_enabling_service" msgid="5473495203759847687">"വോളിയം കീകൾ പിടിച്ചു. <xliff:g id="SERVICE_NAME">%1$s</xliff:g> ഓണാക്കി."</string>
     <string name="accessibility_shortcut_disabling_service" msgid="8675244165062700619">"വോളിയം കീകൾ അമർത്തിപ്പിടിച്ചു. <xliff:g id="SERVICE_NAME">%1$s</xliff:g> ഓഫാക്കി."</string>
     <string name="accessibility_shortcut_spoken_feedback" msgid="4228997042855695090">"<xliff:g id="SERVICE_NAME">%1$s</xliff:g> ഉപയോഗിക്കാൻ, രണ്ട് വോളിയം കീകളും മൂന്ന് സെക്കൻഡ് അമർത്തിപ്പിടിക്കുക"</string>
@@ -1867,8 +1881,10 @@
     <string name="stk_cc_ss_to_dial_video" msgid="1324194624384312664">"SS അഭ്യർത്ഥന, വീഡിയോ കോളിലേക്ക് മാറ്റി"</string>
     <string name="stk_cc_ss_to_ussd" msgid="8417905193112944760">"SS അഭ്യർത്ഥന, USSD അഭ്യർത്ഥനയിലേക്ക് മാറ്റി"</string>
     <string name="stk_cc_ss_to_ss" msgid="132040645206514450">"പുതിയ SS അഭ്യർത്ഥനയിലേക്ക് മാറ്റി"</string>
+    <string name="notification_phishing_alert_content_description" msgid="494227305355958790">"ഫിഷിംഗ് മുന്നറിയിപ്പ്"</string>
     <string name="notification_work_profile_content_description" msgid="5296477955677725799">"ഔദ്യോഗിക പ്രൊഫൈൽ"</string>
     <string name="notification_alerted_content_description" msgid="6139691253611265992">"മുന്നറിയിപ്പ് നൽകി"</string>
+    <string name="notification_verified_content_description" msgid="6401483602782359391">"പരിശോധിച്ചുറപ്പിച്ചത്"</string>
     <string name="expand_button_content_description_collapsed" msgid="3873368935659010279">"വികസിപ്പിക്കുക"</string>
     <string name="expand_button_content_description_expanded" msgid="7484217944948667489">"ചുരുക്കുക"</string>
     <string name="expand_action_accessibility" msgid="1947657036871746627">"വികസിപ്പിക്കൽ ടോഗിൾ ചെയ്യുക"</string>
@@ -1880,6 +1896,12 @@
     <string name="maximize_button_text" msgid="4258922519914732645">"വലുതാക്കുക"</string>
     <string name="close_button_text" msgid="10603510034455258">"അവസാനിപ്പിക്കുക"</string>
     <string name="notification_messaging_title_template" msgid="772857526770251989">"<xliff:g id="CONVERSATION_TITLE">%1$s</xliff:g>: <xliff:g id="SENDER_NAME">%2$s</xliff:g>"</string>
+    <string name="call_notification_answer_action" msgid="5999246836247132937">"മറുപടി നൽകുക"</string>
+    <string name="call_notification_decline_action" msgid="3700345945214000726">"നിരസിക്കുക"</string>
+    <string name="call_notification_hang_up_action" msgid="9130720590159188131">"കോൾ നിർത്തുക"</string>
+    <string name="call_notification_incoming_text" msgid="6143109825406638201">"ഇൻകമിംഗ് കോൾ"</string>
+    <string name="call_notification_ongoing_text" msgid="3880832933933020875">"സജീവമായ കോൾ"</string>
+    <string name="call_notification_screening_text" msgid="8396931408268940208">"ഇൻകമിംഗ് കോൾ സ്‌ക്രീൻ ചെയ്യൽ"</string>
     <plurals name="selected_count" formatted="false" msgid="3946212171128200491">
       <item quantity="other"><xliff:g id="COUNT_1">%1$d</xliff:g> എണ്ണം തിരഞ്ഞെടുത്തു</item>
       <item quantity="one"><xliff:g id="COUNT_0">%1$d</xliff:g> എണ്ണം തിരഞ്ഞെടുത്തു</item>
@@ -1934,6 +1956,7 @@
     <string name="app_category_news" msgid="1172762719574964544">"വാർത്തകളും മാസികകളും"</string>
     <string name="app_category_maps" msgid="6395725487922533156">"മാപ്പുകളും നാവിഗേഷനും"</string>
     <string name="app_category_productivity" msgid="1844422703029557883">"ഉല്‍‌പ്പാദനക്ഷമത"</string>
+    <string name="app_category_accessibility" msgid="6643521607848547683">"ഉപയോഗസഹായി"</string>
     <string name="device_storage_monitor_notification_channel" msgid="5164244565844470758">"ഉപകരണ സ്റ്റോറേജ്"</string>
     <string name="adb_debugging_notification_channel_tv" msgid="4764046459631031496">"USB ഡീബഗ്ഗിംഗ്"</string>
     <string name="time_picker_hour_label" msgid="4208590187662336864">"മണി."</string>
@@ -2204,4 +2227,10 @@
     <string name="window_magnification_prompt_content" msgid="4166711383253283838">"സ്ക്രീനിന്റെ ഭാഗങ്ങളോ മുഴുവനുമോ മാഗ്നിഫൈ ചെയ്യാം"</string>
     <string name="turn_on_magnification_settings_action" msgid="8521433346684847700">"ക്രമീകരണത്തിൽ ഓണാക്കുക"</string>
     <string name="dismiss_action" msgid="1728820550388704784">"ഡിസ്‌മിസ് ചെയ്യുക"</string>
+    <string name="sensor_privacy_start_use_mic_notification_content" msgid="8063355861118105607">"തുടരാൻ, &lt;b&gt;‎‏‎‎‏‏‎<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; ആപ്പിന് നിങ്ങളുടെ ഉപകരണത്തിന്റെ മൈക്രോഫോണിലേക്ക് ആക്‌സസ് നൽകേണ്ടതുണ്ട്."</string>
+    <string name="sensor_privacy_start_use_camera_notification_content" msgid="4738005643315863736">"തുടരാൻ, &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; ആപ്പിന് നിങ്ങളുടെ ഉപകരണത്തിന്റെ ക്യാമറയിലേക്ക് ആക്‌സസ് നൽകേണ്ടതുണ്ട്."</string>
+    <string name="sensor_privacy_start_use_dialog_turn_on_button" msgid="7921147002346108119">"ഓണാക്കുക"</string>
+    <string name="sensor_privacy_notification_channel_label" msgid="936036783155261349">"സെൻസർ സ്വകാര്യത"</string>
+    <string name="splash_screen_view_icon_description" msgid="180638751260598187">"ആപ്പ് ഐക്കൺ"</string>
+    <string name="splash_screen_view_branding_description" msgid="7911129347402728216">"അപ്ലിക്കേഷൻ ബ്രാൻഡിംഗ് ഇമേജ്"</string>
 </resources>

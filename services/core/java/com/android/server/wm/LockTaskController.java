@@ -141,6 +141,7 @@ public class LockTaskController {
     private final IBinder mToken = new LockTaskToken();
     private final ActivityTaskSupervisor mSupervisor;
     private final Context mContext;
+    private final TaskChangeNotificationController mTaskChangeNotificationController;
 
     // The following system services cannot be final, because they do not exist when this class
     // is instantiated during device boot
@@ -204,10 +205,11 @@ public class LockTaskController {
     private int mPendingDisableFromDismiss = UserHandle.USER_NULL;
 
     LockTaskController(Context context, ActivityTaskSupervisor supervisor,
-            Handler handler) {
+            Handler handler, TaskChangeNotificationController taskChangeNotificationController) {
         mContext = context;
         mSupervisor = supervisor;
         mHandler = handler;
+        mTaskChangeNotificationController = taskChangeNotificationController;
     }
 
     /**
@@ -532,12 +534,13 @@ public class LockTaskController {
         // thread, which makes it guarded by ATMS#mGlobalLock as ATMS#getLockTaskModeState.
         final int oldLockTaskModeState = mLockTaskModeState;
         mLockTaskModeState = LOCK_TASK_MODE_NONE;
+        mTaskChangeNotificationController.notifyLockTaskModeChanged(mLockTaskModeState);
         // When lock task ends, we enable the status bars.
         try {
             setStatusBarState(mLockTaskModeState, userId);
             setKeyguardState(mLockTaskModeState, userId);
             if (oldLockTaskModeState == LOCK_TASK_MODE_PINNED) {
-                lockKeyguardIfNeeded();
+                lockKeyguardIfNeeded(userId);
             }
             if (getDevicePolicyManager() != null) {
                 getDevicePolicyManager().notifyLockTaskModeChanged(false, null, userId);
@@ -661,6 +664,7 @@ public class LockTaskController {
             }
             mWindowManager.onLockTaskStateChanged(lockTaskModeState);
             mLockTaskModeState = lockTaskModeState;
+            mTaskChangeNotificationController.notifyLockTaskModeChanged(mLockTaskModeState);
             setStatusBarState(lockTaskModeState, userId);
             setKeyguardState(lockTaskModeState, userId);
             if (getDevicePolicyManager() != null) {
@@ -882,15 +886,15 @@ public class LockTaskController {
      * Helper method for locking the device immediately. This may be necessary when the device
      * leaves the pinned mode.
      */
-    private void lockKeyguardIfNeeded() {
-        if (shouldLockKeyguard()) {
+    private void lockKeyguardIfNeeded(int userId) {
+        if (shouldLockKeyguard(userId)) {
             mWindowManager.lockNow(null);
             mWindowManager.dismissKeyguard(null /* callback */, null /* message */);
             getLockPatternUtils().requireCredentialEntry(USER_ALL);
         }
     }
 
-    private boolean shouldLockKeyguard() {
+    private boolean shouldLockKeyguard(int userId) {
         // This functionality should be kept consistent with
         // com.android.settings.security.ScreenPinningSettings (see b/127605586)
         try {
@@ -900,7 +904,7 @@ public class LockTaskController {
         } catch (Settings.SettingNotFoundException e) {
             // Log to SafetyNet for b/127605586
             android.util.EventLog.writeEvent(0x534e4554, "127605586", -1, "");
-            return getLockPatternUtils().isSecure(USER_CURRENT);
+            return getLockPatternUtils().isSecure(userId);
         }
     }
 

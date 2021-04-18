@@ -18,11 +18,13 @@ package com.android.server.am;
 
 import static android.app.PendingIntent.FLAG_IMMUTABLE;
 import static android.app.PendingIntent.FLAG_UPDATE_CURRENT;
+import static android.os.PowerWhitelistManager.REASON_DENIED;
 
 import static com.android.server.am.ActivityManagerDebugConfig.TAG_AM;
 import static com.android.server.am.ActivityManagerDebugConfig.TAG_WITH_CLASS_NAME;
 
 import android.annotation.Nullable;
+import android.app.IApplicationThread;
 import android.app.Notification;
 import android.app.PendingIntent;
 import android.content.ComponentName;
@@ -35,6 +37,7 @@ import android.net.Uri;
 import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerWhitelistManager;
 import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.Settings;
@@ -46,7 +49,6 @@ import android.util.proto.ProtoUtils;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.app.procstats.ServiceState;
-import com.android.internal.os.BatteryStatsImpl;
 import com.android.server.LocalServices;
 import com.android.server.notification.NotificationManagerInternal;
 import com.android.server.uri.NeededUriGrants;
@@ -70,7 +72,6 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
     static final int MAX_DONE_EXECUTING_COUNT = 6;
 
     final ActivityManagerService ams;
-    final BatteryStatsImpl.Uid.Pkg.Serv stats;
     final ComponentName name; // service component.
     final ComponentName instanceName; // service component's per-instance name.
     final String shortInstanceName; // instanceName.flattenToShortString().
@@ -102,10 +103,11 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
     ProcessRecord isolatedProc; // keep track of isolated process, if requested
     ServiceState tracker; // tracking service execution, may be null
     ServiceState restartTracker; // tracking service restart
-    boolean whitelistManager; // any bindings to this service have BIND_ALLOW_WHITELIST_MANAGEMENT?
+    boolean allowlistManager; // any bindings to this service have BIND_ALLOW_WHITELIST_MANAGEMENT?
     boolean delayed;        // are we waiting to start this service in the background?
     boolean fgRequired;     // is the service required to go foreground after starting?
     boolean fgWaiting;      // is a timeout for going foreground already scheduled?
+    boolean isNotAppComponentUsage; // is service binding not considered component/package usage?
     boolean isForeground;   // is service currently in foreground mode?
     int foregroundId;       // Notification ID of last foreground req.
     Notification foregroundNoti; // Notification record of foreground state.
@@ -157,11 +159,14 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
 
     // the most recent package that start/bind this service.
     String mRecentCallingPackage;
+    // the most recent uid that start/bind this service.
+    int mRecentCallingUid;
 
     // allow the service becomes foreground service? Service started from background may not be
     // allowed to become a foreground service.
-    @ActiveServices.FgsFeatureRetCode int mAllowStartForeground;
+    @PowerWhitelistManager.ReasonCode int mAllowStartForeground = REASON_DENIED;
     String mInfoAllowStartForeground;
+    FgsStartTempAllowList.TempFgsAllowListEntry mInfoTempFgsAllowListReason;
     boolean mLoggedInfoAllowStartForeground;
 
     String stringName;      // caching of toString
@@ -283,7 +288,7 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
         proto.write(ServiceRecordProto.SHORT_NAME, this.shortInstanceName);
         proto.write(ServiceRecordProto.IS_RUNNING, app != null);
         if (app != null) {
-            proto.write(ServiceRecordProto.PID, app.pid);
+            proto.write(ServiceRecordProto.PID, app.getPid());
         }
         if (intent != null) {
             intent.getIntent().dumpDebug(proto, ServiceRecordProto.INTENT, false, true, false,
@@ -310,7 +315,7 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
         if (isolatedProc != null) {
             isolatedProc.dumpDebug(proto, ServiceRecordProto.ISOLATED_PROC);
         }
-        proto.write(ServiceRecordProto.WHITELIST_MANAGER, whitelistManager);
+        proto.write(ServiceRecordProto.WHITELIST_MANAGER, allowlistManager);
         proto.write(ServiceRecordProto.DELAYED, delayed);
         if (isForeground || foregroundId != 0) {
             long fgToken = proto.start(ServiceRecordProto.FOREGROUND);
@@ -411,8 +416,8 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
         if (isolatedProc != null) {
             pw.print(prefix); pw.print("isolatedProc="); pw.println(isolatedProc);
         }
-        if (whitelistManager) {
-            pw.print(prefix); pw.print("whitelistManager="); pw.println(whitelistManager);
+        if (allowlistManager) {
+            pw.print(prefix); pw.print("allowlistManager="); pw.println(allowlistManager);
         }
         if (mIsAllowedBgActivityStartsByBinding) {
             pw.print(prefix); pw.print("mIsAllowedBgActivityStartsByBinding=");
@@ -430,6 +435,8 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
                 pw.println(mAllowWhileInUsePermissionInFgs);
         pw.print(prefix); pw.print("recentCallingPackage=");
                 pw.println(mRecentCallingPackage);
+        pw.print(prefix); pw.print("recentCallingUid=");
+        pw.println(mRecentCallingUid);
         pw.print(prefix); pw.print("allowStartForeground=");
         pw.println(mAllowStartForeground);
         pw.print(prefix); pw.print("infoAllowStartForeground=");
@@ -518,13 +525,11 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
         }
     }
 
-    ServiceRecord(ActivityManagerService ams,
-            BatteryStatsImpl.Uid.Pkg.Serv servStats, ComponentName name,
+    ServiceRecord(ActivityManagerService ams, ComponentName name,
             ComponentName instanceName, String definingPackageName, int definingUid,
             Intent.FilterComparison intent, ServiceInfo sInfo, boolean callerIsFg,
             Runnable restarter) {
         this.ams = ams;
-        this.stats = servStats;
         this.name = name;
         this.instanceName = instanceName;
         shortInstanceName = instanceName.flattenToShortString();
@@ -586,13 +591,14 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
         restartTracker.setRestarting(true, memFactor, now);
     }
 
-    public void setProcess(ProcessRecord _proc) {
-        if (_proc != null) {
+    public void setProcess(ProcessRecord proc, IApplicationThread thread, int pid,
+            UidRecord uidRecord) {
+        if (proc != null) {
             // We're starting a new process for this service, but a previous one is allowed to start
             // background activities. Remove that ability now (unless the new process is the same as
             // the previous one, which is a common case).
             if (mAppForAllowingBgActivityStartsByStart != null) {
-                if (mAppForAllowingBgActivityStartsByStart != _proc) {
+                if (mAppForAllowingBgActivityStartsByStart != proc) {
                     mAppForAllowingBgActivityStartsByStart
                             .removeAllowBackgroundActivityStartsToken(this);
                     ams.mHandler.removeCallbacks(mCleanUpAllowBgActivityStartsByStartCallback);
@@ -600,34 +606,35 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
             }
             // Make sure the cleanup callback knows about the new process.
             mAppForAllowingBgActivityStartsByStart = mIsAllowedBgActivityStartsByStart
-                    ? _proc : null;
+                    ? proc : null;
             if (mIsAllowedBgActivityStartsByStart
                     || mIsAllowedBgActivityStartsByBinding) {
-                _proc.addOrUpdateAllowBackgroundActivityStartsToken(this,
+                proc.addOrUpdateAllowBackgroundActivityStartsToken(this,
                         getExclusiveOriginatingToken());
             } else {
-                _proc.removeAllowBackgroundActivityStartsToken(this);
+                proc.removeAllowBackgroundActivityStartsToken(this);
             }
             if (mIsAllowedBgFgsStartsByBinding) {
-                _proc.addAllowBackgroundFgsStartsToken(this);
+                proc.mState.addAllowBackgroundFgsStartsToken(this);
             } else {
-                _proc.removeAllowBackgroundFgsStartsToken(this);
+                proc.mState.removeAllowBackgroundFgsStartsToken(this);
             }
         }
-        if (app != null && app != _proc) {
+        if (app != null && app != proc) {
             // If the old app is allowed to start bg activities because of a service start, leave it
             // that way until the cleanup callback runs. Otherwise we can remove its bg activity
             // start ability immediately (it can't be bound now).
             if (!mIsAllowedBgActivityStartsByStart) {
                 app.removeAllowBackgroundActivityStartsToken(this);
             }
-            app.updateBoundClientUids();
+            app.mServices.updateBoundClientUids();
         }
-        app = _proc;
-        if (pendingConnectionGroup > 0 && _proc != null) {
-            _proc.connectionService = this;
-            _proc.connectionGroup = pendingConnectionGroup;
-            _proc.connectionImportance = pendingConnectionImportance;
+        app = proc;
+        if (pendingConnectionGroup > 0 && proc != null) {
+            final ProcessServiceRecord psr = proc.mServices;
+            psr.setConnectionService(this);
+            psr.setConnectionGroup(pendingConnectionGroup);
+            psr.setConnectionImportance(pendingConnectionImportance);
             pendingConnectionGroup = pendingConnectionImportance = 0;
         }
         if (ActivityManagerService.TRACK_PROCSTATS_ASSOCIATIONS) {
@@ -635,7 +642,7 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
                 ArrayList<ConnectionRecord> cr = connections.valueAt(conni);
                 for (int i = 0; i < cr.size(); i++) {
                     final ConnectionRecord conn = cr.get(i);
-                    if (_proc != null) {
+                    if (proc != null) {
                         conn.startAssociationIfNeeded();
                     } else {
                         conn.stopAssociation();
@@ -643,8 +650,8 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
                 }
             }
         }
-        if (_proc != null) {
-            _proc.updateBoundClientUids();
+        if (proc != null) {
+            proc.mServices.updateBoundClientUids();
         }
     }
 
@@ -662,7 +669,7 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
 
         // if we have a process attached, add bound client uid of this connection to it
         if (app != null) {
-            app.addBoundClientUid(c.clientUid);
+            app.mServices.addBoundClientUid(c.clientUid);
         }
     }
 
@@ -670,7 +677,7 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
         connections.remove(binder);
         // if we have a process attached, tell it to update the state of bound clients
         if (app != null) {
-            app.updateBoundClientUids();
+            app.mServices.updateBoundClientUids();
         }
     }
 
@@ -824,9 +831,9 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
             return;
         }
         if (mIsAllowedBgFgsStartsByBinding) {
-            app.addAllowBackgroundFgsStartsToken(this);
+            app.mState.addAllowBackgroundFgsStartsToken(this);
         } else {
-            app.removeAllowBackgroundFgsStartsToken(this);
+            app.mState.removeAllowBackgroundFgsStartsToken(this);
         }
     }
 
@@ -895,13 +902,13 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
         return false;
     }
 
-    public void updateWhitelistManager() {
-        whitelistManager = false;
+    public void updateAllowlistManager() {
+        allowlistManager = false;
         for (int conni=connections.size()-1; conni>=0; conni--) {
             ArrayList<ConnectionRecord> cr = connections.valueAt(conni);
             for (int i=0; i<cr.size(); i++) {
                 if ((cr.get(i).flags&Context.BIND_ALLOW_WHITELIST_MANAGEMENT) != 0) {
-                    whitelistManager = true;
+                    allowlistManager = true;
                     return;
                 }
             }
@@ -941,7 +948,7 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
 
     public void postNotification() {
         final int appUid = appInfo.uid;
-        final int appPid = app.pid;
+        final int appPid = app.getPid();
         if (foregroundId != 0 && foregroundNoti != null) {
             // Do asynchronous communication with notification manager to
             // avoid deadlocks.
@@ -1061,7 +1068,7 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
         final String localPackageName = packageName;
         final int localForegroundId = foregroundId;
         final int appUid = appInfo.uid;
-        final int appPid = app != null ? app.pid : 0;
+        final int appPid = app != null ? app.getPid() : 0;
         ams.mHandler.post(new Runnable() {
             public void run() {
                 NotificationManagerInternal nm = LocalServices.getService(

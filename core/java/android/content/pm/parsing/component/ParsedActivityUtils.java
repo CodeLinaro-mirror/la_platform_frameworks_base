@@ -16,6 +16,7 @@
 
 package android.content.pm.parsing.component;
 
+import static android.content.pm.ActivityInfo.LAUNCH_SINGLE_INSTANCE_PER_TASK;
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
 import static android.content.pm.parsing.component.ComponentParseUtils.flag;
 
@@ -25,6 +26,7 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageParser;
 import android.content.pm.parsing.ParsingPackage;
+import android.content.pm.parsing.ParsingPackageUtils;
 import android.content.pm.parsing.ParsingUtils;
 import android.content.pm.parsing.result.ParseInput;
 import android.content.pm.parsing.result.ParseInput.DeferredError;
@@ -66,6 +68,12 @@ public class ParsedActivityUtils {
     static {
         SAFE_BROADCASTS.add(Intent.ACTION_BOOT_COMPLETED);
     }
+
+    /**
+     * Bit mask of all the valid bits that can be set in recreateOnConfigChanges.
+     */
+    private static final int RECREATE_ON_CONFIG_CHANGES_MASK =
+            ActivityInfo.CONFIG_MCC | ActivityInfo.CONFIG_MNC;
 
     @NonNull
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
@@ -153,7 +161,7 @@ public class ParsedActivityUtils {
                 activity.rotationAnimation = sa.getInt(R.styleable.AndroidManifestActivity_rotationAnimation, WindowManager.LayoutParams.ROTATION_ANIMATION_UNSPECIFIED);
                 activity.softInputMode = sa.getInt(R.styleable.AndroidManifestActivity_windowSoftInputMode, 0);
 
-                activity.configChanges = PackageParser.getActivityConfigChanges(
+                activity.configChanges = getActivityConfigChanges(
                         sa.getInt(R.styleable.AndroidManifestActivity_configChanges, 0),
                         sa.getInt(R.styleable.AndroidManifestActivity_recreateOnConfigChanges, 0));
 
@@ -345,7 +353,7 @@ public class ParsedActivityUtils {
                     if (intent != null) {
                         activity.order = Math.max(intent.getOrder(), activity.order);
                         activity.addIntent(intent);
-                        if (PackageParser.LOG_UNSAFE_BROADCASTS && isReceiver
+                        if (LOG_UNSAFE_BROADCASTS && isReceiver
                                 && pkg.getTargetSdkVersion() >= Build.VERSION_CODES.O) {
                             int actionCount = intent.countActions();
                             for (int i = 0; i < actionCount; i++) {
@@ -354,7 +362,7 @@ public class ParsedActivityUtils {
                                     continue;
                                 }
 
-                                if (!PackageParser.SAFE_BROADCASTS.contains(action)) {
+                                if (!SAFE_BROADCASTS.contains(action)) {
                                     Slog.w(TAG,
                                             "Broadcast " + action + " may never be delivered to "
                                                     + pkg.getPackageName() + " as requested at: "
@@ -393,6 +401,16 @@ public class ParsedActivityUtils {
 
             if (result.isError()) {
                 return input.error(result);
+            }
+        }
+
+        if (!isAlias && activity.launchMode != LAUNCH_SINGLE_INSTANCE_PER_TASK
+                && activity.metaData != null && activity.metaData.containsKey(
+                PackageParser.METADATA_ACTIVITY_LAUNCH_MODE)) {
+            final String launchMode = activity.metaData.getString(
+                    PackageParser.METADATA_ACTIVITY_LAUNCH_MODE);
+            if (launchMode != null && launchMode.equals("singleInstancePerTask")) {
+                activity.launchMode = LAUNCH_SINGLE_INSTANCE_PER_TASK;
             }
         }
 
@@ -532,7 +550,7 @@ public class ParsedActivityUtils {
             ParsedActivity activity, ParseInput input) {
         // There isn't a metadata for us to fall back. Whatever is in layout is correct.
         if (activity.metaData == null || !activity.metaData.containsKey(
-                PackageParser.METADATA_ACTIVITY_WINDOW_LAYOUT_AFFINITY)) {
+                ParsingPackageUtils.METADATA_ACTIVITY_WINDOW_LAYOUT_AFFINITY)) {
             return input.success(activity.windowLayout);
         }
 
@@ -542,7 +560,7 @@ public class ParsedActivityUtils {
         }
 
         String windowLayoutAffinity = activity.metaData.getString(
-                PackageParser.METADATA_ACTIVITY_WINDOW_LAYOUT_AFFINITY);
+                ParsingPackageUtils.METADATA_ACTIVITY_WINDOW_LAYOUT_AFFINITY);
         ActivityInfo.WindowLayout layout = activity.windowLayout;
         if (layout == null) {
             layout = new ActivityInfo.WindowLayout(-1 /* width */, -1 /* widthFraction */,
@@ -552,5 +570,15 @@ public class ParsedActivityUtils {
             layout.windowLayoutAffinity = windowLayoutAffinity;
         }
         return input.success(layout);
+    }
+
+    /**
+     * @param configChanges The bit mask of configChanges fetched from AndroidManifest.xml.
+     * @param recreateOnConfigChanges The bit mask recreateOnConfigChanges fetched from
+     *                                AndroidManifest.xml.
+     * @hide
+     */
+    static int getActivityConfigChanges(int configChanges, int recreateOnConfigChanges) {
+        return configChanges | ((~recreateOnConfigChanges) & RECREATE_ON_CONFIG_CHANGES_MASK);
     }
 }

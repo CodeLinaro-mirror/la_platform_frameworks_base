@@ -17,18 +17,27 @@
 package android.widget;
 
 import android.annotation.ColorInt;
+import android.annotation.IntDef;
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.BlendMode;
 import android.graphics.Canvas;
+import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.RecordingCanvas;
 import android.graphics.Rect;
+import android.graphics.RenderNode;
 import android.os.Build;
+import android.util.AttributeSet;
 import android.view.animation.AnimationUtils;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Interpolator;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * This class performs the graphical effect used at the edges of scrollable widgets
@@ -54,6 +63,26 @@ public class EdgeEffect {
      * The default blend mode used by {@link EdgeEffect}.
      */
     public static final BlendMode DEFAULT_BLEND_MODE = BlendMode.SRC_ATOP;
+
+    /**
+     * Use a color edge glow for the edge effect. From XML, use
+     * <code>android:edgeEffectType="glow"</code>.
+     */
+    public static final int TYPE_GLOW = 0;
+
+    /**
+     * Use a stretch for the edge effect. From XML, use
+     * <code>android:edgeEffectType="stretch"</code>.
+     */
+    public static final int TYPE_STRETCH = 1;
+
+    /** @hide */
+    @IntDef({TYPE_GLOW, TYPE_STRETCH})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface EdgeEffectType {
+    }
+
+    private static final float DEFAULT_MAX_STRETCH_INTENSITY = 1.5f;
 
     @SuppressWarnings("UnusedDeclaration")
     private static final String TAG = "EdgeEffect";
@@ -89,14 +118,19 @@ public class EdgeEffect {
     private float mGlowAlpha;
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private float mGlowScaleY;
+    private float mDistance;
 
     private float mGlowAlphaStart;
     private float mGlowAlphaFinish;
     private float mGlowScaleYStart;
     private float mGlowScaleYFinish;
+    private float mDistanceStart;
+    private float mDistanceFinish;
 
     private long mStartTime;
     private float mDuration;
+    private float mStretchIntensity = DEFAULT_MAX_STRETCH_INTENSITY;
+    private float mStretchDistance = -1f;
 
     private final Interpolator mInterpolator;
 
@@ -115,23 +149,39 @@ public class EdgeEffect {
     private float mPullDistance;
 
     private final Rect mBounds = new Rect();
+    private float mWidth;
+    private float mHeight;
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 123769450)
     private final Paint mPaint = new Paint();
     private float mRadius;
     private float mBaseGlowScale;
     private float mDisplacement = 0.5f;
     private float mTargetDisplacement = 0.5f;
+    private @EdgeEffectType int mEdgeEffectType = TYPE_GLOW;
+    private Matrix mTmpMatrix = null;
+    private float[] mTmpPoints = null;
 
     /**
      * Construct a new EdgeEffect with a theme appropriate for the provided context.
      * @param context Context used to provide theming and resource information for the EdgeEffect
      */
     public EdgeEffect(Context context) {
+        this(context, null);
+    }
+
+    /**
+     * Construct a new EdgeEffect with a theme appropriate for the provided context.
+     * @param context Context used to provide theming and resource information for the EdgeEffect
+     * @param attrs The attributes of the XML tag that is inflating the view
+     */
+    public EdgeEffect(@NonNull Context context, @Nullable AttributeSet attrs) {
         mPaint.setAntiAlias(true);
         final TypedArray a = context.obtainStyledAttributes(
-                com.android.internal.R.styleable.EdgeEffect);
+                attrs, com.android.internal.R.styleable.EdgeEffect);
         final int themeColor = a.getColor(
                 com.android.internal.R.styleable.EdgeEffect_colorEdgeEffect, 0xff666666);
+        mEdgeEffectType = a.getInt(
+                com.android.internal.R.styleable.EdgeEffect_edgeEffectType, TYPE_GLOW);
         a.recycle();
         mPaint.setColor((themeColor & 0xffffff) | 0x33000000);
         mPaint.setStyle(Paint.Style.FILL);
@@ -157,6 +207,19 @@ public class EdgeEffect {
         mBaseGlowScale = h > 0 ? Math.min(oh / h, 1.f) : 1.f;
 
         mBounds.set(mBounds.left, mBounds.top, width, (int) Math.min(height, h));
+
+        mWidth = width;
+        mHeight = height;
+    }
+
+    /**
+     * Configure the distance in pixels to stretch the content. This is only consumed as part
+     * if {@link #setType(int)} is set to {@link #TYPE_STRETCH}
+     * @param stretchDistance Stretch distance in pixels when the target View is overscrolled
+     * @hide
+     */
+    public void setStretchDistance(float stretchDistance) {
+        mStretchDistance = stretchDistance;
     }
 
     /**
@@ -211,11 +274,18 @@ public class EdgeEffect {
     public void onPull(float deltaDistance, float displacement) {
         final long now = AnimationUtils.currentAnimationTimeMillis();
         mTargetDisplacement = displacement;
-        if (mState == STATE_PULL_DECAY && now - mStartTime < mDuration) {
+        if (mState == STATE_PULL_DECAY && now - mStartTime < mDuration
+                && mEdgeEffectType == TYPE_GLOW) {
             return;
         }
         if (mState != STATE_PULL) {
-            mGlowScaleY = Math.max(PULL_GLOW_BEGIN, mGlowScaleY);
+            if (mEdgeEffectType == TYPE_STRETCH) {
+                // Restore the mPullDistance to the fraction it is currently showing -- we want
+                // to "catch" the current stretch value.
+                mPullDistance = mDistance;
+            } else {
+                mGlowScaleY = Math.max(PULL_GLOW_BEGIN, mGlowScaleY);
+            }
         }
         mState = STATE_PULL;
 
@@ -223,6 +293,7 @@ public class EdgeEffect {
         mDuration = PULL_TIME;
 
         mPullDistance += deltaDistance;
+        mDistanceStart = mDistanceFinish = mDistance = Math.max(0f, mPullDistance);
 
         final float absdd = Math.abs(deltaDistance);
         mGlowAlpha = mGlowAlphaStart = Math.min(MAX_ALPHA,
@@ -242,6 +313,65 @@ public class EdgeEffect {
     }
 
     /**
+     * A view should call this when content is pulled away from an edge by the user.
+     * This will update the state of the current visual effect and its associated animation.
+     * The host view should always {@link android.view.View#invalidate()} after this
+     * and draw the results accordingly. This works similarly to {@link #onPull(float, float)},
+     * but returns the amount of <code>deltaDistance</code> that has been consumed. If the
+     * {@link #getDistance()} is currently 0 and <code>deltaDistance</code> is negative, this
+     * function will return 0 and the drawn value will remain unchanged.
+     *
+     * This method can be used to reverse the effect from a pull or absorb and partially consume
+     * some of a motion:
+     *
+     * <pre class="prettyprint">
+     *     if (deltaY < 0) {
+     *         float consumed = edgeEffect.onPullDistance(deltaY / getHeight(), x / getWidth());
+     *         deltaY -= consumed * getHeight();
+     *         if (edgeEffect.getDistance() == 0f) edgeEffect.onRelease();
+     *     }
+     * </pre>
+     *
+     * @param deltaDistance Change in distance since the last call. Values may be 0 (no change) to
+     *                      1.f (full length of the view) or negative values to express change
+     *                      back toward the edge reached to initiate the effect.
+     * @param displacement The displacement from the starting side of the effect of the point
+     *                     initiating the pull. In the case of touch this is the finger position.
+     *                     Values may be from 0-1.
+     * @return The amount of <code>deltaDistance</code> that was consumed, a number between
+     * 0 and <code>deltaDistance</code>.
+     */
+    public float onPullDistance(float deltaDistance, float displacement) {
+        float finalDistance = Math.max(0f, deltaDistance + mDistance);
+        float delta = finalDistance - mDistance;
+        if (delta == 0f && mDistance == 0f) {
+            return 0f; // No pull, don't do anything.
+        }
+
+        if (mState != STATE_PULL && mState != STATE_PULL_DECAY && mEdgeEffectType == TYPE_GLOW) {
+            // Catch the edge glow in the middle of an animation.
+            mPullDistance = mDistance;
+            mState = STATE_PULL;
+        }
+        onPull(delta, displacement);
+        return delta;
+    }
+
+    /**
+     * Returns the pull distance needed to be released to remove the showing effect.
+     * It is determined by the {@link #onPull(float, float)} <code>deltaDistance</code> and
+     * any animating values, including from {@link #onAbsorb(int)} and {@link #onRelease()}.
+     *
+     * This can be used in conjunction with {@link #onPullDistance(float, float)} to
+     * release the currently showing effect.
+     *
+     * @return The pull distance that must be released to remove the showing effect.
+     */
+    public float getDistance() {
+        return mDistance;
+    }
+
+    /**
      * Call when the object is released after being pulled.
      * This will begin the "decay" phase of the effect. After calling this method
      * the host view should {@link android.view.View#invalidate()} and thereby
@@ -257,9 +387,11 @@ public class EdgeEffect {
         mState = STATE_RECEDE;
         mGlowAlphaStart = mGlowAlpha;
         mGlowScaleYStart = mGlowScaleY;
+        mDistanceStart = mDistance;
 
         mGlowAlphaFinish = 0.f;
         mGlowScaleYFinish = 0.f;
+        mDistanceFinish = 0.f;
 
         mStartTime = AnimationUtils.currentAnimationTimeMillis();
         mDuration = RECEDE_TIME;
@@ -286,7 +418,7 @@ public class EdgeEffect {
         // nearly invisible.
         mGlowAlphaStart = GLOW_ALPHA_START;
         mGlowScaleYStart = Math.max(mGlowScaleY, 0.f);
-
+        mDistanceStart = mDistance;
 
         // Growth for the size of the glow should be quadratic to properly
         // respond
@@ -297,6 +429,9 @@ public class EdgeEffect {
         mGlowAlphaFinish = Math.max(
                 mGlowAlphaStart, Math.min(velocity * VELOCITY_GLOW_FACTOR * .00001f, MAX_ALPHA));
         mTargetDisplacement = 0.5f;
+
+        // Use glow values to estimate the absorption for stretch distance.
+        mDistanceFinish = calculateDistanceFromGlowValues(mGlowScaleYFinish, mGlowAlphaFinish);
     }
 
     /**
@@ -306,6 +441,24 @@ public class EdgeEffect {
      */
     public void setColor(@ColorInt int color) {
         mPaint.setColor(color);
+    }
+
+    /**
+     * Sets the edge effect type to use. The default without a theme attribute set is
+     * {@link EdgeEffect#TYPE_GLOW}.
+     *
+     * @param type The edge effect type to use.
+     * @attr ref android.R.styleable#EdgeEffect_edgeEffectType
+     */
+    public void setType(@EdgeEffectType int type) {
+        mEdgeEffectType = type;
+    }
+
+    /**
+     * @hide
+     */
+    public void setMaxStretchIntensity(float stretchIntensity) {
+        mStretchIntensity = stretchIntensity;
     }
 
     /**
@@ -333,6 +486,15 @@ public class EdgeEffect {
         return mPaint.getColor();
     }
 
+    /**
+     * Return the edge effect type to use.
+     *
+     * @return The edge effect type to use.
+     * @attr ref android.R.styleable#EdgeEffect_edgeEffectType
+     */
+    public @EdgeEffectType int getType() {
+        return mEdgeEffectType;
+    }
 
     /**
      * Returns the blend mode. A blend mode defines how source pixels
@@ -351,38 +513,108 @@ public class EdgeEffect {
      * Draw into the provided canvas. Assumes that the canvas has been rotated
      * accordingly and the size has been set. The effect will be drawn the full
      * width of X=0 to X=width, beginning from Y=0 and extending to some factor <
-     * 1.f of height.
+     * 1.f of height. The {@link #TYPE_STRETCH} effect will only be visible on a
+     * hardware canvas, e.g. {@link RenderNode#beginRecording()}.
      *
      * @param canvas Canvas to draw into
      * @return true if drawing should continue beyond this frame to continue the
      *         animation
      */
     public boolean draw(Canvas canvas) {
-        update();
+        if (mEdgeEffectType == TYPE_GLOW) {
+            update();
+            final int count = canvas.save();
 
-        final int count = canvas.save();
+            final float centerX = mBounds.centerX();
+            final float centerY = mBounds.height() - mRadius;
 
-        final float centerX = mBounds.centerX();
-        final float centerY = mBounds.height() - mRadius;
+            canvas.scale(1.f, Math.min(mGlowScaleY, 1.f) * mBaseGlowScale, centerX, 0);
 
-        canvas.scale(1.f, Math.min(mGlowScaleY, 1.f) * mBaseGlowScale, centerX, 0);
+            final float displacement = Math.max(0, Math.min(mDisplacement, 1.f)) - 0.5f;
+            float translateX = mBounds.width() * displacement / 2;
 
-        final float displacement = Math.max(0, Math.min(mDisplacement, 1.f)) - 0.5f;
-        float translateX = mBounds.width() * displacement / 2;
+            canvas.clipRect(mBounds);
+            canvas.translate(translateX, 0);
+            mPaint.setAlpha((int) (0xff * mGlowAlpha));
+            canvas.drawCircle(centerX, centerY, mRadius, mPaint);
+            canvas.restoreToCount(count);
+        } else if (canvas instanceof RecordingCanvas) {
+            if (mState != STATE_PULL) {
+                update();
+            }
+            RecordingCanvas recordingCanvas = (RecordingCanvas) canvas;
+            if (mTmpMatrix == null) {
+                mTmpMatrix = new Matrix();
+                mTmpPoints = new float[12];
+            }
+            //noinspection deprecation
+            recordingCanvas.getMatrix(mTmpMatrix);
 
-        canvas.clipRect(mBounds);
-        canvas.translate(translateX, 0);
-        mPaint.setAlpha((int) (0xff * mGlowAlpha));
-        canvas.drawCircle(centerX, centerY, mRadius, mPaint);
-        canvas.restoreToCount(count);
+            mTmpPoints[0] = 0;
+            mTmpPoints[1] = 0; // top-left
+            mTmpPoints[2] = mWidth;
+            mTmpPoints[3] = 0; // top-right
+            mTmpPoints[4] = mWidth;
+            mTmpPoints[5] = mHeight; // bottom-right
+            mTmpPoints[6] = 0;
+            mTmpPoints[7] = mHeight; // bottom-left
+            mTmpPoints[8] = mWidth * mDisplacement;
+            mTmpPoints[9] = 0; // drag start point
+            mTmpPoints[10] = mWidth * mDisplacement;
+            mTmpPoints[11] = mHeight * mDistance; // drag point
+            mTmpMatrix.mapPoints(mTmpPoints);
+
+            RenderNode renderNode = recordingCanvas.mNode;
+
+            float left = renderNode.getLeft()
+                    + min(mTmpPoints[0], mTmpPoints[2], mTmpPoints[4], mTmpPoints[6]);
+            float top = renderNode.getTop()
+                    + min(mTmpPoints[1], mTmpPoints[3], mTmpPoints[5], mTmpPoints[7]);
+            float right = renderNode.getLeft()
+                    + max(mTmpPoints[0], mTmpPoints[2], mTmpPoints[4], mTmpPoints[6]);
+            float bottom = renderNode.getTop()
+                    + max(mTmpPoints[1], mTmpPoints[3], mTmpPoints[5], mTmpPoints[7]);
+            // assume rotations of increments of 90 degrees
+            float x = mTmpPoints[10] - mTmpPoints[8];
+            float width = right - left;
+            float vecX = Math.max(-1f, Math.min(1f, x / width));
+            float y = mTmpPoints[11] - mTmpPoints[9];
+            float height = bottom - top;
+            float vecY = Math.max(-1f, Math.min(1f, y / height));
+            renderNode.stretch(
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    vecX * mStretchIntensity,
+                    vecY * mStretchIntensity,
+                    // TODO (njawad/mount) figure out proper stretch distance from UX
+                    //  for now leverage placeholder logic if no stretch distance is provided to
+                    //  consume the displacement ratio times the minimum of the width or height
+                    mStretchDistance > 0 ? mStretchDistance :
+                            (mDisplacement * Math.min(mWidth, mHeight))
+            );
+        }
 
         boolean oneLastFrame = false;
-        if (mState == STATE_RECEDE && mGlowScaleY == 0) {
+        if (mState == STATE_RECEDE && mDistance == 0) {
             mState = STATE_IDLE;
             oneLastFrame = true;
         }
 
         return mState != STATE_IDLE || oneLastFrame;
+    }
+
+    private float min(float f1, float f2, float f3, float f4) {
+        float min = Math.min(f1, f2);
+        min = Math.min(min, f3);
+        return Math.min(min, f4);
+    }
+
+    private float max(float f1, float f2, float f3, float f4) {
+        float max = Math.max(f1, f2);
+        max = Math.max(max, f3);
+        return Math.max(max, f4);
     }
 
     /**
@@ -402,6 +634,7 @@ public class EdgeEffect {
 
         mGlowAlpha = mGlowAlphaStart + (mGlowAlphaFinish - mGlowAlphaStart) * interp;
         mGlowScaleY = mGlowScaleYStart + (mGlowScaleYFinish - mGlowScaleYStart) * interp;
+        mDistance = mDistanceStart + (mDistanceFinish - mDistanceStart) * interp;
         mDisplacement = (mDisplacement + mTargetDisplacement) / 2;
 
         if (t >= 1.f - EPSILON) {
@@ -413,10 +646,12 @@ public class EdgeEffect {
 
                     mGlowAlphaStart = mGlowAlpha;
                     mGlowScaleYStart = mGlowScaleY;
+                    mDistanceStart = mDistance;
 
                     // After absorb, the glow should fade to nothing.
                     mGlowAlphaFinish = 0.f;
                     mGlowScaleYFinish = 0.f;
+                    mDistanceFinish = 0.f;
                     break;
                 case STATE_PULL:
                     mState = STATE_PULL_DECAY;
@@ -425,10 +660,12 @@ public class EdgeEffect {
 
                     mGlowAlphaStart = mGlowAlpha;
                     mGlowScaleYStart = mGlowScaleY;
+                    mDistanceStart = mDistance;
 
                     // After pull, the glow should fade to nothing.
                     mGlowAlphaFinish = 0.f;
                     mGlowScaleYFinish = 0.f;
+                    mDistanceFinish = 0.f;
                     break;
                 case STATE_PULL_DECAY:
                     mState = STATE_RECEDE;
@@ -438,5 +675,21 @@ public class EdgeEffect {
                     break;
             }
         }
+    }
+
+    /**
+     * @return The estimated pull distance as calculated from mGlowScaleY.
+     */
+    private float calculateDistanceFromGlowValues(float scale, float alpha) {
+        if (scale >= 1f) {
+            // It should asymptotically approach 1, but not reach there.
+            // Here, we're just choosing a value that is large.
+            return 1f;
+        }
+        if (scale > 0f) {
+            float v = 1f / 0.7f / (mGlowScaleY - 1f);
+            return v * v / mBounds.height();
+        }
+        return alpha / PULL_DISTANCE_ALPHA_GLOW_FACTOR;
     }
 }

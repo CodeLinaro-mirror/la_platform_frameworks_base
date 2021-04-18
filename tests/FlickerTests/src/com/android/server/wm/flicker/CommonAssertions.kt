@@ -17,299 +17,230 @@
 package com.android.server.wm.flicker
 
 import android.platform.helpers.IAppHelper
-import com.android.server.wm.flicker.dsl.EventLogAssertion
-import com.android.server.wm.flicker.dsl.LayersAssertion
-import com.android.server.wm.flicker.dsl.WmAssertion
 import com.android.server.wm.flicker.helpers.WindowUtils
+import com.android.server.wm.traces.parser.windowmanager.WindowManagerStateHelper.Companion.NAV_BAR_LAYER_NAME
+import com.android.server.wm.traces.parser.windowmanager.WindowManagerStateHelper.Companion.STATUS_BAR_WINDOW_NAME
 
-const val NAVIGATION_BAR_WINDOW_TITLE = "NavigationBar"
-const val STATUS_BAR_WINDOW_TITLE = "StatusBar"
-const val DOCKED_STACK_DIVIDER = "DockedStackDivider"
 const val WALLPAPER_TITLE = "Wallpaper"
 
-@JvmOverloads
-fun WmAssertion.statusBarWindowIsAlwaysVisible(
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("statusBarWindowIsAlwaysVisible", bugId, enabled) {
-        this.showsAboveAppWindow(STATUS_BAR_WINDOW_TITLE)
+fun FlickerTestParameter.statusBarWindowIsAlwaysVisible() {
+    assertWm {
+        this.showsAboveAppWindow(NAV_BAR_LAYER_NAME)
+    }
+}
+
+fun FlickerTestParameter.navBarWindowIsAlwaysVisible() {
+    assertWm {
+        this.showsAboveAppWindow(NAV_BAR_LAYER_NAME)
     }
 }
 
 @JvmOverloads
-fun WmAssertion.navBarWindowIsAlwaysVisible(
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
+fun FlickerTestParameter.visibleWindowsShownMoreThanOneConsecutiveEntry(
+    ignoreWindows: List<String> = emptyList()
 ) {
-    all("navBarWindowIsAlwaysVisible", bugId, enabled) {
-        this.showsAboveAppWindow(NAVIGATION_BAR_WINDOW_TITLE)
-    }
-}
-
-fun WmAssertion.visibleWindowsShownMoreThanOneConsecutiveEntry(
-    ignoreWindows: List<String> = emptyList(),
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("visibleWindowsShownMoreThanOneConsecutiveEntry", bugId, enabled) {
+    assertWm {
         this.visibleWindowsShownMoreThanOneConsecutiveEntry(ignoreWindows)
     }
 }
 
-fun WmAssertion.launcherReplacesAppWindowAsTopWindow(
-    testApp: IAppHelper,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("launcherReplacesAppWindowAsTopWindow", bugId, enabled) {
+fun FlickerTestParameter.launcherReplacesAppWindowAsTopWindow(testApp: IAppHelper) {
+    assertWm {
         this.showsAppWindowOnTop(testApp.getPackage())
-                .then()
-                .showsAppWindowOnTop("Launcher")
+            .then()
+            .showsAppWindowOnTop("Launcher")
     }
 }
 
-fun WmAssertion.wallpaperWindowBecomesVisible(
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("wallpaperWindowBecomesVisible", bugId, enabled) {
+fun FlickerTestParameter.wallpaperWindowBecomesVisible() {
+    assertWm {
         this.hidesBelowAppWindow(WALLPAPER_TITLE)
-                .then()
-                .showsBelowAppWindow(WALLPAPER_TITLE)
+            .then()
+            .showsBelowAppWindow(WALLPAPER_TITLE)
     }
 }
 
-fun WmAssertion.wallpaperWindowBecomesInvisible(
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("wallpaperWindowBecomesInvisible", bugId, enabled) {
-        this.showsBelowAppWindow("Wallpaper")
-                .then()
-                .hidesBelowAppWindow("Wallpaper")
+fun FlickerTestParameter.wallpaperWindowBecomesInvisible() {
+    assertWm {
+        this.showsBelowAppWindow(WALLPAPER_TITLE)
+            .then()
+            .hidesBelowAppWindow(WALLPAPER_TITLE)
     }
 }
 
-fun WmAssertion.appWindowAlwaysVisibleOnTop(
-    packageName: String,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("appWindowAlwaysVisibleOnTop", bugId, enabled) {
+fun FlickerTestParameter.appWindowAlwaysVisibleOnTop(packageName: String) {
+    assertWm {
         this.showsAppWindowOnTop(packageName)
     }
 }
 
-fun WmAssertion.appWindowBecomesVisible(
-    appName: String,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("appWindowBecomesVisible", bugId, enabled) {
+fun FlickerTestParameter.appWindowBecomesVisible(appName: String) {
+    assertWm {
         this.hidesAppWindow(appName)
-                .then()
-                .showsAppWindow(appName)
+            .then()
+            .showsAppWindow(appName)
+    }
+}
+
+fun FlickerTestParameter.appWindowBecomesInVisible(appName: String) {
+    assertWm {
+        this.showsAppWindow(appName)
+            .then()
+            .hidesAppWindow(appName)
     }
 }
 
 @JvmOverloads
-fun LayersAssertion.noUncoveredRegions(
+fun FlickerTestParameter.noUncoveredRegions(
     beginRotation: Int,
     endRotation: Int = beginRotation,
-    allStates: Boolean = true,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
+    allStates: Boolean = true
 ) {
     val startingBounds = WindowUtils.getDisplayBounds(beginRotation)
     val endingBounds = WindowUtils.getDisplayBounds(endRotation)
     if (allStates) {
-        all("noUncoveredRegions", bugId, enabled) {
+        assertLayers {
             if (startingBounds == endingBounds) {
-                this.coversAtLeastRegion(startingBounds)
+                this.coversAtLeast(startingBounds)
             } else {
-                this.coversAtLeastRegion(startingBounds)
-                        .then()
-                        .coversAtLeastRegion(endingBounds)
+                this.coversAtLeast(startingBounds)
+                    .then()
+                    .coversAtLeast(endingBounds)
             }
         }
     } else {
-        start("noUncoveredRegions_StartingPos") {
-            this.coversAtLeastRegion(startingBounds)
+        assertLayersStart {
+            this.coversAtLeast(startingBounds)
         }
-        end("noUncoveredRegions_EndingPos") {
-            this.coversAtLeastRegion(endingBounds)
+        assertLayersEnd {
+            this.coversAtLeast(endingBounds)
         }
     }
 }
 
 @JvmOverloads
-fun LayersAssertion.navBarLayerIsAlwaysVisible(
-    rotatesScreen: Boolean = false,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
+fun FlickerTestParameter.navBarLayerIsAlwaysVisible(rotatesScreen: Boolean = false) {
     if (rotatesScreen) {
-        all("navBarLayerIsAlwaysVisible", bugId, enabled) {
-            this.showsLayer(NAVIGATION_BAR_WINDOW_TITLE)
-                    .then()
-                    .hidesLayer(NAVIGATION_BAR_WINDOW_TITLE)
-                    .then()
-                    .showsLayer(NAVIGATION_BAR_WINDOW_TITLE)
+        assertLayers {
+            this.isVisible(NAV_BAR_LAYER_NAME)
+                .then()
+                .isInvisible(NAV_BAR_LAYER_NAME)
+                .then()
+                .isVisible(NAV_BAR_LAYER_NAME)
         }
     } else {
-        all("navBarLayerIsAlwaysVisible", bugId, enabled) {
-            this.showsLayer(NAVIGATION_BAR_WINDOW_TITLE)
+        assertLayers {
+            this.isVisible(NAV_BAR_LAYER_NAME)
         }
     }
 }
 
 @JvmOverloads
-fun LayersAssertion.statusBarLayerIsAlwaysVisible(
-    rotatesScreen: Boolean = false,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
+fun FlickerTestParameter.statusBarLayerIsAlwaysVisible(rotatesScreen: Boolean = false) {
     if (rotatesScreen) {
-        all("statusBarLayerIsAlwaysVisible", bugId, enabled) {
-            this.showsLayer(STATUS_BAR_WINDOW_TITLE)
-                    .then()
-                    hidesLayer(STATUS_BAR_WINDOW_TITLE)
-                    .then()
-                    .showsLayer(STATUS_BAR_WINDOW_TITLE)
+        assertLayers {
+            this.isVisible(STATUS_BAR_WINDOW_NAME)
+                .then()
+                .isInvisible(STATUS_BAR_WINDOW_NAME)
+                .then()
+                .isVisible(STATUS_BAR_WINDOW_NAME)
         }
     } else {
-        all("statusBarLayerIsAlwaysVisible", bugId, enabled) {
-            this.showsLayer(STATUS_BAR_WINDOW_TITLE)
+        assertLayers {
+            this.isVisible(STATUS_BAR_WINDOW_NAME)
         }
     }
 }
 
 @JvmOverloads
-fun LayersAssertion.navBarLayerRotatesAndScales(
+fun FlickerTestParameter.navBarLayerRotatesAndScales(
     beginRotation: Int,
-    endRotation: Int = beginRotation,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
+    endRotation: Int = beginRotation
 ) {
     val startingPos = WindowUtils.getNavigationBarPosition(beginRotation)
     val endingPos = WindowUtils.getNavigationBarPosition(endRotation)
 
-    start("navBarLayerRotatesAndScales_StartingPos", bugId, enabled) {
-        this.hasVisibleRegion(NAVIGATION_BAR_WINDOW_TITLE, startingPos)
+    assertLayersStart {
+        this.coversExactly(startingPos, NAV_BAR_LAYER_NAME)
     }
-    end("navBarLayerRotatesAndScales_EndingPost", bugId, enabled) {
-        this.hasVisibleRegion(NAVIGATION_BAR_WINDOW_TITLE, endingPos)
-    }
-
-    if (startingPos == endingPos) {
-        all("navBarLayerRotatesAndScales", enabled = false, bugId = 167747321) {
-            this.hasVisibleRegion(NAVIGATION_BAR_WINDOW_TITLE, startingPos)
-        }
+    assertLayersEnd {
+        this.coversExactly(endingPos, NAV_BAR_LAYER_NAME)
     }
 }
 
 @JvmOverloads
-fun LayersAssertion.statusBarLayerRotatesScales(
+fun FlickerTestParameter.statusBarLayerRotatesScales(
     beginRotation: Int,
-    endRotation: Int = beginRotation,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
+    endRotation: Int = beginRotation
 ) {
     val startingPos = WindowUtils.getStatusBarPosition(beginRotation)
     val endingPos = WindowUtils.getStatusBarPosition(endRotation)
 
-    start("statusBarLayerRotatesScales_StartingPos", bugId, enabled) {
-        this.hasVisibleRegion(STATUS_BAR_WINDOW_TITLE, startingPos)
+    assertLayersStart {
+        this.coversExactly(startingPos, STATUS_BAR_WINDOW_NAME)
     }
-    end("statusBarLayerRotatesScales_EndingPos", bugId, enabled) {
-        this.hasVisibleRegion(STATUS_BAR_WINDOW_TITLE, endingPos)
+    assertLayersEnd {
+        this.coversExactly(endingPos, STATUS_BAR_WINDOW_NAME)
     }
 }
 
-fun LayersAssertion.visibleLayersShownMoreThanOneConsecutiveEntry(
-    ignoreLayers: List<String> = emptyList(),
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
+@JvmOverloads
+fun FlickerTestParameter.visibleLayersShownMoreThanOneConsecutiveEntry(
+    ignoreLayers: List<String> = emptyList()
 ) {
-    all("visibleLayersShownMoreThanOneConsecutiveEntry", bugId, enabled) {
+    assertLayers {
         this.visibleLayersShownMoreThanOneConsecutiveEntry(ignoreLayers)
     }
 }
 
-fun LayersAssertion.appLayerReplacesWallpaperLayer(
-    appName: String,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("appLayerReplacesWallpaperLayer", bugId, enabled) {
-        this.showsLayer("Wallpaper")
-                .then()
-                .replaceVisibleLayer("Wallpaper", appName)
+fun FlickerTestParameter.appLayerReplacesWallpaperLayer(appName: String) {
+    assertLayers {
+        this.isVisible(WALLPAPER_TITLE)
+            .then()
+            .isInvisible(WALLPAPER_TITLE)
+            .isVisible(appName)
     }
 }
 
-fun LayersAssertion.wallpaperLayerReplacesAppLayer(
-    testApp: IAppHelper,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("appLayerReplacesWallpaperLayer", bugId, enabled) {
-        this.showsLayer(testApp.getPackage())
-                .then()
-                .replaceVisibleLayer(testApp.getPackage(), WALLPAPER_TITLE)
+fun FlickerTestParameter.wallpaperLayerReplacesAppLayer(testApp: IAppHelper) {
+    assertLayers {
+        this.isVisible(testApp.getPackage())
+            .then()
+            .isInvisible(testApp.getPackage())
+            .isVisible(WALLPAPER_TITLE)
     }
 }
 
-fun LayersAssertion.layerAlwaysVisible(
-    packageName: String,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("layerAlwaysVisible", bugId, enabled) {
-        this.showsLayer(packageName)
+fun FlickerTestParameter.layerAlwaysVisible(packageName: String) {
+    assertLayers {
+        this.isVisible(packageName)
     }
 }
 
-fun LayersAssertion.layerBecomesVisible(
-    packageName: String,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("layerBecomesVisible", bugId, enabled) {
-        this.hidesLayer(packageName)
-                .then()
-                .showsLayer(packageName)
+fun FlickerTestParameter.layerBecomesVisible(packageName: String) {
+    assertLayers {
+        this.isInvisible(packageName)
+            .then()
+            .isVisible(packageName)
     }
 }
 
-fun LayersAssertion.layerBecomesInvisible(
-    packageName: String,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("layerBecomesInvisible", bugId, enabled) {
-        this.showsLayer(packageName)
-                .then()
-                .hidesLayer(packageName)
+fun FlickerTestParameter.layerBecomesInvisible(packageName: String) {
+    assertLayers {
+        this.isVisible(packageName)
+            .then()
+            .isInvisible(packageName)
     }
 }
 
-fun EventLogAssertion.focusChanges(
-    vararg windows: String,
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("focusChanges", bugId, enabled) {
+fun FlickerTestParameter.focusChanges(vararg windows: String) {
+    assertEventLog {
         this.focusChanges(windows)
     }
 }
 
-fun EventLogAssertion.focusDoesNotChange(
-    bugId: Int = 0,
-    enabled: Boolean = bugId == 0
-) {
-    all("focusDoesNotChange", bugId, enabled) {
+fun FlickerTestParameter.focusDoesNotChange() {
+    assertEventLog {
         this.focusDoesNotChange()
     }
 }

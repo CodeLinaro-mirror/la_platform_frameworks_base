@@ -16,6 +16,15 @@
 
 // Privapp permission whitelist files
 
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_base_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_base_license"],
+}
+
 prebuilt_etc {
     name: "allowed_privapp_android.car.cluster.loggingrenderer",
     sub_dir: "permissions",
@@ -122,13 +131,6 @@ prebuilt_etc {
 }
 
 prebuilt_etc {
-    name: "allowed_privapp_com.android.car.companiondevicesupport",
-    sub_dir: "permissions",
-    src: "com.android.car.companiondevicesupport.xml",
-    filename_from_src: true,
-}
-
-prebuilt_etc {
     name: "allowed_privapp_com.google.android.car.kitchensink",
     sub_dir: "permissions",
     src: "com.google.android.car.kitchensink.xml",
@@ -141,6 +143,13 @@ prebuilt_etc {
     src: "com.android.car.developeroptions.xml",
     filename_from_src: true,
     system_ext_specific: true,
+}
+
+prebuilt_etc {
+    name: "allowed_privapp_com.android.car.rotary",
+    sub_dir: "permissions",
+    src: "com.android.car.rotary.xml",
+    filename_from_src: true,
 }
 
 prebuilt_etc {
@@ -169,5 +178,12 @@ prebuilt_etc {
     name: "allowed_privapp_com.android.carshell",
     sub_dir: "permissions",
     src: "com.android.car.shell.xml",
+    filename_from_src: true,
+}
+
+prebuilt_etc {
+    name: "allowed_privapp_com.android.car.activityresolver",
+    sub_dir: "permissions",
+    src: "com.android.car.activityresolver.xml",
     filename_from_src: true,
 }

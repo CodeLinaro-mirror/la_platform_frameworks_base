@@ -19,7 +19,6 @@ package com.android.server.biometrics.sensors.face.hidl;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
-import android.app.NotificationManager;
 import android.app.SynchronousUserSwitchObserver;
 import android.app.UserSwitchObserver;
 import android.content.Context;
@@ -29,6 +28,7 @@ import android.hardware.biometrics.BiometricFaceConstants;
 import android.hardware.biometrics.BiometricManager;
 import android.hardware.biometrics.BiometricsProtoEnums;
 import android.hardware.biometrics.ITestSession;
+import android.hardware.biometrics.ITestSessionCallback;
 import android.hardware.biometrics.face.V1_0.IBiometricsFace;
 import android.hardware.biometrics.face.V1_0.IBiometricsFaceClientCallback;
 import android.hardware.face.Face;
@@ -70,6 +70,7 @@ import com.android.server.biometrics.sensors.PerformanceTracker;
 import com.android.server.biometrics.sensors.RemovalConsumer;
 import com.android.server.biometrics.sensors.face.FaceUtils;
 import com.android.server.biometrics.sensors.face.LockoutHalImpl;
+import com.android.server.biometrics.sensors.face.ReEnrollNotificationUtils;
 import com.android.server.biometrics.sensors.face.ServiceProvider;
 import com.android.server.biometrics.sensors.face.UsageStats;
 
@@ -95,8 +96,6 @@ public class Face10 implements IHwBinder.DeathRecipient, ServiceProvider {
 
     private static final String TAG = "Face10";
     private static final int ENROLL_TIMEOUT_SEC = 75;
-    static final String NOTIFICATION_TAG = "FaceService";
-    static final int NOTIFICATION_ID = 1;
 
     private boolean mTestHalEnabled;
 
@@ -108,7 +107,6 @@ public class Face10 implements IHwBinder.DeathRecipient, ServiceProvider {
     @NonNull private final LockoutResetDispatcher mLockoutResetDispatcher;
     @NonNull private final LockoutHalImpl mLockoutTracker;
     @NonNull private final UsageStats mUsageStats;
-    @NonNull private final NotificationManager mNotificationManager;
     @NonNull private final Map<Integer, Long> mAuthenticatorIds;
     @Nullable private IBiometricsFace mDaemon;
     @NonNull private final HalResultController mHalResultController;
@@ -123,7 +121,7 @@ public class Face10 implements IHwBinder.DeathRecipient, ServiceProvider {
     private final UserSwitchObserver mUserSwitchObserver = new SynchronousUserSwitchObserver() {
         @Override
         public void onUserSwitching(int newUserId) {
-            scheduleInternalCleanup(newUserId);
+            scheduleInternalCleanup(newUserId, null /* callback */);
             scheduleGetFeature(mSensorId, new Binder(), newUserId,
                     BiometricFaceConstants.FEATURE_REQUIRE_ATTENTION,
                     null, mContext.getOpPackageName());
@@ -342,7 +340,6 @@ public class Face10 implements IHwBinder.DeathRecipient, ServiceProvider {
         mUsageStats = new UsageStats(context);
         mAuthenticatorIds = new HashMap<>();
         mLazyDaemon = Face10.this::getDaemon;
-        mNotificationManager = mContext.getSystemService(NotificationManager.class);
         mLockoutTracker = new LockoutHalImpl();
         mLockoutResetDispatcher = lockoutResetDispatcher;
         mHalResultController = new HalResultController(sensorId, context, mHandler, mScheduler,
@@ -437,7 +434,7 @@ public class Face10 implements IHwBinder.DeathRecipient, ServiceProvider {
         Slog.d(TAG, "Face HAL ready, HAL ID: " + halId);
         if (halId != 0) {
             scheduleLoadAuthenticatorIds();
-            scheduleInternalCleanup(ActivityManager.getCurrentUser());
+            scheduleInternalCleanup(ActivityManager.getCurrentUser(), null /* callback */);
             scheduleGetFeature(mSensorId, new Binder(),
                     ActivityManager.getCurrentUser(),
                     BiometricFaceConstants.FEATURE_REQUIRE_ATTENTION, null,
@@ -602,12 +599,11 @@ public class Face10 implements IHwBinder.DeathRecipient, ServiceProvider {
     public void scheduleEnroll(int sensorId, @NonNull IBinder token,
             @NonNull byte[] hardwareAuthToken, int userId, @NonNull IFaceServiceReceiver receiver,
             @NonNull String opPackageName, @NonNull int[] disabledFeatures,
-            @Nullable NativeHandle surfaceHandle) {
+            @Nullable NativeHandle surfaceHandle, boolean debugConsent) {
         mHandler.post(() -> {
             scheduleUpdateActiveUserWithoutHandler(userId);
 
-            mNotificationManager.cancelAsUser(NOTIFICATION_TAG, NOTIFICATION_ID,
-                    UserHandle.CURRENT);
+            ReEnrollNotificationUtils.cancelNotification(mContext);
 
             final FaceEnrollClient client = new FaceEnrollClient(mContext, mLazyDaemon, token,
                     new ClientMonitorCallbackConverter(receiver), userId, hardwareAuthToken,
@@ -646,7 +642,7 @@ public class Face10 implements IHwBinder.DeathRecipient, ServiceProvider {
             final FaceAuthenticationClient client = new FaceAuthenticationClient(mContext,
                     mLazyDaemon, token, receiver, userId, operationId, restricted, opPackageName,
                     cookie, false /* requireConfirmation */, mSensorId, isStrongBiometric,
-                    statsClient, mLockoutTracker, mUsageStats);
+                    statsClient, mLockoutTracker, mUsageStats, isKeyguard);
             mScheduler.scheduleClientMonitor(client);
         });
     }
@@ -671,6 +667,20 @@ public class Face10 implements IHwBinder.DeathRecipient, ServiceProvider {
         });
     }
 
+    @Override
+    public void scheduleRemoveAll(int sensorId, @NonNull IBinder token, int userId,
+            @NonNull IFaceServiceReceiver receiver, @NonNull String opPackageName) {
+        mHandler.post(() -> {
+            scheduleUpdateActiveUserWithoutHandler(userId);
+
+            // For IBiometricsFace@1.0, remove(0) means remove all enrollments
+            final FaceRemovalClient client = new FaceRemovalClient(mContext, mLazyDaemon, token,
+                    new ClientMonitorCallbackConverter(receiver), 0 /* faceId */, userId,
+                    opPackageName,
+                    FaceUtils.getLegacyInstance(mSensorId), mSensorId, mAuthenticatorIds);
+            mScheduler.scheduleClientMonitor(client);
+        });
+    }
 
     @Override
     public void scheduleResetLockout(int sensorId, int userId, @NonNull byte[] hardwareAuthToken) {
@@ -742,7 +752,8 @@ public class Face10 implements IHwBinder.DeathRecipient, ServiceProvider {
         });
     }
 
-    private void scheduleInternalCleanup(int userId) {
+    private void scheduleInternalCleanup(int userId,
+            @Nullable BaseClientMonitor.Callback callback) {
         mHandler.post(() -> {
             scheduleUpdateActiveUserWithoutHandler(userId);
 
@@ -750,13 +761,14 @@ public class Face10 implements IHwBinder.DeathRecipient, ServiceProvider {
             final FaceInternalCleanupClient client = new FaceInternalCleanupClient(mContext,
                     mLazyDaemon, userId, mContext.getOpPackageName(), mSensorId, enrolledList,
                     FaceUtils.getLegacyInstance(mSensorId), mAuthenticatorIds);
-            mScheduler.scheduleClientMonitor(client);
+            mScheduler.scheduleClientMonitor(client, callback);
         });
     }
 
     @Override
-    public void scheduleInternalCleanup(int sensorId, int userId) {
-        scheduleInternalCleanup(userId);
+    public void scheduleInternalCleanup(int sensorId, int userId,
+            @Nullable BaseClientMonitor.Callback callback) {
+        scheduleInternalCleanup(userId, callback);
     }
 
     @Override
@@ -767,12 +779,13 @@ public class Face10 implements IHwBinder.DeathRecipient, ServiceProvider {
     }
 
     @Override
-    public void dumpProtoState(int sensorId, ProtoOutputStream proto) {
+    public void dumpProtoState(int sensorId, ProtoOutputStream proto,
+            boolean clearSchedulerBuffer) {
         final long sensorToken = proto.start(SensorServiceStateProto.SENSOR_STATES);
 
         proto.write(SensorStateProto.SENSOR_ID, mSensorProperties.sensorId);
         proto.write(SensorStateProto.MODALITY, SensorStateProto.FACE);
-        proto.write(SensorStateProto.IS_BUSY, mScheduler.getCurrentClient() != null);
+        proto.write(SensorStateProto.SCHEDULER, mScheduler.dumpProtoState(clearSchedulerBuffer));
 
         for (UserInfo user : UserManager.get(mContext).getUsers()) {
             final int userId = user.getUserHandle().getIdentifier();
@@ -929,7 +942,9 @@ public class Face10 implements IHwBinder.DeathRecipient, ServiceProvider {
 
     @NonNull
     @Override
-    public ITestSession createTestSession(int sensorId, @NonNull String opPackageName) {
-        return new BiometricTestSessionImpl(mContext, mSensorId, this, mHalResultController);
+    public ITestSession createTestSession(int sensorId, @NonNull ITestSessionCallback callback,
+            @NonNull String opPackageName) {
+        return new BiometricTestSessionImpl(mContext, mSensorId, callback, this,
+                mHalResultController);
     }
 }

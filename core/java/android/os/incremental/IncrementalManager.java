@@ -22,7 +22,6 @@ import android.annotation.Nullable;
 import android.annotation.SystemService;
 import android.content.Context;
 import android.content.pm.DataLoaderParams;
-import android.content.pm.IDataLoaderStatusListener;
 import android.content.pm.IPackageLoadingProgressCallback;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
@@ -58,6 +57,8 @@ public final class IncrementalManager {
     private static final String TAG = "IncrementalManager";
 
     private static final String ALLOWED_PROPERTY = "incremental.allowed";
+
+    public static final int MIN_VERSION_TO_SUPPORT_FSVERITY = 2;
 
     public static final int CREATE_MODE_TEMPORARY_BIND =
             IIncrementalService.CREATE_MODE_TEMPORARY_BIND;
@@ -95,32 +96,20 @@ public final class IncrementalManager {
      * @param params              IncrementalDataLoaderParams object to configure data loading.
      * @param createMode          Mode for opening an old Incremental File System mount or creating
      *                            a new mount.
-     * @param autoStartDataLoader Set true to immediately start data loader after creating storage.
      * @return IncrementalStorage object corresponding to the mounted directory.
      */
     @Nullable
     public IncrementalStorage createStorage(@NonNull String path,
             @NonNull DataLoaderParams params,
-            @CreateMode int createMode,
-            boolean autoStartDataLoader,
-            @Nullable IDataLoaderStatusListener statusListener,
-            @Nullable StorageHealthCheckParams healthCheckParams,
-            @Nullable IStorageHealthListener healthListener,
-            @NonNull PerUidReadTimeouts[] perUidReadTimeouts) {
+            @CreateMode int createMode) {
         Objects.requireNonNull(path);
         Objects.requireNonNull(params);
-        Objects.requireNonNull(perUidReadTimeouts);
         try {
-            final int id = mService.createStorage(path, params.getData(), createMode,
-                    statusListener, healthCheckParams, healthListener, perUidReadTimeouts);
+            final int id = mService.createStorage(path, params.getData(), createMode);
             if (id < 0) {
                 return null;
             }
-            final IncrementalStorage storage = new IncrementalStorage(mService, id);
-            if (autoStartDataLoader) {
-                storage.startLoading();
-            }
-            return storage;
+            return new IncrementalStorage(mService, id);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -168,22 +157,21 @@ public final class IncrementalManager {
     }
 
     /**
-     * Set up an app's code path. The expected outcome of this method is:
+     * Link an app's files from the stage dir to the final installation location.
+     * The expected outcome of this method is:
      * 1) The actual apk directory under /data/incremental is bind-mounted to the parent directory
      * of {@code afterCodeFile}.
      * 2) All the files under {@code beforeCodeFile} will show up under {@code afterCodeFile}.
      *
      * @param beforeCodeFile Path that is currently bind-mounted and have APKs under it.
-     *                       Should no longer have any APKs after this method is called.
      *                       Example: /data/app/vmdl*tmp
      * @param afterCodeFile Path that should will have APKs after this method is called. Its parent
      *                      directory should be bind-mounted to a directory under /data/incremental.
      *                      Example: /data/app/~~[randomStringA]/[packageName]-[randomStringB]
      * @throws IllegalArgumentException
      * @throws IOException
-     * TODO(b/147371381): add unit tests
      */
-    public void renameCodePath(File beforeCodeFile, File afterCodeFile)
+    public void linkCodePath(File beforeCodeFile, File afterCodeFile)
             throws IllegalArgumentException, IOException {
         final File beforeCodeAbsolute = beforeCodeFile.getAbsoluteFile();
         final IncrementalStorage apkStorage = openStorage(beforeCodeAbsolute.toString());
@@ -201,7 +189,6 @@ public final class IncrementalManager {
         try {
             final String afterCodePathName = afterCodeFile.getName();
             linkFiles(apkStorage, beforeCodeAbsolute, "", linkedApkStorage, afterCodePathName);
-            apkStorage.unBind(beforeCodeAbsolute.toString());
         } catch (Exception e) {
             linkedApkStorage.unBind(targetStorageDir);
             throw e;
@@ -254,6 +241,15 @@ public final class IncrementalManager {
     }
 
     /**
+     * 0 - IncFs is disabled.
+     * 1 - IncFs v1, core features, no PerUid support. Optional in R.
+     * 2 - IncFs v2, PerUid support, fs-verity support. Required in S.
+     */
+    public static int getVersion() {
+        return nativeIsEnabled() ? nativeIsV2Available() ? 2 : 1 : 0;
+    }
+
+    /**
      * Checks if Incremental installations are allowed.
      * A developer can disable Incremental installations by setting the property.
      */
@@ -281,15 +277,18 @@ public final class IncrementalManager {
      * Unbinds the target dir and deletes the corresponding storage instance.
      * Deletes the package name and associated storage id from maps.
      */
-    public void onPackageRemoved(@NonNull String codePath) {
+    public void onPackageRemoved(@NonNull File codeFile) {
         try {
+            final String codePath = codeFile.getAbsolutePath();
             final IncrementalStorage storage = openStorage(codePath);
             if (storage == null) {
                 return;
             }
             mLoadingProgressCallbacks.cleanUpCallbacks(storage);
             unregisterHealthListener(codePath);
-            mService.deleteStorage(storage.getId());
+
+            // Parent since we bind-mount a folder one level above.
+            mService.deleteBindMount(storage.getId(), codeFile.getParent());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -314,20 +313,16 @@ public final class IncrementalManager {
     }
 
     /**
-     * Called when a callback wants to stop listen to the loading progress of an installed package.
-     * Decrease the count of the callbacks on the associated to the corresponding storage.
-     * If the count becomes zero, unregister the storage listener.
+     * Called to stop all listeners from listening to loading progress of an installed package.
      * @param codePath Path of the installed package
-     * @return True if the package name and associated storage id are valid. False otherwise.
      */
-    public boolean unregisterLoadingProgressCallback(@NonNull String codePath,
-            @NonNull IPackageLoadingProgressCallback callback) {
+    public void unregisterLoadingProgressCallbacks(@NonNull String codePath) {
         final IncrementalStorage storage = openStorage(codePath);
         if (storage == null) {
             // storage does not exist, package not installed
-            return false;
+            return;
         }
-        return mLoadingProgressCallbacks.unregisterCallback(storage, callback);
+        mLoadingProgressCallbacks.cleanUpCallbacks(storage);
     }
 
     private static class LoadingProgressCallbacks extends IStorageLoadingProgressListener.Stub {
@@ -335,7 +330,6 @@ public final class IncrementalManager {
         private final SparseArray<RemoteCallbackList<IPackageLoadingProgressCallback>> mCallbacks =
                 new SparseArray<>();
 
-        // TODO(b/165841827): disable callbacks when app state changes to fully loaded
         public void cleanUpCallbacks(@NonNull IncrementalStorage storage) {
             final int storageId = storage.getId();
             final RemoteCallbackList<IPackageLoadingProgressCallback> callbacksForStorage;
@@ -350,7 +344,6 @@ public final class IncrementalManager {
             storage.unregisterLoadingProgressListener();
         }
 
-        // TODO(b/165841827): handle reboot and app update
         public boolean registerCallback(@NonNull IncrementalStorage storage,
                 @NonNull IPackageLoadingProgressCallback callback) {
             final int storageId = storage.getId();
@@ -370,30 +363,6 @@ public final class IncrementalManager {
                 }
             }
             return storage.registerLoadingProgressListener(this);
-        }
-
-        public boolean unregisterCallback(@NonNull IncrementalStorage storage,
-                @NonNull IPackageLoadingProgressCallback callback) {
-            final int storageId = storage.getId();
-            final RemoteCallbackList<IPackageLoadingProgressCallback> callbacksForStorage;
-            synchronized (mCallbacks) {
-                callbacksForStorage = mCallbacks.get(storageId);
-                if (callbacksForStorage == null) {
-                    // no callback has ever been registered on this storage
-                    return false;
-                }
-                if (!callbacksForStorage.unregister(callback)) {
-                    // the callback was not registered
-                    return false;
-                }
-                if (callbacksForStorage.getRegisteredCallbackCount() > 0) {
-                    // other callbacks are still listening on this storage
-                    return true;
-                }
-                mCallbacks.delete(storageId);
-            }
-            // stop listening for this storage
-            return storage.unregisterLoadingProgressListener();
         }
 
         @Override
@@ -454,6 +423,7 @@ public final class IncrementalManager {
 
     /* Native methods */
     private static native boolean nativeIsEnabled();
+    private static native boolean nativeIsV2Available();
     private static native boolean nativeIsIncrementalPath(@NonNull String path);
     private static native byte[] nativeUnsafeGetFileSignature(@NonNull String path);
 }

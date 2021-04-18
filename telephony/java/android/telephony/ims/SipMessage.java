@@ -16,7 +16,10 @@
 
 package android.telephony.ims;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.annotation.SystemApi;
 import android.os.Build;
 import android.os.Parcel;
@@ -39,10 +42,13 @@ import java.util.Objects;
 public final class SipMessage implements Parcelable {
     // Should not be set to true for production!
     private static final boolean IS_DEBUGGING = Build.IS_ENG;
+    private static final String CRLF = "\r\n";
 
     private final String mStartLine;
     private final String mHeaderSection;
     private final byte[] mContent;
+    private final String mViaBranchParam;
+    private final String mCallIdParam;
 
     /**
      * Represents a partially encoded SIP message.
@@ -60,6 +66,9 @@ public final class SipMessage implements Parcelable {
         mStartLine = startLine;
         mHeaderSection = headerSection;
         mContent = content;
+
+        mViaBranchParam = SipMessageParsingUtils.getTransactionId(mHeaderSection);
+        mCallIdParam = SipMessageParsingUtils.getCallId(mHeaderSection);
     }
 
     /**
@@ -70,6 +79,8 @@ public final class SipMessage implements Parcelable {
         mHeaderSection = source.readString();
         mContent = new byte[source.readInt()];
         source.readByteArray(mContent);
+        mViaBranchParam = source.readString();
+        mCallIdParam = source.readString();
     }
 
     /**
@@ -94,6 +105,25 @@ public final class SipMessage implements Parcelable {
         return mContent;
     }
 
+    /**
+     * @return the branch parameter enclosed in the Via header key's value. See RFC 3261 section
+     * 20.42 for more information on the Via header. If {@code null}, then there was either no
+     * Via parameter found in this SIP message's headers or no branch parameter found in the
+     * Via header.
+     */
+    public @Nullable String getViaBranchParameter() {
+        return mViaBranchParam;
+    }
+
+    /**
+     * @return the value associated with the call-id header of this SIP message. See RFC 3261
+     * section 20.8 for more information on the call-id header. If {@code null}, then there was no
+     * call-id header found in this SIP message's headers.
+     */
+    public @Nullable String getCallIdParameter() {
+        return mCallIdParam;
+    }
+
     @Override
     public int describeContents() {
         return 0;
@@ -105,6 +135,8 @@ public final class SipMessage implements Parcelable {
         dest.writeString(mHeaderSection);
         dest.writeInt(mContent.length);
         dest.writeByteArray(mContent);
+        dest.writeString(mViaBranchParam);
+        dest.writeString(mCallIdParam);
     }
 
     public static final @NonNull Creator<SipMessage> CREATOR = new Creator<SipMessage>() {
@@ -164,5 +196,20 @@ public final class SipMessage implements Parcelable {
         int result = Objects.hash(mStartLine, mHeaderSection);
         result = 31 * result + Arrays.hashCode(mContent);
         return result;
+    }
+
+    /**
+     * @return the UTF-8 encoded SIP message.
+     */
+    public @NonNull byte[] getEncodedMessage() {
+        byte[] header = new StringBuilder()
+                .append(mStartLine)
+                .append(mHeaderSection)
+                .append(CRLF)
+                .toString().getBytes(UTF_8);
+        byte[] sipMessage = new byte[header.length + mContent.length];
+        System.arraycopy(header, 0, sipMessage, 0, header.length);
+        System.arraycopy(mContent, 0, sipMessage, header.length, mContent.length);
+        return sipMessage;
     }
 }

@@ -34,7 +34,7 @@ void LayerDrawable::onDraw(SkCanvas* canvas) {
 }
 
 static inline SkScalar isIntegerAligned(SkScalar x) {
-    return fabsf(roundf(x) - x) <= NON_ZERO_EPSILON;
+    return MathUtils::isZero(roundf(x) - x);
 }
 
 // Disable filtering when there is no scaling in screen coordinates and the corners have the same
@@ -141,18 +141,20 @@ bool LayerDrawable::DrawLayer(GrRecordingContext* context,
             // then use nearest neighbor, otherwise use bilerp sampling.
             // Skia TextureOp has the above logic build-in, but not NonAAFillRectOp. TextureOp works
             // only for SrcOver blending and without color filter (readback uses Src blending).
+            SkSamplingOptions sampling(SkFilterMode::kNearest);
             if (layer->getForceFilter() ||
                 shouldFilterRect(totalMatrix, skiaSrcRect, skiaDestRect)) {
-                paint.setFilterQuality(kLow_SkFilterQuality);
+                sampling = SkSamplingOptions(SkFilterMode::kLinear);
             }
-            canvas->drawImageRect(layerImage.get(), skiaSrcRect, skiaDestRect, &paint,
+            canvas->drawImageRect(layerImage.get(), skiaSrcRect, skiaDestRect, sampling, &paint,
                                   SkCanvas::kFast_SrcRectConstraint);
         } else {
             SkRect imageRect = SkRect::MakeIWH(layerImage->width(), layerImage->height());
+            SkSamplingOptions sampling(SkFilterMode::kNearest);
             if (layer->getForceFilter() || shouldFilterRect(totalMatrix, imageRect, imageRect)) {
-                paint.setFilterQuality(kLow_SkFilterQuality);
+                sampling = SkSamplingOptions(SkFilterMode::kLinear);
             }
-            canvas->drawImage(layerImage.get(), 0, 0, &paint);
+            canvas->drawImage(layerImage.get(), 0, 0, sampling, &paint);
         }
         // restore the original matrix
         if (nonIdentityMatrix) {

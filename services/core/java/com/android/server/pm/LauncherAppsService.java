@@ -16,11 +16,13 @@
 
 package com.android.server.pm;
 
+import static android.app.ActivityOptions.KEY_SPLASH_SCREEN_THEME;
 import static android.app.PendingIntent.FLAG_IMMUTABLE;
 import static android.content.Intent.FLAG_ACTIVITY_MULTIPLE_TASK;
 import static android.content.Intent.FLAG_ACTIVITY_NEW_DOCUMENT;
 import static android.content.pm.LauncherApps.FLAG_CACHE_BUBBLE_SHORTCUTS;
 import static android.content.pm.LauncherApps.FLAG_CACHE_NOTIFICATION_SHORTCUTS;
+import static android.content.pm.LauncherApps.FLAG_CACHE_PEOPLE_TILE_SHORTCUTS;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -68,6 +70,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IInterface;
 import android.os.ParcelFileDescriptor;
+import android.os.Process;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -112,6 +115,7 @@ public class LauncherAppsService extends SystemService {
     @Override
     public void onStart() {
         publishBinderService(Context.LAUNCHER_APPS_SERVICE, mLauncherAppsImpl);
+        mLauncherAppsImpl.registerLoadingProgressForIncrementalApps();
     }
 
     static class BroadcastCookie {
@@ -929,10 +933,22 @@ public class LauncherAppsService extends SystemService {
                 // Flag for bubble to make behaviour match documentLaunchMode=always.
                 intents[0].addFlags(FLAG_ACTIVITY_NEW_DOCUMENT);
                 intents[0].addFlags(FLAG_ACTIVITY_MULTIPLE_TASK);
+                intents[0].putExtra(Intent.EXTRA_IS_BUBBLED, true);
             }
 
             intents[0].addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             intents[0].setSourceBounds(sourceBounds);
+
+            // Replace theme for splash screen
+            final int splashScreenThemeResId =
+                    mShortcutServiceInternal.getShortcutStartingThemeResId(getCallingUserId(),
+                            callingPackage, packageName, shortcutId, targetUserId);
+            if (splashScreenThemeResId != 0) {
+                if (startActivityOptions == null) {
+                    startActivityOptions = new Bundle();
+                }
+                startActivityOptions.putInt(KEY_SPLASH_SCREEN_THEME, splashScreenThemeResId);
+            }
 
             return startShortcutIntentsAsPublisher(
                     intents, packageName, featureId, startActivityOptions, targetUserId);
@@ -1157,6 +1173,8 @@ public class LauncherAppsService extends SystemService {
                 ret = ShortcutInfo.FLAG_CACHED_NOTIFICATIONS;
             } else if (cacheFlags == FLAG_CACHE_BUBBLE_SHORTCUTS) {
                 ret = ShortcutInfo.FLAG_CACHED_BUBBLES;
+            } else if (cacheFlags == FLAG_CACHE_PEOPLE_TILE_SHORTCUTS) {
+                ret = ShortcutInfo.FLAG_CACHED_PEOPLE_TILE;
             }
             Preconditions.checkArgumentPositive(ret, "Invalid cache owner");
 
@@ -1166,6 +1184,30 @@ public class LauncherAppsService extends SystemService {
         @VisibleForTesting
         void postToPackageMonitorHandler(Runnable r) {
             mCallbackHandler.post(r);
+        }
+
+        /**
+         * Check all installed apps and if a package is installed via Incremental and not fully
+         * loaded, register loading progress listener.
+         */
+        void registerLoadingProgressForIncrementalApps() {
+            final PackageManagerInternal pmInt =
+                    LocalServices.getService(PackageManagerInternal.class);
+            final List<UserHandle> users = mUm.getUserProfiles();
+            if (users == null) {
+                return;
+            }
+            for (UserHandle user : users) {
+                pmInt.forEachInstalledPackage(pkg -> {
+                    final String packageName = pkg.getPackageName();
+                    if (pmInt.getIncrementalStatesInfo(packageName, Process.myUid(),
+                            user.getIdentifier()).isLoading()) {
+                        pmInt.registerInstalledLoadingProgressCallback(packageName,
+                                new PackageLoadingProgressCallback(packageName, user),
+                                user.getIdentifier());
+                    }
+                }, user.getIdentifier());
+            }
         }
 
         public static class ShortcutChangeHandler implements LauncherApps.ShortcutChangeCallback {
@@ -1316,11 +1358,11 @@ public class LauncherAppsService extends SystemService {
                 } finally {
                     mListeners.finishBroadcast();
                 }
+                super.onPackageAdded(packageName, uid);
                 PackageManagerInternal pmi = LocalServices.getService(PackageManagerInternal.class);
                 pmi.registerInstalledLoadingProgressCallback(packageName,
                         new PackageLoadingProgressCallback(packageName, user),
                         user.getIdentifier());
-                super.onPackageAdded(packageName, uid);
             }
 
             @Override

@@ -134,9 +134,13 @@ import android.view.autofill.IAutofillWindowPresenter;
 import android.view.contentcapture.ContentCaptureContext;
 import android.view.contentcapture.ContentCaptureManager;
 import android.view.contentcapture.ContentCaptureManager.ContentCaptureClient;
+import android.view.translation.TranslationSpec;
+import android.view.translation.UiTranslationController;
 import android.widget.AdapterView;
 import android.widget.Toast;
 import android.widget.Toolbar;
+import android.window.SplashScreen;
+import android.window.SplashScreenView;
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
@@ -152,6 +156,7 @@ import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -798,6 +803,7 @@ public class Activity extends ContextThemeWrapper
     @UnsupportedAppUsage
     private IBinder mToken;
     private IBinder mAssistToken;
+    private IBinder mShareableActivityToken;
     @UnsupportedAppUsage
     private int mIdent;
     @UnsupportedAppUsage
@@ -956,6 +962,12 @@ public class Activity extends ContextThemeWrapper
 
     private boolean mIsInMultiWindowMode;
     private boolean mIsInPictureInPictureMode;
+
+    private UiTranslationController mUiTranslationController;
+
+    private SplashScreen mSplashScreen;
+    /** @hide */
+    SplashScreenView mSplashScreenView;
 
     private final WindowControllerCallback mWindowControllerCallback =
             new WindowControllerCallback() {
@@ -1199,7 +1211,7 @@ public class Activity extends ContextThemeWrapper
                     if (window != null) {
                         cm.updateWindowAttributes(window.getAttributes());
                     }
-                    cm.onActivityCreated(mToken, getComponentName());
+                    cm.onActivityCreated(mToken, mShareableActivityToken, getComponentName());
                     break;
                 case CONTENT_CAPTURE_RESUME:
                     cm.onActivityResumed();
@@ -1596,6 +1608,23 @@ public class Activity extends ContextThemeWrapper
         mRestoredFromBundle = savedInstanceState != null;
         mCalled = true;
 
+    }
+
+    /**
+     * Get the interface that activity use to talk to the splash screen.
+     * @see SplashScreen
+     */
+    public final @NonNull SplashScreen getSplashScreen() {
+        return getOrCreateSplashScreen();
+    }
+
+    private SplashScreen getOrCreateSplashScreen() {
+        synchronized (this) {
+            if (mSplashScreen == null) {
+                mSplashScreen = new SplashScreen.SplashScreenImpl(this);
+            }
+            return mSplashScreen;
+        }
     }
 
     /**
@@ -2665,6 +2694,10 @@ public class Activity extends ContextThemeWrapper
         dispatchActivityDestroyed();
 
         notifyContentCaptureManagerIfNeeded(CONTENT_CAPTURE_STOP);
+
+        if (mUiTranslationController != null) {
+            mUiTranslationController.onActivityDestroyed();
+        }
     }
 
     /**
@@ -3780,6 +3813,22 @@ public class Activity extends ContextThemeWrapper
         return false;
     }
 
+    private static final class RequestFinishCallback extends IRequestFinishCallback.Stub {
+        private final WeakReference<Activity> mActivityRef;
+
+        RequestFinishCallback(WeakReference<Activity> activityRef) {
+            mActivityRef = activityRef;
+        }
+
+        @Override
+        public void requestFinish() {
+            Activity activity = mActivityRef.get();
+            if (activity != null) {
+                activity.mHandler.post(activity::finishAfterTransition);
+            }
+        }
+    }
+
     /**
      * Called when the activity has detected the user's press of the back
      * key.  The default implementation simply finishes the current activity,
@@ -3803,7 +3852,8 @@ public class Activity extends ContextThemeWrapper
         // Inform activity task manager that the activity received a back press while at the
         // root of the task. This call allows ActivityTaskManager to intercept or move the task
         // to the back.
-        ActivityClient.getInstance().onBackPressedOnTaskRoot(mToken);
+        ActivityClient.getInstance().onBackPressedOnTaskRoot(mToken,
+                new RequestFinishCallback(new WeakReference<>(this)));
 
         // Activity was launched when user tapped a link in the Autofill Save UI - Save UI must
         // be restored now.
@@ -5080,6 +5130,13 @@ public class Activity extends ContextThemeWrapper
                 com.android.internal.R.styleable.ActivityTaskDescription_colorBackground, 0);
         if (colorBackground != 0 && Color.alpha(colorBackground) == 0xFF) {
             mTaskDescription.setBackgroundColor(colorBackground);
+        }
+
+        int colorBackgroundFloating = a.getColor(
+                com.android.internal.R.styleable.ActivityTaskDescription_colorBackgroundFloating,
+                0);
+        if (colorBackgroundFloating != 0 && Color.alpha(colorBackgroundFloating) == 0xFF) {
+            mTaskDescription.setBackgroundColorFloating(colorBackgroundFloating);
         }
 
         final int statusBarColor = a.getColor(
@@ -7062,6 +7119,9 @@ public class Activity extends ContextThemeWrapper
                 case "--contentcapture":
                     dumpContentCaptureManager(prefix, writer);
                     return;
+                case "--translation":
+                    dumpUiTranslation(prefix, writer);
+                    return;
             }
         }
         writer.print(prefix); writer.print("Local Activity ");
@@ -7102,6 +7162,7 @@ public class Activity extends ContextThemeWrapper
 
         dumpAutofillManager(prefix, writer);
         dumpContentCaptureManager(prefix, writer);
+        dumpUiTranslation(prefix, writer);
 
         ResourcesManager.getInstance().dump(prefix, writer);
     }
@@ -7123,6 +7184,14 @@ public class Activity extends ContextThemeWrapper
             cm.dump(prefix, writer);
         } else {
             writer.print(prefix); writer.println("No ContentCaptureManager");
+        }
+    }
+
+    void dumpUiTranslation(String prefix, PrintWriter writer) {
+        if (mUiTranslationController != null) {
+            mUiTranslationController.dump(prefix, writer);
+        } else {
+            writer.print(prefix); writer.println("No UiTranslationController");
         }
     }
 
@@ -7782,7 +7851,8 @@ public class Activity extends ContextThemeWrapper
             CharSequence title, Activity parent, String id,
             NonConfigurationInstances lastNonConfigurationInstances,
             Configuration config, String referrer, IVoiceInteractor voiceInteractor,
-            Window window, ActivityConfigCallback activityConfigCallback, IBinder assistToken) {
+            Window window, ActivityConfigCallback activityConfigCallback, IBinder assistToken,
+            IBinder shareableActivityToken) {
         attachBaseContext(context);
 
         mFragments.attachHost(null /*parent*/);
@@ -7804,6 +7874,7 @@ public class Activity extends ContextThemeWrapper
         mInstrumentation = instr;
         mToken = token;
         mAssistToken = assistToken;
+        mShareableActivityToken = shareableActivityToken;
         mIdent = ident;
         mApplication = application;
         mIntent = intent;
@@ -7862,6 +7933,11 @@ public class Activity extends ContextThemeWrapper
     }
 
     /** @hide */
+    public final IBinder getShareableActivityToken() {
+        return mParent != null ? mParent.getShareableActivityToken() : mShareableActivityToken;
+    }
+
+    /** @hide */
     @VisibleForTesting
     public final ActivityThread getActivityThread() {
         return mMainThread;
@@ -7873,6 +7949,10 @@ public class Activity extends ContextThemeWrapper
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     final void performCreate(Bundle icicle, PersistableBundle persistentState) {
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_WINDOW_MANAGER)) {
+            Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "performCreate:"
+                    + mComponent.getClassName());
+        }
         dispatchActivityPreCreated(icicle);
         mCanEnterPictureInPicture = true;
         // initialize mIsInMultiWindowMode and mIsInPictureInPictureMode before onCreate
@@ -7895,6 +7975,7 @@ public class Activity extends ContextThemeWrapper
         mFragments.dispatchActivityCreated();
         mActivityTransitionState.setEnterActivityOptions(this, getActivityOptions());
         dispatchActivityPostCreated(icicle);
+        Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
     }
 
     final void performNewIntent(@NonNull Intent intent) {
@@ -8000,6 +8081,10 @@ public class Activity extends ContextThemeWrapper
     }
 
     final void performResume(boolean followedByPause, String reason) {
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_WINDOW_MANAGER)) {
+            Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "performResume:"
+                    + mComponent.getClassName());
+        }
         dispatchActivityPreResumed();
         performRestart(true /* start */, reason);
 
@@ -8051,9 +8136,14 @@ public class Activity extends ContextThemeWrapper
                 " did not call through to super.onPostResume()");
         }
         dispatchActivityPostResumed();
+        Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
     }
 
     final void performPause() {
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_WINDOW_MANAGER)) {
+            Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "performPause:"
+                    + mComponent.getClassName());
+        }
         dispatchActivityPrePaused();
         mDoReportFullyDrawn = false;
         mFragments.dispatchPause();
@@ -8069,6 +8159,7 @@ public class Activity extends ContextThemeWrapper
                     " did not call through to super.onPause()");
         }
         dispatchActivityPostPaused();
+        Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
     }
 
     final void performUserLeaving() {
@@ -8077,6 +8168,10 @@ public class Activity extends ContextThemeWrapper
     }
 
     final void performStop(boolean preserveWindow, String reason) {
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_WINDOW_MANAGER)) {
+            Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "performStop:"
+                    + mComponent.getClassName());
+        }
         mDoReportFullyDrawn = false;
         mFragments.doLoaderStop(mChangingConfigurations /*retain*/);
 
@@ -8122,9 +8217,14 @@ public class Activity extends ContextThemeWrapper
             dispatchActivityPostStopped();
         }
         mResumed = false;
+        Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
     }
 
     final void performDestroy() {
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_WINDOW_MANAGER)) {
+            Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "performDestroy:"
+                    + mComponent.getClassName());
+        }
         dispatchActivityPreDestroyed();
         mDestroyed = true;
         mWindow.destroy();
@@ -8137,6 +8237,7 @@ public class Activity extends ContextThemeWrapper
             mVoiceInteractor.detachActivity();
         }
         dispatchActivityPostDestroyed();
+        Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
     }
 
     final void dispatchMultiWindowModeChanged(boolean isInMultiWindowMode,
@@ -8446,9 +8547,8 @@ public class Activity extends ContextThemeWrapper
     }
 
     /** @hide */
-    @Override
     @Nullable
-    public final View autofillClientFindViewByAutofillIdTraversal(AutofillId autofillId) {
+    public View findViewByAutofillIdTraversal(@NonNull AutofillId autofillId) {
         final ArrayList<ViewRootImpl> roots =
                 WindowManagerGlobal.getInstance().getRootViews(getActivityToken());
         for (int rootNum = 0; rootNum < roots.size(); rootNum++) {
@@ -8461,8 +8561,14 @@ public class Activity extends ContextThemeWrapper
                 }
             }
         }
-
         return null;
+    }
+
+    /** @hide */
+    @Override
+    @Nullable
+    public final View autofillClientFindViewByAutofillIdTraversal(AutofillId autofillId) {
+        return findViewByAutofillIdTraversal(autofillId);
     }
 
     /** @hide */
@@ -8633,6 +8739,18 @@ public class Activity extends ContextThemeWrapper
     @RequiresPermission(CONTROL_REMOTE_APP_TRANSITION_ANIMATIONS)
     public void unregisterRemoteAnimations() {
         ActivityClient.getInstance().unregisterRemoteAnimations(mToken);
+    }
+
+    /**
+     * Notify {@link UiTranslationController} the ui translation state is changed.
+     * @hide
+     */
+    public void updateUiTranslationState(int state, TranslationSpec sourceSpec,
+            TranslationSpec destSpec, List<AutofillId> viewIds) {
+        if (mUiTranslationController == null) {
+            mUiTranslationController = new UiTranslationController(this, getApplicationContext());
+        }
+        mUiTranslationController.updateUiTranslationState(state, sourceSpec, destSpec, viewIds);
     }
 
     class HostCallbacks extends FragmentHostCallback<Activity> {

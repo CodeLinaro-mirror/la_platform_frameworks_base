@@ -27,6 +27,7 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Slog;
 
+import com.android.server.biometrics.BiometricsProto;
 import com.android.server.biometrics.sensors.AcquisitionClient;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.fingerprint.UdfpsHelper;
@@ -69,8 +70,9 @@ class FingerprintDetectClient extends AcquisitionClient<ISession> {
 
     @Override
     protected void startHalOperation() {
-        UdfpsHelper.showUdfpsOverlay(getSensorId(), IUdfpsOverlayController.REASON_AUTH,
-                mUdfpsOverlayController);
+        UdfpsHelper.showUdfpsOverlay(getSensorId(),
+                IUdfpsOverlayController.REASON_AUTH_FPM_KEYGUARD,
+                mUdfpsOverlayController, this);
         try {
             mCancellationSignal = getFreshDaemon().detectInteraction(mSequentialId);
         } catch (RemoteException e) {
@@ -90,5 +92,15 @@ class FingerprintDetectClient extends AcquisitionClient<ISession> {
             Slog.e(TAG, "Remote exception when sending onDetected", e);
             mCallback.onClientFinished(this, false /* success */);
         }
+    }
+
+    @Override
+    public int getProtoEnum() {
+        return BiometricsProto.CM_DETECT_INTERACTION;
+    }
+
+    @Override
+    public boolean interruptsPrecedingClients() {
+        return true;
     }
 }

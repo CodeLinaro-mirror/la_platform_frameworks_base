@@ -207,6 +207,12 @@ public class Process {
     public static final int SE_UID = 1068;
 
     /**
+     * Defines the UID/GID for the iorapd.
+     * @hide
+     */
+    public static final int IORAPD_UID = 1071;
+
+    /**
      * Defines the UID/GID for the NetworkStack app.
      * @hide
      */
@@ -389,6 +395,12 @@ public class Process {
      * {@link java.lang.Thread} class.
      */
     public static final int THREAD_PRIORITY_VIDEO = -10;
+
+    /**
+     * Priority we boost main thread and RT of top app to.
+     * @hide
+     */
+    public static final int THREAD_PRIORITY_TOP_APP_BOOST = -10;
 
     /**
      * Standard priority of audio threads.  Applications can not normally
@@ -970,6 +982,16 @@ public class Process {
             throws IllegalArgumentException, SecurityException;
 
     /**
+     *
+     * Create a new process group in the cgroup uid/pid hierarchy
+     *
+     * @return <0 in case of error
+     *
+     * @hide
+     */
+    public static final native int createProcessGroup(int uid, int pid);
+
+    /**
      * On some devices, the foreground process may have one or more CPU
      * cores exclusively reserved for it. This method can be used to
      * retrieve which cores that are (if any), so the calling process
@@ -1442,7 +1464,7 @@ public class Process {
      *
      * @hide
      */
-    public static boolean hasFileLocks(int pid) throws IOException {
+    public static boolean hasFileLocks(int pid) throws Exception {
         BufferedReader br = null;
 
         try {
@@ -1454,8 +1476,13 @@ public class Process {
 
                 for (int i = 0; i < 5 && st.hasMoreTokens(); i++) {
                     String str = st.nextToken();
-                    if (i == 4 && Integer.parseInt(str) == pid) {
-                        return true;
+                    try {
+                        if (i == 4 && Integer.parseInt(str) == pid) {
+                            return true;
+                        }
+                    } catch (NumberFormatException nfe) {
+                        throw new Exception("Exception parsing /proc/locks at \" "
+                                + line +  " \", token #" + i);
                     }
                 }
             }

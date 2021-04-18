@@ -23,6 +23,7 @@
 #include "Outline.h"
 #include "Rect.h"
 #include "RevealClip.h"
+#include "effects/StretchEffect.h"
 #include "utils/MathUtils.h"
 #include "utils/PaintUtils.h"
 
@@ -98,6 +99,10 @@ public:
 
     SkImageFilter* getImageFilter() const { return mImageFilter.get(); }
 
+    const StretchEffect& getStretchEffect() const { return mStretchEffect; }
+
+    StretchEffect& mutableStretchEffect() { return mStretchEffect; }
+
     // Sets alpha, xfermode, and colorfilter from an SkPaint
     // paint may be NULL, in which case defaults will be set
     bool setFromPaint(const SkPaint* paint);
@@ -124,6 +129,7 @@ private:
     SkBlendMode mMode;
     sk_sp<SkColorFilter> mColorFilter;
     sk_sp<SkImageFilter> mImageFilter;
+    StretchEffect mStretchEffect;
 };
 
 /*
@@ -546,8 +552,8 @@ public:
 
     bool promotedToLayer() const {
         return mLayerProperties.mType == LayerType::None && fitsOnLayer() &&
-               (mComputedFields.mNeedLayerForFunctors ||
-                mLayerProperties.mImageFilter != nullptr ||
+               (mComputedFields.mNeedLayerForFunctors || mLayerProperties.mImageFilter != nullptr ||
+                !mLayerProperties.getStretchEffect().isEmpty() ||
                 (!MathUtils::isZero(mPrimitiveFields.mAlpha) && mPrimitiveFields.mAlpha < 1 &&
                  mPrimitiveFields.mHasOverlappingRendering));
     }

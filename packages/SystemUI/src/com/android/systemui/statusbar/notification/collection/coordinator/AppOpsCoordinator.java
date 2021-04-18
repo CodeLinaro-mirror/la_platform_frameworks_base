@@ -30,11 +30,7 @@ import com.android.systemui.statusbar.notification.collection.NotifPipeline;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.collection.listbuilder.pluggable.NotifFilter;
 import com.android.systemui.statusbar.notification.collection.listbuilder.pluggable.NotifSectioner;
-import com.android.systemui.statusbar.notification.collection.notifcollection.NotifLifetimeExtender;
 import com.android.systemui.util.concurrency.DelayableExecutor;
-
-import java.util.HashMap;
-import java.util.Map;
 
 import javax.inject.Inject;
 
@@ -75,9 +71,6 @@ public class AppOpsCoordinator implements Coordinator {
     public void attach(NotifPipeline pipeline) {
         mNotifPipeline = pipeline;
 
-        // extend the lifetime of foreground notification services to show for at least 5 seconds
-        mNotifPipeline.addNotificationLifetimeExtender(mForegroundLifetimeExtender);
-
         // filter out foreground service notifications that aren't necessary anymore
         mNotifPipeline.addPreGroupFilter(mNotifFilter);
 
@@ -102,77 +95,7 @@ public class AppOpsCoordinator implements Coordinator {
                             sbn.getUser().getIdentifier())) {
                 return true;
             }
-
-            // Filters out system alert notifications when unneeded
-            if (mForegroundServiceController.isSystemAlertNotification(sbn)) {
-                final String[] apps = sbn.getNotification().extras.getStringArray(
-                        Notification.EXTRA_FOREGROUND_APPS);
-                if (apps != null && apps.length >= 1) {
-                    if (!mForegroundServiceController.isSystemAlertWarningNeeded(
-                            sbn.getUser().getIdentifier(), apps[0])) {
-                        return true;
-                    }
-                }
-            }
             return false;
-        }
-    };
-
-    /**
-     * Extends the lifetime of foreground notification services such that they show for at least
-     * five seconds
-     */
-    private final NotifLifetimeExtender mForegroundLifetimeExtender =
-            new NotifLifetimeExtender() {
-        private static final int MIN_FGS_TIME_MS = 5000;
-        private OnEndLifetimeExtensionCallback mEndCallback;
-        private Map<NotificationEntry, Runnable> mEndRunnables = new HashMap<>();
-
-        @Override
-        public String getName() {
-            return TAG;
-        }
-
-        @Override
-        public void setCallback(OnEndLifetimeExtensionCallback callback) {
-            mEndCallback = callback;
-        }
-
-        @Override
-        public boolean shouldExtendLifetime(NotificationEntry entry, int reason) {
-            if ((entry.getSbn().getNotification().flags
-                    & Notification.FLAG_FOREGROUND_SERVICE) == 0) {
-                return false;
-            }
-
-            final long currTime = System.currentTimeMillis();
-            final boolean extendLife = currTime - entry.getSbn().getPostTime() < MIN_FGS_TIME_MS;
-
-            if (extendLife) {
-                if (!mEndRunnables.containsKey(entry)) {
-                    final Runnable endExtensionRunnable = () -> {
-                        mEndRunnables.remove(entry);
-                        mEndCallback.onEndLifetimeExtension(
-                                mForegroundLifetimeExtender,
-                                entry);
-                    };
-
-                    final Runnable cancelRunnable = mMainExecutor.executeDelayed(
-                            endExtensionRunnable,
-                            MIN_FGS_TIME_MS - (currTime - entry.getSbn().getPostTime()));
-                    mEndRunnables.put(entry, cancelRunnable);
-                }
-            }
-
-            return extendLife;
-        }
-
-        @Override
-        public void cancelLifetimeExtension(NotificationEntry entry) {
-            Runnable cancelRunnable = mEndRunnables.remove(entry);
-            if (cancelRunnable != null) {
-                cancelRunnable.run();
-            }
         }
     };
 

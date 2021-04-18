@@ -15,13 +15,20 @@
  */
 package com.android.server.devicepolicy;
 
+import static android.app.admin.DevicePolicyManager.OPERATION_SAFETY_REASON_NONE;
+import static android.app.admin.DevicePolicyManager.operationSafetyReasonToString;
 import static android.app.admin.DevicePolicyManager.operationToString;
 
 import android.app.admin.DevicePolicyManager.DevicePolicyOperation;
+import android.app.admin.DevicePolicyManager.OperationSafetyReason;
+import android.app.admin.DevicePolicyManagerInternal;
 import android.app.admin.DevicePolicySafetyChecker;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Slog;
 
 import com.android.internal.os.IResultReceiver;
+import com.android.server.LocalServices;
 
 import java.util.Objects;
 
@@ -37,38 +44,93 @@ final class OneTimeSafetyChecker implements DevicePolicySafetyChecker {
 
     private static final String TAG = OneTimeSafetyChecker.class.getSimpleName();
 
+    private static final long SELF_DESTRUCT_TIMEOUT_MS = 10_000;
+
     private final DevicePolicyManagerService mService;
     private final DevicePolicySafetyChecker mRealSafetyChecker;
     private final @DevicePolicyOperation int mOperation;
-    private final boolean mSafe;
+    private final @OperationSafetyReason int mReason;
+    private final Handler mHandler = new Handler(Looper.getMainLooper());
+
+    private boolean mDone;
 
     OneTimeSafetyChecker(DevicePolicyManagerService service,
-            @DevicePolicyOperation int operation, boolean safe) {
+            @DevicePolicyOperation int operation, @OperationSafetyReason int reason) {
         mService = Objects.requireNonNull(service);
         mOperation = operation;
-        mSafe = safe;
+        mReason = reason;
         mRealSafetyChecker = service.getDevicePolicySafetyChecker();
-        Slog.i(TAG, "Saving real DevicePolicySafetyChecker as " + mRealSafetyChecker);
+        Slog.i(TAG, "OneTimeSafetyChecker constructor: operation=" + operationToString(operation)
+                + ", reason=" + operationSafetyReasonToString(reason)
+                + ", realChecker=" + mRealSafetyChecker
+                + ", maxDuration=" + SELF_DESTRUCT_TIMEOUT_MS + "ms");
+        mHandler.postDelayed(() -> selfDestruct(), SELF_DESTRUCT_TIMEOUT_MS);
     }
 
     @Override
-    public boolean isDevicePolicyOperationSafe(@DevicePolicyOperation int operation) {
+    @OperationSafetyReason
+    public int getUnsafeOperationReason(@DevicePolicyOperation int operation) {
         String name = operationToString(operation);
-        boolean safe = true;
+        Slog.i(TAG, "getUnsafeOperationReason(" + name + ")");
+        int reason = OPERATION_SAFETY_REASON_NONE;
         if (operation == mOperation) {
-            safe = mSafe;
+            reason = mReason;
         } else {
             Slog.wtf(TAG, "invalid call to isDevicePolicyOperationSafe(): asked for " + name
                     + ", should be " + operationToString(mOperation));
         }
-        Slog.i(TAG, "isDevicePolicyOperationSafe(" + name + "): returning " + safe
-                + " and restoring DevicePolicySafetyChecker to " + mRealSafetyChecker);
-        mService.setDevicePolicySafetyCheckerUnchecked(mRealSafetyChecker);
+        String reasonName = operationSafetyReasonToString(reason);
+        DevicePolicyManagerInternal dpmi = LocalServices
+                .getService(DevicePolicyManagerInternal.class);
+
+        Slog.i(TAG, "notifying " + reasonName + " is UNSAFE");
+        dpmi.notifyUnsafeOperationStateChanged(this, reason, /* isSafe= */ false);
+
+        Slog.i(TAG, "notifying " + reasonName + " is SAFE");
+        dpmi.notifyUnsafeOperationStateChanged(this, reason, /* isSafe= */ true);
+
+        Slog.i(TAG, "returning " + reasonName);
+
+        disableSelf();
+        return reason;
+    }
+
+    @Override
+    public boolean isSafeOperation(@OperationSafetyReason int reason) {
+        boolean safe = mReason != reason;
+        Slog.i(TAG, "isSafeOperation(" + operationSafetyReasonToString(reason) + "): " + safe);
+
+        disableSelf();
         return safe;
     }
 
     @Override
     public void onFactoryReset(IResultReceiver callback) {
         throw new UnsupportedOperationException();
+    }
+
+    private void disableSelf() {
+        if (mDone) {
+            Slog.w(TAG, "disableSelf(): already disabled");
+            return;
+        }
+        Slog.i(TAG, "restoring DevicePolicySafetyChecker to " + mRealSafetyChecker);
+        mService.setDevicePolicySafetyCheckerUnchecked(mRealSafetyChecker);
+        mDone = true;
+    }
+
+    private void selfDestruct() {
+        if (mDone) return;
+
+        // Usually happens when a CTS failed before calling the DPM method that would clear it
+        Slog.e(TAG, "Self destructing " + this + ", as it was not automatically disabled");
+        disableSelf();
+    }
+
+    @Override
+    public String toString() {
+        return "OneTimeSafetyChecker[id=" + System.identityHashCode(this)
+                + ", reason=" + operationSafetyReasonToString(mReason)
+                + ", operation=" + operationToString(mOperation) + ']';
     }
 }

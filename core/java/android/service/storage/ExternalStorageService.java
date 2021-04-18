@@ -95,6 +95,13 @@ public abstract class ExternalStorageService extends Service {
     public static final String EXTRA_ERROR =
             "android.service.storage.extra.error";
 
+    /**
+     * {@link Bundle} key for a package name {@link String} value.
+     *
+     * {@hide}
+     */
+    public static final String EXTRA_PACKAGE_NAME = "android.service.storage.extra.package_name";
+
     /** @hide */
     @IntDef(flag = true, prefix = {"FLAG_SESSION_"},
         value = {FLAG_SESSION_TYPE_FUSE, FLAG_SESSION_ATTRIBUTE_INDEXABLE})
@@ -158,8 +165,22 @@ public abstract class ExternalStorageService extends Service {
      * @param volumeUuid uuid of the {@link StorageVolume} from which cache needs to be freed
      * @param bytes number of bytes which need to be freed
      */
-    public void onFreeCacheRequested(@NonNull UUID volumeUuid, @BytesLong long bytes) {
+    public void onFreeCache(@NonNull UUID volumeUuid, @BytesLong long bytes) throws IOException {
         throw new UnsupportedOperationException("onFreeCacheRequested not implemented");
+    }
+
+    /**
+     * Called when {@code packageName} is about to ANR. The {@link ExternalStorageService} can
+     * show a progress dialog for the {@code reason}.
+     *
+     * @param packageName the package name of the ANR'ing app
+     * @param uid the uid of the ANR'ing app
+     * @param tid the tid of the ANR'ing app
+     * @param reason the reason the app is ANR'ing
+     */
+    public void onAnrDelayStarted(@NonNull String packageName, int uid, int tid,
+            @StorageManager.AppIoBlockedReason int reason) {
+        throw new UnsupportedOperationException("onAnrDelayStarted not implemented");
     }
 
     @Override
@@ -202,7 +223,7 @@ public abstract class ExternalStorageService extends Service {
                 RemoteCallback callback) {
             mHandler.post(() -> {
                 try {
-                    onFreeCacheRequested(StorageManager.convert(volumeUuid), bytes);
+                    onFreeCache(StorageManager.convert(volumeUuid), bytes);
                     sendResult(sessionId, null /* throwable */, callback);
                 } catch (Throwable t) {
                     sendResult(sessionId, t, callback);
@@ -218,6 +239,18 @@ public abstract class ExternalStorageService extends Service {
                     sendResult(sessionId, null /* throwable */, callback);
                 } catch (Throwable t) {
                     sendResult(sessionId, t, callback);
+                }
+            });
+        }
+
+        @Override
+        public void notifyAnrDelayStarted(String packageName, int uid, int tid, int reason)
+                throws RemoteException {
+            mHandler.post(() -> {
+                try {
+                    onAnrDelayStarted(packageName, uid, tid, reason);
+                } catch (Throwable t) {
+                    // Ignored
                 }
             });
         }

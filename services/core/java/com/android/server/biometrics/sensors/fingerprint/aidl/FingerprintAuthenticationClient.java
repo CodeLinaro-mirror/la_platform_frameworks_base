@@ -30,6 +30,7 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Slog;
 
+import com.android.server.biometrics.Utils;
 import com.android.server.biometrics.sensors.AuthenticationClient;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.LockoutCache;
@@ -58,11 +59,11 @@ class FingerprintAuthenticationClient extends AuthenticationClient<ISession> imp
             boolean restricted, @NonNull String owner, int cookie, boolean requireConfirmation,
             int sensorId, boolean isStrongBiometric, int statsClient,
             @Nullable TaskStackListener taskStackListener, @NonNull LockoutCache lockoutCache,
-            @Nullable IUdfpsOverlayController udfpsOverlayController) {
+            @Nullable IUdfpsOverlayController udfpsOverlayController, boolean isKeyguard) {
         super(context, lazyDaemon, token, listener, targetUserId, operationId, restricted, owner,
                 cookie, requireConfirmation, sensorId, isStrongBiometric,
                 BiometricsProtoEnums.MODALITY_FINGERPRINT, statsClient, taskStackListener,
-                lockoutCache);
+                lockoutCache, isKeyguard);
         mLockoutCache = lockoutCache;
         mUdfpsOverlayController = udfpsOverlayController;
     }
@@ -87,8 +88,8 @@ class FingerprintAuthenticationClient extends AuthenticationClient<ISession> imp
 
     @Override
     protected void startHalOperation() {
-        UdfpsHelper.showUdfpsOverlay(getSensorId(), IUdfpsOverlayController.REASON_AUTH,
-                mUdfpsOverlayController);
+        UdfpsHelper.showUdfpsOverlay(getSensorId(), Utils.getUdfpsAuthReason(this),
+                mUdfpsOverlayController, this);
         try {
             mCancellationSignal = getFreshDaemon().authenticate(mSequentialId, mOperationId);
         } catch (RemoteException e) {
@@ -117,6 +118,9 @@ class FingerprintAuthenticationClient extends AuthenticationClient<ISession> imp
     public void onPointerDown(int x, int y, float minor, float major) {
         try {
             getFreshDaemon().onPointerDown(0 /* pointerId */, x, y, minor, major);
+            if (getListener() != null) {
+                getListener().onUdfpsPointerDown(getSensorId(), getCookie());
+            }
         } catch (RemoteException e) {
             Slog.e(TAG, "Remote exception", e);
         }
@@ -126,6 +130,9 @@ class FingerprintAuthenticationClient extends AuthenticationClient<ISession> imp
     public void onPointerUp() {
         try {
             getFreshDaemon().onPointerUp(0 /* pointerId */);
+            if (getListener() != null) {
+                getListener().onUdfpsPointerUp(getSensorId(), getCookie());
+            }
         } catch (RemoteException e) {
             Slog.e(TAG, "Remote exception", e);
         }

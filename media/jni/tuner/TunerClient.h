@@ -20,14 +20,19 @@
 #include <aidl/android/media/tv/tunerresourcemanager/ITunerResourceManager.h>
 #include <aidl/android/media/tv/tuner/ITunerService.h>
 #include <aidl/android/media/tv/tuner/TunerFrontendInfo.h>
+#include <android/binder_parcel_utils.h>
 #include <android/hardware/tv/tuner/1.1/ITuner.h>
 #include <android/hardware/tv/tuner/1.1/types.h>
 
-#include "FrontendClient.h"
 #include "DemuxClient.h"
+#include "ClientHelper.h"
+#include "FrontendClient.h"
 #include "DescramblerClient.h"
 #include "LnbClient.h"
 
+using Status = ::ndk::ScopedAStatus;
+
+using ::aidl::android::media::tv::tuner::TunerDemuxCapabilities;
 using ::aidl::android::media::tv::tuner::ITunerService;
 using ::aidl::android::media::tv::tuner::TunerFrontendInfo;
 using ::aidl::android::media::tv::tunerresourcemanager::ITunerResourceManager;
@@ -42,6 +47,10 @@ using ::android::hardware::tv::tuner::V1_1::FrontendDtmbCapabilities;
 using namespace std;
 
 namespace android {
+
+const static int TUNER_HAL_VERSION_UNKNOWN = 0;
+const static int TUNER_HAL_VERSION_1_0 = 1 << 16;
+const static int TUNER_HAL_VERSION_1_1 = (1 << 16) | 1;
 
 typedef enum {
     FRONTEND,
@@ -141,7 +150,8 @@ private:
     sp<ILnb> openHidlLnbByName(string name, LnbId& lnbId);
     sp<IDescrambler> openHidlDescrambler();
     vector<int> getLnbHandles();
-    FrontendInfo FrontendInfoAidlToHidl(TunerFrontendInfo aidlFrontendInfo);
+    DemuxCapabilities getHidlDemuxCaps(TunerDemuxCapabilities& aidlCaps);
+    FrontendInfo frontendInfoAidlToHidl(TunerFrontendInfo aidlFrontendInfo);
     void updateTunerResources();
     void updateFrontendResources();
     void updateLnbResources();

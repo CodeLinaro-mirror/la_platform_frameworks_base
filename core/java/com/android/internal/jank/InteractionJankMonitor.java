@@ -16,12 +16,25 @@
 
 package com.android.internal.jank;
 
-import static com.android.internal.jank.FrameTracker.*;
+import static android.content.Intent.FLAG_RECEIVER_REGISTERED_ONLY;
+
+import static com.android.internal.jank.FrameTracker.ChoreographerWrapper;
+import static com.android.internal.jank.FrameTracker.SurfaceControlWrapper;
+import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LAUNCHER_ALL_APPS_SCROLL;
 import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LAUNCHER_APP_CLOSE_TO_HOME;
 import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LAUNCHER_APP_CLOSE_TO_PIP;
 import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LAUNCHER_APP_LAUNCH_FROM_ICON;
 import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LAUNCHER_APP_LAUNCH_FROM_RECENTS;
+import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LAUNCHER_OPEN_ALL_APPS;
 import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LAUNCHER_QUICK_SWITCH;
+import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_PASSWORD_APPEAR;
+import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_PASSWORD_DISAPPEAR;
+import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_PATTERN_APPEAR;
+import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_PATTERN_DISAPPEAR;
+import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_PIN_APPEAR;
+import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_PIN_DISAPPEAR;
+import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_TRANSITION_FROM_AOD;
+import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_TRANSITION_TO_AOD;
 import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__NOTIFICATION_SHADE_SWIPE;
 import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__SHADE_APP_LAUNCH;
 import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__SHADE_EXPAND_COLLAPSE_LOCK;
@@ -37,20 +50,24 @@ import static com.android.internal.util.FrameworkStatsLog.UIINTERACTION_FRAME_IN
 
 import android.annotation.IntDef;
 import android.annotation.NonNull;
+import android.content.Context;
+import android.content.Intent;
 import android.os.Build;
 import android.os.HandlerExecutor;
 import android.os.HandlerThread;
+import android.os.SystemProperties;
 import android.provider.DeviceConfig;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.Choreographer;
-import android.view.SurfaceControl;
 import android.view.View;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.jank.FrameTracker.FrameMetricsWrapper;
+import com.android.internal.jank.FrameTracker.FrameTrackerListener;
 import com.android.internal.jank.FrameTracker.ThreadedRendererWrapper;
 import com.android.internal.jank.FrameTracker.ViewRootWrapper;
+import com.android.internal.util.PerfettoTrigger;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -63,6 +80,8 @@ import java.util.concurrent.TimeUnit;
  */
 public class InteractionJankMonitor {
     private static final String TAG = InteractionJankMonitor.class.getSimpleName();
+    private static final String ACTION_PREFIX = InteractionJankMonitor.class.getCanonicalName();
+
     private static final String DEFAULT_WORKER_NAME = TAG + "-Worker";
     private static final long DEFAULT_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(5L);
     private static final String SETTINGS_ENABLED_KEY = "enabled";
@@ -78,6 +97,14 @@ public class InteractionJankMonitor {
     /** Default to triggering trace if 3 frames are missed OR a frame takes at least 64ms */
     private static final int DEFAULT_TRACE_THRESHOLD_MISSED_FRAMES = 3;
     private static final int DEFAULT_TRACE_THRESHOLD_FRAME_TIME_MILLIS = 64;
+
+    public static final String ACTION_SESSION_BEGIN = ACTION_PREFIX + ".ACTION_SESSION_BEGIN";
+    public static final String ACTION_SESSION_CANCEL = ACTION_PREFIX + ".ACTION_SESSION_CANCEL";
+    public static final String ACTION_METRICS_LOGGED = ACTION_PREFIX + ".ACTION_METRICS_LOGGED";
+    public static final String BUNDLE_KEY_CUJ_NAME = ACTION_PREFIX + ".CUJ_NAME";
+    public static final String BUNDLE_KEY_TIMESTAMP = ACTION_PREFIX + ".TIMESTAMP";
+    @VisibleForTesting
+    public static final String PROP_NOTIFY_CUJ_EVENT = "debug.notify_cuj_events";
 
     // Every value must have a corresponding entry in CUJ_STATSD_INTERACTION_TYPE.
     public static final int CUJ_NOTIFICATION_SHADE_EXPAND_COLLAPSE = 0;
@@ -97,6 +124,16 @@ public class InteractionJankMonitor {
     public static final int CUJ_NOTIFICATION_ADD = 14;
     public static final int CUJ_NOTIFICATION_REMOVE = 15;
     public static final int CUJ_NOTIFICATION_APP_START = 16;
+    public static final int CUJ_LOCKSCREEN_PASSWORD_APPEAR = 17;
+    public static final int CUJ_LOCKSCREEN_PATTERN_APPEAR = 18;
+    public static final int CUJ_LOCKSCREEN_PIN_APPEAR = 19;
+    public static final int CUJ_LOCKSCREEN_PASSWORD_DISAPPEAR = 20;
+    public static final int CUJ_LOCKSCREEN_PATTERN_DISAPPEAR = 21;
+    public static final int CUJ_LOCKSCREEN_PIN_DISAPPEAR = 22;
+    public static final int CUJ_LOCKSCREEN_TRANSITION_FROM_AOD = 23;
+    public static final int CUJ_LOCKSCREEN_TRANSITION_TO_AOD = 24;
+    public static final int CUJ_LAUNCHER_OPEN_ALL_APPS = 25;
+    public static final int CUJ_LAUNCHER_ALL_APPS_SCROLL = 26;
 
     private static final int NO_STATSD_LOGGING = -1;
 
@@ -122,6 +159,16 @@ public class InteractionJankMonitor {
             UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__SHADE_NOTIFICATION_ADD,
             UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__SHADE_NOTIFICATION_REMOVE,
             UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__SHADE_APP_LAUNCH,
+            UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_PASSWORD_APPEAR,
+            UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_PATTERN_APPEAR,
+            UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_PIN_APPEAR,
+            UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_PASSWORD_DISAPPEAR,
+            UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_PATTERN_DISAPPEAR,
+            UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_PIN_DISAPPEAR,
+            UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_TRANSITION_FROM_AOD,
+            UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LOCKSCREEN_TRANSITION_TO_AOD,
+            UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LAUNCHER_OPEN_ALL_APPS,
+            UIINTERACTION_FRAME_INFO_REPORTED__INTERACTION_TYPE__LAUNCHER_ALL_APPS_SCROLL,
     };
 
     private static volatile InteractionJankMonitor sInstance;
@@ -158,6 +205,16 @@ public class InteractionJankMonitor {
             CUJ_NOTIFICATION_ADD,
             CUJ_NOTIFICATION_REMOVE,
             CUJ_NOTIFICATION_APP_START,
+            CUJ_LOCKSCREEN_PASSWORD_APPEAR,
+            CUJ_LOCKSCREEN_PATTERN_APPEAR,
+            CUJ_LOCKSCREEN_PIN_APPEAR,
+            CUJ_LOCKSCREEN_PASSWORD_DISAPPEAR,
+            CUJ_LOCKSCREEN_PATTERN_DISAPPEAR,
+            CUJ_LOCKSCREEN_PIN_DISAPPEAR,
+            CUJ_LOCKSCREEN_TRANSITION_FROM_AOD,
+            CUJ_LOCKSCREEN_TRANSITION_TO_AOD,
+            CUJ_LAUNCHER_OPEN_ALL_APPS,
+            CUJ_LAUNCHER_ALL_APPS_SCROLL,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface CujType {
@@ -215,13 +272,26 @@ public class InteractionJankMonitor {
      */
     @VisibleForTesting
     public FrameTracker createFrameTracker(View v, Session session) {
+        final Context c = v.getContext().getApplicationContext();
         synchronized (this) {
+            boolean needListener = SystemProperties.getBoolean(PROP_NOTIFY_CUJ_EVENT, false);
+            FrameTrackerListener eventsListener =
+                    !needListener ? null : (s, act) -> notifyEvents(c, act, s);
+
             return new FrameTracker(session, mWorker.getThreadHandler(),
                     new ThreadedRendererWrapper(v.getThreadedRenderer()),
                     new ViewRootWrapper(v.getViewRootImpl()), new SurfaceControlWrapper(),
                     new ChoreographerWrapper(Choreographer.getInstance()), mMetrics,
-                    mTraceThresholdMissedFrames, mTraceThresholdFrameTimeMillis);
+                    mTraceThresholdMissedFrames, mTraceThresholdFrameTimeMillis, eventsListener);
         }
+    }
+
+    private void notifyEvents(Context context, String action, Session session) {
+        Intent intent = new Intent(action);
+        intent.putExtra(BUNDLE_KEY_CUJ_NAME, getNameOfCuj(session.getCuj()));
+        intent.putExtra(BUNDLE_KEY_TIMESTAMP, session.getTimeStamp());
+        intent.addFlags(FLAG_RECEIVER_REGISTERED_ONLY);
+        context.sendBroadcast(intent);
     }
 
     /**
@@ -366,7 +436,13 @@ public class InteractionJankMonitor {
         return getNameOfCuj(interactionType - 1);
     }
 
-    private static String getNameOfCuj(int cujType) {
+    /**
+     * A helper method to translate CUJ type to CUJ name.
+     *
+     * @param cujType the cuj type defined in this file
+     * @return the name of the cuj type
+     */
+    public static String getNameOfCuj(int cujType) {
         switch (cujType) {
             case CUJ_NOTIFICATION_SHADE_EXPAND_COLLAPSE:
                 return "SHADE_EXPAND_COLLAPSE";
@@ -402,6 +478,26 @@ public class InteractionJankMonitor {
                 return "NOTIFICATION_REMOVE";
             case CUJ_NOTIFICATION_APP_START:
                 return "NOTIFICATION_APP_START";
+            case CUJ_LOCKSCREEN_PASSWORD_APPEAR:
+                return "CUJ_LOCKSCREEN_PASSWORD_APPEAR";
+            case CUJ_LOCKSCREEN_PATTERN_APPEAR:
+                return "CUJ_LOCKSCREEN_PATTERN_APPEAR";
+            case CUJ_LOCKSCREEN_PIN_APPEAR:
+                return "CUJ_LOCKSCREEN_PIN_APPEAR";
+            case CUJ_LOCKSCREEN_PASSWORD_DISAPPEAR:
+                return "CUJ_LOCKSCREEN_PASSWORD_DISAPPEAR";
+            case CUJ_LOCKSCREEN_PATTERN_DISAPPEAR:
+                return "CUJ_LOCKSCREEN_PATTERN_DISAPPEAR";
+            case CUJ_LOCKSCREEN_PIN_DISAPPEAR:
+                return "CUJ_LOCKSCREEN_PIN_DISAPPEAR";
+            case CUJ_LOCKSCREEN_TRANSITION_FROM_AOD:
+                return "CUJ_LOCKSCREEN_TRANSITION_FROM_AOD";
+            case CUJ_LOCKSCREEN_TRANSITION_TO_AOD:
+                return "CUJ_LOCKSCREEN_TRANSITION_TO_AOD";
+            case CUJ_LAUNCHER_OPEN_ALL_APPS :
+                return "CUJ_LAUNCHER_OPEN_ALL_APPS";
+            case CUJ_LAUNCHER_ALL_APPS_SCROLL:
+                return "CUJ_LAUNCHER_ALL_APPS_SCROLL";
         }
         return "UNKNOWN";
     }
@@ -412,6 +508,7 @@ public class InteractionJankMonitor {
     public static class Session {
         @CujType
         private int mCujType;
+        private long mTimeStamp;
 
         public Session(@CujType int cujType) {
             mCujType = cujType;
@@ -432,11 +529,19 @@ public class InteractionJankMonitor {
         }
 
         public String getPerfettoTrigger() {
-            return String.format("interaction-jank-monitor-%d", mCujType);
+            return String.format("com.android.telemetry.interaction-jank-monitor-%d", mCujType);
         }
 
         public String getName() {
             return "J<" + getNameOfCuj(mCujType) + ">";
+        }
+
+        public void setTimeStamp(long timeStamp) {
+            mTimeStamp = timeStamp;
+        }
+
+        public long getTimeStamp() {
+            return mTimeStamp;
         }
     }
 }

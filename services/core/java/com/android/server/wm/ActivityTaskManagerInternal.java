@@ -162,8 +162,8 @@ public abstract class ActivityTaskManagerInternal {
             IVoiceInteractor mInteractor);
 
     /**
-     * Returns the top activity from each of the currently visible stacks. The first entry will be
-     * the focused activity.
+     * Returns the top activity from each of the currently visible root tasks. The first entry
+     * will be the focused activity.
      */
     public abstract List<IBinder> getTopVisibleActivities();
 
@@ -279,12 +279,6 @@ public abstract class ActivityTaskManagerInternal {
     public abstract void cancelRecentsAnimation(boolean restoreHomeRootTaskPosition);
 
     /**
-     * This enforces {@code func} can only be called if either the caller is Recents activity or
-     * has {@code permission}.
-     */
-    public abstract void enforceCallerIsRecentsOrHasPermission(String permission, String func);
-
-    /**
      * Returns true if the app can close system dialogs. Otherwise it either throws a {@link
      * SecurityException} or returns false with a logcat message depending on whether the app
      * targets SDK level {@link android.os.Build.VERSION_CODES#S} or not.
@@ -354,13 +348,16 @@ public abstract class ActivityTaskManagerInternal {
     public final class ActivityTokens {
         private final @NonNull IBinder mActivityToken;
         private final @NonNull IBinder mAssistToken;
+        private final @NonNull IBinder mShareableActivityToken;
         private final @NonNull IApplicationThread mAppThread;
 
         public ActivityTokens(@NonNull IBinder activityToken,
-                @NonNull IBinder assistToken, @NonNull IApplicationThread appThread) {
+                @NonNull IBinder assistToken, @NonNull IApplicationThread appThread,
+                @NonNull IBinder shareableActivityToken) {
             mActivityToken = activityToken;
             mAssistToken = assistToken;
             mAppThread = appThread;
+            mShareableActivityToken = shareableActivityToken;
         }
 
         /**
@@ -375,6 +372,13 @@ public abstract class ActivityTaskManagerInternal {
          */
         public @NonNull IBinder getAssistToken() {
             return mAssistToken;
+        }
+
+        /**
+         * @return The sharable activity token..
+         */
+        public @NonNull IBinder getShareableActivityToken() {
+            return mShareableActivityToken;
         }
 
         /**
@@ -487,8 +491,8 @@ public abstract class ActivityTaskManagerInternal {
 
     /** Dump the current activities state. */
     public abstract boolean dumpActivity(FileDescriptor fd, PrintWriter pw, String name,
-            String[] args, int opti, boolean dumpAll, boolean dumpVisibleStacksOnly,
-            boolean dumpFocusedStackOnly);
+            String[] args, int opti, boolean dumpAll, boolean dumpVisibleRootTasksOnly,
+            boolean dumpFocusedRootTaskOnly);
 
     /** Dump the current state for inclusion in oom dump. */
     public abstract void dumpForOom(PrintWriter pw);
@@ -580,4 +584,26 @@ public abstract class ActivityTaskManagerInternal {
      * @return Whether the package is the base of any locked task
      */
     public abstract boolean isBaseOfLockedTask(String packageName);
+
+    /**
+     * Create an interface to update configuration for an application.
+     */
+    public abstract PackageConfigurationUpdater createPackageConfigurationUpdater();
+
+    /**
+     * An interface to update configuration for an application, and will persist override
+     * configuration for this package.
+     */
+    public interface PackageConfigurationUpdater {
+        /**
+         * Sets the dark mode for the current application. This setting is persisted and will
+         * override the system configuration for this application.
+         */
+        PackageConfigurationUpdater setNightMode(int nightMode);
+
+        /**
+         * Commit changes.
+         */
+        void commit() throws RemoteException;
+    }
 }

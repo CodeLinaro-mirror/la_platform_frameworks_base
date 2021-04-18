@@ -53,6 +53,7 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.List;
 import java.util.concurrent.Executor;
 
 /**
@@ -168,6 +169,11 @@ public class ContextWrapper extends Context {
     @Override
     public @Nullable String getAttributionTag() {
         return mBase.getAttributionTag();
+    }
+
+    @Override
+    public @Nullable ContextParams getParams() {
+        return mBase.getParams();
     }
 
     @Override
@@ -624,6 +630,35 @@ public class ContextWrapper extends Context {
         mBase.sendStickyBroadcast(intent);
     }
 
+    /**
+     * <p>Perform a {@link #sendBroadcast(Intent)} that is "sticky," meaning the
+     * Intent you are sending stays around after the broadcast is complete,
+     * so that others can quickly retrieve that data through the return
+     * value of {@link #registerReceiver(BroadcastReceiver, IntentFilter)}.  In
+     * all other ways, this behaves the same as
+     * {@link #sendBroadcast(Intent)}.
+     *
+     * @deprecated Sticky broadcasts should not be used.  They provide no security (anyone
+     * can access them), no protection (anyone can modify them), and many other problems.
+     * The recommended pattern is to use a non-sticky broadcast to report that <em>something</em>
+     * has changed, with another mechanism for apps to retrieve the current value whenever
+     * desired.
+     *
+     * @param intent The Intent to broadcast; all receivers matching this
+     * Intent will receive the broadcast, and the Intent will be held to
+     * be re-broadcast to future receivers.
+     * @param options (optional) Additional sending options, generated from a
+     * {@link android.app.BroadcastOptions}.
+     *
+     * @see #sendBroadcast(Intent)
+     * @see #sendStickyOrderedBroadcast(Intent, BroadcastReceiver, Handler, int, String, Bundle)
+     */
+    @Override
+    @Deprecated
+    public void sendStickyBroadcast(@NonNull Intent intent, @Nullable Bundle options) {
+        mBase.sendStickyBroadcast(intent, options);
+    }
+
     @Override
     @Deprecated
     public void sendStickyOrderedBroadcast(Intent intent,
@@ -876,6 +911,13 @@ public class ContextWrapper extends Context {
         return mBase.checkUriPermission(uri, pid, uid, modeFlags);
     }
 
+    @NonNull
+    @Override
+    public int[] checkUriPermissions(@NonNull List<Uri> uris, int pid, int uid,
+            int modeFlags) {
+        return mBase.checkUriPermissions(uris, pid, uid, modeFlags);
+    }
+
     /** @hide */
     @Override
     public int checkUriPermission(Uri uri, int pid, int uid, int modeFlags, IBinder callerToken) {
@@ -887,9 +929,21 @@ public class ContextWrapper extends Context {
         return mBase.checkCallingUriPermission(uri, modeFlags);
     }
 
+    @NonNull
+    @Override
+    public int[] checkCallingUriPermissions(@NonNull List<Uri> uris, int modeFlags) {
+        return mBase.checkCallingUriPermissions(uris, modeFlags);
+    }
+
     @Override
     public int checkCallingOrSelfUriPermission(Uri uri, int modeFlags) {
         return mBase.checkCallingOrSelfUriPermission(uri, modeFlags);
+    }
+
+    @NonNull
+    @Override
+    public int[] checkCallingOrSelfUriPermissions(@NonNull List<Uri> uris, int modeFlags) {
+        return mBase.checkCallingOrSelfUriPermissions(uris, modeFlags);
     }
 
     @Override
@@ -993,6 +1047,12 @@ public class ContextWrapper extends Context {
     public Context createWindowContext(@NonNull Display display, @WindowType int type,
             @Nullable Bundle options) {
         return mBase.createWindowContext(display, type, options);
+    }
+
+    @Override
+    @NonNull
+    public Context createContext(@NonNull ContextParams contextParams) {
+        return mBase.createContext(contextParams);
     }
 
     @Override

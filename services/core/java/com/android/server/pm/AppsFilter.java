@@ -69,6 +69,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.concurrent.Executor;
+import java.util.function.Function;
 
 /**
  * The entity responsible for filtering visibility between apps based on declarations in their
@@ -588,29 +589,32 @@ public class AppsFilter implements Watchable, Snappable {
      *
      * @param recipientUid the uid gaining visibility of the {@code visibleUid}.
      * @param visibleUid   the uid becoming visible to the {@recipientUid}
+     * @return {@code true} if implicit access was not already granted.
      */
-    public void grantImplicitAccess(int recipientUid, int visibleUid) {
-        if (recipientUid != visibleUid) {
-            final boolean changed = mImplicitlyQueryable.add(recipientUid, visibleUid);
-            if (changed && DEBUG_LOGGING) {
-                Slog.i(TAG, "implicit access granted: " + recipientUid + " -> " + visibleUid);
-            }
-            synchronized (mCacheLock) {
-                if (mShouldFilterCache != null) {
-                    // update the cache in a one-off manner since we've got all the information we
-                    // need.
-                    SparseBooleanArray visibleUids = mShouldFilterCache.get(recipientUid);
-                    if (visibleUids == null) {
-                        visibleUids = new SparseBooleanArray();
-                        mShouldFilterCache.put(recipientUid, visibleUids);
-                    }
-                    visibleUids.put(visibleUid, false);
+    public boolean grantImplicitAccess(int recipientUid, int visibleUid) {
+        if (recipientUid == visibleUid) {
+            return false;
+        }
+        final boolean changed = mImplicitlyQueryable.add(recipientUid, visibleUid);
+        if (changed && DEBUG_LOGGING) {
+            Slog.i(TAG, "implicit access granted: " + recipientUid + " -> " + visibleUid);
+        }
+        synchronized (mCacheLock) {
+            if (mShouldFilterCache != null) {
+                // update the cache in a one-off manner since we've got all the information we
+                // need.
+                SparseBooleanArray visibleUids = mShouldFilterCache.get(recipientUid);
+                if (visibleUids == null) {
+                    visibleUids = new SparseBooleanArray();
+                    mShouldFilterCache.put(recipientUid, visibleUids);
                 }
-            }
-            if (changed) {
-                onChanged();
+                visibleUids.put(visibleUid, false);
             }
         }
+        if (changed) {
+            onChanged();
+        }
+        return changed;
     }
 
     public void onSystemReady() {
@@ -1351,14 +1355,13 @@ public class AppsFilter implements Watchable, Snappable {
     }
 
     public void dumpQueries(
-            PrintWriter pw, PackageManagerService pms, @Nullable Integer filteringAppId,
-            DumpState dumpState,
-            int[] users) {
+            PrintWriter pw, @Nullable Integer filteringAppId, DumpState dumpState, int[] users,
+            Function<Integer, String[]> getPackagesForUid) {
         final SparseArray<String> cache = new SparseArray<>();
         ToString<Integer> expandPackages = input -> {
             String cachedValue = cache.get(input);
             if (cachedValue == null) {
-                final String[] packagesForUid = pms.getPackagesForUid(input);
+                final String[] packagesForUid = getPackagesForUid.apply(input);
                 if (packagesForUid == null) {
                     cachedValue = "[unknown app id " + input + "]";
                 } else {

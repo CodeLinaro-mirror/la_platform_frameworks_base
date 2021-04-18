@@ -86,7 +86,7 @@ interface IUserManager {
     Bundle getApplicationRestrictionsForUser(in String packageName, int userId);
     void setDefaultGuestRestrictions(in Bundle restrictions);
     Bundle getDefaultGuestRestrictions();
-    int removeUserOrSetEphemeral(int userId);
+    int removeUserOrSetEphemeral(int userId, boolean evenWhenDisallowed);
     boolean markGuestForDeletion(int userId);
     UserInfo findCurrentGuestUser();
     boolean isQuietModeEnabled(int userId);
@@ -113,6 +113,7 @@ interface IUserManager {
     boolean hasBadge(int userId);
     boolean isUserUnlocked(int userId);
     boolean isUserRunning(int userId);
+    boolean isUserForeground(int userId);
     boolean isUserNameSet(int userId);
     boolean hasRestrictedProfiles();
     boolean requestQuietModeEnabled(String callingPackage, boolean enableQuietMode, int userId, in IntentSender target, int flags);

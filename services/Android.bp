@@ -1,3 +1,12 @@
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_base_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_base_license"],
+}
+
 filegroup {
     name: "services-main-sources",
     srcs: ["java/**/*.java"],
@@ -6,7 +15,7 @@ filegroup {
 }
 
 filegroup {
-    name: "services-all-sources",
+    name: "services-non-updatable-sources",
     srcs: [
         ":services.core-sources",
         ":services.core-sources-am-wm",
@@ -28,13 +37,25 @@ filegroup {
         ":services.profcollect-sources",
         ":services.restrictions-sources",
         ":services.searchui-sources",
+        ":services.smartspace-sources",
+        ":services.speech-sources",
         ":services.startop.iorap-sources",
         ":services.systemcaptions-sources",
         ":services.translation-sources",
+        ":services.texttospeech-sources",
         ":services.usage-sources",
         ":services.usb-sources",
         ":services.voiceinteraction-sources",
         ":services.wifi-sources",
+    ],
+    visibility: ["//visibility:private"],
+}
+
+filegroup {
+    name: "services-all-sources",
+    srcs: [
+        ":services-non-updatable-sources",
+        ":service-media-s-sources",
         ":service-permission-sources",
         ":service-statsd-sources",
     ],
@@ -75,9 +96,12 @@ java_library {
         "services.profcollect",
         "services.restrictions",
         "services.searchui",
+        "services.smartspace",
+        "services.speech",
         "services.startop",
         "services.systemcaptions",
         "services.translation",
+        "services.texttospeech",
         "services.usage",
         "services.usb",
         "services.voiceinteraction",
@@ -118,9 +142,8 @@ filegroup {
 // API stub
 // =============================================================
 
-droidstubs {
-    name: "services-stubs.sources",
-    srcs: [":services-all-sources"],
+stubs_defaults {
+    name: "services-stubs-default",
     installable: false,
     args: " --show-annotation android.annotation.SystemApi\\(client=android.annotation.SystemApi.Client.SYSTEM_SERVER\\)" +
         " --hide-annotation android.annotation.Hide" +
@@ -130,7 +153,13 @@ droidstubs {
         " --hide DeprecationMismatch" +
         " --hide HiddenTypedefConstant",
     visibility: ["//visibility:private"],
-    filter_packages: ["com.android."],
+    filter_packages: ["com.android."]
+}
+
+droidstubs {
+    name: "services-stubs.sources",
+    srcs: [":services-all-sources"],
+    defaults: ["services-stubs-default"],
     check_api: {
         current: {
             api_file: "api/current.txt",
@@ -139,7 +168,7 @@ droidstubs {
         last_released: {
             api_file: ":android.api.system-server.latest",
             removed_api_file: ":removed.api.system-server.latest",
-            baseline_file: ":system-server-api-incompatibilities-with-last-released"
+            baseline_file: ":android-incompatibilities.api.system-server.latest"
         },
         api_lint: {
             enabled: true,
@@ -147,11 +176,20 @@ droidstubs {
             baseline_file: "api/lint-baseline.txt",
         },
     },
-    dist: {
-        targets: ["sdk", "win_sdk"],
-        dir: "apistubs/android/system-server/api",
-        dest: "android.txt",
-    },
+    dists: [
+        {
+            targets: ["sdk", "win_sdk"],
+            dir: "apistubs/android/system-server/api",
+            dest: "android.txt",
+            tag: ".api.txt"
+        },
+        {
+            targets: ["sdk", "win_sdk"],
+            dir: "apistubs/android/system-server/api",
+            dest: "removed.txt",
+            tag: ".removed-api.txt",
+        },
+    ]
 }
 
 java_library {
@@ -166,4 +204,35 @@ java_library {
     dist: {
         dir: "apistubs/android/system-server",
     },
+}
+
+droidstubs {
+    name: "services-non-updatable-stubs.sources",
+    srcs: [":services-non-updatable-sources"],
+    defaults: ["services-stubs-default"],
+    check_api: {
+        current: {
+            api_file: "api/non-updatable-current.txt",
+            removed_api_file: "api/non-updatable-removed.txt",
+        },
+        api_lint: {
+            enabled: true,
+            new_since: ":android-non-updatable.api.system-server.latest",
+            baseline_file: "api/non-updatable-lint-baseline.txt",
+        },
+    },
+    dists: [
+        {
+            targets: ["sdk", "win_sdk"],
+            dir: "apistubs/android/system-server/api",
+            dest: "android-non-updatable.txt",
+            tag: ".api.txt"
+        },
+        {
+            targets: ["sdk", "win_sdk"],
+            dir: "apistubs/android/system-server/api",
+            dest: "android-non-updatable-removed.txt",
+            tag: ".removed-api.txt",
+        },
+    ]
 }

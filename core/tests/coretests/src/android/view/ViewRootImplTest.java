@@ -23,7 +23,7 @@ import static android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
 import static android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
 import static android.view.View.SYSTEM_UI_FLAG_LOW_PROFILE;
 import static android.view.WindowInsetsController.APPEARANCE_OPAQUE_STATUS_BARS;
-import static android.view.WindowInsetsController.BEHAVIOR_SHOW_BARS_BY_SWIPE;
+import static android.view.WindowInsetsController.BEHAVIOR_DEFAULT;
 import static android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
 import static android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION;
@@ -184,7 +184,7 @@ public class ViewRootImplTest {
     public void adjustLayoutParamsForCompatibility_noAdjustBehavior() {
         final WindowInsetsController controller = mViewRootImpl.getInsetsController();
         final WindowManager.LayoutParams attrs = mViewRootImpl.mWindowAttributes;
-        final int behavior = BEHAVIOR_SHOW_BARS_BY_SWIPE;
+        final int behavior = BEHAVIOR_DEFAULT;
         controller.setSystemBarsBehavior(behavior);
         attrs.systemUiVisibility = SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
         ViewRootImpl.adjustLayoutParamsForCompatibility(attrs);
@@ -207,7 +207,7 @@ public class ViewRootImplTest {
         final CountDownLatch latch = new CountDownLatch(1);
         mViewRootImpl.handleScrollCaptureRequest(new IScrollCaptureCallbacks.Default() {
             @Override
-            public void onUnavailable() {
+            public void onScrollCaptureResponse(ScrollCaptureResponse response) {
                 latch.countDown();
             }
         });
@@ -217,6 +217,37 @@ public class ViewRootImplTest {
             }
         } catch (InterruptedException e) { /* ignore */ }
         fail("requestScrollCapture did not respond");
+    }
+
+    /**
+     * Ensure scroll capture request handles a ViewRootImpl with no view tree.
+     */
+    @Test
+    public void requestScrollCapture_timeout() {
+        final View view = new View(mContext);
+        view.setScrollCaptureCallback(new TestScrollCaptureCallback()); // Does nothing
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            WindowManager.LayoutParams wmlp =
+                    new WindowManager.LayoutParams(TYPE_APPLICATION_OVERLAY);
+            // Set a fake token to bypass 'is your activity running' check
+            wmlp.token = new Binder();
+            view.setLayoutParams(wmlp);
+            mViewRootImpl.setView(view, wmlp, null);
+        });
+
+        final CountDownLatch latch = new CountDownLatch(1);
+        mViewRootImpl.setScrollCaptureRequestTimeout(100);
+        mViewRootImpl.handleScrollCaptureRequest(new IScrollCaptureCallbacks.Default() {
+            @Override
+            public void onScrollCaptureResponse(ScrollCaptureResponse response) {
+                latch.countDown();
+            }
+        });
+        try {
+            if (!latch.await(2500, TimeUnit.MILLISECONDS)) {
+                fail("requestScrollCapture timeout did not occur");
+            }
+        } catch (InterruptedException e) { /* ignore */ }
     }
 
     /**

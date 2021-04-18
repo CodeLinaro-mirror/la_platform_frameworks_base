@@ -35,6 +35,7 @@ import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_T
 
 import android.annotation.FloatRange;
 import android.app.ActivityTaskManager;
+import android.app.PendingIntent;
 import android.app.PictureInPictureParams;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -83,6 +84,8 @@ import com.android.systemui.recents.OverviewProxyService.OverviewProxyListener;
 import com.android.systemui.settings.CurrentUserTracker;
 import com.android.systemui.shared.recents.IOverviewProxy;
 import com.android.systemui.shared.recents.IPinnedStackAnimationListener;
+import com.android.systemui.shared.recents.ISplitScreenListener;
+import com.android.systemui.shared.recents.IStartingWindowListener;
 import com.android.systemui.shared.recents.ISystemUiProxy;
 import com.android.systemui.shared.recents.model.Task;
 import com.android.systemui.shared.system.ActivityManagerWrapper;
@@ -98,7 +101,9 @@ import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
 import com.android.wm.shell.onehanded.OneHanded;
 import com.android.wm.shell.pip.Pip;
 import com.android.wm.shell.pip.PipAnimationController;
-import com.android.wm.shell.transition.Transitions;
+import com.android.wm.shell.splitscreen.SplitScreen;
+import com.android.wm.shell.startingsurface.StartingSurface;
+import com.android.wm.shell.transition.RemoteTransitions;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -133,7 +138,8 @@ public class OverviewProxyService extends CurrentUserTracker implements
     private final Context mContext;
     private final Optional<Pip> mPipOptional;
     private final Optional<Lazy<StatusBar>> mStatusBarOptionalLazy;
-    private final Optional<LegacySplitScreen> mSplitScreenOptional;
+    private final Optional<LegacySplitScreen> mLegacySplitScreenOptional;
+    private final Optional<SplitScreen> mSplitScreenOptional;
     private SysUiState mSysUiState;
     private final Handler mHandler;
     private final Lazy<NavigationBarController> mNavBarControllerLazy;
@@ -145,7 +151,8 @@ public class OverviewProxyService extends CurrentUserTracker implements
     private final ScreenshotHelper mScreenshotHelper;
     private final Optional<OneHanded> mOneHandedOptional;
     private final CommandQueue mCommandQueue;
-    private final Transitions mShellTransitions;
+    private final RemoteTransitions mShellTransitions;
+    private final Optional<StartingSurface> mStartingSurface;
 
     private Region mActiveNavBarRegion;
 
@@ -163,6 +170,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
     private boolean mSupportsRoundedCornersOnWindows;
     private int mNavBarMode = NAV_BAR_MODE_3BUTTON;
     private final ArraySet<IRemoteTransition> mRemoteTransitions = new ArraySet<>();
+    private IStartingWindowListener mIStartingWindowListener;
 
     @VisibleForTesting
     public ISystemUiProxy mSysUiProxy = new ISystemUiProxy.Stub() {
@@ -263,7 +271,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
             }
             final long token = Binder.clearCallingIdentity();
             try {
-                return mSplitScreenOptional.map(splitScreen ->
+                return mLegacySplitScreenOptional.map(splitScreen ->
                         splitScreen.getDividerView().getNonMinimizedSplitScreenSecondaryBounds())
                         .orElse(null);
             } finally {
@@ -401,7 +409,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
 
         @Override
         public void setSplitScreenMinimized(boolean minimized) {
-            mSplitScreenOptional.ifPresent(
+            mLegacySplitScreenOptional.ifPresent(
                     splitScreen -> splitScreen.setMinimized(minimized));
         }
 
@@ -430,6 +438,21 @@ public class OverviewProxyService extends CurrentUserTracker implements
             try {
                 mPipOptional.ifPresent(
                         pip -> pip.setPinnedStackAnimationListener(mPinnedStackAnimationCallback));
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public void setStartingWindowListener(IStartingWindowListener listener) {
+            if (!verifyCaller("setStartingWindowListener")) {
+                return;
+            }
+            mIStartingWindowListener = listener;
+            final long token = Binder.clearCallingIdentity();
+            try {
+                mStartingSurface.ifPresent(s ->
+                        s.setStartingWindowListener(mStartingWindowListener));
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
@@ -559,6 +582,133 @@ public class OverviewProxyService extends CurrentUserTracker implements
             }
         }
 
+        @Override
+        public void registerSplitScreenListener(ISplitScreenListener listener) {
+            if (!verifyCaller("registerSplitScreenListener")) {
+                return;
+            }
+            mISplitScreenListener = listener;
+            final long token = Binder.clearCallingIdentity();
+            try {
+                mSplitScreenOptional.ifPresent(
+                        s -> s.registerSplitScreenListener(mSplitScreenListener));
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public void unregisterSplitScreenListener(ISplitScreenListener listener) {
+            if (!verifyCaller("unregisterSplitScreenListener")) {
+                return;
+            }
+            mISplitScreenListener = null;
+            final long token = Binder.clearCallingIdentity();
+            try {
+                mSplitScreenOptional.ifPresent(
+                        s -> s.unregisterSplitScreenListener(mSplitScreenListener));
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public void setSideStageVisibility(boolean visible) {
+            if (!verifyCaller("setSideStageVisibility")) {
+                return;
+            }
+            final long token = Binder.clearCallingIdentity();
+            try {
+                mSplitScreenOptional.ifPresent(s -> s.setSideStageVisibility(visible));
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public void exitSplitScreen() {
+            if (!verifyCaller("exitSplitScreen")) {
+                return;
+            }
+            final long token = Binder.clearCallingIdentity();
+            try {
+                mSplitScreenOptional.ifPresent(s -> s.exitSplitScreen());
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public void exitSplitScreenOnHide(boolean exitSplitScreenOnHide) {
+            if (!verifyCaller("exitSplitScreenOnHide")) {
+                return;
+            }
+            final long token = Binder.clearCallingIdentity();
+            try {
+                mSplitScreenOptional.ifPresent(s -> s.exitSplitScreenOnHide(exitSplitScreenOnHide));
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public void startTask(int taskId, int stage, int position, Bundle options) {
+            if (!verifyCaller("startTask")) {
+                return;
+            }
+            final long token = Binder.clearCallingIdentity();
+            try {
+                mSplitScreenOptional.ifPresent(
+                        s -> s.startTask(taskId, stage, position, options));
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public void startShortcut(String packageName, String shortcutId, int stage, int position,
+                Bundle options, UserHandle user) {
+            if (!verifyCaller("startShortcut")) {
+                return;
+            }
+            final long token = Binder.clearCallingIdentity();
+            try {
+                mSplitScreenOptional.ifPresent(s ->
+                        s.startShortcut(packageName, shortcutId, stage, position, options, user));
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public void startIntent(PendingIntent intent, Intent fillInIntent,
+                int stage, int position, Bundle options) {
+            if (!verifyCaller("startIntent")) {
+                return;
+            }
+            final long token = Binder.clearCallingIdentity();
+            try {
+                mSplitScreenOptional.ifPresent(s ->
+                        s.startIntent(intent, mContext, fillInIntent, stage, position, options));
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public void removeFromSideStage(int taskId) {
+            if (!verifyCaller("removeFromSideStage")) {
+                return;
+            }
+            final long token = Binder.clearCallingIdentity();
+            try {
+                mSplitScreenOptional.ifPresent(
+                        s -> s.removeFromSideStage(taskId));
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
         private boolean verifyCaller(String reason) {
             final int callerId = Binder.getCallingUserHandle().getIdentifier();
             if (callerId != mCurrentBoundedUserId) {
@@ -654,9 +804,38 @@ public class OverviewProxyService extends CurrentUserTracker implements
     private final Consumer<Boolean> mPinnedStackAnimationCallback =
             this::notifyPinnedStackAnimationStarted;
 
+    private final BiConsumer<Integer, Integer> mStartingWindowListener =
+            this::notifyTaskLaunching;
+
     // This is the death handler for the binder from the launcher service
     private final IBinder.DeathRecipient mOverviewServiceDeathRcpt
             = this::cleanupAfterDeath;
+
+    private ISplitScreenListener mISplitScreenListener;
+    private final SplitScreen.SplitScreenListener mSplitScreenListener =
+            new SplitScreen.SplitScreenListener() {
+        @Override
+        public void onStagePositionChanged(int stage, int position) {
+            try {
+                if (mISplitScreenListener != null) {
+                    mISplitScreenListener.onStagePositionChanged(stage, position);
+                }
+            } catch (RemoteException e) {
+                Log.e(TAG_OPS, "onStagePositionChanged", e);
+            }
+        }
+
+        @Override
+        public void onTaskStageChanged(int taskId, int stage, boolean visible) {
+            try {
+                if (mISplitScreenListener != null) {
+                    mISplitScreenListener.onTaskStageChanged(taskId, stage, visible);
+                }
+            } catch (RemoteException e) {
+                Log.e(TAG_OPS, "onTaskStageChanged", e);
+            }
+        }
+    };
 
     @SuppressWarnings("OptionalUsedAsFieldOrParameterType")
     @Inject
@@ -665,11 +844,13 @@ public class OverviewProxyService extends CurrentUserTracker implements
             NavigationModeController navModeController,
             NotificationShadeWindowController statusBarWinController, SysUiState sysUiState,
             Optional<Pip> pipOptional,
-            Optional<LegacySplitScreen> splitScreenOptional,
+            Optional<LegacySplitScreen> legacySplitScreenOptional,
+            Optional<SplitScreen> splitScreenOptional,
             Optional<Lazy<StatusBar>> statusBarOptionalLazy,
             Optional<OneHanded> oneHandedOptional,
             BroadcastDispatcher broadcastDispatcher,
-            Transitions shellTransitions) {
+            RemoteTransitions shellTransitions,
+            Optional<StartingSurface> startingSurface) {
         super(broadcastDispatcher);
         mContext = context;
         mPipOptional = pipOptional;
@@ -718,9 +899,10 @@ public class OverviewProxyService extends CurrentUserTracker implements
         });
         mCommandQueue = commandQueue;
 
-        splitScreenOptional.ifPresent(splitScreen ->
-                splitScreen.registerBoundsChangeListener(mSplitScreenBoundsChangeListener));
         mSplitScreenOptional = splitScreenOptional;
+        legacySplitScreenOptional.ifPresent(splitScreen ->
+                splitScreen.registerBoundsChangeListener(mSplitScreenBoundsChangeListener));
+        mLegacySplitScreenOptional = legacySplitScreenOptional;
 
         // Listen for user setup
         startTracking();
@@ -728,6 +910,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
         // Connect to the service
         updateEnabledState();
         startConnectionToCurrentUser();
+        mStartingSurface = startingSurface;
     }
 
     @Override
@@ -794,6 +977,18 @@ public class OverviewProxyService extends CurrentUserTracker implements
         }
     }
 
+    private void notifyTaskLaunching(int taskId, int supportedType) {
+        if (mIStartingWindowListener == null) {
+            return;
+        }
+
+        try {
+            mIStartingWindowListener.onTaskLaunching(taskId, supportedType);
+        } catch (RemoteException e) {
+            Log.e(TAG_OPS, "Failed to call notifyTaskLaunching()", e);
+        }
+    }
+
     private void onStatusBarStateChanged(boolean keyguardShowing, boolean keyguardOccluded,
             boolean bouncerShowing) {
         mSysUiState.setFlag(SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING,
@@ -835,7 +1030,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
         startConnectionToCurrentUser();
 
         // Clean up the minimized state if launcher dies
-        mSplitScreenOptional.ifPresent(
+        mLegacySplitScreenOptional.ifPresent(
                 splitScreen -> splitScreen.setMinimized(false));
 
         // Clean up any registered remote transitions

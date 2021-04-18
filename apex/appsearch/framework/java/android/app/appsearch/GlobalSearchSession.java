@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 The Android Open Source Project
+ * Copyright 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,21 +32,30 @@ import java.util.function.Consumer;
 /**
  * This class provides global access to the centralized AppSearch index maintained by the system.
  *
- * <p>Apps can retrieve indexed documents through the query API.
+ * <p>Apps can retrieve indexed documents through the {@link #search} API.
  */
 public class GlobalSearchSession implements Closeable {
 
     private final IAppSearchManager mService;
+
     @UserIdInt
     private final int mUserId;
     private boolean mIsClosed = false;
 
+    private final String mPackageName;
+
+    /**
+     * Creates a search session for the client, defined by the {@code userId} and
+     * {@code packageName}.
+     */
     static void createGlobalSearchSession(
             @NonNull IAppSearchManager service,
             @UserIdInt int userId,
+            @NonNull String packageName,
             @NonNull @CallbackExecutor Executor executor,
             @NonNull Consumer<AppSearchResult<GlobalSearchSession>> callback) {
-        GlobalSearchSession globalSearchSession = new GlobalSearchSession(service, userId);
+        GlobalSearchSession globalSearchSession = new GlobalSearchSession(service, userId,
+                packageName);
         globalSearchSession.initialize(executor, callback);
     }
 
@@ -73,66 +82,39 @@ public class GlobalSearchSession implements Closeable {
         }
     }
 
-    private GlobalSearchSession(@NonNull IAppSearchManager service, @UserIdInt int userId) {
+    private GlobalSearchSession(@NonNull IAppSearchManager service, @UserIdInt int userId,
+            @NonNull String packageName) {
         mService = service;
         mUserId = userId;
+        mPackageName = packageName;
     }
 
     /**
-     * Searches across all documents in the storage based on a given query string.
+     * Retrieves documents from all AppSearch databases that the querying application has access to.
      *
-     * <p>Currently we support following features in the raw query format:
-     * <ul>
-     *     <li>AND
-     *     <p>AND joins (e.g. “match documents that have both the terms ‘dog’ and
-     *     ‘cat’”).
-     *     Example: hello world matches documents that have both ‘hello’ and ‘world’
-     *     <li>OR
-     *     <p>OR joins (e.g. “match documents that have either the term ‘dog’ or
-     *     ‘cat’”).
-     *     Example: dog OR puppy
-     *     <li>Exclusion
-     *     <p>Exclude a term (e.g. “match documents that do
-     *     not have the term ‘dog’”).
-     *     Example: -dog excludes the term ‘dog’
-     *     <li>Grouping terms
-     *     <p>Allow for conceptual grouping of subqueries to enable hierarchical structures (e.g.
-     *     “match documents that have either ‘dog’ or ‘puppy’, and either ‘cat’ or ‘kitten’”).
-     *     Example: (dog puppy) (cat kitten) two one group containing two terms.
-     *     <li>Property restricts
-     *     <p> Specifies which properties of a document to specifically match terms in (e.g.
-     *     “match documents where the ‘subject’ property contains ‘important’”).
-     *     Example: subject:important matches documents with the term ‘important’ in the
-     *     ‘subject’ property
-     *     <li>Schema type restricts
-     *     <p>This is similar to property restricts, but allows for restricts on top-level document
-     *     fields, such as schema_type. Clients should be able to limit their query to documents of
-     *     a certain schema_type (e.g. “match documents that are of the ‘Email’ schema_type”).
-     *     Example: { schema_type_filters: “Email”, “Video”,query: “dog” } will match documents
-     *     that contain the query term ‘dog’ and are of either the ‘Email’ schema type or the
-     *     ‘Video’ schema type.
-     * </ul>
+     * <p>Applications can be granted access to documents by specifying {@link
+     * SetSchemaRequest.Builder#setSchemaTypeVisibilityForPackage} when building a schema.
      *
-     * <p> This method is lightweight. The heavy work will be done in
-     * {@link SearchResults#getNextPage}.
+     * <p>Document access can also be granted to system UIs by specifying {@link
+     * SetSchemaRequest.Builder#setSchemaTypeDisplayedBySystem} when building a schema.
      *
-     * @param queryExpression Query String to search.
-     * @param searchSpec      Spec for setting filters, raw query etc.
-     * @param executor        Executor on which to invoke the callback of the following request
-     *                        {@link SearchResults#getNextPage}.
-     * @return The search result of performing this operation.
+     * <p>See {@link AppSearchSession#search} for a detailed explanation on forming a query string.
+     *
+     * <p>This method is lightweight. The heavy work will be done in {@link
+     * SearchResults#getNextPage}.
+     *
+     * @param queryExpression query string to search.
+     * @param searchSpec spec for setting document filters, adding projection, setting term match
+     *     type, etc.
+     * @return a {@link SearchResults} object for retrieved matched documents.
      */
     @NonNull
-    public SearchResults query(
-            @NonNull String queryExpression,
-            @NonNull SearchSpec searchSpec,
-            @NonNull @CallbackExecutor Executor executor) {
+    public SearchResults search(@NonNull String queryExpression, @NonNull SearchSpec searchSpec) {
         Objects.requireNonNull(queryExpression);
         Objects.requireNonNull(searchSpec);
-        Objects.requireNonNull(executor);
         Preconditions.checkState(!mIsClosed, "GlobalSearchSession has already been closed");
-        return new SearchResults(mService, /*databaseName=*/null, queryExpression,
-                searchSpec, mUserId, executor);
+        return new SearchResults(mService, mPackageName, /*databaseName=*/null, queryExpression,
+                searchSpec, mUserId);
     }
 
     /** Closes the {@link GlobalSearchSession}. */

@@ -235,9 +235,7 @@ public class PackageInstaller {
      * See the individual types documentation for details.
      *
      * @see Intent#getIntExtra(String, int)
-     * {@hide}
      */
-    @SystemApi
     public static final String EXTRA_DATA_LOADER_TYPE = "android.content.pm.extra.DATA_LOADER_TYPE";
 
     /**
@@ -245,7 +243,6 @@ public class PackageInstaller {
      * Caller should make sure DataLoader is able to prepare image and reinitiate the operation.
      *
      * @see #EXTRA_SESSION_ID
-     * {@hide}
      */
     public static final int STATUS_PENDING_STREAMING = -2;
 
@@ -348,44 +345,33 @@ public class PackageInstaller {
      * Default value, non-streaming installation session.
      *
      * @see #EXTRA_DATA_LOADER_TYPE
-     * {@hide}
      */
-    @SystemApi
     public static final int DATA_LOADER_TYPE_NONE = DataLoaderType.NONE;
 
     /**
      * Streaming installation using data loader.
      *
      * @see #EXTRA_DATA_LOADER_TYPE
-     * {@hide}
      */
-    @SystemApi
     public static final int DATA_LOADER_TYPE_STREAMING = DataLoaderType.STREAMING;
 
     /**
      * Streaming installation using Incremental FileSystem.
      *
      * @see #EXTRA_DATA_LOADER_TYPE
-     * {@hide}
      */
-    @SystemApi
     public static final int DATA_LOADER_TYPE_INCREMENTAL = DataLoaderType.INCREMENTAL;
 
     /**
      * Target location for the file in installation session is /data/app/<packageName>-<id>.
      * This is the intended location for APKs.
-     * Requires permission to install packages.
-     * {@hide}
      */
-    @SystemApi
     public static final int LOCATION_DATA_APP = InstallationFileLocation.DATA_APP;
 
     /**
      * Target location for the file in installation session is
      * /data/media/<userid>/Android/obb/<packageName>. This is the intended location for OBBs.
-     * {@hide}
      */
-    @SystemApi
     public static final int LOCATION_MEDIA_OBB = InstallationFileLocation.MEDIA_OBB;
 
     /**
@@ -393,9 +379,7 @@ public class PackageInstaller {
      * /data/media/<userid>/Android/data/<packageName>.
      * This is the intended location for application data.
      * Can only be used by an app itself running under specific user.
-     * {@hide}
      */
-    @SystemApi
     public static final int LOCATION_MEDIA_DATA = InstallationFileLocation.MEDIA_DATA;
 
     /** @hide */
@@ -1167,13 +1151,7 @@ public class PackageInstaller {
 
         /**
          * @return data loader params or null if the session is not using one.
-         *
-         * WARNING: This is a system API to aid internal development.
-         * Use at your own risk. It will change or be removed without warning.
-         * {@hide}
          */
-        @SystemApi
-        @RequiresPermission(android.Manifest.permission.USE_INSTALLER_V2)
         public @Nullable DataLoaderParams getDataLoaderParams() {
             try {
                 DataLoaderParamsParcel data = mSession.getDataLoaderParams();
@@ -1207,13 +1185,7 @@ public class PackageInstaller {
          * @throws SecurityException if called after the session has been
          *             sealed or abandoned
          * @throws IllegalStateException if called for non-callback session
-         *
-         * WARNING: This is a system API to aid internal development.
-         * Use at your own risk. It will change or be removed without warning.
-         * {@hide}
          */
-        @SystemApi
-        @RequiresPermission(android.Manifest.permission.USE_INSTALLER_V2)
         public void addFile(@FileLocation int location, @NonNull String name, long lengthBytes,
                 @NonNull byte[] metadata, @Nullable byte[] signature) {
             try {
@@ -1237,7 +1209,6 @@ public class PackageInstaller {
          * {@hide}
          */
         @SystemApi
-        @RequiresPermission(android.Manifest.permission.USE_INSTALLER_V2)
         public void removeFile(@FileLocation int location, @NonNull String name) {
             try {
                 mSession.removeFile(location, name);
@@ -1247,12 +1218,23 @@ public class PackageInstaller {
         }
 
         /**
-         * Adds installer-provided checksums for the APK file in session.
+         * Sets installer-provided checksums for the APK file in session.
          *
          * @param name      previously written as part of this session.
          *                  {@link #openWrite}
          * @param checksums installer intends to make available via
          *                  {@link PackageManager#requestChecksums}.
+         * @param signature DER PKCS#7 detached signature bytes over binary serialized checksums
+         *                  to enable integrity checking for the checksums or null for no integrity
+         *                  checking. {@link PackageManager#requestChecksums} will return
+         *                  the certificate used to create signature.
+         *                  Binary format for checksums:
+         *                  <pre>{@code DataOutputStream dos;
+         *                  dos.writeInt(checksum.getType());
+         *                  dos.writeInt(checksum.getValue().length);
+         *                  dos.write(checksum.getValue());}</pre>
+         *                  If using <b>openssl cms</b>, make sure to specify -binary -nosmimecap.
+         *                  @see <a href="https://www.openssl.org/docs/man1.0.2/man1/cms.html">openssl cms</a>
          * @throws SecurityException if called after the session has been
          *                           committed or abandoned.
          * @throws IllegalStateException if checksums for this file have already been added.
@@ -1262,13 +1244,14 @@ public class PackageInstaller {
          *              in {@link PackageManager#requestChecksums}.
          */
         @Deprecated
-        public void addChecksums(@NonNull String name, @NonNull List<Checksum> checksums)
-                throws IOException {
+        public void setChecksums(@NonNull String name, @NonNull List<Checksum> checksums,
+                @Nullable byte[] signature) throws IOException {
             Objects.requireNonNull(name);
             Objects.requireNonNull(checksums);
 
             try {
-                mSession.addChecksums(name, checksums.toArray(new Checksum[checksums.size()]));
+                mSession.setChecksums(name, checksums.toArray(new Checksum[checksums.size()]),
+                        signature);
             } catch (RuntimeException e) {
                 ExceptionUtils.maybeUnwrapIOException(e);
                 throw e;
@@ -2032,15 +2015,7 @@ public class PackageInstaller {
          * Set the data loader params for the session.
          * This also switches installation into data provider mode and disallow direct writes into
          * staging folder.
-         *
-         * WARNING: This is a system API to aid internal development.
-         * Use at your own risk. It will change or be removed without warning.
-         * {@hide}
          */
-        @SystemApi
-        @RequiresPermission(allOf = {
-                Manifest.permission.INSTALL_PACKAGES,
-                Manifest.permission.USE_INSTALLER_V2})
         public void setDataLoaderParams(@NonNull DataLoaderParams dataLoaderParams) {
             this.dataLoaderParams = dataLoaderParams;
         }
@@ -2051,6 +2026,13 @@ public class PackageInstaller {
          */
         public void setForceQueryable() {
             this.forceQueryableOverride = true;
+        }
+
+        /**
+         * Sets the install scenario for this session, which describes the expected user journey.
+         */
+        public void setInstallScenario(@InstallScenario int installScenario) {
+            this.installScenario = installScenario;
         }
 
         /** {@hide} */
@@ -2212,7 +2194,7 @@ public class PackageInstaller {
         /** {@hide} */
         public @InstallReason int installReason;
         /** {@hide} */
-        public @InstallReason int installScenario;
+        public @InstallScenario int installScenario;
         /** {@hide} */
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
         public long sizeBytes;

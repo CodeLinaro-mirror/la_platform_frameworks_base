@@ -12,6 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_base_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_base_license"],
+}
+
 java_library {
     name: "updatable-media",
 
@@ -38,6 +47,8 @@ java_library {
     static_libs: [
         "exoplayer2-extractor",
         "mediatranscoding_aidl_interface-java",
+        "modules-annotation-minsdk",
+        "modules-utils-build",
     ],
     jarjar_rules: "jarjar_rules.txt",
 
@@ -52,6 +63,7 @@ java_library {
     visibility: [
         "//frameworks/av/apex:__subpackages__",
         "//frameworks/base", // For framework-all
+        "//frameworks/base/apex/media/service",
     ],
 }
 
@@ -80,6 +92,7 @@ filegroup {
         "java/android/media/Session2CommandGroup.java",
         "java/android/media/Session2Link.java",
         "java/android/media/Session2Token.java",
+        "java/android/media/MediaCommunicationManager.java",
     ],
     path: "java",
 }
@@ -96,7 +109,7 @@ filegroup {
 filegroup {
     name: "mediaparser-srcs",
     srcs: [
-        "java/android/media/MediaParser.java"
+        "java/android/media/MediaParser.java",
     ],
     path: "java",
 }
@@ -107,7 +120,6 @@ filegroup {
         "java/android/media/ApplicationMediaCapabilities.java",
         "java/android/media/MediaFeature.java",
         "java/android/media/MediaTranscodeManager.java",
-        "java/android/media/MediaTranscodingException.java",
     ],
     path: "java",
 }

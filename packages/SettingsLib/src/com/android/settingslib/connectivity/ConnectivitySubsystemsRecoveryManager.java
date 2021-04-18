@@ -27,7 +27,7 @@ import android.net.wifi.WifiManager.SubsystemRestartTrackingCallback;
 import android.os.Handler;
 import android.os.HandlerExecutor;
 import android.provider.Settings;
-import android.telephony.PhoneStateListener;
+import android.telephony.TelephonyCallback;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 
@@ -72,7 +72,10 @@ public class ConnectivitySubsystemsRecoveryManager {
             checkIfAllSubsystemsRestartsAreDone();
         }
     };
-    private final PhoneStateListener mPhoneStateListener = new PhoneStateListener() {
+    private final MobileTelephonyCallback mTelephonyCallback = new MobileTelephonyCallback();
+
+    private class MobileTelephonyCallback extends TelephonyCallback implements
+            TelephonyCallback.RadioPowerStateListener {
         @Override
         public void onRadioPowerStateChanged(int state) {
             if (!mTelephonyRestartInProgress || mCurrentRecoveryCallback == null) {
@@ -85,7 +88,7 @@ public class ConnectivitySubsystemsRecoveryManager {
                 checkIfAllSubsystemsRestartsAreDone();
             }
         }
-    };
+    }
 
     public ConnectivitySubsystemsRecoveryManager(@NonNull Context context,
             @NonNull Handler handler) {
@@ -196,21 +199,22 @@ public class ConnectivitySubsystemsRecoveryManager {
     }
 
     private void stopTrackingWifiRestart() {
-        mWifiManager.unregisterWifiSubsystemRestartTrackingCallback(
+        mWifiManager.unregisterSubsystemRestartTrackingCallback(
                 mWifiSubsystemRestartTrackingCallback);
     }
 
     private void startTrackingTelephonyRestart() {
-        mTelephonyManager.registerPhoneStateListener(new HandlerExecutor(mHandler),
-                mPhoneStateListener);
+        mTelephonyManager.registerTelephonyCallback(new HandlerExecutor(mHandler),
+                mTelephonyCallback);
     }
 
     private void stopTrackingTelephonyRestart() {
-        mTelephonyManager.unregisterPhoneStateListener(mPhoneStateListener);
+        mTelephonyManager.unregisterTelephonyCallback(mTelephonyCallback);
     }
 
     private void checkIfAllSubsystemsRestartsAreDone() {
-        if (!mWifiRestartInProgress && !mTelephonyRestartInProgress) {
+        if (!mWifiRestartInProgress && !mTelephonyRestartInProgress
+                && mCurrentRecoveryCallback != null) {
             mCurrentRecoveryCallback.onSubsystemRestartOperationEnd();
             mCurrentRecoveryCallback = null;
         }
@@ -283,8 +287,10 @@ public class ConnectivitySubsystemsRecoveryManager {
                     stopTrackingTelephonyRestart();
                     mWifiRestartInProgress = false;
                     mTelephonyRestartInProgress = false;
-                    mCurrentRecoveryCallback.onSubsystemRestartOperationEnd();
-                    mCurrentRecoveryCallback = null;
+                    if (mCurrentRecoveryCallback != null) {
+                        mCurrentRecoveryCallback.onSubsystemRestartOperationEnd();
+                        mCurrentRecoveryCallback = null;
+                    }
                 }, RESTART_TIMEOUT_MS);
             }
         });

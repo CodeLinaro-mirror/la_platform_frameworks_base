@@ -18,6 +18,7 @@ package com.android.wm.shell.bubbles
 
 import android.graphics.PointF
 import android.os.Handler
+import android.os.Looper
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
@@ -90,7 +91,6 @@ abstract class RelativeTouchListener : View.OnTouchListener {
     private var touchSlop: Int = -1
     private var movedEnough = false
 
-    private val handler = Handler()
     private var performedLongClick = false
 
     @Suppress("UNCHECKED_CAST")
@@ -114,7 +114,7 @@ abstract class RelativeTouchListener : View.OnTouchListener {
                 viewPositionOnTouchDown.set(v.translationX, v.translationY)
 
                 performedLongClick = false
-                handler.postDelayed({
+                v.handler.postDelayed({
                     if (v.isLongClickable) {
                         performedLongClick = v.performLongClick()
                     }
@@ -124,7 +124,7 @@ abstract class RelativeTouchListener : View.OnTouchListener {
             MotionEvent.ACTION_MOVE -> {
                 if (!movedEnough && hypot(dx, dy) > touchSlop && !performedLongClick) {
                     movedEnough = true
-                    handler.removeCallbacksAndMessages(null)
+                    v.handler.removeCallbacksAndMessages(null)
                 }
 
                 if (movedEnough) {
@@ -140,7 +140,7 @@ abstract class RelativeTouchListener : View.OnTouchListener {
                 } else if (!performedLongClick) {
                     v.performClick()
                 } else {
-                    handler.removeCallbacksAndMessages(null)
+                    v.handler.removeCallbacksAndMessages(null)
                 }
 
                 velocityTracker.clear()

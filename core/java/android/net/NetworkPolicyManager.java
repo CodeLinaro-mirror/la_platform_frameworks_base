@@ -16,13 +16,17 @@
 
 package android.net;
 
+import static android.app.ActivityManager.procStateToString;
 import static android.content.pm.PackageManager.GET_SIGNATURES;
 
 import android.annotation.IntDef;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemService;
+import android.annotation.TestApi;
 import android.app.ActivityManager;
+import android.app.ActivityManager.ProcessCapability;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.Intent;
@@ -34,6 +38,7 @@ import android.net.wifi.WifiInfo;
 import android.os.Build;
 import android.os.Process;
 import android.os.RemoteException;
+import android.telephony.Annotation;
 import android.telephony.SubscriptionPlan;
 import android.util.DebugUtils;
 import android.util.Pair;
@@ -54,6 +59,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * @hide
  */
+@TestApi
 @SystemService(Context.NETWORK_POLICY_SERVICE)
 public class NetworkPolicyManager {
 
@@ -124,6 +130,7 @@ public class NetworkPolicyManager {
     public static final int RULE_REJECT_ALL = 1 << 6;
     /**
      * Reject traffic on all networks for restricted networking mode.
+     * @hide
      */
     public static final int RULE_REJECT_RESTRICTED_MODE = 1 << 10;
 
@@ -350,6 +357,7 @@ public class NetworkPolicyManager {
     }
 
     /** @hide */
+    @TestApi
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public void setRestrictBackground(boolean restrictBackground) {
         try {
@@ -360,6 +368,7 @@ public class NetworkPolicyManager {
     }
 
     /** @hide */
+    @TestApi
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public boolean getRestrictBackground() {
         try {
@@ -377,6 +386,8 @@ public class NetworkPolicyManager {
      * @param overrideMask the bitmask that specifies which of the overrides is being
      *            set or cleared.
      * @param overrideValue the override values to set or clear.
+     * @param networkTypes the network types this override applies to.
+     *            {@see TelephonyManager#getAllNetworkTypes()}
      * @param timeoutMillis the timeout after which the requested override will
      *            be automatically cleared, or {@code 0} to leave in the
      *            requested state until explicitly cleared, or the next reboot,
@@ -385,11 +396,12 @@ public class NetworkPolicyManager {
      * @hide
      */
     public void setSubscriptionOverride(int subId, @SubscriptionOverrideMask int overrideMask,
-            @SubscriptionOverrideMask int overrideValue, long timeoutMillis,
-                    @NonNull String callingPackage) {
+            @SubscriptionOverrideMask int overrideValue,
+            @NonNull @Annotation.NetworkType int[] networkTypes, long timeoutMillis,
+            @NonNull String callingPackage) {
         try {
-            mService.setSubscriptionOverride(subId, overrideMask, overrideValue, timeoutMillis,
-                    callingPackage);
+            mService.setSubscriptionOverride(subId, overrideMask, overrideValue, networkTypes,
+                    timeoutMillis, callingPackage);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -460,7 +472,50 @@ public class NetworkPolicyManager {
     }
 
     /**
+     * Figure out if networking is blocked for a given set of conditions.
+     *
+     * This is used by ConnectivityService via passing stale copies of conditions, so it must not
+     * take any locks.
+     *
+     * @param uid The target uid.
+     * @param uidRules The uid rules which are obtained from NetworkPolicyManagerService.
+     * @param isNetworkMetered True if the network is metered.
+     * @param isBackgroundRestricted True if data saver is enabled.
+     *
+     * @return true if networking is blocked for the UID under the specified conditions.
+     *
+     * @hide
+     */
+    public boolean checkUidNetworkingBlocked(int uid, int uidRules,
+            boolean isNetworkMetered, boolean isBackgroundRestricted) {
+        try {
+            return mService.checkUidNetworkingBlocked(uid, uidRules, isNetworkMetered,
+                    isBackgroundRestricted);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Check that the given uid is restricted from doing networking on metered networks.
+     *
+     * @param uid The target uid.
+     * @return true if the given uid is restricted from doing networking on metered networks.
+     *
+     * @hide
+     */
+    public boolean isUidRestrictedOnMeteredNetworks(int uid) {
+        try {
+            return mService.isUidRestrictedOnMeteredNetworks(uid);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Get multipath preference for the given network.
+     *
+     * @hide
      */
     public int getMultipathPreference(Network network) {
         try {
@@ -565,8 +620,18 @@ public class NetworkPolicyManager {
      * to access network when the device is idle or in battery saver mode. Otherwise, false.
      * @hide
      */
-    public static boolean isProcStateAllowedWhileIdleOrPowerSaveMode(int procState) {
-        return procState <= FOREGROUND_THRESHOLD_STATE;
+    public static boolean isProcStateAllowedWhileIdleOrPowerSaveMode(@Nullable UidState uidState) {
+        if (uidState == null) {
+            return false;
+        }
+        return isProcStateAllowedWhileIdleOrPowerSaveMode(uidState.procState, uidState.capability);
+    }
+
+    /** @hide */
+    public static boolean isProcStateAllowedWhileIdleOrPowerSaveMode(
+            int procState, @ProcessCapability int capability) {
+        return procState <= FOREGROUND_THRESHOLD_STATE
+                || (capability & ActivityManager.PROCESS_CAPABILITY_NETWORK) != 0;
     }
 
     /**
@@ -574,12 +639,47 @@ public class NetworkPolicyManager {
      * to access network when the device is in data saver mode. Otherwise, false.
      * @hide
      */
+    public static boolean isProcStateAllowedWhileOnRestrictBackground(@Nullable UidState uidState) {
+        if (uidState == null) {
+            return false;
+        }
+        return isProcStateAllowedWhileOnRestrictBackground(uidState.procState);
+    }
+
+    /** @hide */
     public static boolean isProcStateAllowedWhileOnRestrictBackground(int procState) {
+        // Data saver and bg policy restrictions will only take procstate into account.
         return procState <= FOREGROUND_THRESHOLD_STATE;
     }
 
     /** @hide */
-    public static String resolveNetworkId(WifiConfiguration config) {
+    public static final class UidState {
+        public int uid;
+        public int procState;
+        public int capability;
+
+        public UidState(int uid, int procState, int capability) {
+            this.uid = uid;
+            this.procState = procState;
+            this.capability = capability;
+        }
+
+        @Override
+        public String toString() {
+            final StringBuilder sb = new StringBuilder();
+            sb.append("{procState=");
+            sb.append(procStateToString(procState));
+            sb.append(",cap=");
+            ActivityManager.printCapabilitiesSummary(sb, capability);
+            sb.append("}");
+            return sb.toString();
+        }
+    }
+
+    /** @hide */
+    @TestApi
+    @NonNull
+    public static String resolveNetworkId(@NonNull WifiConfiguration config) {
         return WifiInfo.sanitizeSsid(config.isPasspoint()
                 ? config.providerFriendlyName : config.SSID);
     }
@@ -597,9 +697,10 @@ public class NetworkPolicyManager {
          * @param subId the subscriber this override applies to.
          * @param overrideMask a bitmask that specifies which of the overrides is set.
          * @param overrideValue a bitmask that specifies the override values.
+         * @param networkTypes the network types this override applies to.
          */
         public void onSubscriptionOverride(int subId, @SubscriptionOverrideMask int overrideMask,
-                @SubscriptionOverrideMask int overrideValue) {}
+                @SubscriptionOverrideMask int overrideValue, int[] networkTypes) {}
 
         /**
          * Notify of subscription plans change about a given subscription.
@@ -623,8 +724,8 @@ public class NetworkPolicyManager {
 
         @Override
         public void onSubscriptionOverride(int subId, @SubscriptionOverrideMask int overrideMask,
-                @SubscriptionOverrideMask int overrideValue) {
-            mCallback.onSubscriptionOverride(subId, overrideMask, overrideValue);
+                @SubscriptionOverrideMask int overrideValue, int[] networkTypes) {
+            mCallback.onSubscriptionOverride(subId, overrideMask, overrideValue, networkTypes);
         }
 
         @Override
@@ -640,7 +741,7 @@ public class NetworkPolicyManager {
         @Override public void onRestrictBackgroundChanged(boolean restrictBackground) { }
         @Override public void onUidPoliciesChanged(int uid, int uidPolicies) { }
         @Override public void onSubscriptionOverride(int subId, int overrideMask,
-                int overrideValue) { }
+                int overrideValue, int[] networkTypes) { }
         @Override public void onSubscriptionPlansChanged(int subId, SubscriptionPlan[] plans) { }
     }
 }

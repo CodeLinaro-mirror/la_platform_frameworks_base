@@ -24,7 +24,6 @@ import static android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
 import static com.android.wm.shell.bubbles.BubbleDebugConfig.DEBUG_BUBBLE_EXPANDED_VIEW;
 import static com.android.wm.shell.bubbles.BubbleDebugConfig.TAG_BUBBLES;
 import static com.android.wm.shell.bubbles.BubbleDebugConfig.TAG_WITH_CLASS_NAME;
-import static com.android.wm.shell.bubbles.BubbleOverflowActivity.EXTRA_BUBBLE_CONTROLLER;
 
 import android.annotation.NonNull;
 import android.annotation.SuppressLint;
@@ -37,14 +36,16 @@ import android.content.Intent;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Outline;
+import android.graphics.Picture;
 import android.graphics.Rect;
 import android.graphics.drawable.ShapeDrawable;
-import android.os.Bundle;
 import android.os.RemoteException;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.SurfaceControl;
 import android.view.View;
 import android.view.ViewGroup;
@@ -77,11 +78,25 @@ public class BubbleExpandedView extends LinearLayout {
 
     private AlphaOptimizedButton mSettingsIcon;
     private TaskView mTaskView;
+    private BubbleOverflowContainerView mOverflowView;
 
     private int mTaskId = INVALID_TASK_ID;
 
     private boolean mImeVisible;
     private boolean mNeedsNewHeight;
+
+    /**
+     * Whether we want the TaskView's content to be visible (alpha = 1f). If
+     * {@link #mIsAlphaAnimating} is true, this may not reflect the TaskView's actual alpha value
+     * until the animation ends.
+     */
+    private boolean mIsContentVisible = false;
+
+    /**
+     * Whether we're animating the TaskView's alpha value. If so, we will hold off on applying alpha
+     * changes from {@link #setContentVisibility} until the animation ends.
+     */
+    private boolean mIsAlphaAnimating = false;
 
     private int mMinHeight;
     private int mOverflowHeight;
@@ -125,6 +140,7 @@ public class BubbleExpandedView extends LinearLayout {
             if (mDestroyed || mInitialized) {
                 return;
             }
+
             // Custom options so there is no activity transition animation
             ActivityOptions options = ActivityOptions.makeCustomAnimation(getContext(),
                     0 /* enterResId */, 0 /* exitResId */);
@@ -137,6 +153,7 @@ public class BubbleExpandedView extends LinearLayout {
                             + getBubbleKey());
                 }
                 try {
+                    options.setTaskAlwaysOnTop(true);
                     if (!mIsOverflow && mBubble.hasMetadataShortcutId()) {
                         options.setApplyActivityFlagsForBubbles(true);
                         mTaskView.startShortcutActivity(mBubble.getShortcutInfo(),
@@ -146,6 +163,7 @@ public class BubbleExpandedView extends LinearLayout {
                         // Apply flags to make behaviour match documentLaunchMode=always.
                         fillInIntent.addFlags(FLAG_ACTIVITY_NEW_DOCUMENT);
                         fillInIntent.addFlags(FLAG_ACTIVITY_MULTIPLE_TASK);
+                        fillInIntent.putExtra(Intent.EXTRA_IS_BUBBLED, true);
                         if (mBubble != null) {
                             mBubble.setIntentActive();
                         }
@@ -307,15 +325,25 @@ public class BubbleExpandedView extends LinearLayout {
      * Initialize {@link BubbleController} and {@link BubbleStackView} here, this method must need
      * to be called after view inflate.
      */
-    void initialize(BubbleController controller, BubbleStackView stackView) {
+    void initialize(BubbleController controller, BubbleStackView stackView, boolean isOverflow) {
         mController = controller;
         mStackView = stackView;
-
-        mTaskView = new TaskView(mContext, mController.getTaskOrganizer());
-        mExpandedViewContainer.addView(mTaskView);
-        bringChildToFront(mTaskView);
-        mTaskView.setListener(mContext.getMainExecutor(), mTaskViewListener);
+        mIsOverflow = isOverflow;
         mPositioner = mController.getPositioner();
+
+        if (mIsOverflow) {
+            mOverflowView = (BubbleOverflowContainerView) LayoutInflater.from(getContext()).inflate(
+                    R.layout.bubble_overflow_container, null /* root */);
+            mOverflowView.setBubbleController(mController);
+            mExpandedViewContainer.addView(mOverflowView);
+            bringChildToFront(mOverflowView);
+            mSettingsIcon.setVisibility(GONE);
+        } else {
+            mTaskView = new TaskView(mContext, mController.getTaskOrganizer());
+            mTaskView.setListener(mController.getMainExecutor(), mTaskViewListener);
+            mExpandedViewContainer.addView(mTaskView);
+            bringChildToFront(mTaskView);
+        }
     }
 
     void updateDimensions() {
@@ -390,6 +418,17 @@ public class BubbleExpandedView extends LinearLayout {
     /** Return a GraphicBuffer with the contents of the task view surface. */
     @Nullable
     SurfaceControl.ScreenshotHardwareBuffer snapshotActivitySurface() {
+        if (mIsOverflow) {
+            // For now, just snapshot the view and return it as a hw buffer so that the animation
+            // code for both the tasks and overflow can be the same
+            Picture p = new Picture();
+            mOverflowView.draw(
+                    p.beginRecording(mOverflowView.getWidth(), mOverflowView.getHeight()));
+            p.endRecording();
+            Bitmap snapshot = Bitmap.createBitmap(p);
+            return new SurfaceControl.ScreenshotHardwareBuffer(snapshot.getHardwareBuffer(),
+                    snapshot.getColorSpace(), false /* containsSecureLayers */);
+        }
         if (mTaskView == null || mTaskView.getSurfaceControl() == null) {
             return null;
         }
@@ -400,6 +439,11 @@ public class BubbleExpandedView extends LinearLayout {
     }
 
     int[] getTaskViewLocationOnScreen() {
+        if (mIsOverflow) {
+            // This is only used for animating away the surface when switching bubbles, just use the
+            // view location on screen for now to allow us to use the same animation code with tasks
+            return mOverflowView.getLocationOnScreen();
+        }
         if (mTaskView != null) {
             return mTaskView.getLocationOnScreen();
         } else {
@@ -435,6 +479,29 @@ public class BubbleExpandedView extends LinearLayout {
     }
 
     /**
+     * Whether we are currently animating the TaskView's alpha value. If this is set to true, calls
+     * to {@link #setContentVisibility} will not be applied until this is set to false again.
+     */
+    void setAlphaAnimating(boolean animating) {
+        mIsAlphaAnimating = animating;
+
+        // If we're done animating, apply the correct
+        if (!animating) {
+            setContentVisibility(mIsContentVisible);
+        }
+    }
+
+    /**
+     * Sets the alpha of the underlying TaskView, since changing the expanded view's alpha does not
+     * affect the TaskView since it uses a Surface.
+     */
+    void setTaskViewAlpha(float alpha) {
+        if (mTaskView != null) {
+            mTaskView.setAlpha(alpha);
+        }
+    }
+
+    /**
      * Set visibility of contents in the expanded state.
      *
      * @param visibility {@code true} if the contents should be visible on the screen.
@@ -447,37 +514,24 @@ public class BubbleExpandedView extends LinearLayout {
             Log.d(TAG, "setContentVisibility: visibility=" + visibility
                     + " bubble=" + getBubbleKey());
         }
+        mIsContentVisible = visibility;
+
         final float alpha = visibility ? 1f : 0f;
 
         mPointerView.setAlpha(alpha);
-        if (mTaskView == null) {
-            return;
-        }
-        if (alpha != mTaskView.getAlpha()) {
+        if (mTaskView != null && !mIsAlphaAnimating) {
             mTaskView.setAlpha(alpha);
         }
     }
 
+
     @Nullable
-    View getTaskView() {
+    TaskView getTaskView() {
         return mTaskView;
     }
 
     int getTaskId() {
         return mTaskId;
-    }
-
-    public void setOverflow(boolean overflow) {
-        mIsOverflow = overflow;
-
-        Intent target = new Intent(mContext, BubbleOverflowActivity.class);
-        target.addFlags(FLAG_ACTIVITY_NEW_DOCUMENT | FLAG_ACTIVITY_MULTIPLE_TASK);
-        Bundle extras = new Bundle();
-        extras.putBinder(EXTRA_BUBBLE_CONTROLLER, ObjectWrapper.wrap(mController));
-        target.putExtras(extras);
-        mPendingIntent = PendingIntent.getActivity(mContext, 0 /* requestCode */,
-                target, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        mSettingsIcon.setVisibility(GONE);
     }
 
     /**
@@ -511,7 +565,8 @@ public class BubbleExpandedView extends LinearLayout {
 
             if (isNew) {
                 mPendingIntent = mBubble.getBubbleIntent();
-                if (mPendingIntent != null || mBubble.hasMetadataShortcutId()) {
+                if ((mPendingIntent != null || mBubble.hasMetadataShortcutId())
+                        && mTaskView != null) {
                     setContentVisibility(false);
                     mTaskView.setVisibility(VISIBLE);
                 }
@@ -552,13 +607,19 @@ public class BubbleExpandedView extends LinearLayout {
             desiredHeight = Math.max(desiredHeight, mMinHeight);
             float height = Math.min(desiredHeight, getMaxExpandedHeight());
             height = Math.max(height, mMinHeight);
-            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) mTaskView.getLayoutParams();
+            FrameLayout.LayoutParams lp = mIsOverflow
+                    ? (FrameLayout.LayoutParams) mOverflowView.getLayoutParams()
+                    : (FrameLayout.LayoutParams) mTaskView.getLayoutParams();
             mNeedsNewHeight = lp.height != height;
             if (!mImeVisible) {
                 // If the ime is visible... don't adjust the height because that will cause
                 // a configuration change and the ime will be lost.
                 lp.height = (int) height;
-                mTaskView.setLayoutParams(lp);
+                if (mIsOverflow) {
+                    mOverflowView.setLayoutParams(lp);
+                } else {
+                    mTaskView.setLayoutParams(lp);
+                }
                 mNeedsNewHeight = false;
             }
             if (DEBUG_BUBBLE_EXPANDED_VIEW) {
@@ -602,6 +663,9 @@ public class BubbleExpandedView extends LinearLayout {
             updateHeight();
             mTaskView.onLocationChanged();
         }
+        if (mIsOverflow) {
+            mOverflowView.show();
+        }
     }
 
     /**
@@ -637,8 +701,8 @@ public class BubbleExpandedView extends LinearLayout {
 
     /**
      * Cleans up anything related to the task and TaskView. If this view should be reused after this
-     * method is called, then {@link #initialize(BubbleController, BubbleStackView)} must be invoked
-     * first.
+     * method is called, then {@link #initialize(BubbleController, BubbleStackView, boolean)} must
+     * be invoked first.
      */
     public void cleanUpExpandedState() {
         if (DEBUG_BUBBLE_EXPANDED_VIEW) {
@@ -653,8 +717,6 @@ public class BubbleExpandedView extends LinearLayout {
         }
         if (mTaskView != null) {
             mTaskView.release();
-        }
-        if (mTaskView != null) {
             removeView(mTaskView);
             mTaskView = null;
         }

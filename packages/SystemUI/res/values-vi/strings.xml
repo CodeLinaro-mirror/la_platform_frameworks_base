@@ -93,6 +93,8 @@
     <string name="screenshot_scroll_description" msgid="7855773867093272175">"Cuộn để phóng to ảnh chụp màn hình"</string>
     <string name="screenshot_dismiss_description" msgid="4702341245899508786">"Đóng ảnh chụp màn hình"</string>
     <string name="screenshot_preview_description" msgid="7606510140714080474">"Xem trước ảnh chụp màn hình"</string>
+    <string name="screenshot_top_boundary" msgid="1500569103321300856">"Ranh giới trên"</string>
+    <string name="screenshot_bottom_boundary" msgid="5657242629526407311">"Ranh giới dưới"</string>
     <string name="screenrecord_name" msgid="2596401223859996572">"Trình ghi màn hình"</string>
     <string name="screenrecord_background_processing_label" msgid="7244617554884238898">"Đang xử lý video ghi màn hình"</string>
     <string name="screenrecord_channel_description" msgid="4147077128486138351">"Thông báo đang diễn ra về phiên ghi màn hình"</string>
@@ -114,7 +116,10 @@
     <string name="screenrecord_cancel_label" msgid="7850926573274483294">"Hủy"</string>
     <string name="screenrecord_share_label" msgid="5025590804030086930">"Chia sẻ"</string>
     <string name="screenrecord_cancel_success" msgid="1775448688137393901">"Đã hủy bản ghi màn hình"</string>
-    <string name="screenrecord_save_message" msgid="490522052388998226">"Đã lưu bản ghi màn hình, nhấn để xem"</string>
+    <!-- no translation found for screenrecord_save_title (1886652605520893850) -->
+    <skip />
+    <!-- no translation found for screenrecord_save_text (3008973099800840163) -->
+    <skip />
     <string name="screenrecord_delete_error" msgid="2870506119743013588">"Lỗi khi xóa bản ghi màn hình"</string>
     <string name="screenrecord_permission_error" msgid="7856841237023137686">"Không được cấp đủ quyền"</string>
     <string name="screenrecord_start_error" msgid="2200660692479682368">"Lỗi khi bắt đầu ghi màn hình"</string>
@@ -344,10 +349,8 @@
     <string name="quick_settings_ime_label" msgid="3351174938144332051">"Phương thức nhập"</string>
     <string name="quick_settings_location_label" msgid="2621868789013389163">"Vị trí"</string>
     <string name="quick_settings_location_off_label" msgid="7923929131443915919">"Tắt vị trí"</string>
-    <!-- no translation found for quick_settings_camera_label (1367149596242401934) -->
-    <skip />
-    <!-- no translation found for quick_settings_mic_label (8245831073612564953) -->
-    <skip />
+    <string name="quick_settings_camera_label" msgid="1367149596242401934">"Chặn máy ảnh"</string>
+    <string name="quick_settings_mic_label" msgid="8245831073612564953">"Tắt tiếng micrô"</string>
     <string name="quick_settings_media_device_label" msgid="8034019242363789941">"Thiết bị phương tiện"</string>
     <string name="quick_settings_rssi_label" msgid="3397615415140356701">"RSSI"</string>
     <string name="quick_settings_rssi_emergency_only" msgid="7499207215265078598">"Chỉ cuộc gọi khẩn cấp"</string>
@@ -358,12 +361,9 @@
     <string name="quick_settings_user_new_user" msgid="3347905871336069666">"Người dùng mới"</string>
     <string name="quick_settings_wifi_label" msgid="2879507532983487244">"Wi-Fi"</string>
     <string name="quick_settings_internet_label" msgid="6603068555872455463">"Internet"</string>
-    <!-- no translation found for quick_settings_airplane_safe_label (2665758539772645899) -->
-    <skip />
-    <!-- no translation found for quick_settings_networks_available (1875138606855420438) -->
-    <skip />
-    <!-- no translation found for quick_settings_networks_unavailable (1167847013337940082) -->
-    <skip />
+    <string name="quick_settings_airplane_safe_label" msgid="2665758539772645899">"An toàn với máy bay"</string>
+    <string name="quick_settings_networks_available" msgid="1875138606855420438">"Có mạng"</string>
+    <string name="quick_settings_networks_unavailable" msgid="1167847013337940082">"Không có mạng"</string>
     <string name="quick_settings_wifi_not_connected" msgid="4071097522427039160">"Chưa được kết nối"</string>
     <string name="quick_settings_wifi_no_network" msgid="6003178398713839313">"Không có mạng nào"</string>
     <string name="quick_settings_wifi_off_label" msgid="4003379736176547594">"Tắt Wi-Fi"</string>
@@ -415,12 +415,15 @@
     <string name="quick_settings_dark_mode_secondary_label_until_sunrise" msgid="4404885070316716472">"Cho đến khi trời sáng"</string>
     <string name="quick_settings_dark_mode_secondary_label_on_at" msgid="5128758823486361279">"Bật vào lúc <xliff:g id="TIME">%s</xliff:g>"</string>
     <string name="quick_settings_dark_mode_secondary_label_until" msgid="2289774641256492437">"Cho đến <xliff:g id="TIME">%s</xliff:g>"</string>
+    <string name="quick_settings_reduce_bright_colors_label" msgid="7537352080559075175">"Giảm độ sáng"</string>
     <string name="quick_settings_nfc_label" msgid="1054317416221168085">"NFC"</string>
     <string name="quick_settings_nfc_off" msgid="3465000058515424663">"NFC đã được tắt"</string>
     <string name="quick_settings_nfc_on" msgid="1004976611203202230">"NFC đã được bật"</string>
     <string name="quick_settings_screen_record_label" msgid="1594046461509776676">"Ghi lại nội dung trên màn hình"</string>
     <string name="quick_settings_screen_record_start" msgid="1574725369331638985">"Bắt đầu"</string>
     <string name="quick_settings_screen_record_stop" msgid="8087348522976412119">"Dừng"</string>
+    <string name="sensor_privacy_start_use_mic_dialog_content" msgid="8643239110815357707">"Để tiếp tục, &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; cần quyền truy cập vào micrô trên thiết bị của bạn."</string>
+    <string name="sensor_privacy_start_use_camera_dialog_content" msgid="7773612142162829116">"Để tiếp tục, &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; cần quyền truy cập vào máy ảnh trên thiết bị của bạn."</string>
     <string name="media_seamless_remote_device" msgid="177033467332920464">"Thiết bị"</string>
     <string name="recents_swipe_up_onboarding" msgid="2820265886420993995">"Vuốt lên để chuyển đổi ứng dụng"</string>
     <string name="recents_quick_scrub_onboarding" msgid="765934300283514912">"Kéo sang phải để chuyển đổi nhanh giữa các ứng dụng"</string>
@@ -443,8 +446,10 @@
     <string name="notification_tap_again" msgid="4477318164947497249">"Nhấn lại để mở"</string>
     <string name="keyguard_unlock" msgid="8031975796351361601">"Vuốt lên để mở"</string>
     <string name="keyguard_retry" msgid="886802522584053523">"Vuốt lên để thử lại"</string>
+    <string name="require_unlock_for_nfc" msgid="1305686454823018831">"Mở khóa để sử dụng NFC"</string>
     <string name="do_disclosure_generic" msgid="4896482821974707167">"Thiết bị này thuộc về tổ chức của bạn"</string>
     <string name="do_disclosure_with_name" msgid="2091641464065004091">"Thiết bị này thuộc về <xliff:g id="ORGANIZATION_NAME">%s</xliff:g>"</string>
+    <string name="do_financed_disclosure_with_name" msgid="6723004643314467864">"Thiết bị này do <xliff:g id="ORGANIZATION_NAME">%s</xliff:g> cung cấp"</string>
     <string name="phone_hint" msgid="6682125338461375925">"Vuốt từ biểu tượng để mở điện thoại"</string>
     <string name="voice_hint" msgid="7476017460191291417">"Vuốt từ biểu tượng để mở trợ lý thoại"</string>
     <string name="camera_hint" msgid="4519495795000658637">"Vuốt từ biểu tượng để mở máy ảnh"</string>
@@ -465,9 +470,10 @@
     <string name="accessibility_multi_user_switch_quick_contact" msgid="4504508915324898576">"Hiển thị hồ sơ"</string>
     <string name="user_add_user" msgid="4336657383006913022">"Thêm người dùng"</string>
     <string name="user_new_user_name" msgid="2019166282704195789">"Người dùng mới"</string>
-    <string name="guest_exit_guest_dialog_title" msgid="2034481024623462357">"Kết thúc phiên khách?"</string>
+    <string name="guest_exit_button" msgid="3059840571760915762">"Kết thúc phiên khách"</string>
+    <string name="guest_exit_guest_dialog_title" msgid="5015697561580641422">"Xóa phiên khách?"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"Tất cả ứng dụng và dữ liệu trong phiên này sẽ bị xóa."</string>
-    <string name="guest_exit_guest_dialog_remove" msgid="8533184512885775423">"Kết thúc phiên"</string>
+    <string name="guest_exit_guest_dialog_remove" msgid="7505817591242703757">"Xóa"</string>
     <string name="guest_wipe_session_title" msgid="7147965814683990944">"Chào mừng bạn trở lại!"</string>
     <string name="guest_wipe_session_message" msgid="3393823610257065457">"Bạn có muốn tiếp tục phiên của mình không?"</string>
     <string name="guest_wipe_session_wipe" msgid="8056836584445473309">"Bắt đầu lại"</string>
@@ -542,6 +548,7 @@
     <string name="monitoring_description_managed_profile_ca_certificate" msgid="7904323416598435647">"Tổ chức của bạn đã cài đặt một tổ chức phát hành chứng chỉ trong hồ cơ công việc của bạn. Lưu lượng truy cập mạng bảo mật của bạn có thể được giám sát hoặc sửa đổi."</string>
     <string name="monitoring_description_ca_certificate" msgid="448923057059097497">"Một tổ chức phát hành chứng chỉ được cài đặt trên thiết bị này. Lưu lượng truy cập mạng bảo mật của bạn có thể được giám sát hoặc sửa đổi."</string>
     <string name="monitoring_description_management_network_logging" msgid="216983105036994771">"Quản trị viên của bạn đã bật tính năng ghi nhật ký mạng. Tính năng này giám sát lưu lượng truy cập trên thiết bị của bạn."</string>
+    <string name="monitoring_description_managed_profile_network_logging" msgid="6932303843097006037">"Quản trị viên của bạn đã bật tính năng ghi nhật ký mạng. Tính năng này giám sát lưu lượng truy cập trong hồ sơ công việc chứ không giám sát lưu lượng truy cập trong hồ sơ cá nhân của bạn."</string>
     <string name="monitoring_description_named_vpn" msgid="5749932930634037027">"Bạn đang kết nối với <xliff:g id="VPN_APP">%1$s</xliff:g>. Ứng dụng này có thể giám sát hoạt động mạng của bạn, bao gồm email, ứng dụng và trang web."</string>
     <string name="monitoring_description_two_named_vpns" msgid="3516830755681229463">"Bạn đang kết nối với <xliff:g id="VPN_APP_0">%1$s</xliff:g> và <xliff:g id="VPN_APP_1">%2$s</xliff:g>. Các ứng dụng này có thể giám sát hoạt động mạng của bạn, bao gồm email, ứng dụng và trang web."</string>
     <string name="monitoring_description_managed_profile_named_vpn" msgid="368812367182387320">"Hồ sơ công việc của bạn được kết nối với <xliff:g id="VPN_APP">%1$s</xliff:g>, ứng dụng này có thể giám sát hoạt động mạng của bạn, bao gồm email, ứng dụng và trang web."</string>
@@ -622,6 +629,7 @@
     <string name="volume_stream_content_description_mute" msgid="4079046784917920984">"%1$s. Nhấn để tắt tiếng. Bạn có thể tắt tiếng dịch vụ trợ năng."</string>
     <string name="volume_stream_content_description_vibrate_a11y" msgid="2742330052979397471">"%1$s. Nhấn để đặt chế độ rung."</string>
     <string name="volume_stream_content_description_mute_a11y" msgid="5743548478357238156">"%1$s. Nhấn để tắt tiếng."</string>
+    <string name="volume_ringer_change" msgid="3574969197796055532">"Nhấn để thay đổi chế độ chuông"</string>
     <string name="volume_ringer_hint_mute" msgid="4263821214125126614">"tắt tiếng"</string>
     <string name="volume_ringer_hint_unmute" msgid="6119086890306456976">"bật tiếng"</string>
     <string name="volume_ringer_hint_vibrate" msgid="6211609047099337509">"rung"</string>
@@ -735,7 +743,7 @@
     <string name="feedback_silenced" msgid="9116540317466126457">"Hệ thống đã tự động &lt;b&gt;thay đổi thành Im lặng&lt;/b&gt; theo tầm quan trọng của thông báo này."</string>
     <string name="feedback_promoted" msgid="2125562787759780807">"Hệ thống đã tự động &lt;b&gt;tăng mức độ quan trọng&lt;/b&gt; của thông báo này trong ngăn thông báo."</string>
     <string name="feedback_demoted" msgid="951884763467110604">"Hệ thống đã tự động &lt;b&gt;giảm mức độ quan trọng&lt;/b&gt; của thông báo này trong ngăn thông báo."</string>
-    <string name="feedback_prompt" msgid="2278631214125128281">"Thông tin này có chính xác không?"</string>
+    <string name="feedback_prompt" msgid="3656728972307896379">"Chia sẻ ý kiến phản hồi của bạn với nhà phát triển. Thông tin này có chính xác không?"</string>
     <string name="feedback_response" msgid="4671729244976641339">"Cảm ơn bạn đã phản hồi!"</string>
     <string name="feedback_ok" msgid="6481426753298857144">"OK"</string>
     <string name="notification_channel_controls_opened_accessibility" msgid="6111817750774381094">"Đã mở điều khiển thông báo đối với <xliff:g id="APP_NAME">%1$s</xliff:g>"</string>
@@ -836,7 +844,7 @@
     <string name="right_nav_bar_button_type" msgid="4472566498647364715">"Loại nút bổ sung bên phải"</string>
     <string name="nav_bar_default" msgid="8386559913240761526">"(mặc định)"</string>
   <string-array name="nav_bar_buttons">
-    <item msgid="2681220472659720036">"Khay nhớ tạm"</item>
+    <item msgid="2681220472659720036">"Bảng nhớ tạm"</item>
     <item msgid="4795049793625565683">"Mã phím"</item>
     <item msgid="80697951177515644">"Xác nhận xoay, trình chuyển đổi bàn phím"</item>
     <item msgid="7626977989589303588">"Không có"</item>
@@ -851,7 +859,7 @@
     <string name="save" msgid="3392754183673848006">"Lưu"</string>
     <string name="reset" msgid="8715144064608810383">"Đặt lại"</string>
     <string name="adjust_button_width" msgid="8313444823666482197">"Điều chỉnh chiều rộng nút"</string>
-    <string name="clipboard" msgid="8517342737534284617">"Khay nhớ tạm"</string>
+    <string name="clipboard" msgid="8517342737534284617">"Bảng nhớ tạm"</string>
     <string name="accessibility_key" msgid="3471162841552818281">"Nút điều hướng tùy chỉnh"</string>
     <string name="left_keycode" msgid="8211040899126637342">"Mã phím bên trái"</string>
     <string name="right_keycode" msgid="2480715509844798438">"Mã phím bên phải"</string>
@@ -882,6 +890,8 @@
     <string name="accessibility_qs_edit_tile_move_to_position" msgid="5198161544045930556">"Di chuyển tới <xliff:g id="POSITION">%1$d</xliff:g>"</string>
     <string name="accessibility_qs_edit_tile_add_to_position" msgid="9029163095148274690">"Thêm vào vị trí <xliff:g id="POSITION">%1$d</xliff:g>"</string>
     <string name="accessibility_qs_edit_position" msgid="4509277359815711830">"Vị trí <xliff:g id="POSITION">%1$d</xliff:g>"</string>
+    <string name="accessibility_qs_edit_tile_added" msgid="9067146040380836334">"Đã thêm thẻ thông tin"</string>
+    <string name="accessibility_qs_edit_tile_removed" msgid="1175925632436612036">"Đã xóa thẻ thông tin"</string>
     <string name="accessibility_desc_quick_settings_edit" msgid="741658939453595297">"Trình chỉnh sửa cài đặt nhanh."</string>
     <string name="accessibility_desc_notification_icon" msgid="7331265967584178674">"Thông báo của <xliff:g id="ID_1">%1$s</xliff:g>: <xliff:g id="ID_2">%2$s</xliff:g>"</string>
     <string name="accessibility_quick_settings_settings" msgid="7098489591715844713">"Mở phần cài đặt."</string>
@@ -969,13 +979,17 @@
     <string name="ongoing_privacy_chip_content_multiple_apps" msgid="8341216022442383954">"Các ứng dụng đang dùng <xliff:g id="TYPES_LIST">%s</xliff:g> của bạn."</string>
     <string name="ongoing_privacy_dialog_separator" msgid="1866222499727706187">", "</string>
     <string name="ongoing_privacy_dialog_last_separator" msgid="5615876114268009767">" và "</string>
+    <string name="ongoing_privacy_dialog_using_op" msgid="4125175620929701569">"<xliff:g id="APPLICATION_NAME">%1$s</xliff:g> đang sử dụng <xliff:g id="APP_OPP_NAME">%2$s</xliff:g>"</string>
+    <string name="ongoing_privacy_dialog_recent_op" msgid="4255923947334262404">"Gần đây, <xliff:g id="APPLICATION_NAME">%1$s</xliff:g> đã sử dụng <xliff:g id="APP_OPP_NAME">%2$s</xliff:g>"</string>
+    <string name="ongoing_privacy_dialog_enterprise" msgid="4082735415905550729">"(doanh nghiệp)"</string>
+    <string name="ongoing_privacy_dialog_phonecall" msgid="4487370562589839298">"Cuộc gọi điện thoại"</string>
+    <string name="ongoing_privacy_dialog_attribution_text" msgid="9186683306719924646">"(thông qua <xliff:g id="ATTRIBUTION">%s</xliff:g>)"</string>
     <string name="privacy_type_camera" msgid="7974051382167078332">"máy ảnh"</string>
     <string name="privacy_type_location" msgid="7991481648444066703">"vị trí"</string>
     <string name="privacy_type_microphone" msgid="9136763906797732428">"micrô"</string>
     <string name="sensor_privacy_mode" msgid="4462866919026513692">"Tắt cảm biến"</string>
     <string name="device_services" msgid="1549944177856658705">"Dịch vụ cho thiết bị"</string>
     <string name="music_controls_no_title" msgid="4166497066552290938">"Không có tiêu đề"</string>
-    <string name="restart_button_description" msgid="6916116576177456480">"Nhấn để khởi động lại ứng dụng này và xem ở chế độ toàn màn hình."</string>
     <string name="bubble_accessibility_action_move" msgid="3185080443743819178">"Di chuyển"</string>
     <string name="notification_content_system_nav_changed" msgid="5077913144844684544">"Đã cập nhật chế độ di chuyển trên hệ thống. Để thay đổi, hãy chuyển đến phần Cài đặt."</string>
     <string name="notification_content_gesture_nav_available" msgid="4431460803004659888">"Chuyển đến phần Cài đặt để cập nhật chế độ di chuyển trên hệ thống"</string>
@@ -1029,6 +1043,7 @@
     <string name="controls_dialog_ok" msgid="2770230012857881822">"Thêm"</string>
     <string name="controls_dialog_message" msgid="342066938390663844">"Do <xliff:g id="APP">%s</xliff:g> đề xuất"</string>
     <string name="controls_dialog_confirmation" msgid="586517302736263447">"Đã cập nhật các tùy chọn điều khiển"</string>
+    <string name="controls_tile_locked" msgid="731547768182831938">"Đã khóa thiết bị"</string>
     <string name="controls_pin_use_alphanumeric" msgid="8478371861023048414">"Mã PIN chứa các ký tự hoặc ký hiệu"</string>
     <string name="controls_pin_verify" msgid="3452778292918877662">"Xác minh <xliff:g id="DEVICE">%s</xliff:g>"</string>
     <string name="controls_pin_wrong" msgid="6162694056042164211">"Mã PIN sai"</string>
@@ -1065,7 +1080,7 @@
     <string name="media_output_dialog_connect_failed" msgid="3225190634236259010">"Không thể kết nối. Hãy thử lại."</string>
     <string name="media_output_dialog_pairing_new" msgid="9099497976087485862">"Ghép nối thiết bị mới"</string>
     <string name="build_number_clip_data_label" msgid="3623176728412560914">"Số bản dựng"</string>
-    <string name="build_number_copy_toast" msgid="877720921605503046">"Đã sao chép số bản dựng vào khay nhớ tạm."</string>
+    <string name="build_number_copy_toast" msgid="877720921605503046">"Đã sao chép số bản dựng vào bảng nhớ tạm."</string>
     <string name="battery_state_unknown_notification_title" msgid="8464703640483773454">"Đã xảy ra vấn đề khi đọc dung lượng pin của bạn"</string>
     <string name="battery_state_unknown_notification_text" msgid="13720937839460899">"Nhấn để biết thêm thông tin"</string>
 </resources>

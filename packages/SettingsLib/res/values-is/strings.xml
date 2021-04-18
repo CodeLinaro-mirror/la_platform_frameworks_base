@@ -36,6 +36,7 @@
     <string name="wifi_no_internet_no_reconnect" msgid="821591791066497347">"Mun ekki tengjast sjálfkrafa"</string>
     <string name="wifi_no_internet" msgid="1774198889176926299">"Enginn netaðgangur"</string>
     <string name="saved_network" msgid="7143698034077223645">"<xliff:g id="NAME">%1$s</xliff:g> vistaði"</string>
+    <string name="connected_to_metered_access_point" msgid="9179693207918156341">"Tengdist neti með mældri notkun"</string>
     <string name="connected_via_network_scorer" msgid="7665725527352893558">"Sjálfkrafa tengt um %1$s"</string>
     <string name="connected_via_network_scorer_default" msgid="7973529709744526285">"Sjálfkrafa tengt um netgæðaveitu"</string>
     <string name="connected_via_passpoint" msgid="7735442932429075684">"Tengt í gegnum %1$s"</string>
@@ -226,12 +227,12 @@
     <string name="adb_pairing_device_dialog_pairing_code_label" msgid="3639239786669722731">"Wi-Fi pörunarkóði"</string>
     <string name="adb_pairing_device_dialog_failed_title" msgid="3426758947882091735">"Pörun mistókst"</string>
     <string name="adb_pairing_device_dialog_failed_msg" msgid="6611097519661997148">"Gakktu úr skugga um að tækið sé tengt sama neti."</string>
-    <string name="adb_wireless_qrcode_summary" msgid="8051414549011801917">"Tengja tæki með Wi-Fi með því að skanna QR-kóða"</string>
+    <string name="adb_wireless_qrcode_summary" msgid="8051414549011801917">"Para tæki gegnum Wi-Fi með því að skanna QR-kóða"</string>
     <string name="adb_wireless_verifying_qrcode_text" msgid="6123192424916029207">"Parar tæki…"</string>
     <string name="adb_qrcode_pairing_device_failed_msg" msgid="6936292092592914132">"Ekki tókst að para við tækið. Annað hvort var QR-kóðinn rangur eða tækið ekki tengt sama neti."</string>
     <string name="adb_wireless_ip_addr_preference_title" msgid="8335132107715311730">"IP-tala og gátt"</string>
     <string name="adb_wireless_qrcode_pairing_title" msgid="1906409667944674707">"Skanna QR-kóða"</string>
-    <string name="adb_wireless_qrcode_pairing_description" msgid="6014121407143607851">"Tengja tæki með Wi-Fi með því að skanna QR-kóða"</string>
+    <string name="adb_wireless_qrcode_pairing_description" msgid="6014121407143607851">"Para tæki gegnum Wi-Fi með því að skanna QR-kóða"</string>
     <string name="adb_wireless_no_network_msg" msgid="2365795244718494658">"Tengstu Wi-Fi neti"</string>
     <string name="keywords_adb_wireless" msgid="6507505581882171240">"adb, villuleit, dev"</string>
     <string name="bugreport_in_power" msgid="8664089072534638709">"Flýtileið í villutilkynningu"</string>
@@ -403,6 +404,7 @@
     <string name="transcode_user_control" msgid="6176368544817731314">"Hnekkja sjálfgefinni umkóðun"</string>
     <string name="transcode_enable_all" msgid="2411165920039166710">"Kveikja á umkóðun"</string>
     <string name="transcode_default" msgid="3784803084573509491">"Gera ráð fyrir að forrit styðji nútímasnið"</string>
+    <string name="transcode_notification" msgid="5560515979793436168">"Sýna umkóðunartilkynningar"</string>
     <string name="runningservices_settings_title" msgid="6460099290493086515">"Þjónustur í gangi"</string>
     <string name="runningservices_settings_summary" msgid="1046080643262665743">"Skoða og stjórna þjónustum í gangi"</string>
     <string name="select_webview_provider_title" msgid="3917815648099445503">"Innleiðing WebView"</string>
@@ -422,7 +424,8 @@
     <string name="daltonizer_mode_protanomaly" msgid="7805583306666608440">"Litblinda (rauðgræn)"</string>
     <string name="daltonizer_mode_tritanomaly" msgid="7135266249220732267">"Litblinda (blágul)"</string>
     <string name="accessibility_display_daltonizer_preference_title" msgid="1810693571332381974">"Litaleiðrétting"</string>
-    <string name="accessibility_display_daltonizer_preference_subtitle" msgid="1284746051652993443">"Litaleiðrétting gerir þér kleift að stilla hvernig litir birtast í tækinu þínu"</string>
+    <!-- no translation found for accessibility_display_daltonizer_preference_subtitle (8625527799885140826) -->
+    <skip />
     <string name="daltonizer_type_overridden" msgid="4509604753672535721">"Hnekkt af <xliff:g id="TITLE">%1$s</xliff:g>"</string>
     <string name="power_remaining_settings_home_page" msgid="4885165789445462557">"<xliff:g id="PERCENTAGE">%1$s</xliff:g> – <xliff:g id="TIME_STRING">%2$s</xliff:g>"</string>
     <string name="power_remaining_duration_only" msgid="8264199158671531431">"Um það bil <xliff:g id="TIME_REMAINING">%1$s</xliff:g> eftir"</string>
@@ -513,6 +516,8 @@
     <string name="zen_mode_forever" msgid="3339224497605461291">"Þar til þú slekkur"</string>
     <string name="time_unit_just_now" msgid="3006134267292728099">"Rétt í þessu"</string>
     <string name="media_transfer_this_device_name" msgid="2716555073132169240">"Símahátalari"</string>
+    <!-- no translation found for media_transfer_this_phone (7194341457812151531) -->
+    <skip />
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Vandamál í tengingu. Slökktu og kveiktu á tækinu"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Snúrutengt hljómtæki"</string>
     <string name="help_label" msgid="3528360748637781274">"Hjálp og ábendingar"</string>
@@ -553,7 +558,7 @@
     <string name="creating_new_user_dialog_message" msgid="7232880257538970375">"Stofnar nýjan notanda…"</string>
     <string name="user_nickname" msgid="262624187455825083">"Gælunafn"</string>
     <string name="guest_new_guest" msgid="3482026122932643557">"Bæta gesti við"</string>
-    <string name="guest_exit_guest" msgid="4754204715192830850">"Ljúka gestalotu"</string>
+    <string name="guest_exit_guest" msgid="5908239569510734136">"Fjarlægja gest"</string>
     <string name="guest_nickname" msgid="6332276931583337261">"Gestur"</string>
     <string name="user_image_take_photo" msgid="467512954561638530">"Taka mynd"</string>
     <string name="user_image_choose_photo" msgid="1363820919146782908">"Velja mynd"</string>
@@ -590,5 +595,6 @@
     <string name="accessibility_data_three_bars" msgid="2813876214466722413">"Sendistyrkur gagnatengingar er þrjú strik."</string>
     <string name="accessibility_data_signal_full" msgid="1808301899314382337">"Fullur sendistyrkur gagnatengingar."</string>
     <string name="accessibility_ethernet_disconnected" msgid="2832501530856497489">"Ethernet aftengt."</string>
-    <string name="accessibility_ethernet_connected" msgid="2093872142317190618">"Ethernet tengt."</string>
+    <string name="accessibility_ethernet_connected" msgid="6175942685957461563">"Ethernet."</string>
+    <string name="accessibility_no_calling" msgid="3540827068323895748">"Engin símtöl."</string>
 </resources>

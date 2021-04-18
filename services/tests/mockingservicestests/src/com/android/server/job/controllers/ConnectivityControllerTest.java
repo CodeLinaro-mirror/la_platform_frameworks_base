@@ -19,6 +19,7 @@ package com.android.server.job.controllers;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_CONGESTED;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED;
+import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED;
 import static android.net.NetworkCapabilities.TRANSPORT_CELLULAR;
 
@@ -63,7 +64,6 @@ import android.util.DataUnit;
 import com.android.server.LocalServices;
 import com.android.server.job.JobSchedulerService;
 import com.android.server.job.JobSchedulerService.Constants;
-import com.android.server.job.JobServiceContext;
 import com.android.server.net.NetworkPolicyManagerInternal;
 
 import org.junit.Before;
@@ -144,8 +144,7 @@ public class ConnectivityControllerTest {
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY);
 
         final ConnectivityController controller = new ConnectivityController(mService);
-        when(mService.getMaxJobExecutionTimeMs(any()))
-                .thenReturn(JobServiceContext.DEFAULT_EXECUTING_TIMESLICE_MILLIS);
+        when(mService.getMaxJobExecutionTimeMs(any())).thenReturn(10 * 60_000L);
 
         // Slow network is too slow
         assertFalse(controller.isSatisfied(createJobStatus(job), net,
@@ -613,6 +612,7 @@ public class ConnectivityControllerTest {
 
     private static NetworkCapabilities createCapabilities() {
         return new NetworkCapabilities().addCapability(NET_CAPABILITY_INTERNET)
+                .addCapability(NET_CAPABILITY_NOT_VCN_MANAGED)
                 .addCapability(NET_CAPABILITY_VALIDATED);
     }
 
@@ -641,6 +641,6 @@ public class ConnectivityControllerTest {
     private static JobStatus createJobStatus(JobInfo.Builder job, int uid,
             long earliestRunTimeElapsedMillis, long latestRunTimeElapsedMillis) {
         return new JobStatus(job.build(), uid, null, -1, 0, null,
-                earliestRunTimeElapsedMillis, latestRunTimeElapsedMillis, 0, 0, null, 0);
+                earliestRunTimeElapsedMillis, latestRunTimeElapsedMillis, 0, 0, null, 0, 0);
     }
 }

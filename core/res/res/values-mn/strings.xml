@@ -57,8 +57,7 @@
     <string name="imei" msgid="2157082351232630390">"IMEI"</string>
     <string name="meid" msgid="3291227361605924674">"MEID"</string>
     <string name="ClipMmi" msgid="4110549342447630629">"Дуудлага хийгчийн ID"</string>
-    <!-- no translation found for ClirMmi (6752346475055446417) -->
-    <skip />
+    <string name="ClirMmi" msgid="6752346475055446417">"Залгасан дуудлага хийгчийн ID-г нуух"</string>
     <string name="ColpMmi" msgid="4736462893284419302">"Холбогдсон шугамын ID"</string>
     <string name="ColrMmi" msgid="5889782479745764278">"Холбогдсон шугамын ID Хязгаарлалт"</string>
     <string name="CfMmi" msgid="8390012691099787178">"Дуудлага дамжуулах"</string>
@@ -149,7 +148,7 @@
     <string name="wfc_mode_wifi_only_summary" msgid="104951993894678665">"Зөвхөн Wi-Fi"</string>
     <!-- no translation found for crossSimFormat_spn (9125246077491634262) -->
     <skip />
-    <string name="crossSimFormat_spn_cross_sim_calling" msgid="779976494687695991">"<xliff:g id="SPN">%s</xliff:g> SIM хоорондын дуудлага"</string>
+    <string name="crossSimFormat_spn_cross_sim_calling" msgid="5620807020002879057">"<xliff:g id="SPN">%s</xliff:g> Дуудлагыг нөөцлөх"</string>
     <string name="cfTemplateNotForwarded" msgid="862202427794270501">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: дамжуулагдаагүй"</string>
     <string name="cfTemplateForwarded" msgid="9132506315842157860">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: <xliff:g id="DIALING_NUMBER">{1}</xliff:g>"</string>
     <string name="cfTemplateForwardedTime" msgid="735042369233323609">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: <xliff:g id="DIALING_NUMBER">{1}</xliff:g> <xliff:g id="TIME_DELAY">{2}</xliff:g> секундын дараа"</string>
@@ -204,6 +203,7 @@
     <string name="sensor_notification_service" msgid="7474531979178682676">"Мэдрэгчийн мэдэгдлийн үйлчилгээ"</string>
     <string name="twilight_service" msgid="8964898045693187224">"Twilight үйлчилгээ"</string>
     <string name="offline_location_time_zone_detection_service_attribution" msgid="303754195048744816">"Цагийн бүс илрүүлэгч (Холболт байхгүй)"</string>
+    <string name="gnss_time_update_service" msgid="9039489496037616095">"GNSS Хугацаа шинэчлэлтийн үйлчилгээ"</string>
     <string name="factory_reset_warning" msgid="6858705527798047809">"Таны төхөөрөмж устах болно."</string>
     <string name="factory_reset_message" msgid="2657049595153992213">"Админ аппыг ашиглах боломжгүй. Таны төхөөрөмжийг одоо устгана.\n\nХэрэв танд асуулт байгаа бол байгууллагынхаа админтай холбогдоно уу."</string>
     <string name="printing_disabled_by" msgid="3517499806528864633">"<xliff:g id="OWNER_APP">%s</xliff:g> хэвлэх үйлдлийг идэвхгүй болгосон."</string>
@@ -325,7 +325,7 @@
     <string name="permgroupdesc_sensors" msgid="2610631290633747752">"таны биеийн байдлын талаарх мэдрэгч бүхий өгөгдөлд нэвтрэх"</string>
     <string name="capability_title_canRetrieveWindowContent" msgid="7554282892101587296">"Цонхны агуулгыг авах"</string>
     <string name="capability_desc_canRetrieveWindowContent" msgid="6195610527625237661">"Таны харилцан үйлчлэх цонхны контентоос шалгах."</string>
-    <string name="capability_title_canRequestTouchExploration" msgid="327598364696316213">"Хүрч танихыг асаах"</string>
+    <string name="capability_title_canRequestTouchExploration" msgid="327598364696316213">"Хүрэлтээр сонсохыг асаах"</string>
     <string name="capability_desc_canRequestTouchExploration" msgid="4394677060796752976">"Товшсон зүйлсийг чангаар хэлэх ба дэлгэцийг дохио ашиглан таних боломжтой."</string>
     <string name="capability_title_canRequestFilterKeyEvents" msgid="2772371671541753254">"Бичсэн текстээ ажиглах"</string>
     <string name="capability_desc_canRequestFilterKeyEvents" msgid="2381315802405773092">"Кредит картын дугаар болон нууц үг зэрэг хувийн датаг агуулж байна."</string>
@@ -550,13 +550,18 @@
     <string name="permdesc_imagesWrite" msgid="5195054463269193317">"Таны зургийн цуглуулгыг тохируулах зөвшөөрлийг аппад олгодог."</string>
     <string name="permlab_mediaLocation" msgid="7368098373378598066">"медиа цуглуулгаасаа байршлыг унших"</string>
     <string name="permdesc_mediaLocation" msgid="597912899423578138">"Таны медиа цуглуулгаас байршлыг унших зөвшөөрлийг аппад олгодог."</string>
+    <string name="biometric_app_setting_name" msgid="3339209978734534457">"Биометр ашиглах"</string>
+    <string name="biometric_or_screen_lock_app_setting_name" msgid="5348462421758257752">"Биометр эсвэл дэлгэцийн түгжээ ашиглах"</string>
     <string name="biometric_dialog_default_title" msgid="55026799173208210">"Өөрийгөө мөн гэдгийг баталгаажуулаарай"</string>
+    <string name="biometric_dialog_default_subtitle" msgid="8457232339298571992">"Үргэлжлүүлэхийн тулд биометрээ ашиглана уу"</string>
     <string name="biometric_error_hw_unavailable" msgid="2494077380540615216">"Биометрийн техник хангамж боломжгүй байна"</string>
     <string name="biometric_error_user_canceled" msgid="6732303949695293730">"Нотолгоог цуцаллаа"</string>
     <string name="biometric_not_recognized" msgid="5106687642694635888">"Таниагүй"</string>
     <string name="biometric_error_canceled" msgid="8266582404844179778">"Нотолгоог цуцаллаа"</string>
     <string name="biometric_error_device_not_secured" msgid="3129845065043995924">"Тохируулсан пин, хээ эсвэл нууц үг алга"</string>
     <string name="biometric_error_generic" msgid="6784371929985434439">"Баталгаажуулахад алдаа гарлаа"</string>
+    <string name="screen_lock_app_setting_name" msgid="6054944352976789228">"Дэлгэцийн түгжээг ашиглах"</string>
+    <string name="screen_lock_dialog_default_subtitle" msgid="8638638125397857315">"Үргэлжлүүлэхийн тулд төхөөрөмжийнхөө мандат үнэмлэхийг оруулна уу"</string>
     <string name="fingerprint_acquired_partial" msgid="8532380671091299342">"Хурууны хээг дутуу уншуулсан байна. Дахин оролдоно уу."</string>
     <string name="fingerprint_acquired_insufficient" msgid="2545149524031515411">"Хурууны хээ боловсруулж чадахгүй байна. Дахин оролдоно уу."</string>
     <string name="fingerprint_acquired_imager_dirty" msgid="4694800187151533990">"Хурууны хээ мэдрэгч бохирдсон байна. Цэвэрлэсний дараа дахин оролдоно уу."</string>
@@ -579,6 +584,9 @@
     <string name="fingerprint_error_hw_not_present" msgid="578914350967423382">"Энэ төхөөрөмжид хурууны хээ мэдрэгч алга."</string>
     <string name="fingerprint_error_security_update_required" msgid="7750187320640856433">"Мэдрэгчийг түр хугацаанд идэвхгүй болгосон."</string>
     <string name="fingerprint_name_template" msgid="8941662088160289778">"Хурууны хээ <xliff:g id="FINGERID">%d</xliff:g>"</string>
+    <string name="fingerprint_app_setting_name" msgid="4253767877095495844">"Хурууны хээ ашиглах"</string>
+    <string name="fingerprint_or_screen_lock_app_setting_name" msgid="3501743523487644907">"Хурууны хээ эсвэл дэлгэцийн түгжээ ашиглах"</string>
+    <string name="fingerprint_dialog_default_subtitle" msgid="3879832845486835905">"Үргэлжлүүлэхийн тулд хурууны хээгээ ашиглаарай"</string>
   <string-array name="fingerprint_error_vendor">
   </string-array>
     <string name="fingerprint_icon_content_description" msgid="4741068463175388817">"Хурууны хээний дүрс"</string>
@@ -605,7 +613,7 @@
     <string name="face_acquired_too_different" msgid="4699657338753282542">"Царайг таних боломжгүй боллоо. Дахин оролдоно уу."</string>
     <string name="face_acquired_too_similar" msgid="7684650785108399370">"Хэт адилхан байгаа тул байрлалаа өөрчилнө үү."</string>
     <string name="face_acquired_pan_too_extreme" msgid="7822191262299152527">"Толгойгоо арай багаар эргүүлнэ үү."</string>
-    <string name="face_acquired_tilt_too_extreme" msgid="8119978324129248059">"Толгойгоо арай багаар эргүүлнэ үү."</string>
+    <string name="face_acquired_tilt_too_extreme" msgid="8618210742620248049">"Толгойгоо арай бага хазайлгана уу."</string>
     <string name="face_acquired_roll_too_extreme" msgid="1442830503572636825">"Толгойгоо арай багаар эргүүлнэ үү."</string>
     <string name="face_acquired_obscured" msgid="4917643294953326639">"Таны нүүрийг далдалж буй аливаа зүйлийг хасна уу."</string>
     <string name="face_acquired_sensor_dirty" msgid="8968391891086721678">"Хар хэсэг зэрэг дэлгэцийнхээ дээд хэсгийг цэвэрлэнэ үү"</string>
@@ -623,6 +631,9 @@
     <string name="face_error_hw_not_present" msgid="1070600921591729944">"Царайгаар тайлахыг энэ төхөөрөмж дээр дэмждэггүй."</string>
     <string name="face_error_security_update_required" msgid="5076017208528750161">"Мэдрэгчийг түр хугацаанд идэвхгүй болгосон."</string>
     <string name="face_name_template" msgid="3877037340223318119">"Царай <xliff:g id="FACEID">%d</xliff:g>"</string>
+    <string name="face_app_setting_name" msgid="8130135875458467243">"Царайгаар тайлахыг ашиглах"</string>
+    <string name="face_or_screen_lock_app_setting_name" msgid="1603149075605709106">"Царай эсвэл дэлгэцийн түгжээ ашиглах"</string>
+    <string name="face_dialog_default_subtitle" msgid="4979205739418564856">"Үргэлжлүүлэхийн тулд царайгаар тайлахыг ашиглана уу"</string>
   <string-array name="face_error_vendor">
   </string-array>
     <string name="face_icon_content_description" msgid="465030547475916280">"Царайны дүрс тэмдэг"</string>
@@ -684,6 +695,8 @@
     <string name="permdesc_access_notification_policy" msgid="8538374112403845013">"Апп-д Бүү саад бол тохируулгыг уншиж, бичихийг зөвшөөрөх"</string>
     <string name="permlab_startViewPermissionUsage" msgid="1504564328641112341">"зөвшөөрлийн ашиглалтыг харж эхлэх"</string>
     <string name="permdesc_startViewPermissionUsage" msgid="2820325605959586538">"Эзэмшигчид аппын зөвшөөрлөө ашиглаж эхлэхийг зөвшөөрдөг. Энгийн аппуудад шаардлагагүй."</string>
+    <string name="permlab_highSamplingRateSensors" msgid="3941068435726317070">"түүврийн өндөр хувиар мэдрэгчийн өгөгдөлд хандах"</string>
+    <string name="permdesc_highSamplingRateSensors" msgid="8430061978931155995">"Аппад 200 Гц-ээс их хувиар мэдрэгчийн өгөгдлийг түүвэрлэх боломжийг олгодог"</string>
     <string name="policylab_limitPassword" msgid="4851829918814422199">"Нууц үгний дүрмийг тохируулах"</string>
     <string name="policydesc_limitPassword" msgid="4105491021115793793">"Дэлгэц түгжих нууц үг болон ПИН кодны урт болон нийт тэмдэгтийн уртыг хянах."</string>
     <string name="policylab_watchLogin" msgid="7599669460083719504">"Дэлгэцийн түгжээг тайлах оролдлогыг хянах"</string>
@@ -1002,9 +1015,9 @@
     <string name="searchview_description_clear" msgid="1989371719192982900">"Асуулгыг цэвэрлэх"</string>
     <string name="searchview_description_submit" msgid="6771060386117334686">"Асуулгыг илгээх"</string>
     <string name="searchview_description_voice" msgid="42360159504884679">"Дуут хайлт"</string>
-    <string name="enable_explore_by_touch_warning_title" msgid="5095399706284943314">"Хүрч хайх функцийг идэвхтэй болгох уу?"</string>
-    <string name="enable_explore_by_touch_warning_message" product="tablet" msgid="1037295476738940824">"<xliff:g id="ACCESSIBILITY_SERVICE_NAME">%1$s</xliff:g> нь Хүрч танихыг идэвхжүүлэхийг шаардаж байна. Хүрч таних идэвхжсэн үед та хуруун доороо юу байгааг сонсох, тайлбарыг харах боломжтой ба таблеттайгаа дохиогоор харилцах боломжтой."</string>
-    <string name="enable_explore_by_touch_warning_message" product="default" msgid="4312979647356179250">"<xliff:g id="ACCESSIBILITY_SERVICE_NAME">%1$s</xliff:g> нь Хүрч танихыг идэвхжүүлэхийг шаардаж байна. Хүрч таних идэвхжсэн тохиолдолд та хуруун доороо юу байгааг сонсох, тайлбарыг харах боломжтой ба утастайгаа дохиогоор харилцах боломжтой."</string>
+    <string name="enable_explore_by_touch_warning_title" msgid="5095399706284943314">"Хүрэлтээр сонсохыг идэвхжүүлэх үү?"</string>
+    <string name="enable_explore_by_touch_warning_message" product="tablet" msgid="1037295476738940824">"<xliff:g id="ACCESSIBILITY_SERVICE_NAME">%1$s</xliff:g> нь Хүрэлтээр сонсохыг идэвхжүүлэхийг шаардаж байна. Хүрэлтээр сонсох идэвхжсэн үед та хуруун доороо юу байгааг сонсох, тайлбарыг харах боломжтой ба таблеттайгаа дохиогоор харилцах боломжтой."</string>
+    <string name="enable_explore_by_touch_warning_message" product="default" msgid="4312979647356179250">"<xliff:g id="ACCESSIBILITY_SERVICE_NAME">%1$s</xliff:g> нь Хүрэлтээр сонсохыг идэвхжүүлэхийг шаардаж байна. Хүрэлтээр сонсох идэвхжсэн тохиолдолд та хуруун доороо юу байгааг сонсох, тайлбарыг харах боломжтой ба утастайгаа дохиогоор харилцах боломжтой."</string>
     <string name="oneMonthDurationPast" msgid="4538030857114635777">"1 сарын өмнө"</string>
     <string name="beforeOneMonthDurationPast" msgid="8315149541372065392">"1 сарын өмнө"</string>
     <plurals name="last_num_days" formatted="false" msgid="687443109145393632">
@@ -1664,6 +1677,7 @@
     <string name="leave_accessibility_shortcut_on" msgid="6543362062336990814">"Товчлол ашиглах"</string>
     <string name="color_inversion_feature_name" msgid="326050048927789012">"Өнгө хувиргалт"</string>
     <string name="color_correction_feature_name" msgid="3655077237805422597">"Өнгөний засвар"</string>
+    <string name="reduce_bright_colors_feature_name" msgid="8978255324027479398">"Гэрэлтүүлгийг багасгах"</string>
     <string name="accessibility_shortcut_enabling_service" msgid="5473495203759847687">"Дууны түвшний түлхүүрийг удаан дарсан. <xliff:g id="SERVICE_NAME">%1$s</xliff:g>-г асаалаа."</string>
     <string name="accessibility_shortcut_disabling_service" msgid="8675244165062700619">"Дууны түвшний түлхүүрийг удаан дарсан. <xliff:g id="SERVICE_NAME">%1$s</xliff:g>-г унтраалаа."</string>
     <string name="accessibility_shortcut_spoken_feedback" msgid="4228997042855695090">"<xliff:g id="SERVICE_NAME">%1$s</xliff:g>-г ашиглахын тулд дууны түвшнийг ихэсгэх, багасгах түлхүүрийг 3 секундийн турш зэрэг дарна уу"</string>
@@ -1867,11 +1881,13 @@
     <string name="stk_cc_ss_to_dial_video" msgid="1324194624384312664">"SS хүсэлтийг видео дуудлага болгон өөрчилсөн"</string>
     <string name="stk_cc_ss_to_ussd" msgid="8417905193112944760">"SS хүсэлтийг USSD хүсэлт болгон өөрчилсөн"</string>
     <string name="stk_cc_ss_to_ss" msgid="132040645206514450">"Шинэ SS хүсэлт болгон өөрчилсөн"</string>
+    <string name="notification_phishing_alert_content_description" msgid="494227305355958790">"Фишинг сэрэмжлүүлэг"</string>
     <string name="notification_work_profile_content_description" msgid="5296477955677725799">"Ажлын профайл"</string>
     <string name="notification_alerted_content_description" msgid="6139691253611265992">"Мэдэгдсэн"</string>
+    <string name="notification_verified_content_description" msgid="6401483602782359391">"Баталгаажуулсан"</string>
     <string name="expand_button_content_description_collapsed" msgid="3873368935659010279">"Дэлгэх"</string>
     <string name="expand_button_content_description_expanded" msgid="7484217944948667489">"Буулгах"</string>
-    <string name="expand_action_accessibility" msgid="1947657036871746627">"унтраах/асаах өргөтгөл"</string>
+    <string name="expand_action_accessibility" msgid="1947657036871746627">"асаах/унтраах өргөтгөл"</string>
     <string name="usb_midi_peripheral_name" msgid="490523464968655741">"Андройд USB Peripheral Port"</string>
     <string name="usb_midi_peripheral_manufacturer_name" msgid="7557148557088787741">"Android"</string>
     <string name="usb_midi_peripheral_product_name" msgid="2836276258480904434">"USB Peripheral Port"</string>
@@ -1880,6 +1896,12 @@
     <string name="maximize_button_text" msgid="4258922519914732645">"Томруулах"</string>
     <string name="close_button_text" msgid="10603510034455258">"Хаах"</string>
     <string name="notification_messaging_title_template" msgid="772857526770251989">"<xliff:g id="CONVERSATION_TITLE">%1$s</xliff:g>: <xliff:g id="SENDER_NAME">%2$s</xliff:g>"</string>
+    <string name="call_notification_answer_action" msgid="5999246836247132937">"Хариулах"</string>
+    <string name="call_notification_decline_action" msgid="3700345945214000726">"Татгалзах"</string>
+    <string name="call_notification_hang_up_action" msgid="9130720590159188131">"Таслах"</string>
+    <string name="call_notification_incoming_text" msgid="6143109825406638201">"Ирсэн дуудлага"</string>
+    <string name="call_notification_ongoing_text" msgid="3880832933933020875">"Дуудлага хийгдэж байна"</string>
+    <string name="call_notification_screening_text" msgid="8396931408268940208">"Ирсэн дуудлагыг харуулж байна"</string>
     <plurals name="selected_count" formatted="false" msgid="3946212171128200491">
       <item quantity="other"><xliff:g id="COUNT_1">%1$d</xliff:g> сонгосон</item>
       <item quantity="one"><xliff:g id="COUNT_0">%1$d</xliff:g> сонгосон</item>
@@ -1934,6 +1956,7 @@
     <string name="app_category_news" msgid="1172762719574964544">"Мэдээ &amp; сэтгүүл"</string>
     <string name="app_category_maps" msgid="6395725487922533156">"Газрын зураг &amp; зүг чиг"</string>
     <string name="app_category_productivity" msgid="1844422703029557883">"Бүтээмж"</string>
+    <string name="app_category_accessibility" msgid="6643521607848547683">"Хандалт"</string>
     <string name="device_storage_monitor_notification_channel" msgid="5164244565844470758">"Төхөөрөмжийн сан"</string>
     <string name="adb_debugging_notification_channel_tv" msgid="4764046459631031496">"USB дебаг хийлт"</string>
     <string name="time_picker_hour_label" msgid="4208590187662336864">"Цаг"</string>
@@ -2204,4 +2227,10 @@
     <string name="window_magnification_prompt_content" msgid="4166711383253283838">"Та одоо зарим эсвэл бүх дэлгэцээ томруулж болно"</string>
     <string name="turn_on_magnification_settings_action" msgid="8521433346684847700">"Тохиргоонд асаана уу"</string>
     <string name="dismiss_action" msgid="1728820550388704784">"Үл хэрэгсэх"</string>
+    <string name="sensor_privacy_start_use_mic_notification_content" msgid="8063355861118105607">"Үргэлжлүүлэхийн тулд, &lt;b&gt;‎‏‎‎‏‏‎<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; таны төхөөрөмжийн микрофонд хандах шаардлагатай."</string>
+    <string name="sensor_privacy_start_use_camera_notification_content" msgid="4738005643315863736">"Үргэлжлүүлэхийн тулд &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; таны төхөөрөмжийн камерт хандах шаардлагатай."</string>
+    <string name="sensor_privacy_start_use_dialog_turn_on_button" msgid="7921147002346108119">"Асаах"</string>
+    <string name="sensor_privacy_notification_channel_label" msgid="936036783155261349">"Мэдрэгчийн нууцлал"</string>
+    <string name="splash_screen_view_icon_description" msgid="180638751260598187">"Аппын дүрс тэмдэг"</string>
+    <string name="splash_screen_view_branding_description" msgid="7911129347402728216">"Аппын брэнд зураг"</string>
 </resources>

@@ -157,6 +157,14 @@ public final class DeviceConfig {
     public static final String NAMESPACE_BLUETOOTH = "bluetooth";
 
     /**
+     * Namespace for features relating to clipboard.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_CLIPBOARD = "clipboard";
+
+    /**
      * Namespace for all networking connectivity related features.
      *
      * @hide
@@ -275,6 +283,14 @@ public final class DeviceConfig {
     public static final String NAMESPACE_PROFCOLLECT_NATIVE_BOOT = "profcollect_native_boot";
 
     /**
+     * Namespace for features related to Reboot Readiness detection.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_REBOOT_READINESS = "reboot_readiness";
+
+    /**
      * Namespace for Rollback flags that are applied immediately.
      *
      * @hide
@@ -289,6 +305,13 @@ public final class DeviceConfig {
      */
     @SystemApi
     public static final String NAMESPACE_ROLLBACK_BOOT = "rollback_boot";
+
+    /**
+     * Namespace for Rotation Resolver Manager Service.
+     *
+     * @hide
+     */
+    public static final String NAMESPACE_ROTATION_RESOLVER = "rotation_resolver";
 
     /**
      * Namespace for all runtime related features that don't require a reboot to become active.
@@ -359,6 +382,14 @@ public final class DeviceConfig {
      */
     @SystemApi
     public static final String NAMESPACE_SYSTEMUI = "systemui";
+
+    /**
+     * Namespace for system time and time zone detection related features / behavior.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_SYSTEM_TIME = "system_time";
 
     /**
      * Telephony related properties.
@@ -474,6 +505,22 @@ public final class DeviceConfig {
             "connectivity_thermal_power_manager";
 
     /**
+     * Namespace for all statsd java features that can be applied immediately.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_STATSD_JAVA = "statsd_java";
+
+    /**
+     * Namespace for all statsd java features that are applied on boot.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_STATSD_JAVA_BOOT = "statsd_java_boot";
+
+    /**
      * Namespace for all statsd native features that can be applied immediately.
      *
      * @hide
@@ -509,6 +556,13 @@ public final class DeviceConfig {
      * @hide
      */
     public static final String NAMESPACE_INTERACTION_JANK_MONITOR = "interaction_jank_monitor";
+
+    /**
+     * Namespace for game overlay related features.
+     *
+     * @hide
+     */
+    public static final String NAMESPACE_GAME_OVERLAY = "game_overlay";
 
     private static final Object sLock = new Object();
     @GuardedBy("sLock")

@@ -22,11 +22,16 @@ import static org.testng.Assert.expectThrows;
 
 import android.app.appsearch.AppSearchSchema;
 import android.app.appsearch.GenericDocument;
-import android.app.appsearch.PackageIdentifier;
 import android.app.appsearch.SearchResult;
 import android.app.appsearch.SearchResultPage;
 import android.app.appsearch.SearchSpec;
+import android.app.appsearch.SetSchemaResponse;
 import android.app.appsearch.exceptions.AppSearchException;
+import android.content.Context;
+import android.util.ArrayMap;
+import android.util.ArraySet;
+
+import androidx.test.core.app.ApplicationProvider;
 
 import com.android.server.appsearch.external.localstorage.converter.GenericDocumentToProtoConverter;
 import com.android.server.appsearch.proto.DocumentProto;
@@ -41,7 +46,6 @@ import com.android.server.appsearch.proto.StringIndexingConfig;
 import com.android.server.appsearch.proto.TermMatchType;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 
 import org.junit.Before;
@@ -52,6 +56,8 @@ import org.junit.rules.TemporaryFolder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class AppSearchImplTest {
     @Rule public TemporaryFolder mTemporaryFolder = new TemporaryFolder();
@@ -59,7 +65,15 @@ public class AppSearchImplTest {
 
     @Before
     public void setUp() throws Exception {
-        mAppSearchImpl = AppSearchImpl.create(mTemporaryFolder.newFolder());
+        Context context = ApplicationProvider.getApplicationContext();
+
+        // Give ourselves global query permissions
+        mAppSearchImpl =
+                AppSearchImpl.create(
+                        mTemporaryFolder.newFolder(),
+                        context,
+                        VisibilityStore.NO_OP_USER_ID,
+                        /*globalQuerierPackage=*/ context.getPackageName());
     }
 
     // TODO(b/175430168) add test to verify reset is working properly.
@@ -411,18 +425,24 @@ public class AppSearchImplTest {
         GetOptimizeInfoResultProto optimizeInfo = mAppSearchImpl.getOptimizeInfoResultLocked();
         assertThat(optimizeInfo.getOptimizableDocs()).isEqualTo(0);
 
-        // delete 999 documents , we will reach the threshold to trigger optimize() in next
+        // delete 999 documents, we will reach the threshold to trigger optimize() in next
         // deletion.
         for (int i = 0; i < AppSearchImpl.OPTIMIZE_THRESHOLD_DOC_COUNT - 1; i++) {
             mAppSearchImpl.remove("package", "database", "namespace", "uri" + i);
         }
 
-        // optimize() still not be triggered since we are in the interval to call getOptimizeInfo()
+        // Updates the check for optimize counter, checkForOptimize() will be triggered since
+        // CHECK_OPTIMIZE_INTERVAL is reached but optimize() won't since
+        // OPTIMIZE_THRESHOLD_DOC_COUNT is not.
+        mAppSearchImpl.checkForOptimize(
+                /*mutateBatchSize=*/ AppSearchImpl.OPTIMIZE_THRESHOLD_DOC_COUNT - 1);
+
+        // Verify optimize() still not be triggered.
         optimizeInfo = mAppSearchImpl.getOptimizeInfoResultLocked();
         assertThat(optimizeInfo.getOptimizableDocs())
                 .isEqualTo(AppSearchImpl.OPTIMIZE_THRESHOLD_DOC_COUNT - 1);
 
-        // Keep delete docs, will reach the interval this time and trigger optimize().
+        // Keep delete docs
         for (int i = AppSearchImpl.OPTIMIZE_THRESHOLD_DOC_COUNT;
                 i
                         < AppSearchImpl.OPTIMIZE_THRESHOLD_DOC_COUNT
@@ -430,6 +450,9 @@ public class AppSearchImplTest {
                 i++) {
             mAppSearchImpl.remove("package", "database", "namespace", "uri" + i);
         }
+        // updates the check for optimize counter, will reach both CHECK_OPTIMIZE_INTERVAL and
+        // OPTIMIZE_THRESHOLD_DOC_COUNT this time and trigger a optimize().
+        mAppSearchImpl.checkForOptimize(/*mutateBatchSize*/ AppSearchImpl.CHECK_OPTIMIZE_INTERVAL);
 
         // Verify optimize() is triggered
         optimizeInfo = mAppSearchImpl.getOptimizeInfoResultLocked();
@@ -460,7 +483,8 @@ public class AppSearchImplTest {
         // Rewrite SearchSpec
         mAppSearchImpl.rewriteSearchSpecForPrefixesLocked(
                 searchSpecProto,
-                Collections.singleton(AppSearchImpl.createPrefix("package", "database")));
+                Collections.singleton(AppSearchImpl.createPrefix("package", "database")),
+                ImmutableSet.of("package$database/type"));
         assertThat(searchSpecProto.getSchemaTypeFiltersList())
                 .containsExactly("package$database/type");
         assertThat(searchSpecProto.getNamespaceFiltersList())
@@ -505,7 +529,10 @@ public class AppSearchImplTest {
                 searchSpecProto,
                 ImmutableSet.of(
                         AppSearchImpl.createPrefix("package", "database1"),
-                        AppSearchImpl.createPrefix("package", "database2")));
+                        AppSearchImpl.createPrefix("package", "database2")),
+                ImmutableSet.of(
+                        "package$database1/typeA", "package$database1/typeB",
+                        "package$database2/typeA", "package$database2/typeB"));
         assertThat(searchSpecProto.getSchemaTypeFiltersList())
                 .containsExactly(
                         "package$database1/typeA",
@@ -514,6 +541,38 @@ public class AppSearchImplTest {
                         "package$database2/typeB");
         assertThat(searchSpecProto.getNamespaceFiltersList())
                 .containsExactly("package$database1/namespace", "package$database2/namespace");
+    }
+
+    @Test
+    public void testRewriteSearchSpec_ignoresSearchSpecSchemaFilters() throws Exception {
+        SearchSpecProto.Builder searchSpecProto =
+                SearchSpecProto.newBuilder().setQuery("").addSchemaTypeFilters("type");
+
+        // Insert schema
+        List<AppSearchSchema> schemas =
+                Collections.singletonList(new AppSearchSchema.Builder("type").build());
+        mAppSearchImpl.setSchema(
+                "package",
+                "database",
+                schemas,
+                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
+                /*schemasPackageAccessible=*/ Collections.emptyMap(),
+                /*forceOverride=*/ false);
+
+        // Insert document
+        GenericDocument document =
+                new GenericDocument.Builder<>("uri", "type").setNamespace("namespace").build();
+        mAppSearchImpl.putDocument("package", "database", document);
+
+        // If 'allowedPrefixedSchemas' is empty, this returns false since there's nothing to
+        // search over. Despite the searchSpecProto having schema type filters.
+        assertThat(
+                        mAppSearchImpl.rewriteSearchSpecForPrefixesLocked(
+                                searchSpecProto,
+                                Collections.singleton(
+                                        AppSearchImpl.createPrefix("package", "database")),
+                                /*allowedPrefixedSchemas=*/ Collections.emptySet()))
+                .isFalse();
     }
 
     @Test
@@ -640,131 +699,24 @@ public class AppSearchImplTest {
     public void testGlobalQueryEmptyDatabase() throws Exception {
         SearchSpec searchSpec =
                 new SearchSpec.Builder().setTermMatch(TermMatchType.Code.PREFIX_VALUE).build();
-        SearchResultPage searchResultPage = mAppSearchImpl.globalQuery("", searchSpec);
+        SearchResultPage searchResultPage =
+                mAppSearchImpl.globalQuery(
+                        "", searchSpec, /*callerPackageName=*/ "", /*callerUid=*/ 0);
         assertThat(searchResultPage.getResults()).isEmpty();
-    }
-
-    /**
-     * TODO(b/169883602): This should be an integration test at the cts-level. This is a short-term
-     * test until we have official support for multiple-apps indexing at once.
-     */
-    @Test
-    public void testGlobalQueryWithMultiplePackages_noPackageFilters() throws Exception {
-        // Insert package1 schema
-        List<AppSearchSchema> schema1 =
-                ImmutableList.of(new AppSearchSchema.Builder("schema1").build());
-        mAppSearchImpl.setSchema(
-                "package1",
-                "database1",
-                schema1,
-                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
-                /*schemasPackageAccessible=*/ Collections.emptyMap(),
-                /*forceOverride=*/ false);
-
-        // Insert package2 schema
-        List<AppSearchSchema> schema2 =
-                ImmutableList.of(new AppSearchSchema.Builder("schema2").build());
-        mAppSearchImpl.setSchema(
-                "package2",
-                "database2",
-                schema2,
-                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
-                /*schemasPackageAccessible=*/ Collections.emptyMap(),
-                /*forceOverride=*/ false);
-
-        // Insert package1 document
-        GenericDocument document1 =
-                new GenericDocument.Builder<>("uri", "schema1").setNamespace("namespace").build();
-        mAppSearchImpl.putDocument("package1", "database1", document1);
-
-        // Insert package2 document
-        GenericDocument document2 =
-                new GenericDocument.Builder<>("uri", "schema2").setNamespace("namespace").build();
-        mAppSearchImpl.putDocument("package2", "database2", document2);
-
-        // No query filters specified, global query can retrieve all documents.
-        SearchSpec searchSpec =
-                new SearchSpec.Builder().setTermMatch(TermMatchType.Code.PREFIX_VALUE).build();
-        SearchResultPage searchResultPage = mAppSearchImpl.globalQuery("", searchSpec);
-        assertThat(searchResultPage.getResults()).hasSize(2);
-
-        // Document2 will be first since it got indexed later and has a "better", aka more recent
-        // score.
-        assertThat(searchResultPage.getResults().get(0).getDocument()).isEqualTo(document2);
-        assertThat(searchResultPage.getResults().get(1).getDocument()).isEqualTo(document1);
-    }
-
-    /**
-     * TODO(b/169883602): This should be an integration test at the cts-level. This is a short-term
-     * test until we have official support for multiple-apps indexing at once.
-     */
-    @Test
-    public void testGlobalQueryWithMultiplePackages_withPackageFilters() throws Exception {
-        // Insert package1 schema
-        List<AppSearchSchema> schema1 =
-                ImmutableList.of(new AppSearchSchema.Builder("schema1").build());
-        mAppSearchImpl.setSchema(
-                "package1",
-                "database1",
-                schema1,
-                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
-                /*schemasPackageAccessible=*/ Collections.emptyMap(),
-                /*forceOverride=*/ false);
-
-        // Insert package2 schema
-        List<AppSearchSchema> schema2 =
-                ImmutableList.of(new AppSearchSchema.Builder("schema2").build());
-        mAppSearchImpl.setSchema(
-                "package2",
-                "database2",
-                schema2,
-                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
-                /*schemasPackageAccessible=*/ Collections.emptyMap(),
-                /*forceOverride=*/ false);
-
-        // Insert package1 document
-        GenericDocument document1 =
-                new GenericDocument.Builder<>("uri", "schema1").setNamespace("namespace").build();
-        mAppSearchImpl.putDocument("package1", "database1", document1);
-
-        // Insert package2 document
-        GenericDocument document2 =
-                new GenericDocument.Builder<>("uri", "schema2").setNamespace("namespace").build();
-        mAppSearchImpl.putDocument("package2", "database2", document2);
-
-        // "package1" filter specified
-        SearchSpec searchSpec =
-                new SearchSpec.Builder()
-                        .setTermMatch(TermMatchType.Code.PREFIX_VALUE)
-                        .addFilterPackageNames("package1")
-                        .build();
-        SearchResultPage searchResultPage = mAppSearchImpl.globalQuery("", searchSpec);
-        assertThat(searchResultPage.getResults()).hasSize(1);
-        assertThat(searchResultPage.getResults().get(0).getDocument()).isEqualTo(document1);
-
-        // "package2" filter specified
-        searchSpec =
-                new SearchSpec.Builder()
-                        .setTermMatch(TermMatchType.Code.PREFIX_VALUE)
-                        .addFilterPackageNames("package2")
-                        .build();
-        searchResultPage = mAppSearchImpl.globalQuery("", searchSpec);
-        assertThat(searchResultPage.getResults()).hasSize(1);
-        assertThat(searchResultPage.getResults().get(0).getDocument()).isEqualTo(document2);
     }
 
     @Test
     public void testRemoveEmptyDatabase_noExceptionThrown() throws Exception {
         SearchSpec searchSpec =
                 new SearchSpec.Builder()
-                        .addSchemaType("FakeType")
+                        .addFilterSchemas("FakeType")
                         .setTermMatch(TermMatchType.Code.PREFIX_VALUE)
                         .build();
         mAppSearchImpl.removeByQuery("package", "EmptyDatabase", "", searchSpec);
 
         searchSpec =
                 new SearchSpec.Builder()
-                        .addNamespace("FakeNamespace")
+                        .addFilterNamespaces("FakeNamespace")
                         .setTermMatch(TermMatchType.Code.PREFIX_VALUE)
                         .build();
         mAppSearchImpl.removeByQuery("package", "EmptyDatabase", "", searchSpec);
@@ -794,7 +746,8 @@ public class AppSearchImplTest {
                 SchemaProto.newBuilder()
                         .addTypes(
                                 SchemaTypeConfigProto.newBuilder()
-                                        .setSchemaType("package$database1/Email"))
+                                        .setSchemaType("package$database1/Email")
+                                        .setVersion(0))
                         .build();
 
         List<SchemaTypeConfigProto> expectedTypes = new ArrayList<>();
@@ -805,67 +758,50 @@ public class AppSearchImplTest {
     }
 
     @Test
-    public void testSetSchema_existingSchemaRetainsVisibilitySetting() throws Exception {
-        PackageIdentifier package1 =
-                new PackageIdentifier("package1", /*sha256Certificate=*/ new byte[] {100});
+    public void testSetSchema_incompatible() throws Exception {
+        List<SchemaTypeConfigProto> existingSchemas =
+                mAppSearchImpl.getSchemaProtoLocked().getTypesList();
 
-        String prefix = AppSearchImpl.createPrefix("package", "database");
+        List<AppSearchSchema> oldSchemas = new ArrayList<>();
+        oldSchemas.add(
+                new AppSearchSchema.Builder("Email")
+                        .addProperty(
+                                new AppSearchSchema.StringPropertyConfig.Builder("foo")
+                                        .setCardinality(
+                                                AppSearchSchema.PropertyConfig.CARDINALITY_REQUIRED)
+                                        .setTokenizerType(
+                                                AppSearchSchema.StringPropertyConfig
+                                                        .TOKENIZER_TYPE_PLAIN)
+                                        .setIndexingType(
+                                                AppSearchSchema.StringPropertyConfig
+                                                        .INDEXING_TYPE_PREFIXES)
+                                        .build())
+                        .build());
+        oldSchemas.add(new AppSearchSchema.Builder("Text").build());
+        // Set schema Email to AppSearch database1
         mAppSearchImpl.setSchema(
                 "package",
-                "database",
-                Collections.singletonList(new AppSearchSchema.Builder("schema1").build()),
-                /*schemasNotPlatformSurfaceable=*/ Collections.singletonList("schema1"),
-                /*schemasPackageAccessible=*/ ImmutableMap.of(
-                        "schema1", ImmutableList.of(package1)),
+                "database1",
+                oldSchemas,
+                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
+                /*schemasPackageAccessible=*/ Collections.emptyMap(),
                 /*forceOverride=*/ false);
 
-        // "schema1" is platform hidden now and package visible to package1
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPlatformSurfaceable(prefix, prefix + "schema1"))
-                .isFalse();
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPackageAccessible(prefix, prefix + "schema1", package1))
-                .isTrue();
+        // Create incompatible schema
+        List<AppSearchSchema> newSchemas =
+                Collections.singletonList(new AppSearchSchema.Builder("Email").build());
 
-        // Add a new schema, and include the already-existing "schema1"
-        mAppSearchImpl.setSchema(
-                "package",
-                "database",
-                ImmutableList.of(
-                        new AppSearchSchema.Builder("schema1").build(),
-                        new AppSearchSchema.Builder("schema2").build()),
-                /*schemasNotPlatformSurfaceable=*/ Collections.singletonList("schema1"),
-                /*schemasPackageAccessible=*/ ImmutableMap.of(
-                        "schema1", ImmutableList.of(package1)),
-                /*forceOverride=*/ false);
-
-        // Check that "schema1" still has the same visibility settings
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPlatformSurfaceable(prefix, prefix + "schema1"))
-                .isFalse();
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPackageAccessible(prefix, prefix + "schema1", package1))
-                .isTrue();
-
-        // "schema2" has default visibility settings
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPlatformSurfaceable(prefix, prefix + "schema2"))
-                .isTrue();
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPackageAccessible(prefix, prefix + "schema2", package1))
-                .isFalse();
+        // set email incompatible and delete text
+        SetSchemaResponse setSchemaResponse =
+                mAppSearchImpl.setSchema(
+                        "package",
+                        "database1",
+                        newSchemas,
+                        /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
+                        /*schemasPackageAccessible=*/ Collections.emptyMap(),
+                        /*forceOverride=*/ true);
+        assertThat(setSchemaResponse.getDeletedTypes()).containsExactly("Text");
+        assertThat(setSchemaResponse.getIncompatibleTypes()).containsExactly("Email");
     }
 
     @Test
@@ -891,10 +827,12 @@ public class AppSearchImplTest {
                 SchemaProto.newBuilder()
                         .addTypes(
                                 SchemaTypeConfigProto.newBuilder()
-                                        .setSchemaType("package$database1/Email"))
+                                        .setSchemaType("package$database1/Email")
+                                        .setVersion(0))
                         .addTypes(
                                 SchemaTypeConfigProto.newBuilder()
-                                        .setSchemaType("package$database1/Document"))
+                                        .setSchemaType("package$database1/Document")
+                                        .setVersion(0))
                         .build();
 
         // Check both schema Email and Document saved correctly.
@@ -906,20 +844,17 @@ public class AppSearchImplTest {
 
         final List<AppSearchSchema> finalSchemas =
                 Collections.singletonList(new AppSearchSchema.Builder("Email").build());
-        // Check the incompatible error has been thrown.
-        AppSearchException e =
-                expectThrows(
-                        AppSearchException.class,
-                        () ->
-                                mAppSearchImpl.setSchema(
-                                        "package",
-                                        "database1",
-                                        finalSchemas,
-                                        /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
-                                        /*schemasPackageAccessible=*/ Collections.emptyMap(),
-                                        /*forceOverride=*/ false));
-        assertThat(e).hasMessageThat().contains("Schema is incompatible");
-        assertThat(e).hasMessageThat().contains("Deleted types: [package$database1/Document]");
+        SetSchemaResponse setSchemaResponse =
+                mAppSearchImpl.setSchema(
+                        "package",
+                        "database1",
+                        finalSchemas,
+                        /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
+                        /*schemasPackageAccessible=*/ Collections.emptyMap(),
+                        /*forceOverride=*/ false);
+
+        // Check the Document type has been deleted.
+        assertThat(setSchemaResponse.getDeletedTypes()).containsExactly("Document");
 
         // ForceOverride to delete.
         mAppSearchImpl.setSchema(
@@ -935,7 +870,8 @@ public class AppSearchImplTest {
                 SchemaProto.newBuilder()
                         .addTypes(
                                 SchemaTypeConfigProto.newBuilder()
-                                        .setSchemaType("package$database1/Email"))
+                                        .setSchemaType("package$database1/Email")
+                                        .setVersion(0))
                         .build();
 
         expectedTypes = new ArrayList<>();
@@ -977,16 +913,20 @@ public class AppSearchImplTest {
                 SchemaProto.newBuilder()
                         .addTypes(
                                 SchemaTypeConfigProto.newBuilder()
-                                        .setSchemaType("package$database1/Email"))
+                                        .setSchemaType("package$database1/Email")
+                                        .setVersion(0))
                         .addTypes(
                                 SchemaTypeConfigProto.newBuilder()
-                                        .setSchemaType("package$database1/Document"))
+                                        .setSchemaType("package$database1/Document")
+                                        .setVersion(0))
                         .addTypes(
                                 SchemaTypeConfigProto.newBuilder()
-                                        .setSchemaType("package$database2/Email"))
+                                        .setSchemaType("package$database2/Email")
+                                        .setVersion(0))
                         .addTypes(
                                 SchemaTypeConfigProto.newBuilder()
-                                        .setSchemaType("package$database2/Document"))
+                                        .setSchemaType("package$database2/Document")
+                                        .setVersion(0))
                         .build();
 
         // Check Email and Document is saved in database 1 and 2 correctly.
@@ -1012,13 +952,16 @@ public class AppSearchImplTest {
                 SchemaProto.newBuilder()
                         .addTypes(
                                 SchemaTypeConfigProto.newBuilder()
-                                        .setSchemaType("package$database1/Email"))
+                                        .setSchemaType("package$database1/Email")
+                                        .setVersion(0))
                         .addTypes(
                                 SchemaTypeConfigProto.newBuilder()
-                                        .setSchemaType("package$database2/Email"))
+                                        .setSchemaType("package$database2/Email")
+                                        .setVersion(0))
                         .addTypes(
                                 SchemaTypeConfigProto.newBuilder()
-                                        .setSchemaType("package$database2/Document"))
+                                        .setSchemaType("package$database2/Document")
+                                        .setVersion(0))
                         .build();
 
         // Check nothing changed in database2.
@@ -1030,175 +973,55 @@ public class AppSearchImplTest {
     }
 
     @Test
-    public void testRemoveSchema_removedFromVisibilityStore() throws Exception {
-        PackageIdentifier package1 =
-                new PackageIdentifier("package1", /*sha256Certificate=*/ new byte[] {100});
-
-        String prefix = AppSearchImpl.createPrefix("package", "database");
-        mAppSearchImpl.setSchema(
-                "package",
-                "database",
-                Collections.singletonList(new AppSearchSchema.Builder("schema1").build()),
-                /*schemasNotPlatformSurfaceable=*/ Collections.singletonList("schema1"),
-                /*schemasPackageAccessible=*/ ImmutableMap.of(
-                        "schema1", ImmutableList.of(package1)),
-                /*forceOverride=*/ false);
-
-        // "schema1" is platform hidden now and package accessible
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPlatformSurfaceable(prefix, prefix + "schema1"))
-                .isFalse();
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPackageAccessible(prefix, prefix + "schema1", package1))
-                .isTrue();
-
-        // Remove "schema1" by force overriding
-        mAppSearchImpl.setSchema(
-                "package",
-                "database",
-                /*schemas=*/ Collections.emptyList(),
-                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
-                /*schemasPackageAccessible=*/ Collections.emptyMap(),
-                /*forceOverride=*/ true);
-
-        // Check that "schema1" is no longer considered platform hidden or package accessible
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPlatformSurfaceable(prefix, prefix + "schema1"))
-                .isTrue();
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPackageAccessible(prefix, prefix + "schema1", package1))
-                .isFalse();
-
-        // Add "schema1" back, it gets default visibility settings which means it's not platform
-        // hidden and not package accessible
-        mAppSearchImpl.setSchema(
-                "package",
-                "database",
-                Collections.singletonList(new AppSearchSchema.Builder("schema1").build()),
-                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
-                /*schemasPackageAccessible=*/ Collections.emptyMap(),
-                /*forceOverride=*/ false);
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPlatformSurfaceable(prefix, prefix + "schema1"))
-                .isTrue();
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPackageAccessible(prefix, prefix + "schema1", package1))
-                .isFalse();
-    }
-
-    @Test
-    public void testSetSchema_defaultPlatformVisible() throws Exception {
-        String prefix = AppSearchImpl.createPrefix("package", "database");
-        mAppSearchImpl.setSchema(
-                "package",
-                "database",
-                Collections.singletonList(new AppSearchSchema.Builder("Schema").build()),
-                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
-                /*schemasPackageAccessible=*/ Collections.emptyMap(),
-                /*forceOverride=*/ false);
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPlatformSurfaceable(prefix, prefix + "Schema"))
-                .isTrue();
-    }
-
-    @Test
-    public void testSetSchema_platformHidden() throws Exception {
-        String prefix = AppSearchImpl.createPrefix("package", "database");
-        mAppSearchImpl.setSchema(
-                "package",
-                "database",
-                Collections.singletonList(new AppSearchSchema.Builder("Schema").build()),
-                /*schemasNotPlatformSurfaceable=*/ Collections.singletonList("Schema"),
-                /*schemasPackageAccessible=*/ Collections.emptyMap(),
-                /*forceOverride=*/ false);
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPlatformSurfaceable(prefix, prefix + "Schema"))
-                .isFalse();
-    }
-
-    @Test
-    public void testSetSchema_defaultNotPackageAccessible() throws Exception {
-        PackageIdentifier package1 =
-                new PackageIdentifier("package1", /*sha256Certificate=*/ new byte[] {100});
-
-        String prefix = AppSearchImpl.createPrefix("package", "database");
-        mAppSearchImpl.setSchema(
-                "package",
-                "database",
-                Collections.singletonList(new AppSearchSchema.Builder("Schema").build()),
-                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
-                /*schemasPackageAccessible=*/ Collections.emptyMap(),
-                /*forceOverride=*/ false);
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPackageAccessible(prefix, prefix + "Schema", package1))
-                .isFalse();
-    }
-
-    @Test
-    public void testSetSchema_packageAccessible() throws Exception {
-        PackageIdentifier package1 =
-                new PackageIdentifier("package1", /*sha256Certificate=*/ new byte[] {100});
-
-        String prefix = AppSearchImpl.createPrefix("package", "database");
-        mAppSearchImpl.setSchema(
-                "package",
-                "database",
-                Collections.singletonList(new AppSearchSchema.Builder("Schema").build()),
-                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
-                /*schemasPackageAccessible=*/ ImmutableMap.of("Schema", ImmutableList.of(package1)),
-                /*forceOverride=*/ false);
-        assertThat(
-                        mAppSearchImpl
-                                .getVisibilityStoreLocked()
-                                .isSchemaPackageAccessible(prefix, prefix + "Schema", package1))
-                .isTrue();
-    }
-
-    @Test
-    public void testHasSchemaType() throws Exception {
-        // Nothing exists yet
-        assertThat(mAppSearchImpl.hasSchemaTypeLocked("package", "database", "Schema")).isFalse();
-
-        mAppSearchImpl.setSchema(
-                "package",
-                "database",
-                Collections.singletonList(new AppSearchSchema.Builder("Schema").build()),
-                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
-                /*schemasPackageAccessible=*/ Collections.emptyMap(),
-                /*forceOverride=*/ false);
-        assertThat(mAppSearchImpl.hasSchemaTypeLocked("package", "database", "Schema")).isTrue();
-
-        assertThat(mAppSearchImpl.hasSchemaTypeLocked("package", "database", "UnknownSchema"))
-                .isFalse();
-    }
-
-    @Test
-    public void testGetDatabases() throws Exception {
-        // No client databases exist yet, but the VisibilityStore's does
-        assertThat(mAppSearchImpl.getPrefixesLocked())
-                .containsExactly(
-                        AppSearchImpl.createPrefix(
-                                VisibilityStore.PACKAGE_NAME, VisibilityStore.DATABASE_NAME));
+    public void testGetPackageToDatabases() throws Exception {
+        Map<String, Set<String>> existingMapping = mAppSearchImpl.getPackageToDatabases();
+        Map<String, Set<String>> expectedMapping = new ArrayMap<>();
+        expectedMapping.putAll(existingMapping);
 
         // Has database1
+        expectedMapping.put("package1", ImmutableSet.of("database1"));
+        mAppSearchImpl.setSchema(
+                "package1",
+                "database1",
+                Collections.singletonList(new AppSearchSchema.Builder("schema").build()),
+                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
+                /*schemasPackageAccessible=*/ Collections.emptyMap(),
+                /*forceOverride=*/ false);
+        assertThat(mAppSearchImpl.getPackageToDatabases())
+                .containsExactlyEntriesIn(expectedMapping);
+
+        // Has both databases
+        expectedMapping.put("package1", ImmutableSet.of("database1", "database2"));
+        mAppSearchImpl.setSchema(
+                "package1",
+                "database2",
+                Collections.singletonList(new AppSearchSchema.Builder("schema").build()),
+                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
+                /*schemasPackageAccessible=*/ Collections.emptyMap(),
+                /*forceOverride=*/ false);
+        assertThat(mAppSearchImpl.getPackageToDatabases())
+                .containsExactlyEntriesIn(expectedMapping);
+
+        // Has both packages
+        expectedMapping.put("package2", ImmutableSet.of("database1"));
+        mAppSearchImpl.setSchema(
+                "package2",
+                "database1",
+                Collections.singletonList(new AppSearchSchema.Builder("schema").build()),
+                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
+                /*schemasPackageAccessible=*/ Collections.emptyMap(),
+                /*forceOverride=*/ false);
+        assertThat(mAppSearchImpl.getPackageToDatabases())
+                .containsExactlyEntriesIn(expectedMapping);
+    }
+
+    @Test
+    public void testGetPrefixes() throws Exception {
+        Set<String> existingPrefixes = mAppSearchImpl.getPrefixesLocked();
+
+        // Has database1
+        Set<String> expectedPrefixes = new ArraySet<>(existingPrefixes);
+        expectedPrefixes.add(AppSearchImpl.createPrefix("package", "database1"));
         mAppSearchImpl.setSchema(
                 "package",
                 "database1",
@@ -1206,13 +1029,10 @@ public class AppSearchImplTest {
                 /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
                 /*schemasPackageAccessible=*/ Collections.emptyMap(),
                 /*forceOverride=*/ false);
-        assertThat(mAppSearchImpl.getPrefixesLocked())
-                .containsExactly(
-                        AppSearchImpl.createPrefix(
-                                VisibilityStore.PACKAGE_NAME, VisibilityStore.DATABASE_NAME),
-                        AppSearchImpl.createPrefix("package", "database1"));
+        assertThat(mAppSearchImpl.getPrefixesLocked()).containsExactlyElementsIn(expectedPrefixes);
 
         // Has both databases
+        expectedPrefixes.add(AppSearchImpl.createPrefix("package", "database2"));
         mAppSearchImpl.setSchema(
                 "package",
                 "database2",
@@ -1220,12 +1040,7 @@ public class AppSearchImplTest {
                 /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
                 /*schemasPackageAccessible=*/ Collections.emptyMap(),
                 /*forceOverride=*/ false);
-        assertThat(mAppSearchImpl.getPrefixesLocked())
-                .containsExactly(
-                        AppSearchImpl.createPrefix(
-                                VisibilityStore.PACKAGE_NAME, VisibilityStore.DATABASE_NAME),
-                        AppSearchImpl.createPrefix("package", "database1"),
-                        AppSearchImpl.createPrefix("package", "database2"));
+        assertThat(mAppSearchImpl.getPrefixesLocked()).containsExactlyElementsIn(expectedPrefixes);
     }
 
     @Test
@@ -1263,5 +1078,137 @@ public class AppSearchImplTest {
                             GenericDocumentToProtoConverter.toGenericDocument(
                                     strippedDocumentProto.build()));
         }
+    }
+
+    @Test
+    public void testThrowsExceptionIfClosed() throws Exception {
+        Context context = ApplicationProvider.getApplicationContext();
+        AppSearchImpl appSearchImpl =
+                AppSearchImpl.create(
+                        mTemporaryFolder.newFolder(),
+                        context,
+                        VisibilityStore.NO_OP_USER_ID,
+                        /*globalQuerierPackage=*/ "");
+
+        // Initial check that we could do something at first.
+        List<AppSearchSchema> schemas =
+                Collections.singletonList(new AppSearchSchema.Builder("type").build());
+        appSearchImpl.setSchema(
+                "package",
+                "database",
+                schemas,
+                /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
+                /*schemasPackageAccessible=*/ Collections.emptyMap(),
+                /*forceOverride=*/ false);
+
+        appSearchImpl.close();
+
+        // Check all our public APIs
+        expectThrows(
+                IllegalStateException.class,
+                () -> {
+                    appSearchImpl.setSchema(
+                            "package",
+                            "database",
+                            schemas,
+                            /*schemasNotPlatformSurfaceable=*/ Collections.emptyList(),
+                            /*schemasPackageAccessible=*/ Collections.emptyMap(),
+                            /*forceOverride=*/ false);
+                });
+
+        expectThrows(
+                IllegalStateException.class,
+                () -> {
+                    appSearchImpl.getSchema("package", "database");
+                });
+
+        expectThrows(
+                IllegalStateException.class,
+                () -> {
+                    appSearchImpl.putDocument(
+                            "package",
+                            "database",
+                            new GenericDocument.Builder<>("uri", "type")
+                                    .setNamespace("namespace")
+                                    .build());
+                });
+
+        expectThrows(
+                IllegalStateException.class,
+                () -> {
+                    appSearchImpl.getDocument(
+                            "package", "database", "namespace", "uri", Collections.emptyMap());
+                });
+
+        expectThrows(
+                IllegalStateException.class,
+                () -> {
+                    appSearchImpl.query(
+                            "package",
+                            "database",
+                            "query",
+                            new SearchSpec.Builder()
+                                    .setTermMatch(TermMatchType.Code.PREFIX_VALUE)
+                                    .build());
+                });
+
+        expectThrows(
+                IllegalStateException.class,
+                () -> {
+                    appSearchImpl.globalQuery(
+                            "query",
+                            new SearchSpec.Builder()
+                                    .setTermMatch(TermMatchType.Code.PREFIX_VALUE)
+                                    .build(),
+                            "package",
+                            /*callerUid=*/ 1);
+                });
+
+        expectThrows(
+                IllegalStateException.class,
+                () -> {
+                    appSearchImpl.getNextPage(/*nextPageToken=*/ 1L);
+                });
+
+        expectThrows(
+                IllegalStateException.class,
+                () -> {
+                    appSearchImpl.invalidateNextPageToken(/*nextPageToken=*/ 1L);
+                });
+
+        expectThrows(
+                IllegalStateException.class,
+                () -> {
+                    appSearchImpl.reportUsage(
+                            "package",
+                            "database",
+                            "namespace",
+                            "uri",
+                            /*usageTimestampMillis=*/ 1000L);
+                });
+
+        expectThrows(
+                IllegalStateException.class,
+                () -> {
+                    appSearchImpl.remove("package", "database", "namespace", "uri");
+                });
+
+        expectThrows(
+                IllegalStateException.class,
+                () -> {
+                    appSearchImpl.removeByQuery(
+                            "package",
+                            "database",
+                            "query",
+                            new SearchSpec.Builder()
+                                    .setTermMatch(TermMatchType.Code.PREFIX_VALUE)
+                                    .build());
+                });
+
+        expectThrows(
+                IllegalStateException.class,
+                () -> {
+                    appSearchImpl.persistToDisk();
+                });
     }
 }

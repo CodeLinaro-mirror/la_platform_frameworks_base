@@ -84,6 +84,7 @@ public class AccessibilityManagerServiceTest extends AndroidTestCase {
     @Mock private AccessibilityServiceInfo mMockServiceInfo;
     @Mock private ResolveInfo mMockResolveInfo;
     @Mock private AbstractAccessibilityServiceConnection.SystemSupport mMockSystemSupport;
+    @Mock private WindowManagerInternal.AccessibilityControllerInternal mMockA11yController;
     @Mock private PackageManager mMockPackageManager;
     @Mock private WindowManagerInternal mMockWindowManagerService;
     @Mock private AccessibilitySecurityPolicy mMockSecurityPolicy;
@@ -115,6 +116,9 @@ public class AccessibilityManagerServiceTest extends AndroidTestCase {
 
         when(mMockMagnificationController.getWindowMagnificationMgr()).thenReturn(
                 mMockWindowMagnificationMgr);
+        when(mMockWindowManagerService.getAccessibilityController()).thenReturn(
+                mMockA11yController);
+        when(mMockA11yController.isAccessibilityTracingEnabled()).thenReturn(false);
         mA11yms = new AccessibilityManagerService(
             InstrumentationRegistry.getContext(),
             mMockPackageManager,
@@ -153,6 +157,7 @@ public class AccessibilityManagerServiceTest extends AndroidTestCase {
                 new Object(),
                 mMockSecurityPolicy,
                 mMockSystemSupport,
+                mA11yms,
                 mMockWindowManagerService,
                 mMockSystemActionPerformer,
                 mMockA11yWindowManager,
@@ -164,9 +169,7 @@ public class AccessibilityManagerServiceTest extends AndroidTestCase {
     @SmallTest
     public void testRegisterSystemActionWithoutPermission() throws Exception {
         doThrow(SecurityException.class).when(mMockSecurityPolicy)
-                .enforceCallerIsRecentsOrHasPermission(
-                        Manifest.permission.MANAGE_ACCESSIBILITY,
-                        AccessibilityManagerService.FUNCTION_REGISTER_SYSTEM_ACTION);
+                .enforceCallingOrSelfPermission(Manifest.permission.MANAGE_ACCESSIBILITY);
 
         try {
             mA11yms.registerSystemAction(TEST_ACTION, ACTION_ID);
@@ -185,9 +188,7 @@ public class AccessibilityManagerServiceTest extends AndroidTestCase {
     @SmallTest
     public void testUnregisterSystemActionWithoutPermission() throws Exception {
         doThrow(SecurityException.class).when(mMockSecurityPolicy)
-                .enforceCallerIsRecentsOrHasPermission(
-                        Manifest.permission.MANAGE_ACCESSIBILITY,
-                        AccessibilityManagerService.FUNCTION_UNREGISTER_SYSTEM_ACTION);
+                .enforceCallingOrSelfPermission(Manifest.permission.MANAGE_ACCESSIBILITY);
 
         try {
             mA11yms.unregisterSystemAction(ACTION_ID);

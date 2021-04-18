@@ -17,6 +17,7 @@
 package com.android.server;
 
 import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED;
+import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VPN;
 import static android.net.NetworkCapabilities.TRANSPORT_CELLULAR;
 import static android.net.NetworkCapabilities.TRANSPORT_ETHERNET;
@@ -31,6 +32,7 @@ import static junit.framework.Assert.assertTrue;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
+import android.annotation.NonNull;
 import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
@@ -40,6 +42,7 @@ import android.net.NetworkAgentConfig;
 import android.net.NetworkCapabilities;
 import android.net.NetworkProvider;
 import android.net.NetworkSpecifier;
+import android.net.QosFilter;
 import android.net.SocketKeepalive;
 import android.net.UidRange;
 import android.os.ConditionVariable;
@@ -47,10 +50,12 @@ import android.os.HandlerThread;
 import android.os.Message;
 import android.util.Log;
 
+import com.android.net.module.util.ArrayTrackRecord;
 import com.android.server.connectivity.ConnectivityConstants;
 import com.android.testutils.HandlerUtils;
 import com.android.testutils.TestableNetworkCallback;
 
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -71,6 +76,8 @@ public class NetworkAgentWrapper implements TestableNetworkCallback.HasNetwork {
     // start/stop. Useful when simulate KeepaliveTracker is waiting for response from modem.
     private long mKeepaliveResponseDelay = 0L;
     private Integer mExpectedKeepaliveSlot = null;
+    private final ArrayTrackRecord<CallbackType>.ReadHead mCallbackHistory =
+            new ArrayTrackRecord<CallbackType>().newReadHead();
 
     public NetworkAgentWrapper(int transport, LinkProperties linkProperties,
             NetworkCapabilities ncTemplate, Context context) throws Exception {
@@ -78,6 +85,7 @@ public class NetworkAgentWrapper implements TestableNetworkCallback.HasNetwork {
         final String typeName = ConnectivityManager.getNetworkTypeName(type);
         mNetworkCapabilities = (ncTemplate != null) ? ncTemplate : new NetworkCapabilities();
         mNetworkCapabilities.addCapability(NET_CAPABILITY_NOT_SUSPENDED);
+        mNetworkCapabilities.addCapability(NET_CAPABILITY_NOT_VCN_MANAGED);
         mNetworkCapabilities.addTransportType(transport);
         switch (transport) {
             case TRANSPORT_ETHERNET:
@@ -154,6 +162,20 @@ public class NetworkAgentWrapper implements TestableNetworkCallback.HasNetwork {
             mWrapper.mHandlerThread.getThreadHandler().postDelayed(
                     () -> onSocketKeepaliveEvent(slot, mWrapper.mStopKeepaliveError),
                     mWrapper.mKeepaliveResponseDelay);
+        }
+
+        @Override
+        public void onQosCallbackRegistered(final int qosCallbackId,
+                final @NonNull QosFilter filter) {
+            Log.i(mWrapper.mLogTag, "onQosCallbackRegistered");
+            mWrapper.mCallbackHistory.add(
+                    new CallbackType.OnQosCallbackRegister(qosCallbackId, filter));
+        }
+
+        @Override
+        public void onQosCallbackUnregistered(final int qosCallbackId) {
+            Log.i(mWrapper.mLogTag, "onQosCallbackUnregistered");
+            mWrapper.mCallbackHistory.add(new CallbackType.OnQosCallbackUnregister(qosCallbackId));
         }
 
         @Override
@@ -279,7 +301,60 @@ public class NetworkAgentWrapper implements TestableNetworkCallback.HasNetwork {
         return mNetworkCapabilities;
     }
 
+    public @NonNull ArrayTrackRecord<CallbackType>.ReadHead getCallbackHistory() {
+        return mCallbackHistory;
+    }
+
     public void waitForIdle(long timeoutMs) {
         HandlerUtils.waitForIdle(mHandlerThread, timeoutMs);
+    }
+
+    abstract static class CallbackType {
+        final int mQosCallbackId;
+
+        protected CallbackType(final int qosCallbackId) {
+            mQosCallbackId = qosCallbackId;
+        }
+
+        static class OnQosCallbackRegister extends CallbackType {
+            final QosFilter mFilter;
+            OnQosCallbackRegister(final int qosCallbackId, final QosFilter filter) {
+                super(qosCallbackId);
+                mFilter = filter;
+            }
+
+            @Override
+            public boolean equals(final Object o) {
+                if (this == o) return true;
+                if (o == null || getClass() != o.getClass()) return false;
+                final OnQosCallbackRegister that = (OnQosCallbackRegister) o;
+                return mQosCallbackId == that.mQosCallbackId
+                        && Objects.equals(mFilter, that.mFilter);
+            }
+
+            @Override
+            public int hashCode() {
+                return Objects.hash(mQosCallbackId, mFilter);
+            }
+        }
+
+        static class OnQosCallbackUnregister extends CallbackType {
+            OnQosCallbackUnregister(final int qosCallbackId) {
+                super(qosCallbackId);
+            }
+
+            @Override
+            public boolean equals(final Object o) {
+                if (this == o) return true;
+                if (o == null || getClass() != o.getClass()) return false;
+                final OnQosCallbackUnregister that = (OnQosCallbackUnregister) o;
+                return mQosCallbackId == that.mQosCallbackId;
+            }
+
+            @Override
+            public int hashCode() {
+                return Objects.hash(mQosCallbackId);
+            }
+        }
     }
 }

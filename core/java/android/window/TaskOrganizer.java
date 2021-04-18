@@ -21,6 +21,7 @@ import android.annotation.CallSuper;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
+import android.annotation.SuppressLint;
 import android.annotation.TestApi;
 import android.app.ActivityManager;
 import android.os.IBinder;
@@ -51,7 +52,7 @@ public class TaskOrganizer extends WindowOrganizer {
     /** @hide */
     @VisibleForTesting
     public TaskOrganizer(ITaskOrganizerController taskOrganizerController, Executor executor) {
-        mExecutor = executor != null ? executor : command -> command.run();
+        mExecutor = executor != null ? executor : Runnable::run;
         mTaskOrganizerController = taskOrganizerController != null
                 ? taskOrganizerController : getController();
     }
@@ -104,6 +105,12 @@ public class TaskOrganizer extends WindowOrganizer {
     public void removeStartingWindow(int taskId) {}
 
     /**
+     * Called when the Task want to copy the splash screen.
+     */
+    @BinderThread
+    public void copySplashScreenView(int taskId) {}
+
+    /**
      * Called when a task with the registered windowing mode can be controlled by this task
      * organizer. For non-root tasks, the leash may initially be hidden so it is up to the organizer
      * to show this task.
@@ -151,6 +158,7 @@ public class TaskOrganizer extends WindowOrganizer {
     /** Gets direct child tasks (ordered from top-to-bottom) */
     @RequiresPermission(android.Manifest.permission.MANAGE_ACTIVITY_TASKS)
     @Nullable
+    @SuppressLint("NullableCollection")
     public List<ActivityManager.RunningTaskInfo> getChildTasks(
             @NonNull WindowContainerToken parent, @NonNull int[] activityTypes) {
         try {
@@ -163,6 +171,7 @@ public class TaskOrganizer extends WindowOrganizer {
     /** Gets all root tasks on a display (ordered from top-to-bottom) */
     @RequiresPermission(android.Manifest.permission.MANAGE_ACTIVITY_TASKS)
     @Nullable
+    @SuppressLint("NullableCollection")
     public List<ActivityManager.RunningTaskInfo> getRootTasks(
             int displayId, @NonNull int[] activityTypes) {
         try {
@@ -217,6 +226,11 @@ public class TaskOrganizer extends WindowOrganizer {
         @Override
         public void removeStartingWindow(int taskId) {
             mExecutor.execute(() -> TaskOrganizer.this.removeStartingWindow(taskId));
+        }
+
+        @Override
+        public void copySplashScreenView(int taskId) {
+            mExecutor.execute(() -> TaskOrganizer.this.copySplashScreenView(taskId));
         }
 
         @Override

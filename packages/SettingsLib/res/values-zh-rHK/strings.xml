@@ -36,6 +36,7 @@
     <string name="wifi_no_internet_no_reconnect" msgid="821591791066497347">"不會自動連線"</string>
     <string name="wifi_no_internet" msgid="1774198889176926299">"無法連接互聯網"</string>
     <string name="saved_network" msgid="7143698034077223645">"由「<xliff:g id="NAME">%1$s</xliff:g>」儲存"</string>
+    <string name="connected_to_metered_access_point" msgid="9179693207918156341">"已連結至按用量收費的網絡"</string>
     <string name="connected_via_network_scorer" msgid="7665725527352893558">"已透過 %1$s 自動連線"</string>
     <string name="connected_via_network_scorer_default" msgid="7973529709744526285">"已透過網絡評分供應商自動連線"</string>
     <string name="connected_via_passpoint" msgid="7735442932429075684">"已透過 %1$s 連線"</string>
@@ -403,6 +404,7 @@
     <string name="transcode_user_control" msgid="6176368544817731314">"覆寫轉碼預設設定"</string>
     <string name="transcode_enable_all" msgid="2411165920039166710">"啟用轉碼功能"</string>
     <string name="transcode_default" msgid="3784803084573509491">"假設應用程式支援新型格式"</string>
+    <string name="transcode_notification" msgid="5560515979793436168">"顯示轉碼通知"</string>
     <string name="runningservices_settings_title" msgid="6460099290493086515">"執行中的服務"</string>
     <string name="runningservices_settings_summary" msgid="1046080643262665743">"查看並控制目前正在執行中的服務"</string>
     <string name="select_webview_provider_title" msgid="3917815648099445503">"WebView 設置"</string>
@@ -422,7 +424,7 @@
     <string name="daltonizer_mode_protanomaly" msgid="7805583306666608440">"紅色弱視 (紅綠)"</string>
     <string name="daltonizer_mode_tritanomaly" msgid="7135266249220732267">"藍色弱視 (藍黃)"</string>
     <string name="accessibility_display_daltonizer_preference_title" msgid="1810693571332381974">"色彩校正"</string>
-    <string name="accessibility_display_daltonizer_preference_subtitle" msgid="1284746051652993443">"色彩校正功能讓您調整裝置顯示的顏色"</string>
+    <string name="accessibility_display_daltonizer_preference_subtitle" msgid="8625527799885140826">"調整裝置顯示顏色的方式。這項設定適用於以下情況：&lt;br/&gt;&lt;br/&gt; &lt;ol&gt; &lt;li&gt; 想讓裝置更準確地顯示顏色&lt;/li&gt; &lt;li&gt; 移除顏色以提高專注力&lt;/li&gt; &lt;/ol&gt;"</string>
     <string name="daltonizer_type_overridden" msgid="4509604753672535721">"已由「<xliff:g id="TITLE">%1$s</xliff:g>」覆寫"</string>
     <string name="power_remaining_settings_home_page" msgid="4885165789445462557">"<xliff:g id="PERCENTAGE">%1$s</xliff:g> - <xliff:g id="TIME_STRING">%2$s</xliff:g>"</string>
     <string name="power_remaining_duration_only" msgid="8264199158671531431">"還有大約 <xliff:g id="TIME_REMAINING">%1$s</xliff:g>"</string>
@@ -513,6 +515,7 @@
     <string name="zen_mode_forever" msgid="3339224497605461291">"直至您關閉為止"</string>
     <string name="time_unit_just_now" msgid="3006134267292728099">"剛剛"</string>
     <string name="media_transfer_this_device_name" msgid="2716555073132169240">"手機喇叭"</string>
+    <string name="media_transfer_this_phone" msgid="7194341457812151531">"這支手機"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"無法連接，請關閉裝置然後重新開機"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"有線音響裝置"</string>
     <string name="help_label" msgid="3528360748637781274">"說明與意見反映"</string>
@@ -553,7 +556,7 @@
     <string name="creating_new_user_dialog_message" msgid="7232880257538970375">"正在建立新使用者…"</string>
     <string name="user_nickname" msgid="262624187455825083">"暱稱"</string>
     <string name="guest_new_guest" msgid="3482026122932643557">"新增訪客"</string>
-    <string name="guest_exit_guest" msgid="4754204715192830850">"結束訪客工作階段"</string>
+    <string name="guest_exit_guest" msgid="5908239569510734136">"移除訪客"</string>
     <string name="guest_nickname" msgid="6332276931583337261">"訪客"</string>
     <string name="user_image_take_photo" msgid="467512954561638530">"拍照"</string>
     <string name="user_image_choose_photo" msgid="1363820919146782908">"選擇圖片"</string>
@@ -590,5 +593,6 @@
     <string name="accessibility_data_three_bars" msgid="2813876214466722413">"數據網絡訊號強度為三格。"</string>
     <string name="accessibility_data_signal_full" msgid="1808301899314382337">"數據網絡訊號滿格。"</string>
     <string name="accessibility_ethernet_disconnected" msgid="2832501530856497489">"以太網連接中斷。"</string>
-    <string name="accessibility_ethernet_connected" msgid="2093872142317190618">"已連接以太網。"</string>
+    <string name="accessibility_ethernet_connected" msgid="6175942685957461563">"以太網絡。"</string>
+    <string name="accessibility_no_calling" msgid="3540827068323895748">"不啟用通話。"</string>
 </resources>

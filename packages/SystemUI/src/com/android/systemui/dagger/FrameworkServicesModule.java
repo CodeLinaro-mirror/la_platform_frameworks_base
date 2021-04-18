@@ -25,6 +25,7 @@ import android.app.IActivityTaskManager;
 import android.app.IWallpaperManager;
 import android.app.KeyguardManager;
 import android.app.NotificationManager;
+import android.app.StatsManager;
 import android.app.WallpaperManager;
 import android.app.admin.DevicePolicyManager;
 import android.app.role.RoleManager;
@@ -54,6 +55,7 @@ import android.os.PowerManager;
 import android.os.ServiceManager;
 import android.os.UserManager;
 import android.os.Vibrator;
+import android.permission.PermissionManager;
 import android.service.dreams.DreamService;
 import android.service.dreams.IDreamManager;
 import android.telecom.TelecomManager;
@@ -320,6 +322,12 @@ public class FrameworkServicesModule {
 
     @Provides
     @Singleton
+    static StatsManager provideStatsManager(Context context) {
+        return context.getSystemService(StatsManager.class);
+    }
+
+    @Provides
+    @Singleton
     @Nullable
     static TelecomManager provideTelecomManager(Context context) {
         return context.getSystemService(TelecomManager.class);
@@ -378,5 +386,11 @@ public class FrameworkServicesModule {
     @Singleton
     static WindowManager provideWindowManager(Context context) {
         return context.getSystemService(WindowManager.class);
+    }
+
+    @Provides
+    @Singleton
+    static PermissionManager providePermissionManager(Context context) {
+        return context.getSystemService(PermissionManager.class);
     }
 }

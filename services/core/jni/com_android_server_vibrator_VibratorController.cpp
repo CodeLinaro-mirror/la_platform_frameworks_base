@@ -29,7 +29,7 @@
 
 #include <vibratorservice/VibratorHalController.h>
 
-#include "com_android_server_VibratorManagerService.h"
+#include "com_android_server_vibrator_VibratorManagerService.h"
 
 namespace V1_0 = android::hardware::vibrator::V1_0;
 namespace V1_1 = android::hardware::vibrator::V1_1;
@@ -73,11 +73,8 @@ static_assert(static_cast<uint8_t>(V1_3::Effect::TEXTURE_TICK) ==
               static_cast<uint8_t>(aidl::Effect::TEXTURE_TICK));
 
 static std::shared_ptr<vibrator::HalController> findVibrator(int32_t vibratorId) {
-    // TODO(b/167946816): remove this once VibratorService is removed.
-    if (vibratorId < 0) {
-        return std::move(std::make_unique<vibrator::HalController>());
-    }
-    vibrator::ManagerHalWrapper* manager = android_server_VibratorManagerService_getManager();
+    vibrator::ManagerHalController* manager =
+            android_server_vibrator_VibratorManagerService_getManager();
     if (manager == nullptr) {
         return nullptr;
     }
@@ -241,12 +238,12 @@ static jlong vibratorPerformEffect(JNIEnv* env, jclass /* clazz */, jlong ptr, j
     return result.isOk() ? result.value().count() : -1;
 }
 
-static void vibratorPerformComposedEffect(JNIEnv* env, jclass /* clazz */, jlong ptr,
-                                          jobjectArray composition, jlong vibrationId) {
+static jlong vibratorPerformComposedEffect(JNIEnv* env, jclass /* clazz */, jlong ptr,
+                                           jobjectArray composition, jlong vibrationId) {
     VibratorControllerWrapper* wrapper = reinterpret_cast<VibratorControllerWrapper*>(ptr);
     if (wrapper == nullptr) {
         ALOGE("vibratorPerformComposedEffect failed because native wrapper was not initialized");
-        return;
+        return -1;
     }
     size_t size = env->GetArrayLength(composition);
     std::vector<aidl::CompositeEffect> effects;
@@ -255,7 +252,8 @@ static void vibratorPerformComposedEffect(JNIEnv* env, jclass /* clazz */, jlong
         effects.push_back(effectFromJavaPrimitive(env, element));
     }
     auto callback = wrapper->createCallback(vibrationId);
-    wrapper->hal()->performComposedEffect(effects, callback);
+    auto result = wrapper->hal()->performComposedEffect(effects, callback);
+    return result.isOk() ? result.value().count() : -1;
 }
 
 static jlong vibratorGetCapabilities(JNIEnv* env, jclass /* clazz */, jlong ptr) {
@@ -299,7 +297,7 @@ static const JNINativeMethod method_table[] = {
         {"vibratorSetAmplitude", "(JI)V", (void*)vibratorSetAmplitude},
         {"vibratorPerformEffect", "(JJJJ)J", (void*)vibratorPerformEffect},
         {"vibratorPerformComposedEffect",
-         "(J[Landroid/os/VibrationEffect$Composition$PrimitiveEffect;J)V",
+         "(J[Landroid/os/VibrationEffect$Composition$PrimitiveEffect;J)J",
          (void*)vibratorPerformComposedEffect},
         {"vibratorGetSupportedEffects", "(J)[I", (void*)vibratorGetSupportedEffects},
         {"vibratorGetSupportedPrimitives", "(J)[I", (void*)vibratorGetSupportedPrimitives},

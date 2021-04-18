@@ -27,6 +27,9 @@ import static android.app.ActivityManagerInternal.ALLOW_ALL_PROFILE_PERMISSIONS_
 import static android.app.ActivityManagerInternal.ALLOW_FULL_ONLY;
 import static android.app.ActivityManagerInternal.ALLOW_NON_FULL;
 import static android.app.ActivityManagerInternal.ALLOW_NON_FULL_IN_PROFILE;
+import static android.os.PowerWhitelistManager.REASON_BOOT_COMPLETED;
+import static android.os.PowerWhitelistManager.REASON_LOCKED_BOOT_COMPLETED;
+import static android.os.PowerWhitelistManager.TEMPORARY_ALLOWLIST_TYPE_FOREGROUND_SERVICE_ALLOWED;
 import static android.os.Process.SHELL_UID;
 import static android.os.Process.SYSTEM_UID;
 
@@ -45,8 +48,10 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager;
+import android.app.ActivityManagerInternal;
 import android.app.AppGlobals;
 import android.app.AppOpsManager;
+import android.app.BroadcastOptions;
 import android.app.Dialog;
 import android.app.IStopUserCallback;
 import android.app.IUserSwitchObserver;
@@ -72,6 +77,7 @@ import android.os.IRemoteCallback;
 import android.os.IUserManager;
 import android.os.Looper;
 import android.os.Message;
+import android.os.PowerWhitelistManager;
 import android.os.Process;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
@@ -116,6 +122,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 /**
  * Helper class for {@link ActivityManagerService} responsible for multi-user functionality.
@@ -518,7 +525,10 @@ class UserController implements Handler.Callback {
                         | Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
                 mInjector.broadcastIntent(intent, null, resultTo, 0, null, null,
                         new String[]{android.Manifest.permission.RECEIVE_BOOT_COMPLETED},
-                        AppOpsManager.OP_NONE, null, true, false, MY_PID, SYSTEM_UID,
+                        AppOpsManager.OP_NONE,
+                        getTemporaryAppAllowlistBroadcastOptions(REASON_LOCKED_BOOT_COMPLETED)
+                                .toBundle(), true,
+                        false, MY_PID, SYSTEM_UID,
                         Binder.getCallingUid(), Binder.getCallingPid(), userId);
             }
         }
@@ -764,8 +774,9 @@ class UserController implements Handler.Callback {
                         }
                     }, 0, null, null,
                     new String[]{android.Manifest.permission.RECEIVE_BOOT_COMPLETED},
-                    AppOpsManager.OP_NONE, null, true, false, MY_PID, SYSTEM_UID,
-                    callingUid, callingPid, userId);
+                    AppOpsManager.OP_NONE,
+                    getTemporaryAppAllowlistBroadcastOptions(REASON_BOOT_COMPLETED).toBundle(),
+                    true, false, MY_PID, SYSTEM_UID, callingUid, callingPid, userId);
         });
     }
 
@@ -1452,7 +1463,7 @@ class UserController implements Handler.Callback {
             t.traceBegin("updateConfigurationAndProfileIds");
             if (foreground) {
                 // Make sure the old user is no longer considering the display to be on.
-                mInjector.reportGlobalUsageEventLocked(UsageEvents.Event.SCREEN_NON_INTERACTIVE);
+                mInjector.reportGlobalUsageEvent(UsageEvents.Event.SCREEN_NON_INTERACTIVE);
                 boolean userSwitchUiEnabled;
                 synchronized (mLock) {
                     mCurrentUserId = userId;
@@ -2804,6 +2815,20 @@ class UserController implements Handler.Callback {
         }
     }
 
+    private BroadcastOptions getTemporaryAppAllowlistBroadcastOptions(
+            @PowerWhitelistManager.ReasonCode int reasonCode) {
+        long duration = 10_000;
+        final ActivityManagerInternal amInternal =
+                LocalServices.getService(ActivityManagerInternal.class);
+        if (amInternal != null) {
+            duration = amInternal.getBootTimeTempAllowListDuration();
+        }
+        final BroadcastOptions bOptions = BroadcastOptions.makeBasic();
+        bOptions.setTemporaryAppAllowlist(duration,
+                TEMPORARY_ALLOWLIST_TYPE_FOREGROUND_SERVICE_ALLOWED, reasonCode, "");
+        return bOptions;
+    }
+
     /**
      * Helper class to store user journey and session id.
      *
@@ -3025,16 +3050,12 @@ class UserController implements Handler.Callback {
             d.show();
         }
 
-        void reportGlobalUsageEventLocked(int event) {
-            synchronized (mService) {
-                mService.reportGlobalUsageEventLocked(event);
-            }
+        void reportGlobalUsageEvent(int event) {
+            mService.reportGlobalUsageEvent(event);
         }
 
         void reportCurWakefulnessUsageEvent() {
-            synchronized (mService) {
-                mService.reportCurWakefulnessUsageEventLocked();
-            }
+            mService.reportCurWakefulnessUsageEvent();
         }
 
         void taskSupervisorRemoveUser(@UserIdInt int userId) {

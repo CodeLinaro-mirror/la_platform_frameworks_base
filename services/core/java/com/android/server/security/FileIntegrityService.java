@@ -23,10 +23,8 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.os.Binder;
-import android.os.Build;
 import android.os.Environment;
 import android.os.IBinder;
-import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.security.IFileIntegrityService;
 import android.util.Slog;
@@ -60,8 +58,7 @@ public class FileIntegrityService extends SystemService {
     private final IBinder mService = new IFileIntegrityService.Stub() {
         @Override
         public boolean isApkVeritySupported() {
-            return Build.VERSION.FIRST_SDK_INT >= Build.VERSION_CODES.R
-                    || SystemProperties.getInt("ro.apk_verity.mode", 0) == 2;
+            return VerityUtils.isFsVeritySupported();
         }
 
         @Override
@@ -70,7 +67,7 @@ public class FileIntegrityService extends SystemService {
             checkCallerPermission(packageName);
 
             try {
-                if (!isApkVeritySupported()) {
+                if (!VerityUtils.isFsVeritySupported()) {
                     return false;
                 }
                 if (certificateBytes == null) {

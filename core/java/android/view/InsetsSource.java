@@ -65,6 +65,14 @@ public class InsetsSource implements Parcelable {
                 : null;
     }
 
+    public void set(InsetsSource other) {
+        mFrame.set(other.mFrame);
+        mVisible = other.mVisible;
+        mVisibleFrame = other.mVisibleFrame != null
+                ? new Rect(other.mVisibleFrame)
+                : null;
+    }
+
     public void setFrame(int left, int top, int right, int bottom) {
         mFrame.set(left, top, right, bottom);
     }
@@ -132,7 +140,11 @@ public class InsetsSource implements Parcelable {
         if (getType() == ITYPE_CAPTION_BAR) {
             return Insets.of(0, frame.height(), 0, 0);
         }
-        if (!getIntersection(frame, relativeFrame, mTmpFrame)) {
+        // Checks for whether there is shared edge with insets for 0-width/height window.
+        final boolean hasIntersection = relativeFrame.isEmpty()
+                ? getIntersection(frame, relativeFrame, mTmpFrame)
+                : mTmpFrame.setIntersect(frame, relativeFrame);
+        if (!hasIntersection) {
             return Insets.NONE;
         }
 
@@ -249,11 +261,7 @@ public class InsetsSource implements Parcelable {
 
     public InsetsSource(Parcel in) {
         mType = in.readInt();
-        if (in.readInt() != 0) {
-            mFrame = Rect.CREATOR.createFromParcel(in);
-        } else {
-            mFrame = null;
-        }
+        mFrame = Rect.CREATOR.createFromParcel(in);
         if (in.readInt() != 0) {
             mVisibleFrame = Rect.CREATOR.createFromParcel(in);
         } else {
@@ -270,12 +278,7 @@ public class InsetsSource implements Parcelable {
     @Override
     public void writeToParcel(Parcel dest, int flags) {
         dest.writeInt(mType);
-        if (mFrame != null) {
-            dest.writeInt(1);
-            mFrame.writeToParcel(dest, 0);
-        } else {
-            dest.writeInt(0);
-        }
+        mFrame.writeToParcel(dest, 0);
         if (mVisibleFrame != null) {
             dest.writeInt(1);
             mVisibleFrame.writeToParcel(dest, 0);

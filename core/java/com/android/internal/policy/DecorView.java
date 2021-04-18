@@ -110,6 +110,7 @@ import android.widget.FrameLayout;
 import android.widget.PopupWindow;
 
 import com.android.internal.R;
+import com.android.internal.graphics.drawable.BackgroundBlurDrawable;
 import com.android.internal.policy.PhoneWindow.PanelFeatureState;
 import com.android.internal.policy.PhoneWindow.PhoneWindowMenuCallback;
 import com.android.internal.view.FloatingActionMode;
@@ -123,6 +124,7 @@ import com.android.internal.widget.DecorCaptionView;
 import com.android.internal.widget.FloatingToolbar;
 
 import java.util.List;
+import java.util.function.Consumer;
 
 /** @hide */
 public class DecorView extends FrameLayout implements RootViewSurfaceTaker, WindowCallbacks {
@@ -255,6 +257,7 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
     private Drawable mOriginalBackgroundDrawable;
     private Drawable mLastOriginalBackgroundDrawable;
     private Drawable mResizingBackgroundDrawable;
+    private BackgroundBlurDrawable mBackgroundBlurDrawable;
 
     /**
      * Temporary holder for a window background when it is set before {@link #mWindow} is
@@ -283,6 +286,16 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
     private boolean mDrawLegacyNavigationBarBackground;
 
     private PendingInsetsController mPendingInsetsController = new PendingInsetsController();
+
+    private int mOriginalBackgroundBlurRadius = 0;
+    private int mBackgroundBlurRadius = 0;
+    private int mLastBackgroundBlurRadius = 0;
+    private boolean mCrossWindowBlurEnabled;
+    private final ViewTreeObserver.OnPreDrawListener mBackgroundBlurOnPreDrawListener = () -> {
+        updateBackgroundBlurCorners();
+        return true;
+    };
+    private Consumer<Boolean> mCrossWindowBlurEnabledListener;
 
     DecorView(Context context, int featureId, PhoneWindow window,
             WindowManager.LayoutParams params) {
@@ -1263,18 +1276,21 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
         if (mBackgroundInsets == null) {
             mBackgroundInsets = Insets.NONE;
         }
+
         if (mBackgroundInsets.equals(mLastBackgroundInsets)
+                && mBackgroundBlurRadius == mLastBackgroundBlurRadius
                 && mLastOriginalBackgroundDrawable == mOriginalBackgroundDrawable) {
             return;
         }
-        if (mOriginalBackgroundDrawable == null || mBackgroundInsets.equals(Insets.NONE)) {
 
-            // Call super since we are intercepting setBackground on this class.
-            super.setBackgroundDrawable(mOriginalBackgroundDrawable);
-        } else {
+        Drawable destDrawable = mOriginalBackgroundDrawable;
+        if (mBackgroundBlurRadius > 0) {
+            destDrawable = new LayerDrawable(new Drawable[] {mBackgroundBlurDrawable,
+                                                             mOriginalBackgroundDrawable});
+        }
 
-            // Call super since we are intercepting setBackground on this class.
-            super.setBackgroundDrawable(new InsetDrawable(mOriginalBackgroundDrawable,
+        if (destDrawable != null && !mBackgroundInsets.equals(Insets.NONE)) {
+            destDrawable = new InsetDrawable(destDrawable,
                     mBackgroundInsets.left, mBackgroundInsets.top,
                     mBackgroundInsets.right, mBackgroundInsets.bottom) {
 
@@ -1286,10 +1302,67 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
                 public boolean getPadding(Rect padding) {
                     return getDrawable().getPadding(padding);
                 }
-            });
+            };
         }
+
+        // Call super since we are intercepting setBackground on this class.
+        super.setBackgroundDrawable(destDrawable);
+
         mLastBackgroundInsets = mBackgroundInsets;
+        mLastBackgroundBlurRadius = mBackgroundBlurRadius;
         mLastOriginalBackgroundDrawable = mOriginalBackgroundDrawable;
+    }
+
+    private void updateBackgroundBlurCorners() {
+        if (mBackgroundBlurDrawable == null) return;
+
+        float cornerRadius = 0;
+        // If the blur radius is 0, the blur region won't be sent to surface flinger, so we don't
+        // need to calculate the corner radius.
+        if (mBackgroundBlurRadius != 0 && mOriginalBackgroundDrawable != null) {
+            final Outline outline = new Outline();
+            mOriginalBackgroundDrawable.getOutline(outline);
+            cornerRadius = outline.mMode == Outline.MODE_ROUND_RECT ? outline.getRadius() : 0;
+        }
+        mBackgroundBlurDrawable.setCornerRadius(cornerRadius);
+    }
+
+    private void updateBackgroundBlurRadius() {
+        if (getViewRootImpl() == null) return;
+
+        mBackgroundBlurRadius = mCrossWindowBlurEnabled && mWindow.isTranslucent()
+                ? mOriginalBackgroundBlurRadius : 0;
+        if (mBackgroundBlurDrawable == null && mBackgroundBlurRadius > 0) {
+            mBackgroundBlurDrawable = getViewRootImpl().createBackgroundBlurDrawable();
+        }
+
+        if (mBackgroundBlurDrawable != null) {
+            mBackgroundBlurDrawable.setBlurRadius(mBackgroundBlurRadius);
+            updateBackgroundDrawable();
+        }
+    }
+
+    void setBackgroundBlurRadius(int blurRadius) {
+        mOriginalBackgroundBlurRadius = blurRadius;
+        if (blurRadius > 0) {
+            if (mCrossWindowBlurEnabledListener == null) {
+                mCrossWindowBlurEnabledListener = enabled -> {
+                    mCrossWindowBlurEnabled = enabled;
+                    updateBackgroundBlurRadius();
+                };
+                getContext().getSystemService(WindowManager.class)
+                        .addCrossWindowBlurEnabledListener(mCrossWindowBlurEnabledListener);
+                getViewTreeObserver().addOnPreDrawListener(mBackgroundBlurOnPreDrawListener);
+            } else {
+                updateBackgroundBlurRadius();
+            }
+        } else if (mCrossWindowBlurEnabledListener != null) {
+            mCrossWindowBlurEnabledListener = null;
+            getContext().getSystemService(WindowManager.class)
+                    .removeCrossWindowBlurEnabledListener(mCrossWindowBlurEnabledListener);
+            getViewTreeObserver().removeOnPreDrawListener(mBackgroundBlurOnPreDrawListener);
+            updateBackgroundBlurRadius();
+        }
     }
 
     @Override
@@ -1743,6 +1816,9 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
             // renderer about it.
             mBackdropFrameRenderer.onConfigurationChange();
         }
+
+        updateBackgroundBlurRadius();
+
         mWindow.onViewRootImplSet(getViewRootImpl());
     }
 

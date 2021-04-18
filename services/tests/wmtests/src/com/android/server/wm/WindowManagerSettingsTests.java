@@ -17,7 +17,7 @@
 package com.android.server.wm;
 
 import static android.provider.Settings.Global.DEVELOPMENT_ENABLE_FREEFORM_WINDOWS_SUPPORT;
-import static android.provider.Settings.Global.DEVELOPMENT_ENABLE_SIZECOMPAT_FREEFORM;
+import static android.provider.Settings.Global.DEVELOPMENT_ENABLE_NON_RESIZABLE_MULTI_WINDOW;
 import static android.provider.Settings.Global.DEVELOPMENT_FORCE_DESKTOP_MODE_ON_EXTERNAL_DISPLAYS;
 import static android.provider.Settings.Global.DEVELOPMENT_FORCE_RESIZABLE_ACTIVITIES;
 import static android.provider.Settings.Global.DEVELOPMENT_WM_DISPLAY_SETTINGS_PATH;
@@ -118,16 +118,17 @@ public class WindowManagerSettingsTests extends WindowTestsBase {
     }
 
     @Test
-    public void testEnableSizeCompatFreeform() {
-        try (BoolSettingsSession enableSizeCompatFreeformSession = new
-                BoolSettingsSession(DEVELOPMENT_ENABLE_SIZECOMPAT_FREEFORM)) {
-            final boolean enableSizeCompatFreeform =
-                    !enableSizeCompatFreeformSession.getSetting();
-            final Uri enableSizeCompatFreeformUri =
-                    enableSizeCompatFreeformSession.setSetting(enableSizeCompatFreeform);
-            mWm.mSettingsObserver.onChange(false, enableSizeCompatFreeformUri);
+    public void testSupportsNonResizableMultiWindow() {
+        try (BoolSettingsSession supportsNonResizableMultiWindowSession = new
+                BoolSettingsSession(DEVELOPMENT_ENABLE_NON_RESIZABLE_MULTI_WINDOW)) {
+            final boolean supportsNonResizableMultiWindow =
+                    !supportsNonResizableMultiWindowSession.getSetting();
+            final Uri supportsNonResizableMultiWindowUri = supportsNonResizableMultiWindowSession
+                    .setSetting(supportsNonResizableMultiWindow);
+            mWm.mSettingsObserver.onChange(false, supportsNonResizableMultiWindowUri);
 
-            assertEquals(mWm.mAtmService.mSizeCompatFreeform, enableSizeCompatFreeform);
+            assertEquals(mWm.mAtmService.mSupportsNonResizableMultiWindow,
+                    supportsNonResizableMultiWindow);
         }
     }
 

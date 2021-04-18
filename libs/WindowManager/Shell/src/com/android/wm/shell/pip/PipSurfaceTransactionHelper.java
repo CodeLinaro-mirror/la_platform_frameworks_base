@@ -84,9 +84,19 @@ public class PipSurfaceTransactionHelper {
      */
     public PipSurfaceTransactionHelper scale(SurfaceControl.Transaction tx, SurfaceControl leash,
             Rect sourceBounds, Rect destinationBounds) {
+        return scale(tx, leash, sourceBounds, destinationBounds, 0 /* degrees */);
+    }
+
+    /**
+     * Operates the scale (setMatrix) on a given transaction and leash, along with a rotation.
+     * @return same {@link PipSurfaceTransactionHelper} instance for method chaining
+     */
+    public PipSurfaceTransactionHelper scale(SurfaceControl.Transaction tx, SurfaceControl leash,
+            Rect sourceBounds, Rect destinationBounds, float degrees) {
         mTmpSourceRectF.set(sourceBounds);
         mTmpDestinationRectF.set(destinationBounds);
         mTmpTransform.setRectToRect(mTmpSourceRectF, mTmpDestinationRectF, Matrix.ScaleToFit.FILL);
+        mTmpTransform.postRotate(degrees);
         tx.setMatrix(leash, mTmpTransform, mTmpFloat9)
                 .setPosition(leash, mTmpDestinationRectF.left, mTmpDestinationRectF.top);
         return this;
@@ -117,6 +127,32 @@ public class PipSurfaceTransactionHelper {
     }
 
     /**
+     * Operates the rotation according to the given degrees and scale (setMatrix) according to the
+     * source bounds and rotated destination bounds. The crop will be the unscaled source bounds.
+     * @return same {@link PipSurfaceTransactionHelper} instance for method chaining
+     */
+    public PipSurfaceTransactionHelper rotateAndScaleWithCrop(SurfaceControl.Transaction tx,
+            SurfaceControl leash, Rect sourceBounds, Rect destinationBounds, float degrees,
+            float positionX, float positionY) {
+        mTmpDestinationRect.set(sourceBounds);
+        final int dw = destinationBounds.width();
+        final int dh = destinationBounds.height();
+        // Scale by the short side so there won't be empty area if the aspect ratio of source and
+        // destination are different.
+        final float scale = dw <= dh
+                ? (float) sourceBounds.width() / dw
+                : (float) sourceBounds.height() / dh;
+        // Inverse scale for crop to fit in screen coordinates.
+        mTmpDestinationRect.scale(1 / scale);
+        mTmpTransform.setRotate(degrees);
+        mTmpTransform.postScale(scale, scale);
+        mTmpTransform.postTranslate(positionX, positionY);
+        tx.setMatrix(leash, mTmpTransform, mTmpFloat9)
+                .setWindowCrop(leash, mTmpDestinationRect.width(), mTmpDestinationRect.height());
+        return this;
+    }
+
+    /**
      * Resets the scale (setMatrix) on a given transaction and leash if there's any
      *
      * @return same {@link PipSurfaceTransactionHelper} instance for method chaining
@@ -138,6 +174,18 @@ public class PipSurfaceTransactionHelper {
         if (mEnableCornerRadius) {
             tx.setCornerRadius(leash, applyCornerRadius ? mCornerRadius : 0);
         }
+        return this;
+    }
+
+    /**
+     * Re-parents the snapshot to the parent's surface control and shows it.
+     */
+    public PipSurfaceTransactionHelper reparentAndShowSurfaceSnapshot(
+            SurfaceControl.Transaction t, SurfaceControl parent, SurfaceControl snapshot) {
+        t.reparent(snapshot, parent);
+        t.setLayer(snapshot, Integer.MAX_VALUE);
+        t.show(snapshot);
+        t.apply();
         return this;
     }
 

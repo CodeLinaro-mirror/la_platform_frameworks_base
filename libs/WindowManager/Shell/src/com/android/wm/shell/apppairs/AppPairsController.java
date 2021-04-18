@@ -23,17 +23,16 @@ import android.util.Slog;
 import android.util.SparseArray;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.protolog.common.ProtoLog;
 import com.android.wm.shell.ShellTaskOrganizer;
 import com.android.wm.shell.common.DisplayController;
+import com.android.wm.shell.common.DisplayImeController;
 import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.common.SyncTransactionQueue;
 
 import java.io.PrintWriter;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Class manages app-pairs multitasking mode and implements the main interface {@link AppPairs}.
@@ -50,38 +49,34 @@ public class AppPairsController {
     // Active app-pairs mapped by root task id key.
     private final SparseArray<AppPair> mActiveAppPairs = new SparseArray<>();
     private final DisplayController mDisplayController;
+    private final DisplayImeController mDisplayImeController;
 
-    /**
-     * Creates {@link AppPairs}, returns {@code null} if the feature is not supported.
-     */
-    @Nullable
-    public static AppPairs create(ShellTaskOrganizer organizer,
-            SyncTransactionQueue syncQueue, DisplayController displayController,
-            ShellExecutor mainExecutor) {
-        return new AppPairsController(organizer, syncQueue, displayController,
-                mainExecutor).mImpl;
-    }
-
-    AppPairsController(ShellTaskOrganizer organizer, SyncTransactionQueue syncQueue,
-                DisplayController displayController, ShellExecutor mainExecutor) {
+    public AppPairsController(ShellTaskOrganizer organizer, SyncTransactionQueue syncQueue,
+            DisplayController displayController, ShellExecutor mainExecutor,
+            DisplayImeController displayImeController) {
         mTaskOrganizer = organizer;
         mSyncQueue = syncQueue;
         mDisplayController = displayController;
+        mDisplayImeController = displayImeController;
         mMainExecutor = mainExecutor;
     }
 
-    void onOrganizerRegistered() {
+    public AppPairs asAppPairs() {
+        return mImpl;
+    }
+
+    public void onOrganizerRegistered() {
         if (mPairsPool == null) {
             setPairsPool(new AppPairsPool(this));
         }
     }
 
     @VisibleForTesting
-    void setPairsPool(AppPairsPool pool) {
+    public void setPairsPool(AppPairsPool pool) {
         mPairsPool = pool;
     }
 
-    boolean pair(int taskId1, int taskId2) {
+    public boolean pair(int taskId1, int taskId2) {
         final ActivityManager.RunningTaskInfo task1 = mTaskOrganizer.getRunningTaskInfo(taskId1);
         final ActivityManager.RunningTaskInfo task2 = mTaskOrganizer.getRunningTaskInfo(taskId2);
         if (task1 == null || task2 == null) {
@@ -90,13 +85,13 @@ public class AppPairsController {
         return pair(task1, task2);
     }
 
-    boolean pair(ActivityManager.RunningTaskInfo task1,
+    public boolean pair(ActivityManager.RunningTaskInfo task1,
             ActivityManager.RunningTaskInfo task2) {
         return pairInner(task1, task2) != null;
     }
 
     @VisibleForTesting
-    AppPair pairInner(
+    public AppPair pairInner(
             @NonNull ActivityManager.RunningTaskInfo task1,
             @NonNull ActivityManager.RunningTaskInfo task2) {
         final AppPair pair = mPairsPool.acquire();
@@ -109,11 +104,11 @@ public class AppPairsController {
         return pair;
     }
 
-    void unpair(int taskId) {
+    public void unpair(int taskId) {
         unpair(taskId, true /* releaseToPool */);
     }
 
-    void unpair(int taskId, boolean releaseToPool) {
+    public void unpair(int taskId, boolean releaseToPool) {
         AppPair pair = mActiveAppPairs.get(taskId);
         if (pair == null) {
             for (int i = mActiveAppPairs.size() - 1; i >= 0; --i) {
@@ -149,7 +144,11 @@ public class AppPairsController {
         return mDisplayController;
     }
 
-    private void dump(@NonNull PrintWriter pw, String prefix) {
+    DisplayImeController getDisplayImeController() {
+        return mDisplayImeController;
+    }
+
+    public void dump(@NonNull PrintWriter pw, String prefix) {
         final String innerPrefix = prefix + "  ";
         final String childPrefix = innerPrefix + "  ";
         pw.println(prefix + this);
@@ -201,22 +200,6 @@ public class AppPairsController {
             mMainExecutor.execute(() -> {
                 AppPairsController.this.unpair(taskId);
             });
-        }
-
-        @Override
-        public void onOrganizerRegistered() {
-            mMainExecutor.execute(() -> {
-                AppPairsController.this.onOrganizerRegistered();
-            });
-        }
-
-        @Override
-        public void dump(@NonNull PrintWriter pw, String prefix) {
-            try {
-                mMainExecutor.executeBlocking(() -> AppPairsController.this.dump(pw, prefix));
-            } catch (InterruptedException e) {
-                Slog.e(TAG, "Failed to dump AppPairsController in 2s");
-            }
         }
     }
 }

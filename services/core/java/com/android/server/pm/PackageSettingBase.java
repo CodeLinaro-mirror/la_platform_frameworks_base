@@ -26,13 +26,12 @@ import android.annotation.UserIdInt;
 import android.content.ComponentName;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.IncrementalStatesInfo;
-import android.content.pm.IntentFilterVerificationInfo;
-import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.UninstallReason;
 import android.content.pm.PackageParser;
 import android.content.pm.PackageUserState;
 import android.content.pm.Signature;
 import android.content.pm.SuspendDialogInfo;
+import android.content.pm.overlay.OverlayPaths;
 import android.os.PersistableBundle;
 import android.os.incremental.IncrementalManager;
 import android.service.pm.PackageProto;
@@ -46,7 +45,6 @@ import com.android.server.pm.parsing.pkg.AndroidPackage;
 
 import java.io.File;
 import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -130,8 +128,6 @@ public abstract class PackageSettingBase extends SettingBase {
     int categoryHint = ApplicationInfo.CATEGORY_UNDEFINED;
     /** Whether or not an update is available. Ostensibly only for instant apps. */
     boolean updateAvailable;
-
-    IntentFilterVerificationInfo verificationInfo;
 
     boolean forceQueryableOverride;
 
@@ -258,7 +254,6 @@ public abstract class PackageSettingBase extends SettingBase {
         for (int i = 0; i < orig.mUserState.size(); i++) {
             mUserState.put(orig.mUserState.keyAt(i), orig.mUserState.valueAt(i));
         }
-        verificationInfo = orig.verificationInfo;
         versionCode = orig.versionCode;
         volumeUuid = orig.volumeUuid;
         categoryHint = orig.categoryHint;
@@ -332,27 +327,29 @@ public abstract class PackageSettingBase extends SettingBase {
         modifyUserState(userId).uninstallReason = uninstallReason;
     }
 
-    void setOverlayPaths(List<String> overlayPaths, int userId) {
-        modifyUserState(userId).setOverlayPaths(overlayPaths == null ? null :
-            overlayPaths.toArray(new String[overlayPaths.size()]));
+    boolean setOverlayPaths(OverlayPaths overlayPaths, int userId) {
+        return modifyUserState(userId).setOverlayPaths(overlayPaths);
     }
 
-    String[] getOverlayPaths(int userId) {
+    OverlayPaths getOverlayPaths(int userId) {
         return readUserState(userId).getOverlayPaths();
     }
 
-    void setOverlayPathsForLibrary(String libName, List<String> overlayPaths, int userId) {
-        modifyUserState(userId).setSharedLibraryOverlayPaths(libName,
-                overlayPaths == null ? null : overlayPaths.toArray(new String[0]));
+    boolean setOverlayPathsForLibrary(String libName, OverlayPaths overlayPaths,
+            int userId) {
+        return modifyUserState(userId).setSharedLibraryOverlayPaths(libName, overlayPaths);
     }
 
-    Map<String, String[]> getOverlayPathsForLibrary(int userId) {
+    Map<String, OverlayPaths> getOverlayPathsForLibrary(int userId) {
         return readUserState(userId).getSharedLibraryOverlayPaths();
     }
 
-    /** Only use for testing. Do NOT use in production code. */
+    /**
+     * Only use for testing. Do NOT use in production code.
+     */
     @VisibleForTesting
-    SparseArray<PackageUserState> getUserState() {
+    @Deprecated
+    public SparseArray<PackageUserState> getUserState() {
         return mUserState;
     }
 
@@ -496,8 +493,7 @@ public abstract class PackageSettingBase extends SettingBase {
             ArrayMap<String, PackageUserState.SuspendParams> suspendParams, boolean instantApp,
             boolean virtualPreload, String lastDisableAppCaller,
             ArraySet<String> enabledComponents, ArraySet<String> disabledComponents,
-            int domainVerifState, int linkGeneration, int installReason, int uninstallReason,
-            String harmfulAppWarning) {
+            int installReason, int uninstallReason, String harmfulAppWarning) {
         PackageUserState state = modifyUserState(userId);
         state.ceDataInode = ceDataInode;
         state.enabled = enabled;
@@ -511,8 +507,6 @@ public abstract class PackageSettingBase extends SettingBase {
         state.lastDisableAppCaller = lastDisableAppCaller;
         state.enabledComponents = enabledComponents;
         state.disabledComponents = disabledComponents;
-        state.domainVerificationStatus = domainVerifState;
-        state.appLinkGeneration = linkGeneration;
         state.installReason = installReason;
         state.uninstallReason = uninstallReason;
         state.instantApp = instantApp;
@@ -528,7 +522,6 @@ public abstract class PackageSettingBase extends SettingBase {
                 otherState.instantApp,
                 otherState.virtualPreload, otherState.lastDisableAppCaller,
                 otherState.enabledComponents, otherState.disabledComponents,
-                otherState.domainVerificationStatus, otherState.appLinkGeneration,
                 otherState.installReason, otherState.uninstallReason, otherState.harmfulAppWarning);
     }
 
@@ -644,40 +637,6 @@ public abstract class PackageSettingBase extends SettingBase {
         return excludedUserIds;
     }
 
-    IntentFilterVerificationInfo getIntentFilterVerificationInfo() {
-        return verificationInfo;
-    }
-
-    void setIntentFilterVerificationInfo(IntentFilterVerificationInfo info) {
-        verificationInfo = info;
-        onChanged();
-    }
-
-    // Returns a packed value as a long:
-    //
-    // high 'int'-sized word: link status: undefined/ask/never/always.
-    // low 'int'-sized word: relative priority among 'always' results.
-    long getDomainVerificationStatusForUser(int userId) {
-        PackageUserState state = readUserState(userId);
-        long result = (long) state.appLinkGeneration;
-        result |= ((long) state.domainVerificationStatus) << 32;
-        return result;
-    }
-
-    void setDomainVerificationStatusForUser(final int status, int generation, int userId) {
-        PackageUserState state = modifyUserState(userId);
-        state.domainVerificationStatus = status;
-        if (status == PackageManager.INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_ALWAYS) {
-            state.appLinkGeneration = generation;
-            onChanged();
-        }
-    }
-
-    void clearDomainVerificationStatusForUser(int userId) {
-        modifyUserState(userId).domainVerificationStatus =
-                PackageManager.INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_UNDEFINED;
-    }
-
     protected void writeUsersInfoToProto(ProtoOutputStream proto, long fieldId) {
         int count = mUserState.size();
         for (int i = 0; i < count; i++) {
@@ -767,14 +726,14 @@ public abstract class PackageSettingBase extends SettingBase {
      * @return True if package is startable, false otherwise.
      */
     public boolean isPackageStartable() {
-        return incrementalStates.isStartable();
+        return getIncrementalStates().isStartable();
     }
 
     /**
      * @return True if package is still being loaded, false if the package is fully loaded.
      */
     public boolean isPackageLoading() {
-        return incrementalStates.isLoading();
+        return getIncrementalStates().isLoading();
     }
 
     /**
@@ -824,6 +783,14 @@ public abstract class PackageSettingBase extends SettingBase {
         incrementalStates.onStorageHealthStatusChanged(status);
     }
 
+    public long getFirstInstallTime() {
+        return firstInstallTime;
+    }
+
+    public String getName() {
+        return name;
+    }
+
     protected PackageSettingBase updateFrom(PackageSettingBase other) {
         super.copyFrom(other);
         setPath(other.getPath());
@@ -845,7 +812,6 @@ public abstract class PackageSettingBase extends SettingBase {
         this.volumeUuid = other.volumeUuid;
         this.categoryHint = other.categoryHint;
         this.updateAvailable = other.updateAvailable;
-        this.verificationInfo = other.verificationInfo;
         this.forceQueryableOverride = other.forceQueryableOverride;
         this.incrementalStates = other.incrementalStates;
 

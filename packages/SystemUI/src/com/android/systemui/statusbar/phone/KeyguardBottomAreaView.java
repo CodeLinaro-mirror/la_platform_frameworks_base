@@ -48,6 +48,7 @@ import android.os.Messenger;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.service.media.CameraPrewarmService;
 import android.telecom.TelecomManager;
 import android.text.TextUtils;
@@ -60,6 +61,7 @@ import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -117,14 +119,16 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
     private static final int DOZE_ANIMATION_STAGGER_DELAY = 48;
     private static final int DOZE_ANIMATION_ELEMENT_DURATION = 250;
 
+    // TODO(b/179494051): May no longer be needed
     private final boolean mShowLeftAffordance;
     private final boolean mShowCameraAffordance;
 
     private KeyguardAffordanceView mRightAffordanceView;
     private KeyguardAffordanceView mLeftAffordanceView;
+    private ImageView mWalletButton;
     private ViewGroup mIndicationArea;
-    private TextView mEnterpriseDisclosure;
     private TextView mIndicationText;
+    private TextView mIndicationTextBottom;
     private ViewGroup mPreviewContainer;
     private ViewGroup mOverlayContainer;
 
@@ -170,6 +174,8 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
     private int mBurnInXOffset;
     private int mBurnInYOffset;
     private ActivityIntentHelper mActivityIntentHelper;
+    private int mLockScreenMode;
+    private KeyguardUpdateMonitor mKeyguardUpdateMonitor;
 
     public KeyguardBottomAreaView(Context context) {
         this(context, null);
@@ -236,10 +242,10 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
         mOverlayContainer = findViewById(R.id.overlay_container);
         mRightAffordanceView = findViewById(R.id.camera_button);
         mLeftAffordanceView = findViewById(R.id.left_button);
+        mWalletButton = findViewById(R.id.wallet_button);
         mIndicationArea = findViewById(R.id.keyguard_indication_area);
-        mEnterpriseDisclosure = findViewById(
-                R.id.keyguard_indication_enterprise_disclosure);
         mIndicationText = findViewById(R.id.keyguard_indication_text);
+        mIndicationTextBottom = findViewById(R.id.keyguard_indication_text_bottom);
         mIndicationBottomMargin = getResources().getDimensionPixelSize(
                 R.dimen.keyguard_indication_margin_bottom);
         mBurnInYOffset = getResources().getDimensionPixelSize(
@@ -282,7 +288,8 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
         filter.addAction(DevicePolicyManager.ACTION_DEVICE_POLICY_MANAGER_STATE_CHANGED);
         getContext().registerReceiverAsUser(mDevicePolicyReceiver,
                 UserHandle.ALL, filter, null, null);
-        Dependency.get(KeyguardUpdateMonitor.class).registerCallback(mUpdateMonitorCallback);
+        mKeyguardUpdateMonitor = Dependency.get(KeyguardUpdateMonitor.class);
+        mKeyguardUpdateMonitor.registerCallback(mUpdateMonitorCallback);
         mKeyguardStateController.addCallback(this);
     }
 
@@ -294,7 +301,7 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
         mRightExtension.destroy();
         mLeftExtension.destroy();
         getContext().unregisterReceiver(mDevicePolicyReceiver);
-        Dependency.get(KeyguardUpdateMonitor.class).removeCallback(mUpdateMonitorCallback);
+        mKeyguardUpdateMonitor.removeCallback(mUpdateMonitorCallback);
     }
 
     private void initAccessibility() {
@@ -316,7 +323,7 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
         }
 
         // Respect font size setting.
-        mEnterpriseDisclosure.setTextSize(TypedValue.COMPLEX_UNIT_PX,
+        mIndicationTextBottom.setTextSize(TypedValue.COMPLEX_UNIT_PX,
                 getResources().getDimensionPixelSize(
                         com.android.internal.R.dimen.text_size_small_material));
         mIndicationText.setTextSize(TypedValue.COMPLEX_UNIT_PX,
@@ -334,6 +341,11 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
         lp.height = getResources().getDimensionPixelSize(R.dimen.keyguard_affordance_height);
         mLeftAffordanceView.setLayoutParams(lp);
         updateLeftAffordanceIcon();
+
+        lp = mWalletButton.getLayoutParams();
+        lp.width = getResources().getDimensionPixelSize(R.dimen.keyguard_affordance_width);
+        lp.height = getResources().getDimensionPixelSize(R.dimen.keyguard_affordance_height);
+        mWalletButton.setLayoutParams(lp);
     }
 
     private void updateRightAffordanceIcon() {
@@ -396,6 +408,7 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
             mLeftAffordanceView.setVisibility(GONE);
             return;
         }
+
         IconState state = mLeftButton.getIcon();
         mLeftAffordanceView.setVisibility(state.isVisible ? View.VISIBLE : View.GONE);
         if (state.drawable != mLeftAffordanceView.getDrawable()
@@ -403,6 +416,14 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
             mLeftAffordanceView.setImageDrawable(state.drawable, state.tint);
         }
         mLeftAffordanceView.setContentDescription(state.contentDescription);
+    }
+
+    private void updateWalletVisibility() {
+        if (mDozing) {
+            mWalletButton.setVisibility(GONE);
+        } else {
+            mWalletButton.setVisibility(VISIBLE);
+        }
     }
 
     public boolean isLeftVoiceAssist() {
@@ -669,6 +690,9 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
 
     public void startFinishDozeAnimation() {
         long delay = 0;
+        if (mWalletButton.getVisibility() == View.VISIBLE) {
+            startFinishDozeAnimationElement(mWalletButton, delay);
+        }
         if (mLeftAffordanceView.getVisibility() == View.VISIBLE) {
             startFinishDozeAnimationElement(mLeftAffordanceView, delay);
             delay += DOZE_ANIMATION_STAGGER_DELAY;
@@ -741,6 +765,7 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
 
         updateCameraVisibility();
         updateLeftAffordanceIcon();
+        updateWalletVisibility();
 
         if (dozing) {
             mOverlayContainer.setVisibility(INVISIBLE);
@@ -773,6 +798,7 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
         mLeftAffordanceView.setAlpha(alpha);
         mRightAffordanceView.setAlpha(alpha);
         mIndicationArea.setAlpha(alpha);
+        mWalletButton.setAlpha(alpha);
     }
 
     private class DefaultLeftButton implements IntentButton {
@@ -843,5 +869,27 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
             setPadding(getPaddingLeft(), getPaddingTop(), getPaddingRight(), bottom);
         }
         return insets;
+    }
+
+    private void setupWallet() {
+        boolean inNewLayout = mLockScreenMode != KeyguardUpdateMonitor.LOCK_SCREEN_MODE_NORMAL;
+        boolean settingEnabled = Settings.Global.getInt(mContext.getContentResolver(),
+                "controls_lockscreen", 0) == 1;
+        if (!inNewLayout || !settingEnabled) {
+            mWalletButton.setVisibility(View.GONE);
+            return;
+        }
+
+        // TODO: add image
+        //        mWalletButton.setImageDrawable(list.get(0).loadIcon());
+        updateWalletVisibility();
+    }
+
+    /**
+     * Optionally add controls when in the new lockscreen mode
+     */
+    public void onLockScreenModeChanged(int mode) {
+        mLockScreenMode = mode;
+        setupWallet();
     }
 }

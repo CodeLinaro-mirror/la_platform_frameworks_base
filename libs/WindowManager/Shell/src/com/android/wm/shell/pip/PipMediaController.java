@@ -31,6 +31,8 @@ import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
+import android.os.Handler;
+import android.os.HandlerExecutor;
 import android.os.UserHandle;
 
 import androidx.annotation.Nullable;
@@ -74,6 +76,8 @@ public class PipMediaController {
     }
 
     private final Context mContext;
+    private final Handler mMainHandler;
+    private final HandlerExecutor mHandlerExecutor;
 
     private final MediaSessionManager mMediaSessionManager;
     private MediaController mMediaController;
@@ -118,15 +122,17 @@ public class PipMediaController {
     private final ArrayList<ActionListener> mActionListeners = new ArrayList<>();
     private final ArrayList<MetadataListener> mMetadataListeners = new ArrayList<>();
 
-    public PipMediaController(Context context) {
+    public PipMediaController(Context context, Handler mainHandler) {
         mContext = context;
+        mMainHandler = mainHandler;
+        mHandlerExecutor = new HandlerExecutor(mMainHandler);
         IntentFilter mediaControlFilter = new IntentFilter();
         mediaControlFilter.addAction(ACTION_PLAY);
         mediaControlFilter.addAction(ACTION_PAUSE);
         mediaControlFilter.addAction(ACTION_NEXT);
         mediaControlFilter.addAction(ACTION_PREV);
-        mContext.registerReceiver(mPlayPauseActionReceiver, mediaControlFilter,
-                UserHandle.USER_ALL);
+        mContext.registerReceiverForAllUsers(mPlayPauseActionReceiver, mediaControlFilter,
+                null /* permission */, mainHandler);
 
         createMediaActions();
         mMediaSessionManager = context.getSystemService(MediaSessionManager.class);
@@ -244,8 +250,8 @@ public class PipMediaController {
      */
     public void registerSessionListenerForCurrentUser() {
         mMediaSessionManager.removeOnActiveSessionsChangedListener(mSessionsChangedListener);
-        mMediaSessionManager.addOnActiveSessionsChangedListener(mSessionsChangedListener, null,
-                UserHandle.CURRENT, null);
+        mMediaSessionManager.addOnActiveSessionsChangedListener(null, UserHandle.CURRENT,
+                mHandlerExecutor, mSessionsChangedListener);
     }
 
     /**
@@ -277,7 +283,7 @@ public class PipMediaController {
             }
             mMediaController = controller;
             if (controller != null) {
-                controller.registerCallback(mPlaybackChangedListener);
+                controller.registerCallback(mPlaybackChangedListener, mMainHandler);
             }
             notifyActionsChanged();
             notifyMetadataChanged(getMediaMetadata());

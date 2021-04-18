@@ -85,6 +85,7 @@ public class AccessibilityServiceConnectionTest {
     @Mock AccessibilityWindowManager mMockA11yWindowManager;
     @Mock ActivityTaskManagerInternal mMockActivityTaskManagerInternal;
     @Mock AbstractAccessibilityServiceConnection.SystemSupport mMockSystemSupport;
+    @Mock AccessibilityTrace mMockA11yTrace;
     @Mock WindowManagerInternal mMockWindowManagerInternal;
     @Mock SystemActionPerformer mMockSystemActionPerformer;
     @Mock KeyEventDispatcher mMockKeyEventDispatcher;
@@ -110,14 +111,13 @@ public class AccessibilityServiceConnectionTest {
         mMockResolveInfo.serviceInfo.applicationInfo = mock(ApplicationInfo.class);
 
         when(mMockIBinder.queryLocalInterface(any())).thenReturn(mMockServiceClient);
-        when(mMockWindowManagerInternal.isTouchableDisplay(Display.DEFAULT_DISPLAY)).thenReturn(
-                true);
+        when(mMockA11yTrace.isA11yTracingEnabled()).thenReturn(false);
 
         mConnection = new AccessibilityServiceConnection(mMockUserState, mMockContext,
                 COMPONENT_NAME, mMockServiceInfo, SERVICE_ID, mHandler, new Object(),
-                mMockSecurityPolicy, mMockSystemSupport, mMockWindowManagerInternal,
-                mMockSystemActionPerformer, mMockA11yWindowManager,
-                mMockActivityTaskManagerInternal);
+                mMockSecurityPolicy, mMockSystemSupport, mMockA11yTrace,
+                mMockWindowManagerInternal, mMockSystemActionPerformer,
+                mMockA11yWindowManager, mMockActivityTaskManagerInternal);
         when(mMockSecurityPolicy.canPerformGestures(mConnection)).thenReturn(true);
     }
 
@@ -197,8 +197,9 @@ public class AccessibilityServiceConnectionTest {
     }
 
     @Test
-    public void sendGesture_touchableDisplay_injectEvents()
+    public void sendGesture_touchableDevice_injectEvents()
             throws RemoteException {
+        when(mMockWindowManagerInternal.isTouchOrFaketouchDevice()).thenReturn(true);
         setServiceBinding(COMPONENT_NAME);
         mConnection.bindLocked();
         mConnection.onServiceConnected(COMPONENT_NAME, mMockIBinder);
@@ -213,10 +214,9 @@ public class AccessibilityServiceConnectionTest {
     }
 
     @Test
-    public void sendGesture_untouchableDisplay_performGestureResultFailed()
+    public void sendGesture_untouchableDevice_performGestureResultFailed()
             throws RemoteException {
-        when(mMockWindowManagerInternal.isTouchableDisplay(Display.DEFAULT_DISPLAY)).thenReturn(
-                false);
+        when(mMockWindowManagerInternal.isTouchOrFaketouchDevice()).thenReturn(false);
         setServiceBinding(COMPONENT_NAME);
         mConnection.bindLocked();
         mConnection.onServiceConnected(COMPONENT_NAME, mMockIBinder);

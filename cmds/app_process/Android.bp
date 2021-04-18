@@ -1,3 +1,20 @@
+package {
+    default_applicable_licenses: ["frameworks_base_cmds_app_process_license"],
+}
+
+// Added automatically by a large-scale-change
+// See: http://go/android-license-faq
+license {
+    name: "frameworks_base_cmds_app_process_license",
+    visibility: [":__subpackages__"],
+    license_kinds: [
+        "SPDX-license-identifier-Apache-2.0",
+    ],
+    license_text: [
+        "NOTICE",
+    ],
+}
+
 cc_binary {
     name: "app_process",
 
@@ -62,4 +79,13 @@ cc_binary {
     // Create a symlink from app_process to app_process32 or 64
     // depending on the target configuration.
     symlink_preferred_arch: true,
+
+    // Enable ASYNC MTE in the zygote, in order to allow apps and the system
+    // server to use MTE. We use ASYNC because we don't expect the pre-fork
+    // zygote to have substantial memory corruption bugs (as it's primarily Java
+    // code), and we don't want to waste memory recording malloc/free stack
+    // traces (which happens in SYNC mode).
+    sanitize: {
+        memtag_heap: true,
+    },
 }

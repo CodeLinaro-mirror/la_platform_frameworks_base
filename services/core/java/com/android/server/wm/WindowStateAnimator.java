@@ -52,13 +52,11 @@ import static com.android.server.wm.WindowManagerService.logWithStack;
 import static com.android.server.wm.WindowStateAnimatorProto.DRAW_STATE;
 import static com.android.server.wm.WindowStateAnimatorProto.SURFACE;
 import static com.android.server.wm.WindowStateAnimatorProto.SYSTEM_DECOR_RECT;
-import static com.android.server.wm.WindowSurfacePlacer.SET_ORIENTATION_CHANGE_COMPLETE;
 
 import android.content.Context;
 import android.graphics.Matrix;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
-import android.graphics.Region;
 import android.os.Debug;
 import android.os.Trace;
 import android.util.Slog;
@@ -85,23 +83,23 @@ class WindowStateAnimator {
     static final int PRESERVED_SURFACE_LAYER = 1;
 
     /**
-     * Mode how the window gets clipped by the stack bounds during an animation: The clipping should
-     * be applied after applying the animation transformation, i.e. the stack bounds don't move
-     * during the animation.
+     * Mode how the window gets clipped by the root task bounds during an animation: The clipping
+     * should be applied after applying the animation transformation, i.e. the root task bounds
+     * don't move during the animation.
      */
-    static final int STACK_CLIP_AFTER_ANIM = 0;
+    static final int ROOT_TASK_CLIP_AFTER_ANIM = 0;
 
     /**
-     * Mode how the window gets clipped by the stack bounds: The clipping should be applied before
-     * applying the animation transformation, i.e. the stack bounds move with the window.
+     * Mode how the window gets clipped by the root task bounds: The clipping should be applied
+     * before applying the animation transformation, i.e. the root task bounds move with the window.
      */
-    static final int STACK_CLIP_BEFORE_ANIM = 1;
+    static final int ROOT_TASK_CLIP_BEFORE_ANIM = 1;
 
     /**
-     * Mode how window gets clipped by the stack bounds during an animation: Don't clip the window
-     * by the stack bounds.
+     * Mode how window gets clipped by the root task bounds during an animation: Don't clip the
+     * window by the root task bounds.
      */
-    static final int STACK_CLIP_NONE = 2;
+    static final int ROOT_TASK_CLIP_NONE = 2;
 
     // Unchanging local convenience fields.
     final WindowManagerService mService;
@@ -116,15 +114,7 @@ class WindowStateAnimator {
     boolean mAnimationIsEntrance;
 
     WindowSurfaceController mSurfaceController;
-    private WindowSurfaceController mPendingDestroySurface;
 
-    /**
-     * Set if the client has asked that the destroy of its surface be delayed
-     * until it explicitly says it is okay.
-     */
-    boolean mSurfaceDestroyDeferred;
-
-    private boolean mDestroyPreservedSurfaceUponRedraw;
     float mShownAlpha = 0;
     float mAlpha = 0;
     float mLastAlpha = 0;
@@ -257,11 +247,6 @@ class WindowStateAnimator {
             //dump();
             mLastHidden = true;
 
-            // We may have a preserved surface which we no longer need. If there was a quick
-            // VISIBLE, GONE, VISIBLE, GONE sequence, the surface may never draw, so we don't mark
-            // it to be destroyed in prepareSurfaceLocked.
-            markPreservedSurfaceForDestroy();
-
             if (mSurfaceController != null) {
                 mSurfaceController.hide(transaction, reason);
             }
@@ -323,70 +308,6 @@ class WindowStateAnimator {
         return result;
     }
 
-    void preserveSurfaceLocked(SurfaceControl.Transaction t) {
-        if (mDestroyPreservedSurfaceUponRedraw) {
-            // This could happen when switching the surface mode very fast. For example,
-            // we preserved a surface when dragResizing changed to true. Then before the
-            // preserved surface is removed, dragResizing changed to false again.
-            // In this case, we need to leave the preserved surface alone, and destroy
-            // the actual surface, so that the createSurface call could create a surface
-            // of the proper size. The preserved surface will still be removed when client
-            // finishes drawing to the new surface.
-            mSurfaceDestroyDeferred = false;
-
-            // Make sure to reparent any children of the new surface back to the preserved
-            // surface before destroying it.
-            if (mSurfaceController != null && mPendingDestroySurface != null) {
-                mPostDrawTransaction.reparentChildren(
-                    mSurfaceController.mSurfaceControl,
-                    mPendingDestroySurface.mSurfaceControl).apply();
-            }
-            destroySurfaceLocked(t);
-            mSurfaceDestroyDeferred = true;
-            return;
-        }
-        ProtoLog.i(WM_SHOW_TRANSACTIONS, "SURFACE SET FREEZE LAYER: %s", mWin);
-        if (mSurfaceController != null) {
-            // Our SurfaceControl is always at layer 0 within the parent Surface managed by
-            // window-state. We want this old Surface to stay on top of the new one
-            // until we do the swap, so we place it at a positive layer.
-            t.setLayer(mSurfaceController.mSurfaceControl, PRESERVED_SURFACE_LAYER);
-        }
-        mDestroyPreservedSurfaceUponRedraw = true;
-        mSurfaceDestroyDeferred = true;
-        destroySurfaceLocked(t);
-    }
-
-    void destroyPreservedSurfaceLocked(SurfaceControl.Transaction t) {
-        if (!mDestroyPreservedSurfaceUponRedraw) {
-            return;
-        }
-
-        // If we are preserving a surface but we aren't relaunching that means
-        // we are just doing an in-place switch. In that case any SurfaceFlinger side
-        // child layers need to be reparented to the new surface to make this
-        // transparent to the app.
-        // If the children are detached, we don't want to reparent them to the new surface.
-        // Instead let the children get removed when the old surface is deleted.
-        if (mSurfaceController != null && mPendingDestroySurface != null
-                && !mPendingDestroySurface.mChildrenDetached
-                && (mWin.mActivityRecord == null || !mWin.mActivityRecord.isRelaunching())) {
-            mPostDrawTransaction.reparentChildren(
-                    mPendingDestroySurface.mSurfaceControl,
-                    mSurfaceController.mSurfaceControl).apply();
-        }
-
-        destroyDeferredSurfaceLocked(t);
-        mDestroyPreservedSurfaceUponRedraw = false;
-    }
-
-    private void markPreservedSurfaceForDestroy() {
-        if (mDestroyPreservedSurfaceUponRedraw
-                && !mService.mDestroyPreservedSurface.contains(mWin)) {
-            mService.mDestroyPreservedSurface.add(mWin);
-        }
-    }
-
     void resetDrawState() {
         mDrawState = DRAW_PENDING;
 
@@ -443,20 +364,9 @@ class WindowStateAnimator {
         // Set up surface control with initial size.
         try {
 
+            // This can be removed once we move all Buffer Layers to use BLAST.
             final boolean isHwAccelerated = (attrs.flags & FLAG_HARDWARE_ACCELERATED) != 0;
             final int format = isHwAccelerated ? PixelFormat.TRANSLUCENT : attrs.format;
-            if (!PixelFormat.formatHasAlpha(attrs.format)
-                    // Don't make surface with surfaceInsets opaque as they display a
-                    // translucent shadow.
-                    && attrs.surfaceInsets.left == 0
-                    && attrs.surfaceInsets.top == 0
-                    && attrs.surfaceInsets.right == 0
-                    && attrs.surfaceInsets.bottom == 0
-                    // Don't make surface opaque when resizing to reduce the amount of
-                    // artifacts shown in areas the app isn't drawing content to.
-                    && !w.isDragResizing()) {
-                flags |= SurfaceControl.OPAQUE;
-            }
 
             mSurfaceController = new WindowSurfaceController(attrs.getTitle().toString(), width,
                     height, format, flags, this, windowType);
@@ -519,39 +429,23 @@ class WindowStateAnimator {
             return;
         }
 
-        // When destroying a surface we want to make sure child windows are hidden. If we are
-        // preserving the surface until redraw though we intend to swap it out with another surface
-        // for resizing. In this case the window always remains visible to the user and the child
-        // windows should likewise remain visible.
-        if (!mDestroyPreservedSurfaceUponRedraw) {
-            mWin.mHidden = true;
-        }
+        mWin.mHidden = true;
 
         try {
-            if (DEBUG_VISIBILITY) logWithStack(TAG, "Window " + this + " destroying surface "
-                    + mSurfaceController + ", session " + mSession);
-            if (mSurfaceDestroyDeferred) {
-                if (mSurfaceController != null && mPendingDestroySurface != mSurfaceController) {
-                    if (mPendingDestroySurface != null) {
-                        ProtoLog.i(WM_SHOW_SURFACE_ALLOC, "SURFACE DESTROY PENDING: %s. %s",
-                                mWin, new RuntimeException().fillInStackTrace());
-                        mPendingDestroySurface.destroy(t);
-                    }
-                    mPendingDestroySurface = mSurfaceController;
-                }
-            } else {
-                ProtoLog.i(WM_SHOW_SURFACE_ALLOC, "SURFACE DESTROY: %s. %s",
-                        mWin, new RuntimeException().fillInStackTrace());
-                destroySurface(t);
+            if (DEBUG_VISIBILITY) {
+                logWithStack(TAG, "Window " + this + " destroying surface "
+                        + mSurfaceController + ", session " + mSession);
             }
+            ProtoLog.i(WM_SHOW_SURFACE_ALLOC, "SURFACE DESTROY: %s. %s",
+                    mWin, new RuntimeException().fillInStackTrace());
+            destroySurface(t);
             // Don't hide wallpaper if we're deferring the surface destroy
             // because of a surface change.
-            if (!mDestroyPreservedSurfaceUponRedraw) {
-                mWallpaperControllerLocked.hideWallpapers(mWin);
-            }
+            mWallpaperControllerLocked.hideWallpapers(mWin);
         } catch (RuntimeException e) {
             Slog.w(TAG, "Exception thrown when destroying Window " + this
-                + " surface " + mSurfaceController + " session " + mSession + ": " + e.toString());
+                    + " surface " + mSurfaceController + " session " + mSession + ": "
+                    + e.toString());
         }
 
         // Whether the surface was preserved (and copied to mPendingDestroySurface) or not, it
@@ -563,27 +457,6 @@ class WindowStateAnimator {
         }
         mSurfaceController = null;
         mDrawState = NO_SURFACE;
-    }
-
-    void destroyDeferredSurfaceLocked(SurfaceControl.Transaction t) {
-        try {
-            if (mPendingDestroySurface != null) {
-                ProtoLog.i(WM_SHOW_SURFACE_ALLOC, "SURFACE DESTROY PENDING: %s. %s",
-                        mWin, new RuntimeException().fillInStackTrace());
-                mPendingDestroySurface.destroy(t);
-                // Don't hide wallpaper if we're destroying a deferred surface
-                // after a surface mode change.
-                if (!mDestroyPreservedSurfaceUponRedraw) {
-                    mWallpaperControllerLocked.hideWallpapers(mWin);
-                }
-            }
-        } catch (RuntimeException e) {
-            Slog.w(TAG, "Exception thrown when destroying Window "
-                    + this + " surface " + mPendingDestroySurface
-                    + " session " + mSession + ": " + e.toString());
-        }
-        mSurfaceDestroyDeferred = false;
-        mPendingDestroySurface = null;
     }
 
     void computeShownFrameLocked() {
@@ -701,10 +574,7 @@ class WindowStateAnimator {
 
         setSurfaceBoundariesLocked(t);
 
-        if (mIsWallpaper && !w.mWallpaperVisible) {
-            // Wallpaper is no longer visible and there is no wp target => hide it.
-            hide(t, "prepareSurfaceLocked");
-        } else if (w.isParentWindowHidden() || !w.isOnScreen()) {
+        if (w.isParentWindowHidden() || !w.isOnScreen()) {
             hide(t, "prepareSurfaceLocked");
             mWallpaperControllerLocked.hideWallpapers(w);
 
@@ -755,12 +625,8 @@ class WindowStateAnimator {
             if (prepared && mDrawState == HAS_DRAWN) {
                 if (mLastHidden) {
                     if (showSurfaceRobustlyLocked(t)) {
-                        markPreservedSurfaceForDestroy();
                         mAnimator.requestRemovalOfReplacedWindows(w);
                         mLastHidden = false;
-                        if (mIsWallpaper) {
-                            w.dispatchWallpaperVisibility(true);
-                        }
                         final DisplayContent displayContent = w.getDisplayContent();
                         if (!displayContent.getLastHasContent()) {
                             // This draw means the difference between unique content and mirroring.
@@ -790,7 +656,7 @@ class WindowStateAnimator {
 
         if (w.getOrientationChanging()) {
             if (!w.isDrawn()) {
-                mAnimator.mBulkUpdateParams &= ~SET_ORIENTATION_CHANGE_COMPLETE;
+                w.mWmService.mRoot.mOrientationChangeComplete = false;
                 mAnimator.mLastWindowFreezeSource = w;
                 ProtoLog.v(WM_DEBUG_ORIENTATION,
                         "Orientation continue waiting for draw in %s", w);
@@ -803,14 +669,6 @@ class WindowStateAnimator {
         if (displayed) {
             w.mToken.hasVisible = true;
         }
-    }
-
-    void setTransparentRegionHintLocked(final Region region) {
-        if (mSurfaceController == null) {
-            Slog.w(TAG, "setTransparentRegionHint: null mSurface after mHasSurface true");
-            return;
-        }
-        mSurfaceController.setTransparentRegionHint(region);
     }
 
     boolean setWallpaperOffset(int dx, int dy, float scale) {
@@ -916,20 +774,6 @@ class WindowStateAnimator {
         if (!shown)
             return false;
 
-        // If we had a preserved surface it's no longer needed, and it may be harmful
-        // if we are transparent.
-        if (mPendingDestroySurface != null && mDestroyPreservedSurfaceUponRedraw) {
-            final SurfaceControl pendingSurfaceControl = mPendingDestroySurface.mSurfaceControl;
-            mPostDrawTransaction.reparent(pendingSurfaceControl, null);
-            // If the children are detached, we don't want to reparent them to the new surface.
-            // Instead let the children get removed when the old surface is deleted.
-            if (!mPendingDestroySurface.mChildrenDetached) {
-                mPostDrawTransaction.reparentChildren(
-                        mPendingDestroySurface.mSurfaceControl,
-                        mSurfaceController.mSurfaceControl);
-            }
-        }
-
         t.merge(mPostDrawTransaction);
         return true;
     }
@@ -957,7 +801,7 @@ class WindowStateAnimator {
         }
 
         if (mService.mAccessibilityController != null) {
-            mService.mAccessibilityController.onWindowTransitionLocked(mWin, transit);
+            mService.mAccessibilityController.onWindowTransition(mWin, transit);
         }
     }
 
@@ -1069,13 +913,6 @@ class WindowStateAnimator {
             pw.println();
         }
 
-        if (mPendingDestroySurface != null) {
-            pw.print(prefix); pw.print("mPendingDestroySurface=");
-                    pw.println(mPendingDestroySurface);
-        }
-        if (mSurfaceDestroyDeferred) {
-                    pw.print(" mSurfaceDestroyDeferred="); pw.println(mSurfaceDestroyDeferred);
-        }
         if (mShownAlpha != 1 || mAlpha != 1 || mLastAlpha != 1) {
             pw.print(prefix); pw.print("mShownAlpha="); pw.print(mShownAlpha);
                     pw.print(" mAlpha="); pw.print(mAlpha);
@@ -1119,18 +956,6 @@ class WindowStateAnimator {
             mWin.setHasSurface(false);
             mSurfaceController = null;
             mDrawState = NO_SURFACE;
-        }
-    }
-
-    void detachChildren(SurfaceControl.Transaction t) {
-
-        // Do not detach children of starting windows, as their lifecycle is well under control and
-        // it may lead to issues in case we relaunch when we just added the starting window.
-        if (mWin.mAttrs.type == TYPE_APPLICATION_STARTING) {
-            return;
-        }
-        if (mSurfaceController != null) {
-            mSurfaceController.detachChildren(t);
         }
     }
 

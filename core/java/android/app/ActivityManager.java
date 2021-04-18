@@ -50,7 +50,9 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Point;
+import android.graphics.Rect;
 import android.graphics.drawable.Icon;
+import android.hardware.HardwareBuffer;
 import android.os.BatteryStats;
 import android.os.Binder;
 import android.os.Build;
@@ -76,6 +78,7 @@ import android.util.Singleton;
 import android.util.Size;
 import android.util.TypedXmlPullParser;
 import android.util.TypedXmlSerializer;
+import android.window.TaskSnapshot;
 
 import com.android.internal.app.LocalePicker;
 import com.android.internal.app.procstats.ProcessStats;
@@ -508,6 +511,7 @@ public class ActivityManager {
     /** @hide Process is hosting the current top activities.  Note that this covers
      * all activities that are visible to the user. */
     @UnsupportedAppUsage
+    @TestApi
     public static final int PROCESS_STATE_TOP = ProcessStateEnum.TOP;
 
     /** @hide Process is bound to a TOP app. */
@@ -515,6 +519,7 @@ public class ActivityManager {
 
     /** @hide Process is hosting a foreground service. */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+    @TestApi
     public static final int PROCESS_STATE_FOREGROUND_SERVICE = ProcessStateEnum.FOREGROUND_SERVICE;
 
     /** @hide Process is hosting a foreground service due to a system binding. */
@@ -613,11 +618,16 @@ public class ActivityManager {
     @TestApi
     public static final int PROCESS_CAPABILITY_FOREGROUND_MICROPHONE = 1 << 2;
 
+    /** @hide Process can access network despite any power saving resrictions */
+    @TestApi
+    public static final int PROCESS_CAPABILITY_NETWORK = 1 << 3;
+
     /** @hide all capabilities, the ORing of all flags in {@link ProcessCapability}*/
     @TestApi
     public static final int PROCESS_CAPABILITY_ALL = PROCESS_CAPABILITY_FOREGROUND_LOCATION
             | PROCESS_CAPABILITY_FOREGROUND_CAMERA
-            | PROCESS_CAPABILITY_FOREGROUND_MICROPHONE;
+            | PROCESS_CAPABILITY_FOREGROUND_MICROPHONE
+            | PROCESS_CAPABILITY_NETWORK;
     /**
      * All explicit capabilities. These are capabilities that need to be specified from manifest
      * file.
@@ -643,6 +653,15 @@ public class ActivityManager {
         pw.print((caps & PROCESS_CAPABILITY_FOREGROUND_LOCATION) != 0 ? 'L' : '-');
         pw.print((caps & PROCESS_CAPABILITY_FOREGROUND_CAMERA) != 0 ? 'C' : '-');
         pw.print((caps & PROCESS_CAPABILITY_FOREGROUND_MICROPHONE) != 0 ? 'M' : '-');
+        pw.print((caps & PROCESS_CAPABILITY_NETWORK) != 0 ? 'N' : '-');
+    }
+
+    /** @hide */
+    public static void printCapabilitiesSummary(StringBuilder sb, @ProcessCapability int caps) {
+        sb.append((caps & PROCESS_CAPABILITY_FOREGROUND_LOCATION) != 0 ? 'L' : '-');
+        sb.append((caps & PROCESS_CAPABILITY_FOREGROUND_CAMERA) != 0 ? 'C' : '-');
+        sb.append((caps & PROCESS_CAPABILITY_FOREGROUND_MICROPHONE) != 0 ? 'M' : '-');
+        sb.append((caps & PROCESS_CAPABILITY_NETWORK) != 0 ? 'N' : '-');
     }
 
     /**
@@ -653,11 +672,19 @@ public class ActivityManager {
         printCapabilitiesSummary(pw, caps);
         final int remain = caps & ~(PROCESS_CAPABILITY_FOREGROUND_LOCATION
                 | PROCESS_CAPABILITY_FOREGROUND_CAMERA
-                | PROCESS_CAPABILITY_FOREGROUND_MICROPHONE);
+                | PROCESS_CAPABILITY_FOREGROUND_MICROPHONE
+                | PROCESS_CAPABILITY_NETWORK);
         if (remain != 0) {
             pw.print('+');
             pw.print(remain);
         }
+    }
+
+    /** @hide */
+    public static String getCapabilitiesSummary(@ProcessCapability int caps) {
+        final StringBuilder sb = new StringBuilder();
+        printCapabilitiesSummary(sb, caps);
+        return sb.toString();
     }
 
     // NOTE: If PROCESS_STATEs are added, then new fields must be added
@@ -1072,13 +1099,15 @@ public class ActivityManager {
         private static final String ATTR_TASKDESCRIPTIONCOLOR_PRIMARY =
                 ATTR_TASKDESCRIPTION_PREFIX + "color";
         private static final String ATTR_TASKDESCRIPTIONCOLOR_BACKGROUND =
-                ATTR_TASKDESCRIPTION_PREFIX + "colorBackground";
+                ATTR_TASKDESCRIPTION_PREFIX + "color_background";
         private static final String ATTR_TASKDESCRIPTIONICON_FILENAME =
                 ATTR_TASKDESCRIPTION_PREFIX + "icon_filename";
         private static final String ATTR_TASKDESCRIPTIONICON_RESOURCE =
                 ATTR_TASKDESCRIPTION_PREFIX + "icon_resource";
         private static final String ATTR_TASKDESCRIPTIONICON_RESOURCE_PACKAGE =
                 ATTR_TASKDESCRIPTION_PREFIX + "icon_package";
+        private static final String ATTR_TASKDESCRIPTIONCOLOR_BACKGROUND_FLOATING =
+                ATTR_TASKDESCRIPTION_PREFIX + "color_background_floating";
 
         private String mLabel;
         @Nullable
@@ -1086,6 +1115,7 @@ public class ActivityManager {
         private String mIconFilename;
         private int mColorPrimary;
         private int mColorBackground;
+        private int mColorBackgroundFloating;
         private int mStatusBarColor;
         private int mNavigationBarColor;
         private boolean mEnsureStatusBarContrastWhenTransparent;
@@ -1106,7 +1136,7 @@ public class ActivityManager {
          */
         public TaskDescription(String label, @DrawableRes int iconRes, int colorPrimary) {
             this(label, Icon.createWithResource(ActivityThread.currentPackageName(), iconRes),
-                    colorPrimary, 0, 0, 0, false, false, RESIZE_MODE_RESIZEABLE, -1, -1);
+                    colorPrimary, 0, 0, 0, false, false, RESIZE_MODE_RESIZEABLE, -1, -1, 0);
             if ((colorPrimary != 0) && (Color.alpha(colorPrimary) != 255)) {
                 throw new RuntimeException("A TaskDescription's primary color should be opaque");
             }
@@ -1121,7 +1151,7 @@ public class ActivityManager {
          */
         public TaskDescription(String label, @DrawableRes int iconRes) {
             this(label, Icon.createWithResource(ActivityThread.currentPackageName(), iconRes),
-                    0, 0, 0, 0, false, false, RESIZE_MODE_RESIZEABLE, -1, -1);
+                    0, 0, 0, 0, false, false, RESIZE_MODE_RESIZEABLE, -1, -1, 0);
         }
 
         /**
@@ -1130,14 +1160,14 @@ public class ActivityManager {
          * @param label A label and description of the current state of this activity.
          */
         public TaskDescription(String label) {
-            this(label, null, 0, 0, 0, 0, false, false, RESIZE_MODE_RESIZEABLE, -1, -1);
+            this(label, null, 0, 0, 0, 0, false, false, RESIZE_MODE_RESIZEABLE, -1, -1, 0);
         }
 
         /**
          * Creates an empty TaskDescription.
          */
         public TaskDescription() {
-            this(null, null, 0, 0, 0, 0, false, false, RESIZE_MODE_RESIZEABLE, -1, -1);
+            this(null, null, 0, 0, 0, 0, false, false, RESIZE_MODE_RESIZEABLE, -1, -1, 0);
         }
 
         /**
@@ -1152,7 +1182,7 @@ public class ActivityManager {
         @Deprecated
         public TaskDescription(String label, Bitmap icon, int colorPrimary) {
             this(label, icon != null ? Icon.createWithBitmap(icon) : null, colorPrimary, 0, 0, 0,
-                    false, false, RESIZE_MODE_RESIZEABLE, -1, -1);
+                    false, false, RESIZE_MODE_RESIZEABLE, -1, -1, 0);
             if ((colorPrimary != 0) && (Color.alpha(colorPrimary) != 255)) {
                 throw new RuntimeException("A TaskDescription's primary color should be opaque");
             }
@@ -1168,7 +1198,7 @@ public class ActivityManager {
         @Deprecated
         public TaskDescription(String label, Bitmap icon) {
             this(label, icon != null ? Icon.createWithBitmap(icon) : null, 0, 0, 0, 0, false, false,
-                    RESIZE_MODE_RESIZEABLE, -1, -1);
+                    RESIZE_MODE_RESIZEABLE, -1, -1, 0);
         }
 
         /** @hide */
@@ -1177,7 +1207,7 @@ public class ActivityManager {
                 int statusBarColor, int navigationBarColor,
                 boolean ensureStatusBarContrastWhenTransparent,
                 boolean ensureNavigationBarContrastWhenTransparent, int resizeMode, int minWidth,
-                int minHeight) {
+                int minHeight, int colorBackgroundFloating) {
             mLabel = label;
             mIcon = icon;
             mColorPrimary = colorPrimary;
@@ -1190,6 +1220,7 @@ public class ActivityManager {
             mResizeMode = resizeMode;
             mMinWidth = minWidth;
             mMinHeight = minHeight;
+            mColorBackgroundFloating = colorBackgroundFloating;
         }
 
         /**
@@ -1217,6 +1248,7 @@ public class ActivityManager {
             mResizeMode = other.mResizeMode;
             mMinWidth = other.mMinWidth;
             mMinHeight = other.mMinHeight;
+            mColorBackgroundFloating = other.mColorBackgroundFloating;
         }
 
         /**
@@ -1252,6 +1284,9 @@ public class ActivityManager {
             }
             if (other.mMinHeight != -1) {
                 mMinHeight = other.mMinHeight;
+            }
+            if (other.mColorBackgroundFloating != 0) {
+                mColorBackgroundFloating = other.mColorBackgroundFloating;
             }
         }
 
@@ -1289,6 +1324,19 @@ public class ActivityManager {
                 throw new RuntimeException("A TaskDescription's background color should be opaque");
             }
             mColorBackground = backgroundColor;
+        }
+
+        /**
+         * Sets the background color floating for this task description.
+         * @hide
+         */
+        public void setBackgroundColorFloating(int backgroundColor) {
+            // Ensure that the given color is valid
+            if ((backgroundColor != 0) && (Color.alpha(backgroundColor) != 255)) {
+                throw new RuntimeException(
+                        "A TaskDescription's background color floating should be opaque");
+            }
+            mColorBackgroundFloating = backgroundColor;
         }
 
         /**
@@ -1461,6 +1509,14 @@ public class ActivityManager {
         }
 
         /**
+         * @return The background color floating.
+         * @hide
+         */
+        public int getBackgroundColorFloating() {
+            return mColorBackgroundFloating;
+        }
+
+        /**
          * @hide
          */
         public int getStatusBarColor() {
@@ -1537,6 +1593,10 @@ public class ActivityManager {
             if (mColorBackground != 0) {
                 out.attributeIntHex(null, ATTR_TASKDESCRIPTIONCOLOR_BACKGROUND, mColorBackground);
             }
+            if (mColorBackgroundFloating != 0) {
+                out.attributeIntHex(null, ATTR_TASKDESCRIPTIONCOLOR_BACKGROUND_FLOATING,
+                        mColorBackgroundFloating);
+            }
             if (mIconFilename != null) {
                 out.attribute(null, ATTR_TASKDESCRIPTIONICON_FILENAME, mIconFilename);
             }
@@ -1562,6 +1622,11 @@ public class ActivityManager {
                     ATTR_TASKDESCRIPTIONCOLOR_BACKGROUND, 0);
             if (colorBackground != 0) {
                 setBackgroundColor(colorBackground);
+            }
+            final int colorBackgroundFloating = in.getAttributeIntHex(null,
+                    ATTR_TASKDESCRIPTIONCOLOR_BACKGROUND_FLOATING, 0);
+            if (colorBackgroundFloating != 0) {
+                setBackgroundColorFloating(colorBackgroundFloating);
             }
             final String iconFilename = in.getAttributeValue(null,
                     ATTR_TASKDESCRIPTIONICON_FILENAME);
@@ -1615,6 +1680,7 @@ public class ActivityManager {
                 dest.writeInt(1);
                 dest.writeString(mIconFilename);
             }
+            dest.writeInt(mColorBackgroundFloating);
         }
 
         public void readFromParcel(Parcel source) {
@@ -1632,6 +1698,7 @@ public class ActivityManager {
             mMinWidth = source.readInt();
             mMinHeight = source.readInt();
             mIconFilename = source.readInt() > 0 ? source.readString() : null;
+            mColorBackgroundFloating = source.readInt();
         }
 
         public static final @android.annotation.NonNull Creator<TaskDescription> CREATOR
@@ -1655,7 +1722,8 @@ public class ActivityManager {
                     + (mEnsureNavigationBarContrastWhenTransparent
                             ? " (contrast when transparent)" : "")
                     + " resizeMode: " + ActivityInfo.resizeModeToString(mResizeMode)
-                    + " minWidth: " + mMinWidth + " minHeight: " + mMinHeight;
+                    + " minWidth: " + mMinWidth + " minHeight: " + mMinHeight
+                    + " colorBackgrounFloating: " + mColorBackgroundFloating;
         }
 
         @Override
@@ -1678,7 +1746,8 @@ public class ActivityManager {
                             == other.mEnsureNavigationBarContrastWhenTransparent
                     && mResizeMode == other.mResizeMode
                     && mMinWidth == other.mMinWidth
-                    && mMinHeight == other.mMinHeight;
+                    && mMinHeight == other.mMinHeight
+                    && mColorBackgroundFloating == other.mColorBackgroundFloating;
         }
 
         /** @hide */
@@ -1697,6 +1766,62 @@ public class ActivityManager {
      * started or visited.
      */
     public static class RecentTaskInfo extends TaskInfo implements Parcelable {
+        /**
+         * @hide
+         */
+        public static class PersistedTaskSnapshotData {
+            /**
+             * The bounds of the task when the last snapshot was taken, may be null if the task is
+             * not yet attached to the hierarchy.
+             * @see {@link android.window.TaskSnapshot#mTaskSize}.
+             * @hide
+             */
+            public @Nullable Point taskSize;
+
+            /**
+             * The content insets of the task when the task snapshot was taken.
+             * @see {@link android.window.TaskSnapshot#mContentInsets}.
+             * @hide
+             */
+            public @Nullable Rect contentInsets;
+
+            /**
+             * The size of the last snapshot taken, may be null if there is no associated snapshot.
+             * @see {@link android.window.TaskSnapshot#mSnapshot}.
+             * @hide
+             */
+            public @Nullable Point bufferSize;
+
+            /**
+             * Sets the data from the other data.
+             * @hide
+             */
+            public void set(PersistedTaskSnapshotData other) {
+                taskSize = other.taskSize;
+                contentInsets = other.contentInsets;
+                bufferSize = other.bufferSize;
+            }
+
+            /**
+             * Sets the data from the provided {@param snapshot}.
+             * @hide
+             */
+            public void set(TaskSnapshot snapshot) {
+                if (snapshot == null) {
+                    taskSize = null;
+                    contentInsets = null;
+                    bufferSize = null;
+                    return;
+                }
+                final HardwareBuffer buffer = snapshot.getHardwareBuffer();
+                taskSize = new Point(snapshot.getTaskSize());
+                contentInsets = new Rect(snapshot.getContentInsets());
+                bufferSize = buffer != null
+                        ? new Point(buffer.getWidth(), buffer.getHeight())
+                        : null;
+            }
+        }
+
         /**
          * If this task is currently running, this is the identifier for it.
          * If it is not running, this will be -1.
@@ -1740,6 +1865,12 @@ public class ActivityManager {
          */
         public ArrayList<RecentTaskInfo> childrenTaskInfos = new ArrayList<>();
 
+        /**
+         * Information about the last snapshot taken for this task.
+         * @hide
+         */
+        public PersistedTaskSnapshotData lastSnapshotData = new PersistedTaskSnapshotData();
+
         public RecentTaskInfo() {
         }
 
@@ -1756,6 +1887,9 @@ public class ActivityManager {
             id = source.readInt();
             persistentId = source.readInt();
             childrenTaskInfos = source.readArrayList(RecentTaskInfo.class.getClassLoader());
+            lastSnapshotData.taskSize = source.readTypedObject(Point.CREATOR);
+            lastSnapshotData.contentInsets = source.readTypedObject(Rect.CREATOR);
+            lastSnapshotData.bufferSize = source.readTypedObject(Point.CREATOR);
             super.readFromParcel(source);
         }
 
@@ -1764,6 +1898,9 @@ public class ActivityManager {
             dest.writeInt(id);
             dest.writeInt(persistentId);
             dest.writeList(childrenTaskInfos);
+            dest.writeTypedObject(lastSnapshotData.taskSize, flags);
+            dest.writeTypedObject(lastSnapshotData.contentInsets, flags);
+            dest.writeTypedObject(lastSnapshotData.bufferSize, flags);
             super.writeToParcel(dest, flags);
         }
 
@@ -1783,7 +1920,6 @@ public class ActivityManager {
         public void dump(PrintWriter pw, String indent) {
             pw.println(); pw.print("   ");
             pw.print(" id="); pw.print(persistentId);
-            pw.print(" stackId="); pw.print(stackId);
             pw.print(" userId="); pw.print(userId);
             pw.print(" hasTask="); pw.print((id != -1));
             pw.print(" lastActiveTime="); pw.println(lastActiveTime);
@@ -1826,8 +1962,16 @@ public class ActivityManager {
                 pw.print(ActivityInfo.resizeModeToString(td.getResizeMode()));
                 pw.print(" minWidth="); pw.print(td.getMinWidth());
                 pw.print(" minHeight="); pw.print(td.getMinHeight());
+                pw.print(" colorBackgroundFloating=#");
+                pw.print(Integer.toHexString(td.getBackgroundColorFloating()));
                 pw.println(" }");
             }
+            pw.print("   ");
+            pw.print(" lastSnapshotData {");
+            pw.print(" taskSize=" + lastSnapshotData.taskSize);
+            pw.print(" contentInsets=" + lastSnapshotData.contentInsets);
+            pw.print(" bufferSize=" + lastSnapshotData.bufferSize);
+            pw.println(" }");
         }
     }
 
@@ -3291,6 +3435,36 @@ public class ActivityManager {
     }
 
     /**
+     * Returns the process state of this uid.
+     *
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(Manifest.permission.PACKAGE_USAGE_STATS)
+    public int getUidProcessState(int uid) {
+        try {
+            return getService().getUidProcessState(uid, mContext.getOpPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Returns the process capability of this uid.
+     *
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(Manifest.permission.PACKAGE_USAGE_STATS)
+    public @ProcessCapability int getUidProcessCapabilities(int uid) {
+        try {
+            return getService().getUidProcessCapabilities(uid, mContext.getOpPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Return the importance of a given package name, based on the processes that are
      * currently running.  The return value is one of the importance constants defined
      * in {@link RunningAppProcessInfo}, giving you the highest importance of all the
@@ -4365,6 +4539,80 @@ public class ActivityManager {
         }
     }
 
+    /** @hide */
+    public static String procStateToString(int procState) {
+        final String procStateStr;
+        switch (procState) {
+            case ActivityManager.PROCESS_STATE_PERSISTENT:
+                procStateStr = "PER ";
+                break;
+            case ActivityManager.PROCESS_STATE_PERSISTENT_UI:
+                procStateStr = "PERU";
+                break;
+            case ActivityManager.PROCESS_STATE_TOP:
+                procStateStr = "TOP ";
+                break;
+            case ActivityManager.PROCESS_STATE_BOUND_TOP:
+                procStateStr = "BTOP";
+                break;
+            case ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE:
+                procStateStr = "FGS ";
+                break;
+            case ActivityManager.PROCESS_STATE_BOUND_FOREGROUND_SERVICE:
+                procStateStr = "BFGS";
+                break;
+            case ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND:
+                procStateStr = "IMPF";
+                break;
+            case ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND:
+                procStateStr = "IMPB";
+                break;
+            case ActivityManager.PROCESS_STATE_TRANSIENT_BACKGROUND:
+                procStateStr = "TRNB";
+                break;
+            case ActivityManager.PROCESS_STATE_BACKUP:
+                procStateStr = "BKUP";
+                break;
+            case ActivityManager.PROCESS_STATE_SERVICE:
+                procStateStr = "SVC ";
+                break;
+            case ActivityManager.PROCESS_STATE_RECEIVER:
+                procStateStr = "RCVR";
+                break;
+            case ActivityManager.PROCESS_STATE_TOP_SLEEPING:
+                procStateStr = "TPSL";
+                break;
+            case ActivityManager.PROCESS_STATE_HEAVY_WEIGHT:
+                procStateStr = "HVY ";
+                break;
+            case ActivityManager.PROCESS_STATE_HOME:
+                procStateStr = "HOME";
+                break;
+            case ActivityManager.PROCESS_STATE_LAST_ACTIVITY:
+                procStateStr = "LAST";
+                break;
+            case ActivityManager.PROCESS_STATE_CACHED_ACTIVITY:
+                procStateStr = "CAC ";
+                break;
+            case ActivityManager.PROCESS_STATE_CACHED_ACTIVITY_CLIENT:
+                procStateStr = "CACC";
+                break;
+            case ActivityManager.PROCESS_STATE_CACHED_RECENT:
+                procStateStr = "CRE ";
+                break;
+            case ActivityManager.PROCESS_STATE_CACHED_EMPTY:
+                procStateStr = "CEM ";
+                break;
+            case ActivityManager.PROCESS_STATE_NONEXISTENT:
+                procStateStr = "NONE";
+                break;
+            default:
+                procStateStr = "??";
+                break;
+        }
+        return procStateStr;
+    }
+
     /**
      * The AppTask allows you to manage your own application's tasks.
      * See {@link android.app.ActivityManager#getAppTasks()}
@@ -4560,5 +4808,72 @@ public class ActivityManager {
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
+    }
+
+    /**
+     * A subset of immutable pending intent information suitable for caching on the client side.
+     *
+     * @hide
+     */
+    public static final class PendingIntentInfo implements Parcelable {
+
+        private final String mCreatorPackage;
+        private final int mCreatorUid;
+        private final boolean mImmutable;
+        private final int mIntentSenderType;
+
+        public PendingIntentInfo(String creatorPackage, int creatorUid, boolean immutable,
+                int intentSenderType) {
+            mCreatorPackage = creatorPackage;
+            mCreatorUid = creatorUid;
+            mImmutable = immutable;
+            mIntentSenderType = intentSenderType;
+        }
+
+        public String getCreatorPackage() {
+            return mCreatorPackage;
+        }
+
+        public int getCreatorUid() {
+            return mCreatorUid;
+        }
+
+        public boolean isImmutable() {
+            return mImmutable;
+        }
+
+        public int getIntentSenderType() {
+            return mIntentSenderType;
+        }
+
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+
+        @Override
+        public void writeToParcel(@NonNull Parcel parcel, int flags) {
+            parcel.writeString(mCreatorPackage);
+            parcel.writeInt(mCreatorUid);
+            parcel.writeBoolean(mImmutable);
+            parcel.writeInt(mIntentSenderType);
+        }
+
+        public static final @NonNull Creator<PendingIntentInfo> CREATOR =
+                new Creator<PendingIntentInfo>() {
+                    @Override
+                    public PendingIntentInfo createFromParcel(Parcel in) {
+                        return new PendingIntentInfo(
+                                /* creatorPackage= */ in.readString(),
+                                /* creatorUid= */ in.readInt(),
+                                /* immutable= */ in.readBoolean(),
+                                /* intentSenderType= */ in.readInt());
+                    }
+
+                    @Override
+                    public PendingIntentInfo[] newArray(int size) {
+                        return new PendingIntentInfo[size];
+                    }
+                };
     }
 }

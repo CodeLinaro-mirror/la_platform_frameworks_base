@@ -3589,6 +3589,7 @@ public final class MotionEvent extends InputEvent implements Parcelable {
             msg.append(", deviceId=").append(getDeviceId());
             msg.append(", source=0x").append(Integer.toHexString(getSource()));
             msg.append(", displayId=").append(getDisplayId());
+            msg.append(", eventId=").append(getId());
         }
         msg.append(" }");
         return msg.toString();
@@ -3766,6 +3767,41 @@ public final class MotionEvent extends InputEvent implements Parcelable {
             return false;
         }
         return (getButtonState() & button) == button;
+    }
+
+    /**
+     * Gets a rotation matrix that (when applied to a motionevent) will rotate that motion event
+     * such that the result coordinates end up in the same physical location on a display whose
+     * coordinates are rotated by `rotation`.
+     *
+     * For example, rotating 0,0 by 90 degrees will move a point from the physical top-left to
+     * the bottom-left of the 90-degree-rotated display.
+     *
+     * @hide
+     */
+    public static Matrix createRotateMatrix(
+            @Surface.Rotation int rotation, int displayW, int displayH) {
+        if (rotation == Surface.ROTATION_0) {
+            return new Matrix(Matrix.IDENTITY_MATRIX);
+        }
+        // values is row-major
+        float[] values = null;
+        if (rotation == Surface.ROTATION_90) {
+            values = new float[]{0, 1, 0,
+                    -1, 0, displayH,
+                    0, 0, 1};
+        } else if (rotation == Surface.ROTATION_180) {
+            values = new float[]{-1, 0, displayW,
+                    0, -1, displayH,
+                    0, 0, 1};
+        } else if (rotation == Surface.ROTATION_270) {
+            values = new float[]{0, -1, displayW,
+                    1, 0, 0,
+                    0, 0, 1};
+        }
+        Matrix toOrient = new Matrix();
+        toOrient.setValues(values);
+        return toOrient;
     }
 
     public static final @android.annotation.NonNull Parcelable.Creator<MotionEvent> CREATOR

@@ -16,7 +16,48 @@
 
 package android.hardware.devicestate;
 
+import android.hardware.devicestate.DeviceStateInfo;
+
 /** @hide */
 interface IDeviceStateManagerCallback {
-    oneway void onDeviceStateChanged(int deviceState);
+    /**
+     * Called in response to a change in {@link DeviceStateInfo}. Guaranteed to be called once
+     * after successful registration of the callback with the initial value.
+     *
+     * @param info the new device state info.
+     *
+     * @see DeviceStateInfo
+     */
+    oneway void onDeviceStateInfoChanged(in DeviceStateInfo info);
+
+    /**
+     * Called to notify the callback that a request has become active. Guaranteed to be called
+     * after a subsequent call to {@link #onDeviceStateInfoChanged(DeviceStateInfo)} if the request
+     * becoming active resulted in a change of device state info.
+     *
+     * @param token the request token previously registered with
+     *        {@link IDeviceStateManager#requestState(IBinder, int, int)}
+     */
+    oneway void onRequestActive(IBinder token);
+
+    /**
+     * Called to notify the callback that a request has become suspended. Guaranteed to be called
+     * before a subsequent call to {@link #onDeviceStateInfoChanged(DeviceStateInfo)} if the request
+     * becoming suspended resulted in a change of device state info.
+     *
+     * @param token the request token previously registered with
+     *        {@link IDeviceStateManager#requestState(IBinder, int, int)}
+     */
+    oneway void onRequestSuspended(IBinder token);
+
+    /**
+     * Called to notify the callback that a request has become canceled. No further callbacks will
+     * be triggered for this request. Guaranteed to be called before a subsequent call to
+     * {@link #onDeviceStateInfoChanged(DeviceStateInfo)} if the request becoming canceled resulted
+     * in a change of device state info.
+     *
+     * @param token the request token previously registered with
+     *        {@link IDeviceStateManager#requestState(IBinder, int, int)}
+     */
+    oneway void onRequestCanceled(IBinder token);
 }

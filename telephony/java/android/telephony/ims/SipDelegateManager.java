@@ -24,6 +24,7 @@ import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.os.RemoteException;
 import android.os.ServiceSpecificException;
 import android.telephony.BinderCacheManager;
@@ -47,6 +48,9 @@ import java.util.concurrent.Executor;
  * This allows multiple IMS applications to forward SIP messages to/from their application for the
  * purposes of providing a single IMS registration to the carrier's IMS network from potentially
  * many IMS stacks implementing a subset of the supported MMTEL/RCS features.
+ * <p>
+ * This API is only supported if the device supports the
+ * {@link PackageManager#FEATURE_TELEPHONY_IMS_SINGLE_REGISTRATION} feature.
  * @hide
  */
 @SystemApi
@@ -269,8 +273,10 @@ public class SipDelegateManager {
      * {@link ImsException#getCode()} for more information.
      *
      * @see CarrierConfigManager.Ims#KEY_IMS_SINGLE_REGISTRATION_REQUIRED_BOOL
+     * @see PackageManager#FEATURE_TELEPHONY_IMS_SINGLE_REGISTRATION
      */
-    @RequiresPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
+    @RequiresPermission(anyOf = {Manifest.permission.READ_PRIVILEGED_PHONE_STATE,
+            Manifest.permission.PERFORM_IMS_SINGLE_REGISTRATION})
     public boolean isSupported() throws ImsException {
         try {
             IImsRcsController controller = mBinderCache.getBinder();
@@ -312,7 +318,7 @@ public class SipDelegateManager {
      * @throws ImsException Thrown if there was a problem communicating with the ImsService
      * associated with this SipDelegateManager. See {@link ImsException#getCode()}.
      */
-    @RequiresPermission(Manifest.permission.MODIFY_PHONE_STATE)
+    @RequiresPermission(Manifest.permission.PERFORM_IMS_SINGLE_REGISTRATION)
     public void createSipDelegate(@NonNull DelegateRequest request, @NonNull Executor executor,
             @NonNull DelegateConnectionStateCallback dc,
             @NonNull DelegateConnectionMessageCallback mc) throws ImsException {
@@ -346,7 +352,7 @@ public class SipDelegateManager {
      * @param delegateConnection The SipDelegateConnection to destroy.
      * @param reason The reason for why this SipDelegateConnection was destroyed.
      */
-    @RequiresPermission(Manifest.permission.MODIFY_PHONE_STATE)
+    @RequiresPermission(Manifest.permission.PERFORM_IMS_SINGLE_REGISTRATION)
     public void destroySipDelegate(@NonNull SipDelegateConnection delegateConnection,
             @SipDelegateDestroyReason int reason) {
 
@@ -387,6 +393,7 @@ public class SipDelegateManager {
      *         this condition. May be {@code null} if there was no reason String provided from the
      *         network.
      */
+    @RequiresPermission(Manifest.permission.PERFORM_IMS_SINGLE_REGISTRATION)
     public void triggerFullNetworkRegistration(@NonNull SipDelegateConnection connection,
             @IntRange(from = 100, to = 699) int sipCode, @Nullable String sipReason) {
         if (connection == null) {

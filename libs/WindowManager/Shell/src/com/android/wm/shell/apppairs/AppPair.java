@@ -34,6 +34,7 @@ import androidx.annotation.Nullable;
 import com.android.internal.protolog.common.ProtoLog;
 import com.android.wm.shell.ShellTaskOrganizer;
 import com.android.wm.shell.common.DisplayController;
+import com.android.wm.shell.common.DisplayImeController;
 import com.android.wm.shell.common.SyncTransactionQueue;
 import com.android.wm.shell.common.split.SplitLayout;
 
@@ -57,12 +58,14 @@ class AppPair implements ShellTaskOrganizer.TaskListener, SplitLayout.LayoutChan
     private final AppPairsController mController;
     private final SyncTransactionQueue mSyncQueue;
     private final DisplayController mDisplayController;
+    private final DisplayImeController mDisplayImeController;
     private SplitLayout mSplitLayout;
 
     AppPair(AppPairsController controller) {
         mController = controller;
         mSyncQueue = controller.getSyncTransactionQueue();
         mDisplayController = controller.getDisplayController();
+        mDisplayImeController = controller.getDisplayImeController();
     }
 
     int getRootTaskId() {
@@ -97,7 +100,7 @@ class AppPair implements ShellTaskOrganizer.TaskListener, SplitLayout.LayoutChan
         mSplitLayout = new SplitLayout(TAG + "SplitDivider",
                 mDisplayController.getDisplayContext(mRootTaskInfo.displayId),
                 mRootTaskInfo.configuration, this /* layoutChangeListener */,
-                b -> b.setParent(mRootTaskLeash));
+                b -> b.setParent(mRootTaskLeash), mDisplayImeController);
 
         final WindowContainerToken token1 = task1.token;
         final WindowContainerToken token2 = task2.token;
@@ -210,6 +213,19 @@ class AppPair implements ShellTaskOrganizer.TaskListener, SplitLayout.LayoutChan
             mController.unpair(mRootTaskInfo.taskId, false /* releaseToPool */);
         } else if (taskInfo.taskId == getTaskId1() || taskInfo.taskId == getTaskId2()) {
             mController.unpair(mRootTaskInfo.taskId);
+        }
+    }
+
+    @Override
+    public void attachChildSurfaceToTask(int taskId, SurfaceControl.Builder b) {
+        if (getRootTaskId() == taskId) {
+            b.setParent(mRootTaskLeash);
+        } else if (getTaskId1() == taskId) {
+            b.setParent(mTaskLeash1);
+        } else if (getTaskId2() == taskId) {
+            b.setParent(mTaskLeash2);
+        } else {
+            throw new IllegalArgumentException("There is no surface for taskId=" + taskId);
         }
     }
 

@@ -22,10 +22,13 @@ import android.telephony.SubscriptionInfo;
 import android.util.ArraySet;
 import android.util.Log;
 
+import com.android.settingslib.mobile.TelephonyIcons;
 import com.android.systemui.Dependency;
 import com.android.systemui.R;
 import com.android.systemui.statusbar.policy.NetworkController;
 import com.android.systemui.statusbar.policy.NetworkController.IconState;
+import com.android.systemui.statusbar.policy.NetworkController.MobileDataIndicators;
+import com.android.systemui.statusbar.policy.NetworkController.WifiIndicators;
 import com.android.systemui.statusbar.policy.NetworkControllerImpl;
 import com.android.systemui.statusbar.policy.SecurityController;
 import com.android.systemui.tuner.TunerService;
@@ -67,7 +70,8 @@ public class StatusBarSignalPolicy implements NetworkControllerImpl.SignalCallba
     private boolean mWifiVisible = false;
 
     private ArrayList<MobileIconState> mMobileStates = new ArrayList<MobileIconState>();
-    private ArrayList<NoCallingIconState> mNoCallingStates = new ArrayList<NoCallingIconState>();
+    private ArrayList<CallIndicatorIconState> mCallIndicatorStates =
+            new ArrayList<CallIndicatorIconState>();
     private WifiIconState mWifiIconState = new WifiIconState();
 
     public StatusBarSignalPolicy(Context context, StatusBarIconController iconController) {
@@ -141,24 +145,14 @@ public class StatusBarSignalPolicy implements NetworkControllerImpl.SignalCallba
     }
 
     @Override
-    public void setWifiIndicators(boolean enabled, IconState statusIcon, IconState qsIcon,
-            boolean activityIn, boolean activityOut, String description, boolean isTransient,
-            String statusLabel) {
+    public void setWifiIndicators(WifiIndicators indicators) {
         if (DEBUG) {
-            Log.d(TAG, "setWifiIndicators: "
-                    + "enabled = " + enabled + ","
-                    + "statusIcon = " + (statusIcon == null ? "" : statusIcon.toString()) + ","
-                    + "qsIcon = " + (qsIcon == null ? "" : qsIcon.toString()) + ","
-                    + "activityIn = " + activityIn + ","
-                    + "activityOut = " + activityOut + ","
-                    + "description = " + description + ","
-                    + "isTransient = " + isTransient + ","
-                    + "statusLabel = " + statusLabel);
+            Log.d(TAG, "setWifiIndicators: " + indicators);
         }
-        boolean visible = statusIcon.visible && !mHideWifi;
-        boolean in = activityIn && mActivityEnabled && visible;
-        boolean out = activityOut && mActivityEnabled && visible;
-        mIsWifiEnabled = enabled;
+        boolean visible = indicators.statusIcon.visible && !mHideWifi;
+        boolean in = indicators.activityIn && mActivityEnabled && visible;
+        boolean out = indicators.activityOut && mActivityEnabled && visible;
+        mIsWifiEnabled = indicators.enabled;
 
         WifiIconState newState = mWifiIconState.copy();
 
@@ -172,10 +166,10 @@ public class StatusBarSignalPolicy implements NetworkControllerImpl.SignalCallba
             newState.resId = R.drawable.ic_qs_no_internet_available;
         } else {
             newState.visible = visible;
-            newState.resId = statusIcon.icon;
+            newState.resId = indicators.statusIcon.icon;
             newState.activityIn = in;
             newState.activityOut = out;
-            newState.contentDescription = statusIcon.contentDescription;
+            newState.contentDescription = indicators.statusIcon.contentDescription;
             MobileIconState first = getFirstMobileState();
             newState.signalSpacerVisible = first != null && first.typeId != 0;
         }
@@ -201,58 +195,50 @@ public class StatusBarSignalPolicy implements NetworkControllerImpl.SignalCallba
     }
 
     @Override
-    public void setNoCallingStatus(boolean noCalling, int subId) {
+    public void setCallIndicator(IconState statusIcon, int subId) {
         if (DEBUG) {
-            Log.d(TAG, "setNoCallingStatus: "
-                    + "noCalling = " + noCalling + ","
+            Log.d(TAG, "setCallIndicator: "
+                    + "statusIcon = " + statusIcon + ","
                     + "subId = " + subId);
         }
-        NoCallingIconState state = getNoCallingState(subId);
+        CallIndicatorIconState state = getNoCallingState(subId);
         if (state == null) {
             return;
         }
-        state.visible = noCalling;
-        mIconController.setNoCallingIcons(
-                mSlotNoCalling, NoCallingIconState.copyStates(mNoCallingStates));
+        if (statusIcon.icon == R.drawable.ic_qs_no_calling_sms) {
+            state.isNoCalling = statusIcon.visible;
+            state.noCallingDescription = statusIcon.contentDescription;
+        } else {
+            state.callStrengthResId = statusIcon.icon;
+            state.callStrengthDescription = statusIcon.contentDescription;
+        }
+        mIconController.setCallIndicatorIcons(
+                mSlotNoCalling, CallIndicatorIconState.copyStates(mCallIndicatorStates));
     }
 
     @Override
-    public void setMobileDataIndicators(IconState statusIcon, IconState qsIcon, int statusType,
-            int qsType, boolean activityIn, boolean activityOut,
-            CharSequence typeContentDescription,
-            CharSequence typeContentDescriptionHtml, CharSequence description,
-            boolean isWide, int subId, boolean roaming) {
+    public void setMobileDataIndicators(MobileDataIndicators indicators) {
         if (DEBUG) {
-            Log.d(TAG, "setMobileDataIndicators: "
-                    + "statusIcon = " + (statusIcon == null ? "" : statusIcon.toString()) + ","
-                    + "qsIcon = " + (qsIcon == null ? "" : qsIcon.toString()) + ","
-                    + "statusType = " + statusType + ","
-                    + "qsType = " + qsType + ","
-                    + "activityIn = " + activityIn + ","
-                    + "activityOut = " + activityOut + ","
-                    + "typeContentDescription = " + typeContentDescription + ","
-                    + "typeContentDescriptionHtml = " + typeContentDescriptionHtml + ","
-                    + "description = " + description + ","
-                    + "isWide = " + isWide + ","
-                    + "subId = " + subId + ","
-                    + "roaming = " + roaming);
+            Log.d(TAG, "setMobileDataIndicators: " + indicators);
         }
-        MobileIconState state = getState(subId);
+        MobileIconState state = getState(indicators.subId);
         if (state == null) {
             return;
         }
 
         // Visibility of the data type indicator changed
-        boolean typeChanged = statusType != state.typeId && (statusType == 0 || state.typeId == 0);
+        boolean typeChanged = indicators.statusType != state.typeId
+                && (indicators.statusType == 0 || state.typeId == 0);
 
-        state.visible = statusIcon.visible && !mHideMobile;
-        state.strengthId = statusIcon.icon;
-        state.typeId = statusType;
-        state.contentDescription = statusIcon.contentDescription;
-        state.typeContentDescription = typeContentDescription;
-        state.roaming = roaming;
-        state.activityIn = activityIn && mActivityEnabled;
-        state.activityOut = activityOut && mActivityEnabled;
+        state.visible = indicators.statusIcon.visible && !mHideMobile;
+        state.strengthId = indicators.statusIcon.icon;
+        state.typeId = indicators.statusType;
+        state.contentDescription = indicators.statusIcon.contentDescription;
+        state.typeContentDescription = indicators.typeContentDescription;
+        state.showTriangle = indicators.showTriangle;
+        state.roaming = indicators.roaming;
+        state.activityIn = indicators.activityIn && mActivityEnabled;
+        state.activityOut = indicators.activityOut && mActivityEnabled;
 
         if (DEBUG) {
             Log.d(TAG, "MobileIconStates: "
@@ -271,8 +257,8 @@ public class StatusBarSignalPolicy implements NetworkControllerImpl.SignalCallba
         }
     }
 
-    private NoCallingIconState getNoCallingState(int subId) {
-        for (NoCallingIconState state : mNoCallingStates) {
+    private CallIndicatorIconState getNoCallingState(int subId) {
+        for (CallIndicatorIconState state : mCallIndicatorStates) {
             if (state.subId == subId) {
                 return state;
             }
@@ -313,12 +299,26 @@ public class StatusBarSignalPolicy implements NetworkControllerImpl.SignalCallba
         }
 
         mIconController.removeAllIconsForSlot(mSlotMobile);
+        mIconController.removeAllIconsForSlot(mSlotNoCalling);
         mMobileStates.clear();
-        mNoCallingStates.clear();
+        List<CallIndicatorIconState> noCallingStates = new ArrayList<CallIndicatorIconState>();
+        noCallingStates.addAll(mCallIndicatorStates);
+        mCallIndicatorStates.clear();
         final int n = subs.size();
         for (int i = 0; i < n; i++) {
             mMobileStates.add(new MobileIconState(subs.get(i).getSubscriptionId()));
-            mNoCallingStates.add(new NoCallingIconState(subs.get(i).getSubscriptionId()));
+            boolean isNewSub = true;
+            for (CallIndicatorIconState state : noCallingStates) {
+                if (state.subId == subs.get(i).getSubscriptionId()) {
+                    mCallIndicatorStates.add(state);
+                    isNewSub = false;
+                    break;
+                }
+            }
+            if (isNewSub) {
+                mCallIndicatorStates.add(
+                        new CallIndicatorIconState(subs.get(i).getSubscriptionId()));
+            }
         }
     }
 
@@ -411,14 +411,18 @@ public class StatusBarSignalPolicy implements NetworkControllerImpl.SignalCallba
     /**
      * Stores the StatusBar state for no Calling & SMS.
      */
-    public static class NoCallingIconState {
-        public boolean visible;
-        public int resId;
+    public static class CallIndicatorIconState {
+        public boolean isNoCalling;
+        public int noCallingResId;
+        public int callStrengthResId;
         public int subId;
+        public String noCallingDescription;
+        public String callStrengthDescription;
 
-        private NoCallingIconState(int subId) {
+        private CallIndicatorIconState(int subId) {
             this.subId = subId;
-            this.resId = R.drawable.ic_qs_no_calling_sms;
+            this.noCallingResId = R.drawable.ic_qs_no_calling_sms;
+            this.callStrengthResId = TelephonyIcons.MOBILE_CALL_STRENGTH_ICONS[0];
         }
 
         @Override
@@ -427,27 +431,36 @@ public class StatusBarSignalPolicy implements NetworkControllerImpl.SignalCallba
             if (o == null || getClass() != o.getClass()) {
                 return false;
             }
-            NoCallingIconState that = (NoCallingIconState) o;
-            return visible == that.visible
-                    && resId == that.resId
-                    && subId == that.subId;
+            CallIndicatorIconState that = (CallIndicatorIconState) o;
+            return  isNoCalling == that.isNoCalling
+                    && noCallingResId == that.noCallingResId
+                    && callStrengthResId == that.callStrengthResId
+                    && subId == that.subId
+                    && noCallingDescription == that.noCallingDescription
+                    && callStrengthDescription == that.callStrengthDescription;
+
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(visible, resId, subId);
+            return Objects.hash(isNoCalling, noCallingResId,
+                    callStrengthResId, subId, noCallingDescription, callStrengthDescription);
         }
 
-        private void copyTo(NoCallingIconState other) {
-            other.visible = visible;
-            other.resId = resId;
+        private void copyTo(CallIndicatorIconState other) {
+            other.isNoCalling = isNoCalling;
+            other.noCallingResId = noCallingResId;
+            other.callStrengthResId = callStrengthResId;
             other.subId = subId;
+            other.noCallingDescription = noCallingDescription;
+            other.callStrengthDescription = callStrengthDescription;
         }
 
-        private static List<NoCallingIconState> copyStates(List<NoCallingIconState> inStates) {
-            ArrayList<NoCallingIconState> outStates = new ArrayList<>();
-            for (NoCallingIconState state : inStates) {
-                NoCallingIconState copy = new NoCallingIconState(state.subId);
+        private static List<CallIndicatorIconState> copyStates(
+                List<CallIndicatorIconState> inStates) {
+            ArrayList<CallIndicatorIconState> outStates = new ArrayList<>();
+            for (CallIndicatorIconState state : inStates) {
+                CallIndicatorIconState copy = new CallIndicatorIconState(state.subId);
                 state.copyTo(copy);
                 outStates.add(copy);
             }
@@ -551,6 +564,7 @@ public class StatusBarSignalPolicy implements NetworkControllerImpl.SignalCallba
         public int subId;
         public int strengthId;
         public int typeId;
+        public boolean showTriangle;
         public boolean roaming;
         public boolean needsLeadingPadding;
         public CharSequence typeContentDescription;
@@ -569,20 +583,21 @@ public class StatusBarSignalPolicy implements NetworkControllerImpl.SignalCallba
                 return false;
             }
             MobileIconState that = (MobileIconState) o;
-            return subId == that.subId &&
-                    strengthId == that.strengthId &&
-                    typeId == that.typeId &&
-                    roaming == that.roaming &&
-                    needsLeadingPadding == that.needsLeadingPadding &&
-                    Objects.equals(typeContentDescription, that.typeContentDescription);
+            return subId == that.subId
+                    && strengthId == that.strengthId
+                    && typeId == that.typeId
+                    && showTriangle == that.showTriangle
+                    && roaming == that.roaming
+                    && needsLeadingPadding == that.needsLeadingPadding
+                    && Objects.equals(typeContentDescription, that.typeContentDescription);
         }
 
         @Override
         public int hashCode() {
 
             return Objects
-                    .hash(super.hashCode(), subId, strengthId, typeId, roaming, needsLeadingPadding,
-                            typeContentDescription);
+                    .hash(super.hashCode(), subId, strengthId, typeId, showTriangle, roaming,
+                            needsLeadingPadding, typeContentDescription);
         }
 
         public MobileIconState copy() {
@@ -596,6 +611,7 @@ public class StatusBarSignalPolicy implements NetworkControllerImpl.SignalCallba
             other.subId = subId;
             other.strengthId = strengthId;
             other.typeId = typeId;
+            other.showTriangle = showTriangle;
             other.roaming = roaming;
             other.needsLeadingPadding = needsLeadingPadding;
             other.typeContentDescription = typeContentDescription;
@@ -613,8 +629,9 @@ public class StatusBarSignalPolicy implements NetworkControllerImpl.SignalCallba
         }
 
         @Override public String toString() {
-            return "MobileIconState(subId=" + subId + ", strengthId=" + strengthId + ", roaming="
-                    + roaming + ", typeId=" + typeId + ", visible=" + visible + ")";
+            return "MobileIconState(subId=" + subId + ", strengthId=" + strengthId
+                    + ", showTriangle=" + showTriangle + ", roaming=" + roaming
+                    + ", typeId=" + typeId + ", visible=" + visible + ")";
         }
     }
 }

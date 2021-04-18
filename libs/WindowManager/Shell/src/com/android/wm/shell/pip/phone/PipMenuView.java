@@ -32,7 +32,6 @@ import android.animation.AnimatorListenerAdapter;
 import android.animation.AnimatorSet;
 import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
-import android.annotation.Nullable;
 import android.app.PendingIntent.CanceledException;
 import android.app.RemoteAction;
 import android.content.ComponentName;
@@ -48,21 +47,20 @@ import android.os.Handler;
 import android.os.UserHandle;
 import android.util.Log;
 import android.util.Pair;
+import android.util.Size;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
-import android.view.SurfaceControl;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewRootImpl;
 import android.view.accessibility.AccessibilityManager;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.FrameLayout;
-import android.widget.ImageButton;
 import android.widget.LinearLayout;
 
 import com.android.wm.shell.R;
 import com.android.wm.shell.animation.Interpolators;
+import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.pip.PipUtils;
 
 import java.util.ArrayList;
@@ -75,9 +73,6 @@ public class PipMenuView extends FrameLayout {
 
     private static final String TAG = "PipMenuView";
 
-    private static final int MESSAGE_INVALID_TYPE = -1;
-    public static final int MESSAGE_MENU_EXPANDED = 8;
-
     private static final int INITIAL_DISMISS_DELAY = 3500;
     private static final int POST_INTERACTION_DISMISS_DELAY = 2000;
     private static final long MENU_FADE_DURATION = 125;
@@ -85,14 +80,11 @@ public class PipMenuView extends FrameLayout {
     private static final long MENU_SHOW_ON_EXPAND_START_DELAY = 30;
 
     private static final float MENU_BACKGROUND_ALPHA = 0.3f;
-    private static final float DISMISS_BACKGROUND_ALPHA = 0.6f;
-
     private static final float DISABLED_ACTION_ALPHA = 0.54f;
 
     private static final boolean ENABLE_RESIZE_HANDLE = false;
 
     private int mMenuState;
-    private boolean mResize = true;
     private boolean mAllowMenuTimeout = true;
     private boolean mAllowTouches = true;
 
@@ -116,7 +108,8 @@ public class PipMenuView extends FrameLayout {
                 }
             };
 
-    private Handler mHandler = new Handler();
+    private ShellExecutor mMainExecutor;
+    private Handler mMainHandler;
 
     private final Runnable mHideMenuRunnable = this::hideMenu;
 
@@ -127,10 +120,13 @@ public class PipMenuView extends FrameLayout {
     protected View mTopEndContainer;
     protected PipMenuIconsAlgorithm mPipMenuIconsAlgorithm;
 
-    public PipMenuView(Context context, PhonePipMenuController controller) {
+    public PipMenuView(Context context, PhonePipMenuController controller,
+            ShellExecutor mainExecutor, Handler mainHandler) {
         super(context, null, 0);
         mContext = context;
         mController = controller;
+        mMainExecutor = mainExecutor;
+        mMainHandler = mainHandler;
 
         mAccessibilityManager = context.getSystemService(AccessibilityManager.class);
         inflate(context, R.layout.pip_menu, this);
@@ -199,6 +195,11 @@ public class PipMenuView extends FrameLayout {
     }
 
     @Override
+    public boolean shouldDelayChildPressedState() {
+        return true;
+    }
+
+    @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
         if (!mAllowTouches) {
             return false;
@@ -230,7 +231,6 @@ public class PipMenuView extends FrameLayout {
                     && (mMenuState == MENU_STATE_FULL || menuState == MENU_STATE_FULL);
             mAllowTouches = !disallowTouchesUntilAnimationEnd;
             cancelDelayedHide();
-            updateActionViews(stackBounds);
             if (mMenuContainerAnimator != null) {
                 mMenuContainerAnimator.cancel();
             }
@@ -279,6 +279,7 @@ public class PipMenuView extends FrameLayout {
                 setVisibility(VISIBLE);
                 mMenuContainerAnimator.start();
             }
+            updateActionViews(stackBounds);
         } else {
             // If we are already visible, then just start the delayed dismiss and unregister any
             // existing input consumers from the previous drag
@@ -286,18 +287,6 @@ public class PipMenuView extends FrameLayout {
                 repostDelayedHide(POST_INTERACTION_DISMISS_DELAY);
             }
         }
-    }
-
-    @Nullable SurfaceControl getWindowSurfaceControl() {
-        final ViewRootImpl root = getViewRootImpl();
-        if (root == null) {
-            return null;
-        }
-        final SurfaceControl out = root.getSurfaceControl();
-        if (out != null && out.isValid()) {
-            return out;
-        }
-        return null;
     }
 
     /**
@@ -328,16 +317,21 @@ public class PipMenuView extends FrameLayout {
         hideMenu(null);
     }
 
+    void hideMenu(boolean animate, boolean resize) {
+        hideMenu(null, true /* notifyMenuVisibility */, animate, resize);
+    }
+
     void hideMenu(Runnable animationEndCallback) {
-        hideMenu(animationEndCallback, true /* notifyMenuVisibility */, true /* animate */);
+        hideMenu(animationEndCallback, true /* notifyMenuVisibility */, true /* animate */,
+                true /* resize */);
     }
 
     private void hideMenu(final Runnable animationFinishedRunnable, boolean notifyMenuVisibility,
-            boolean animate) {
+            boolean animate, boolean resize) {
         if (mMenuState != MENU_STATE_NONE) {
             cancelDelayedHide();
             if (notifyMenuVisibility) {
-                notifyMenuStateChange(MENU_STATE_NONE, mResize, null);
+                notifyMenuStateChange(MENU_STATE_NONE, resize, null);
             }
             mMenuContainerAnimator = new AnimatorSet();
             ObjectAnimator menuAnim = ObjectAnimator.ofFloat(mMenuContainer, View.ALPHA,
@@ -365,6 +359,21 @@ public class PipMenuView extends FrameLayout {
         }
     }
 
+    /**
+     * @return Estimated minimum {@link Size} to hold the actions.
+     *         See also {@link #updateActionViews(Rect)}
+     */
+    Size getEstimatedMinMenuSize() {
+        final int pipActionSize = getResources().getDimensionPixelSize(R.dimen.pip_action_size);
+        // the minimum width would be (2 * pipActionSize) since we have settings and dismiss button
+        // on the top action container.
+        final int width = Math.max(2, mActions.size()) * pipActionSize;
+        final int height = getResources().getDimensionPixelSize(R.dimen.pip_expand_action_size)
+                + getResources().getDimensionPixelSize(R.dimen.pip_action_padding)
+                + getResources().getDimensionPixelSize(R.dimen.pip_expand_container_edge_margin);
+        return new Size(width, height);
+    }
+
     void setActions(Rect stackBounds, List<RemoteAction> actions) {
         mActions.clear();
         mActions.addAll(actions);
@@ -379,15 +388,27 @@ public class PipMenuView extends FrameLayout {
             return true;
         });
 
-        if (mActions.isEmpty() || mMenuState == MENU_STATE_CLOSE) {
+        // Update the expand button only if it should show with the menu
+        expandContainer.setVisibility(mMenuState == MENU_STATE_FULL
+                ? View.VISIBLE
+                : View.INVISIBLE);
+
+        FrameLayout.LayoutParams expandedLp =
+                (FrameLayout.LayoutParams) expandContainer.getLayoutParams();
+        if (mActions.isEmpty() || mMenuState == MENU_STATE_CLOSE || mMenuState == MENU_STATE_NONE) {
             actionsContainer.setVisibility(View.INVISIBLE);
+
+            // Update the expand container margin to adjust the center of the expand button to
+            // account for the existence of the action container
+            expandedLp.topMargin = 0;
+            expandedLp.bottomMargin = 0;
         } else {
             actionsContainer.setVisibility(View.VISIBLE);
             if (mActionsGroup != null) {
                 // Ensure we have as many buttons as actions
                 final LayoutInflater inflater = LayoutInflater.from(mContext);
                 while (mActionsGroup.getChildCount() < mActions.size()) {
-                    final ImageButton actionView = (ImageButton) inflater.inflate(
+                    final PipMenuActionView actionView = (PipMenuActionView) inflater.inflate(
                             R.layout.pip_menu_action, mActionsGroup, false);
                     mActionsGroup.addView(actionView);
                 }
@@ -404,7 +425,8 @@ public class PipMenuView extends FrameLayout {
                         && (stackBounds.width() > stackBounds.height());
                 for (int i = 0; i < mActions.size(); i++) {
                     final RemoteAction action = mActions.get(i);
-                    final ImageButton actionView = (ImageButton) mActionsGroup.getChildAt(i);
+                    final PipMenuActionView actionView =
+                            (PipMenuActionView) mActionsGroup.getChildAt(i);
 
                     // TODO: Check if the action drawable has changed before we reload it
                     action.getIcon().loadDrawableAsync(mContext, d -> {
@@ -412,17 +434,15 @@ public class PipMenuView extends FrameLayout {
                             d.setTint(Color.WHITE);
                             actionView.setImageDrawable(d);
                         }
-                    }, mHandler);
+                    }, mMainHandler);
                     actionView.setContentDescription(action.getContentDescription());
                     if (action.isEnabled()) {
                         actionView.setOnClickListener(v -> {
-                            mHandler.post(() -> {
-                                try {
-                                    action.getActionIntent().send();
-                                } catch (CanceledException e) {
-                                    Log.w(TAG, "Failed to send action", e);
-                                }
-                            });
+                            try {
+                                action.getActionIntent().send();
+                            } catch (CanceledException e) {
+                                Log.w(TAG, "Failed to send action", e);
+                            }
                         });
                     }
                     actionView.setEnabled(action.isEnabled());
@@ -437,14 +457,12 @@ public class PipMenuView extends FrameLayout {
 
             // Update the expand container margin to adjust the center of the expand button to
             // account for the existence of the action container
-            FrameLayout.LayoutParams expandedLp =
-                    (FrameLayout.LayoutParams) expandContainer.getLayoutParams();
             expandedLp.topMargin = getResources().getDimensionPixelSize(
                     R.dimen.pip_action_padding);
             expandedLp.bottomMargin = getResources().getDimensionPixelSize(
                     R.dimen.pip_expand_container_edge_margin);
-            expandContainer.requestLayout();
         }
+        expandContainer.requestLayout();
     }
 
     private void notifyMenuStateChange(int menuState, boolean resize, Runnable callback) {
@@ -455,7 +473,8 @@ public class PipMenuView extends FrameLayout {
     private void expandPip() {
         // Do not notify menu visibility when hiding the menu, the controller will do this when it
         // handles the message
-        hideMenu(mController::onPipExpand, false /* notifyMenuVisibility */, true /* animate */);
+        hideMenu(mController::onPipExpand, false /* notifyMenuVisibility */, true /* animate */,
+                true /* resize */);
     }
 
     private void dismissPip() {
@@ -465,7 +484,8 @@ public class PipMenuView extends FrameLayout {
         final boolean animate = mMenuState != MENU_STATE_CLOSE;
         // Do not notify menu visibility when hiding the menu, the controller will do this when it
         // handles the message
-        hideMenu(mController::onPipDismiss, false /* notifyMenuVisibility */, animate);
+        hideMenu(mController::onPipDismiss, false /* notifyMenuVisibility */, animate,
+                true /* resize */);
     }
 
     private void showSettings() {
@@ -480,13 +500,13 @@ public class PipMenuView extends FrameLayout {
     }
 
     private void cancelDelayedHide() {
-        mHandler.removeCallbacks(mHideMenuRunnable);
+        mMainExecutor.removeCallbacks(mHideMenuRunnable);
     }
 
     private void repostDelayedHide(int delay) {
         int recommendedTimeout = mAccessibilityManager.getRecommendedTimeoutMillis(delay,
                 FLAG_CONTENT_ICONS | FLAG_CONTENT_CONTROLS);
-        mHandler.removeCallbacks(mHideMenuRunnable);
-        mHandler.postDelayed(mHideMenuRunnable, recommendedTimeout);
+        mMainExecutor.removeCallbacks(mHideMenuRunnable);
+        mMainExecutor.executeDelayed(mHideMenuRunnable, recommendedTimeout);
     }
 }

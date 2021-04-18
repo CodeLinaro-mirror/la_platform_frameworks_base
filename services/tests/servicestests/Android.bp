@@ -2,6 +2,15 @@
 // Build FrameworksServicesTests package
 //########################################################################
 
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_base_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_base_license"],
+}
+
 android_test {
     name: "FrameworksServicesTests",
 
@@ -59,9 +68,9 @@ android_test {
     },
 
     libs: [
-        "android.hardware.power-java",
+        "android.hardware.power-V1-java",
         "android.hardware.tv.cec-V1.0-java",
-        "android.hardware.vibrator-java",
+        "android.hardware.vibrator-V2-java",
         "android.hidl.manager-V1.0-java",
         "android.test.mock",
         "android.test.base",
@@ -88,7 +97,7 @@ android_test {
         "libui",
         "libunwindstack",
         "libutils",
-        "netd_aidl_interface-cpp",
+        "netd_aidl_interface-V5-cpp",
     ],
 
     dxflags: ["--multi-dex"],
@@ -172,9 +181,12 @@ java_genrule {
         ":FrameworksServicesTests_install_split_feature_a",
         ":FrameworksServicesTests_install_uses_sdk_0",
         ":FrameworksServicesTests_install_uses_sdk_q0",
-        ":FrameworksServicesTests_install_uses_sdk_r",
+        ":FrameworksServicesTests_install_uses_sdk_q0_r0",
+        ":FrameworksServicesTests_install_uses_sdk_r_none",
         ":FrameworksServicesTests_install_uses_sdk_r0",
         ":FrameworksServicesTests_install_uses_sdk_r5",
+        ":FrameworksServicesTests_install_uses_sdk_r0_s0",
+        ":FrameworksServicesTests_install_uses_sdk_r0_s5",
     ],
     out: ["FrameworkServicesTests_apks_as_resources.res.zip"],
     tools: ["soong_zip"],

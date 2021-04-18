@@ -40,6 +40,7 @@ import com.android.systemui.dagger.ContextComponentHelper;
 import com.android.systemui.dagger.GlobalRootComponent;
 import com.android.systemui.dagger.SysUIComponent;
 import com.android.systemui.dump.DumpManager;
+import com.android.systemui.people.PeopleSpaceActivity;
 import com.android.systemui.people.widget.PeopleSpaceWidgetProvider;
 import com.android.systemui.shared.system.ThreadedRendererCompat;
 import com.android.systemui.util.NotificationChannels;
@@ -125,14 +126,19 @@ public class SystemUIApplication extends Application implements
                             mServices[i].onBootCompleted();
                         }
                     }
-
                     // If SHOW_PEOPLE_SPACE is true, enable People Space widget provider.
-                    // TODO(b/170396074): Remove this when we don't need a widget anymore.
+                    // TODO(b/170396074): Migrate to new feature flag (go/silk-flags-howto)
                     try {
                         int showPeopleSpace = Settings.Global.getInt(context.getContentResolver(),
                                 Settings.Global.SHOW_PEOPLE_SPACE, 1);
                         context.getPackageManager().setComponentEnabledSetting(
                                 new ComponentName(context, PeopleSpaceWidgetProvider.class),
+                                showPeopleSpace == 1
+                                        ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                                        : PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                                PackageManager.DONT_KILL_APP);
+                        context.getPackageManager().setComponentEnabledSetting(
+                                new ComponentName(context, PeopleSpaceActivity.class),
                                 showPeopleSpace == 1
                                         ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                                         : PackageManager.COMPONENT_ENABLED_STATE_DISABLED,

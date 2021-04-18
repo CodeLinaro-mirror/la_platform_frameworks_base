@@ -16,27 +16,37 @@
 
 package com.android.server;
 
+import static android.Manifest.permission.MANAGE_SENSOR_PRIVACY;
+import static android.app.ActivityManager.RunningServiceInfo;
+import static android.app.ActivityManager.RunningTaskInfo;
 import static android.app.AppOpsManager.MODE_ALLOWED;
 import static android.app.AppOpsManager.OP_CAMERA;
 import static android.app.AppOpsManager.OP_RECORD_AUDIO;
+import static android.content.Intent.EXTRA_PACKAGE_NAME;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
+import static android.hardware.SensorPrivacyManager.EXTRA_SENSOR;
+import static android.hardware.SensorPrivacyManager.Sensors.CAMERA;
+import static android.hardware.SensorPrivacyManager.Sensors.MICROPHONE;
 import static android.os.UserHandle.USER_SYSTEM;
-import static android.service.SensorPrivacyIndividualEnabledSensorProto.CAMERA;
-import static android.service.SensorPrivacyIndividualEnabledSensorProto.MICROPHONE;
 import static android.service.SensorPrivacyIndividualEnabledSensorProto.UNKNOWN;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
+import android.app.ActivityManager;
+import android.app.ActivityOptions;
+import android.app.ActivityTaskManager;
 import android.app.AppOpsManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.graphics.drawable.Icon;
 import android.hardware.ISensorPrivacyListener;
 import android.hardware.ISensorPrivacyManager;
@@ -55,10 +65,12 @@ import android.os.UserHandle;
 import android.service.SensorPrivacyIndividualEnabledSensorProto;
 import android.service.SensorPrivacyServiceDumpProto;
 import android.service.SensorPrivacyUserProto;
+import android.text.Html;
 import android.util.ArrayMap;
 import android.util.AtomicFile;
 import android.util.IndentingPrintWriter;
 import android.util.Log;
+import android.util.Pair;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.util.TypedXmlPullParser;
@@ -66,6 +78,7 @@ import android.util.TypedXmlSerializer;
 import android.util.Xml;
 import android.util.proto.ProtoOutputStream;
 
+import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.DumpUtils;
 import com.android.internal.util.FunctionalUtils;
@@ -83,6 +96,8 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 
@@ -110,8 +125,6 @@ public final class SensorPrivacyService extends SystemService {
     private static final String SENSOR_PRIVACY_CHANNEL_ID = Context.SENSOR_PRIVACY_SERVICE;
     private static final String ACTION_DISABLE_INDIVIDUAL_SENSOR_PRIVACY =
             SensorPrivacyService.class.getName() + ".action.disable_sensor_privacy";
-    private static final String EXTRA_SENSOR = SensorPrivacyService.class.getName()
-            + ".extra.sensor";
 
     // These are associated with fields that existed for older persisted versions of files
     private static final int VER0_ENABLED = 0;
@@ -121,11 +134,15 @@ public final class SensorPrivacyService extends SystemService {
 
     private final SensorPrivacyServiceImpl mSensorPrivacyServiceImpl;
     private final UserManagerInternal mUserManagerInternal;
+    private final ActivityManager mActivityManager;
+    private final ActivityTaskManager mActivityTaskManager;
 
     public SensorPrivacyService(Context context) {
         super(context);
         mUserManagerInternal = getLocalService(UserManagerInternal.class);
         mSensorPrivacyServiceImpl = new SensorPrivacyServiceImpl(context);
+        mActivityManager = context.getSystemService(ActivityManager.class);
+        mActivityTaskManager = context.getSystemService(ActivityTaskManager.class);
     }
 
     @Override
@@ -134,7 +151,8 @@ public final class SensorPrivacyService extends SystemService {
     }
 
     class SensorPrivacyServiceImpl extends ISensorPrivacyManager.Stub implements
-            AppOpsManager.OnOpNotedListener, AppOpsManager.OnOpStartedListener {
+            AppOpsManager.OnOpNotedListener, AppOpsManager.OnOpStartedListener,
+            IBinder.DeathRecipient {
 
         private final SensorPrivacyHandler mHandler;
         private final Context mContext;
@@ -145,6 +163,15 @@ public final class SensorPrivacyService extends SystemService {
         private SparseBooleanArray mEnabled = new SparseBooleanArray();
         @GuardedBy("mLock")
         private SparseArray<SparseBooleanArray> mIndividualEnabled = new SparseArray<>();
+
+        /**
+         * Packages for which not to show sensor use reminders.
+         *
+         * <Package, User> -> list of suppressor tokens
+         */
+        @GuardedBy("mLock")
+        private ArrayMap<Pair<String, UserHandle>, ArrayList<IBinder>> mSuppressReminders =
+                new ArrayMap<>();
 
         SensorPrivacyServiceImpl(Context context) {
             mContext = context;
@@ -166,21 +193,25 @@ public final class SensorPrivacyService extends SystemService {
             mContext.registerReceiver(new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
-                    setIndividualSensorPrivacy(intent.getIntExtra(Intent.EXTRA_USER_ID, -1),
+                    setIndividualSensorPrivacy(
+                            ((UserHandle) intent.getParcelableExtra(
+                                    Intent.EXTRA_USER)).getIdentifier(),
                             intent.getIntExtra(EXTRA_SENSOR, UNKNOWN), false);
                 }
-            }, new IntentFilter(ACTION_DISABLE_INDIVIDUAL_SENSOR_PRIVACY));
+            }, new IntentFilter(ACTION_DISABLE_INDIVIDUAL_SENSOR_PRIVACY),
+                    MANAGE_SENSOR_PRIVACY, null);
         }
 
         @Override
-        public void onOpStarted(int code, int uid, String packageName,
+        public void onOpStarted(int code, int uid, String packageName, String attributionTag,
                 @AppOpsManager.OpFlags int flags, @AppOpsManager.Mode int result) {
-            onOpNoted(code, uid, packageName, flags, result);
+            onOpNoted(code, uid, packageName, attributionTag, flags, result);
         }
 
         @Override
         public void onOpNoted(int code, int uid, String packageName,
-                @AppOpsManager.OpFlags int flags, @AppOpsManager.Mode int result) {
+                String attributionTag, @AppOpsManager.OpFlags int flags,
+                @AppOpsManager.Mode int result) {
             if (result != MODE_ALLOWED || (flags & AppOpsManager.OP_FLAGS_ALL_TRUSTED) == 0) {
                 return;
             }
@@ -192,7 +223,12 @@ public final class SensorPrivacyService extends SystemService {
                 sensor = CAMERA;
             }
 
-            onSensorUseStarted(uid, packageName, sensor);
+            long token = Binder.clearCallingIdentity();
+            try {
+                onSensorUseStarted(uid, packageName, sensor);
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
         }
 
         /**
@@ -203,31 +239,138 @@ public final class SensorPrivacyService extends SystemService {
          * @param sensor The sensor that is attempting to be used
          */
         private void onSensorUseStarted(int uid, String packageName, int sensor) {
-            int userId = UserHandle.getUserId(uid);
-            if (!isIndividualSensorPrivacyEnabled(userId, sensor)) {
+            UserHandle user = UserHandle.getUserHandleForUid(uid);
+            if (!isIndividualSensorPrivacyEnabled(user.getIdentifier(), sensor)) {
                 return;
             }
 
-            // TODO moltmann: Use dialog instead of notification if we can determine the activity
-            //                which triggered this usage
+            synchronized (mLock) {
+                if (mSuppressReminders.containsKey(new Pair<>(packageName, user))) {
+                    Log.d(TAG,
+                            "Suppressed sensor privacy reminder for " + packageName + "/" + user);
+                    return;
+                }
+            }
 
-            // TODO evanseverson: - Implement final UX for notification
-            //                    - Finalize strings and icons and add as resources
+            // TODO: Handle reminders with multiple sensors
 
-            int icon;
-            CharSequence notificationMessage;
+            // - If we have a likely activity that triggered the sensor use overlay a dialog over
+            //   it. This should be the most common case.
+            // - If there is no use visible entity that triggered the sensor don't show anything as
+            //   this is - from the point of the user - a background usage
+            // - Otherwise show a notification as we are not quite sure where to display the dialog.
+
+            List<RunningTaskInfo> tasksOfPackageUsingSensor = new ArrayList<>();
+
+            List<RunningTaskInfo> tasks = mActivityTaskManager.getTasks(Integer.MAX_VALUE);
+            int numTasks = tasks.size();
+            for (int taskNum = 0; taskNum < numTasks; taskNum++) {
+                RunningTaskInfo task = tasks.get(taskNum);
+
+                if (task.isVisible && task.topActivity.getPackageName().equals(packageName)) {
+                    if (task.isFocused) {
+                        // There is the one focused activity
+                        showSensorUseReminderDialog(task.taskId, user, packageName, sensor);
+                        return;
+                    }
+
+                    tasksOfPackageUsingSensor.add(task);
+                }
+            }
+
+            // TODO: Test this case
+            // There is one or more non-focused activity
+            if (tasksOfPackageUsingSensor.size() == 1) {
+                showSensorUseReminderDialog(tasksOfPackageUsingSensor.get(0).taskId, user,
+                        packageName, sensor);
+                return;
+            } else if (tasksOfPackageUsingSensor.size() > 1) {
+                showSensorUseReminderNotification(user, packageName, sensor);
+                return;
+            }
+
+            // TODO: Test this case
+            // Check if there is a foreground service for this package
+            List<RunningServiceInfo> services = mActivityManager.getRunningServices(
+                    Integer.MAX_VALUE);
+            int numServices = services.size();
+            for (int serviceNum = 0; serviceNum < numServices; serviceNum++) {
+                RunningServiceInfo service = services.get(serviceNum);
+
+                if (service.foreground && service.service.getPackageName().equals(packageName)) {
+                    showSensorUseReminderNotification(user, packageName, sensor);
+                    return;
+                }
+            }
+
+            Log.i(TAG, packageName + "/" + uid + " started using sensor " + sensor
+                    + " but no activity or foreground service was running. The user will not be"
+                    + " informed. System components should check if sensor privacy is enabled for"
+                    + " the sensor before accessing it.");
+        }
+
+        /**
+         * Show a dialog that informs the user that a sensor use or a blocked sensor started.
+         * The user can then react to this event.
+         *
+         * @param taskId The task this dialog should be overlaid on.
+         * @param user The user of the package using the sensor.
+         * @param packageName The name of the package using the sensor.
+         * @param sensor The sensor that is being used.
+         */
+        private void showSensorUseReminderDialog(int taskId, @NonNull UserHandle user,
+                @NonNull String packageName, int sensor) {
+            Intent dialogIntent = new Intent();
+            dialogIntent.setComponent(ComponentName.unflattenFromString(
+                    mContext.getResources().getString(
+                            R.string.config_sensorUseStartedActivity)));
+
+            ActivityOptions options = ActivityOptions.makeBasic();
+            options.setLaunchTaskId(taskId);
+            options.setTaskOverlay(true, true);
+
+            dialogIntent.putExtra(EXTRA_PACKAGE_NAME, packageName);
+            dialogIntent.putExtra(EXTRA_SENSOR, sensor);
+
+            mContext.startActivityAsUser(dialogIntent, options.toBundle(), user);
+        }
+
+        /**
+         * Show a notification that informs the user that a sensor use or a blocked sensor started.
+         * The user can then react to this event.
+         *
+         * @param user The user of the package using the sensor.
+         * @param packageName The name of the package using the sensor.
+         * @param sensor The sensor that is being used.
+         */
+        private void showSensorUseReminderNotification(@NonNull UserHandle user,
+                @NonNull String packageName, int sensor) {
+            int iconRes;
+            int messageRes;
+
+            CharSequence packageLabel;
+            try {
+                packageLabel = getUiContext().getPackageManager()
+                        .getApplicationInfoAsUser(packageName, 0, user)
+                        .loadLabel(mContext.getPackageManager());
+            } catch (PackageManager.NameNotFoundException e) {
+                Log.e(TAG, "Cannot show sensor use notification for " + packageName);
+                return;
+            }
+
             if (sensor == MICROPHONE) {
-                icon = com.android.internal.R.drawable.ic_mic;
-                notificationMessage = "Microphone is muted because of sensor privacy";
+                iconRes = R.drawable.ic_mic_blocked;
+                messageRes = R.string.sensor_privacy_start_use_mic_notification_content;
             } else {
-                icon = com.android.internal.R.drawable.ic_camera;
-                notificationMessage = "Camera is blocked because of sensor privacy";
+                iconRes = R.drawable.ic_camera_blocked;
+                messageRes = R.string.sensor_privacy_start_use_camera_notification_content;
             }
 
             NotificationManager notificationManager =
                     mContext.getSystemService(NotificationManager.class);
             NotificationChannel channel = new NotificationChannel(
-                    SENSOR_PRIVACY_CHANNEL_ID, "Sensor privacy",
+                    SENSOR_PRIVACY_CHANNEL_ID,
+                    getUiContext().getString(R.string.sensor_privacy_notification_channel_label),
                     NotificationManager.IMPORTANCE_HIGH);
             channel.setSound(null, null);
             channel.setBypassDnd(true);
@@ -236,18 +379,21 @@ public final class SensorPrivacyService extends SystemService {
 
             notificationManager.createNotificationChannel(channel);
 
+            Icon icon = Icon.createWithResource(getUiContext().getResources(), iconRes);
             notificationManager.notify(sensor,
                     new Notification.Builder(mContext, SENSOR_PRIVACY_CHANNEL_ID)
-                            .setContentTitle(notificationMessage)
+                            .setContentTitle(Html.fromHtml(getUiContext().getString(messageRes,
+                                    packageLabel),0))
                             .setSmallIcon(icon)
-                            .addAction(new Notification.Action.Builder(
-                                    Icon.createWithResource(mContext, icon),
-                                    "Disable sensor privacy",
+                            .setLargeIcon(icon)
+                            .addAction(new Notification.Action.Builder(icon,
+                                    getUiContext().getString(
+                                            R.string.sensor_privacy_start_use_dialog_turn_on_button),
                                     PendingIntent.getBroadcast(mContext, sensor,
                                             new Intent(ACTION_DISABLE_INDIVIDUAL_SENSOR_PRIVACY)
                                                     .setPackage(mContext.getPackageName())
                                                     .putExtra(EXTRA_SENSOR, sensor)
-                                                    .putExtra(Intent.EXTRA_USER_ID, userId),
+                                                    .putExtra(Intent.EXTRA_USER, user),
                                             PendingIntent.FLAG_IMMUTABLE
                                                     | PendingIntent.FLAG_UPDATE_CURRENT))
                                     .build())
@@ -260,12 +406,12 @@ public final class SensorPrivacyService extends SystemService {
          */
         @Override
         public void setSensorPrivacy(boolean enable) {
+            enforceManageSensorPrivacyPermission();
             // Keep the state consistent between all users to make it a single global state
             forAllUsers(userId -> setSensorPrivacy(userId, enable));
         }
 
         private void setSensorPrivacy(@UserIdInt int userId, boolean enable) {
-            enforceSensorPrivacyPermission();
             synchronized (mLock) {
                 mEnabled.put(userId, enable);
                 persistSensorPrivacyStateLocked();
@@ -275,7 +421,7 @@ public final class SensorPrivacyService extends SystemService {
 
         @Override
         public void setIndividualSensorPrivacy(@UserIdInt int userId, int sensor, boolean enable) {
-            enforceSensorPrivacyPermission();
+            enforceManageSensorPrivacyPermission();
             synchronized (mLock) {
                 SparseBooleanArray userIndividualEnabled = mIndividualEnabled.get(userId,
                         new SparseBooleanArray());
@@ -302,6 +448,7 @@ public final class SensorPrivacyService extends SystemService {
         @Override
         public void setIndividualSensorPrivacyForProfileGroup(@UserIdInt int userId, int sensor,
                 boolean enable) {
+            enforceManageSensorPrivacyPermission();
             int parentId = mUserManagerInternal.getProfileParentId(userId);
             forAllUsers(userId2 -> {
                 if (parentId == mUserManagerInternal.getProfileParentId(userId2)) {
@@ -314,14 +461,27 @@ public final class SensorPrivacyService extends SystemService {
          * Enforces the caller contains the necessary permission to change the state of sensor
          * privacy.
          */
-        private void enforceSensorPrivacyPermission() {
-            if (mContext.checkCallingOrSelfPermission(
-                    android.Manifest.permission.MANAGE_SENSOR_PRIVACY) == PERMISSION_GRANTED) {
+        private void enforceManageSensorPrivacyPermission() {
+            enforcePermission(android.Manifest.permission.MANAGE_SENSOR_PRIVACY,
+                    "Changing sensor privacy requires the following permission: "
+                            + MANAGE_SENSOR_PRIVACY);
+        }
+
+        /**
+         * Enforces the caller contains the necessary permission to observe changes to the sate of
+         * sensor privacy.
+         */
+        private void enforceObserveSensorPrivacyPermission() {
+            enforcePermission(android.Manifest.permission.OBSERVE_SENSOR_PRIVACY,
+                    "Observing sensor privacy changes requires the following permission: "
+                            + android.Manifest.permission.OBSERVE_SENSOR_PRIVACY);
+        }
+
+        private void enforcePermission(String permission, String message) {
+            if (mContext.checkCallingOrSelfPermission(permission) == PERMISSION_GRANTED) {
                 return;
             }
-            throw new SecurityException(
-                    "Changing sensor privacy requires the following permission: "
-                            + android.Manifest.permission.MANAGE_SENSOR_PRIVACY);
+            throw new SecurityException(message);
         }
 
         /**
@@ -329,6 +489,7 @@ public final class SensorPrivacyService extends SystemService {
          */
         @Override
         public boolean isSensorPrivacyEnabled() {
+            enforceObserveSensorPrivacyPermission();
             return isSensorPrivacyEnabled(USER_SYSTEM);
         }
 
@@ -340,6 +501,7 @@ public final class SensorPrivacyService extends SystemService {
 
         @Override
         public boolean isIndividualSensorPrivacyEnabled(@UserIdInt int userId, int sensor) {
+            enforceObserveSensorPrivacyPermission();
             synchronized (mLock) {
                 SparseBooleanArray states = mIndividualEnabled.get(userId);
                 if (states == null) {
@@ -423,7 +585,7 @@ public final class SensorPrivacyService extends SystemService {
                                     // User may no longer exist or isn't set
                                     continue;
                                 }
-                                int sensor = parser.getAttributeIndex(null, XML_ATTRIBUTE_SENSOR);
+                                int sensor = parser.getAttributeInt(null, XML_ATTRIBUTE_SENSOR);
                                 boolean isEnabled = parser.getAttributeBoolean(null,
                                         XML_ATTRIBUTE_ENABLED);
                                 SparseBooleanArray userIndividualEnabled = individualEnabled.get(
@@ -557,6 +719,7 @@ public final class SensorPrivacyService extends SystemService {
          */
         @Override
         public void addSensorPrivacyListener(ISensorPrivacyListener listener) {
+            enforceObserveSensorPrivacyPermission();
             if (listener == null) {
                 throw new NullPointerException("listener cannot be null");
             }
@@ -569,6 +732,7 @@ public final class SensorPrivacyService extends SystemService {
         @Override
         public void addIndividualSensorPrivacyListener(int userId, int sensor,
                 ISensorPrivacyListener listener) {
+            enforceObserveSensorPrivacyPermission();
             if (listener == null) {
                 throw new NullPointerException("listener cannot be null");
             }
@@ -580,10 +744,91 @@ public final class SensorPrivacyService extends SystemService {
          */
         @Override
         public void removeSensorPrivacyListener(ISensorPrivacyListener listener) {
+            enforceObserveSensorPrivacyPermission();
             if (listener == null) {
                 throw new NullPointerException("listener cannot be null");
             }
             mHandler.removeListener(listener);
+        }
+
+        @Override
+        public void suppressIndividualSensorPrivacyReminders(int userId, String packageName,
+                IBinder token, boolean suppress) {
+            enforceManageSensorPrivacyPermission();
+            Objects.requireNonNull(packageName);
+            Objects.requireNonNull(token);
+
+            Pair<String, UserHandle> key = new Pair<>(packageName, UserHandle.of(userId));
+
+            synchronized (mLock) {
+                if (suppress) {
+                    try {
+                        token.linkToDeath(this, 0);
+                    } catch (RemoteException e) {
+                        Log.e(TAG, "Could not suppress sensor use reminder", e);
+                        return;
+                    }
+
+                    ArrayList<IBinder> suppressPackageReminderTokens = mSuppressReminders.get(key);
+                    if (suppressPackageReminderTokens == null) {
+                        suppressPackageReminderTokens = new ArrayList<>(1);
+                        mSuppressReminders.put(key, suppressPackageReminderTokens);
+                    }
+
+                    suppressPackageReminderTokens.add(token);
+                } else {
+                    mHandler.removeSuppressPackageReminderToken(key, token);
+                }
+            }
+        }
+
+        /**
+         * Remove a sensor use reminder suppression token.
+         *
+         * @param key Key the token is in
+         * @param token The token to remove
+         */
+        private void removeSuppressPackageReminderToken(@NonNull Pair<String, UserHandle> key,
+                @NonNull IBinder token) {
+            synchronized (mLock) {
+                ArrayList<IBinder> suppressPackageReminderTokens =
+                        mSuppressReminders.get(key);
+                if (suppressPackageReminderTokens == null) {
+                    Log.e(TAG, "No tokens for " + key);
+                    return;
+                }
+
+                boolean wasRemoved = suppressPackageReminderTokens.remove(token);
+                if (wasRemoved) {
+                    token.unlinkToDeath(this, 0);
+
+                    if (suppressPackageReminderTokens.isEmpty()) {
+                        mSuppressReminders.remove(key);
+                    }
+                } else {
+                    Log.w(TAG, "Could not remove sensor use reminder suppression token " + token
+                            + " from " + key);
+                }
+            }
+        }
+
+        /**
+         * A owner of a suppressor token died. Clean up.
+         *
+         * @param token The token that is invalid now.
+         */
+        @Override
+        public void binderDied(@NonNull IBinder token) {
+            synchronized (mLock) {
+                for (Pair<String, UserHandle> key : mSuppressReminders.keySet()) {
+                    removeSuppressPackageReminderToken(key, token);
+                }
+            }
+        }
+
+        @Override
+        public void binderDied() {
+            // Handled in binderDied(IBinder)
         }
 
         @Override
@@ -661,13 +906,13 @@ public final class SensorPrivacyService extends SystemService {
         }
 
         /**
-         * Convert a string into a {@link SensorPrivacyManager.IndividualSensor id}.
+         * Convert a string into a {@link SensorPrivacyManager.Sensors.Sensor id}.
          *
          * @param sensor The name to convert
          *
          * @return The id corresponding to the name
          */
-        private @SensorPrivacyManager.IndividualSensor int sensorStrToId(@Nullable String sensor) {
+        private @SensorPrivacyManager.Sensors.Sensor int sensorStrToId(@Nullable String sensor) {
             if (sensor == null) {
                 return UNKNOWN;
             }
@@ -725,7 +970,7 @@ public final class SensorPrivacyService extends SystemService {
                                 return -1;
                             }
 
-                            enforceSensorPrivacyPermission();
+                            enforceManageSensorPrivacyPermission();
 
                             synchronized (mLock) {
                                 SparseBooleanArray individualEnabled =
@@ -882,6 +1127,13 @@ public final class SensorPrivacyService extends SystemService {
                 }
             }
             listeners.finishBroadcast();
+        }
+
+        public void removeSuppressPackageReminderToken(Pair<String, UserHandle> key,
+                IBinder token) {
+            sendMessage(PooledLambda.obtainMessage(
+                    SensorPrivacyServiceImpl::removeSuppressPackageReminderToken,
+                    mSensorPrivacyServiceImpl, key, token));
         }
     }
 

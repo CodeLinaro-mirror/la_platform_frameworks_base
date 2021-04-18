@@ -20,7 +20,6 @@ import android.annotation.NonNull;
 
 /**
  * Interface for playback related components used by playback metrics.
- * @hide
  */
 public interface PlaybackComponent {
 

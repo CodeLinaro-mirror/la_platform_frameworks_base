@@ -73,6 +73,8 @@ interface IAudioService {
 
     oneway void releaseRecorder(in int riid);
 
+    oneway void playerSessionId(in int piid, in int sessionId);
+
     // Java-only methods below.
 
     oneway void adjustSuggestedStreamVolume(int direction, int suggestedStreamType, int flags,
@@ -340,20 +342,28 @@ interface IAudioService {
 
     int getDevicesForStream(in int streamType);
 
-    boolean setDeviceForCommunication(IBinder cb, int portId);
+    int[] getAvailableCommunicationDeviceIds();
 
-    int getDeviceForCommunication();
+    boolean setCommunicationDevice(IBinder cb, int portId);
+
+    int getCommunicationDevice();
 
     void registerCommunicationDeviceDispatcher(ICommunicationDeviceDispatcher dispatcher);
 
     oneway void unregisterCommunicationDeviceDispatcher(
             ICommunicationDeviceDispatcher dispatcher);
 
-    boolean areFastScrollSoundEffectsEnabled();
+    boolean areNavigationRepeatSoundEffectsEnabled();
 
-    oneway void setFastScrollSoundEffectsEnabled(boolean enabled);
+    oneway void setNavigationRepeatSoundEffectsEnabled(boolean enabled);
 
     boolean isHomeSoundEffectEnabled();
 
     oneway void setHomeSoundEffectEnabled(boolean enabled);
+
+    boolean setAdditionalOutputDeviceDelay(in AudioDeviceAttributes device, long delayMillis);
+
+    long getAdditionalOutputDeviceDelay(in AudioDeviceAttributes device);
+
+    long getMaxAdditionalOutputDeviceDelay(in AudioDeviceAttributes device);
 }

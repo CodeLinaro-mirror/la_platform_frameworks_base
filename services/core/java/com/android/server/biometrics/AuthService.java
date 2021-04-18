@@ -33,6 +33,7 @@ import android.annotation.NonNull;
 import android.app.AppOpsManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.hardware.biometrics.BiometricAuthenticator;
 import android.hardware.biometrics.IAuthService;
 import android.hardware.biometrics.IBiometricAuthenticator;
 import android.hardware.biometrics.IBiometricEnabledOnKeyguardCallback;
@@ -40,6 +41,7 @@ import android.hardware.biometrics.IBiometricService;
 import android.hardware.biometrics.IBiometricServiceReceiver;
 import android.hardware.biometrics.IInvalidationCallback;
 import android.hardware.biometrics.ITestSession;
+import android.hardware.biometrics.ITestSessionCallback;
 import android.hardware.biometrics.PromptInfo;
 import android.hardware.biometrics.SensorPropertiesInternal;
 import android.hardware.face.IFaceService;
@@ -144,13 +146,14 @@ public class AuthService extends SystemService {
 
     private final class AuthServiceImpl extends IAuthService.Stub {
         @Override
-        public ITestSession createTestSession(int sensorId, @NonNull String opPackageName)
-                throws RemoteException {
+        public ITestSession createTestSession(int sensorId, @NonNull ITestSessionCallback callback,
+                @NonNull String opPackageName) throws RemoteException {
             Utils.checkPermission(getContext(), TEST_BIOMETRIC);
 
             final long identity = Binder.clearCallingIdentity();
             try {
-                return mInjector.getBiometricService().createTestSession(sensorId, opPackageName);
+                return mInjector.getBiometricService()
+                        .createTestSession(sensorId, callback, opPackageName);
             } finally {
                 Binder.restoreCallingIdentity(identity);
             }
@@ -335,6 +338,168 @@ public class AuthService extends SystemService {
                 Binder.restoreCallingIdentity(identity);
             }
         }
+
+        @Override
+        public CharSequence getButtonLabel(
+                int userId,
+                String opPackageName,
+                @Authenticators.Types int authenticators) throws RemoteException {
+
+            // Only allow internal clients to call getButtonLabel with a different userId.
+            final int callingUserId = UserHandle.getCallingUserId();
+
+            if (userId != callingUserId) {
+                checkInternalPermission();
+            } else {
+                checkPermission();
+            }
+
+            final long identity = Binder.clearCallingIdentity();
+            try {
+                @BiometricAuthenticator.Modality final int modality =
+                        mBiometricService.getCurrentModality(
+                                opPackageName, userId, callingUserId, authenticators);
+
+                final String result;
+                switch (getCredentialBackupModality(modality)) {
+                    case BiometricAuthenticator.TYPE_NONE:
+                        result = null;
+                        break;
+                    case BiometricAuthenticator.TYPE_CREDENTIAL:
+                        result = getContext().getString(R.string.screen_lock_app_setting_name);
+                        break;
+                    case BiometricAuthenticator.TYPE_FINGERPRINT:
+                        result = getContext().getString(R.string.fingerprint_app_setting_name);
+                        break;
+                    case BiometricAuthenticator.TYPE_FACE:
+                        result = getContext().getString(R.string.face_app_setting_name);
+                        break;
+                    default:
+                        result = getContext().getString(R.string.biometric_app_setting_name);
+                        break;
+                }
+
+                return result;
+            } finally {
+                Binder.restoreCallingIdentity(identity);
+            }
+        }
+
+        @Override
+        public CharSequence getPromptMessage(
+                int userId,
+                String opPackageName,
+                @Authenticators.Types int authenticators) throws RemoteException {
+
+            // Only allow internal clients to call getButtonLabel with a different userId.
+            final int callingUserId = UserHandle.getCallingUserId();
+
+            if (userId != callingUserId) {
+                checkInternalPermission();
+            } else {
+                checkPermission();
+            }
+
+            final long identity = Binder.clearCallingIdentity();
+            try {
+                @BiometricAuthenticator.Modality final int modality =
+                        mBiometricService.getCurrentModality(
+                                opPackageName, userId, callingUserId, authenticators);
+
+                final String result;
+                switch (getCredentialBackupModality(modality)) {
+                    case BiometricAuthenticator.TYPE_NONE:
+                        result = null;
+                        break;
+                    case BiometricAuthenticator.TYPE_CREDENTIAL:
+                        result = getContext().getString(
+                                R.string.screen_lock_dialog_default_subtitle);
+                        break;
+                    case BiometricAuthenticator.TYPE_FINGERPRINT:
+                        result = getContext().getString(
+                                R.string.fingerprint_dialog_default_subtitle);
+                        break;
+                    case BiometricAuthenticator.TYPE_FACE:
+                        result = getContext().getString(R.string.face_dialog_default_subtitle);
+                        break;
+                    default:
+                        result = getContext().getString(R.string.biometric_dialog_default_subtitle);
+                        break;
+                }
+                return result;
+            } finally {
+                Binder.restoreCallingIdentity(identity);
+            }
+        }
+
+        @Override
+        public CharSequence getSettingName(
+                int userId,
+                String opPackageName,
+                @Authenticators.Types int authenticators) throws RemoteException {
+
+            // Only allow internal clients to call getButtonLabel with a different userId.
+            final int callingUserId = UserHandle.getCallingUserId();
+
+            if (userId != callingUserId) {
+                checkInternalPermission();
+            } else {
+                checkPermission();
+            }
+
+            final long identity = Binder.clearCallingIdentity();
+            try {
+                @BiometricAuthenticator.Modality final int modality =
+                        mBiometricService.getSupportedModalities(authenticators);
+
+                final String result;
+                switch (modality) {
+                    // Handle the case of a single supported modality.
+                    case BiometricAuthenticator.TYPE_NONE:
+                        result = null;
+                        break;
+                    case BiometricAuthenticator.TYPE_CREDENTIAL:
+                        result = getContext().getString(R.string.screen_lock_app_setting_name);
+                        break;
+                    case BiometricAuthenticator.TYPE_IRIS:
+                        result = getContext().getString(R.string.biometric_app_setting_name);
+                        break;
+                    case BiometricAuthenticator.TYPE_FINGERPRINT:
+                        result = getContext().getString(R.string.fingerprint_app_setting_name);
+                        break;
+                    case BiometricAuthenticator.TYPE_FACE:
+                        result = getContext().getString(R.string.face_app_setting_name);
+                        break;
+
+                    // Handle other possible modality combinations.
+                    default:
+                        if ((modality & BiometricAuthenticator.TYPE_CREDENTIAL) == 0) {
+                            // 2+ biometric modalities are supported (but not device credential).
+                            result = getContext().getString(R.string.biometric_app_setting_name);
+                        } else {
+                            @BiometricAuthenticator.Modality final int biometricModality =
+                                    modality & ~BiometricAuthenticator.TYPE_CREDENTIAL;
+                            if (biometricModality == BiometricAuthenticator.TYPE_FINGERPRINT) {
+                                // Only device credential and fingerprint are supported.
+                                result = getContext().getString(
+                                        R.string.fingerprint_or_screen_lock_app_setting_name);
+                            } else if (biometricModality == BiometricAuthenticator.TYPE_FACE) {
+                                // Only device credential and face are supported.
+                                result = getContext().getString(
+                                        R.string.face_or_screen_lock_app_setting_name);
+                            } else {
+                                // Device credential and 1+ other biometric(s) are supported.
+                                result = getContext().getString(
+                                        R.string.biometric_or_screen_lock_app_setting_name);
+                            }
+                        }
+                        break;
+                }
+                return result;
+            } finally {
+                Binder.restoreCallingIdentity(identity);
+            }
+        }
     }
 
     public AuthService(Context context) {
@@ -439,5 +604,11 @@ public class AuthService extends SystemService {
     private boolean checkAppOps(int uid, String opPackageName, String reason) {
         return mInjector.getAppOps(getContext()).noteOp(AppOpsManager.OP_USE_BIOMETRIC, uid,
                 opPackageName, null /* attributionTag */, reason) == AppOpsManager.MODE_ALLOWED;
+    }
+
+    @BiometricAuthenticator.Modality
+    private static int getCredentialBackupModality(@BiometricAuthenticator.Modality int modality) {
+        return modality == BiometricAuthenticator.TYPE_CREDENTIAL
+                ? modality : (modality & ~BiometricAuthenticator.TYPE_CREDENTIAL);
     }
 }

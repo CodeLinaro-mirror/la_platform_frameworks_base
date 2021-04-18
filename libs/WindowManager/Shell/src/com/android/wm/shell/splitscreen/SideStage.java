@@ -48,6 +48,17 @@ class SideStage extends StageTaskListener {
                 .reorder(rootToken, true);
     }
 
+    boolean removeAllTasks(WindowContainerTransaction wct, boolean toTop) {
+        if (mChildrenTaskInfo.size() == 0) return false;
+        wct.reparentTasks(
+                mRootTaskInfo.token,
+                null /* newParent */,
+                CONTROLLED_WINDOWING_MODES_WHEN_ACTIVE,
+                CONTROLLED_ACTIVITY_TYPES,
+                toTop);
+        return true;
+    }
+
     boolean removeTask(int taskId, WindowContainerToken newParent, WindowContainerTransaction wct) {
         final ActivityManager.RunningTaskInfo task = mChildrenTaskInfo.get(taskId);
         if (task == null) return false;

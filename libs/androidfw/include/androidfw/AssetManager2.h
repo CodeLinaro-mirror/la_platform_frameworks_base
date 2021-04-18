@@ -101,7 +101,7 @@ class AssetManager2 {
   // Only pass invalidate_caches=false when it is known that the structure
   // change in ApkAssets is due to a safe addition of resources with completely
   // new resource IDs.
-  bool SetApkAssets(const std::vector<const ApkAssets*>& apk_assets, bool invalidate_caches = true);
+  bool SetApkAssets(std::vector<const ApkAssets*> apk_assets, bool invalidate_caches = true);
 
   inline const std::vector<const ApkAssets*> GetApkAssets() const {
     return apk_assets_;
@@ -412,7 +412,7 @@ class AssetManager2 {
   void RebuildFilterList();
 
   // Retrieves the APK paths of overlays that overlay non-system packages.
-  std::set<std::string> GetNonSystemOverlayPaths() const;
+  std::set<const ApkAssets*> GetNonSystemOverlays() const;
 
   // AssetManager2::GetBag(resid) wraps this function to track which resource ids have already
   // been seen while traversing bag parents.

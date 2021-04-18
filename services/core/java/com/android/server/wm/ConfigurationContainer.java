@@ -142,9 +142,16 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
                     mMergedOverrideConfiguration);
         }
         for (int i = getChildCount() - 1; i >= 0; --i) {
-            final ConfigurationContainer child = getChildAt(i);
-            child.onConfigurationChanged(mFullConfiguration);
+            dispatchConfigurationToChild(getChildAt(i), mFullConfiguration);
         }
+    }
+
+    /**
+     * Dispatches the configuration to child when {@link #onConfigurationChanged(Configuration)} is
+     * called. This allows the derived classes to override how to dispatch the configuration.
+     */
+    void dispatchConfigurationToChild(E child, Configuration config) {
+        child.onConfigurationChanged(config);
     }
 
     /**
@@ -360,8 +367,7 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
      * Returns {@code true} if this {@link ConfigurationContainer} provides the maximum bounds to
      * its child {@link ConfigurationContainer}s. Returns {@code false}, otherwise.
      * <p>
-     * The maximum bounds is how large a window can be expanded. Currently only
-     * {@link DisplayContent} and {@link DisplayArea} effect this property.
+     * The maximum bounds is how large a window can be expanded.
      * </p>
      */
     protected boolean providesMaxBounds() {
@@ -534,6 +540,28 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
         return getActivityType() == ACTIVITY_TYPE_ASSISTANT;
     }
 
+    /**
+     * Overrides the night mode applied to this ConfigurationContainer.
+     * @return true if the nightMode has been changed.
+     */
+    public boolean setOverrideNightMode(int nightMode) {
+        final int currentUiMode = mFullConfiguration.uiMode;
+        final int currentNightMode = getNightMode();
+        final int validNightMode = nightMode & Configuration.UI_MODE_NIGHT_MASK;
+        if (currentNightMode == validNightMode) {
+            return false;
+        }
+        mRequestsTmpConfig.setTo(getRequestedOverrideConfiguration());
+        mRequestsTmpConfig.uiMode = validNightMode
+                | (currentUiMode & ~Configuration.UI_MODE_NIGHT_MASK);
+        onRequestedOverrideConfigurationChanged(mRequestsTmpConfig);
+        return true;
+    }
+
+    int getNightMode() {
+        return mFullConfiguration.uiMode & Configuration.UI_MODE_NIGHT_MASK;
+    }
+
     public boolean isActivityTypeDream() {
         return getActivityType() == ACTIVITY_TYPE_DREAM;
     }
@@ -662,7 +690,9 @@ public abstract class ConfigurationContainer<E extends ConfigurationContainer> {
         pw.println(getName()
                 + " type=" + activityTypeToString(getActivityType())
                 + " mode=" + windowingModeToString(getWindowingMode())
-                + " override-mode=" + windowingModeToString(getRequestedOverrideWindowingMode()));
+                + " override-mode=" + windowingModeToString(getRequestedOverrideWindowingMode())
+                + " requested-bounds=" + getRequestedOverrideBounds().toShortString()
+                + " bounds=" + getBounds().toShortString());
         for (int i = getChildCount() - 1; i >= 0; --i) {
             final E cc = getChildAt(i);
             pw.print(childPrefix + "#" + i + " ");

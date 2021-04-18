@@ -29,6 +29,7 @@ import android.annotation.SystemApi;
 import android.app.Notification;
 import android.bluetooth.BluetoothDevice;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.hardware.camera2.CameraManager;
 import android.net.Uri;
@@ -38,7 +39,9 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
+import android.os.Parcelable;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.telephony.ims.ImsStreamMediaProfile;
@@ -934,6 +937,46 @@ public abstract class Connection extends Conferenceable {
      */
     public static final String EVENT_RTT_AUDIO_INDICATION_CHANGED =
             "android.telecom.event.RTT_AUDIO_INDICATION_CHANGED";
+
+    /**
+     * Connection event used to signal between the telephony {@link ConnectionService} and Telecom
+     * when device to device messages are sent/received.
+     * <p>
+     * Device to device messages originating from the network are sent by telephony using
+     * {@link Connection#sendConnectionEvent(String, Bundle)} and are routed up to any active
+     * {@link CallDiagnosticService} implementation which is active.
+     * <p>
+     * Likewise, if a {@link CallDiagnosticService} sends a message using
+     * {@link DiagnosticCall#sendDeviceToDeviceMessage(int, int)}, it will be routed to telephony
+     * via {@link Connection#onCallEvent(String, Bundle)}.  The telephony stack will relay the
+     * message to the other device.
+     * @hide
+     */
+    @SystemApi
+    public static final String EVENT_DEVICE_TO_DEVICE_MESSAGE =
+            "android.telecom.event.DEVICE_TO_DEVICE_MESSAGE";
+
+    /**
+     * Sent along with {@link #EVENT_DEVICE_TO_DEVICE_MESSAGE} to indicate the device to device
+     * message type.
+     *
+     * See {@link DiagnosticCall} for more information.
+     * @hide
+     */
+    @SystemApi
+    public static final String EXTRA_DEVICE_TO_DEVICE_MESSAGE_TYPE =
+            "android.telecom.extra.DEVICE_TO_DEVICE_MESSAGE_TYPE";
+
+    /**
+     * Sent along with {@link #EVENT_DEVICE_TO_DEVICE_MESSAGE} to indicate the device to device
+     * message value.
+     * <p>
+     * See {@link DiagnosticCall} for more information.
+     * @hide
+     */
+    @SystemApi
+    public static final String EXTRA_DEVICE_TO_DEVICE_MESSAGE_VALUE =
+            "android.telecom.extra.DEVICE_TO_DEVICE_MESSAGE_VALUE";
 
     // Flag controlling whether PII is emitted into the logs
     private static final boolean PII_DEBUG = Log.isLoggable(android.util.Log.DEBUG);
@@ -3014,6 +3057,26 @@ public abstract class Connection extends Conferenceable {
     public void onCallAudioStateChanged(CallAudioState state) {}
 
     /**
+     * Inform this Connection when it will or will not be tracked by an {@link InCallService} which
+     * can provide an InCall UI.
+     * This is primarily intended for use by Connections reported by self-managed
+     * {@link ConnectionService} which typically maintain their own UI.
+     *
+     * @param isUsingAlternativeUi Indicates whether an InCallService that can provide InCall UI is
+     *                             currently tracking the self-managed call.
+     */
+    public void onUsingAlternativeUi(boolean isUsingAlternativeUi) {}
+
+    /**
+     * Inform this Conenection when it will or will not be tracked by an non-UI
+     * {@link InCallService}.
+     *
+     * @param isTracked Indicates whether an non-UI InCallService is currently tracking the
+     *                 self-managed call.
+     */
+    public void onTrackedByNonUiService(boolean isTracked) {}
+
+    /**
      * Notifies this Connection of an internal state change. This method is called after the
      * state is changed.
      *
@@ -3359,6 +3422,121 @@ public abstract class Connection extends Conferenceable {
     public void handleRttUpgradeResponse(@Nullable RttTextStream rttTextStream) {}
 
     /**
+     * Information provided to a {@link Connection} upon completion of call filtering in Telecom.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final class CallFilteringCompletionInfo implements Parcelable {
+        private final boolean mIsBlocked;
+        private final boolean mIsInContacts;
+        private final CallScreeningService.CallResponse mCallResponse;
+        private final ComponentName mCallScreeningComponent;
+
+        /**
+         * Constructor for {@link CallFilteringCompletionInfo}
+         *
+         * @param isBlocked Whether any part of the call filtering process indicated that this call
+         *                  should be blocked.
+         * @param isInContacts Whether the caller is in the user's contacts.
+         * @param callResponse The instance of {@link CallScreeningService.CallResponse} provided
+         *                     by the {@link CallScreeningService} that processed this call, or
+         *                     {@code null} if no call screening service ran.
+         * @param callScreeningComponent The component of the {@link CallScreeningService}
+         *                                 that processed this call, or {@link null} if no
+         *                                 call screening service ran.
+         */
+        public CallFilteringCompletionInfo(boolean isBlocked, boolean isInContacts,
+                @Nullable CallScreeningService.CallResponse callResponse,
+                @Nullable ComponentName callScreeningComponent) {
+            mIsBlocked = isBlocked;
+            mIsInContacts = isInContacts;
+            mCallResponse = callResponse;
+            mCallScreeningComponent = callScreeningComponent;
+        }
+
+        /** @hide */
+        protected CallFilteringCompletionInfo(Parcel in) {
+            mIsBlocked = in.readByte() != 0;
+            mIsInContacts = in.readByte() != 0;
+            CallScreeningService.ParcelableCallResponse response
+                    = in.readParcelable(CallScreeningService.class.getClassLoader());
+            mCallResponse = response == null ? null : response.toCallResponse();
+            mCallScreeningComponent = in.readParcelable(ComponentName.class.getClassLoader());
+        }
+
+        @NonNull
+        public static final Creator<CallFilteringCompletionInfo> CREATOR =
+                new Creator<CallFilteringCompletionInfo>() {
+                    @Override
+                    public CallFilteringCompletionInfo createFromParcel(Parcel in) {
+                        return new CallFilteringCompletionInfo(in);
+                    }
+
+                    @Override
+                    public CallFilteringCompletionInfo[] newArray(int size) {
+                        return new CallFilteringCompletionInfo[size];
+                    }
+                };
+
+        /**
+         * @return Whether any part of the call filtering process indicated that this call should be
+         *         blocked.
+         */
+        public boolean isBlocked() {
+            return mIsBlocked;
+        }
+
+        /**
+         * @return Whether the caller is in the user's contacts.
+         */
+        public boolean isInContacts() {
+            return mIsInContacts;
+        }
+
+        /**
+         * @return The instance of {@link CallScreeningService.CallResponse} provided
+         *         by the {@link CallScreeningService} that processed this
+         *         call, or {@code null} if no call screening service ran.
+         */
+        public @Nullable CallScreeningService.CallResponse getCallResponse() {
+            return mCallResponse;
+        }
+
+        /**
+         * @return The component of the {@link CallScreeningService}
+         *         that processed this call, or {@code null} if no call screening service ran.
+         */
+        public @Nullable ComponentName getCallScreeningComponent() {
+            return mCallScreeningComponent;
+        }
+
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+
+        @Override
+        public String toString() {
+            return "CallFilteringCompletionInfo{" +
+                    "mIsBlocked=" + mIsBlocked +
+                    ", mIsInContacts=" + mIsInContacts +
+                    ", mCallResponse=" + mCallResponse +
+                    ", mCallScreeningPackageName='" + mCallScreeningComponent + '\'' +
+                    '}';
+        }
+
+        /** @hide */
+        @Override
+        public void writeToParcel(Parcel dest, int flags) {
+            dest.writeByte((byte) (mIsBlocked ? 1 : 0));
+            dest.writeByte((byte) (mIsInContacts ? 1 : 0));
+            dest.writeParcelable(mCallResponse == null ? null : mCallResponse.toParcelable(), 0);
+            dest.writeParcelable(mCallScreeningComponent, 0);
+        }
+    }
+
+    /**
      * Indicates that call filtering in Telecom is complete
      *
      * This method is called for a connection created via
@@ -3366,15 +3544,13 @@ public abstract class Connection extends Conferenceable {
      * Telecom, including checking the blocked number db, per-contact settings, and custom call
      * filtering apps.
      *
-     * @param isBlocked {@code true} if the call was blocked, {@code false} otherwise. If this is
-     *                  {@code true}, {@link #onDisconnect()} will be called soon after
-     *                  this is called.
-     * @param isInContacts Indicates whether the caller is in the user's contacts list.
+     * @param callFilteringCompletionInfo Info provided by Telecom on the results of call filtering.
      * @hide
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.READ_CONTACTS)
-    public void onCallFilteringCompleted(boolean isBlocked, boolean isInContacts) { }
+    public void onCallFilteringCompleted(
+            @NonNull CallFilteringCompletionInfo callFilteringCompletionInfo) { }
 
     static String toLogSafePhoneNumber(String number) {
         // For unknown number, log empty string.

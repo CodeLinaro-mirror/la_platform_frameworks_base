@@ -23,8 +23,10 @@ import static java.lang.annotation.RetentionPolicy.SOURCE;
 
 import android.content.res.Configuration;
 import android.os.Bundle;
+import android.os.Looper;
 import android.service.notification.NotificationListenerService.RankingMap;
 import android.util.ArraySet;
+import android.util.Pair;
 import android.view.View;
 
 import androidx.annotation.IntDef;
@@ -36,7 +38,11 @@ import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.Target;
+import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.Executor;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
 /**
@@ -50,7 +56,7 @@ public interface Bubbles {
             DISMISS_NOTIF_CANCEL, DISMISS_ACCESSIBILITY_ACTION, DISMISS_NO_LONGER_BUBBLE,
             DISMISS_USER_CHANGED, DISMISS_GROUP_CANCELLED, DISMISS_INVALID_INTENT,
             DISMISS_OVERFLOW_MAX_REACHED, DISMISS_SHORTCUT_REMOVED, DISMISS_PACKAGE_REMOVED,
-            DISMISS_NO_BUBBLE_UP})
+            DISMISS_NO_BUBBLE_UP, DISMISS_RELOAD_FROM_DISK})
     @Target({FIELD, LOCAL_VARIABLE, PARAMETER})
     @interface DismissReason {}
 
@@ -68,6 +74,7 @@ public interface Bubbles {
     int DISMISS_SHORTCUT_REMOVED = 12;
     int DISMISS_PACKAGE_REMOVED = 13;
     int DISMISS_NO_BUBBLE_UP = 14;
+    int DISMISS_RELOAD_FROM_DISK = 15;
 
     /**
      * @return {@code true} if there is a bubble associated with the provided key and if its
@@ -86,13 +93,14 @@ public interface Bubbles {
     /** @return {@code true} if stack of bubbles is expanded or not. */
     boolean isStackExpanded();
 
-    /** @return {@code true} if the summary for the provided group key is suppressed. */
-    boolean isSummarySuppressed(String groupKey);
-
     /**
-     * Removes a group key indicating that summary for this group should no longer be suppressed.
+     * Removes a group key indicating that the summary for this group should no longer be
+     * suppressed.
+     *
+     * @param callback If removed, this callback will be called with the summary key of the group
      */
-    void removeSuppressedSummary(String groupKey);
+    void removeSuppressedSummaryIfNecessary(String groupKey, Consumer<String> callback,
+            Executor callbackExecutor);
 
     /** Tell the stack of bubbles to collapse. */
     void collapseStack();
@@ -134,19 +142,16 @@ public interface Bubbles {
     boolean handleDismissalInterception(BubbleEntry entry, @Nullable List<BubbleEntry> children,
             IntConsumer removeCallback);
 
-    /**
-     * Retrieves the notif entry key of the summary associated with the provided group key.
-     *
-     * @param groupKey the group to look up
-     * @return the key for the notification that is the summary of this group.
-     */
-    String getSummaryKey(String groupKey);
-
     /** Set the proxy to commnuicate with SysUi side components. */
     void setSysuiProxy(SysuiProxy proxy);
 
-    /** Set the scrim view for bubbles. */
-    void setBubbleScrim(View view);
+    /**
+     * Set the scrim view for bubbles.
+     *
+     * @param callback The callback made with the executor and the executor's looper that the view
+     *                 will be running on.
+     **/
+    void setBubbleScrim(View view, BiConsumer<Executor, Looper> callback);
 
     /** Set a listener to be notified of bubble expand events. */
     void setExpandListener(BubbleExpandListener listener);
@@ -179,8 +184,11 @@ public interface Bubbles {
      * permissions on the notification channel or the global setting.
      *
      * @param rankingMap the updated ranking map from NotificationListenerService
+     * @param entryDataByKey a map of ranking key to bubble entry and whether the entry should
+     *                       bubble up
      */
-    void onRankingUpdated(RankingMap rankingMap);
+    void onRankingUpdated(RankingMap rankingMap,
+            HashMap<String, Pair<BubbleEntry, Boolean>> entryDataByKey);
 
     /**
      * Called when the status bar has become visible or invisible (either permanently or
@@ -226,8 +234,8 @@ public interface Bubbles {
         void onBubbleExpandChanged(boolean isExpanding, String key);
     }
 
-    /** Listener to be notified when a bubbles' notification suppression state changes.*/
-    interface NotificationSuppressionChangedListener {
+    /** Listener to be notified when the flags for notification or bubble suppression changes.*/
+    interface SuppressionChangedListener {
         /** Called when the notification suppression state of a bubble changes. */
         void onBubbleNotificationSuppressionChange(Bubble bubble);
     }
@@ -240,14 +248,10 @@ public interface Bubbles {
 
     /** Callback to tell SysUi components execute some methods. */
     interface SysuiProxy {
-        @Nullable
-        BubbleEntry getPendingOrActiveEntry(String key);
+        void getPendingOrActiveEntry(String key, Consumer<BubbleEntry> callback);
 
-        List<BubbleEntry> getShouldRestoredEntries(ArraySet<String> savedBubbleKeys);
-
-        boolean isNotificationShadeExpand();
-
-        boolean shouldBubbleUp(String key);
+        void getShouldRestoredEntries(ArraySet<String> savedBubbleKeys,
+                Consumer<List<BubbleEntry>> callback);
 
         void setNotificationInterruption(String key);
 

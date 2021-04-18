@@ -16,6 +16,8 @@
 
 package com.android.systemui.appops;
 
+import static android.hardware.SensorPrivacyManager.Sensors.CAMERA;
+import static android.hardware.SensorPrivacyManager.Sensors.MICROPHONE;
 import static android.media.AudioManager.ACTION_MICROPHONE_MUTE_CHANGED;
 
 import android.Manifest;
@@ -38,6 +40,7 @@ import android.util.SparseArray;
 
 import androidx.annotation.WorkerThread;
 
+import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.systemui.Dumpable;
@@ -45,6 +48,7 @@ import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dump.DumpManager;
+import com.android.systemui.statusbar.policy.IndividualSensorPrivacyController;
 import com.android.systemui.util.Assert;
 
 import java.io.FileDescriptor;
@@ -64,7 +68,8 @@ import javax.inject.Inject;
 @SysUISingleton
 public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsController,
         AppOpsManager.OnOpActiveChangedInternalListener,
-        AppOpsManager.OnOpNotedListener, Dumpable {
+        AppOpsManager.OnOpNotedListener, IndividualSensorPrivacyController.Callback,
+        Dumpable {
 
     // This is the minimum time that we will keep AppOps that are noted on record. If multiple
     // occurrences of the same (op, package, uid) happen in a shorter interval, they will not be
@@ -74,11 +79,12 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
     private static final boolean DEBUG = false;
 
     private final BroadcastDispatcher mDispatcher;
+    private final Context mContext;
     private final AppOpsManager mAppOps;
     private final AudioManager mAudioManager;
     private final LocationManager mLocationManager;
-    // TODO ntmyren: remove t
     private final PackageManager mPackageManager;
+    private final IndividualSensorPrivacyController mSensorPrivacyController;
 
     // mLocationProviderPackages are cached and updated only occasionally
     private static final long LOCATION_PROVIDER_UPDATE_FREQUENCY_MS = 30000;
@@ -91,6 +97,7 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
     private final PermissionFlagsCache mFlagsCache;
     private boolean mListening;
     private boolean mMicMuted;
+    private boolean mCameraDisabled;
 
     @GuardedBy("mActiveItems")
     private final List<AppOpItem> mActiveItems = new ArrayList<>();
@@ -118,6 +125,7 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
             DumpManager dumpManager,
             PermissionFlagsCache cache,
             AudioManager audioManager,
+            IndividualSensorPrivacyController sensorPrivacyController,
             BroadcastDispatcher dispatcher
     ) {
         mDispatcher = dispatcher;
@@ -129,9 +137,13 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
             mCallbacksByCode.put(OPS[i], new ArraySet<>());
         }
         mAudioManager = audioManager;
-        mMicMuted = audioManager.isMicrophoneMute();
+        mSensorPrivacyController = sensorPrivacyController;
+        mMicMuted = audioManager.isMicrophoneMute()
+                || mSensorPrivacyController.isSensorBlocked(MICROPHONE);
+        mCameraDisabled = mSensorPrivacyController.isSensorBlocked(CAMERA);
         mLocationManager = context.getSystemService(LocationManager.class);
         mPackageManager = context.getPackageManager();
+        mContext = context;
         dumpManager.registerDumpable(TAG, this);
     }
 
@@ -147,6 +159,12 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
             mAppOps.startWatchingActive(OPS, this);
             mAppOps.startWatchingNoted(OPS, this);
             mAudioManager.registerAudioRecordingCallback(mAudioRecordingCallback, mBGHandler);
+            mSensorPrivacyController.addCallback(this);
+
+            mMicMuted = mAudioManager.isMicrophoneMute()
+                    || mSensorPrivacyController.isSensorBlocked(MICROPHONE);
+            mCameraDisabled = mSensorPrivacyController.isSensorBlocked(CAMERA);
+
             mBGHandler.post(() -> mAudioRecordingCallback.onRecordingConfigChanged(
                     mAudioManager.getActiveRecordingConfigurations()));
             mDispatcher.registerReceiverWithHandler(this,
@@ -156,6 +174,7 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
             mAppOps.stopWatchingActive(this);
             mAppOps.stopWatchingNoted(this);
             mAudioManager.unregisterAudioRecordingCallback(mAudioRecordingCallback);
+            mSensorPrivacyController.removeCallback(this);
 
             mBGHandler.removeCallbacksAndMessages(null); // null removes all
             mDispatcher.unregisterReceiver(this);
@@ -235,11 +254,13 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
             if (item == null && active) {
                 item = new AppOpItem(code, uid, packageName, System.currentTimeMillis());
                 if (code == AppOpsManager.OP_RECORD_AUDIO) {
-                    item.setSilenced(isAnyRecordingPausedLocked(uid));
+                    item.setDisabled(isAnyRecordingPausedLocked(uid));
+                } else if (code == AppOpsManager.OP_CAMERA) {
+                    item.setDisabled(mCameraDisabled);
                 }
                 mActiveItems.add(item);
                 if (DEBUG) Log.w(TAG, "Added item: " + item.toString());
-                return !item.isSilenced();
+                return !item.isDisabled();
             } else if (item != null && !active) {
                 mActiveItems.remove(item);
                 if (DEBUG) Log.w(TAG, "Removed item: " + item.toString());
@@ -339,6 +360,15 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
         return mLocationProviderPackages.contains(packageName);
     }
 
+    private boolean isSpeechRecognizerUsage(int opCode, String packageName) {
+        if (AppOpsManager.OP_RECORD_AUDIO != opCode) {
+            return false;
+        }
+
+        return packageName.equals(
+                mContext.getString(R.string.config_systemSpeechRecognizer));
+    }
+
     // TODO ntmyren: remove after teamfood is finished
     private boolean shouldShowAppPredictor(String pkgName) {
         if (!DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_PRIVACY, "permissions_hub_2_enabled",
@@ -370,7 +400,8 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
         }
         // TODO ntmyren: Replace this with more robust check if this moves beyond teamfood
         if ((appOpCode == AppOpsManager.OP_CAMERA && isLocationProvider(packageName))
-                || shouldShowAppPredictor(packageName)) {
+                || shouldShowAppPredictor(packageName)
+                || isSpeechRecognizerUsage(appOpCode, packageName)) {
             return true;
         }
 
@@ -409,7 +440,7 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
                 AppOpItem item = mActiveItems.get(i);
                 if ((userId == UserHandle.USER_ALL
                         || UserHandle.getUserId(item.getUid()) == userId)
-                        && isUserVisible(item) && !item.isSilenced()) {
+                        && isUserVisible(item) && !item.isDisabled()) {
                     list.add(item);
                 }
             }
@@ -455,7 +486,8 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
 
     @Override
     public void onOpNoted(int code, int uid, String packageName,
-            @AppOpsManager.OpFlags int flags, @AppOpsManager.Mode int result) {
+            String attributionTag, @AppOpsManager.OpFlags int flags,
+            @AppOpsManager.Mode int result) {
         if (DEBUG) {
             Log.w(TAG, "Noted op: " + code + " with result "
                     + AppOpsManager.MODE_NAMES[result] + " for package " + packageName);
@@ -512,22 +544,27 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
         return false;
     }
 
-    private void updateRecordingPausedStatus() {
+    private void updateSensorDisabledStatus() {
         synchronized (mActiveItems) {
             int size = mActiveItems.size();
             for (int i = 0; i < size; i++) {
                 AppOpItem item = mActiveItems.get(i);
+
+                boolean paused = false;
                 if (item.getCode() == AppOpsManager.OP_RECORD_AUDIO) {
-                    boolean paused = isAnyRecordingPausedLocked(item.getUid());
-                    if (item.isSilenced() != paused) {
-                        item.setSilenced(paused);
-                        notifySuscribers(
-                                item.getCode(),
-                                item.getUid(),
-                                item.getPackageName(),
-                                !item.isSilenced()
-                        );
-                    }
+                    paused = isAnyRecordingPausedLocked(item.getUid());
+                } else if (item.getCode() == AppOpsManager.OP_CAMERA) {
+                    paused = mCameraDisabled;
+                }
+
+                if (item.isDisabled() != paused) {
+                    item.setDisabled(paused);
+                    notifySuscribers(
+                            item.getCode(),
+                            item.getUid(),
+                            item.getPackageName(),
+                            !item.isDisabled()
+                    );
                 }
             }
         }
@@ -552,14 +589,27 @@ public class AppOpsControllerImpl extends BroadcastReceiver implements AppOpsCon
                     recordings.add(recording);
                 }
             }
-            updateRecordingPausedStatus();
+            updateSensorDisabledStatus();
         }
     };
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        mMicMuted = mAudioManager.isMicrophoneMute();
-        updateRecordingPausedStatus();
+        mMicMuted = mAudioManager.isMicrophoneMute()
+                || mSensorPrivacyController.isSensorBlocked(MICROPHONE);
+        updateSensorDisabledStatus();
+    }
+
+    @Override
+    public void onSensorBlockedChanged(int sensor, boolean blocked) {
+        mBGHandler.post(() -> {
+            if (sensor == CAMERA) {
+                mCameraDisabled = blocked;
+            } else if (sensor == MICROPHONE) {
+                mMicMuted = mAudioManager.isMicrophoneMute() || blocked;
+            }
+            updateSensorDisabledStatus();
+        });
     }
 
     protected class H extends Handler {

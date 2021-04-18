@@ -1703,6 +1703,39 @@ public abstract class Window {
     public abstract void setBackgroundDrawable(Drawable drawable);
 
     /**
+     * Blurs the screen behind the window within the bounds of the window.
+     *
+     * The density of the blur is set by the blur radius. The radius defines the size
+     * of the neighbouring area, from which pixels will be averaged to form the final
+     * color for each pixel. The operation approximates a Gaussian blur.
+     * A radius of 0 means no blur. The higher the radius, the denser the blur.
+     *
+     * The window background drawable is drawn on top of the blurred region. The blur
+     * region bounds and rounded corners will mimic those of the background drawable.
+     *
+     * For the blur region to be visible, the window has to be translucent. See
+     * {@link android.R.styleable#Window_windowIsTranslucent}.
+     *
+     * Note the difference with {@link WindowManager.LayoutParams#setBlurBehindRadius},
+     * which blurs the whole screen behind the window. Background blur blurs the screen behind
+     * only within the bounds of the window.
+     *
+     * Some devices might not support cross-window blur due to GPU limitations. It can also be
+     * disabled at runtime, e.g. during battery saving mode, when multimedia tunneling is used or
+     * when minimal post processing is requested. In such situations, no blur will be computed or
+     * drawn, resulting in a transparent window background. To avoid this, the app might want to
+     * change its theme to one that does not use blurs. To listen for cross-window blur
+     * enabled/disabled events, use {@link WindowManager#addCrossWindowBlurEnabledListener}.
+     *
+     * @param blurRadius The blur radius to use for window background blur in pixels
+     *
+     * @see android.R.styleable#Window_windowBackgroundBlurRadius
+     * @see WindowManager.LayoutParams#setBlurBehindRadius
+     * @see WindowManager#addCrossWindowBlurEnabledListener
+     */
+    public void setBackgroundBlurRadius(int blurRadius) {}
+
+    /**
      * Set the value for a drawable feature of this window, from a resource
      * identifier.  You must have called requestFeature(featureId) before
      * calling this function.
@@ -2597,7 +2630,6 @@ public abstract class Window {
      * callback with the root view of the window.
      *
      * @param callback the callback to add
-     * @hide
      */
     public void registerScrollCaptureCallback(@NonNull ScrollCaptureCallback callback) {
     }
@@ -2606,7 +2638,6 @@ public abstract class Window {
      * Unregisters a {@link ScrollCaptureCallback} previously registered with this window.
      *
      * @param callback the callback to remove
-     * @hide
      */
     public void unregisterScrollCaptureCallback(@NonNull ScrollCaptureCallback callback) {
     }

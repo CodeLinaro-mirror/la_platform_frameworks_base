@@ -22,7 +22,10 @@
 
 #include "TunerClient.h"
 
+using ::aidl::android::media::tv::tuner::TunerFrontendCapabilities;
+using ::aidl::android::media::tv::tuner::TunerFrontendDtmbCapabilities;
 using ::android::hardware::tv::tuner::V1_0::FrontendId;
+using ::android::hardware::tv::tuner::V1_0::FrontendStatusType;
 using ::android::hardware::tv::tuner::V1_0::FrontendType;
 
 namespace android {
@@ -37,14 +40,16 @@ int TunerClient::mTunerVersion;
 TunerClient::TunerClient() {
     // Get HIDL Tuner in migration stage.
     getHidlTuner();
-    updateTunerResources();
+    if (mTuner != NULL) {
+        updateTunerResources();
+    }
     // Connect with Tuner Service.
     ::ndk::SpAIBinder binder(AServiceManager_getService("media.tuner"));
     mTunerService = ITunerService::fromBinder(binder);
-    // TODO: Remove after JNI migration is done.
-    mTunerService = NULL;
     if (mTunerService == NULL) {
         ALOGE("Failed to get tuner service");
+    } else {
+        mTunerService->getTunerHalVersion(&mTunerVersion);
     }
 }
 
@@ -60,10 +65,8 @@ vector<FrontendId> TunerClient::getFrontendIds() {
 
     if (mTunerService != NULL) {
         vector<int32_t> v;
-        int aidl_return;
-        Status s = mTunerService->getFrontendIds(&v, &aidl_return);
-        if (!s.isOk() || aidl_return != (int) Result::SUCCESS
-                || v.size() == 0) {
+        Status s = mTunerService->getFrontendIds(&v);
+        if (ClientHelper::getServiceSpecificErrorCode(s) != Result::SUCCESS || v.size() == 0) {
             ids.clear();
             return ids;
         }
@@ -93,19 +96,23 @@ vector<FrontendId> TunerClient::getFrontendIds() {
 
 sp<FrontendClient> TunerClient::openFrontend(int frontendHandle) {
     if (mTunerService != NULL) {
-        // TODO: handle error code
         shared_ptr<ITunerFrontend> tunerFrontend;
-        mTunerService->openFrontend(frontendHandle, &tunerFrontend);
-        if (tunerFrontend == NULL) {
+        Status s = mTunerService->openFrontend(frontendHandle, &tunerFrontend);
+        if (ClientHelper::getServiceSpecificErrorCode(s) != Result::SUCCESS
+                || tunerFrontend == NULL) {
             return NULL;
         }
         int id;
-        // TODO: handle error code
-        tunerFrontend->getFrontendId(&id);
+        s = tunerFrontend->getFrontendId(&id);
+        if (ClientHelper::getServiceSpecificErrorCode(s) != Result::SUCCESS) {
+            return NULL;
+        }
         TunerFrontendInfo aidlFrontendInfo;
-        // TODO: handle error code
-        mTunerService->getFrontendInfo(id, &aidlFrontendInfo);
-        return new FrontendClient(tunerFrontend, frontendHandle, aidlFrontendInfo.type);
+        s = mTunerService->getFrontendInfo(id, &aidlFrontendInfo);
+        if (ClientHelper::getServiceSpecificErrorCode(s) != Result::SUCCESS) {
+            return NULL;
+        }
+        return new FrontendClient(tunerFrontend, aidlFrontendInfo.type);
     }
 
     if (mTuner != NULL) {
@@ -117,8 +124,10 @@ sp<FrontendClient> TunerClient::openFrontend(int frontendHandle) {
             if (res != Result::SUCCESS) {
                 return NULL;
             }
-            sp<FrontendClient> frontendClient = new FrontendClient(NULL, id, (int)hidlInfo.type);
+            sp<FrontendClient> frontendClient = new FrontendClient(
+                    NULL, (int)hidlInfo.type);
             frontendClient->setHidlFrontend(hidlFrontend);
+            frontendClient->setId(id);
             return frontendClient;
         }
     }
@@ -129,9 +138,11 @@ sp<FrontendClient> TunerClient::openFrontend(int frontendHandle) {
 shared_ptr<FrontendInfo> TunerClient::getFrontendInfo(int id) {
     if (mTunerService != NULL) {
         TunerFrontendInfo aidlFrontendInfo;
-        // TODO: handle error code
-        mTunerService->getFrontendInfo(id, &aidlFrontendInfo);
-        return make_shared<FrontendInfo>(FrontendInfoAidlToHidl(aidlFrontendInfo));
+        Status s = mTunerService->getFrontendInfo(id, &aidlFrontendInfo);
+        if (ClientHelper::getServiceSpecificErrorCode(s) != Result::SUCCESS) {
+            return NULL;
+        }
+        return make_shared<FrontendInfo>(frontendInfoAidlToHidl(aidlFrontendInfo));
     }
 
     if (mTuner != NULL) {
@@ -147,7 +158,22 @@ shared_ptr<FrontendInfo> TunerClient::getFrontendInfo(int id) {
 }
 
 shared_ptr<FrontendDtmbCapabilities> TunerClient::getFrontendDtmbCapabilities(int id) {
-    // pending aidl interface
+    if (mTunerService != NULL) {
+        TunerFrontendDtmbCapabilities dtmbCaps;
+        Status s = mTunerService->getFrontendDtmbCapabilities(id, &dtmbCaps);
+        if (ClientHelper::getServiceSpecificErrorCode(s) != Result::SUCCESS) {
+            return NULL;
+        }
+        FrontendDtmbCapabilities hidlCaps{
+            .transmissionModeCap = static_cast<uint32_t>(dtmbCaps.transmissionModeCap),
+            .bandwidthCap = static_cast<uint32_t>(dtmbCaps.bandwidthCap),
+            .modulationCap = static_cast<uint32_t>(dtmbCaps.modulationCap),
+            .codeRateCap = static_cast<uint32_t>(dtmbCaps.codeRateCap),
+            .guardIntervalCap = static_cast<uint32_t>(dtmbCaps.guardIntervalCap),
+            .interleaveModeCap = static_cast<uint32_t>(dtmbCaps.interleaveModeCap),
+        };
+        return make_shared<FrontendDtmbCapabilities>(hidlCaps);
+    }
 
     if (mTuner_1_1 != NULL) {
         Result result;
@@ -165,17 +191,18 @@ shared_ptr<FrontendDtmbCapabilities> TunerClient::getFrontendDtmbCapabilities(in
     return NULL;
 }
 
-sp<DemuxClient> TunerClient::openDemux(int /*demuxHandle*/) {
+sp<DemuxClient> TunerClient::openDemux(int demuxHandle) {
     if (mTunerService != NULL) {
-        // TODO: handle error code
-        /*shared_ptr<ITunerDemux> tunerDemux;
-        mTunerService->openDemux(demuxHandle, &tunerDemux);
-        return new DemuxClient(tunerDemux);*/
+        shared_ptr<ITunerDemux> tunerDemux;
+        Status s = mTunerService->openDemux(demuxHandle, &tunerDemux);
+        if (ClientHelper::getServiceSpecificErrorCode(s) != Result::SUCCESS) {
+            return NULL;
+        }
+        return new DemuxClient(tunerDemux);
     }
 
     if (mTuner != NULL) {
-        // TODO: pending aidl interface
-        sp<DemuxClient> demuxClient = new DemuxClient();
+        sp<DemuxClient> demuxClient = new DemuxClient(NULL);
         int demuxId;
         sp<IDemux> hidlDemux = openHidlDemux(demuxId);
         if (hidlDemux != NULL) {
@@ -189,7 +216,14 @@ sp<DemuxClient> TunerClient::openDemux(int /*demuxHandle*/) {
 }
 
 shared_ptr<DemuxCapabilities> TunerClient::getDemuxCaps() {
-    // pending aidl interface
+    if (mTunerService != NULL) {
+        TunerDemuxCapabilities aidlCaps;
+        Status s = mTunerService->getDemuxCaps(&aidlCaps);
+        if (ClientHelper::getServiceSpecificErrorCode(s) != Result::SUCCESS) {
+            return NULL;
+        }
+        return make_shared<DemuxCapabilities>(getHidlDemuxCaps(aidlCaps));
+    }
 
     if (mTuner != NULL) {
         Result res;
@@ -206,17 +240,18 @@ shared_ptr<DemuxCapabilities> TunerClient::getDemuxCaps() {
     return NULL;
 }
 
-sp<DescramblerClient> TunerClient::openDescrambler(int /*descramblerHandle*/) {
+sp<DescramblerClient> TunerClient::openDescrambler(int descramblerHandle) {
     if (mTunerService != NULL) {
-        // TODO: handle error code
-        /*shared_ptr<ITunerDescrambler> tunerDescrambler;
-        mTunerService->openDescrambler(demuxHandle, &tunerDescrambler);
-        return new DescramblerClient(tunerDescrambler);*/
+        shared_ptr<ITunerDescrambler> tunerDescrambler;
+        Status s = mTunerService->openDescrambler(descramblerHandle, &tunerDescrambler);
+        if (ClientHelper::getServiceSpecificErrorCode(s) != Result::SUCCESS) {
+            return NULL;
+        }
+        return new DescramblerClient(tunerDescrambler);
     }
 
     if (mTuner != NULL) {
-        // TODO: pending aidl interface
-        sp<DescramblerClient> descramblerClient = new DescramblerClient();
+        sp<DescramblerClient> descramblerClient = new DescramblerClient(NULL);
         sp<IDescrambler> hidlDescrambler = openHidlDescrambler();
         if (hidlDescrambler != NULL) {
             descramblerClient->setHidlDescrambler(hidlDescrambler);
@@ -224,20 +259,22 @@ sp<DescramblerClient> TunerClient::openDescrambler(int /*descramblerHandle*/) {
         }
     }
 
-    return NULL;}
+    return NULL;
+}
 
 sp<LnbClient> TunerClient::openLnb(int lnbHandle) {
     if (mTunerService != NULL) {
-        // TODO: handle error code
-        /*shared_ptr<ITunerLnb> tunerLnb;
-        mTunerService->openLnb(demuxHandle, &tunerLnb);
-        return new LnbClient(tunerLnb);*/
+        shared_ptr<ITunerLnb> tunerLnb;
+        Status s = mTunerService->openLnb(lnbHandle, &tunerLnb);
+        if (ClientHelper::getServiceSpecificErrorCode(s) != Result::SUCCESS) {
+            return NULL;
+        }
+        return new LnbClient(tunerLnb);
     }
 
     if (mTuner != NULL) {
         int id = getResourceIdFromHandle(lnbHandle, LNB);
-        // TODO: pending aidl interface
-        sp<LnbClient> lnbClient = new LnbClient();
+        sp<LnbClient> lnbClient = new LnbClient(NULL);
         sp<ILnb> hidlLnb = openHidlLnbById(id);
         if (hidlLnb != NULL) {
             lnbClient->setHidlLnb(hidlLnb);
@@ -251,15 +288,16 @@ sp<LnbClient> TunerClient::openLnb(int lnbHandle) {
 
 sp<LnbClient> TunerClient::openLnbByName(string lnbName) {
     if (mTunerService != NULL) {
-        // TODO: handle error code
-        /*shared_ptr<ITunerLnb> tunerLnb;
-        mTunerService->openLnbByName(lnbName, &tunerLnb);
-        return new LnbClient(tunerLnb);*/
+        shared_ptr<ITunerLnb> tunerLnb;
+        Status s = mTunerService->openLnbByName(lnbName, &tunerLnb);
+        if (ClientHelper::getServiceSpecificErrorCode(s) != Result::SUCCESS) {
+            return NULL;
+        }
+        return new LnbClient(tunerLnb);
     }
 
     if (mTuner != NULL) {
-        // TODO: pending aidl interface
-        sp<LnbClient> lnbClient = new LnbClient();
+        sp<LnbClient> lnbClient = new LnbClient(NULL);
         LnbId id;
         sp<ILnb> hidlLnb = openHidlLnbByName(lnbName, id);
         if (hidlLnb != NULL) {
@@ -319,7 +357,7 @@ void TunerClient::updateLnbResources() {
 
 sp<ITuner> TunerClient::getHidlTuner() {
     if (mTuner == NULL) {
-        mTunerVersion = 0;
+        mTunerVersion = TUNER_HAL_VERSION_UNKNOWN;
         mTuner_1_1 = ::android::hardware::tv::tuner::V1_1::ITuner::getService();
 
         if (mTuner_1_1 == NULL) {
@@ -328,11 +366,11 @@ sp<ITuner> TunerClient::getHidlTuner() {
             if (mTuner == NULL) {
                 ALOGW("Failed to get tuner 1.0 service.");
             } else {
-                mTunerVersion = 1 << 16;
+                mTunerVersion = TUNER_HAL_VERSION_1_0;
             }
         } else {
             mTuner = static_cast<sp<ITuner>>(mTuner_1_1);
-            mTunerVersion = ((1 << 16) | 1);
+            mTunerVersion = TUNER_HAL_VERSION_1_1;
          }
      }
      return mTuner;
@@ -408,29 +446,8 @@ sp<ILnb> TunerClient::openHidlLnbByName(string name, LnbId& lnbId) {
     return lnb;
 }
 
-sp<IDescrambler> TunerClient::openHidlDescrambler() {
-    sp<IDescrambler> descrambler;
-    Result res;
-
-    mTuner->openDescrambler([&](Result r, const sp<IDescrambler>& descramblerSp) {
-        res = r;
-        descrambler = descramblerSp;
-    });
-
-    if (res != Result::SUCCESS || descrambler == NULL) {
-        return NULL;
-    }
-
-    return descrambler;
-}
-
 vector<int> TunerClient::getLnbHandles() {
     vector<int> lnbHandles;
-
-    if (mTunerService != NULL) {
-        // TODO: pending hidl interface
-    }
-
     if (mTuner != NULL) {
         Result res;
         vector<LnbId> lnbIds;
@@ -450,7 +467,43 @@ vector<int> TunerClient::getLnbHandles() {
     return lnbHandles;
 }
 
-FrontendInfo TunerClient::FrontendInfoAidlToHidl(TunerFrontendInfo aidlFrontendInfo) {
+sp<IDescrambler> TunerClient::openHidlDescrambler() {
+    sp<IDescrambler> descrambler;
+    Result res;
+
+    mTuner->openDescrambler([&](Result r, const sp<IDescrambler>& descramblerSp) {
+        res = r;
+        descrambler = descramblerSp;
+    });
+
+    if (res != Result::SUCCESS || descrambler == NULL) {
+        return NULL;
+    }
+
+    return descrambler;
+}
+
+DemuxCapabilities TunerClient::getHidlDemuxCaps(TunerDemuxCapabilities& aidlCaps) {
+    DemuxCapabilities caps{
+        .numDemux = (uint32_t)aidlCaps.numDemux,
+        .numRecord = (uint32_t)aidlCaps.numRecord,
+        .numPlayback = (uint32_t)aidlCaps.numPlayback,
+        .numTsFilter = (uint32_t)aidlCaps.numTsFilter,
+        .numSectionFilter = (uint32_t)aidlCaps.numSectionFilter,
+        .numAudioFilter = (uint32_t)aidlCaps.numAudioFilter,
+        .numVideoFilter = (uint32_t)aidlCaps.numVideoFilter,
+        .numPesFilter = (uint32_t)aidlCaps.numPesFilter,
+        .numPcrFilter = (uint32_t)aidlCaps.numPcrFilter,
+        .numBytesInSectionFilter = (uint32_t)aidlCaps.numBytesInSectionFilter,
+        .filterCaps = (uint32_t)aidlCaps.filterCaps,
+        .bTimeFilter = aidlCaps.bTimeFilter,
+    };
+    caps.linkCaps.resize(aidlCaps.linkCaps.size());
+    copy(aidlCaps.linkCaps.begin(), aidlCaps.linkCaps.end(), caps.linkCaps.begin());
+    return caps;
+}
+
+FrontendInfo TunerClient::frontendInfoAidlToHidl(TunerFrontendInfo aidlFrontendInfo) {
     FrontendInfo hidlFrontendInfo {
         .type = static_cast<FrontendType>(aidlFrontendInfo.type),
         .minFrequency = static_cast<uint32_t>(aidlFrontendInfo.minFrequency),
@@ -460,8 +513,102 @@ FrontendInfo TunerClient::FrontendInfoAidlToHidl(TunerFrontendInfo aidlFrontendI
         .acquireRange = static_cast<uint32_t>(aidlFrontendInfo.acquireRange),
         .exclusiveGroupId = static_cast<uint32_t>(aidlFrontendInfo.exclusiveGroupId),
     };
-    // TODO: handle Frontend caps
 
+    int size = aidlFrontendInfo.statusCaps.size();
+    hidlFrontendInfo.statusCaps.resize(size);
+    for (int i = 0; i < size; i++) {
+        hidlFrontendInfo.statusCaps[i] =
+                static_cast<FrontendStatusType>(aidlFrontendInfo.statusCaps[i]);
+    }
+
+    switch (aidlFrontendInfo.caps.getTag()) {
+        case TunerFrontendCapabilities::analogCaps: {
+            auto analog = aidlFrontendInfo.caps.get<TunerFrontendCapabilities::analogCaps>();
+            hidlFrontendInfo.frontendCaps.analogCaps({
+                .typeCap = static_cast<uint32_t>(analog.typeCap),
+                .sifStandardCap = static_cast<uint32_t>(analog.sifStandardCap),
+            });
+            break;
+        }
+        case TunerFrontendCapabilities::atscCaps: {
+            auto atsc = aidlFrontendInfo.caps.get<TunerFrontendCapabilities::atscCaps>();
+            hidlFrontendInfo.frontendCaps.atscCaps({
+                .modulationCap = static_cast<uint32_t>(atsc.modulationCap),
+            });
+            break;
+        }
+        case TunerFrontendCapabilities::atsc3Caps: {
+            auto atsc3 = aidlFrontendInfo.caps.get<TunerFrontendCapabilities::atsc3Caps>();
+            hidlFrontendInfo.frontendCaps.atsc3Caps({
+                .bandwidthCap = static_cast<uint32_t>(atsc3.bandwidthCap),
+                .modulationCap = static_cast<uint32_t>(atsc3.modulationCap),
+                .timeInterleaveModeCap = static_cast<uint32_t>(atsc3.timeInterleaveModeCap),
+                .codeRateCap = static_cast<uint32_t>(atsc3.codeRateCap),
+                .fecCap = static_cast<uint32_t>(atsc3.fecCap),
+                .demodOutputFormatCap = static_cast<uint8_t>(atsc3.demodOutputFormatCap),
+            });
+            break;
+        }
+        case TunerFrontendCapabilities::cableCaps: {
+            auto cable = aidlFrontendInfo.caps.get<TunerFrontendCapabilities::cableCaps>();
+            hidlFrontendInfo.frontendCaps.dvbcCaps({
+                .modulationCap = static_cast<uint32_t>(cable.modulationCap),
+                .fecCap = static_cast<uint64_t>(cable.codeRateCap),
+                .annexCap = static_cast<uint8_t>(cable.annexCap),
+            });
+            break;
+        }
+        case TunerFrontendCapabilities::dvbsCaps: {
+            auto dvbs = aidlFrontendInfo.caps.get<TunerFrontendCapabilities::dvbsCaps>();
+            hidlFrontendInfo.frontendCaps.dvbsCaps({
+                .modulationCap = static_cast<int32_t>(dvbs.modulationCap),
+                .innerfecCap = static_cast<uint64_t>(dvbs.codeRateCap),
+                .standard = static_cast<uint8_t>(dvbs.standard),
+            });
+            break;
+        }
+        case TunerFrontendCapabilities::dvbtCaps: {
+            auto dvbt = aidlFrontendInfo.caps.get<TunerFrontendCapabilities::dvbtCaps>();
+            hidlFrontendInfo.frontendCaps.dvbtCaps({
+                .transmissionModeCap = static_cast<uint32_t>(dvbt.transmissionModeCap),
+                .bandwidthCap = static_cast<uint32_t>(dvbt.bandwidthCap),
+                .constellationCap = static_cast<uint32_t>(dvbt.constellationCap),
+                .coderateCap = static_cast<uint32_t>(dvbt.codeRateCap),
+                .hierarchyCap = static_cast<uint32_t>(dvbt.hierarchyCap),
+                .guardIntervalCap = static_cast<uint32_t>(dvbt.guardIntervalCap),
+                .isT2Supported = dvbt.isT2Supported,
+                .isMisoSupported = dvbt.isMisoSupported,
+            });
+            break;
+        }
+        case TunerFrontendCapabilities::isdbsCaps: {
+            auto isdbs = aidlFrontendInfo.caps.get<TunerFrontendCapabilities::isdbsCaps>();
+            hidlFrontendInfo.frontendCaps.isdbsCaps({
+                .modulationCap = static_cast<uint32_t>(isdbs.modulationCap),
+                .coderateCap = static_cast<uint32_t>(isdbs.codeRateCap),
+            });
+            break;
+        }
+        case TunerFrontendCapabilities::isdbs3Caps: {
+            auto isdbs3 = aidlFrontendInfo.caps.get<TunerFrontendCapabilities::isdbs3Caps>();
+            hidlFrontendInfo.frontendCaps.isdbs3Caps({
+                .modulationCap = static_cast<uint32_t>(isdbs3.modulationCap),
+                .coderateCap = static_cast<uint32_t>(isdbs3.codeRateCap),
+            });
+            break;
+        }
+        case TunerFrontendCapabilities::isdbtCaps: {
+            auto isdbt = aidlFrontendInfo.caps.get<TunerFrontendCapabilities::isdbtCaps>();
+            hidlFrontendInfo.frontendCaps.isdbtCaps({
+                .modeCap = static_cast<uint32_t>(isdbt.modeCap),
+                .bandwidthCap = static_cast<uint32_t>(isdbt.bandwidthCap),
+                .modulationCap = static_cast<uint32_t>(isdbt.modulationCap),
+                .coderateCap = static_cast<uint32_t>(isdbt.codeRateCap),
+                .guardIntervalCap = static_cast<uint32_t>(isdbt.guardIntervalCap),
+            });
+            break;
+        }
+    }
     return hidlFrontendInfo;
 }
 

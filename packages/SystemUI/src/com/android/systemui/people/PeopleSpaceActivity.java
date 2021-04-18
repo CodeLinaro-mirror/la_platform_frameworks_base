@@ -22,11 +22,9 @@ import static android.appwidget.AppWidgetManager.INVALID_APPWIDGET_ID;
 import android.app.Activity;
 import android.app.INotificationManager;
 import android.app.people.IPeopleManager;
-import android.appwidget.AppWidgetManager;
-import android.content.ComponentName;
+import android.app.people.PeopleSpaceTile;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
@@ -35,14 +33,13 @@ import android.provider.Settings;
 import android.util.Log;
 import android.view.ViewGroup;
 
-import androidx.preference.PreferenceManager;
-
-import com.android.internal.logging.UiEventLogger;
-import com.android.internal.logging.UiEventLoggerImpl;
 import com.android.systemui.R;
-import com.android.systemui.people.widget.PeopleSpaceWidgetProvider;
+import com.android.systemui.people.widget.PeopleSpaceWidgetManager;
+import com.android.systemui.statusbar.notification.NotificationEntryManager;
 
 import java.util.List;
+
+import javax.inject.Inject;
 
 /**
  * Shows the user their tiles for their priority People (go/live-status).
@@ -50,17 +47,24 @@ import java.util.List;
 public class PeopleSpaceActivity extends Activity {
 
     private static final String TAG = "PeopleSpaceActivity";
+    private static final boolean DEBUG = PeopleSpaceUtils.DEBUG;
 
     private ViewGroup mPeopleSpaceLayout;
     private IPeopleManager mPeopleManager;
+    private PeopleSpaceWidgetManager mPeopleSpaceWidgetManager;
     private INotificationManager mNotificationManager;
     private PackageManager mPackageManager;
     private LauncherApps mLauncherApps;
     private Context mContext;
-    private AppWidgetManager mAppWidgetManager;
+    private NotificationEntryManager mNotificationEntryManager;
     private int mAppWidgetId;
     private boolean mShowSingleConversation;
-    private UiEventLogger mUiEventLogger = new UiEventLoggerImpl();
+
+    @Inject
+    public PeopleSpaceActivity(NotificationEntryManager notificationEntryManager) {
+        super();
+        mNotificationEntryManager = notificationEntryManager;
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -73,8 +77,8 @@ public class PeopleSpaceActivity extends Activity {
         mPackageManager = getPackageManager();
         mPeopleManager = IPeopleManager.Stub.asInterface(
                 ServiceManager.getService(Context.PEOPLE_SERVICE));
+        mPeopleSpaceWidgetManager = new PeopleSpaceWidgetManager(mContext);
         mLauncherApps = mContext.getSystemService(LauncherApps.class);
-        mAppWidgetManager = AppWidgetManager.getInstance(mContext);
         setTileViewsWithPriorityConversations();
         mAppWidgetId = getIntent().getIntExtra(EXTRA_APPWIDGET_ID,
                 INVALID_APPWIDGET_ID);
@@ -95,8 +99,8 @@ public class PeopleSpaceActivity extends Activity {
      */
     private void setTileViewsWithPriorityConversations() {
         try {
-            List<PeopleSpaceTile> tiles = PeopleSpaceUtils.getTiles(
-                    mContext, mNotificationManager, mPeopleManager, mLauncherApps);
+            List<PeopleSpaceTile> tiles = PeopleSpaceUtils.getTiles(mContext, mNotificationManager,
+                    mPeopleManager, mLauncherApps, mNotificationEntryManager);
             for (PeopleSpaceTile tile : tiles) {
                 PeopleSpaceTileView tileView = new PeopleSpaceTileView(mContext, mPeopleSpaceLayout,
                         tile.getId());
@@ -127,31 +131,20 @@ public class PeopleSpaceActivity extends Activity {
 
     /** Stores the user selected configuration for {@code mAppWidgetId}. */
     private void storeWidgetConfiguration(PeopleSpaceTile tile) {
-        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(mContext);
-        SharedPreferences.Editor editor = sp.edit();
         if (PeopleSpaceUtils.DEBUG) {
-            Log.d(TAG, "Put " + tile.getUserName() + "'s shortcut ID: "
-                    + tile.getId() + " for widget ID: "
-                    + mAppWidgetId);
+            if (DEBUG) {
+                Log.d(TAG, "Put " + tile.getUserName() + "'s shortcut ID: "
+                        + tile.getId() + " for widget ID: "
+                        + mAppWidgetId);
+            }
         }
-        editor.putString(String.valueOf(mAppWidgetId), tile.getId());
-        editor.commit();
-        AppWidgetManager appWidgetManager = AppWidgetManager.getInstance(mContext);
-        Bundle options = new Bundle();
-        options.putParcelable(PeopleSpaceUtils.OPTIONS_PEOPLE_SPACE_TILE, tile);
-        appWidgetManager.updateAppWidgetOptions(mAppWidgetId, options);
-        int[] widgetIds = appWidgetManager.getAppWidgetIds(
-                new ComponentName(mContext, PeopleSpaceWidgetProvider.class));
-        // TODO: Populate new widget with existing conversation notification, if there is any.
-        PeopleSpaceUtils.updateSingleConversationWidgets(mContext, widgetIds, mAppWidgetManager,
-                mNotificationManager);
+        mPeopleSpaceWidgetManager.addNewWidget(tile, mAppWidgetId);
         finishActivity();
     }
 
     /** Finish activity with a successful widget configuration result. */
     private void finishActivity() {
-        if (PeopleSpaceUtils.DEBUG) Log.d(TAG, "Widget added!");
-        mUiEventLogger.log(PeopleSpaceUtils.PeopleSpaceWidgetEvent.PEOPLE_SPACE_WIDGET_ADDED);
+        if (DEBUG) Log.d(TAG, "Widget added!");
         setActivityResult(RESULT_OK);
         finish();
     }

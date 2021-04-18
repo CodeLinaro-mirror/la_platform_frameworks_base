@@ -93,6 +93,8 @@
     <string name="screenshot_scroll_description" msgid="7855773867093272175">"സ്ക്രീൻഷോട്ട് സ്ക്രോൾ ചെയ്യുക"</string>
     <string name="screenshot_dismiss_description" msgid="4702341245899508786">"സ്ക്രീൻഷോട്ട് ഡിസ്‌മിസ് ചെയ്യുക"</string>
     <string name="screenshot_preview_description" msgid="7606510140714080474">"സ്‌ക്രീൻഷോട്ട് പ്രിവ്യു"</string>
+    <string name="screenshot_top_boundary" msgid="1500569103321300856">"മുകളിലുള്ള അതിർത്തി"</string>
+    <string name="screenshot_bottom_boundary" msgid="5657242629526407311">"ചുവടെയുള്ള അതിർത്തി"</string>
     <string name="screenrecord_name" msgid="2596401223859996572">"സ്ക്രീൻ റെക്കോർഡർ"</string>
     <string name="screenrecord_background_processing_label" msgid="7244617554884238898">"സ്ക്രീൻ റെക്കോർഡിംഗ് പ്രോസസുചെയ്യുന്നു"</string>
     <string name="screenrecord_channel_description" msgid="4147077128486138351">"ഒരു സ്ക്രീൻ റെക്കോർഡിംഗ് സെഷനായി നിലവിലുള്ള അറിയിപ്പ്"</string>
@@ -114,7 +116,10 @@
     <string name="screenrecord_cancel_label" msgid="7850926573274483294">"റദ്ദാക്കുക"</string>
     <string name="screenrecord_share_label" msgid="5025590804030086930">"പങ്കിടുക"</string>
     <string name="screenrecord_cancel_success" msgid="1775448688137393901">"സ്ക്രീൻ റെക്കോർഡിംഗ് റദ്ദാക്കി"</string>
-    <string name="screenrecord_save_message" msgid="490522052388998226">"സ്ക്രീൻ റെക്കോർഡിംഗ് സംരക്ഷിച്ചു, കാണാൻ ടാപ്പ് ചെയ്യുക"</string>
+    <!-- no translation found for screenrecord_save_title (1886652605520893850) -->
+    <skip />
+    <!-- no translation found for screenrecord_save_text (3008973099800840163) -->
+    <skip />
     <string name="screenrecord_delete_error" msgid="2870506119743013588">"സ്ക്രീൻ റെക്കോർഡിംഗ് ഇല്ലാതാക്കുന്നതിൽ പിശക്"</string>
     <string name="screenrecord_permission_error" msgid="7856841237023137686">"അനുമതികൾ ലഭിച്ചില്ല"</string>
     <string name="screenrecord_start_error" msgid="2200660692479682368">"സ്ക്രീൻ റെക്കോർഡിംഗ് ആരംഭിക്കുന്നതിൽ പിശക്"</string>
@@ -344,10 +349,8 @@
     <string name="quick_settings_ime_label" msgid="3351174938144332051">"ടൈപ്പുചെയ്യൽ രീതി"</string>
     <string name="quick_settings_location_label" msgid="2621868789013389163">"ലൊക്കേഷൻ"</string>
     <string name="quick_settings_location_off_label" msgid="7923929131443915919">"ലൊക്കേഷൻ ഓഫാണ്"</string>
-    <!-- no translation found for quick_settings_camera_label (1367149596242401934) -->
-    <skip />
-    <!-- no translation found for quick_settings_mic_label (8245831073612564953) -->
-    <skip />
+    <string name="quick_settings_camera_label" msgid="1367149596242401934">"ക്യാമറ ബ്ലോക്ക് ചെയ്യുക"</string>
+    <string name="quick_settings_mic_label" msgid="8245831073612564953">"മൈക്രോഫോൺ മ്യൂട്ട് ചെയ്യുക"</string>
     <string name="quick_settings_media_device_label" msgid="8034019242363789941">"മീഡിയ ഉപകരണം"</string>
     <string name="quick_settings_rssi_label" msgid="3397615415140356701">"RSSI"</string>
     <string name="quick_settings_rssi_emergency_only" msgid="7499207215265078598">"അടിയന്തിര കോളുകൾ മാത്രം"</string>
@@ -358,12 +361,9 @@
     <string name="quick_settings_user_new_user" msgid="3347905871336069666">"പുതിയ ഉപയോക്താവ്"</string>
     <string name="quick_settings_wifi_label" msgid="2879507532983487244">"വൈഫൈ"</string>
     <string name="quick_settings_internet_label" msgid="6603068555872455463">"ഇന്റർനെറ്റ്"</string>
-    <!-- no translation found for quick_settings_airplane_safe_label (2665758539772645899) -->
-    <skip />
-    <!-- no translation found for quick_settings_networks_available (1875138606855420438) -->
-    <skip />
-    <!-- no translation found for quick_settings_networks_unavailable (1167847013337940082) -->
-    <skip />
+    <string name="quick_settings_airplane_safe_label" msgid="2665758539772645899">"വിമാന-സുരക്ഷിതം"</string>
+    <string name="quick_settings_networks_available" msgid="1875138606855420438">"നെറ്റ്‌വർക്കുകൾ ലഭ്യമാണ്"</string>
+    <string name="quick_settings_networks_unavailable" msgid="1167847013337940082">"നെറ്റ്‌വർക്കുകൾ ലഭ്യമല്ല"</string>
     <string name="quick_settings_wifi_not_connected" msgid="4071097522427039160">"കണ‌ക്റ്റ് ചെയ്‌തിട്ടില്ല"</string>
     <string name="quick_settings_wifi_no_network" msgid="6003178398713839313">"നെറ്റ്‌വർക്ക് ഒന്നുമില്ല"</string>
     <string name="quick_settings_wifi_off_label" msgid="4003379736176547594">"വൈഫൈ ഓഫുചെയ്യുക"</string>
@@ -415,12 +415,15 @@
     <string name="quick_settings_dark_mode_secondary_label_until_sunrise" msgid="4404885070316716472">"സൂര്യോദയം വരെ"</string>
     <string name="quick_settings_dark_mode_secondary_label_on_at" msgid="5128758823486361279">"<xliff:g id="TIME">%s</xliff:g>-ന്"</string>
     <string name="quick_settings_dark_mode_secondary_label_until" msgid="2289774641256492437">"<xliff:g id="TIME">%s</xliff:g> വരെ"</string>
+    <string name="quick_settings_reduce_bright_colors_label" msgid="7537352080559075175">"തെളിച്ചം കുറയ്ക്കുക"</string>
     <string name="quick_settings_nfc_label" msgid="1054317416221168085">"NFC"</string>
     <string name="quick_settings_nfc_off" msgid="3465000058515424663">"NFC പ്രവർത്തനരഹിതമാക്കി"</string>
     <string name="quick_settings_nfc_on" msgid="1004976611203202230">"NFC പ്രവർത്തനക്ഷമമാക്കി"</string>
     <string name="quick_settings_screen_record_label" msgid="1594046461509776676">"സ്‌ക്രീൻ റെക്കോർഡ്"</string>
     <string name="quick_settings_screen_record_start" msgid="1574725369331638985">"ആരംഭിക്കുക"</string>
     <string name="quick_settings_screen_record_stop" msgid="8087348522976412119">"നിര്‍ത്തുക"</string>
+    <string name="sensor_privacy_start_use_mic_dialog_content" msgid="8643239110815357707">"തുടരാൻ, &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; ആപ്പിന് നിങ്ങളുടെ ഉപകരണത്തിന്റെ മൈക്രോഫോണിലേക്ക് ആക്‌സസ് നൽകേണ്ടതുണ്ട്."</string>
+    <string name="sensor_privacy_start_use_camera_dialog_content" msgid="7773612142162829116">"തുടരാൻ, &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; ആപ്പിന് നിങ്ങളുടെ ഉപകരണത്തിന്റെ ക്യാമറയിലേക്ക് ആക്‌സസ് നൽകേണ്ടതുണ്ട്."</string>
     <string name="media_seamless_remote_device" msgid="177033467332920464">"ഉപകരണം"</string>
     <string name="recents_swipe_up_onboarding" msgid="2820265886420993995">"ആപ്പുകൾ മാറാൻ മുകളിലേക്ക് സ്വൈപ്പ് ചെയ്യുക"</string>
     <string name="recents_quick_scrub_onboarding" msgid="765934300283514912">"ആപ്പുകൾ പെട്ടെന്ന് മാറാൻ വലത്തോട്ട് വലിച്ചിടുക"</string>
@@ -443,8 +446,10 @@
     <string name="notification_tap_again" msgid="4477318164947497249">"തുറക്കുന്നതിന് വീണ്ടും ടാപ്പുചെയ്യുക"</string>
     <string name="keyguard_unlock" msgid="8031975796351361601">"തുറക്കാൻ മുകളിലോട്ട് സ്വൈപ്പ് ചെയ്യുക"</string>
     <string name="keyguard_retry" msgid="886802522584053523">"വീണ്ടും ശ്രമിക്കാൻ മുകളിലേക്ക് സ്വൈപ്പ് ചെയ്യുക"</string>
+    <string name="require_unlock_for_nfc" msgid="1305686454823018831">"NFC ഉപയോഗിക്കാൻ അൺലോക്ക് ചെയ്യുക"</string>
     <string name="do_disclosure_generic" msgid="4896482821974707167">"ഈ ഉപകരണം നിങ്ങളുടെ സ്ഥാപനത്തിന്റേതാണ്"</string>
     <string name="do_disclosure_with_name" msgid="2091641464065004091">"ഈ ഉപകരണം <xliff:g id="ORGANIZATION_NAME">%s</xliff:g> എന്ന സ്ഥാപനത്തിന്റേതാണ്"</string>
+    <string name="do_financed_disclosure_with_name" msgid="6723004643314467864">"<xliff:g id="ORGANIZATION_NAME">%s</xliff:g> നൽകിയ ഉപകരണമാണിത്"</string>
     <string name="phone_hint" msgid="6682125338461375925">"ഫോൺ ഐക്കണിൽ നിന്ന് സ്വൈപ്പുചെയ്യുക"</string>
     <string name="voice_hint" msgid="7476017460191291417">"വോയ്‌സ് അസിസ്റ്റിനായുള്ള ഐക്കണിൽ നിന്ന് സ്വൈപ്പുചെയ്യുക"</string>
     <string name="camera_hint" msgid="4519495795000658637">"ക്യാമറ ഐക്കണിൽ നിന്ന് സ്വൈപ്പുചെയ്യുക"</string>
@@ -465,9 +470,10 @@
     <string name="accessibility_multi_user_switch_quick_contact" msgid="4504508915324898576">"പ്രൊഫൈൽ കാണിക്കുക"</string>
     <string name="user_add_user" msgid="4336657383006913022">"ഉപയോക്താവിനെ ചേര്‍ക്കുക"</string>
     <string name="user_new_user_name" msgid="2019166282704195789">"പുതിയ ഉപയോക്താവ്"</string>
-    <string name="guest_exit_guest_dialog_title" msgid="2034481024623462357">"അതിഥി സെഷൻ അവസാനിപ്പിക്കണോ?"</string>
+    <string name="guest_exit_button" msgid="3059840571760915762">"അതിഥി സെഷൻ അവസാനിപ്പിക്കുക"</string>
+    <string name="guest_exit_guest_dialog_title" msgid="5015697561580641422">"അതിഥിയെ നീക്കംചെയ്യണോ?"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"ഈ സെഷനിലെ എല്ലാ അപ്ലിക്കേഷനുകളും ഡാറ്റയും ഇല്ലാതാക്കും."</string>
-    <string name="guest_exit_guest_dialog_remove" msgid="8533184512885775423">"സെഷൻ അവസാനിപ്പിക്കുക"</string>
+    <string name="guest_exit_guest_dialog_remove" msgid="7505817591242703757">"നീക്കംചെയ്യുക"</string>
     <string name="guest_wipe_session_title" msgid="7147965814683990944">"അതിഥിയ്‌ക്ക് വീണ്ടും സ്വാഗതം!"</string>
     <string name="guest_wipe_session_message" msgid="3393823610257065457">"നിങ്ങളുടെ സെഷൻ തുടരണോ?"</string>
     <string name="guest_wipe_session_wipe" msgid="8056836584445473309">"പുനരാംരംഭിക്കുക"</string>
@@ -542,6 +548,7 @@
     <string name="monitoring_description_managed_profile_ca_certificate" msgid="7904323416598435647">"നിങ്ങളുടെ ഔദ്യോഗിക പ്രൊഫൈലിൽ നിങ്ങളുടെ സ്ഥാപനമൊരു സർട്ടിഫിക്കറ്റ് അതോറിറ്റി ഇൻസ്റ്റാൾ ചെയ്തിരിക്കുന്നു. നിങ്ങളുടെ സുരക്ഷിത നെറ്റ്‌വർക്ക് ട്രാഫിക്ക് നിരീക്ഷിക്കപ്പെടുകയോ പരിഷ്കരിക്കപ്പെടുയോ ചെയ്തേക്കാം."</string>
     <string name="monitoring_description_ca_certificate" msgid="448923057059097497">"നിങ്ങളുടെ ഉപകരണത്തിൽ ഒരു സർട്ടിഫിക്കറ്റ് അതോറിറ്റി ഇൻസ്റ്റാൾ ചെയ്തിരിക്കുന്നു. നിങ്ങളുടെ സുരക്ഷിത നെറ്റ്‌വർക്ക് ട്രാഫിക്ക് നിരീക്ഷിക്കപ്പെടുകയോ പരിഷ്കരിക്കപ്പെടുയോ ചെയ്തേക്കാം."</string>
     <string name="monitoring_description_management_network_logging" msgid="216983105036994771">"നിങ്ങളുടെ അഡ്‌മിൻ, നെറ്റ്‌വർക്ക് ലോഗിംഗ് ഓണാക്കിയിട്ടുണ്ട്, ഇതിന് നിങ്ങളുടെ ഉപകരണത്തിലെ ട്രാഫിക്ക് നിരീക്ഷിക്കാൻ കഴിയും."</string>
+    <string name="monitoring_description_managed_profile_network_logging" msgid="6932303843097006037">"നിങ്ങളുടെ അഡ്‌മിൻ നെറ്റ്‌വർക്ക് ലോഗിംഗ് ഓണാക്കി, ഇത് നിങ്ങളുടെ ഔദ്യോഗിക പ്രൊഫൈലിലെ ട്രാഫിക് നിരീക്ഷിക്കുന്നു എന്നാൽ വ്യക്തിപരമായ പ്രൊഫൈലിലെ ട്രാഫിക് നിരീക്ഷിക്കുന്നില്ല."</string>
     <string name="monitoring_description_named_vpn" msgid="5749932930634037027">"നിങ്ങൾ <xliff:g id="VPN_APP">%1$s</xliff:g> എന്ന ആപ്പിലേക്ക് കണക്റ്റുചെയ്‌തിരിക്കുന്നു, ഇമെയിലുകൾ, ആപ്പുകൾ, വെബ്‌സൈറ്റുകൾ എന്നിവ ഉൾപ്പെടെ നിങ്ങളുടെ നെറ്റ്‌വർക്ക് ആക്റ്റിവിറ്റി നിരീക്ഷിക്കാൻ ഈ ആപ്പിന് കഴിയും."</string>
     <string name="monitoring_description_two_named_vpns" msgid="3516830755681229463">"നിങ്ങൾ <xliff:g id="VPN_APP_0">%1$s</xliff:g>, <xliff:g id="VPN_APP_1">%2$s</xliff:g> എന്നീ ആപ്പുകളിലേക്ക് കണക്റ്റുചെയ്‌തിരിക്കുന്നു, ഇമെയിലുകൾ, ആപ്പുകൾ, വെബ്‌സൈറ്റുകൾ എന്നിവ ഉൾപ്പെടെ നിങ്ങളുടെ നെറ്റ്‌വർക്ക് ആക്റ്റിവിറ്റി നിരീക്ഷിക്കാൻ ഈ ആപ്പിന് കഴിയും."</string>
     <string name="monitoring_description_managed_profile_named_vpn" msgid="368812367182387320">"<xliff:g id="VPN_APP">%1$s</xliff:g> ആപ്പിലേക്ക് നിങ്ങളുടെ ഔദ്യോഗിക പ്രൊഫൈൽ കണക്റ്റുചെയ്‌തിരിക്കുന്നു, ഇമെയിലുകൾ, ആപ്‌സ്, വെബ്‌സൈറ്റുകൾ എന്നിവ ഉൾപ്പെടെ നിങ്ങളുടെ നെറ്റ്‌വർക്ക് ആക്റ്റിവിറ്റി നിരീക്ഷിക്കാൻ ഈ ആപ്പിന് കഴിയും."</string>
@@ -622,6 +629,7 @@
     <string name="volume_stream_content_description_mute" msgid="4079046784917920984">"%1$s. മ്യൂട്ടുചെയ്യുന്നതിന് ടാപ്പുചെയ്യുക. ഉപയോഗസഹായി സേവനങ്ങൾ മ്യൂട്ടുചെയ്യപ്പെട്ടേക്കാം."</string>
     <string name="volume_stream_content_description_vibrate_a11y" msgid="2742330052979397471">"%1$s വൈബ്രേറ്റിലേക്ക് സജ്ജമാക്കുന്നതിന് ടാപ്പുചെയ്യുക."</string>
     <string name="volume_stream_content_description_mute_a11y" msgid="5743548478357238156">"%1$s മ്യൂട്ടുചെയ്യുന്നതിന് ടാപ്പുചെയ്യുക."</string>
+    <string name="volume_ringer_change" msgid="3574969197796055532">"റിംഗർ മോഡ് മാറ്റാൻ ടാപ്പ് ചെയ്യുക"</string>
     <string name="volume_ringer_hint_mute" msgid="4263821214125126614">"മ്യൂട്ട് ചെയ്യുക"</string>
     <string name="volume_ringer_hint_unmute" msgid="6119086890306456976">"അൺമ്യൂട്ട് ചെയ്യുക"</string>
     <string name="volume_ringer_hint_vibrate" msgid="6211609047099337509">"വൈബ്രേറ്റ് ചെയ്യുക"</string>
@@ -735,7 +743,7 @@
     <string name="feedback_silenced" msgid="9116540317466126457">"ഈ അറിയിപ്പ്, സിസ്‌റ്റം സ്വയമേവ &lt;b&gt;നിശബ്‌ദമാക്കി തരം താഴ്ത്തി&lt;/b&gt;."</string>
     <string name="feedback_promoted" msgid="2125562787759780807">"ഈ അറിയിപ്പിന് നിങ്ങളുടെ ഷെയ്‌ഡിൽ സ്വയമേവ &lt;b&gt;ഉയർന്ന റാങ്കിംഗ് നൽകി&lt;/b&gt;."</string>
     <string name="feedback_demoted" msgid="951884763467110604">"ഈ അറിയിപ്പിന് നിങ്ങളുടെ ഷെയ്‌ഡിൽ സ്വയമേവ &lt;b&gt;താഴ്ന്ന റാങ്കിംഗ് നൽകി&lt;/b&gt;."</string>
-    <string name="feedback_prompt" msgid="2278631214125128281">"ഇത് ശരിയായിരുന്നോ?"</string>
+    <string name="feedback_prompt" msgid="3656728972307896379">"ഡെവലപ്പറിനെ നിങ്ങളുടെ ഫീഡ്ബാക്ക് അറിയിക്കൂ. ഇത് ശരിയായിരുന്നോ?"</string>
     <string name="feedback_response" msgid="4671729244976641339">"നിങ്ങളുടെ ഫീഡ്‌ബാക്കിന് നന്ദി!"</string>
     <string name="feedback_ok" msgid="6481426753298857144">"ശരി"</string>
     <string name="notification_channel_controls_opened_accessibility" msgid="6111817750774381094">"<xliff:g id="APP_NAME">%1$s</xliff:g> ആപ്പിന്റെ അറിയിപ്പ് നിയന്ത്രണങ്ങൾ തുറന്നു"</string>
@@ -882,6 +890,8 @@
     <string name="accessibility_qs_edit_tile_move_to_position" msgid="5198161544045930556">"<xliff:g id="POSITION">%1$d</xliff:g> എന്നതിലേക്ക് നീക്കുക"</string>
     <string name="accessibility_qs_edit_tile_add_to_position" msgid="9029163095148274690">"<xliff:g id="POSITION">%1$d</xliff:g> എന്ന സ്ഥാനത്തേക്ക് ചേർക്കുക"</string>
     <string name="accessibility_qs_edit_position" msgid="4509277359815711830">"സ്ഥാനം <xliff:g id="POSITION">%1$d</xliff:g>"</string>
+    <string name="accessibility_qs_edit_tile_added" msgid="9067146040380836334">"ടൈൽ ചേർത്തു"</string>
+    <string name="accessibility_qs_edit_tile_removed" msgid="1175925632436612036">"ടൈൽ നീക്കം ചെയ്‌തു"</string>
     <string name="accessibility_desc_quick_settings_edit" msgid="741658939453595297">"ദ്രുത ക്രമീകരണ എഡിറ്റർ."</string>
     <string name="accessibility_desc_notification_icon" msgid="7331265967584178674">"<xliff:g id="ID_1">%1$s</xliff:g> അറിയിപ്പ്: <xliff:g id="ID_2">%2$s</xliff:g>"</string>
     <string name="accessibility_quick_settings_settings" msgid="7098489591715844713">"ക്രമീകരണം തുറക്കുക."</string>
@@ -969,13 +979,17 @@
     <string name="ongoing_privacy_chip_content_multiple_apps" msgid="8341216022442383954">"ആപ്പുകൾ നിങ്ങളുടെ <xliff:g id="TYPES_LIST">%s</xliff:g> ഉപയോഗിക്കുന്നു."</string>
     <string name="ongoing_privacy_dialog_separator" msgid="1866222499727706187">", "</string>
     <string name="ongoing_privacy_dialog_last_separator" msgid="5615876114268009767">" കൂടാതെ "</string>
+    <string name="ongoing_privacy_dialog_using_op" msgid="4125175620929701569">"<xliff:g id="APPLICATION_NAME">%1$s</xliff:g> ആപ്പ്, <xliff:g id="APP_OPP_NAME">%2$s</xliff:g> ഉപയോഗിക്കുന്നു"</string>
+    <string name="ongoing_privacy_dialog_recent_op" msgid="4255923947334262404">"<xliff:g id="APPLICATION_NAME">%1$s</xliff:g> അടുത്തിടെ <xliff:g id="APP_OPP_NAME">%2$s</xliff:g> ഉപയോഗിച്ചു"</string>
+    <string name="ongoing_privacy_dialog_enterprise" msgid="4082735415905550729">"(എന്റർപ്രൈസ്)"</string>
+    <string name="ongoing_privacy_dialog_phonecall" msgid="4487370562589839298">"ഫോൺ കോൾ"</string>
+    <string name="ongoing_privacy_dialog_attribution_text" msgid="9186683306719924646">"(<xliff:g id="ATTRIBUTION">%s</xliff:g> എന്നതിലൂടെ)"</string>
     <string name="privacy_type_camera" msgid="7974051382167078332">"ക്യാമറ"</string>
     <string name="privacy_type_location" msgid="7991481648444066703">"ലൊക്കേഷന്‍"</string>
     <string name="privacy_type_microphone" msgid="9136763906797732428">"മൈക്രോഫോൺ"</string>
     <string name="sensor_privacy_mode" msgid="4462866919026513692">"സെൻസറുകൾ ഓഫാണ്"</string>
     <string name="device_services" msgid="1549944177856658705">"ഉപകരണ സേവനങ്ങള്‍"</string>
     <string name="music_controls_no_title" msgid="4166497066552290938">"പേരില്ല"</string>
-    <string name="restart_button_description" msgid="6916116576177456480">"ഈ ആപ്പ് റീസ്‌റ്റാർട്ട് ചെയ്യാനും പൂർണ്ണ സ്‌ക്രീനാവാനും ടാപ്പ് ചെയ്യുക."</string>
     <string name="bubble_accessibility_action_move" msgid="3185080443743819178">"നീക്കുക"</string>
     <string name="notification_content_system_nav_changed" msgid="5077913144844684544">"സിസ്‌റ്റം നാവിഗേഷൻ അപ്‌ഡേറ്റ് ചെയ്‌തു. മാറ്റങ്ങൾ വരുത്താൻ ക്രമീകരണത്തിലേക്ക് പോവുക."</string>
     <string name="notification_content_gesture_nav_available" msgid="4431460803004659888">"സിസ്‌റ്റം നാവിഗേഷൻ അപ്‌ഡേറ്റ് ചെയ്യാൻ ക്രമീകരണത്തിലേക്ക് പോവുക"</string>
@@ -1029,6 +1043,7 @@
     <string name="controls_dialog_ok" msgid="2770230012857881822">"ചേർക്കുക"</string>
     <string name="controls_dialog_message" msgid="342066938390663844">"<xliff:g id="APP">%s</xliff:g> നിർദ്ദേശിച്ചത്"</string>
     <string name="controls_dialog_confirmation" msgid="586517302736263447">"നിയന്ത്രണങ്ങൾ അപ്ഡേറ്റ് ചെയ്തു"</string>
+    <string name="controls_tile_locked" msgid="731547768182831938">"ഉപകരണം ലോക്ക് ചെയ്തു"</string>
     <string name="controls_pin_use_alphanumeric" msgid="8478371861023048414">"പിന്നിൽ അക്ഷരങ്ങളോ ചിഹ്നങ്ങളോ അടങ്ങിയിരിക്കുന്നു"</string>
     <string name="controls_pin_verify" msgid="3452778292918877662">"<xliff:g id="DEVICE">%s</xliff:g> പരിശോധിച്ചുറപ്പിക്കുക"</string>
     <string name="controls_pin_wrong" msgid="6162694056042164211">"പിൻ തെറ്റാണ്"</string>

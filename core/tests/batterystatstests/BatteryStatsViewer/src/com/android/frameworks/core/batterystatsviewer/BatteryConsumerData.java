@@ -38,14 +38,9 @@ public class BatteryConsumerData {
     private static final String[] PACKAGES_SYSTEM = {PACKAGE_MEDIA_PROVIDER,
             PACKAGE_CALENDAR_PROVIDER, PACKAGE_SYSTEMUI};
 
-    // Temporary placeholder voltage for converting energy to charge
-    // TODO: remove this when b/173765509 is resolved
-    private static final double MOCK_NOMINAL_VOLTAGE = 3.7;
-
     // Unit conversion:
-    //   mAh = uWs * (1/1000)(milli/micro) * (1/Voltage) * (1/3600)(hours/second)
-    private static final double UJ_2_MAH =
-            (1.0 / 1000) * (1.0 / MOCK_NOMINAL_VOLTAGE) * (1.0 / 3600);
+    //   mAh = uC * (1/1000)(milli/micro) * (1/3600)(hours/second)
+    private static final double UC_2_MAH = (1.0 / 1000)  * (1.0 / 3600);
 
     enum EntryType {
         POWER,
@@ -63,7 +58,9 @@ public class BatteryConsumerData {
     private final List<Entry> mEntries = new ArrayList<>();
 
     public BatteryConsumerData(Context context, BatteryStatsHelper batteryStatsHelper,
-            BatteryUsageStats batteryUsageStats, String batteryConsumerId) {
+            List<BatteryUsageStats> batteryUsageStatsList, String batteryConsumerId) {
+        BatteryUsageStats batteryUsageStats = batteryUsageStatsList.get(0);
+        BatteryUsageStats powerProfileModeledUsageStats = batteryUsageStatsList.get(1);
         List<BatterySipper> usageList = batteryStatsHelper.getUsageList();
         BatteryStats batteryStats = batteryStatsHelper.getStats();
 
@@ -142,16 +139,22 @@ public class BatteryConsumerData {
         }
 
         BatteryConsumer requestedBatteryConsumer = null;
-        double totalModeledCpuPowerMah = 0;
 
         for (BatteryConsumer consumer : batteryUsageStats.getUidBatteryConsumers()) {
             if (batteryConsumerId(consumer).equals(batteryConsumerId)) {
                 requestedBatteryConsumer = consumer;
             }
+        }
 
-            totalModeledCpuPowerMah += consumer.getConsumedPowerForCustomComponent(
-                    BatteryConsumer.FIRST_MODELED_POWER_COMPONENT_ID
-                            + BatteryConsumer.POWER_COMPONENT_CPU);
+        double totalModeledCpuPowerMah = 0;
+        BatteryConsumer requestedBatteryConsumerPowerProfileModeled = null;
+        for (BatteryConsumer consumer : powerProfileModeledUsageStats.getUidBatteryConsumers()) {
+            if (batteryConsumerId(consumer).equals(batteryConsumerId)) {
+                requestedBatteryConsumerPowerProfileModeled = consumer;
+            }
+
+            totalModeledCpuPowerMah += consumer.getConsumedPower(
+                    BatteryConsumer.POWER_COMPONENT_CPU);
         }
 
         if (requestedBatterySipper == null) {
@@ -170,8 +173,10 @@ public class BatteryConsumerData {
 
         mBatteryConsumerInfo = BatteryConsumerInfoHelper.makeBatteryConsumerInfo(
                 context.getPackageManager(), requestedBatterySipper);
-        long totalScreenMeasuredEnergyUJ = batteryStats.getScreenOnEnergy();
-        long uidScreenMeasuredEnergyUJ = requestedBatterySipper.uidObj.getScreenOnEnergy();
+        long totalScreenMeasuredChargeUC =
+                batteryStats.getScreenOnMeasuredBatteryConsumptionUC();
+        long uidScreenMeasuredChargeUC =
+                requestedBatterySipper.uidObj.getScreenOnMeasuredBatteryConsumptionUC();
 
         addEntry("Total power", EntryType.POWER,
                 requestedBatterySipper.totalSmearedPowerMah, totalSmearedPowerMah);
@@ -181,10 +186,10 @@ public class BatteryConsumerData {
                 requestedBatterySipper.totalSmearedPowerMah, totalPowerExcludeSystemMah);
         addEntry("Screen, smeared", EntryType.POWER,
                 requestedBatterySipper.screenPowerMah, totalScreenPower);
-        if (uidScreenMeasuredEnergyUJ != BatteryStats.ENERGY_DATA_UNAVAILABLE
-                && totalScreenMeasuredEnergyUJ != BatteryStats.ENERGY_DATA_UNAVAILABLE) {
-            final double measuredCharge = UJ_2_MAH * uidScreenMeasuredEnergyUJ;
-            final double totalMeasuredCharge = UJ_2_MAH * totalScreenMeasuredEnergyUJ;
+        if (uidScreenMeasuredChargeUC != BatteryStats.POWER_DATA_UNAVAILABLE
+                && totalScreenMeasuredChargeUC != BatteryStats.POWER_DATA_UNAVAILABLE) {
+            final double measuredCharge = UC_2_MAH * uidScreenMeasuredChargeUC;
+            final double totalMeasuredCharge = UC_2_MAH * totalScreenMeasuredChargeUC;
             addEntry("Screen, measured", EntryType.POWER,
                     measuredCharge, totalMeasuredCharge);
         }
@@ -196,11 +201,10 @@ public class BatteryConsumerData {
             addEntry("CPU", EntryType.POWER,
                     requestedBatteryConsumer.getConsumedPower(BatteryConsumer.POWER_COMPONENT_CPU),
                     totalCpuPowerMah);
-            if (totalModeledCpuPowerMah != 0) {
+            if (requestedBatteryConsumerPowerProfileModeled != null) {
                 addEntry("CPU (modeled)", EntryType.POWER,
-                        requestedBatteryConsumer.getConsumedPowerForCustomComponent(
-                                BatteryConsumer.FIRST_MODELED_POWER_COMPONENT_ID
-                                        + BatteryConsumer.POWER_COMPONENT_CPU),
+                        requestedBatteryConsumerPowerProfileModeled.getConsumedPower(
+                                BatteryConsumer.POWER_COMPONENT_CPU),
                         totalModeledCpuPowerMah);
             }
         } else {
@@ -290,17 +294,19 @@ public class BatteryConsumerData {
             BatteryStats batteryStats) {
         switch (drainType) {
             case AMBIENT_DISPLAY:
-                final long totalDozeMeasuredEnergyUJ = batteryStats.getScreenDozeEnergy();
-                if (totalDozeMeasuredEnergyUJ != BatteryStats.ENERGY_DATA_UNAVAILABLE) {
-                    final double measuredCharge = UJ_2_MAH * totalDozeMeasuredEnergyUJ;
+                final long totalDozeMeasuredChargeUC =
+                        batteryStats.getScreenDozeMeasuredBatteryConsumptionUC();
+                if (totalDozeMeasuredChargeUC != BatteryStats.POWER_DATA_UNAVAILABLE) {
+                    final double measuredCharge = UC_2_MAH * totalDozeMeasuredChargeUC;
                     addEntry("Measured ambient display power", EntryType.POWER, measuredCharge,
                             measuredCharge);
                 }
                 break;
             case SCREEN:
-                final long totalScreenMeasuredEnergyUJ = batteryStats.getScreenOnEnergy();
-                if (totalScreenMeasuredEnergyUJ != BatteryStats.ENERGY_DATA_UNAVAILABLE) {
-                    final double measuredCharge = UJ_2_MAH * totalScreenMeasuredEnergyUJ;
+                final long totalScreenMeasuredChargeUC =
+                        batteryStats.getScreenOnMeasuredBatteryConsumptionUC();
+                if (totalScreenMeasuredChargeUC != BatteryStats.POWER_DATA_UNAVAILABLE) {
+                    final double measuredCharge = UC_2_MAH * totalScreenMeasuredChargeUC;
                     addEntry("Measured screen power", EntryType.POWER, measuredCharge,
                             measuredCharge);
                 }

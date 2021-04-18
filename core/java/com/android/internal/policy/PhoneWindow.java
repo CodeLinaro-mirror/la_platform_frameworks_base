@@ -75,6 +75,7 @@ import android.util.Pair;
 import android.util.SparseArray;
 import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
+import android.view.CrossWindowBlurListeners;
 import android.view.Gravity;
 import android.view.IRotationWatcher.Stub;
 import android.view.IScrollCaptureCallbacks;
@@ -257,6 +258,8 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
     Drawable mBackgroundDrawable = null;
     Drawable mBackgroundFallbackDrawable = null;
+
+    private int mBackgroundBlurRadius = 0;
 
     private boolean mLoadElevation = true;
     private float mElevation;
@@ -1523,6 +1526,17 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
     }
 
     @Override
+    public final void setBackgroundBlurRadius(int blurRadius) {
+        super.setBackgroundBlurRadius(blurRadius);
+        if (CrossWindowBlurListeners.CROSS_WINDOW_BLUR_SUPPORTED) {
+            if (mBackgroundBlurRadius != Math.max(blurRadius, 0)) {
+                mBackgroundBlurRadius = Math.max(blurRadius, 0);
+                mDecor.setBackgroundBlurRadius(mBackgroundBlurRadius);
+            }
+        }
+    }
+
+    @Override
     public final void setFeatureDrawableResource(int featureId, int resId) {
         if (resId != 0) {
             DrawableFeatureState st = getDrawableState(featureId, true);
@@ -2540,8 +2554,18 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
             }
         }
 
-        params.backgroundBlurRadius = a.getDimensionPixelSize(
-                R.styleable.Window_windowBackgroundBlurRadius, 0);
+        if (a.getBoolean(R.styleable.Window_windowBlurBehindEnabled, false)) {
+            if ((getForcedWindowFlags() & WindowManager.LayoutParams.FLAG_BLUR_BEHIND) == 0) {
+                params.flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
+            }
+
+            params.setBlurBehindRadius(a.getDimensionPixelSize(
+                    android.R.styleable.Window_windowBlurBehindRadius, 0));
+        }
+
+        setBackgroundBlurRadius(a.getDimensionPixelSize(
+                R.styleable.Window_windowBackgroundBlurRadius, 0));
+
 
         if (params.windowAnimations == 0) {
             params.windowAnimations = a.getResourceId(

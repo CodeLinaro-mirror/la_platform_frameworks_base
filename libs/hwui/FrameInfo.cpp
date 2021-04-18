@@ -20,13 +20,12 @@
 namespace android {
 namespace uirenderer {
 
-const std::array<std::string, static_cast<int>(FrameInfoIndex::NumIndexes)> FrameInfoNames = {
+const std::array FrameInfoNames{
         "Flags",
         "FrameTimelineVsyncId",
         "IntendedVsync",
         "Vsync",
-        "OldestInputEvent",
-        "NewestInputEvent",
+        "InputEventId",
         "HandleInputStart",
         "AnimationStart",
         "PerformTraversalsStart",
@@ -40,9 +39,11 @@ const std::array<std::string, static_cast<int>(FrameInfoIndex::NumIndexes)> Fram
         "DequeueBufferDuration",
         "QueueBufferDuration",
         "GpuCompleted",
+        "SwapBuffersCompleted",
+        "DisplayPresentTime",
 };
 
-static_assert(static_cast<int>(FrameInfoIndex::NumIndexes) == 19,
+static_assert(static_cast<int>(FrameInfoIndex::NumIndexes) == 20,
               "Must update value in FrameMetrics.java#FRAME_STATS_COUNT (and here)");
 
 void FrameInfo::importUiThreadInfo(int64_t* info) {

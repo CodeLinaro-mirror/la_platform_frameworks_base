@@ -110,7 +110,6 @@ import android.os.ServiceManager;
 import android.os.ShellCallback;
 import android.os.ShellCommand;
 import android.os.SystemClock;
-import android.os.SystemProperties;
 import android.os.Trace;
 import android.os.UserHandle;
 import android.os.UserManager;
@@ -160,6 +159,7 @@ import com.android.internal.compat.IPlatformCompat;
 import com.android.internal.content.PackageMonitor;
 import com.android.internal.inputmethod.CallbackUtils;
 import com.android.internal.inputmethod.IBooleanResultCallback;
+import com.android.internal.inputmethod.IIInputContentUriTokenResultCallback;
 import com.android.internal.inputmethod.IInputBindResultResultCallback;
 import com.android.internal.inputmethod.IInputContentUriToken;
 import com.android.internal.inputmethod.IInputMethodInfoListResultCallback;
@@ -167,6 +167,7 @@ import com.android.internal.inputmethod.IInputMethodPrivilegedOperations;
 import com.android.internal.inputmethod.IInputMethodSubtypeListResultCallback;
 import com.android.internal.inputmethod.IInputMethodSubtypeResultCallback;
 import com.android.internal.inputmethod.IIntResultCallback;
+import com.android.internal.inputmethod.IVoidResultCallback;
 import com.android.internal.inputmethod.InputMethodDebug;
 import com.android.internal.inputmethod.SoftInputShowHideReason;
 import com.android.internal.inputmethod.StartInputFlags;
@@ -178,6 +179,7 @@ import com.android.internal.os.BackgroundThread;
 import com.android.internal.os.HandlerCaller;
 import com.android.internal.os.SomeArgs;
 import com.android.internal.os.TransferPipe;
+import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.DumpUtils;
 import com.android.internal.view.IInlineSuggestionsRequestCallback;
 import com.android.internal.view.IInlineSuggestionsResponseCallback;
@@ -298,45 +300,6 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
      */
     private static final String ACTION_SHOW_INPUT_METHOD_PICKER =
             "com.android.server.inputmethod.InputMethodManagerService.SHOW_INPUT_METHOD_PICKER";
-
-    /**
-     * Debug flag for overriding runtime {@link SystemProperties}.
-     */
-    @AnyThread
-    private static final class DebugFlag {
-        private static final Object LOCK = new Object();
-        private final String mKey;
-        private final boolean mDefaultValue;
-        @GuardedBy("LOCK")
-        private boolean mValue;
-
-        public DebugFlag(String key, boolean defaultValue) {
-            mKey = key;
-            mDefaultValue = defaultValue;
-            mValue = SystemProperties.getBoolean(key, defaultValue);
-        }
-
-        void refresh() {
-            synchronized (LOCK) {
-                mValue = SystemProperties.getBoolean(mKey, mDefaultValue);
-            }
-        }
-
-        boolean value() {
-            synchronized (LOCK) {
-                return mValue;
-            }
-        }
-    }
-
-    /**
-     * Debug flags that can be overridden using "adb shell setprop <key>"
-     * Note: These flags are cached. To refresh, run "adb shell ime refresh_debug_properties".
-     */
-    private static final class DebugFlags {
-        static final DebugFlag FLAG_OPTIMIZE_START_INPUT =
-                new DebugFlag("debug.optimize_startinput", false);
-    }
 
     @UserIdInt
     private int mLastSwitchUserId;
@@ -1663,6 +1626,10 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
             }
             mHandler.removeCallbacks(mUserSwitchHandlerTask);
         }
+        // Hide soft input before user switch task since switch task may block main handler a while
+        // and delayed the MSG_HIDE_SOFT_INPUT.
+        hideCurrentInputLocked(
+                mCurFocusedWindow, 0, null, SoftInputShowHideReason.HIDE_SWITCH_USER);
         final UserSwitchHandlerTask task = new UserSwitchHandlerTask(this, userId,
                 clientToBeReset);
         mUserSwitchHandlerTask = task;
@@ -1788,20 +1755,16 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
         final boolean initialUserSwitch = TextUtils.isEmpty(defaultImiId);
         mLastSystemLocales = mRes.getConfiguration().getLocales();
 
-        // TODO: Is it really possible that switchUserLocked() happens before system ready?
-        if (mSystemReady) {
-            hideCurrentInputLocked(
-                    mCurFocusedWindow, 0, null, SoftInputShowHideReason.HIDE_SWITCH_USER);
-
-            resetCurrentMethodAndClient(UnbindReason.SWITCH_USER);
-            buildInputMethodListLocked(initialUserSwitch);
-            if (TextUtils.isEmpty(mSettings.getSelectedInputMethod())) {
-                // This is the first time of the user switch and
-                // set the current ime to the proper one.
-                resetDefaultImeLocked(mContext);
-            }
-            updateFromSettingsLocked(true);
+        // The mSystemReady flag is set during boot phase,
+        // and user switch would not happen at that time.
+        resetCurrentMethodAndClient(UnbindReason.SWITCH_USER);
+        buildInputMethodListLocked(initialUserSwitch);
+        if (TextUtils.isEmpty(mSettings.getSelectedInputMethod())) {
+            // This is the first time of the user switch and
+            // set the current ime to the proper one.
+            resetDefaultImeLocked(mContext);
         }
+        updateFromSettingsLocked(true);
 
         if (initialUserSwitch) {
             InputMethodUtils.setNonSelectedSystemImesDisabledUntilUsed(mIPackageManager,
@@ -2585,7 +2548,7 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
                             + mCurTokenDisplayId);
                 }
                 mIWindowManager.addWindowToken(mCurToken, LayoutParams.TYPE_INPUT_METHOD,
-                        mCurTokenDisplayId);
+                        mCurTokenDisplayId, null /* options */);
             } catch (RemoteException e) {
             }
             return new InputBindResult(
@@ -2658,8 +2621,9 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
                 }
                 if (DEBUG) Slog.v(TAG, "Initiating attach with token: " + mCurToken);
                 // Dispatch display id for InputMethodService to update context display.
-                executeOrSendMessage(mCurMethod, mCaller.obtainMessageIOO(
-                        MSG_INITIALIZE_IME, mCurTokenDisplayId, mCurMethod, mCurToken));
+                executeOrSendMessage(mCurMethod, mCaller.obtainMessageIOOO(
+                        MSG_INITIALIZE_IME, mCurTokenDisplayId, mCurMethod, mCurToken,
+                        mMethodMap.get(mCurMethodId).getConfigChanges()));
                 scheduleNotifyImeUidToAudioService(mCurMethodUid);
                 if (mCurClient != null) {
                     clearClientSessionLocked(mCurClient);
@@ -3574,6 +3538,20 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
         boolean didStart = false;
 
         InputBindResult res = null;
+        // We shows the IME when the system allows the IME focused target window to restore the
+        // IME visibility (e.g. switching to the app task when last time the IME is visible).
+        if (isTextEditor && mWindowManagerInternal.shouldRestoreImeVisibility(windowToken)) {
+            if (attribute != null) {
+                res = startInputUncheckedLocked(cs, inputContext, missingMethods,
+                        attribute, startInputFlags, startInputReason);
+                showCurrentInputLocked(windowToken, InputMethodManager.SHOW_IMPLICIT, null,
+                        SoftInputShowHideReason.SHOW_RESTORE_IME_VISIBILITY);
+            } else {
+                res = InputBindResult.NULL_EDITOR_INFO;
+            }
+            return res;
+        }
+
         switch (softInputMode & LayoutParams.SOFT_INPUT_MASK_STATE) {
             case LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED:
                 if (!sameWindowFocused && (!isTextEditor || !doAutoShow)) {
@@ -3684,15 +3662,9 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
                         hideCurrentInputLocked(mCurFocusedWindow, 0, null,
                                 SoftInputShowHideReason.HIDE_SAME_WINDOW_FOCUSED_WITHOUT_EDITOR);
                     }
-                    res = startInputUncheckedLocked(cs, inputContext, missingMethods, attribute,
-                            startInputFlags, startInputReason);
-                } else if (!DebugFlags.FLAG_OPTIMIZE_START_INPUT.value()
-                        || (startInputFlags & StartInputFlags.IS_TEXT_EDITOR) != 0) {
-                    res = startInputUncheckedLocked(cs, inputContext, missingMethods, attribute,
-                            startInputFlags, startInputReason);
-                } else {
-                    res = InputBindResult.NO_EDITOR;
                 }
+                res = startInputUncheckedLocked(cs, inputContext, missingMethods, attribute,
+                        startInputFlags, startInputReason);
             } else {
                 res = InputBindResult.NULL_EDITOR_INFO;
             }
@@ -3720,38 +3692,43 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
     }
 
     @Override
-    public void showInputMethodPickerFromClient(
-            IInputMethodClient client, int auxiliarySubtypeMode) {
-        synchronized (mMethodMap) {
-            if (!calledFromValidUserLocked()) {
-                return;
-            }
-            if(!canShowInputMethodPickerLocked(client)) {
-                Slog.w(TAG, "Ignoring showInputMethodPickerFromClient of uid "
-                        + Binder.getCallingUid() + ": " + client);
-                return;
-            }
+    public void showInputMethodPickerFromClient(IInputMethodClient client, int auxiliarySubtypeMode,
+            IVoidResultCallback resultCallback) {
+        CallbackUtils.onResult(resultCallback, () -> {
+            synchronized (mMethodMap) {
+                if (!calledFromValidUserLocked()) {
+                    return;
+                }
+                if (!canShowInputMethodPickerLocked(client)) {
+                    Slog.w(TAG, "Ignoring showInputMethodPickerFromClient of uid "
+                            + Binder.getCallingUid() + ": " + client);
+                    return;
+                }
 
-            // Always call subtype picker, because subtype picker is a superset of input method
-            // picker.
-            mHandler.sendMessage(mCaller.obtainMessageII(
-                    MSG_SHOW_IM_SUBTYPE_PICKER, auxiliarySubtypeMode,
-                    (mCurClient != null) ? mCurClient.selfReportedDisplayId : DEFAULT_DISPLAY));
-        }
+                // Always call subtype picker, because subtype picker is a superset of input method
+                // picker.
+                mHandler.sendMessage(mCaller.obtainMessageII(
+                        MSG_SHOW_IM_SUBTYPE_PICKER, auxiliarySubtypeMode,
+                        (mCurClient != null) ? mCurClient.selfReportedDisplayId : DEFAULT_DISPLAY));
+            }
+        });
     }
 
     @Override
     public void showInputMethodPickerFromSystem(IInputMethodClient client, int auxiliarySubtypeMode,
-            int displayId) {
-        if (mContext.checkCallingPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS)
-                != PackageManager.PERMISSION_GRANTED) {
-            throw new SecurityException(
-                    "showInputMethodPickerFromSystem requires WRITE_SECURE_SETTINGS permission");
-        }
-        // Always call subtype picker, because subtype picker is a superset of input method
-        // picker.
-        mHandler.sendMessage(mCaller.obtainMessageII(
-                MSG_SHOW_IM_SUBTYPE_PICKER, auxiliarySubtypeMode, displayId));
+            int displayId, IVoidResultCallback resultCallback) {
+        CallbackUtils.onResult(resultCallback, () -> {
+            if (mContext.checkCallingPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                throw new SecurityException(
+                        "showInputMethodPickerFromSystem requires WRITE_SECURE_SETTINGS "
+                                + "permission");
+            }
+            // Always call subtype picker, because subtype picker is a superset of input method
+            // picker.
+            mHandler.sendMessage(mCaller.obtainMessageII(
+                    MSG_SHOW_IM_SUBTYPE_PICKER, auxiliarySubtypeMode, displayId));
+        });
     }
 
     /**
@@ -3795,15 +3772,17 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
 
     @Override
     public void showInputMethodAndSubtypeEnablerFromClient(
-            IInputMethodClient client, String inputMethodId) {
-        synchronized (mMethodMap) {
-            // TODO(yukawa): Should we verify the display ID?
-            if (!calledFromValidUserLocked()) {
-                return;
+            IInputMethodClient client, String inputMethodId, IVoidResultCallback resultCallback) {
+        CallbackUtils.onResult(resultCallback, () -> {
+            synchronized (mMethodMap) {
+                // TODO(yukawa): Should we verify the display ID?
+                if (!calledFromValidUserLocked()) {
+                    return;
+                }
+                executeOrSendMessage(mCurMethod, mCaller.obtainMessageO(
+                        MSG_SHOW_IM_SUBTYPE_ENABLER, inputMethodId));
             }
-            executeOrSendMessage(mCurMethod, mCaller.obtainMessageO(
-                    MSG_SHOW_IM_SUBTYPE_ENABLER, inputMethodId));
-        }
+        });
     }
 
     @BinderThread
@@ -3939,58 +3918,61 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
     }
 
     @Override
-    public void setAdditionalInputMethodSubtypes(String imiId, InputMethodSubtype[] subtypes) {
-        // By this IPC call, only a process which shares the same uid with the IME can add
-        // additional input method subtypes to the IME.
-        if (TextUtils.isEmpty(imiId) || subtypes == null) return;
-        final ArrayList<InputMethodSubtype> toBeAdded = new ArrayList<>();
-        for (InputMethodSubtype subtype : subtypes) {
-            if (!toBeAdded.contains(subtype)) {
-                toBeAdded.add(subtype);
-            } else {
-                Slog.w(TAG, "Duplicated subtype definition found: "
-                        + subtype.getLocale() + ", " + subtype.getMode());
+    public void setAdditionalInputMethodSubtypes(String imiId, InputMethodSubtype[] subtypes,
+            IVoidResultCallback resultCallback) {
+        CallbackUtils.onResult(resultCallback, () -> {
+            // By this IPC call, only a process which shares the same uid with the IME can add
+            // additional input method subtypes to the IME.
+            if (TextUtils.isEmpty(imiId) || subtypes == null) return;
+            final ArrayList<InputMethodSubtype> toBeAdded = new ArrayList<>();
+            for (InputMethodSubtype subtype : subtypes) {
+                if (!toBeAdded.contains(subtype)) {
+                    toBeAdded.add(subtype);
+                } else {
+                    Slog.w(TAG, "Duplicated subtype definition found: "
+                            + subtype.getLocale() + ", " + subtype.getMode());
+                }
             }
-        }
-        synchronized (mMethodMap) {
-            if (!calledFromValidUserLocked()) {
-                return;
-            }
-            if (!mSystemReady) {
-                return;
-            }
-            final InputMethodInfo imi = mMethodMap.get(imiId);
-            if (imi == null) return;
-            final String[] packageInfos;
-            try {
-                packageInfos = mIPackageManager.getPackagesForUid(Binder.getCallingUid());
-            } catch (RemoteException e) {
-                Slog.e(TAG, "Failed to get package infos");
-                return;
-            }
-            if (packageInfos != null) {
-                final int packageNum = packageInfos.length;
-                for (int i = 0; i < packageNum; ++i) {
-                    if (packageInfos[i].equals(imi.getPackageName())) {
-                        if (subtypes.length > 0) {
-                            mAdditionalSubtypeMap.put(imi.getId(), toBeAdded);
-                        } else {
-                            mAdditionalSubtypeMap.remove(imi.getId());
+            synchronized (mMethodMap) {
+                if (!calledFromValidUserLocked()) {
+                    return;
+                }
+                if (!mSystemReady) {
+                    return;
+                }
+                final InputMethodInfo imi = mMethodMap.get(imiId);
+                if (imi == null) return;
+                final String[] packageInfos;
+                try {
+                    packageInfos = mIPackageManager.getPackagesForUid(Binder.getCallingUid());
+                } catch (RemoteException e) {
+                    Slog.e(TAG, "Failed to get package infos");
+                    return;
+                }
+                if (packageInfos != null) {
+                    final int packageNum = packageInfos.length;
+                    for (int i = 0; i < packageNum; ++i) {
+                        if (packageInfos[i].equals(imi.getPackageName())) {
+                            if (subtypes.length > 0) {
+                                mAdditionalSubtypeMap.put(imi.getId(), toBeAdded);
+                            } else {
+                                mAdditionalSubtypeMap.remove(imi.getId());
+                            }
+                            AdditionalSubtypeUtils.save(mAdditionalSubtypeMap, mMethodMap,
+                                    mSettings.getCurrentUserId());
+                            final long ident = Binder.clearCallingIdentity();
+                            try {
+                                buildInputMethodListLocked(false /* resetDefaultEnabledIme */);
+                            } finally {
+                                Binder.restoreCallingIdentity(ident);
+                            }
+                            return;
                         }
-                        AdditionalSubtypeUtils.save(mAdditionalSubtypeMap, mMethodMap,
-                                mSettings.getCurrentUserId());
-                        final long ident = Binder.clearCallingIdentity();
-                        try {
-                            buildInputMethodListLocked(false /* resetDefaultEnabledIme */);
-                        } finally {
-                            Binder.restoreCallingIdentity(ident);
-                        }
-                        return;
                     }
                 }
             }
-        }
-        return;
+            return;
+        });
     }
 
     /**
@@ -4011,97 +3993,105 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
 
     @Override
     public void reportActivityView(IInputMethodClient parentClient, int childDisplayId,
-            float[] matrixValues) {
-        final DisplayInfo displayInfo = mDisplayManagerInternal.getDisplayInfo(childDisplayId);
-        if (displayInfo == null) {
-            throw new IllegalArgumentException(
-                    "Cannot find display for non-existent displayId: " + childDisplayId);
-        }
-        final int callingUid = Binder.getCallingUid();
-        if (callingUid != displayInfo.ownerUid) {
-            throw new SecurityException("The caller doesn't own the display.");
-        }
-
-        synchronized (mMethodMap) {
-            final ClientState cs = mClients.get(parentClient.asBinder());
-            if (cs == null) {
-                return;
+            float[] matrixValues, IVoidResultCallback resultCallback) {
+        CallbackUtils.onResult(resultCallback, () -> {
+            final DisplayInfo displayInfo = mDisplayManagerInternal.getDisplayInfo(childDisplayId);
+            if (displayInfo == null) {
+                throw new IllegalArgumentException(
+                        "Cannot find display for non-existent displayId: " + childDisplayId);
+            }
+            final int callingUid = Binder.getCallingUid();
+            if (callingUid != displayInfo.ownerUid) {
+                throw new SecurityException("The caller doesn't own the display.");
             }
 
-            // null matrixValues means that the entry needs to be removed.
-            if (matrixValues == null) {
-                final ActivityViewInfo info = mActivityViewDisplayIdToParentMap.get(childDisplayId);
-                if (info == null) {
+            synchronized (mMethodMap) {
+                final ClientState cs = mClients.get(parentClient.asBinder());
+                if (cs == null) {
                     return;
                 }
-                if (info.mParentClient != cs) {
-                    throw new SecurityException("Only the owner client can clear"
-                            + " ActivityViewGeometry for display #" + childDisplayId);
-                }
-                mActivityViewDisplayIdToParentMap.remove(childDisplayId);
-                return;
-            }
 
-            ActivityViewInfo info = mActivityViewDisplayIdToParentMap.get(childDisplayId);
-            if (info != null && info.mParentClient != cs) {
-                throw new InvalidParameterException("Display #" + childDisplayId
-                        + " is already registered by " + info.mParentClient);
-            }
-            if (info == null) {
-                if (!mWindowManagerInternal.isUidAllowedOnDisplay(childDisplayId, cs.uid)) {
-                    throw new SecurityException(cs + " cannot access to display #"
-                            + childDisplayId);
-                }
-                info = new ActivityViewInfo(cs, new Matrix());
-                mActivityViewDisplayIdToParentMap.put(childDisplayId, info);
-            }
-            info.mMatrix.setValues(matrixValues);
-
-            if (mCurClient == null || mCurClient.curSession == null) {
-                return;
-            }
-
-            Matrix matrix = null;
-            int displayId = mCurClient.selfReportedDisplayId;
-            boolean needToNotify = false;
-            while (true) {
-                needToNotify |= (displayId == childDisplayId);
-                final ActivityViewInfo next = mActivityViewDisplayIdToParentMap.get(displayId);
-                if (next == null) {
-                    break;
-                }
-                if (matrix == null) {
-                    matrix = new Matrix(next.mMatrix);
-                } else {
-                    matrix.postConcat(next.mMatrix);
-                }
-                if (next.mParentClient.selfReportedDisplayId == mCurTokenDisplayId) {
-                    if (needToNotify) {
-                        final float[] values = new float[9];
-                        matrix.getValues(values);
-                        try {
-                            mCurClient.client.updateActivityViewToScreenMatrix(mCurSeq, values);
-                        } catch (RemoteException e) {
-                        }
+                // null matrixValues means that the entry needs to be removed.
+                if (matrixValues == null) {
+                    final ActivityViewInfo info =
+                            mActivityViewDisplayIdToParentMap.get(childDisplayId);
+                    if (info == null) {
+                        return;
                     }
-                    break;
+                    if (info.mParentClient != cs) {
+                        throw new SecurityException("Only the owner client can clear"
+                                + " ActivityViewGeometry for display #" + childDisplayId);
+                    }
+                    mActivityViewDisplayIdToParentMap.remove(childDisplayId);
+                    return;
                 }
-                displayId = info.mParentClient.selfReportedDisplayId;
+
+                ActivityViewInfo info = mActivityViewDisplayIdToParentMap.get(childDisplayId);
+                if (info != null && info.mParentClient != cs) {
+                    throw new InvalidParameterException("Display #" + childDisplayId
+                            + " is already registered by " + info.mParentClient);
+                }
+                if (info == null) {
+                    if (!mWindowManagerInternal.isUidAllowedOnDisplay(childDisplayId, cs.uid)) {
+                        throw new SecurityException(cs + " cannot access to display #"
+                                + childDisplayId);
+                    }
+                    info = new ActivityViewInfo(cs, new Matrix());
+                    mActivityViewDisplayIdToParentMap.put(childDisplayId, info);
+                }
+                info.mMatrix.setValues(matrixValues);
+
+                if (mCurClient == null || mCurClient.curSession == null) {
+                    return;
+                }
+
+                Matrix matrix = null;
+                int displayId = mCurClient.selfReportedDisplayId;
+                boolean needToNotify = false;
+                while (true) {
+                    needToNotify |= (displayId == childDisplayId);
+                    final ActivityViewInfo next = mActivityViewDisplayIdToParentMap.get(displayId);
+                    if (next == null) {
+                        break;
+                    }
+                    if (matrix == null) {
+                        matrix = new Matrix(next.mMatrix);
+                    } else {
+                        matrix.postConcat(next.mMatrix);
+                    }
+                    if (next.mParentClient.selfReportedDisplayId == mCurTokenDisplayId) {
+                        if (needToNotify) {
+                            final float[] values = new float[9];
+                            matrix.getValues(values);
+                            try {
+                                mCurClient.client.updateActivityViewToScreenMatrix(mCurSeq, values);
+                            } catch (RemoteException e) {
+                            }
+                        }
+                        break;
+                    }
+                    displayId = info.mParentClient.selfReportedDisplayId;
+                }
             }
-        }
+        });
     }
 
     @Override
-    public void removeImeSurface() {
-        mContext.enforceCallingPermission(Manifest.permission.INTERNAL_SYSTEM_WINDOW, null);
-        mHandler.sendMessage(mHandler.obtainMessage(MSG_REMOVE_IME_SURFACE));
+    public void removeImeSurface(IVoidResultCallback resultCallback) {
+        CallbackUtils.onResult(resultCallback, () -> {
+            mContext.enforceCallingPermission(Manifest.permission.INTERNAL_SYSTEM_WINDOW, null);
+            mHandler.sendMessage(mHandler.obtainMessage(MSG_REMOVE_IME_SURFACE));
+        });
     }
 
     @Override
-    public void removeImeSurfaceFromWindow(IBinder windowToken) {
-        // No permission check, because we'll only execute the request if the calling window is
-        // also the current IME client.
-        mHandler.obtainMessage(MSG_REMOVE_IME_SURFACE_FROM_WINDOW, windowToken).sendToTarget();
+    public void removeImeSurfaceFromWindow(IBinder windowToken,
+            IVoidResultCallback resultCallback) {
+        CallbackUtils.onResult(resultCallback, () -> {
+            // No permission check, because we'll only execute the request if the calling window is
+            // also the current IME client.
+            mHandler.obtainMessage(MSG_REMOVE_IME_SURFACE_FROM_WINDOW, windowToken).sendToTarget();
+        });
     }
 
     /**
@@ -4112,48 +4102,52 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
     @BinderThread
     @Override
     @GuardedBy("mMethodMap")
-    public void startProtoDump(byte[] protoDump, int source, String where) {
-        if (protoDump == null && source != IME_TRACING_FROM_IMMS) {
-            // Dump not triggered from IMMS, but no proto information provided.
-            return;
-        }
-        ImeTracing tracingInstance = ImeTracing.getInstance();
-        if (!tracingInstance.isAvailable() || !tracingInstance.isEnabled()) {
-            return;
-        }
-
-        ProtoOutputStream proto = new ProtoOutputStream();
-        switch (source) {
-            case ImeTracing.IME_TRACING_FROM_CLIENT:
-                final long client_token = proto.start(InputMethodClientsTraceFileProto.ENTRY);
-                proto.write(InputMethodClientsTraceProto.ELAPSED_REALTIME_NANOS,
-                        SystemClock.elapsedRealtimeNanos());
-                proto.write(InputMethodClientsTraceProto.WHERE, where);
-                proto.write(InputMethodClientsTraceProto.CLIENT, protoDump);
-                proto.end(client_token);
-                break;
-            case ImeTracing.IME_TRACING_FROM_IMS:
-                final long service_token = proto.start(InputMethodServiceTraceFileProto.ENTRY);
-                proto.write(InputMethodServiceTraceProto.ELAPSED_REALTIME_NANOS,
-                        SystemClock.elapsedRealtimeNanos());
-                proto.write(InputMethodServiceTraceProto.WHERE, where);
-                proto.write(InputMethodServiceTraceProto.INPUT_METHOD_SERVICE, protoDump);
-                proto.end(service_token);
-                break;
-            case IME_TRACING_FROM_IMMS:
-                final long managerservice_token =
-                        proto.start(InputMethodManagerServiceTraceFileProto.ENTRY);
-                proto.write(InputMethodManagerServiceTraceProto.ELAPSED_REALTIME_NANOS,
-                        SystemClock.elapsedRealtimeNanos());
-                proto.write(InputMethodManagerServiceTraceProto.WHERE, where);
-                dumpDebug(proto, InputMethodManagerServiceTraceProto.INPUT_METHOD_MANAGER_SERVICE);
-                proto.end(managerservice_token);
-                break;
-            default:
-                // Dump triggered by a source not recognised.
+    public void startProtoDump(byte[] protoDump, int source, String where,
+            IVoidResultCallback resultCallback) {
+        CallbackUtils.onResult(resultCallback, () -> {
+            if (protoDump == null && source != IME_TRACING_FROM_IMMS) {
+                // Dump not triggered from IMMS, but no proto information provided.
                 return;
-        }
-        tracingInstance.addToBuffer(proto, source);
+            }
+            ImeTracing tracingInstance = ImeTracing.getInstance();
+            if (!tracingInstance.isAvailable() || !tracingInstance.isEnabled()) {
+                return;
+            }
+
+            ProtoOutputStream proto = new ProtoOutputStream();
+            switch (source) {
+                case ImeTracing.IME_TRACING_FROM_CLIENT:
+                    final long client_token = proto.start(InputMethodClientsTraceFileProto.ENTRY);
+                    proto.write(InputMethodClientsTraceProto.ELAPSED_REALTIME_NANOS,
+                            SystemClock.elapsedRealtimeNanos());
+                    proto.write(InputMethodClientsTraceProto.WHERE, where);
+                    proto.write(InputMethodClientsTraceProto.CLIENT, protoDump);
+                    proto.end(client_token);
+                    break;
+                case ImeTracing.IME_TRACING_FROM_IMS:
+                    final long service_token = proto.start(InputMethodServiceTraceFileProto.ENTRY);
+                    proto.write(InputMethodServiceTraceProto.ELAPSED_REALTIME_NANOS,
+                            SystemClock.elapsedRealtimeNanos());
+                    proto.write(InputMethodServiceTraceProto.WHERE, where);
+                    proto.write(InputMethodServiceTraceProto.INPUT_METHOD_SERVICE, protoDump);
+                    proto.end(service_token);
+                    break;
+                case IME_TRACING_FROM_IMMS:
+                    final long managerservice_token =
+                            proto.start(InputMethodManagerServiceTraceFileProto.ENTRY);
+                    proto.write(InputMethodManagerServiceTraceProto.ELAPSED_REALTIME_NANOS,
+                            SystemClock.elapsedRealtimeNanos());
+                    proto.write(InputMethodManagerServiceTraceProto.WHERE, where);
+                    dumpDebug(proto,
+                            InputMethodManagerServiceTraceProto.INPUT_METHOD_MANAGER_SERVICE);
+                    proto.end(managerservice_token);
+                    break;
+                default:
+                    // Dump triggered by a source not recognised.
+                    return;
+            }
+            tracingInstance.addToBuffer(proto, source);
+        });
     }
 
     @BinderThread
@@ -4164,40 +4158,44 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
 
     @BinderThread
     @Override
-    public void startImeTrace() {
-        ImeTracing.getInstance().startTrace(null /* printwriter */);
-        ArrayMap<IBinder, ClientState> clients;
-        synchronized (mMethodMap) {
-            clients = new ArrayMap<>(mClients);
-        }
-        for (ClientState state : clients.values()) {
-            if (state != null) {
-                try {
-                    state.client.setImeTraceEnabled(true /* enabled */);
-                } catch (RemoteException e) {
-                    Slog.e(TAG, "Error while trying to enable ime trace on client window", e);
+    public void startImeTrace(IVoidResultCallback resultCallback) {
+        CallbackUtils.onResult(resultCallback, () -> {
+            ImeTracing.getInstance().startTrace(null /* printwriter */);
+            ArrayMap<IBinder, ClientState> clients;
+            synchronized (mMethodMap) {
+                clients = new ArrayMap<>(mClients);
+            }
+            for (ClientState state : clients.values()) {
+                if (state != null) {
+                    try {
+                        state.client.setImeTraceEnabled(true /* enabled */);
+                    } catch (RemoteException e) {
+                        Slog.e(TAG, "Error while trying to enable ime trace on client window", e);
+                    }
                 }
             }
-        }
+        });
     }
 
     @BinderThread
     @Override
-    public void stopImeTrace() {
-        ImeTracing.getInstance().stopTrace(null /* printwriter */);
-        ArrayMap<IBinder, ClientState> clients;
-        synchronized (mMethodMap) {
-            clients = new ArrayMap<>(mClients);
-        }
-        for (ClientState state : clients.values()) {
-            if (state != null) {
-                try {
-                    state.client.setImeTraceEnabled(false /* enabled */);
-                } catch (RemoteException e) {
-                    Slog.e(TAG, "Error while trying to disable ime trace on client window", e);
+    public void stopImeTrace(IVoidResultCallback resultCallback) {
+        CallbackUtils.onResult(resultCallback, () -> {
+            ImeTracing.getInstance().stopTrace(null /* printwriter */);
+            ArrayMap<IBinder, ClientState> clients;
+            synchronized (mMethodMap) {
+                clients = new ArrayMap<>(mClients);
+            }
+            for (ClientState state : clients.values()) {
+                if (state != null) {
+                    try {
+                        state.client.setImeTraceEnabled(false /* enabled */);
+                    } catch (RemoteException e) {
+                        Slog.e(TAG, "Error while trying to disable ime trace on client window", e);
+                    }
                 }
             }
-        }
+        });
     }
 
     @GuardedBy("mMethodMap")
@@ -4481,7 +4479,8 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
                     }
                     final IBinder token = (IBinder) args.arg2;
                     ((IInputMethod) args.arg1).initializeInternal(token, msg.arg1,
-                            new InputMethodPrivilegedOperationsImpl(this, token));
+                            new InputMethodPrivilegedOperationsImpl(this, token),
+                            (int) args.arg3);
                 } catch (RemoteException e) {
                 }
                 args.recycle();
@@ -5243,15 +5242,9 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
 
     @Override
     protected void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
-        boolean asProto = false;
-        for (int argIndex = 0; argIndex < args.length; argIndex++) {
-            if (args[argIndex].equals(PROTO_ARG)) {
-                asProto = true;
-                break;
-            }
-        }
+        if (!DumpUtils.checkDumpPermission(mContext, TAG, pw)) return;
 
-        if (asProto) {
+        if (ArrayUtils.contains(args, PROTO_ARG)) {
             final ImeTracing imeTracing = ImeTracing.getInstance();
             if (imeTracing.isEnabled()) {
                 imeTracing.stopTrace(null, false /* writeToFile */);
@@ -5260,14 +5253,7 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
                     imeTracing.startTrace(null);
                 });
             }
-        }
-        doDump(fd, pw, args, asProto);
-    }
 
-    private void doDump(FileDescriptor fd, PrintWriter pw, String[] args, boolean useProto) {
-        if (!DumpUtils.checkDumpPermission(mContext, TAG, pw)) return;
-
-        if (useProto) {
             final ProtoOutputStream proto = new ProtoOutputStream(fd);
             dumpDebug(proto, InputMethodManagerServiceTraceProto.INPUT_METHOD_MANAGER_SERVICE);
             proto.flush();
@@ -5440,48 +5426,38 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
         @BinderThread
         @ShellCommandResult
         private int onCommandWithSystemIdentity(@Nullable String cmd) {
-            if ("refresh_debug_properties".equals(cmd)) {
-                return refreshDebugProperties();
-            }
-
-            if ("get-last-switch-user-id".equals(cmd)) {
-                return mService.getLastSwitchUserId(this);
-            }
-
-            // For existing "adb shell ime <command>".
-            if ("ime".equals(cmd)) {
-                final String imeCommand = getNextArg();
-                if (imeCommand == null || "help".equals(imeCommand) || "-h".equals(imeCommand)) {
-                    onImeCommandHelp();
-                    return ShellCommandResult.SUCCESS;
+            switch (TextUtils.emptyIfNull(cmd)) {
+                case "get-last-switch-user-id":
+                    return mService.getLastSwitchUserId(this);
+                case "tracing":
+                    return mService.handleShellCommandTraceInputMethod(this);
+                case "ime": {  // For "adb shell ime <command>".
+                    final String imeCommand = TextUtils.emptyIfNull(getNextArg());
+                    switch (imeCommand) {
+                        case "":
+                        case "-h":
+                        case "help":
+                            return onImeCommandHelp();
+                        case "list":
+                            return mService.handleShellCommandListInputMethods(this);
+                        case "enable":
+                            return mService.handleShellCommandEnableDisableInputMethod(this, true);
+                        case "disable":
+                            return mService.handleShellCommandEnableDisableInputMethod(this, false);
+                        case "set":
+                            return mService.handleShellCommandSetInputMethod(this);
+                        case "reset":
+                            return mService.handleShellCommandResetInputMethod(this);
+                        case "tracing":  // TODO(b/180765389): Unsupport "adb shell ime tracing"
+                            return mService.handleShellCommandTraceInputMethod(this);
+                        default:
+                            getOutPrintWriter().println("Unknown command: " + imeCommand);
+                            return ShellCommandResult.FAILURE;
+                    }
                 }
-                switch (imeCommand) {
-                    case "list":
-                        return mService.handleShellCommandListInputMethods(this);
-                    case "enable":
-                        return mService.handleShellCommandEnableDisableInputMethod(this, true);
-                    case "disable":
-                        return mService.handleShellCommandEnableDisableInputMethod(this, false);
-                    case "set":
-                        return mService.handleShellCommandSetInputMethod(this);
-                    case "reset":
-                        return mService.handleShellCommandResetInputMethod(this);
-                    case "tracing":
-                        return mService.handleShellCommandTraceInputMethod(this);
-                    default:
-                        getOutPrintWriter().println("Unknown command: " + imeCommand);
-                        return ShellCommandResult.FAILURE;
-                }
+                default:
+                    return handleDefaultCommands(cmd);
             }
-
-            return handleDefaultCommands(cmd);
-        }
-
-        @BinderThread
-        @ShellCommandResult
-        private int refreshDebugProperties() {
-            DebugFlags.FLAG_OPTIMIZE_START_INPUT.refresh();
-            return ShellCommandResult.SUCCESS;
         }
 
         @BinderThread
@@ -5495,10 +5471,16 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
                 pw.println("    Synonym of dumpsys.");
                 pw.println("  ime <command> [options]");
                 pw.println("    Manipulate IMEs.  Run \"ime help\" for details.");
+                pw.println("  tracing <command>");
+                pw.println("    start: Start tracing.");
+                pw.println("    stop : Stop tracing.");
+                pw.println("    help : Show help.");
             }
         }
 
-        private void onImeCommandHelp() {
+        @BinderThread
+        @ShellCommandResult
+        private int onImeCommandHelp() {
             try (IndentingPrintWriter pw =
                          new IndentingPrintWriter(getOutPrintWriter(), "  ", 100)) {
                 pw.println("ime <command>:");
@@ -5553,6 +5535,7 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
 
                 pw.decreaseIndent();
             }
+            return ShellCommandResult.SUCCESS;
         }
     }
 
@@ -5903,87 +5886,102 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
 
         @BinderThread
         @Override
-        public void setImeWindowStatus(int vis, int backDisposition) {
-            mImms.setImeWindowStatus(mToken, vis, backDisposition);
+        public void setImeWindowStatus(int vis, int backDisposition,
+                IVoidResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback,
+                    () -> mImms.setImeWindowStatus(mToken, vis, backDisposition));
         }
 
         @BinderThread
         @Override
-        public void reportStartInput(IBinder startInputToken) {
-            mImms.reportStartInput(mToken, startInputToken);
+        public void reportStartInput(IBinder startInputToken, IVoidResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback,
+                    () -> mImms.reportStartInput(mToken, startInputToken));
         }
 
         @BinderThread
         @Override
-        public IInputContentUriToken createInputContentUriToken(Uri contentUri,
-                String packageName) {
-            return mImms.createInputContentUriToken(mToken, contentUri, packageName);
+        public void createInputContentUriToken(Uri contentUri, String packageName,
+                IIInputContentUriTokenResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback,
+                    () -> mImms.createInputContentUriToken(mToken, contentUri, packageName));
         }
 
         @BinderThread
         @Override
-        public void reportFullscreenMode(boolean fullscreen) {
-            mImms.reportFullscreenMode(mToken, fullscreen);
+        public void reportFullscreenMode(boolean fullscreen, IVoidResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback,
+                    () -> mImms.reportFullscreenMode(mToken, fullscreen));
         }
 
         @BinderThread
         @Override
-        public void setInputMethod(String id) {
-            mImms.setInputMethod(mToken, id);
+        public void setInputMethod(String id, IVoidResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback, () -> mImms.setInputMethod(mToken, id));
         }
 
         @BinderThread
         @Override
-        public void setInputMethodAndSubtype(String id, InputMethodSubtype subtype) {
-            mImms.setInputMethodAndSubtype(mToken, id, subtype);
+        public void setInputMethodAndSubtype(String id, InputMethodSubtype subtype,
+                IVoidResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback,
+                    () -> mImms.setInputMethodAndSubtype(mToken, id, subtype));
         }
 
         @BinderThread
         @Override
-        public void hideMySoftInput(int flags) {
-            mImms.hideMySoftInput(mToken, flags);
+        public void hideMySoftInput(int flags, IVoidResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback, () -> mImms.hideMySoftInput(mToken, flags));
         }
 
         @BinderThread
         @Override
-        public void showMySoftInput(int flags) {
-            mImms.showMySoftInput(mToken, flags);
+        public void showMySoftInput(int flags, IVoidResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback, () -> mImms.showMySoftInput(mToken, flags));
         }
 
         @BinderThread
         @Override
-        public void updateStatusIcon(String packageName, @DrawableRes int iconId) {
-            mImms.updateStatusIcon(mToken, packageName, iconId);
+        public void updateStatusIcon(String packageName, @DrawableRes int iconId,
+                IVoidResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback,
+                    () -> mImms.updateStatusIcon(mToken, packageName, iconId));
         }
 
         @BinderThread
         @Override
-        public boolean switchToPreviousInputMethod() {
-            return mImms.switchToPreviousInputMethod(mToken);
+        public void switchToPreviousInputMethod(IBooleanResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback, () -> mImms.switchToPreviousInputMethod(mToken));
         }
 
         @BinderThread
         @Override
-        public boolean switchToNextInputMethod(boolean onlyCurrentIme) {
-            return mImms.switchToNextInputMethod(mToken, onlyCurrentIme);
+        public void switchToNextInputMethod(boolean onlyCurrentIme,
+                IBooleanResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback,
+                    () -> mImms.switchToNextInputMethod(mToken, onlyCurrentIme));
         }
 
         @BinderThread
         @Override
-        public boolean shouldOfferSwitchingToNextInputMethod() {
-            return mImms.shouldOfferSwitchingToNextInputMethod(mToken);
+        public void shouldOfferSwitchingToNextInputMethod(
+                IBooleanResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback,
+                    () -> mImms.shouldOfferSwitchingToNextInputMethod(mToken));
         }
 
         @BinderThread
         @Override
-        public void notifyUserAction() {
-            mImms.notifyUserAction(mToken);
+        public void notifyUserAction(IVoidResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback, () -> mImms.notifyUserAction(mToken));
         }
 
         @BinderThread
         @Override
-        public void applyImeVisibility(IBinder windowToken, boolean setVisible) {
-            mImms.applyImeVisibility(mToken, windowToken, setVisible);
+        public void applyImeVisibility(IBinder windowToken, boolean setVisible,
+                IVoidResultCallback resultCallback) {
+            CallbackUtils.onResult(resultCallback,
+                    () -> mImms.applyImeVisibility(mToken, windowToken, setVisible));
         }
     }
 }

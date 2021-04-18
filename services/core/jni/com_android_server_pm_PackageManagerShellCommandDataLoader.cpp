@@ -22,6 +22,7 @@
 #include <android-base/stringprintf.h>
 #include <android-base/unique_fd.h>
 #include <core_jni_helpers.h>
+#include <cutils/multiuser.h>
 #include <cutils/trace.h>
 #include <endian.h>
 #include <nativehelper/JNIHelp.h>
@@ -38,12 +39,13 @@
 
 #include "dataloader.h"
 
+// #define VERBOSE_READ_LOGS
+
 namespace android {
 
 namespace {
 
 using android::base::borrowed_fd;
-using android::base::ReadFully;
 using android::base::unique_fd;
 
 using namespace std::literals;
@@ -172,7 +174,7 @@ static inline int32_t readLEInt32(borrowed_fd fd) {
 static inline std::vector<char> readBytes(borrowed_fd fd) {
     int32_t size = readLEInt32(fd);
     std::vector<char> result(size);
-    ReadFully(fd, result.data(), size);
+    android::base::ReadFully(fd, result.data(), size);
     return result;
 }
 
@@ -375,6 +377,9 @@ public:
     }
 
 private:
+    // Bitmask of supported features.
+    DataLoaderFeatures getFeatures() const final { return DATA_LOADER_FEATURE_UID; }
+
     // Lifecycle.
     bool onCreate(const android::dataloader::DataLoaderParams& params,
                   android::dataloader::FilesystemConnectorPtr ifs,
@@ -554,51 +559,6 @@ private:
         return true;
     }
 
-    // Read tracing.
-    struct TracedRead {
-        uint64_t timestampUs;
-        android::dataloader::FileId fileId;
-        uint32_t firstBlockIdx;
-        uint32_t count;
-    };
-
-    void onPageReads(android::dataloader::PageReads pageReads) final {
-        auto trace = atrace_is_tag_enabled(ATRACE_TAG);
-        if (CC_LIKELY(!trace)) {
-            return;
-        }
-
-        TracedRead last = {};
-        for (auto&& read : pageReads) {
-            if (read.id != last.fileId || read.block != last.firstBlockIdx + last.count) {
-                traceRead(last);
-                last = TracedRead{
-                        .timestampUs = read.bootClockTsUs,
-                        .fileId = read.id,
-                        .firstBlockIdx = (uint32_t)read.block,
-                        .count = 1,
-                };
-            } else {
-                ++last.count;
-            }
-        }
-        traceRead(last);
-    }
-
-    void traceRead(const TracedRead& read) {
-        if (!read.count) {
-            return;
-        }
-
-        FileIdx fileIdx = convertFileIdToFileIndex(read.fileId);
-        auto str = android::base::StringPrintf("page_read: index=%lld count=%lld file=%d",
-                                               static_cast<long long>(read.firstBlockIdx),
-                                               static_cast<long long>(read.count),
-                                               static_cast<int>(fileIdx));
-        ATRACE_BEGIN(str.c_str());
-        ATRACE_END();
-    }
-
     // Streaming.
     bool initStreaming(unique_fd inout, MetadataMode mode) {
         mEventFd.reset(eventfd(0, EFD_CLOEXEC));
@@ -610,7 +570,7 @@ private:
         // Awaiting adb handshake.
         char okay_buf[OKAY.size()];
         if (!android::base::ReadFully(inout, okay_buf, OKAY.size())) {
-            ALOGE("Failed to receive OKAY. Abort.");
+            ALOGE("Failed to receive OKAY. Abort. Error %d", errno);
             return false;
         }
         if (std::string_view(okay_buf, OKAY.size()) != OKAY) {
@@ -634,7 +594,10 @@ private:
     }
 
     // IFS callbacks.
-    void onPendingReads(dataloader::PendingReads pendingReads) final {
+    void onPendingReads(dataloader::PendingReads pendingReads) final {}
+    void onPageReads(dataloader::PageReads pageReads) final {}
+
+    void onPendingReadsWithUid(dataloader::PendingReadsWithUid pendingReads) final {
         std::lock_guard lock{mOutFdLock};
         if (mOutFd < 0) {
             return;
@@ -660,6 +623,114 @@ private:
         }
     }
 
+    // Read tracing.
+    struct TracedRead {
+        uint64_t timestampUs;
+        android::dataloader::FileId fileId;
+        android::dataloader::Uid uid;
+        uint32_t firstBlockIdx;
+        uint32_t count;
+    };
+
+    void onPageReadsWithUid(dataloader::PageReadsWithUid pageReads) final {
+        if (!pageReads.size()) {
+            return;
+        }
+
+        auto trace = atrace_is_tag_enabled(ATRACE_TAG);
+        if (CC_LIKELY(!trace)) {
+            return;
+        }
+
+        TracedRead last = {};
+        auto lastSerialNo = mLastSerialNo < 0 ? pageReads[0].serialNo : mLastSerialNo;
+        for (auto&& read : pageReads) {
+            const auto expectedSerialNo = lastSerialNo + last.count;
+#ifdef VERBOSE_READ_LOGS
+            {
+                FileIdx fileIdx = convertFileIdToFileIndex(read.id);
+
+                auto appId = multiuser_get_app_id(read.uid);
+                auto userId = multiuser_get_user_id(read.uid);
+                auto trace = android::base::
+                        StringPrintf("verbose_page_read: serialNo=%lld (expected=%lld) index=%lld "
+                                     "file=%d appid=%d userid=%d",
+                                     static_cast<long long>(read.serialNo),
+                                     static_cast<long long>(expectedSerialNo),
+                                     static_cast<long long>(read.block), static_cast<int>(fileIdx),
+                                     static_cast<int>(appId), static_cast<int>(userId));
+
+                ATRACE_BEGIN(trace.c_str());
+                ATRACE_END();
+            }
+#endif // VERBOSE_READ_LOGS
+
+            if (read.serialNo == expectedSerialNo && read.id == last.fileId &&
+                read.uid == last.uid && read.block == last.firstBlockIdx + last.count) {
+                ++last.count;
+                continue;
+            }
+
+            // First, trace the reads.
+            traceRead(last);
+
+            // Second, report missing reads, if any.
+            if (read.serialNo != expectedSerialNo) {
+                traceMissingReads(expectedSerialNo, read.serialNo);
+            }
+
+            last = TracedRead{
+                    .timestampUs = read.bootClockTsUs,
+                    .fileId = read.id,
+                    .uid = read.uid,
+                    .firstBlockIdx = (uint32_t)read.block,
+                    .count = 1,
+            };
+            lastSerialNo = read.serialNo;
+        }
+
+        traceRead(last);
+        mLastSerialNo = lastSerialNo + last.count;
+    }
+
+    void traceRead(const TracedRead& read) {
+        if (!read.count) {
+            return;
+        }
+
+        FileIdx fileIdx = convertFileIdToFileIndex(read.fileId);
+
+        std::string trace;
+        if (read.uid != kIncFsNoUid) {
+            auto appId = multiuser_get_app_id(read.uid);
+            auto userId = multiuser_get_user_id(read.uid);
+            trace = android::base::
+                    StringPrintf("page_read: index=%lld count=%lld file=%d appid=%d userid=%d",
+                                 static_cast<long long>(read.firstBlockIdx),
+                                 static_cast<long long>(read.count), static_cast<int>(fileIdx),
+                                 static_cast<int>(appId), static_cast<int>(userId));
+        } else {
+            trace = android::base::StringPrintf("page_read: index=%lld count=%lld file=%d",
+                                                static_cast<long long>(read.firstBlockIdx),
+                                                static_cast<long long>(read.count),
+                                                static_cast<int>(fileIdx));
+        }
+
+        ATRACE_BEGIN(trace.c_str());
+        ATRACE_END();
+    }
+
+    void traceMissingReads(int64_t expectedSerialNo, int64_t readSerialNo) {
+        const auto readsMissing = readSerialNo - expectedSerialNo;
+        const auto trace =
+                android::base::StringPrintf("missing_page_reads: count=%lld, range [%lld,%lld)",
+                                            static_cast<long long>(readsMissing),
+                                            static_cast<long long>(expectedSerialNo),
+                                            static_cast<long long>(readSerialNo));
+        ATRACE_BEGIN(trace.c_str());
+        ATRACE_END();
+    }
+
     void receiver(unique_fd inout, MetadataMode mode) {
         std::vector<uint8_t> data;
         std::vector<IncFsDataBlock> instructions;
@@ -670,12 +741,12 @@ private:
                 continue;
             }
             if (res < 0) {
-                ALOGE("Failed to poll. Abort.");
+                ALOGE("Failed to poll. Abort. Error %d", res);
                 mStatusListener->reportStatus(DATA_LOADER_UNRECOVERABLE);
                 break;
             }
             if (res == mEventFd) {
-                ALOGE("Received stop signal. Sending EXIT to server.");
+                ALOGE("DataLoader requested to stop. Sending EXIT to server.");
                 sendRequest(inout, EXIT);
                 break;
             }
@@ -689,7 +760,7 @@ private:
                 auto header = readHeader(remainingData);
                 if (header.fileIdx == -1 && header.blockType == 0 && header.compressionType == 0 &&
                     header.blockIdx == 0 && header.blockSize == 0) {
-                    ALOGI("Stop signal received. Sending exit command (remaining bytes: %d).",
+                    ALOGI("Stop command received. Sending exit command (remaining bytes: %d).",
                           int(remainingData.size()));
 
                     sendRequest(inout, EXIT);
@@ -698,16 +769,15 @@ private:
                 }
                 if (header.fileIdx < 0 || header.blockSize <= 0 || header.blockType < 0 ||
                     header.compressionType < 0 || header.blockIdx < 0) {
-                    ALOGE("invalid header received. Abort.");
+                    ALOGE("Invalid header received. Abort.");
                     mStopReceiving = true;
                     break;
                 }
+
                 const FileIdx fileIdx = header.fileIdx;
                 const android::dataloader::FileId fileId = convertFileIndexToFileId(mode, fileIdx);
                 if (!android::incfs::isValidFileId(fileId)) {
-                    ALOGE("Unknown data destination for file ID %d. "
-                          "Ignore.",
-                          header.fileIdx);
+                    ALOGE("Unknown data destination for file ID %d. Ignore.", header.fileIdx);
                     continue;
                 }
 
@@ -715,7 +785,7 @@ private:
                 if (writeFd < 0) {
                     writeFd.reset(this->mIfs->openForSpecialOps(fileId).release());
                     if (writeFd < 0) {
-                        ALOGE("Failed to open file %d for writing (%d). Aborting.", header.fileIdx,
+                        ALOGE("Failed to open file %d for writing (%d). Abort.", header.fileIdx,
                               -writeFd);
                         break;
                     }
@@ -807,6 +877,7 @@ private:
     std::atomic<bool> mStopReceiving = false;
     std::atomic<bool> mReadLogsEnabled = false;
     std::chrono::milliseconds mWaitOnEofInterval{WaitOnEofMinInterval};
+    int64_t mLastSerialNo{-1};
     /** Tracks which files have been requested */
     std::unordered_set<FileIdx> mRequestedFiles;
 };

@@ -33,7 +33,7 @@ namespace {
 
 constexpr char kRobotoVariable[] = "/system/fonts/Roboto-Regular.ttf";
 
-constexpr char kRegularFont[] = "/system/fonts/NotoSerif-Regular.ttf";
+constexpr char kRegularFont[] = "/system/fonts/NotoSerif.ttf";
 constexpr char kBoldFont[] = "/system/fonts/NotoSerif-Bold.ttf";
 constexpr char kItalicFont[] = "/system/fonts/NotoSerif-Italic.ttf";
 constexpr char kBoldItalicFont[] = "/system/fonts/NotoSerif-BoldItalic.ttf";
@@ -57,7 +57,7 @@ std::shared_ptr<minikin::FontFamily> buildFamily(const char* fileName) {
     sk_sp<SkTypeface> typeface(fm->makeFromStream(std::move(fontData)));
     LOG_ALWAYS_FATAL_IF(typeface == nullptr, "Failed to make typeface from %s", fileName);
     std::shared_ptr<minikin::MinikinFont> font =
-            std::make_shared<MinikinFontSkia>(std::move(typeface), data, st.st_size, fileName, 0,
+            std::make_shared<MinikinFontSkia>(std::move(typeface), 0, data, st.st_size, fileName, 0,
                                               std::vector<minikin::FontVariation>());
     std::vector<std::shared_ptr<minikin::Font>> fonts;
     fonts.push_back(minikin::Font::Builder(font).build());

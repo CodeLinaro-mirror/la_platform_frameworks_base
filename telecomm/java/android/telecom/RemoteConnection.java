@@ -1202,17 +1202,18 @@ public final class RemoteConnection {
     /**
      * Notifies this {@link RemoteConnection} that call filtering has completed, as well as
      * the results of a contacts lookup for the remote party.
-     * @param isBlocked Whether call filtering indicates that the call should be blocked
-     * @param isInContacts Whether the remote party is in the user's contacts
+     *
+     * @param completionInfo Info provided by Telecom on the results of call filtering.
      * @hide
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.READ_CONTACTS)
-    public void onCallFilteringCompleted(boolean isBlocked, boolean isInContacts) {
+    public void onCallFilteringCompleted(
+            @NonNull Connection.CallFilteringCompletionInfo completionInfo) {
         Log.startSession("RC.oCFC", getActiveOwnerInfo());
         try {
             if (mConnected) {
-                mConnectionService.onCallFilteringCompleted(mConnectionId, isBlocked, isInContacts,
+                mConnectionService.onCallFilteringCompleted(mConnectionId, completionInfo,
                         null /*Session.Info*/);
             }
         } catch (RemoteException ignored) {

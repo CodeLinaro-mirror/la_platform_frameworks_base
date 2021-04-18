@@ -18,6 +18,8 @@ package com.android.systemui.keyguard;
 
 import static android.view.WindowManagerPolicyConstants.OFF_BECAUSE_OF_USER;
 
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -27,13 +29,17 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.app.ActivityManager;
+import android.app.ActivityTaskManager;
 import android.app.admin.DevicePolicyManager;
 import android.app.trust.TrustManager;
 import android.os.PowerManager;
 import android.os.PowerManager.WakeLock;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper.RunWithLooper;
+import android.view.View;
 
+import com.android.systemui.R;
 import androidx.test.filters.SmallTest;
 
 import com.android.internal.widget.LockPatternUtils;
@@ -44,6 +50,9 @@ import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.classifier.FalsingCollectorFake;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.navigationbar.NavigationModeController;
+import com.android.systemui.plugins.statusbar.StatusBarStateController;
+import com.android.systemui.statusbar.LightRevealScrim;
+import com.android.systemui.statusbar.phone.DozeParameters;
 import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager;
 import com.android.systemui.util.DeviceConfigProxy;
 import com.android.systemui.util.DeviceConfigProxyFake;
@@ -73,6 +82,8 @@ public class KeyguardViewMediatorTest extends SysuiTestCase {
     private @Mock TrustManager mTrustManager;
     private @Mock NavigationModeController mNavigationModeController;
     private @Mock KeyguardDisplayManager mKeyguardDisplayManager;
+    private @Mock DozeParameters mDozeParameters;
+    private @Mock StatusBarStateController mStatusBarStateController;
     private DeviceConfigProxy mDeviceConfig = new DeviceConfigProxyFake();
     private FakeExecutor mUiBgExecutor = new FakeExecutor(new FakeSystemClock());
 
@@ -91,7 +102,7 @@ public class KeyguardViewMediatorTest extends SysuiTestCase {
                 () -> mStatusBarKeyguardViewManager,
                 mDismissCallbackRegistry, mUpdateMonitor, mDumpManager, mUiBgExecutor,
                 mPowerManager, mTrustManager, mDeviceConfig, mNavigationModeController,
-                mKeyguardDisplayManager);
+                mKeyguardDisplayManager, mDozeParameters, mStatusBarStateController);
         mViewMediator.start();
     }
 
@@ -112,5 +123,21 @@ public class KeyguardViewMediatorTest extends SysuiTestCase {
     public void testKeyguardGone_notGoingaway() {
         mViewMediator.mViewMediatorCallback.keyguardGone();
         verify(mStatusBarKeyguardViewManager).setKeyguardGoingAwayState(eq(false));
+    }
+
+    @Test
+    public void testIsAnimatingScreenOff() {
+        when(mDozeParameters.shouldControlUnlockedScreenOff()).thenReturn(true);
+
+        mViewMediator.onFinishedGoingToSleep(OFF_BECAUSE_OF_USER, false);
+        mViewMediator.setDozing(true);
+
+        // Mid-doze, we should be animating the screen off animation.
+        mViewMediator.onDozeAmountChanged(0.5f, 0.5f);
+        assertTrue(mViewMediator.isAnimatingScreenOff());
+
+        // Once we're 100% dozed, the screen off animation should be completed.
+        mViewMediator.onDozeAmountChanged(1f, 1f);
+        assertFalse(mViewMediator.isAnimatingScreenOff());
     }
 }

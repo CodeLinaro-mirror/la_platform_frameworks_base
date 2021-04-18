@@ -93,6 +93,8 @@
     <string name="screenshot_scroll_description" msgid="7855773867093272175">"Flettiskjáskot"</string>
     <string name="screenshot_dismiss_description" msgid="4702341245899508786">"Loka skjámynd"</string>
     <string name="screenshot_preview_description" msgid="7606510140714080474">"Forskoðun skjámyndar"</string>
+    <string name="screenshot_top_boundary" msgid="1500569103321300856">"Efri mörk"</string>
+    <string name="screenshot_bottom_boundary" msgid="5657242629526407311">"Neðri mörk"</string>
     <string name="screenrecord_name" msgid="2596401223859996572">"Skjáupptaka"</string>
     <string name="screenrecord_background_processing_label" msgid="7244617554884238898">"Vinnur úr skjáupptöku"</string>
     <string name="screenrecord_channel_description" msgid="4147077128486138351">"Áframhaldandi tilkynning fyrir skjáupptökulotu"</string>
@@ -114,7 +116,10 @@
     <string name="screenrecord_cancel_label" msgid="7850926573274483294">"Hætta við"</string>
     <string name="screenrecord_share_label" msgid="5025590804030086930">"Deila"</string>
     <string name="screenrecord_cancel_success" msgid="1775448688137393901">"Hætt við skjáupptöku"</string>
-    <string name="screenrecord_save_message" msgid="490522052388998226">"Skjáupptaka vistuð, ýttu til að skoða"</string>
+    <!-- no translation found for screenrecord_save_title (1886652605520893850) -->
+    <skip />
+    <!-- no translation found for screenrecord_save_text (3008973099800840163) -->
+    <skip />
     <string name="screenrecord_delete_error" msgid="2870506119743013588">"Villa við að eyða skjáupptöku"</string>
     <string name="screenrecord_permission_error" msgid="7856841237023137686">"Ekki tókst að fá heimildir"</string>
     <string name="screenrecord_start_error" msgid="2200660692479682368">"Villa við að hefja upptöku skjás"</string>
@@ -344,10 +349,8 @@
     <string name="quick_settings_ime_label" msgid="3351174938144332051">"Innsláttaraðferð"</string>
     <string name="quick_settings_location_label" msgid="2621868789013389163">"Staðsetning"</string>
     <string name="quick_settings_location_off_label" msgid="7923929131443915919">"Staðsetning óvirk"</string>
-    <!-- no translation found for quick_settings_camera_label (1367149596242401934) -->
-    <skip />
-    <!-- no translation found for quick_settings_mic_label (8245831073612564953) -->
-    <skip />
+    <string name="quick_settings_camera_label" msgid="1367149596242401934">"Loka á myndavél"</string>
+    <string name="quick_settings_mic_label" msgid="8245831073612564953">"Slökkva á hljóðnema"</string>
     <string name="quick_settings_media_device_label" msgid="8034019242363789941">"Margmiðlunartæki"</string>
     <string name="quick_settings_rssi_label" msgid="3397615415140356701">"RSSI"</string>
     <string name="quick_settings_rssi_emergency_only" msgid="7499207215265078598">"Aðeins neyðarsímtöl"</string>
@@ -358,12 +361,9 @@
     <string name="quick_settings_user_new_user" msgid="3347905871336069666">"Nýr notandi"</string>
     <string name="quick_settings_wifi_label" msgid="2879507532983487244">"Wi-Fi"</string>
     <string name="quick_settings_internet_label" msgid="6603068555872455463">"Internet"</string>
-    <!-- no translation found for quick_settings_airplane_safe_label (2665758539772645899) -->
-    <skip />
-    <!-- no translation found for quick_settings_networks_available (1875138606855420438) -->
-    <skip />
-    <!-- no translation found for quick_settings_networks_unavailable (1167847013337940082) -->
-    <skip />
+    <string name="quick_settings_airplane_safe_label" msgid="2665758539772645899">"Öruggt í flugi"</string>
+    <string name="quick_settings_networks_available" msgid="1875138606855420438">"Net í boði"</string>
+    <string name="quick_settings_networks_unavailable" msgid="1167847013337940082">"Net er ekki tiltækt"</string>
     <string name="quick_settings_wifi_not_connected" msgid="4071097522427039160">"Engin tenging"</string>
     <string name="quick_settings_wifi_no_network" msgid="6003178398713839313">"Ekkert net"</string>
     <string name="quick_settings_wifi_off_label" msgid="4003379736176547594">"Slökkt á Wi-Fi"</string>
@@ -415,12 +415,15 @@
     <string name="quick_settings_dark_mode_secondary_label_until_sunrise" msgid="4404885070316716472">"Til sólarupprásar"</string>
     <string name="quick_settings_dark_mode_secondary_label_on_at" msgid="5128758823486361279">"Virkt kl. <xliff:g id="TIME">%s</xliff:g>"</string>
     <string name="quick_settings_dark_mode_secondary_label_until" msgid="2289774641256492437">"Til <xliff:g id="TIME">%s</xliff:g>"</string>
+    <string name="quick_settings_reduce_bright_colors_label" msgid="7537352080559075175">"Minnka birtu"</string>
     <string name="quick_settings_nfc_label" msgid="1054317416221168085">"NFC"</string>
     <string name="quick_settings_nfc_off" msgid="3465000058515424663">"Slökkt á NFC"</string>
     <string name="quick_settings_nfc_on" msgid="1004976611203202230">"Kveikt á NFC"</string>
     <string name="quick_settings_screen_record_label" msgid="1594046461509776676">"Skjáupptaka"</string>
     <string name="quick_settings_screen_record_start" msgid="1574725369331638985">"Hefja"</string>
     <string name="quick_settings_screen_record_stop" msgid="8087348522976412119">"Stöðva"</string>
+    <string name="sensor_privacy_start_use_mic_dialog_content" msgid="8643239110815357707">"Til að halda áfram þarf &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; aðgang að hljóðnema tækisins."</string>
+    <string name="sensor_privacy_start_use_camera_dialog_content" msgid="7773612142162829116">"Til að halda áfram þarf &lt;b&gt;<xliff:g id="APP">%s</xliff:g>&lt;/b&gt; aðgang að myndavél tækisins."</string>
     <string name="media_seamless_remote_device" msgid="177033467332920464">"Tæki"</string>
     <string name="recents_swipe_up_onboarding" msgid="2820265886420993995">"Strjúktu upp til að skipta á milli forrita"</string>
     <string name="recents_quick_scrub_onboarding" msgid="765934300283514912">"Dragðu til hægri til að skipta hratt á milli forrita"</string>
@@ -443,8 +446,10 @@
     <string name="notification_tap_again" msgid="4477318164947497249">"Ýttu aftur til að opna"</string>
     <string name="keyguard_unlock" msgid="8031975796351361601">"Strjúktu upp til að opna"</string>
     <string name="keyguard_retry" msgid="886802522584053523">"Strjúktu upp til að reyna aftur"</string>
+    <string name="require_unlock_for_nfc" msgid="1305686454823018831">"Taktu úr lás til að nota NFC"</string>
     <string name="do_disclosure_generic" msgid="4896482821974707167">"Þetta tæki tilheyrir fyrirtækinu þínu"</string>
     <string name="do_disclosure_with_name" msgid="2091641464065004091">"Þetta tæki tilheyrir <xliff:g id="ORGANIZATION_NAME">%s</xliff:g>"</string>
+    <string name="do_financed_disclosure_with_name" msgid="6723004643314467864">"Þetta tæki er frá <xliff:g id="ORGANIZATION_NAME">%s</xliff:g>"</string>
     <string name="phone_hint" msgid="6682125338461375925">"Strjúktu frá tákninu fyrir síma"</string>
     <string name="voice_hint" msgid="7476017460191291417">"Strjúktu frá tákninu fyrir raddaðstoð"</string>
     <string name="camera_hint" msgid="4519495795000658637">"Strjúktu frá tákninu fyrir myndavél"</string>
@@ -465,9 +470,10 @@
     <string name="accessibility_multi_user_switch_quick_contact" msgid="4504508915324898576">"Sýna snið"</string>
     <string name="user_add_user" msgid="4336657383006913022">"Bæta notanda við"</string>
     <string name="user_new_user_name" msgid="2019166282704195789">"Nýr notandi"</string>
-    <string name="guest_exit_guest_dialog_title" msgid="2034481024623462357">"Ljúka gestalotu?"</string>
+    <string name="guest_exit_button" msgid="3059840571760915762">"Ljúka gestalotu"</string>
+    <string name="guest_exit_guest_dialog_title" msgid="5015697561580641422">"Fjarlægja gest?"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"Öllum forritum og gögnum í þessari lotu verður eytt."</string>
-    <string name="guest_exit_guest_dialog_remove" msgid="8533184512885775423">"Ljúka lotu"</string>
+    <string name="guest_exit_guest_dialog_remove" msgid="7505817591242703757">"Fjarlægja"</string>
     <string name="guest_wipe_session_title" msgid="7147965814683990944">"Velkominn aftur, gestur!"</string>
     <string name="guest_wipe_session_message" msgid="3393823610257065457">"Viltu halda áfram með lotuna?"</string>
     <string name="guest_wipe_session_wipe" msgid="8056836584445473309">"Byrja upp á nýtt"</string>
@@ -542,6 +548,7 @@
     <string name="monitoring_description_managed_profile_ca_certificate" msgid="7904323416598435647">"Fyrirtækið þitt setti upp CA-vottorð á vinnusniðinu þínu. Eftirlit kann að vera haft með öruggri netnotkun þinni eða henni kann að vera breytt."</string>
     <string name="monitoring_description_ca_certificate" msgid="448923057059097497">"CA-vottorð er uppsett á þessu tæki. Eftirlit kann að vera haft með öruggri netnotkun þinni eða henni kann að vera breytt."</string>
     <string name="monitoring_description_management_network_logging" msgid="216983105036994771">"Kerfisstjóri hefur kveikt á eftirliti netkerfa, sem fylgist með netumferð á tækinu þínu."</string>
+    <string name="monitoring_description_managed_profile_network_logging" msgid="6932303843097006037">"Stjórnandinn kveikti á eftirliti netkerfa sem fylgist með netumferð á vinnusniðinu þínu en ekki á eigin sniði."</string>
     <string name="monitoring_description_named_vpn" msgid="5749932930634037027">"Þú ert með tengingu við <xliff:g id="VPN_APP">%1$s</xliff:g>, sem getur fylgst með netnotkun þinni, þ. á m. tölvupósti, forritum og vefsvæðum."</string>
     <string name="monitoring_description_two_named_vpns" msgid="3516830755681229463">"Þú ert með tengingu við <xliff:g id="VPN_APP_0">%1$s</xliff:g> og <xliff:g id="VPN_APP_1">%2$s</xliff:g>, sem geta fylgst með netnotkun þinni, þar á meðal tölvupósti, forritum og vefsvæðum."</string>
     <string name="monitoring_description_managed_profile_named_vpn" msgid="368812367182387320">"Vinnusniðið þitt er tengt <xliff:g id="VPN_APP">%1$s</xliff:g>, sem getur fylgst með netnotkun þinni, þ. á m. tölvupósti, forritum og vefsvæðum."</string>
@@ -622,6 +629,7 @@
     <string name="volume_stream_content_description_mute" msgid="4079046784917920984">"%1$s. Ýttu til að þagga. Hugsanlega verður slökkt á hljóði aðgengisþjónustu."</string>
     <string name="volume_stream_content_description_vibrate_a11y" msgid="2742330052979397471">"%1$s. Ýttu til að stilla á titring."</string>
     <string name="volume_stream_content_description_mute_a11y" msgid="5743548478357238156">"%1$s. Ýttu til að þagga."</string>
+    <string name="volume_ringer_change" msgid="3574969197796055532">"Ýta til að skipta um hringjarastillingu"</string>
     <string name="volume_ringer_hint_mute" msgid="4263821214125126614">"þagga"</string>
     <string name="volume_ringer_hint_unmute" msgid="6119086890306456976">"hætta að þagga"</string>
     <string name="volume_ringer_hint_vibrate" msgid="6211609047099337509">"titringur"</string>
@@ -735,7 +743,7 @@
     <string name="feedback_silenced" msgid="9116540317466126457">"Stig þessarar tilkynningar var sjálfkrafa &lt;b&gt;lækkað í þögult&lt;/b&gt; af kerfinu."</string>
     <string name="feedback_promoted" msgid="2125562787759780807">"Stig þessarar tilkynningar var sjálfkrafa &lt;b&gt;hækkað&lt;/b&gt; í tilkynningaglugganum þínum."</string>
     <string name="feedback_demoted" msgid="951884763467110604">"Stig þessarar tilkynningar var sjálfkrafa &lt;b&gt;lækkað&lt;/b&gt; í tilkynningaglugganum þínum."</string>
-    <string name="feedback_prompt" msgid="2278631214125128281">"Var þetta rétt?"</string>
+    <string name="feedback_prompt" msgid="3656728972307896379">"Sendu framleiðandanum ábendingu. Var þetta rétt?"</string>
     <string name="feedback_response" msgid="4671729244976641339">"Takk fyrir að segja þína skoðun!"</string>
     <string name="feedback_ok" msgid="6481426753298857144">"Í lagi"</string>
     <string name="notification_channel_controls_opened_accessibility" msgid="6111817750774381094">"Opnað fyrir tilkynningastýringar <xliff:g id="APP_NAME">%1$s</xliff:g>"</string>
@@ -882,6 +890,8 @@
     <string name="accessibility_qs_edit_tile_move_to_position" msgid="5198161544045930556">"Færa í <xliff:g id="POSITION">%1$d</xliff:g>"</string>
     <string name="accessibility_qs_edit_tile_add_to_position" msgid="9029163095148274690">"Bæta við í stöðu <xliff:g id="POSITION">%1$d</xliff:g>"</string>
     <string name="accessibility_qs_edit_position" msgid="4509277359815711830">"Staða <xliff:g id="POSITION">%1$d</xliff:g>"</string>
+    <string name="accessibility_qs_edit_tile_added" msgid="9067146040380836334">"Reit bætt við"</string>
+    <string name="accessibility_qs_edit_tile_removed" msgid="1175925632436612036">"Reitur fjarlægður"</string>
     <string name="accessibility_desc_quick_settings_edit" msgid="741658939453595297">"Flýtistillingaritill."</string>
     <string name="accessibility_desc_notification_icon" msgid="7331265967584178674">"<xliff:g id="ID_1">%1$s</xliff:g> tilkynning: <xliff:g id="ID_2">%2$s</xliff:g>"</string>
     <string name="accessibility_quick_settings_settings" msgid="7098489591715844713">"Opna stillingar."</string>
@@ -969,13 +979,17 @@
     <string name="ongoing_privacy_chip_content_multiple_apps" msgid="8341216022442383954">"Forrit eru að nota <xliff:g id="TYPES_LIST">%s</xliff:g>."</string>
     <string name="ongoing_privacy_dialog_separator" msgid="1866222499727706187">", "</string>
     <string name="ongoing_privacy_dialog_last_separator" msgid="5615876114268009767">" og "</string>
+    <string name="ongoing_privacy_dialog_using_op" msgid="4125175620929701569">"<xliff:g id="APPLICATION_NAME">%1$s</xliff:g> er að nota <xliff:g id="APP_OPP_NAME">%2$s</xliff:g>"</string>
+    <string name="ongoing_privacy_dialog_recent_op" msgid="4255923947334262404">"<xliff:g id="APPLICATION_NAME">%1$s</xliff:g> notaði <xliff:g id="APP_OPP_NAME">%2$s</xliff:g> nýlega"</string>
+    <string name="ongoing_privacy_dialog_enterprise" msgid="4082735415905550729">"(fyrirtæki)"</string>
+    <string name="ongoing_privacy_dialog_phonecall" msgid="4487370562589839298">"Símtal"</string>
+    <string name="ongoing_privacy_dialog_attribution_text" msgid="9186683306719924646">"(í gegnum <xliff:g id="ATTRIBUTION">%s</xliff:g>)"</string>
     <string name="privacy_type_camera" msgid="7974051382167078332">"myndavél"</string>
     <string name="privacy_type_location" msgid="7991481648444066703">"staðsetning"</string>
     <string name="privacy_type_microphone" msgid="9136763906797732428">"hljóðnemi"</string>
     <string name="sensor_privacy_mode" msgid="4462866919026513692">"Slökkt á skynjurum"</string>
     <string name="device_services" msgid="1549944177856658705">"Tækjaþjónusta"</string>
     <string name="music_controls_no_title" msgid="4166497066552290938">"Enginn titill"</string>
-    <string name="restart_button_description" msgid="6916116576177456480">"Ýttu til að endurræsa forritið og sýna það á öllum skjánum."</string>
     <string name="bubble_accessibility_action_move" msgid="3185080443743819178">"Færa"</string>
     <string name="notification_content_system_nav_changed" msgid="5077913144844684544">"Kerfisstjórnun uppfærð. Þú getur breytt þessu í stillingunum."</string>
     <string name="notification_content_gesture_nav_available" msgid="4431460803004659888">"Farðu í stillingar til að uppfæra kerfisstjórnun"</string>
@@ -1029,6 +1043,7 @@
     <string name="controls_dialog_ok" msgid="2770230012857881822">"Bæta við"</string>
     <string name="controls_dialog_message" msgid="342066938390663844">"Tillaga frá <xliff:g id="APP">%s</xliff:g>"</string>
     <string name="controls_dialog_confirmation" msgid="586517302736263447">"Stýringar uppfærðar"</string>
+    <string name="controls_tile_locked" msgid="731547768182831938">"Tækið er læst"</string>
     <string name="controls_pin_use_alphanumeric" msgid="8478371861023048414">"PIN inniheldur bókstafi eða tákn"</string>
     <string name="controls_pin_verify" msgid="3452778292918877662">"Staðfesta <xliff:g id="DEVICE">%s</xliff:g>"</string>
     <string name="controls_pin_wrong" msgid="6162694056042164211">"Rangt PIN-númer"</string>

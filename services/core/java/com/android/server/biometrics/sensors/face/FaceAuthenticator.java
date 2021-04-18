@@ -21,6 +21,7 @@ import android.hardware.biometrics.IBiometricAuthenticator;
 import android.hardware.biometrics.IBiometricSensorReceiver;
 import android.hardware.biometrics.IInvalidationCallback;
 import android.hardware.biometrics.ITestSession;
+import android.hardware.biometrics.ITestSessionCallback;
 import android.hardware.biometrics.SensorPropertiesInternal;
 import android.hardware.face.IFaceService;
 import android.os.IBinder;
@@ -41,8 +42,9 @@ public final class FaceAuthenticator extends IBiometricAuthenticator.Stub {
     }
 
     @Override
-    public ITestSession createTestSession(@NonNull String opPackageName) throws RemoteException {
-        return mFaceService.createTestSession(mSensorId, opPackageName);
+    public ITestSession createTestSession(@NonNull ITestSessionCallback callback,
+            @NonNull String opPackageName) throws RemoteException {
+        return mFaceService.createTestSession(mSensorId, callback, opPackageName);
     }
 
     @Override
@@ -52,8 +54,8 @@ public final class FaceAuthenticator extends IBiometricAuthenticator.Stub {
     }
 
     @Override
-    public byte[] dumpSensorServiceStateProto() throws RemoteException {
-        return mFaceService.dumpSensorServiceStateProto(mSensorId);
+    public byte[] dumpSensorServiceStateProto(boolean clearSchedulerBuffer) throws RemoteException {
+        return mFaceService.dumpSensorServiceStateProto(mSensorId, clearSchedulerBuffer);
     }
 
     @Override

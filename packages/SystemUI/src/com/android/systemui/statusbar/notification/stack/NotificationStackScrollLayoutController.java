@@ -45,7 +45,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
-import android.widget.FrameLayout;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.colorextraction.ColorExtractor;
@@ -224,6 +223,7 @@ public class NotificationStackScrollLayoutController {
             updateShowEmptyShadeView();
             mView.updateCornerRadius();
             mView.updateBgColor();
+            mView.updateDecorViews();
             mView.reinflateViews();
         }
 
@@ -271,8 +271,8 @@ public class NotificationStackScrollLayoutController {
         }
     };
 
-    public void setIsShadeOpening(boolean isOpening) {
-        mView.setIsShadeOpening(isOpening);
+    public void setSectionPadding(float padding) {
+        mView.setSectionPadding(padding);
     }
 
     private final OnMenuEventListener mMenuEventListener = new OnMenuEventListener() {
@@ -399,7 +399,7 @@ public class NotificationStackScrollLayoutController {
                     if (mView.getDismissAllInProgress()) {
                         return;
                     }
-                    mView.onSwipeEnd(view);
+                    mView.onSwipeEnd();
                     if (view instanceof ExpandableNotificationRow) {
                         ExpandableNotificationRow row = (ExpandableNotificationRow) view;
                         if (row.isHeadsUp()) {
@@ -459,7 +459,7 @@ public class NotificationStackScrollLayoutController {
 
                 @Override
                 public void onChildSnappedBack(View animView, float targetLeft) {
-                    mView.onSwipeEnd(animView);
+                    mView.onSwipeEnd();
                     if (animView instanceof ExpandableNotificationRow) {
                         ExpandableNotificationRow row = (ExpandableNotificationRow) animView;
                         if (row.isPinned() && !canChildBeDismissed(row)
@@ -847,11 +847,14 @@ public class NotificationStackScrollLayoutController {
         return mView.getChildAtRawPosition(x, y);
     }
 
-    public FrameLayout.LayoutParams getLayoutParams() {
-        return (FrameLayout.LayoutParams) mView.getLayoutParams();
+    public ViewGroup.LayoutParams getLayoutParams() {
+        return mView.getLayoutParams();
     }
 
-    public void setLayoutParams(FrameLayout.LayoutParams lp) {
+    /**
+     * Updates layout parameters on the root view
+     */
+    public void setLayoutParams(ViewGroup.LayoutParams lp) {
         mView.setLayoutParams(lp);
     }
 

@@ -182,6 +182,9 @@ public class PackageWatchdog {
     private final Runnable mSaveToFile = this::saveToFile;
     private final SystemClock mSystemClock;
     private final BootThreshold mBootThreshold;
+    private final DeviceConfig.OnPropertiesChangedListener
+            mOnPropertyChangedListener = this::onPropertyChanged;
+
     // The set of packages that have been synced with the ExplicitHealthCheckController
     @GuardedBy("mLock")
     private Set<String> mRequestedHealthCheckPackages = new ArraySet<>();
@@ -259,10 +262,7 @@ public class PackageWatchdog {
             mIsPackagesReady = true;
             mHealthCheckController.setCallbacks(packageName -> onHealthCheckPassed(packageName),
                     packages -> onSupportedPackages(packages),
-                    () -> {
-                            syncRequestsAsync();
-                            mSyncRequired = true;
-                    });
+                    this::onSyncRequestNotified);
             setPropertyChangedListenerLocked();
             updateConfigs();
             registerConnectivityModuleHealthListener();
@@ -372,10 +372,12 @@ public class PackageWatchdog {
      * even from a previous boot.
      */
     public void unregisterHealthObserver(PackageHealthObserver observer) {
-        synchronized (mLock) {
-            mAllObservers.remove(observer.getName());
-        }
-        syncState("unregistering observer: " + observer.getName());
+        mLongTaskHandler.post(() -> {
+            synchronized (mLock) {
+                mAllObservers.remove(observer.getName());
+            }
+            syncState("unregistering observer: " + observer.getName());
+        });
     }
 
     /**
@@ -535,6 +537,7 @@ public class PackageWatchdog {
         synchronized (mLock) {
             mIsHealthCheckEnabled = enabled;
             mHealthCheckController.setEnabled(enabled);
+            mSyncRequired = true;
             // Prune to update internal state whenever health check is enabled/disabled
             syncState("health check state " + (enabled ? "enabled" : "disabled"));
         }
@@ -669,9 +672,17 @@ public class PackageWatchdog {
         }
     }
 
+    @VisibleForTesting
     long getTriggerFailureCount() {
         synchronized (mLock) {
             return mTriggerFailureCount;
+        }
+    }
+
+    @VisibleForTesting
+    long getTriggerFailureDurationMs() {
+        synchronized (mLock) {
+            return mTriggerFailureDurationMs;
         }
     }
 
@@ -783,6 +794,13 @@ public class PackageWatchdog {
 
         if (isStateChanged) {
             syncState("updated health check supported packages " + supportedPackages);
+        }
+    }
+
+    private void onSyncRequestNotified() {
+        synchronized (mLock) {
+            mSyncRequired = true;
+            syncRequestsAsync();
         }
     }
 
@@ -900,10 +918,13 @@ public class PackageWatchdog {
                 if (registeredObserver != null) {
                     Iterator<MonitoredPackage> it = failedPackages.iterator();
                     while (it.hasNext()) {
-                        VersionedPackage versionedPkg = it.next().mPackage;
-                        Slog.i(TAG, "Explicit health check failed for package " + versionedPkg);
-                        registeredObserver.execute(versionedPkg,
-                                PackageWatchdog.FAILURE_REASON_EXPLICIT_HEALTH_CHECK, 1);
+                        VersionedPackage versionedPkg = getVersionedPackage(it.next().getName());
+                        if (versionedPkg != null) {
+                            Slog.i(TAG,
+                                    "Explicit health check failed for package " + versionedPkg);
+                            registeredObserver.execute(versionedPkg,
+                                    PackageWatchdog.FAILURE_REASON_EXPLICIT_HEALTH_CHECK, 1);
+                        }
                     }
                 }
             }
@@ -973,24 +994,33 @@ public class PackageWatchdog {
         }
     }
 
+    private void onPropertyChanged(DeviceConfig.Properties properties) {
+        try {
+            updateConfigs();
+        } catch (Exception ignore) {
+            Slog.w(TAG, "Failed to reload device config changes");
+        }
+    }
+
     /** Adds a {@link DeviceConfig#OnPropertiesChangedListener}. */
     private void setPropertyChangedListenerLocked() {
         DeviceConfig.addOnPropertiesChangedListener(
                 DeviceConfig.NAMESPACE_ROLLBACK,
                 mContext.getMainExecutor(),
-                (properties) -> {
-                    if (!DeviceConfig.NAMESPACE_ROLLBACK.equals(properties.getNamespace())) {
-                        return;
-                    }
-                    updateConfigs();
-                });
+                mOnPropertyChangedListener);
+    }
+
+    @VisibleForTesting
+    void removePropertyChangedListener() {
+        DeviceConfig.removeOnPropertiesChangedListener(mOnPropertyChangedListener);
     }
 
     /**
      * Health check is enabled or disabled after reading the flags
      * from DeviceConfig.
      */
-    private void updateConfigs() {
+    @VisibleForTesting
+    void updateConfigs() {
         synchronized (mLock) {
             mTriggerFailureCount = DeviceConfig.getInt(
                     DeviceConfig.NAMESPACE_ROLLBACK,
@@ -1335,11 +1365,7 @@ public class PackageWatchdog {
 
     MonitoredPackage newMonitoredPackage(String name, long durationMs, long healthCheckDurationMs,
             boolean hasPassedHealthCheck, LongArrayQueue mitigationCalls) {
-        VersionedPackage pkg = getVersionedPackage(name);
-        if (pkg == null) {
-            return null;
-        }
-        return new MonitoredPackage(pkg, durationMs, healthCheckDurationMs,
+        return new MonitoredPackage(name, durationMs, healthCheckDurationMs,
                 hasPassedHealthCheck, mitigationCalls);
     }
 
@@ -1364,7 +1390,7 @@ public class PackageWatchdog {
      * instances of this class.
      */
     class MonitoredPackage {
-        private final VersionedPackage mPackage;
+        private final String mPackageName;
         // Times when package failures happen sorted in ascending order
         @GuardedBy("mLock")
         private final LongArrayQueue mFailureHistory = new LongArrayQueue();
@@ -1392,10 +1418,10 @@ public class PackageWatchdog {
         @GuardedBy("mLock")
         private long mHealthCheckDurationMs = Long.MAX_VALUE;
 
-        MonitoredPackage(VersionedPackage pkg, long durationMs,
+        MonitoredPackage(String packageName, long durationMs,
                 long healthCheckDurationMs, boolean hasPassedHealthCheck,
                 LongArrayQueue mitigationCalls) {
-            mPackage = pkg;
+            mPackageName = packageName;
             mDurationMs = durationMs;
             mHealthCheckDurationMs = healthCheckDurationMs;
             mHasPassedHealthCheck = hasPassedHealthCheck;
@@ -1549,7 +1575,7 @@ public class PackageWatchdog {
 
         /** Returns the monitored package name. */
         private String getName() {
-            return mPackage.getPackageName();
+            return mPackageName;
         }
 
         /**

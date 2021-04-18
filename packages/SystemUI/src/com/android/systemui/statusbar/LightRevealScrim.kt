@@ -11,13 +11,9 @@ import android.graphics.PorterDuffColorFilter
 import android.graphics.PorterDuffXfermode
 import android.graphics.RadialGradient
 import android.graphics.Shader
-import android.os.SystemProperties
 import android.util.AttributeSet
 import android.view.View
 import com.android.systemui.Interpolators
-
-val enableLightReveal =
-        SystemProperties.getBoolean("persist.sysui.show_new_screen_on_transitions", false)
 
 /**
  * Provides methods to modify the various properties of a [LightRevealScrim] to reveal between 0% to
@@ -82,6 +78,35 @@ object LiftReveal : LightRevealEffect {
                             scrim.width * ovalWidthIncreaseAmount,
                     scrim.height * OVAL_INITIAL_BOTTOM_PERCENT +
                             scrim.height * interpolatedAmount)
+        }
+    }
+}
+
+class PowerButtonReveal(
+    /** Approximate Y-value of the center of the power button on the physical device. */
+    val powerButtonY: Float
+) : LightRevealEffect {
+
+    private val OVAL_INITIAL_HEIGHT = 50f
+
+    private val WIDTH_INCREASE_MULTIPLIER = 1.25f
+
+    override fun setRevealAmountOnScrim(amount: Float, scrim: LightRevealScrim) {
+        val interpolatedAmount = Interpolators.FAST_OUT_SLOW_IN_REVERSE.getInterpolation(amount)
+        val fadeAmount =
+                LightRevealEffect.getPercentPastThreshold(interpolatedAmount, 0.5f)
+
+        with(scrim) {
+            revealGradientEndColorAlpha = 1f - fadeAmount
+            setRevealGradientBounds(
+                    width -
+                            width * WIDTH_INCREASE_MULTIPLIER * interpolatedAmount,
+                    powerButtonY - (OVAL_INITIAL_HEIGHT / 2f) -
+                            height * interpolatedAmount,
+                    width * WIDTH_INCREASE_MULTIPLIER +
+                            width * WIDTH_INCREASE_MULTIPLIER * interpolatedAmount,
+                    powerButtonY + (OVAL_INITIAL_HEIGHT / 2f) +
+                            height * interpolatedAmount)
         }
     }
 }

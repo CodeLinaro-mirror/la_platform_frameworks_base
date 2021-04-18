@@ -1,3 +1,21 @@
+
+package {
+    default_applicable_licenses: ["frameworks_base_core_jni_license"],
+}
+
+// Added automatically by a large-scale-change
+// See: http://go/android-license-faq
+license {
+    name: "frameworks_base_core_jni_license",
+    visibility: [":__subpackages__"],
+    license_kinds: [
+        "SPDX-license-identifier-Apache-2.0",
+    ],
+    license_text: [
+        "NOTICE",
+    ],
+}
+
 cc_library_shared {
     name: "libandroid_runtime",
     host_supported: true,
@@ -33,6 +51,7 @@ cc_library_shared {
         "android_util_XmlBlock.cpp",
         "android_util_jar_StrictJarFile.cpp",
         "com_android_internal_util_VirtualRefBasePtr.cpp",
+        ":deviceproductinfoconstants_aidl",
     ],
 
     include_dirs: [
@@ -49,10 +68,11 @@ cc_library_shared {
         "libhwui",
         "liblog",
         "libminikin",
-        "libnativehelper",
         "libz",
         "libziparchive",
     ],
+
+    static_libs: ["libnativehelper_lazy"],
 
     export_include_dirs: [
         ".",
@@ -102,6 +122,7 @@ cc_library_shared {
                 "android_view_PointerIcon.cpp",
                 "android_view_Surface.cpp",
                 "android_view_SurfaceControl.cpp",
+                "android_view_SurfaceControlFpsListener.cpp",
                 "android_graphics_BLASTBufferQueue.cpp",
                 "android_view_SurfaceSession.cpp",
                 "android_view_TextureView.cpp",
@@ -130,7 +151,7 @@ cc_library_shared {
                 "android_os_VintfRuntimeInfo.cpp",
                 "android_os_incremental_IncrementalManager.cpp",
                 "android_net_LocalSocketImpl.cpp",
-                "android_net_NetUtils.cpp",
+                "android_net_NetworkUtils.cpp",
                 "android_service_DataLoaderService.cpp",
                 "android_util_AssetManager.cpp",
                 "android_util_Binder.cpp",
@@ -156,6 +177,7 @@ cc_library_shared {
                 "android_hardware_Camera.cpp",
                 "android_hardware_camera2_CameraMetadata.cpp",
                 "android_hardware_camera2_DngCreator.cpp",
+                "android_hardware_camera2_impl_CameraExtensionJpegProcessor.cpp",
                 "android_hardware_camera2_utils_SurfaceUtils.cpp",
                 "android_hardware_display_DisplayManagerGlobal.cpp",
                 "android_hardware_display_DisplayViewport.cpp",
@@ -184,11 +206,13 @@ cc_library_shared {
                 "com_android_internal_net_NetworkUtilsInternal.cpp",
                 "com_android_internal_os_ClassLoaderFactory.cpp",
                 "com_android_internal_os_FuseAppLoop.cpp",
+                "com_android_internal_os_KernelCpuBpfTracking.cpp",
                 "com_android_internal_os_KernelCpuTotalBpfMapReader.cpp",
                 "com_android_internal_os_KernelCpuUidBpfMapReader.cpp",
                 "com_android_internal_os_KernelSingleProcessCpuThreadReader.cpp",
                 "com_android_internal_os_KernelSingleUidTimeReader.cpp",
                 "com_android_internal_os_Zygote.cpp",
+                "com_android_internal_os_ZygoteCommandBuffer.cpp",
                 "com_android_internal_os_ZygoteInit.cpp",
                 "hwbinder/EphemeralStorage.cpp",
                 "fd_utils.cpp",
@@ -207,9 +231,11 @@ cc_library_shared {
             ],
 
             shared_libs: [
-                "audioclient-types-aidl-unstable-cpp",
-                "audioflinger-aidl-unstable-cpp",
-                "av-types-aidl-unstable-cpp",
+                "android.hardware.memtrack-V1-ndk_platform",
+                "audioclient-types-aidl-cpp",
+                "audioflinger-aidl-cpp",
+                "av-types-aidl-cpp",
+                "android.hardware.camera.device@3.2",
                 "libandroidicu",
                 "libbpf_android",
                 "libnetdbpf",
@@ -239,6 +265,7 @@ cc_library_shared {
                 "libdataloader",
                 "libvulkan",
                 "libETC1",
+                "libjpeg",
                 "libhardware",
                 "libhardware_legacy",
                 "libselinux",
@@ -270,11 +297,12 @@ cc_library_shared {
                 "libstatspull",
             ],
             export_shared_lib_headers: [
-                // AndroidRuntime.h depends on nativehelper/jni.h
-                "libnativehelper",
-
                 // our headers include libnativewindow's public headers
                 "libnativewindow",
+            ],
+            export_static_lib_headers: [
+                // AndroidRuntime.h depends on nativehelper/jni.h
+                "libnativehelper_lazy",
             ],
             header_libs: [
                 "bionic_libc_platform_headers",

@@ -27,12 +27,13 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Slog;
 
+import com.android.server.biometrics.BiometricsProto;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.HalClientMonitor;
 
 /**
  * Face-specific getFeature client supporting the {@link android.hardware.biometrics.face.V1_0}
- * and {@link android.hardware.biometrics.face.V1_1} HIDL interfaces.
+ * HIDL interface.
  */
 public class FaceGetFeatureClient extends HalClientMonitor<IBiometricsFace> {
 
@@ -87,5 +88,10 @@ public class FaceGetFeatureClient extends HalClientMonitor<IBiometricsFace> {
 
     boolean getValue() {
         return mValue;
+    }
+
+    @Override
+    public int getProtoEnum() {
+        return BiometricsProto.CM_GET_FEATURE;
     }
 }

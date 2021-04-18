@@ -16,11 +16,11 @@
 
 package com.android.systemui.statusbar.policy;
 
-import static android.service.SensorPrivacyIndividualEnabledSensorProto.CAMERA;
-import static android.service.SensorPrivacyIndividualEnabledSensorProto.MICROPHONE;
+import static android.hardware.SensorPrivacyManager.Sensors.CAMERA;
+import static android.hardware.SensorPrivacyManager.Sensors.MICROPHONE;
 
 import android.hardware.SensorPrivacyManager;
-import android.hardware.SensorPrivacyManager.IndividualSensor;
+import android.hardware.SensorPrivacyManager.Sensors.Sensor;
 import android.util.ArraySet;
 import android.util.SparseBooleanArray;
 
@@ -47,18 +47,18 @@ public class IndividualSensorPrivacyControllerImpl implements IndividualSensorPr
             mSensorPrivacyManager.addSensorPrivacyListener(sensor,
                     (enabled) -> onSensorPrivacyChanged(sensor, enabled));
 
-            mState.put(sensor, mSensorPrivacyManager.isIndividualSensorPrivacyEnabled(sensor));
+            mState.put(sensor, mSensorPrivacyManager.isSensorPrivacyEnabled(sensor));
         }
     }
 
     @Override
-    public boolean isSensorBlocked(@IndividualSensor int sensor) {
+    public boolean isSensorBlocked(@Sensor int sensor) {
         return mState.get(sensor, false);
     }
 
     @Override
-    public void setSensorBlocked(@IndividualSensor int sensor, boolean blocked) {
-        mSensorPrivacyManager.setIndividualSensorPrivacyForProfileGroup(sensor, blocked);
+    public void setSensorBlocked(@Sensor int sensor, boolean blocked) {
+        mSensorPrivacyManager.setSensorPrivacyForProfileGroup(sensor, blocked);
     }
 
     @Override
@@ -71,7 +71,7 @@ public class IndividualSensorPrivacyControllerImpl implements IndividualSensorPr
         mCallbacks.remove(listener);
     }
 
-    private void onSensorPrivacyChanged(@IndividualSensor int sensor, boolean blocked) {
+    private void onSensorPrivacyChanged(@Sensor int sensor, boolean blocked) {
         mState.put(sensor, blocked);
 
         for (Callback callback : mCallbacks) {

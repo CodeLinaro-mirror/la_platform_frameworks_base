@@ -42,6 +42,7 @@ import static com.android.dx.mockito.inline.extended.ExtendedMockito.times;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.verify;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.when;
 import static com.android.server.wm.DisplayArea.Type.ABOVE_TASKS;
+import static com.android.server.wm.Task.ActivityState.RESUMED;
 import static com.android.server.wm.WindowContainer.POSITION_TOP;
 import static com.android.server.wm.WindowContainer.SYNC_STATE_READY;
 
@@ -55,10 +56,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.clearInvocations;
 
 import android.app.ActivityManager;
 import android.app.ActivityManager.RunningTaskInfo;
 import android.app.ActivityTaskManager.RootTaskInfo;
+import android.app.IRequestFinishCallback;
 import android.app.PictureInPictureParams;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ParceledListSlice;
@@ -547,6 +550,9 @@ public class WindowOrganizerTests extends WindowTestsBase {
             public void removeStartingWindow(int taskId) { }
 
             @Override
+            public void copySplashScreenView(int taskId) { }
+
+            @Override
             public void onTaskAppeared(RunningTaskInfo taskInfo, SurfaceControl leash) { }
 
             @Override
@@ -607,10 +613,10 @@ public class WindowOrganizerTests extends WindowTestsBase {
             public void addStartingWindow(StartingWindowInfo info, IBinder appToken) {
 
             }
-
             @Override
             public void removeStartingWindow(int taskId) { }
-
+            @Override
+            public void copySplashScreenView(int taskId) { }
             @Override
             public void onTaskAppeared(RunningTaskInfo taskInfo, SurfaceControl leash) { }
 
@@ -683,7 +689,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
 
             @Override
             public void removeStartingWindow(int taskId) { }
-
+            @Override
+            public void copySplashScreenView(int taskId) { }
             @Override
             public void onTaskAppeared(RunningTaskInfo taskInfo, SurfaceControl leash) { }
 
@@ -827,6 +834,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
         @Override
         public void removeStartingWindow(int taskId) { }
         @Override
+        public void copySplashScreenView(int taskId) { }
+        @Override
         public void onTaskAppeared(RunningTaskInfo info, SurfaceControl leash) {
             mInfo = info;
         }
@@ -968,7 +977,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
         assertTrue(stack2.isOrganized());
 
         // Verify a back pressed does not call the organizer
-        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(activity.token);
+        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(activity.token,
+                new IRequestFinishCallback.Default());
         // Ensure events dispatch to organizer.
         mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer, never()).onBackPressedOnTaskRoot(any());
@@ -978,7 +988,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
                 stack.mRemoteToken.toWindowContainerToken(), true);
 
         // Verify now that the back press does call the organizer
-        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(activity.token);
+        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(activity.token,
+                new IRequestFinishCallback.Default());
         // Ensure events dispatch to organizer.
         mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer, times(1)).onBackPressedOnTaskRoot(any());
@@ -988,7 +999,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
                 stack.mRemoteToken.toWindowContainerToken(), false);
 
         // Verify now that the back press no longer calls the organizer
-        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(activity.token);
+        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(activity.token,
+                new IRequestFinishCallback.Default());
         // Ensure events dispatch to organizer.
         mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
         verify(organizer, times(1)).onBackPressedOnTaskRoot(any());
@@ -1193,7 +1205,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
         mWm.mWindowPlacerLocked.deferLayout();
 
         stack.removeImmediately();
-        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(record.token);
+        mWm.mAtmService.mActivityClientController.onBackPressedOnTaskRoot(record.token,
+                new IRequestFinishCallback.Default());
         waitUntilHandlersIdle();
 
         ArrayList<PendingTaskEvent> pendingEvents = getTaskPendingEvent(stack);
@@ -1214,6 +1227,82 @@ public class WindowOrganizerTests extends WindowTestsBase {
         }
 
         return result;
+    }
+
+    @Test
+    public void testReparentNonResizableTaskToSplitScreen() {
+        final ActivityRecord activity = new ActivityBuilder(mAtm)
+                .setCreateTask(true)
+                .setResizeMode(ActivityInfo.RESIZE_MODE_UNRESIZEABLE)
+                .setScreenOrientation(SCREEN_ORIENTATION_LANDSCAPE)
+                .build();
+        final Task rootTask = activity.getRootTask();
+        rootTask.setResizeMode(activity.info.resizeMode);
+        final Task splitPrimaryRootTask = mWm.mAtmService.mTaskOrganizerController.createRootTask(
+                mDisplayContent, WINDOWING_MODE_SPLIT_SCREEN_PRIMARY, null);
+        final WindowContainerTransaction wct = new WindowContainerTransaction();
+        wct.reparent(rootTask.mRemoteToken.toWindowContainerToken(),
+                splitPrimaryRootTask.mRemoteToken.toWindowContainerToken(), true /* onTop */);
+
+        // Can't reparent non-resizable to split screen
+        mAtm.mSupportsNonResizableMultiWindow = false;
+        mAtm.mWindowOrganizerController.applyTransaction(wct);
+
+        assertEquals(rootTask, activity.getRootTask());
+
+        // Allow reparent non-resizable to split screen
+        mAtm.mSupportsNonResizableMultiWindow = true;
+        mAtm.mWindowOrganizerController.applyTransaction(wct);
+
+        assertEquals(splitPrimaryRootTask, activity.getRootTask());
+    }
+
+    @Test
+    public void testSizeCompatModeChangedOnFirstOrganizedTask() throws RemoteException {
+        final ITaskOrganizer organizer = registerMockOrganizer();
+        final Task rootTask = createStack();
+        final Task task = createTask(rootTask);
+        final ActivityRecord activity = createActivityRecord(rootTask.mDisplayContent, task);
+        final ArgumentCaptor<RunningTaskInfo> infoCaptor =
+                ArgumentCaptor.forClass(RunningTaskInfo.class);
+
+        assertTrue(rootTask.isOrganized());
+
+        spyOn(activity);
+        doReturn(true).when(activity).inSizeCompatMode();
+        doReturn(true).when(activity).isState(RESUMED);
+
+        // Ensure task info show top activity in size compat.
+        rootTask.onSizeCompatActivityChanged();
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
+        verify(organizer).onTaskInfoChanged(infoCaptor.capture());
+        RunningTaskInfo info = infoCaptor.getValue();
+        assertEquals(rootTask.mTaskId, info.taskId);
+        assertEquals(activity.appToken, info.topActivityToken);
+        assertTrue(info.topActivityInSizeCompat);
+
+        // Ensure task info show top activity that is not in foreground as not in size compat.
+        clearInvocations(organizer);
+        doReturn(false).when(activity).isState(RESUMED);
+        rootTask.onSizeCompatActivityChanged();
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
+        verify(organizer).onTaskInfoChanged(infoCaptor.capture());
+        info = infoCaptor.getValue();
+        assertEquals(rootTask.mTaskId, info.taskId);
+        assertEquals(activity.appToken, info.topActivityToken);
+        assertFalse(info.topActivityInSizeCompat);
+
+        // Ensure task info show non size compat top activity as not in size compat.
+        clearInvocations(organizer);
+        doReturn(true).when(activity).isState(RESUMED);
+        doReturn(false).when(activity).inSizeCompatMode();
+        rootTask.onSizeCompatActivityChanged();
+        mWm.mAtmService.mTaskOrganizerController.dispatchPendingEvents();
+        verify(organizer).onTaskInfoChanged(infoCaptor.capture());
+        info = infoCaptor.getValue();
+        assertEquals(rootTask.mTaskId, info.taskId);
+        assertEquals(activity.appToken, info.topActivityToken);
+        assertFalse(info.topActivityInSizeCompat);
     }
 
     /**

@@ -25,6 +25,7 @@ import static android.view.autofill.Helper.sVerbose;
 import static android.view.autofill.Helper.toList;
 
 import android.accessibilityservice.AccessibilityServiceInfo;
+import android.annotation.CallbackExecutor;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -45,16 +46,21 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Rect;
 import android.metrics.LogMaker;
+import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.ICancellationSignal;
 import android.os.Looper;
 import android.os.Parcelable;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.service.autofill.AutofillService;
+import android.service.autofill.FillCallback;
 import android.service.autofill.FillEventHistory;
+import android.service.autofill.IFillCallback;
 import android.service.autofill.UserData;
 import android.text.TextUtils;
 import android.util.ArrayMap;
@@ -74,6 +80,7 @@ import android.view.accessibility.AccessibilityManager;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityNodeProvider;
 import android.view.accessibility.AccessibilityWindowInfo;
+import android.view.inputmethod.InlineSuggestionsRequest;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -99,6 +106,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.Executor;
 
 import sun.misc.Cleaner;
 
@@ -167,6 +175,12 @@ import sun.misc.Cleaner;
  * shows an autofill save UI if the value of savable views have changed. If the user selects the
  * option to Save, the current value of the views is then sent to the autofill service.
  *
+ * <p>There is another choice for the application to provide it's datasets to the Autofill framework
+ * by setting an {@link AutofillRequestCallback} through
+ * {@link #setAutofillRequestCallback(Executor, AutofillRequestCallback)}. The application can use
+ * its callback instead of the default {@link AutofillService}. See
+ * {@link AutofillRequestCallback} for more details.
+ *
  * <h3 id="additional-notes">Additional notes</h3>
  *
  * <p>It is safe to call <code>AutofillManager</code> methods from any thread.
@@ -200,6 +214,34 @@ public final class AutofillManager {
             "android.view.autofill.extra.AUTHENTICATION_RESULT";
 
     /**
+     * Intent extra: The optional boolean extra field provided by the
+     * {@link android.service.autofill.AutofillService} accompanying the {@link
+     * android.service.autofill.Dataset} result of an authentication operation.
+     *
+     * <p> Before {@link android.os.Build.VERSION_CODES#R}, if the authentication result is a
+     * {@link android.service.autofill.Dataset}, it'll be used to autofill the fields, and also
+     * replace the existing dataset in the cached {@link android.service.autofill.FillResponse}.
+     * That means if the user clears the field values, the autofill suggestion will show up again
+     * with the new authenticated Dataset.
+     *
+     * <p> In {@link android.os.Build.VERSION_CODES#R}, we added an exception to this behavior
+     * that if the Dataset being authenticated is a pinned dataset (see
+     * {@link android.service.autofill.InlinePresentation#isPinned()}), the old Dataset will not be
+     * replaced.
+     *
+     * <p> In {@link android.os.Build.VERSION_CODES#S}, we added this boolean extra field to
+     * allow the {@link android.service.autofill.AutofillService} to explicitly specify whether
+     * the returned authenticated Dataset is ephemeral. An ephemeral Dataset will be used to
+     * autofill once and then thrown away. Therefore, when the boolean extra is set to true, the
+     * returned Dataset will not replace the old dataset from the existing
+     * {@link android.service.autofill.FillResponse}. When it's set to false, it will. When it's not
+     * set, the old dataset will be replaced, unless it is a pinned inline suggestion, which is
+     * consistent with the behavior in {@link android.os.Build.VERSION_CODES#R}.
+     */
+    public static final String EXTRA_AUTHENTICATION_RESULT_EPHEMERAL_DATASET =
+            "android.view.autofill.extra.AUTHENTICATION_RESULT_EPHEMERAL_DATASET";
+
+    /**
      * Intent extra: The optional extras provided by the
      * {@link android.service.autofill.AutofillService}.
      *
@@ -220,6 +262,18 @@ public final class AutofillManager {
      */
     public static final String EXTRA_CLIENT_STATE =
             "android.view.autofill.extra.CLIENT_STATE";
+
+    /**
+     * Intent extra: the {@link android.view.inputmethod.InlineSuggestionsRequest} in the
+     * autofill request.
+     *
+     * <p>This is filled in the authentication intent so the
+     * {@link android.service.autofill.AutofillService} can use it to create the inline
+     * suggestion {@link android.service.autofill.Dataset} in the response, if the original autofill
+     * request contains the {@link android.view.inputmethod.InlineSuggestionsRequest}.
+     */
+    public static final String EXTRA_INLINE_SUGGESTIONS_REQUEST =
+            "android.view.autofill.extra.INLINE_SUGGESTIONS_REQUEST";
 
     /** @hide */
     public static final String EXTRA_RESTORE_SESSION_TOKEN =
@@ -252,6 +306,7 @@ public final class AutofillManager {
     /** @hide */ public static final int FLAG_ADD_CLIENT_DEBUG = 0x2;
     /** @hide */ public static final int FLAG_ADD_CLIENT_VERBOSE = 0x4;
     /** @hide */ public static final int FLAG_ADD_CLIENT_ENABLED_FOR_AUGMENTED_AUTOFILL_ONLY = 0x8;
+    /** @hide */ public static final int FLAG_ENABLED_CLIENT_SUGGESTIONS = 0x20;
 
     // NOTE: flag below is used by the session start receiver only, hence it can have values above
     /** @hide */ public static final int RECEIVER_FLAG_SESSION_FOR_AUGMENTED_AUTOFILL_ONLY = 0x1;
@@ -551,6 +606,11 @@ public final class AutofillManager {
      */
     @GuardedBy("mLock")
     private boolean mEnabledForAugmentedAutofillOnly;
+
+    @GuardedBy("mLock")
+    @Nullable private AutofillRequestCallback mAutofillRequestCallback;
+    @GuardedBy("mLock")
+    @Nullable private Executor mRequestCallbackExecutor;
 
     /** @hide */
     public interface AutofillClient {
@@ -1755,6 +1815,11 @@ public final class AutofillManager {
             if (newClientState != null) {
                 responseData.putBundle(EXTRA_CLIENT_STATE, newClientState);
             }
+            if (data.getExtras().containsKey(EXTRA_AUTHENTICATION_RESULT_EPHEMERAL_DATASET)) {
+                responseData.putBoolean(EXTRA_AUTHENTICATION_RESULT_EPHEMERAL_DATASET,
+                        data.getBooleanExtra(EXTRA_AUTHENTICATION_RESULT_EPHEMERAL_DATASET,
+                                false));
+            }
             try {
                 mService.setAuthenticationResult(responseData, mSessionId, authenticationId,
                         mContext.getUserId());
@@ -1789,6 +1854,32 @@ public final class AutofillManager {
 
     private static AutofillId getAutofillId(View parent, int virtualId) {
         return new AutofillId(parent.getAutofillViewId(), virtualId);
+    }
+
+    /**
+     * Sets the client's suggestions callback for autofill.
+     *
+     * @see AutofillRequestCallback
+     *
+     * @param executor specifies the thread upon which the callbacks will be invoked.
+     * @param callback which handles autofill request to provide client's suggestions.
+     */
+    public void setAutofillRequestCallback(@NonNull @CallbackExecutor Executor executor,
+            @NonNull AutofillRequestCallback callback) {
+        synchronized (mLock) {
+            mRequestCallbackExecutor = executor;
+            mAutofillRequestCallback = callback;
+        }
+    }
+
+    /**
+     * clears the client's suggestions callback for autofill.
+     */
+    public void clearAutofillRequestCallback() {
+        synchronized (mLock) {
+            mRequestCallbackExecutor = null;
+            mAutofillRequestCallback = null;
+        }
     }
 
     @GuardedBy("mLock")
@@ -1849,6 +1940,13 @@ public final class AutofillManager {
                     client.autofillClientResetableStateAvailable();
                     return;
                 }
+            }
+
+            if (mAutofillRequestCallback != null) {
+                if (sDebug) {
+                    Log.d(TAG, "startSession with the client suggestions provider");
+                }
+                flags |= FLAG_ENABLED_CLIENT_SUGGESTIONS;
             }
 
             mService.startSession(client.autofillClientGetActivityToken(),
@@ -1942,7 +2040,10 @@ public final class AutofillManager {
         if (client == null) {
             return false;
         }
-
+        if (mService == null) {
+            Log.w(TAG, "Autofill service is null!");
+            return false;
+        }
         if (mServiceClient == null) {
             mServiceClient = new AutofillManagerClient(this);
             try {
@@ -2194,6 +2295,28 @@ public final class AutofillManager {
                     client.autofillClientDispatchUnhandledKey(anchor, keyEvent);
                 }
             }
+        }
+    }
+
+    private void onFillRequest(InlineSuggestionsRequest request,
+            CancellationSignal cancellationSignal, FillCallback callback) {
+        final AutofillRequestCallback autofillRequestCallback;
+        final Executor executor;
+        synchronized (mLock) {
+            autofillRequestCallback = mAutofillRequestCallback;
+            executor = mRequestCallbackExecutor;
+        }
+        if (autofillRequestCallback != null && executor != null) {
+            final long ident = Binder.clearCallingIdentity();
+            try {
+                executor.execute(() ->
+                        autofillRequestCallback.onFillRequest(
+                                request, cancellationSignal, callback));
+            } finally {
+                Binder.restoreCallingIdentity(ident);
+            }
+        } else {
+            callback.onSuccess(null);
         }
     }
 
@@ -3574,6 +3697,23 @@ public final class AutofillManager {
             final AutofillManager afm = mAfm.get();
             if (afm != null) {
                 afm.post(() -> afm.requestShowSoftInput(id));
+            }
+        }
+
+        @Override
+        public void requestFillFromClient(int id, InlineSuggestionsRequest request,
+                IFillCallback callback) {
+            final AutofillManager afm = mAfm.get();
+            if (afm != null) {
+                ICancellationSignal transport = CancellationSignal.createTransport();
+                try {
+                    callback.onCancellable(transport);
+                } catch (RemoteException e) {
+                    Slog.w(TAG, "Error requesting a cancellation", e);
+                }
+
+                afm.onFillRequest(request, CancellationSignal.fromTransport(transport),
+                        new FillCallback(callback, id));
             }
         }
     }

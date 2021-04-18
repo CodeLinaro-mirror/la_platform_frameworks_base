@@ -27,7 +27,7 @@ import static android.content.pm.PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
 import static android.content.pm.PackageManager.INSTALL_FAILED_INVALID_APK;
 import static android.content.pm.PackageManager.INSTALL_FAILED_MEDIA_UNAVAILABLE;
 import static android.content.pm.PackageManager.INSTALL_FAILED_MISSING_SPLIT;
-import static android.content.pm.PackageManager.INSTALL_PARSE_FAILED_CERTIFICATE_ENCODING;
+import static android.content.pm.PackageManager.INSTALL_PARSE_FAILED_NO_CERTIFICATES;
 import static android.content.pm.PackageManager.INSTALL_STAGED;
 import static android.content.pm.PackageManager.INSTALL_SUCCEEDED;
 import static android.system.OsConstants.O_CREAT;
@@ -59,7 +59,6 @@ import android.content.IIntentReceiver;
 import android.content.IIntentSender;
 import android.content.Intent;
 import android.content.IntentSender;
-import android.content.pm.ApkChecksum;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.Checksum;
 import android.content.pm.DataLoaderManager;
@@ -82,11 +81,12 @@ import android.content.pm.PackageInstaller.SessionParams;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.content.pm.PackageParser;
-import android.content.pm.PackageParser.ApkLite;
-import android.content.pm.PackageParser.PackageLite;
 import android.content.pm.PackageParser.PackageParserException;
 import android.content.pm.dex.DexMetadataHelper;
+import android.content.pm.parsing.ApkLite;
 import android.content.pm.parsing.ApkLiteParseUtils;
+import android.content.pm.parsing.PackageLite;
+import android.content.pm.parsing.ParsingPackageUtils;
 import android.content.pm.parsing.result.ParseResult;
 import android.content.pm.parsing.result.ParseTypeImpl;
 import android.graphics.Bitmap;
@@ -160,7 +160,9 @@ import java.io.FileDescriptor;
 import java.io.FileFilter;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.security.cert.CertificateException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SignatureException;
+import java.security.cert.Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -187,6 +189,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     static final String TAG_CHILD_SESSION = "childSession";
     static final String TAG_SESSION_FILE = "sessionFile";
     static final String TAG_SESSION_CHECKSUM = "sessionChecksum";
+    static final String TAG_SESSION_CHECKSUM_SIGNATURE = "sessionChecksumSignature";
     private static final String TAG_GRANTED_RUNTIME_PERMISSION = "granted-runtime-permission";
     private static final String TAG_WHITELISTED_RESTRICTED_PERMISSION =
             "whitelisted-restricted-permission";
@@ -248,7 +251,6 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     private static final String PROPERTY_NAME_INHERIT_NATIVE = "pi.inherit_native_on_dont_kill";
     private static final int[] EMPTY_CHILD_SESSION_ARRAY = EmptyArray.INT;
     private static final InstallationFile[] EMPTY_INSTALLATION_FILE_ARRAY = {};
-    private static final ApkChecksum[] EMPTY_FILE_CHECKSUM_ARRAY = {};
 
     private static final String SYSTEM_DATA_LOADER_PACKAGE = "android";
     private static final String APEX_FILE_EXTENSION = ".apex";
@@ -400,8 +402,26 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     @GuardedBy("mLock")
     private ArraySet<FileEntry> mFiles = new ArraySet<>();
 
+    static class PerFileChecksum {
+        private final Checksum[] mChecksums;
+        private final byte[] mSignature;
+
+        PerFileChecksum(Checksum[] checksums, byte[] signature) {
+            mChecksums = checksums;
+            mSignature = signature;
+        }
+
+        Checksum[] getChecksums() {
+            return this.mChecksums;
+        }
+
+        byte[] getSignature() {
+            return this.mSignature;
+        }
+    }
+
     @GuardedBy("mLock")
-    private ArrayMap<String, Checksum[]> mChecksums = new ArrayMap<>();
+    private ArrayMap<String, PerFileChecksum> mChecksums = new ArrayMap<>();
 
     @Nullable
     final StagedSession mStagedSession;
@@ -761,7 +781,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     @GuardedBy("mLock")
     private File mInheritedFilesBase;
     @GuardedBy("mLock")
-    private boolean mVerityFound;
+    private boolean mVerityFoundForApks;
 
     /**
      * Both flags should be guarded with mLock whenever changes need to be in lockstep.
@@ -786,6 +806,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             if (file.getName().endsWith(REMOVE_MARKER_EXTENSION)) return false;
             if (DexMetadataHelper.isDexMetadataFile(file)) return false;
             if (VerityUtils.isFsveritySignatureFile(file)) return false;
+            if (ApkChecksums.isDigestOrDigestSignatureFile(file)) return false;
             return true;
         }
     };
@@ -924,7 +945,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             int sessionId, int userId, int installerUid, @NonNull InstallSource installSource,
             SessionParams params, long createdMillis, long committedMillis,
             File stageDir, String stageCid, InstallationFile[] files,
-            ArrayMap<String, List<Checksum>> checksums,
+            ArrayMap<String, PerFileChecksum> checksums,
             boolean prepared, boolean committed, boolean destroyed, boolean sealed,
             @Nullable int[] childSessionIds, int parentSessionId, boolean isReady,
             boolean isFailed, boolean isApplied, int stagedSessionErrorCode,
@@ -970,11 +991,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         }
 
         if (checksums != null) {
-            for (int i = 0, isize = checksums.size(); i < isize; ++i) {
-                final String fileName = checksums.keyAt(i);
-                final List<Checksum> fileChecksums = checksums.valueAt(i);
-                mChecksums.put(fileName, fileChecksums.toArray(new Checksum[fileChecksums.size()]));
-            }
+            mChecksums.putAll(checksums);
         }
 
         if (!params.isMultiPackage && (stageDir == null) == (stageCid == null)) {
@@ -993,9 +1010,14 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 throw new IllegalArgumentException(
                         "DataLoader installation of APEX modules is not allowed.");
             }
+
             if (this.params.dataLoaderParams.getComponentName().getPackageName()
-                    == SYSTEM_DATA_LOADER_PACKAGE) {
-                assertShellOrSystemCalling("System data loaders");
+                    == SYSTEM_DATA_LOADER_PACKAGE && mContext.checkCallingOrSelfPermission(
+                    Manifest.permission.USE_SYSTEM_DATA_LOADERS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                throw new SecurityException("You need the "
+                        + "com.android.permission.USE_SYSTEM_DATA_LOADERS permission "
+                        + "to use system data loaders");
             }
         }
 
@@ -1185,13 +1207,13 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
     @GuardedBy("mLock")
     private void computeProgressLocked(boolean forcePublish) {
-        // This method is triggered when the client progress is updated or the incremental progress
-        // is updated. For incremental installs, ignore the progress values reported from client.
-        // Instead, only use the progress reported by IncFs as the percentage of loading completion.
-        final float loadingProgress =
-                isIncrementalInstallation() ? mIncrementalProgress : mClientProgress;
-        mProgress = MathUtils.constrain(loadingProgress * 0.8f, 0f, 0.8f)
-                + MathUtils.constrain(mInternalProgress * 0.2f, 0f, 0.2f);
+        if (!mCommitted) {
+            mProgress = MathUtils.constrain(mClientProgress * 0.8f, 0f, 0.8f)
+                    + MathUtils.constrain(mInternalProgress * 0.2f, 0f, 0.2f);
+        } else {
+            // For incremental installs, continue publishing the install progress during committing.
+            mProgress = mIncrementalProgress;
+        }
 
         // Only publish when meaningful change
         if (forcePublish || Math.abs(mProgress - mReportedProgress) >= 0.01) {
@@ -1261,7 +1283,8 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     }
 
     @Override
-    public void addChecksums(String name, @NonNull Checksum[] checksums) {
+    public void setChecksums(String name, @NonNull Checksum[] checksums,
+            @Nullable byte[] signature) {
         if (checksums.length == 0) {
             return;
         }
@@ -1277,6 +1300,14 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             throw new IllegalStateException("Can't obtain calling installer's package.");
         }
 
+        if (signature != null && signature.length != 0) {
+            try {
+                Certificate[] ignored = ApkChecksums.verifySignature(checksums, signature);
+            } catch (IOException | NoSuchAlgorithmException | SignatureException e) {
+                throw new IllegalArgumentException("Can't verify signature", e);
+            }
+        }
+
         synchronized (mLock) {
             assertCallerIsOwnerOrRootLocked();
             assertPreparedAndNotCommittedOrDestroyedLocked("addChecksums");
@@ -1285,7 +1316,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 throw new IllegalStateException("Duplicate checksums.");
             }
 
-            mChecksums.put(name, checksums);
+            mChecksums.put(name, new PerFileChecksum(checksums, signature));
         }
     }
 
@@ -1918,9 +1949,11 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                     throw new PackageManagerException(INSTALL_FAILED_INTERNAL_ERROR,
                             "Session destroyed");
                 }
-                // Client staging is fully done at this point
-                mClientProgress = 1f;
-                computeProgressLocked(true);
+                if (!isIncrementalInstallation()) {
+                    // For non-incremental installs, client staging is fully done at this point
+                    mClientProgress = 1f;
+                    computeProgressLocked(true);
+                }
 
                 // This ongoing commit should keep session active, even though client
                 // will probably close their end.
@@ -2053,15 +2086,16 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             try {
                 sealLocked();
 
-                // Session that are staged, ready and not multi package will be installed during
-                // this boot. As such, we need populate all the fields for successful installation.
-                if (isMultiPackage()) {
+                // Session that are staged, committed and not multi package will be installed or
+                // restart verification during this boot. As such, we need populate all the fields
+                // for successful installation.
+                if (isMultiPackage() || !isStaged() || !isCommitted()) {
                     return;
                 }
                 final PackageInstallerSession root = hasParentSessionId()
                         ? allSessions.get(getParentSessionId())
                         : this;
-                if (root != null && root.isStagedSessionReady()) {
+                if (root != null) {
                     if (isApexSession()) {
                         validateApexInstallLocked();
                     } else {
@@ -2646,16 +2680,17 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
         // Populate package name of the apex session
         mPackageName = null;
-        final ApkLite apk;
-        try {
-            apk = PackageParser.parseApkLite(
-                    mResolvedBaseFile, PackageParser.PARSE_COLLECT_CERTIFICATES);
-        } catch (PackageParserException e) {
-            throw PackageManagerException.from(e);
+        final ParseTypeImpl input = ParseTypeImpl.forDefaultParsing();
+        final ParseResult<ApkLite> ret = ApkLiteParseUtils.parseApkLite(input.reset(),
+                mResolvedBaseFile, ParsingPackageUtils.PARSE_COLLECT_CERTIFICATES);
+        if (ret.isError()) {
+            throw new PackageManagerException(ret.getErrorCode(), ret.getErrorMessage(),
+                    ret.getException());
         }
+        final ApkLite apk = ret.getResult();
 
         if (mPackageName == null) {
-            mPackageName = apk.packageName;
+            mPackageName = apk.getPackageName();
             mVersionCode = apk.getLongVersionCode();
         }
     }
@@ -2695,8 +2730,8 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,
                     "Missing existing base package");
         }
-        // Default to require only if existing base has fs-verity.
-        mVerityFound = PackageManagerServiceUtils.isApkVerityEnabled()
+        // Default to require only if existing base apk has fs-verity.
+        mVerityFoundForApks = PackageManagerServiceUtils.isApkVerityEnabled()
                 && params.mode == SessionParams.MODE_INHERIT_EXISTING
                 && VerityUtils.hasFsverity(pkgInfo.applicationInfo.getBaseCodePath());
 
@@ -2720,29 +2755,29 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
         // Verify that all staged packages are internally consistent
         final ArraySet<String> stagedSplits = new ArraySet<>();
-        final ArrayMap<String, PackageParser.ApkLite> splitApks = new ArrayMap<>();
-        ParseTypeImpl input = ParseTypeImpl.forDefaultParsing();
+        final ArrayMap<String, ApkLite> splitApks = new ArrayMap<>();
+        final ParseTypeImpl input = ParseTypeImpl.forDefaultParsing();
         for (File addedFile : addedFiles) {
-            ParseResult<ApkLite> result = ApkLiteParseUtils.parseApkLite(input.reset(),
-                    addedFile, PackageParser.PARSE_COLLECT_CERTIFICATES);
+            final ParseResult<ApkLite> result = ApkLiteParseUtils.parseApkLite(input.reset(),
+                    addedFile, ParsingPackageUtils.PARSE_COLLECT_CERTIFICATES);
             if (result.isError()) {
                 throw new PackageManagerException(result.getErrorCode(),
                         result.getErrorMessage(), result.getException());
             }
 
             final ApkLite apk = result.getResult();
-            if (!stagedSplits.add(apk.splitName)) {
+            if (!stagedSplits.add(apk.getSplitName())) {
                 throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,
-                        "Split " + apk.splitName + " was defined multiple times");
+                        "Split " + apk.getSplitName() + " was defined multiple times");
             }
 
             // Use first package to define unknown values
             if (mPackageName == null) {
-                mPackageName = apk.packageName;
+                mPackageName = apk.getPackageName();
                 mVersionCode = apk.getLongVersionCode();
             }
             if (mSigningDetails == PackageParser.SigningDetails.UNKNOWN) {
-                mSigningDetails = apk.signingDetails;
+                mSigningDetails = apk.getSigningDetails();
             }
 
             assertApkConsistentLocked(String.valueOf(addedFile), apk);
@@ -2755,10 +2790,10 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             }
 
             // Yell loudly if installers drop attribute installLocation when apps explicitly set.
-            if (apk.installLocation != PackageInfo.INSTALL_LOCATION_UNSPECIFIED) {
+            if (apk.getInstallLocation() != PackageInfo.INSTALL_LOCATION_UNSPECIFIED) {
                 final String installerPackageName = getInstallerPackageName();
                 if (installerPackageName != null
-                        && (params.installLocation != apk.installLocation)) {
+                        && (params.installLocation != apk.getInstallLocation())) {
                     Slog.wtf(TAG, installerPackageName
                             + " drops manifest attribute android:installLocation in " + targetName
                             + " for " + mPackageName);
@@ -2766,14 +2801,14 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             }
 
             final File targetFile = new File(stageDir, targetName);
-            resolveAndStageFileLocked(addedFile, targetFile, apk.splitName);
+            resolveAndStageFileLocked(addedFile, targetFile, apk.getSplitName());
 
             // Base is coming from session
-            if (apk.splitName == null) {
+            if (apk.getSplitName() == null) {
                 mResolvedBaseFile = targetFile;
                 baseApk = apk;
             } else {
-                splitApks.put(apk.splitName, apk);
+                splitApks.put(apk.getSplitName(), apk);
             }
         }
 
@@ -2829,7 +2864,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,
                         "Full install must include a base package");
             }
-            if (baseApk.isSplitRequired && stagedSplits.size() <= 1) {
+            if (baseApk.isSplitRequired() && stagedSplits.size() <= 1) {
                 throw new PackageManagerException(INSTALL_FAILED_MISSING_SPLIT,
                         "Missing split for " + mPackageName);
             }
@@ -2854,10 +2889,10 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             }
             final PackageLite existing = pkgLiteResult.getResult();
             packageLite = existing;
-            assertPackageConsistentLocked("Existing", existing.packageName,
+            assertPackageConsistentLocked("Existing", existing.getPackageName(),
                     existing.getLongVersionCode());
             final PackageParser.SigningDetails signingDetails =
-                    unsafeGetCertsWithoutVerification(existing.baseCodePath);
+                    unsafeGetCertsWithoutVerification(existing.getBaseApkPath());
             if (!mSigningDetails.signaturesMatchExactly(signingDetails)) {
                 throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,
                         "Existing signatures are inconsistent");
@@ -2870,10 +2905,10 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             }
 
             // Inherit splits if not overridden.
-            if (!ArrayUtils.isEmpty(existing.splitNames)) {
-                for (int i = 0; i < existing.splitNames.length; i++) {
-                    final String splitName = existing.splitNames[i];
-                    final File splitFile = new File(existing.splitCodePaths[i]);
+            if (!ArrayUtils.isEmpty(existing.getSplitNames())) {
+                for (int i = 0; i < existing.getSplitNames().length; i++) {
+                    final String splitName = existing.getSplitNames()[i];
+                    final File splitFile = new File(existing.getSplitApkPaths()[i]);
                     final boolean splitRemoved = removeSplitList.contains(splitName);
                     if (!stagedSplits.contains(splitName) && !splitRemoved) {
                         inheritFileLocked(splitFile);
@@ -2953,8 +2988,8 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 }
             }
             // For the case of split required, failed if no splits existed
-            if (packageLite.isSplitRequired) {
-                final int existingSplits = ArrayUtils.size(existing.splitNames);
+            if (packageLite.isSplitRequired()) {
+                final int existingSplits = ArrayUtils.size(existing.getSplitNames());
                 final boolean allSplitsRemoved = (existingSplits == removeSplitList.size());
                 final boolean onlyBaseFileStaged = (stagedSplits.size() == 1
                         && stagedSplits.contains(null));
@@ -2964,7 +2999,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 }
             }
         }
-        if (packageLite.useEmbeddedDex) {
+        if (packageLite.isUseEmbeddedDex()) {
             for (File file : mResolvedStagedFiles) {
                 if (file.getName().endsWith(".apk")
                         && !DexManager.auditUncompressedDexInApk(file.getPath())) {
@@ -2977,7 +3012,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
         final boolean isInstallerShell = (mInstallerUid == Process.SHELL_UID);
         if (isInstallerShell && isIncrementalInstallation() && mIncrementalFileStorages != null) {
-            if (!packageLite.debuggable && !packageLite.profilableByShell) {
+            if (!packageLite.isDebuggable() && !packageLite.isProfileableByShell()) {
                 mIncrementalFileStorages.disallowReadLogs();
             }
         }
@@ -2991,34 +3026,18 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     }
 
     @GuardedBy("mLock")
-    private void maybeStageFsveritySignatureLocked(File origFile, File targetFile)
-            throws PackageManagerException {
+    private void maybeStageFsveritySignatureLocked(File origFile, File targetFile,
+            boolean fsVerityRequired) throws PackageManagerException {
         final File originalSignature = new File(
                 VerityUtils.getFsveritySignatureFilePath(origFile.getPath()));
-        // Make sure .fsv_sig exists when it should, then resolve and stage it.
         if (originalSignature.exists()) {
-            // mVerityFound can only change from false to true here during the staging loop. Since
-            // all or none of files should have .fsv_sig, this should only happen in the first time
-            // (or never), otherwise bail out.
-            if (!mVerityFound) {
-                mVerityFound = true;
-                if (mResolvedStagedFiles.size() > 1) {
-                    throw new PackageManagerException(INSTALL_FAILED_BAD_SIGNATURE,
-                            "Some file is missing fs-verity signature");
-                }
-            }
-        } else {
-            if (!mVerityFound) {
-                return;
-            }
+            final File stagedSignature = new File(
+                    VerityUtils.getFsveritySignatureFilePath(targetFile.getPath()));
+            stageFileLocked(originalSignature, stagedSignature);
+        } else if (fsVerityRequired) {
             throw new PackageManagerException(INSTALL_FAILED_BAD_SIGNATURE,
                     "Missing corresponding fs-verity signature to " + origFile);
         }
-
-        final File stagedSignature = new File(
-                VerityUtils.getFsveritySignatureFilePath(targetFile.getPath()));
-
-        stageFileLocked(originalSignature, stagedSignature);
     }
 
     @GuardedBy("mLock")
@@ -3037,18 +3056,32 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 DexMetadataHelper.buildDexMetadataPathForApk(targetFile.getName()));
 
         stageFileLocked(dexMetadataFile, targetDexMetadataFile);
-        maybeStageFsveritySignatureLocked(dexMetadataFile, targetDexMetadataFile);
+
+        // Also stage .dm.fsv_sig. .dm may be required to install with fs-verity signature on
+        // supported on older devices.
+        maybeStageFsveritySignatureLocked(dexMetadataFile, targetDexMetadataFile,
+                VerityUtils.isFsVeritySupported() && DexMetadataHelper.isFsVerityRequired());
+    }
+
+    private void storeBytesToInstallationFile(final String localPath, final String absolutePath,
+            final byte[] bytes) throws IOException {
+        if (!isIncrementalInstallation() || mIncrementalFileStorages == null) {
+            FileUtils.bytesToFile(absolutePath, bytes);
+        } else {
+            mIncrementalFileStorages.makeFile(localPath, bytes);
+        }
     }
 
     @GuardedBy("mLock")
     private void maybeStageDigestsLocked(File origFile, File targetFile, String splitName)
             throws PackageManagerException {
-        final Checksum[] checksums = mChecksums.get(origFile.getName());
-        if (checksums == null) {
+        final PerFileChecksum perFileChecksum = mChecksums.get(origFile.getName());
+        if (perFileChecksum == null) {
             return;
         }
         mChecksums.remove(origFile.getName());
 
+        final Checksum[] checksums = perFileChecksum.getChecksums();
         if (checksums.length == 0) {
             return;
         }
@@ -3057,22 +3090,66 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         final File targetDigestsFile = new File(stageDir, targetDigestsPath);
         try (ByteArrayOutputStream os = new ByteArrayOutputStream()) {
             ApkChecksums.writeChecksums(os, checksums);
-            final byte[] checksumsBytes = os.toByteArray();
 
-            if (!isIncrementalInstallation() || mIncrementalFileStorages == null) {
-                FileUtils.bytesToFile(targetDigestsFile.getAbsolutePath(), checksumsBytes);
-            } else {
-                mIncrementalFileStorages.makeFile(targetDigestsPath, checksumsBytes);
+            final byte[] signature = perFileChecksum.getSignature();
+            if (signature != null && signature.length > 0) {
+                Certificate[] ignored = ApkChecksums.verifySignature(checksums, signature);
             }
-        } catch (CertificateException e) {
-            throw new PackageManagerException(INSTALL_PARSE_FAILED_CERTIFICATE_ENCODING,
-                    "Failed to encode certificate for " + mPackageName, e);
+
+            // Storing and staging checksums.
+            storeBytesToInstallationFile(targetDigestsPath, targetDigestsFile.getAbsolutePath(),
+                    os.toByteArray());
+            stageFileLocked(targetDigestsFile, targetDigestsFile);
+
+            // Storing and staging signature.
+            if (signature == null || signature.length == 0) {
+                return;
+            }
+
+            final String targetDigestsSignaturePath = ApkChecksums.buildSignaturePathForDigests(
+                    targetDigestsPath);
+            final File targetDigestsSignatureFile = new File(stageDir, targetDigestsSignaturePath);
+            storeBytesToInstallationFile(targetDigestsSignaturePath,
+                    targetDigestsSignatureFile.getAbsolutePath(), signature);
+            stageFileLocked(targetDigestsSignatureFile, targetDigestsSignatureFile);
         } catch (IOException e) {
             throw new PackageManagerException(INSTALL_FAILED_INSUFFICIENT_STORAGE,
                     "Failed to store digests for " + mPackageName, e);
+        } catch (NoSuchAlgorithmException | SignatureException e) {
+            throw new PackageManagerException(INSTALL_PARSE_FAILED_NO_CERTIFICATES,
+                    "Failed to verify digests' signature for " + mPackageName, e);
+        }
+    }
+
+    @GuardedBy("mLock")
+    private boolean isFsVerityRequiredForApk(File origFile, File targetFile)
+            throws PackageManagerException {
+        if (mVerityFoundForApks) {
+            return true;
         }
 
-        stageFileLocked(targetDigestsFile, targetDigestsFile);
+        // We haven't seen .fsv_sig for any APKs. Treat it as not required until we see one.
+        final File originalSignature = new File(
+                VerityUtils.getFsveritySignatureFilePath(origFile.getPath()));
+        if (!originalSignature.exists()) {
+            return false;
+        }
+        mVerityFoundForApks = true;
+
+        // When a signature is found, also check any previous staged APKs since they also need to
+        // have fs-verity signature consistently.
+        for (File file : mResolvedStagedFiles) {
+            if (!file.getName().endsWith(".apk")) {
+                continue;
+            }
+            // Ignore the current targeting file.
+            if (targetFile.getName().equals(file.getName())) {
+                continue;
+            }
+            throw new PackageManagerException(INSTALL_FAILED_BAD_SIGNATURE,
+                    "Previously staged apk is missing fs-verity signature");
+        }
+        return true;
     }
 
     @GuardedBy("mLock")
@@ -3080,9 +3157,10 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             throws PackageManagerException {
         stageFileLocked(origFile, targetFile);
 
-        // Stage fsverity signature if present.
-        maybeStageFsveritySignatureLocked(origFile, targetFile);
-        // Stage dex metadata (.dm) if present.
+        // Stage APK's fs-verity signature if present.
+        maybeStageFsveritySignatureLocked(origFile, targetFile,
+                isFsVerityRequiredForApk(origFile, targetFile));
+        // Stage dex metadata (.dm) and corresponding fs-verity signature if present.
         maybeStageDexMetadataLocked(origFile, targetFile);
         // Stage checksums (.digests) if present.
         maybeStageDigestsLocked(origFile, targetFile, splitName);
@@ -3115,14 +3193,19 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         final File digestsFile = ApkChecksums.findDigestsForFile(origFile);
         if (digestsFile != null) {
             mResolvedInheritedFiles.add(digestsFile);
+
+            final File signatureFile = ApkChecksums.findSignatureForDigests(digestsFile);
+            if (signatureFile != null) {
+                mResolvedInheritedFiles.add(signatureFile);
+            }
         }
     }
 
     @GuardedBy("mLock")
     private void assertApkConsistentLocked(String tag, ApkLite apk)
             throws PackageManagerException {
-        assertPackageConsistentLocked(tag, apk.packageName, apk.getLongVersionCode());
-        if (!mSigningDetails.signaturesMatchExactly(apk.signingDetails)) {
+        assertPackageConsistentLocked(tag, apk.getPackageName(), apk.getLongVersionCode());
+        if (!mSigningDetails.signaturesMatchExactly(apk.getSigningDetails())) {
             throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,
                     tag + " signatures are inconsistent");
         }
@@ -3252,17 +3335,28 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         }
     }
 
+    private void linkFile(String relativePath, String fromBase, String toBase) throws IOException {
+        try {
+            // Try
+            if (mIncrementalFileStorages != null && mIncrementalFileStorages.makeLink(relativePath,
+                    fromBase, toBase)) {
+                return;
+            }
+            mPm.mInstaller.linkFile(relativePath, fromBase, toBase);
+        } catch (InstallerException | IOException e) {
+            throw new IOException("failed linkOrCreateDir(" + relativePath + ", "
+                    + fromBase + ", " + toBase + ")", e);
+        }
+    }
+
     private void linkFiles(List<File> fromFiles, File toDir, File fromDir)
             throws IOException {
         for (File fromFile : fromFiles) {
             final String relativePath = getRelativePath(fromFile, fromDir);
-            try {
-                mPm.mInstaller.linkFile(relativePath, fromDir.getAbsolutePath(),
-                        toDir.getAbsolutePath());
-            } catch (InstallerException e) {
-                throw new IOException("failed linkOrCreateDir(" + relativePath + ", "
-                        + fromDir + ", " + toDir + ")", e);
-            }
+            final String fromBase = fromDir.getAbsolutePath();
+            final String toBase = toDir.getAbsolutePath();
+
+            linkFile(relativePath, fromBase, toBase);
         }
 
         Slog.d(TAG, "Linked " + fromFiles.size() + " files into " + toDir);
@@ -3454,14 +3548,12 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
     @Override
     public DataLoaderParamsParcel getDataLoaderParams() {
-        mContext.enforceCallingOrSelfPermission(Manifest.permission.USE_INSTALLER_V2, null);
         return params.dataLoaderParams != null ? params.dataLoaderParams.getData() : null;
     }
 
     @Override
     public void addFile(int location, String name, long lengthBytes, byte[] metadata,
             byte[] signature) {
-        mContext.enforceCallingOrSelfPermission(Manifest.permission.USE_INSTALLER_V2, null);
         if (!isDataLoaderInstallation()) {
             throw new IllegalStateException(
                     "Cannot add files to non-data loader installation session.");
@@ -3494,7 +3586,6 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
     @Override
     public void removeFile(int location, String name) {
-        mContext.enforceCallingOrSelfPermission(Manifest.permission.USE_INSTALLER_V2, null);
         if (!isDataLoaderInstallation()) {
             throw new IllegalStateException(
                     "Cannot add files to non-data loader installation session.");
@@ -3530,12 +3621,6 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
         // Retrying commit.
         if (mIncrementalFileStorages != null) {
-            try {
-                mIncrementalFileStorages.startLoading();
-            } catch (IOException e) {
-                throw new PackageManagerException(INSTALL_FAILED_MEDIA_UNAVAILABLE, e.getMessage(),
-                        e.getCause());
-            }
             return false;
         }
 
@@ -3710,9 +3795,15 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             };
 
             try {
+                final PackageInfo pkgInfo = mPm.getPackageInfo(this.params.appPackageName, 0,
+                        userId);
+                final File inheritedDir =
+                        (pkgInfo != null && pkgInfo.applicationInfo != null) ? new File(
+                                pkgInfo.applicationInfo.getCodePath()).getParentFile() : null;
+
                 mIncrementalFileStorages = IncrementalFileStorages.initialize(mContext, stageDir,
-                        params, statusListener, healthCheckParams, healthListener, addedFiles,
-                        perUidReadTimeouts,
+                        inheritedDir, params, statusListener, healthCheckParams, healthListener,
+                        addedFiles, perUidReadTimeouts,
                         new IPackageLoadingProgressCallback.Stub() {
                             @Override
                             public void onPackageLoadingProgressChanged(float progress) {
@@ -3729,7 +3820,9 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             }
         }
 
-        if (!dataLoaderManager.bindToDataLoader(sessionId, params.getData(), statusListener)) {
+        final long bindDelayMs = 0;
+        if (!dataLoaderManager.bindToDataLoader(sessionId, params.getData(), bindDelayMs,
+                statusListener)) {
             throw new PackageManagerException(INSTALL_FAILED_MEDIA_UNAVAILABLE,
                     "Failed to initialize data loader");
         }
@@ -4294,7 +4387,8 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
             for (int i = 0, isize = mChecksums.size(); i < isize; ++i) {
                 final String fileName = mChecksums.keyAt(i);
-                final Checksum[] checksums = mChecksums.valueAt(i);
+                final PerFileChecksum perFileChecksum = mChecksums.valueAt(i);
+                final Checksum[] checksums = perFileChecksum.getChecksums();
                 for (Checksum checksum : checksums) {
                     out.startTag(null, TAG_SESSION_CHECKSUM);
                     writeStringAttribute(out, ATTR_NAME, fileName);
@@ -4303,6 +4397,19 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                     out.endTag(null, TAG_SESSION_CHECKSUM);
                 }
             }
+            for (int i = 0, isize = mChecksums.size(); i < isize; ++i) {
+                final String fileName = mChecksums.keyAt(i);
+                final PerFileChecksum perFileChecksum = mChecksums.valueAt(i);
+                final byte[] signature = perFileChecksum.getSignature();
+                if (signature == null || signature.length == 0) {
+                    continue;
+                }
+                out.startTag(null, TAG_SESSION_CHECKSUM_SIGNATURE);
+                writeStringAttribute(out, ATTR_NAME, fileName);
+                writeByteArrayAttribute(out, ATTR_SIGNATURE, signature);
+                out.endTag(null, TAG_SESSION_CHECKSUM_SIGNATURE);
+            }
+
         }
 
         out.endTag(null, TAG_SESSION);
@@ -4418,6 +4525,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         List<Integer> childSessionIds = new ArrayList<>();
         List<InstallationFile> files = new ArrayList<>();
         ArrayMap<String, List<Checksum>> checksums = new ArrayMap<>();
+        ArrayMap<String, byte[]> signatures = new ArrayMap<>();
         int outerDepth = in.getDepth();
         int type;
         while ((type = in.next()) != XmlPullParser.END_DOCUMENT
@@ -4460,6 +4568,11 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 }
                 fileChecksums.add(checksum);
             }
+            if (TAG_SESSION_CHECKSUM_SIGNATURE.equals(in.getName())) {
+                final String fileName = readStringAttribute(in, ATTR_NAME);
+                final byte[] signature = readByteArrayAttribute(in, ATTR_SIGNATURE);
+                signatures.put(fileName, signature);
+            }
         }
 
         if (grantedRuntimePermissions.size() > 0) {
@@ -4488,13 +4601,25 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             fileArray = files.toArray(EMPTY_INSTALLATION_FILE_ARRAY);
         }
 
+        ArrayMap<String, PerFileChecksum> checksumsMap = null;
+        if (!checksums.isEmpty()) {
+            checksumsMap = new ArrayMap<>(checksums.size());
+            for (int i = 0, isize = checksums.size(); i < isize; ++i) {
+                final String fileName = checksums.keyAt(i);
+                final List<Checksum> perFileChecksum = checksums.valueAt(i);
+                final byte[] perFileSignature = signatures.get(fileName);
+                checksumsMap.put(fileName, new PerFileChecksum(
+                        perFileChecksum.toArray(new Checksum[perFileChecksum.size()]),
+                        perFileSignature));
+            }
+        }
+
         InstallSource installSource = InstallSource.create(installInitiatingPackageName,
                 installOriginatingPackageName, installerPackageName, installerAttributionTag);
-        return new PackageInstallerSession(callback, context, pm, sessionProvider,
-                installerThread, stagingManager, sessionId, userId, installerUid,
-                installSource, params, createdMillis, committedMillis, stageDir, stageCid,
-                fileArray, checksums, prepared, committed, destroyed, sealed, childSessionIdsArray,
-                parentSessionId, isReady, isFailed, isApplied, stagedSessionErrorCode,
-                stagedSessionErrorMessage);
+        return new PackageInstallerSession(callback, context, pm, sessionProvider, installerThread,
+                stagingManager, sessionId, userId, installerUid, installSource, params,
+                createdMillis, committedMillis, stageDir, stageCid, fileArray, checksumsMap,
+                prepared, committed, destroyed, sealed, childSessionIdsArray, parentSessionId,
+                isReady, isFailed, isApplied, stagedSessionErrorCode, stagedSessionErrorMessage);
     }
 }

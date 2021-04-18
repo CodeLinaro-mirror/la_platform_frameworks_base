@@ -48,17 +48,14 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.IntentSender;
 import android.content.pm.dex.ArtManager;
-import android.content.pm.parsing.PackageInfoWithoutStateUtils;
-import android.content.pm.parsing.ParsingPackage;
-import android.content.pm.parsing.ParsingPackageUtils;
-import android.content.pm.parsing.result.ParseInput;
-import android.content.pm.parsing.result.ParseResult;
-import android.content.pm.parsing.result.ParseTypeImpl;
+import android.content.pm.verify.domain.DomainVerificationManager;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.content.res.XmlResourceParser;
 import android.graphics.Rect;
 import android.graphics.drawable.AdaptiveIconDrawable;
 import android.graphics.drawable.Drawable;
+import android.net.ConnectivityManager;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -74,6 +71,12 @@ import android.os.incremental.IncrementalManager;
 import android.os.storage.StorageManager;
 import android.os.storage.VolumeInfo;
 import android.permission.PermissionManager;
+import android.telephony.TelephonyManager;
+import android.telephony.gba.GbaService;
+import android.telephony.ims.ImsService;
+import android.telephony.ims.ProvisioningManager;
+import android.telephony.ims.RcsUceAdapter;
+import android.telephony.ims.SipDelegateManager;
 import android.util.AndroidException;
 import android.util.Log;
 
@@ -82,7 +85,6 @@ import com.android.internal.util.ArrayUtils;
 
 import dalvik.system.VMRuntime;
 
-import java.io.File;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.security.cert.Certificate;
@@ -92,6 +94,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Class for retrieving various kinds of information related to the application
@@ -122,6 +125,19 @@ public abstract class PackageManager {
             super(name);
         }
     }
+
+    /**
+     * &lt;application&gt; level {@link android.content.pm.PackageManager.Property} tag specifying
+     * the XML resource ID containing an application's media capabilities XML file
+     *
+     * For example:
+     * &lt;application&gt;
+     *   &lt;property android:name="android.media.PROPERTY_MEDIA_CAPABILITIES"
+     *     android:resource="@xml/media_capabilities"&gt;
+     * &lt;application&gt;
+     */
+    public static final String PROPERTY_MEDIA_CAPABILITIES =
+            "android.media.PROPERTY_MEDIA_CAPABILITIES";
 
     /**
      * A property value set within the manifest.
@@ -1340,15 +1356,11 @@ public abstract class PackageManager {
 
     /**
      * A value to indicate the lack of CUJ information, disabling all installation scenario logic.
-     *
-     * @hide
      */
     public static final int INSTALL_SCENARIO_DEFAULT = 0;
 
     /**
      * Installation scenario providing the fastest “install button to launch" experience possible.
-     *
-     * @hide
      */
     public static final int INSTALL_SCENARIO_FAST = 1;
 
@@ -1365,8 +1377,6 @@ public abstract class PackageManager {
      * less optimized applications.  The device state (e.g. memory usage or battery status) should
      * not be considered when making this decision as those factors are taken into account by the
      * Package Manager when acting on the installation scenario.
-     *
-     * @hide
      */
     public static final int INSTALL_SCENARIO_BULK = 2;
 
@@ -1377,8 +1387,6 @@ public abstract class PackageManager {
      * operation that are marked BULK_SECONDARY, the faster the entire bulk operation will be.
      *
      * See the comments for INSTALL_SCENARIO_BULK for more information.
-     *
-     * @hide
      */
     public static final int INSTALL_SCENARIO_BULK_SECONDARY = 3;
 
@@ -2187,8 +2195,10 @@ public abstract class PackageManager {
      * {@link PackageManager#verifyIntentFilter} to indicate that the calling
      * IntentFilter Verifier confirms that the IntentFilter is verified.
      *
+     * @deprecated Use {@link DomainVerificationManager} APIs.
      * @hide
      */
+    @Deprecated
     @SystemApi
     public static final int INTENT_FILTER_VERIFICATION_SUCCESS = 1;
 
@@ -2197,16 +2207,20 @@ public abstract class PackageManager {
      * {@link PackageManager#verifyIntentFilter} to indicate that the calling
      * IntentFilter Verifier confirms that the IntentFilter is NOT verified.
      *
+     * @deprecated Use {@link DomainVerificationManager} APIs.
      * @hide
      */
+    @Deprecated
     @SystemApi
     public static final int INTENT_FILTER_VERIFICATION_FAILURE = -1;
 
     /**
      * Internal status code to indicate that an IntentFilter verification result is not specified.
      *
+     * @deprecated Use {@link DomainVerificationManager} APIs.
      * @hide
      */
+    @Deprecated
     @SystemApi
     public static final int INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_UNDEFINED = 0;
 
@@ -2216,8 +2230,10 @@ public abstract class PackageManager {
      * will always be prompted the Intent Disambiguation Dialog if there are two
      * or more Intent resolved for the IntentFilter's domain(s).
      *
+     * @deprecated Use {@link DomainVerificationManager} APIs.
      * @hide
      */
+    @Deprecated
     @SystemApi
     public static final int INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_ASK = 1;
 
@@ -2228,8 +2244,10 @@ public abstract class PackageManager {
      * or more resolution of the Intent. The default App for the domain(s)
      * specified in the IntentFilter will also ALWAYS be used.
      *
+     * @deprecated Use {@link DomainVerificationManager} APIs.
      * @hide
      */
+    @Deprecated
     @SystemApi
     public static final int INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_ALWAYS = 2;
 
@@ -2240,8 +2258,10 @@ public abstract class PackageManager {
      * Intent resolved. The default App for the domain(s) specified in the
      * IntentFilter will also NEVER be presented to the User.
      *
+     * @deprecated Use {@link DomainVerificationManager} APIs.
      * @hide
      */
+    @Deprecated
     @SystemApi
     public static final int INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_NEVER = 3;
 
@@ -2254,8 +2274,10 @@ public abstract class PackageManager {
      * more than one candidate app, then a disambiguation is *always* presented
      * even if there is another candidate app with the 'always' state.
      *
+     * @deprecated Use {@link DomainVerificationManager} APIs.
      * @hide
      */
+    @Deprecated
     @SystemApi
     public static final int INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_ALWAYS_ASK = 4;
 
@@ -2443,6 +2465,35 @@ public abstract class PackageManager {
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature(String, int)}: If this feature is supported, the device supports
+     * {@link android.security.identity.IdentityCredentialStore} implemented in secure hardware
+     * at the given feature version.
+     *
+     * <p>Known feature versions include:
+     * <ul>
+     * <li><code>202009</code>: corresponds to the features included in the Identity Credential
+     * API shipped in Android 11.
+     * <li><code>202101</code>: corresponds to the features included in the Identity Credential
+     * API shipped in Android 12.
+     * </ul>
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_IDENTITY_CREDENTIAL_HARDWARE =
+            "android.hardware.identity_credential";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature(String, int)}: If this feature is supported, the device supports
+     * {@link android.security.identity.IdentityCredentialStore} implemented in secure hardware
+     * with direct access at the given feature version.
+     * See {@link #FEATURE_IDENTITY_CREDENTIAL_HARDWARE} for known feature versions.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_IDENTITY_CREDENTIAL_HARDWARE_DIRECT_ACCESS =
+            "android.hardware.identity_credential_direct_access";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
      * {@link #hasSystemFeature}: The device supports one or more methods of
      * reporting current location.
      */
@@ -2586,6 +2637,14 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_SE_OMAPI_SD = "android.hardware.se.omapi.sd";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device is compatible with Android’s security model.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_SECURITY_MODEL_COMPATIBLE =
+            "android.hardware.security.model.compatible";
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
@@ -2889,6 +2948,37 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_TELEPHONY_IMS = "android.hardware.telephony.ims";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}: The device
+     * supports a single IMS registration as defined by carrier networks in the IMS service
+     * implementation using the {@link ImsService} API, {@link GbaService} API, and IRadio 1.6 HAL.
+     * <p>
+     * When set, the device must fully support the following APIs for an application to implement
+     * IMS single registration:
+     * <ul>
+     * <li> Updating RCS provisioning status using the {@link ProvisioningManager} API to supply an
+     * RCC.14 defined XML and notify IMS applications of Auto Configuration Server (ACS) or
+     * proprietary server provisioning updates.</li>
+     * <li>Opening a delegate in the device IMS service to forward SIP traffic to the carrier's
+     * network using the {@link SipDelegateManager} API</li>
+     * <li>Listening to EPS dedicated bearer establishment via the
+     * {@link ConnectivityManager#registerQosCallback}
+     * API to indicate to the application when to start/stop media traffic.</li>
+     * <li>Implementing Generic Bootstrapping Architecture (GBA) and providing the associated
+     * authentication keys to applications
+     * requesting this information via the {@link TelephonyManager#bootstrapAuthenticationRequest}
+     * API</li>
+     * <li>Implementing RCS User Capability Exchange using the {@link RcsUceAdapter} API</li>
+     * </ul>
+     * <p>
+     * This feature should only be defined if {@link #FEATURE_TELEPHONY_IMS} is also defined.
+     * @hide
+     */
+    @SystemApi
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_TELEPHONY_IMS_SINGLE_REGISTRATION =
+            "android.hardware.telephony.ims.singlereg";
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
@@ -3348,6 +3438,7 @@ public abstract class PackageManager {
      * {@link #hasSystemFeature}: This device supports HDMI-CEC.
      * @hide
      */
+    @TestApi
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_HDMI_CEC = "android.hardware.hdmi.cec";
 
@@ -3493,7 +3584,12 @@ public abstract class PackageManager {
      * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}: The device has
      * the requisite kernel support to support incremental delivery aka Incremental FileSystem.
      *
-     * @see IncrementalManager#isEnabled
+     * feature not present - IncFs is not present on the device.
+     * 1 - IncFs v1, core features, no PerUid support. Optional in R.
+     * 2 - IncFs v2, PerUid support, fs-verity support. Required in S.
+     *
+     * @see IncrementalManager#isFeatureEnabled
+     * @see IncrementalManager#getVersion()
      * @hide
      */
     @SystemApi
@@ -3515,11 +3611,26 @@ public abstract class PackageManager {
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
      * {@link #hasSystemFeature}: The device supports a enabling/disabling sensor privacy for
-     * camera. When sensory privacy for the camera is enabled no camera data is send to clients,
+     * microphone. When sensory privacy for the microphone is enabled no microphone data is sent to
+     * clients, e.g. all audio data is silent.
+     *
+     * @hide
+     */
+    @SystemApi
+    @TestApi
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_MICROPHONE_TOGGLE = "android.hardware.microphone.toggle";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device supports a enabling/disabling sensor privacy for
+     * camera. When sensory privacy for the camera is enabled no camera data is sent to clients,
      * e.g. the view finder in a camera app would appear blank.
      *
      * @hide
      */
+    @SystemApi
+    @TestApi
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_CAMERA_TOGGLE = "android.hardware.camera.toggle";
 
@@ -3531,6 +3642,33 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_APP_ENUMERATION = "android.software.app_enumeration";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}: The device has
+     * a Keystore implementation that can only enforce limited use key in hardware with max usage
+     * count equals to 1.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_KEYSTORE_SINGLE_USE_KEY =
+            "android.hardware.keystore.single_use_key";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}: The device has
+     * a Keystore implementation that can enforce limited use key in hardware with any max usage
+     * count (including count equals to 1).
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_KEYSTORE_LIMITED_USE_KEY =
+            "android.hardware.keystore.limited_use_key";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}: The device has
+     * a Keystore implementation that can create application-specific attestation keys.
+     * See {@link android.security.keystore.KeyGenParameterSpec.Builder#setAttestKeyAlias}.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_KEYSTORE_APP_ATTEST_KEY =
+            "android.hardware.keystore.app_attest_key";
 
     /** @hide */
     public static final boolean APP_ENUMERATION_ENABLED_BY_DEFAULT = true;
@@ -3631,8 +3769,10 @@ public abstract class PackageManager {
      * Passed to an intent filter verifier and is used to call back to
      * {@link #verifyIntentFilter}
      *
+     * @deprecated Use DomainVerificationManager APIs.
      * @hide
      */
+    @Deprecated
     public static final String EXTRA_INTENT_FILTER_VERIFICATION_ID
             = "android.content.pm.extra.INTENT_FILTER_VERIFICATION_ID";
 
@@ -3642,8 +3782,10 @@ public abstract class PackageManager {
      *
      * Usually this is "https"
      *
+     * @deprecated Use DomainVerificationManager APIs.
      * @hide
      */
+    @Deprecated
     public static final String EXTRA_INTENT_FILTER_VERIFICATION_URI_SCHEME
             = "android.content.pm.extra.INTENT_FILTER_VERIFICATION_URI_SCHEME";
 
@@ -3654,8 +3796,10 @@ public abstract class PackageManager {
      *
      * This is a space delimited list of hosts.
      *
+     * @deprecated Use DomainVerificationManager APIs.
      * @hide
      */
+    @Deprecated
     public static final String EXTRA_INTENT_FILTER_VERIFICATION_HOSTS
             = "android.content.pm.extra.INTENT_FILTER_VERIFICATION_HOSTS";
 
@@ -3665,8 +3809,10 @@ public abstract class PackageManager {
      * from the hosts. Each host response will need to include the package name of APK containing
      * the intent filter.
      *
+     * @deprecated Use DomainVerificationManager APIs.
      * @hide
      */
+    @Deprecated
     public static final String EXTRA_INTENT_FILTER_VERIFICATION_PACKAGE_NAME
             = "android.content.pm.extra.INTENT_FILTER_VERIFICATION_PACKAGE_NAME";
 
@@ -3721,13 +3867,6 @@ public abstract class PackageManager {
      */
     public static final String EXTRA_FAILURE_EXISTING_PERMISSION
             = "android.content.pm.extra.FAILURE_EXISTING_PERMISSION";
-
-    /**
-     * Extra field name for the ID of a package pending verification. Passed to
-     * a package verifier and is used to call back to
-     * @see #requestChecksums
-     */
-    public static final String EXTRA_CHECKSUMS = "android.content.pm.extra.CHECKSUMS";
 
    /**
     * Permission flag: The permission is set in its current state
@@ -3913,14 +4052,15 @@ public abstract class PackageManager {
     public static final int FLAG_PERMISSION_AUTO_REVOKED = 1 << 17;
 
     /**
-     * Permission flag: The permission is restricted but the app is exempt
-     * from the restriction and is allowed to hold this permission in its
-     * full form and the exemption is provided by the held roles.
+     * Permission flag: This location permission is selected as the level of granularity of
+     * location accuracy.
+     * Example: If this flag is set for ACCESS_FINE_LOCATION, FINE location is the selected location
+     *          accuracy for location permissions.
      *
      * @hide
      */
     @SystemApi
-    public static final int FLAG_PERMISSION_RESTRICTION_ROLE_EXEMPT =  1 << 18;
+    public static final int FLAG_PERMISSION_SELECTED_LOCATION_ACCURACY =  1 << 19;
 
     /**
      * Permission flags: Reserved for use by the permission controller. The platform and any
@@ -3940,8 +4080,7 @@ public abstract class PackageManager {
     public static final int FLAGS_PERMISSION_RESTRICTION_ANY_EXEMPT =
             FLAG_PERMISSION_RESTRICTION_INSTALLER_EXEMPT
                     | FLAG_PERMISSION_RESTRICTION_SYSTEM_EXEMPT
-                    | FLAG_PERMISSION_RESTRICTION_UPGRADE_EXEMPT
-                    | FLAG_PERMISSION_RESTRICTION_ROLE_EXEMPT;
+                    | FLAG_PERMISSION_RESTRICTION_UPGRADE_EXEMPT;
 
     /**
      * Mask for all permission flags.
@@ -4026,20 +4165,11 @@ public abstract class PackageManager {
      */
     public static final int FLAG_PERMISSION_WHITELIST_UPGRADE = 1 << 2;
 
-    /**
-     * Permission allowlist flag: permissions exempted by the system
-     * when being granted a role.
-     * Permissions can also be exempted by the installer, the system, or on
-     * upgrade.
-     */
-    public static final int FLAG_PERMISSION_ALLOWLIST_ROLE = 1 << 3;
-
     /** @hide */
     @IntDef(flag = true, prefix = {"FLAG_PERMISSION_WHITELIST_"}, value = {
             FLAG_PERMISSION_WHITELIST_SYSTEM,
             FLAG_PERMISSION_WHITELIST_INSTALLER,
-            FLAG_PERMISSION_WHITELIST_UPGRADE,
-            FLAG_PERMISSION_ALLOWLIST_ROLE
+            FLAG_PERMISSION_WHITELIST_UPGRADE
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface PermissionWhitelistFlags {}
@@ -4810,15 +4940,17 @@ public abstract class PackageManager {
     /**
      * Gets the package name of the component controlling runtime permissions.
      *
-     * @return The package name.
+     * @return the package name of the component controlling runtime permissions
      *
      * @hide
      */
-    @SuppressWarnings("HiddenAbstractMethod")
-    @UnsupportedAppUsage
     @NonNull
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
     @TestApi
-    public abstract String getPermissionControllerPackageName();
+    @UnsupportedAppUsage
+    public String getPermissionControllerPackageName() {
+        throw new RuntimeException("Not implemented. Must override in a subclass.");
+    }
 
     /**
      * Add a new dynamic permission to the system.  For this to work, your
@@ -5069,10 +5201,6 @@ public abstract class PackageManager {
      * This list corresponds to the {@link #FLAG_PERMISSION_WHITELIST_INSTALLER} flag.
      * Can be accessed by pre-installed holders of a dedicated permission or the
      * installer on record.
-     *
-     * <li>one for cases where the system exempts the permission when granting a role.
-     * This list corresponds to the {@link #FLAG_PERMISSION_ALLOWLIST_ROLE} flag. Can
-     * be accessed by pre-installed holders of a dedicated permission.
      * </ol>
      *
      * <p>
@@ -5091,7 +5219,6 @@ public abstract class PackageManager {
      * @see #FLAG_PERMISSION_WHITELIST_SYSTEM
      * @see #FLAG_PERMISSION_WHITELIST_UPGRADE
      * @see #FLAG_PERMISSION_WHITELIST_INSTALLER
-     * @see #FLAG_PERMISSION_ALLOWLIST_ROLE
      *
      * @throws SecurityException if you try to access a whitelist that you have no access to.
      */
@@ -5131,10 +5258,6 @@ public abstract class PackageManager {
      * This list corresponds to the {@link #FLAG_PERMISSION_WHITELIST_INSTALLER} flag.
      * Can be modified by pre-installed holders of a dedicated permission or the installer
      * on record.
-     *
-     * <li>one for cases where the system exempts the permission when permission when
-     * granting a role. This list corresponds to the {@link #FLAG_PERMISSION_ALLOWLIST_ROLE}
-     * flag. Can be modified by pre-installed holders of a dedicated permission.
      * </ol>
      *
      * <p>You need to specify the whitelists for which to set the whitelisted permissions
@@ -5158,7 +5281,6 @@ public abstract class PackageManager {
      * @see #FLAG_PERMISSION_WHITELIST_SYSTEM
      * @see #FLAG_PERMISSION_WHITELIST_UPGRADE
      * @see #FLAG_PERMISSION_WHITELIST_INSTALLER
-     * @see #FLAG_PERMISSION_ALLOWLIST_ROLE
      *
      * @throws SecurityException if you try to modify a whitelist that you have no access to.
      */
@@ -5228,7 +5350,6 @@ public abstract class PackageManager {
      * @see #FLAG_PERMISSION_WHITELIST_SYSTEM
      * @see #FLAG_PERMISSION_WHITELIST_UPGRADE
      * @see #FLAG_PERMISSION_WHITELIST_INSTALLER
-     * @see #FLAG_PERMISSION_ALLOWLIST_ROLE
      *
      * @throws SecurityException if you try to modify a whitelist that you have no access to.
      */
@@ -5429,7 +5550,7 @@ public abstract class PackageManager {
      *
      * @hide
      */
-    @SuppressWarnings("HiddenAbstractMethod")
+    @SuppressWarnings({"HiddenAbstractMethod", "NullableCollection"})
     @TestApi
     public abstract @Nullable String[] getNamesForUids(int[] uids);
 
@@ -6643,6 +6764,22 @@ public abstract class PackageManager {
             throws NameNotFoundException;
 
     /**
+     * Retrieve the resources for an application for the provided configuration.
+     *
+     * @param app Information about the desired application.
+     * @param configuration Overridden configuration when loading the Resources
+     *
+     * @return Returns the application's Resources.
+     * @throws NameNotFoundException Thrown if the resources for the given
+     * application could not be loaded (most likely because it was uninstalled).
+     */
+    @NonNull
+    public Resources getResourcesForApplication(@NonNull ApplicationInfo app, @Nullable
+            Configuration configuration) throws NameNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Retrieve the resources associated with an application.  Given the full
      * package name of an application, retrieves the information about it and
      * calls getResources() to return its application's resources.  If the
@@ -6701,25 +6838,8 @@ public abstract class PackageManager {
     @Nullable
     public PackageInfo getPackageArchiveInfo(@NonNull String archiveFilePath,
             @PackageInfoFlags int flags) {
-        if ((flags & (PackageManager.MATCH_DIRECT_BOOT_UNAWARE
-                | PackageManager.MATCH_DIRECT_BOOT_AWARE)) == 0) {
-            // Caller expressed no opinion about what encryption
-            // aware/unaware components they want to see, so match both
-            flags |= PackageManager.MATCH_DIRECT_BOOT_AWARE
-                    | PackageManager.MATCH_DIRECT_BOOT_UNAWARE;
-        }
-
-        boolean collectCertificates = (flags & PackageManager.GET_SIGNATURES) != 0
-                || (flags & PackageManager.GET_SIGNING_CERTIFICATES) != 0;
-
-        ParseInput input = ParseTypeImpl.forParsingWithoutPlatformCompat().reset();
-        ParseResult<ParsingPackage> result = ParsingPackageUtils.parseDefault(input,
-                new File(archiveFilePath), 0, collectCertificates);
-        if (result.isError()) {
-            return null;
-        }
-        return PackageInfoWithoutStateUtils.generate(result.getResult(), null, flags, 0, 0, null,
-                new PackageUserState(), UserHandle.getCallingUserId());
+        throw new UnsupportedOperationException(
+                "getPackageArchiveInfo() not implemented in subclass");
     }
 
     /**
@@ -6834,8 +6954,10 @@ public abstract class PackageManager {
      * @throws SecurityException if the caller does not have the
      *            INTENT_FILTER_VERIFICATION_AGENT permission.
      *
+     * @deprecated Use {@link DomainVerificationManager} APIs.
      * @hide
      */
+    @Deprecated
     @SuppressWarnings("HiddenAbstractMethod")
     @SystemApi
     @RequiresPermission(android.Manifest.permission.INTENT_FILTER_VERIFICATION_AGENT)
@@ -6860,8 +6982,10 @@ public abstract class PackageManager {
      *              {@link #INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_NEVER} or
      *              {@link #INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_UNDEFINED}
      *
+     * @deprecated Use {@link DomainVerificationManager} APIs.
      * @hide
      */
+    @Deprecated
     @SuppressWarnings("HiddenAbstractMethod")
     @SystemApi
     @RequiresPermission(Manifest.permission.INTERACT_ACROSS_USERS_FULL)
@@ -6886,8 +7010,18 @@ public abstract class PackageManager {
      *
      * @return true if the status has been set. False otherwise.
      *
+     * @deprecated This API represents a very dangerous behavior where Settings or a system app with
+     * the right permissions can force an application to be verified for all of its declared
+     * domains. This has been removed to prevent unintended usage, and no longer does anything,
+     * always returning false. If a caller truly wishes to grant <i></i>every</i> declared web
+     * domain to an application, use
+     * {@link DomainVerificationManager#setDomainVerificationUserSelection(UUID, Set, boolean)},
+     * passing in all of the domains returned inside
+     * {@link DomainVerificationManager#getDomainVerificationUserState(String)}.
+     *
      * @hide
      */
+    @Deprecated
     @SuppressWarnings("HiddenAbstractMethod")
     @SystemApi
     @RequiresPermission(android.Manifest.permission.SET_PREFERRED_APPLICATIONS)
@@ -6904,8 +7038,10 @@ public abstract class PackageManager {
      *
      * @return a list of IntentFilterVerificationInfo for a specific package.
      *
+     * @deprecated Use {@link DomainVerificationManager} instead.
      * @hide
      */
+    @Deprecated
     @SuppressWarnings("HiddenAbstractMethod")
     @NonNull
     @SystemApi
@@ -8547,9 +8683,20 @@ public abstract class PackageManager {
      */
     public static final @NonNull List<Certificate> TRUST_NONE = Collections.singletonList(null);
 
+    /** Listener that gets notified when checksums are available. */
+    @FunctionalInterface
+    public interface OnChecksumsReadyListener {
+        /**
+         * Called when the checksums are available.
+         *
+         * @param checksums array of checksums.
+         */
+        void onChecksumsReady(@NonNull List<ApkChecksum> checksums);
+    }
+
     /**
      * Requesting the checksums for APKs within a package.
-     * The checksums will be returned asynchronously via statusReceiver.
+     * The checksums will be returned asynchronously via onChecksumsReadyListener.
      *
      * By default returns all readily available checksums:
      * - enforced by platform,
@@ -8568,15 +8715,14 @@ public abstract class PackageManager {
      *                          {@link #TRUST_ALL} will return checksums from any installer,
      *                          {@link #TRUST_NONE} disables optimized installer-enforced checksums,
      *                          otherwise the list has to be non-empty list of certificates.
-     * @param statusReceiver called once when the results are available as
-     *                       {@link #EXTRA_CHECKSUMS} of type {@link ApkChecksum}[].
+     * @param onChecksumsReadyListener called once when the results are available.
      * @throws CertificateEncodingException if an encoding error occurs for trustedInstallers.
      * @throws IllegalArgumentException if the list of trusted installer certificates is empty.
      * @throws NameNotFoundException if a package with the given name cannot be found on the system.
      */
     public void requestChecksums(@NonNull String packageName, boolean includeSplits,
             @Checksum.Type int required, @NonNull List<Certificate> trustedInstallers,
-            @NonNull IntentSender statusReceiver)
+            @NonNull OnChecksumsReadyListener onChecksumsReadyListener)
             throws CertificateEncodingException, NameNotFoundException {
         throw new UnsupportedOperationException("requestChecksums not implemented in subclass");
     }
@@ -8613,6 +8759,16 @@ public abstract class PackageManager {
     public String getAttentionServicePackageName() {
         throw new UnsupportedOperationException(
                 "getAttentionServicePackageName not implemented in subclass");
+    }
+
+    /**
+     * @return rotation resolver service's package name, or null if there's none.
+     *
+     * @hide
+     */
+    public String getRotationResolverPackageName() {
+        throw new UnsupportedOperationException(
+                "getRotationResolverPackageName not implemented in subclass");
     }
 
     /**
@@ -9103,6 +9259,22 @@ public abstract class PackageManager {
     public void holdLock(IBinder token, int durationMs) {
         try {
             ActivityThread.getPackageManager().holdLock(token, durationMs);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Set a list of apps to keep around as APKs even if no user has currently installed it.
+     * @param packageList List of package names to keep cached.
+     *
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.KEEP_UNINSTALLED_PACKAGES)
+    @TestApi
+    public void setKeepUninstalledPackages(@NonNull List<String> packageList) {
+        try {
+            ActivityThread.getPackageManager().setKeepUninstalledPackages(packageList);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

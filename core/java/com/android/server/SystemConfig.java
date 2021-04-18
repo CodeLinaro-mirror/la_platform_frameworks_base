@@ -24,6 +24,7 @@ import android.app.ActivityManager;
 import android.content.ComponentName;
 import android.content.pm.FeatureInfo;
 import android.content.pm.PackageManager;
+import android.hardware.SensorPrivacyManager;
 import android.os.Build;
 import android.os.CarrierAssociatedAppEntry;
 import android.os.Environment;
@@ -175,8 +176,9 @@ public class SystemConfig {
     // be delivered anonymously even to apps which target O+.
     final ArraySet<String> mAllowImplicitBroadcasts = new ArraySet<>();
 
-    // These are the package names of apps which should be in the 'always'
-    // URL-handling state upon factory reset.
+    // These are the package names of apps which should be automatically granted domain verification
+    // for all of their domains. The only way these apps can be overridden by the user is by
+    // explicitly disabling overall link handling support in app info.
     final ArraySet<String> mLinkedApps = new ArraySet<>();
 
     // These are the components that are enabled by default as VR mode listener services.
@@ -1230,8 +1232,9 @@ public class SystemConfig {
             addFeature(PackageManager.FEATURE_RAM_NORMAL, 0);
         }
 
-        if (IncrementalManager.isFeatureEnabled()) {
-            addFeature(PackageManager.FEATURE_INCREMENTAL_DELIVERY, 0);
+        final int incrementalVersion = IncrementalManager.getVersion();
+        if (incrementalVersion > 0) {
+            addFeature(PackageManager.FEATURE_INCREMENTAL_DELIVERY, incrementalVersion);
         }
 
         if (PackageManager.APP_ENUMERATION_ENABLED_BY_DEFAULT) {
@@ -1240,6 +1243,14 @@ public class SystemConfig {
 
         if (Build.VERSION.FIRST_SDK_INT >= Build.VERSION_CODES.Q) {
             addFeature(PackageManager.FEATURE_IPSEC_TUNNELS, 0);
+        }
+
+        if (SensorPrivacyManager.USE_MICROPHONE_TOGGLE) {
+            addFeature(PackageManager.FEATURE_MICROPHONE_TOGGLE, 0);
+        }
+
+        if (SensorPrivacyManager.USE_CAMERA_TOGGLE) {
+            addFeature(PackageManager.FEATURE_CAMERA_TOGGLE, 0);
         }
 
         for (String featureName : mUnavailableFeatures) {

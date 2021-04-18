@@ -38,12 +38,6 @@ class MainStage extends StageTaskListener {
 
     private boolean mIsActive = false;
 
-    private static final int[] CONTROLLED_ACTIVITY_TYPES = {ACTIVITY_TYPE_STANDARD};
-    private static final int[] CONTROLLED_WINDOWING_MODES =
-            {WINDOWING_MODE_FULLSCREEN, WINDOWING_MODE_UNDEFINED};
-    private static final int[] CONTROLLED_WINDOWING_MODES_WHEN_ACTIVE =
-            {WINDOWING_MODE_FULLSCREEN, WINDOWING_MODE_UNDEFINED, WINDOWING_MODE_MULTI_WINDOW};
-
     MainStage(ShellTaskOrganizer taskOrganizer, int displayId,
             StageListenerCallbacks callbacks, SyncTransactionQueue syncQueue) {
         super(taskOrganizer, displayId, callbacks, syncQueue);
@@ -57,8 +51,7 @@ class MainStage extends StageTaskListener {
         if (mIsActive) return;
 
         final WindowContainerToken rootToken = mRootTaskInfo.token;
-        wct.setHidden(rootToken, false)
-                .setBounds(rootToken, rootBounds)
+        wct.setBounds(rootToken, rootBounds)
                 .setLaunchRoot(
                         rootToken,
                         CONTROLLED_WINDOWING_MODES,
@@ -69,7 +62,7 @@ class MainStage extends StageTaskListener {
                         CONTROLLED_WINDOWING_MODES,
                         CONTROLLED_ACTIVITY_TYPES,
                         true /* onTop */)
-                // Moving the root task to top after the child tasks were repareted , or the root
+                // Moving the root task to top after the child tasks were re-parented , or the root
                 // task cannot be visible and focused.
                 .reorder(rootToken, true /* onTop */);
 
@@ -77,13 +70,16 @@ class MainStage extends StageTaskListener {
     }
 
     void deactivate(WindowContainerTransaction wct) {
+        deactivate(wct, false /* toTop */);
+    }
+
+    void deactivate(WindowContainerTransaction wct, boolean toTop) {
         if (!mIsActive) return;
         mIsActive = false;
 
         if (mRootTaskInfo == null) return;
         final WindowContainerToken rootToken = mRootTaskInfo.token;
-        wct.setHidden(rootToken, true)
-                .setLaunchRoot(
+        wct.setLaunchRoot(
                         rootToken,
                         null,
                         null)
@@ -92,7 +88,9 @@ class MainStage extends StageTaskListener {
                         null /* newParent */,
                         CONTROLLED_WINDOWING_MODES_WHEN_ACTIVE,
                         CONTROLLED_ACTIVITY_TYPES,
-                        true /* onTop */)
+                        toTop)
+                // We want this re-order to the bottom regardless since we are re-parenting
+                // all its tasks.
                 .reorder(rootToken, false /* onTop */);
     }
 

@@ -19,15 +19,15 @@ package android.net;
 import android.net.DataUsageRequest;
 import android.net.INetworkStatsSession;
 import android.net.Network;
-import android.net.NetworkState;
+import android.net.NetworkStateSnapshot;
 import android.net.NetworkStats;
 import android.net.NetworkStatsHistory;
 import android.net.NetworkTemplate;
+import android.net.UnderlyingNetworkInfo;
 import android.net.netstats.provider.INetworkStatsProvider;
 import android.net.netstats.provider.INetworkStatsProviderCallback;
 import android.os.IBinder;
 import android.os.Messenger;
-import com.android.internal.net.VpnInfo;
 
 /** {@hide} */
 interface INetworkStatsService {
@@ -68,9 +68,9 @@ interface INetworkStatsService {
     /** Force update of ifaces. */
     void forceUpdateIfaces(
          in Network[] defaultNetworks,
-         in NetworkState[] networkStates,
+         in NetworkStateSnapshot[] snapshots,
          in String activeIface,
-         in VpnInfo[] vpnInfos);
+         in UnderlyingNetworkInfo[] underlyingNetworkInfos);
     /** Force update of statistics. */
     @UnsupportedAppUsage
     void forceUpdate();

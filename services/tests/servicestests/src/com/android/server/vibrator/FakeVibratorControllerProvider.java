@@ -33,7 +33,7 @@ import java.util.Map;
  * Provides {@link VibratorController} with controlled vibrator hardware capabilities and
  * interactions.
  */
-public final class FakeVibratorControllerProvider {
+final class FakeVibratorControllerProvider {
 
     private static final int EFFECT_DURATION = 20;
 
@@ -100,16 +100,17 @@ public final class FakeVibratorControllerProvider {
             return EFFECT_DURATION;
         }
 
-        public void compose(VibrationEffect.Composition.PrimitiveEffect[] effect,
+        public long compose(VibrationEffect.Composition.PrimitiveEffect[] effect,
                 long vibrationId) {
             VibrationEffect.Composed composed = new VibrationEffect.Composed(Arrays.asList(effect));
             mEffects.add(composed);
             applyLatency();
-            long duration = EFFECT_DURATION * effect.length;
+            long duration = 0;
             for (VibrationEffect.Composition.PrimitiveEffect e : effect) {
-                duration += e.delay;
+                duration += EFFECT_DURATION + e.delay;
             }
             scheduleListener(duration, vibrationId);
+            return duration;
         }
 
         public void setExternalControl(boolean enabled) {

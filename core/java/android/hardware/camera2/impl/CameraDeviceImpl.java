@@ -19,10 +19,12 @@ package android.hardware.camera2.impl;
 import static com.android.internal.util.function.pooled.PooledLambda.obtainRunnable;
 
 import android.annotation.NonNull;
+import android.content.Context;
 import android.hardware.ICameraService;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraExtensionSession;
 import android.hardware.camera2.CameraOfflineSession;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CaptureFailure;
@@ -32,7 +34,10 @@ import android.hardware.camera2.ICameraDeviceCallbacks;
 import android.hardware.camera2.ICameraDeviceUser;
 import android.hardware.camera2.ICameraOfflineSession;
 import android.hardware.camera2.TotalCaptureResult;
+import android.hardware.camera2.params.ExtensionSessionConfiguration;
 import android.hardware.camera2.params.InputConfiguration;
+import android.hardware.camera2.params.MultiResolutionStreamConfigurationMap;
+import android.hardware.camera2.params.MultiResolutionStreamInfo;
 import android.hardware.camera2.params.OutputConfiguration;
 import android.hardware.camera2.params.SessionConfiguration;
 import android.hardware.camera2.params.StreamConfigurationMap;
@@ -110,6 +115,7 @@ public class CameraDeviceImpl extends CameraDevice
     private final String mCameraId;
     private final CameraCharacteristics mCharacteristics;
     private final int mTotalPartialCount;
+    private final Context mContext;
 
     private static final long NANO_PER_SECOND = 1000000000; //ns
 
@@ -127,6 +133,7 @@ public class CameraDeviceImpl extends CameraDevice
     private FrameNumberTracker mFrameNumberTracker = new FrameNumberTracker();
 
     private CameraCaptureSessionCore mCurrentSession;
+    private CameraExtensionSessionImpl mCurrentExtensionSession;
     private int mNextSessionId = 0;
 
     private final int mAppTargetSdkVersion;
@@ -250,7 +257,8 @@ public class CameraDeviceImpl extends CameraDevice
     };
 
     public CameraDeviceImpl(String cameraId, StateCallback callback, Executor executor,
-                        CameraCharacteristics characteristics, int appTargetSdkVersion) {
+                        CameraCharacteristics characteristics, int appTargetSdkVersion,
+                        Context ctx) {
         if (cameraId == null || callback == null || executor == null || characteristics == null) {
             throw new IllegalArgumentException("Null argument given");
         }
@@ -259,6 +267,7 @@ public class CameraDeviceImpl extends CameraDevice
         mDeviceExecutor = executor;
         mCharacteristics = characteristics;
         mAppTargetSdkVersion = appTargetSdkVersion;
+        mContext = ctx;
 
         final int MAX_TAG_LEN = 23;
         String tag = String.format("CameraDevice-JV-%s", mCameraId);
@@ -461,7 +470,8 @@ public class CameraDeviceImpl extends CameraDevice
                     }
                     if (inputConfig != null) {
                         int streamId = mRemoteDevice.createInputStream(inputConfig.getWidth(),
-                                inputConfig.getHeight(), inputConfig.getFormat());
+                                inputConfig.getHeight(), inputConfig.getFormat(),
+                                inputConfig.isMultiResolution());
                         mConfiguredInput = new SimpleEntry<Integer, InputConfiguration>(
                                 streamId, inputConfig);
                     }
@@ -1322,6 +1332,10 @@ public class CameraDeviceImpl extends CameraDevice
                 mRemoteDevice.unlinkToDeath(this, /*flags*/0);
             }
 
+            if (mCurrentExtensionSession != null) {
+                mCurrentExtensionSession.release();
+                mCurrentExtensionSession = null;
+            }
             // Only want to fire the onClosed callback once;
             // either a normal close where the remote device is valid
             // or a close after a startup error (no remote device but in error state)
@@ -1344,7 +1358,42 @@ public class CameraDeviceImpl extends CameraDevice
     }
 
     private void checkInputConfiguration(InputConfiguration inputConfig) {
-        if (inputConfig != null) {
+        if (inputConfig == null) {
+            return;
+        }
+
+        if (inputConfig.isMultiResolution()) {
+            MultiResolutionStreamConfigurationMap configMap = mCharacteristics.get(
+                    CameraCharacteristics.SCALER_MULTI_RESOLUTION_STREAM_CONFIGURATION_MAP);
+
+            int[] inputFormats = configMap.getInputFormats();
+            boolean validFormat = false;
+            for (int format : inputFormats) {
+                if (format == inputConfig.getFormat()) {
+                    validFormat = true;
+                }
+            }
+
+            if (validFormat == false) {
+                throw new IllegalArgumentException("multi-resolution input format " +
+                        inputConfig.getFormat() + " is not valid");
+            }
+
+            boolean validSize = false;
+            Collection<MultiResolutionStreamInfo> inputStreamInfo =
+                    configMap.getInputInfo(inputConfig.getFormat());
+            for (MultiResolutionStreamInfo info : inputStreamInfo) {
+                if (inputConfig.getWidth() == info.getWidth() &&
+                        inputConfig.getHeight() == info.getHeight()) {
+                    validSize = true;
+                }
+            }
+
+            if (validSize == false) {
+                throw new IllegalArgumentException("Multi-resolution input size " +
+                        inputConfig.getWidth() + "x" + inputConfig.getHeight() + " is not valid");
+            }
+        } else {
             StreamConfigurationMap configMap = mCharacteristics.get(
                     CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
 
@@ -2295,6 +2344,18 @@ public class CameraDeviceImpl extends CameraDevice
         synchronized(mInterfaceLock) {
             checkIfCameraClosedOrInError();
             return mRemoteDevice.getGlobalAudioRestriction();
+        }
+    }
+
+    @Override
+    public void createExtensionSession(ExtensionSessionConfiguration extensionConfiguration)
+            throws CameraAccessException {
+        try {
+            mCurrentExtensionSession = CameraExtensionSessionImpl.createCameraExtensionSession(this,
+                    mContext,
+                    extensionConfiguration);
+        } catch (RemoteException e) {
+            throw new CameraAccessException(CameraAccessException.CAMERA_ERROR);
         }
     }
 }

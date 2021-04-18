@@ -33,7 +33,7 @@ public final class DumpState {
     public static final int DUMP_KEYSETS = 1 << 14;
     public static final int DUMP_VERSION = 1 << 15;
     public static final int DUMP_INSTALLS = 1 << 16;
-    public static final int DUMP_INTENT_FILTER_VERIFIERS = 1 << 17;
+    public static final int DUMP_DOMAIN_VERIFIER = 1 << 17;
     public static final int DUMP_DOMAIN_PREFERRED = 1 << 18;
     public static final int DUMP_FROZEN = 1 << 19;
     public static final int DUMP_DEXOPT = 1 << 20;
@@ -55,6 +55,10 @@ public final class DumpState {
     private int mOptions;
 
     private boolean mTitlePrinted;
+    private boolean mFullPreferred;
+    private boolean mCheckIn;
+
+    private String mTargetPackageName;
 
     private SharedUserSetting mSharedUser;
 
@@ -98,5 +102,29 @@ public final class DumpState {
 
     public void setSharedUser(SharedUserSetting user) {
         mSharedUser = user;
+    }
+
+    public String getTargetPackageName() {
+        return mTargetPackageName;
+    }
+
+    public void setTargetPackageName(String packageName) {
+        mTargetPackageName = packageName;
+    }
+
+    public boolean isFullPreferred() {
+        return mFullPreferred;
+    }
+
+    public void setFullPreferred(boolean fullPreferred) {
+        mFullPreferred = fullPreferred;
+    }
+
+    public boolean isCheckIn() {
+        return mCheckIn;
+    }
+
+    public void setCheckIn(boolean checkIn) {
+        mCheckIn = checkIn;
     }
 }

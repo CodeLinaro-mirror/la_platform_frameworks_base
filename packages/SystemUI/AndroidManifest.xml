@@ -87,6 +87,7 @@
     <uses-permission android:name="android.permission.MASTER_CLEAR" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.MANAGE_SENSOR_PRIVACY" />
+    <uses-permission android:name="android.permission.OBSERVE_SENSOR_PRIVACY" />
 
     <!-- ActivityManager -->
     <uses-permission android:name="android.permission.REAL_GET_TASKS" />
@@ -334,6 +335,12 @@
             </intent-filter>
         </receiver>
 
+        <activity android:name=".screenshot.LongScreenshotActivity"
+                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+                  android:process=":screenshot"
+                  android:exported="false"
+                  android:finishOnTaskLaunch="true" />
+
         <activity android:name=".screenrecord.ScreenRecordDialog"
             android:theme="@style/ScreenRecord"
             android:showForAllUsers="true"
@@ -352,14 +359,6 @@
         <service android:name=".ImageWallpaper"
                 android:permission="android.permission.BIND_WALLPAPER"
                 android:exported="true" />
-
-        <activity
-            android:name="com.android.wm.shell.bubbles.BubbleOverflowActivity"
-            android:theme="@style/BubbleOverflow"
-            android:excludeFromRecents="true"
-            android:documentLaunchMode="always"
-            android:resizeableActivity="true">
-        </activity>
 
         <activity android:name=".tuner.TunerActivity"
                   android:enabled="false"
@@ -439,6 +438,15 @@
             android:finishOnCloseSystemDialogs="true"
             android:excludeFromRecents="true">
         </activity>
+
+        <!-- started from SensoryPrivacyService -->
+        <activity android:name=".sensorprivacy.SensorUseStartedActivity"
+                  android:exported="true"
+                  android:permission="android.permission.MANAGE_SENSOR_PRIVACY"
+                  android:theme="@style/Theme.SystemUI.Dialog.Alert"
+                  android:finishOnCloseSystemDialogs="true">
+        </activity>
+
 
         <!-- started from UsbDeviceSettingsManager -->
         <activity android:name=".usb.UsbAccessoryUriActivity"
@@ -598,6 +606,14 @@
         <service android:name=".people.widget.PeopleSpaceWidgetService"
             android:permission="android.permission.BIND_REMOTEVIEWS"
             android:exported="false" />
+
+        <!-- ContentProvider that returns a People Tile preview for a given shortcut -->
+        <provider
+            android:name="com.android.systemui.people.PeopleProvider"
+            android:authorities="com.android.systemui.people.PeopleProvider"
+            android:exported="true"
+            android:permission="android.permission.GET_PEOPLE_TILE_PREVIEW">
+        </provider>
 
         <!-- a gallery of delicious treats -->
         <service

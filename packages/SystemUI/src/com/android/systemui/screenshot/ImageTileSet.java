@@ -15,14 +15,20 @@
  */
 package com.android.systemui.screenshot;
 
+import android.annotation.AnyThread;
 import android.graphics.Bitmap;
 import android.graphics.HardwareRenderer;
 import android.graphics.RecordingCanvas;
 import android.graphics.Rect;
 import android.graphics.RenderNode;
 import android.graphics.drawable.Drawable;
+import android.os.Handler;
+import android.util.Log;
 
 import androidx.annotation.UiThread;
+
+import com.android.internal.util.CallbackRegistry;
+import com.android.internal.util.CallbackRegistry.NotifierCallback;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +42,13 @@ import java.util.List;
 class ImageTileSet {
 
     private static final String TAG = "ImageTileSet";
+
+    private CallbackRegistry<OnBoundsChangedListener, ImageTileSet, Rect> mOnBoundsListeners;
+    private CallbackRegistry<OnContentChangedListener, ImageTileSet, Rect> mContentListeners;
+
+    ImageTileSet(@UiThread Handler handler) {
+        mHandler = handler;
+    }
 
     interface OnBoundsChangedListener {
         /**
@@ -54,32 +67,68 @@ class ImageTileSet {
 
     private final List<ImageTile> mTiles = new ArrayList<>();
     private final Rect mBounds = new Rect();
+    private final Handler mHandler;
 
     private OnContentChangedListener mOnContentChangedListener;
     private OnBoundsChangedListener mOnBoundsChangedListener;
 
-    void setOnBoundsChangedListener(OnBoundsChangedListener listener) {
-        mOnBoundsChangedListener = listener;
+    void addOnBoundsChangedListener(OnBoundsChangedListener listener) {
+        if (mOnBoundsListeners == null) {
+            mOnBoundsListeners = new CallbackRegistry<>(
+                    new NotifierCallback<OnBoundsChangedListener, ImageTileSet, Rect>() {
+                        @Override
+                        public void onNotifyCallback(OnBoundsChangedListener callback,
+                                ImageTileSet sender,
+                                int arg, Rect newBounds) {
+                            callback.onBoundsChanged(newBounds.left, newBounds.top, newBounds.right,
+                                    newBounds.bottom);
+                        }
+                    });
+        }
+        mOnBoundsListeners.add(listener);
     }
 
-    void setOnContentChangedListener(OnContentChangedListener listener) {
-        mOnContentChangedListener = listener;
+    void addOnContentChangedListener(OnContentChangedListener listener) {
+        if (mContentListeners == null) {
+            mContentListeners = new CallbackRegistry<>(
+                    new NotifierCallback<OnContentChangedListener, ImageTileSet, Rect>() {
+                        @Override
+                        public void onNotifyCallback(OnContentChangedListener callback,
+                                ImageTileSet sender,
+                                int arg, Rect newBounds) {
+                            callback.onContentChanged();
+                        }
+                    });
+        }
+        mContentListeners.add(listener);
     }
 
+    @AnyThread
     void addTile(ImageTile tile) {
+        if (!mHandler.getLooper().isCurrentThread()) {
+            mHandler.post(() -> addTile(tile));
+            return;
+        }
         final Rect newBounds = new Rect(mBounds);
         final Rect newRect = tile.getLocation();
         mTiles.add(tile);
         newBounds.union(newRect);
         if (!newBounds.equals(mBounds)) {
             mBounds.set(newBounds);
-            if (mOnBoundsChangedListener != null) {
-                mOnBoundsChangedListener.onBoundsChanged(
-                        newBounds.left, newBounds.top, newBounds.right, newBounds.bottom);
-            }
+            notifyBoundsChanged(mBounds);
         }
-        if (mOnContentChangedListener != null) {
-            mOnContentChangedListener.onContentChanged();
+        notifyContentChanged();
+    }
+
+    private void notifyContentChanged() {
+        if (mContentListeners != null) {
+            mContentListeners.notifyCallbacks(this, 0, null);
+        }
+    }
+
+    private void notifyBoundsChanged(Rect bounds) {
+        if (mOnBoundsListeners != null) {
+            mOnBoundsListeners.notifyCallbacks(this, 0, bounds);
         }
     }
 
@@ -108,21 +157,27 @@ class ImageTileSet {
     }
 
     Bitmap toBitmap() {
+        return toBitmap(new Rect(0, 0, getWidth(), getHeight()));
+    }
+
+    /**
+     * @param bounds Selected portion of the tile set's bounds (equivalent to tile bounds coord
+     *               space). For example, to get the whole doc, use Rect(0, 0, getWidth(),
+     *               getHeight()).
+     */
+    Bitmap toBitmap(Rect bounds) {
+        Log.d(TAG, "exporting with bounds: " + bounds);
         if (mTiles.isEmpty()) {
             return null;
         }
         final RenderNode output = new RenderNode("Bitmap Export");
-        output.setPosition(0, 0, getWidth(), getHeight());
+        output.setPosition(0, 0, bounds.width(), bounds.height());
         RecordingCanvas canvas = output.beginRecording();
-        canvas.translate(-getLeft(), -getTop());
-        for (ImageTile tile : mTiles) {
-            canvas.save();
-            canvas.translate(tile.getLeft(), tile.getTop());
-            canvas.drawRenderNode(tile.getDisplayList());
-            canvas.restore();
-        }
+        Drawable drawable = getDrawable();
+        drawable.setBounds(bounds);
+        drawable.draw(canvas);
         output.endRecording();
-        return HardwareRenderer.createHardwareBitmap(output, getWidth(), getHeight());
+        return HardwareRenderer.createHardwareBitmap(output, bounds.width(), bounds.height());
     }
 
     int getLeft() {
@@ -149,15 +204,19 @@ class ImageTileSet {
         return mBounds.height();
     }
 
+    @AnyThread
     void clear() {
-        mBounds.set(0, 0, 0, 0);
+        if (!mHandler.getLooper().isCurrentThread()) {
+            mHandler.post(this::clear);
+            return;
+        }
+        if (mTiles.isEmpty()) {
+            return;
+        }
+        mBounds.setEmpty();
         mTiles.forEach(ImageTile::close);
         mTiles.clear();
-        if (mOnBoundsChangedListener != null) {
-            mOnBoundsChangedListener.onBoundsChanged(0, 0, 0, 0);
-        }
-        if (mOnContentChangedListener != null) {
-            mOnContentChangedListener.onContentChanged();
-        }
+        notifyBoundsChanged(mBounds);
+        notifyContentChanged();
     }
 }

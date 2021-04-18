@@ -39,6 +39,7 @@ import com.android.systemui.qs.dagger.QSScope;
 import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.settings.brightness.BrightnessController;
 import com.android.systemui.settings.brightness.BrightnessSlider;
+import com.android.systemui.statusbar.FeatureFlags;
 import com.android.systemui.statusbar.policy.BrightnessMirrorController;
 import com.android.systemui.tuner.TunerService;
 
@@ -89,9 +90,10 @@ public class QSPanelController extends QSPanelControllerBase<QSPanel> {
             QSTileRevealController.Factory qsTileRevealControllerFactory,
             DumpManager dumpManager, MetricsLogger metricsLogger, UiEventLogger uiEventLogger,
             QSLogger qsLogger, BrightnessController.Factory brightnessControllerFactory,
-            BrightnessSlider.Factory brightnessSliderFactory) {
+            BrightnessSlider.Factory brightnessSliderFactory,
+            FeatureFlags featureFlags) {
         super(view, qstileHost, qsCustomizerController, usingMediaPlayer, mediaHost,
-                metricsLogger, uiEventLogger, qsLogger, dumpManager);
+                metricsLogger, uiEventLogger, qsLogger, dumpManager, featureFlags);
         mQsSecurityFooter = qsSecurityFooter;
         mTunerService = tunerService;
         mQsCustomizerController = qsCustomizerController;
@@ -122,7 +124,6 @@ public class QSPanelController extends QSPanelControllerBase<QSPanel> {
         updateMediaDisappearParameters();
 
         mTunerService.addTunable(mView, QS_SHOW_BRIGHTNESS);
-        mTunerService.addTunable(mTunable, QS_REMOVE_LABELS);
         mView.updateResources();
         if (mView.isListening()) {
             refreshAllTiles();
@@ -136,13 +137,6 @@ public class QSPanelController extends QSPanelControllerBase<QSPanel> {
     }
 
     @Override
-    boolean switchTileLayout(boolean force) {
-        boolean result = super.switchTileLayout(force);
-        getTileLayout().setShowLabels(mShowLabels);
-        return result;
-    }
-
-    @Override
     protected QSTileRevealController createTileRevealController() {
         return mQsTileRevealControllerFactory.create(
                 this, (PagedTileLayout) mView.createRegularTileLayout());
@@ -150,7 +144,6 @@ public class QSPanelController extends QSPanelControllerBase<QSPanel> {
 
     @Override
     protected void onViewDetached() {
-        mTunerService.removeTunable(mTunable);
         mTunerService.removeTunable(mView);
         mView.removeOnConfigurationChangedListener(mOnConfigurationChangedListener);
         if (mBrightnessMirrorController != null) {
@@ -303,7 +296,7 @@ public class QSPanelController extends QSPanelControllerBase<QSPanel> {
     }
 
     /** */
-    public void showDetailDapater(DetailAdapter detailAdapter, int x, int y) {
+    public void showDetailAdapter(DetailAdapter detailAdapter, int x, int y) {
         mView.showDetailAdapter(true, detailAdapter, new int[]{x, y});
     }
 
@@ -316,21 +309,5 @@ public class QSPanelController extends QSPanelControllerBase<QSPanel> {
     public boolean isExpanded() {
         return mView.isExpanded();
     }
-
-    private TunerService.Tunable mTunable = new TunerService.Tunable() {
-        @Override
-        public void onTuningChanged(String key, String newValue) {
-            if (QS_REMOVE_LABELS.equals(key)) {
-                boolean newShowLabels = newValue == null || "0".equals(newValue);
-                if (mShowLabels == newShowLabels) return;
-                mShowLabels = newShowLabels;
-                for (TileRecord t : mRecords) {
-                    t.tileView.setShowLabels(mShowLabels);
-                }
-                getTileLayout().setShowLabels(mShowLabels);
-                mView.requestLayout();
-            }
-        }
-    };
 }
 

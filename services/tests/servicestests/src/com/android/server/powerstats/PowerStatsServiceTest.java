@@ -16,15 +16,18 @@
 
 package com.android.server.powerstats;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import android.content.Context;
-import android.hardware.power.stats.ChannelInfo;
+import android.hardware.power.stats.Channel;
+import android.hardware.power.stats.EnergyConsumer;
+import android.hardware.power.stats.EnergyConsumerAttribution;
 import android.hardware.power.stats.EnergyConsumerResult;
 import android.hardware.power.stats.EnergyMeasurement;
-import android.hardware.power.stats.PowerEntityInfo;
-import android.hardware.power.stats.StateInfo;
+import android.hardware.power.stats.PowerEntity;
+import android.hardware.power.stats.State;
 import android.hardware.power.stats.StateResidency;
 import android.hardware.power.stats.StateResidencyResult;
 
@@ -32,11 +35,14 @@ import androidx.test.InstrumentationRegistry;
 
 import com.android.server.SystemService;
 import com.android.server.powerstats.PowerStatsHALWrapper.IPowerStatsHALWrapper;
-import com.android.server.powerstats.nano.PowerEntityInfoProto;
+import com.android.server.powerstats.ProtoStreamUtils.ChannelUtils;
+import com.android.server.powerstats.ProtoStreamUtils.EnergyConsumerUtils;
+import com.android.server.powerstats.ProtoStreamUtils.PowerEntityUtils;
+import com.android.server.powerstats.nano.PowerEntityProto;
 import com.android.server.powerstats.nano.PowerStatsServiceMeterProto;
 import com.android.server.powerstats.nano.PowerStatsServiceModelProto;
 import com.android.server.powerstats.nano.PowerStatsServiceResidencyProto;
-import com.android.server.powerstats.nano.StateInfoProto;
+import com.android.server.powerstats.nano.StateProto;
 import com.android.server.powerstats.nano.StateResidencyProto;
 import com.android.server.powerstats.nano.StateResidencyResultProto;
 
@@ -50,6 +56,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.Random;
 
 /**
@@ -61,15 +68,21 @@ import java.util.Random;
 public class PowerStatsServiceTest {
     private static final String TAG = PowerStatsServiceTest.class.getSimpleName();
     private static final String DATA_STORAGE_SUBDIR = "powerstatstest";
-    private static final String METER_FILENAME = "metertest";
-    private static final String MODEL_FILENAME = "modeltest";
-    private static final String RESIDENCY_FILENAME = "residencytest";
+    private static final String METER_FILENAME = "log.powerstats.metertest.0";
+    private static final String MODEL_FILENAME = "log.powerstats.modeltest.0";
+    private static final String RESIDENCY_FILENAME = "log.powerstats.residencytest.0";
     private static final String PROTO_OUTPUT_FILENAME = "powerstats.proto";
     private static final String CHANNEL_NAME = "channelname";
+    private static final String CHANNEL_SUBSYSTEM = "channelsubsystem";
     private static final String POWER_ENTITY_NAME = "powerentityinfo";
     private static final String STATE_NAME = "stateinfo";
+    private static final String ENERGY_CONSUMER_NAME = "energyconsumer";
+    private static final String METER_CACHE_FILENAME = "meterCacheTest";
+    private static final String MODEL_CACHE_FILENAME = "modelCacheTest";
+    private static final String RESIDENCY_CACHE_FILENAME = "residencyCacheTest";
     private static final int ENERGY_METER_COUNT = 8;
     private static final int ENERGY_CONSUMER_COUNT = 2;
+    private static final int ENERGY_CONSUMER_ATTRIBUTION_COUNT = 5;
     private static final int POWER_ENTITY_COUNT = 3;
     private static final int STATE_INFO_COUNT = 5;
     private static final int STATE_RESIDENCY_COUNT = 4;
@@ -85,12 +98,12 @@ public class PowerStatsServiceTest {
         private TestPowerStatsHALWrapper mTestPowerStatsHALWrapper = new TestPowerStatsHALWrapper();
         @Override
         File createDataStoragePath() {
-            mDataStorageDir = null;
-
-            try {
-                mDataStorageDir = Files.createTempDirectory(DATA_STORAGE_SUBDIR).toFile();
-            } catch (IOException e) {
-                fail("Could not create temp directory.");
+            if (mDataStorageDir == null) {
+                try {
+                    mDataStorageDir = Files.createTempDirectory(DATA_STORAGE_SUBDIR).toFile();
+                } catch (IOException e) {
+                    fail("Could not create temp directory.");
+                }
             }
 
             return mDataStorageDir;
@@ -112,16 +125,36 @@ public class PowerStatsServiceTest {
         }
 
         @Override
+        String createMeterCacheFilename() {
+            return METER_CACHE_FILENAME;
+        }
+
+        @Override
+        String createModelCacheFilename() {
+            return MODEL_CACHE_FILENAME;
+        }
+
+        @Override
+        String createResidencyCacheFilename() {
+            return RESIDENCY_CACHE_FILENAME;
+        }
+
+        @Override
         IPowerStatsHALWrapper getPowerStatsHALWrapperImpl() {
             return mTestPowerStatsHALWrapper;
         }
 
         @Override
         PowerStatsLogger createPowerStatsLogger(Context context, File dataStoragePath,
-                String meterFilename, String modelFilename, String residencyFilename,
+                String meterFilename, String meterCacheFilename,
+                String modelFilename, String modelCacheFilename,
+                String residencyFilename, String residencyCacheFilename,
                 IPowerStatsHALWrapper powerStatsHALWrapper) {
-            mPowerStatsLogger = new PowerStatsLogger(context, dataStoragePath, meterFilename,
-                modelFilename, residencyFilename, powerStatsHALWrapper);
+            mPowerStatsLogger = new PowerStatsLogger(context, dataStoragePath,
+                meterFilename, meterCacheFilename,
+                modelFilename, modelCacheFilename,
+                residencyFilename, residencyCacheFilename,
+                powerStatsHALWrapper);
             return mPowerStatsLogger;
         }
 
@@ -142,20 +175,20 @@ public class PowerStatsServiceTest {
 
     public static final class TestPowerStatsHALWrapper implements IPowerStatsHALWrapper {
         @Override
-        public PowerEntityInfo[] getPowerEntityInfo() {
-            PowerEntityInfo[] powerEntityInfoList = new PowerEntityInfo[POWER_ENTITY_COUNT];
-            for (int i = 0; i < powerEntityInfoList.length; i++) {
-                powerEntityInfoList[i] = new PowerEntityInfo();
-                powerEntityInfoList[i].powerEntityId = i;
-                powerEntityInfoList[i].powerEntityName = new String(POWER_ENTITY_NAME + i);
-                powerEntityInfoList[i].states = new StateInfo[STATE_INFO_COUNT];
-                for (int j = 0; j < powerEntityInfoList[i].states.length; j++) {
-                    powerEntityInfoList[i].states[j] = new StateInfo();
-                    powerEntityInfoList[i].states[j].stateId = j;
-                    powerEntityInfoList[i].states[j].stateName = new String(STATE_NAME + j);
+        public PowerEntity[] getPowerEntityInfo() {
+            PowerEntity[] powerEntityList = new PowerEntity[POWER_ENTITY_COUNT];
+            for (int i = 0; i < powerEntityList.length; i++) {
+                powerEntityList[i] = new PowerEntity();
+                powerEntityList[i].id = i;
+                powerEntityList[i].name = new String(POWER_ENTITY_NAME + i);
+                powerEntityList[i].states = new State[STATE_INFO_COUNT];
+                for (int j = 0; j < powerEntityList[i].states.length; j++) {
+                    powerEntityList[i].states[j] = new State();
+                    powerEntityList[i].states[j].id = j;
+                    powerEntityList[i].states[j].name = new String(STATE_NAME + j);
                 }
             }
-            return powerEntityInfoList;
+            return powerEntityList;
         }
 
         @Override
@@ -164,12 +197,12 @@ public class PowerStatsServiceTest {
                 new StateResidencyResult[POWER_ENTITY_COUNT];
             for (int i = 0; i < stateResidencyResultList.length; i++) {
                 stateResidencyResultList[i] = new StateResidencyResult();
-                stateResidencyResultList[i].powerEntityId = i;
+                stateResidencyResultList[i].id = i;
                 stateResidencyResultList[i].stateResidencyData =
                     new StateResidency[STATE_RESIDENCY_COUNT];
                 for (int j = 0; j < stateResidencyResultList[i].stateResidencyData.length; j++) {
                     stateResidencyResultList[i].stateResidencyData[j] = new StateResidency();
-                    stateResidencyResultList[i].stateResidencyData[j].stateId = j;
+                    stateResidencyResultList[i].stateResidencyData[j].id = j;
                     stateResidencyResultList[i].stateResidencyData[j].totalTimeInStateMs = j;
                     stateResidencyResultList[i].stateResidencyData[j].totalStateEntryCount = j;
                     stateResidencyResultList[i].stateResidencyData[j].lastEntryTimestampMs = j;
@@ -180,12 +213,16 @@ public class PowerStatsServiceTest {
         }
 
         @Override
-        public int[] getEnergyConsumerInfo() {
-            int[] energyConsumerInfoList = new int[ENERGY_CONSUMER_COUNT];
-            for (int i = 0; i < energyConsumerInfoList.length; i++) {
-                energyConsumerInfoList[i] = i;
+        public EnergyConsumer[] getEnergyConsumerInfo() {
+            EnergyConsumer[] energyConsumerList = new EnergyConsumer[ENERGY_CONSUMER_COUNT];
+            for (int i = 0; i < energyConsumerList.length; i++) {
+                energyConsumerList[i] = new EnergyConsumer();
+                energyConsumerList[i].id = i;
+                energyConsumerList[i].ordinal = i;
+                energyConsumerList[i].type = (byte) i;
+                energyConsumerList[i].name = new String(ENERGY_CONSUMER_NAME + i);
             }
-            return energyConsumerInfoList;
+            return energyConsumerList;
         }
 
         @Override
@@ -194,31 +231,40 @@ public class PowerStatsServiceTest {
                 new EnergyConsumerResult[ENERGY_CONSUMER_COUNT];
             for (int i = 0; i < energyConsumedList.length; i++) {
                 energyConsumedList[i] = new EnergyConsumerResult();
-                energyConsumedList[i].energyConsumerId = i;
+                energyConsumedList[i].id = i;
                 energyConsumedList[i].timestampMs = i;
                 energyConsumedList[i].energyUWs = i;
+                energyConsumedList[i].attribution =
+                    new EnergyConsumerAttribution[ENERGY_CONSUMER_ATTRIBUTION_COUNT];
+                for (int j = 0; j < energyConsumedList[i].attribution.length; j++) {
+                    energyConsumedList[i].attribution[j] = new EnergyConsumerAttribution();
+                    energyConsumedList[i].attribution[j].uid = j;
+                    energyConsumedList[i].attribution[j].energyUWs = j;
+                }
             }
             return energyConsumedList;
         }
 
         @Override
-        public ChannelInfo[] getEnergyMeterInfo() {
-            ChannelInfo[] energyMeterInfoList = new ChannelInfo[ENERGY_METER_COUNT];
-            for (int i = 0; i < energyMeterInfoList.length; i++) {
-                energyMeterInfoList[i] = new ChannelInfo();
-                energyMeterInfoList[i].channelId = i;
-                energyMeterInfoList[i].channelName = new String(CHANNEL_NAME + i);
+        public Channel[] getEnergyMeterInfo() {
+            Channel[] energyMeterList = new Channel[ENERGY_METER_COUNT];
+            for (int i = 0; i < energyMeterList.length; i++) {
+                energyMeterList[i] = new Channel();
+                energyMeterList[i].id = i;
+                energyMeterList[i].name = new String(CHANNEL_NAME + i);
+                energyMeterList[i].subsystem = new String(CHANNEL_SUBSYSTEM + i);
             }
-            return energyMeterInfoList;
+            return energyMeterList;
         }
 
         @Override
-        public EnergyMeasurement[] readEnergyMeters(int[] channelIds) {
+        public EnergyMeasurement[] readEnergyMeter(int[] channelIds) {
             EnergyMeasurement[] energyMeasurementList = new EnergyMeasurement[ENERGY_METER_COUNT];
             for (int i = 0; i < energyMeasurementList.length; i++) {
                 energyMeasurementList[i] = new EnergyMeasurement();
-                energyMeasurementList[i].channelId = i;
+                energyMeasurementList[i].id = i;
                 energyMeasurementList[i].timestampMs = i;
+                energyMeasurementList[i].durationMs = i;
                 energyMeasurementList[i].energyUWs = i;
             }
             return energyMeasurementList;
@@ -241,7 +287,7 @@ public class PowerStatsServiceTest {
         mService.onBootPhase(SystemService.PHASE_BOOT_COMPLETED);
 
         // Write data to on-device storage.
-        mTimerTrigger.logPowerStatsData(PowerStatsLogger.MSG_LOG_TO_DATA_STORAGE_TIMER);
+        mTimerTrigger.logPowerStatsData(PowerStatsLogger.MSG_LOG_TO_DATA_STORAGE_HIGH_FREQUENCY);
 
         // The above call puts a message on a handler.  Wait for
         // it to be processed.
@@ -260,18 +306,21 @@ public class PowerStatsServiceTest {
         // Parse the incident data into a PowerStatsServiceMeterProto object.
         PowerStatsServiceMeterProto pssProto = PowerStatsServiceMeterProto.parseFrom(fileContent);
 
-        // Validate the channelInfo array matches what was written to on-device storage.
-        assertTrue(pssProto.channelInfo.length == ENERGY_METER_COUNT);
-        for (int i = 0; i < pssProto.channelInfo.length; i++) {
-            assertTrue(pssProto.channelInfo[i].channelId == i);
-            assertTrue(pssProto.channelInfo[i].channelName.equals(CHANNEL_NAME + i));
+        // Validate the channel array matches what was written to on-device storage.
+        assertTrue(pssProto.channel.length == ENERGY_METER_COUNT);
+        for (int i = 0; i < pssProto.channel.length; i++) {
+            assertTrue(pssProto.channel[i].id == i);
+            assertTrue(pssProto.channel[i].name.equals(CHANNEL_NAME + i));
+            assertTrue(pssProto.channel[i].subsystem.equals(CHANNEL_SUBSYSTEM + i));
         }
 
         // Validate the energyMeasurement array matches what was written to on-device storage.
         assertTrue(pssProto.energyMeasurement.length == ENERGY_METER_COUNT);
         for (int i = 0; i < pssProto.energyMeasurement.length; i++) {
-            assertTrue(pssProto.energyMeasurement[i].channelId == i);
-            assertTrue(pssProto.energyMeasurement[i].timestampMs == i);
+            assertTrue(pssProto.energyMeasurement[i].id == i);
+            assertTrue(pssProto.energyMeasurement[i].timestampMs ==
+                    i + mPowerStatsLogger.getStartWallTime());
+            assertTrue(pssProto.energyMeasurement[i].durationMs == i);
             assertTrue(pssProto.energyMeasurement[i].energyUws == i);
         }
     }
@@ -282,7 +331,7 @@ public class PowerStatsServiceTest {
         mService.onBootPhase(SystemService.PHASE_BOOT_COMPLETED);
 
         // Write data to on-device storage.
-        mTimerTrigger.logPowerStatsData(PowerStatsLogger.MSG_LOG_TO_DATA_STORAGE_TIMER);
+        mTimerTrigger.logPowerStatsData(PowerStatsLogger.MSG_LOG_TO_DATA_STORAGE_LOW_FREQUENCY);
 
         // The above call puts a message on a handler.  Wait for
         // it to be processed.
@@ -301,18 +350,25 @@ public class PowerStatsServiceTest {
         // Parse the incident data into a PowerStatsServiceModelProto object.
         PowerStatsServiceModelProto pssProto = PowerStatsServiceModelProto.parseFrom(fileContent);
 
-        // Validate the energyConsumerId array matches what was written to on-device storage.
-        assertTrue(pssProto.energyConsumerId.length == ENERGY_CONSUMER_COUNT);
-        for (int i = 0; i < pssProto.energyConsumerId.length; i++) {
-            assertTrue(pssProto.energyConsumerId[i].energyConsumerId == i);
+        // Validate the energyConsumer array matches what was written to on-device storage.
+        assertTrue(pssProto.energyConsumer.length == ENERGY_CONSUMER_COUNT);
+        for (int i = 0; i < pssProto.energyConsumer.length; i++) {
+            assertTrue(pssProto.energyConsumer[i].id == i);
         }
 
         // Validate the energyConsumerResult array matches what was written to on-device storage.
         assertTrue(pssProto.energyConsumerResult.length == ENERGY_CONSUMER_COUNT);
         for (int i = 0; i < pssProto.energyConsumerResult.length; i++) {
-            assertTrue(pssProto.energyConsumerResult[i].energyConsumerId == i);
-            assertTrue(pssProto.energyConsumerResult[i].timestampMs == i);
+            assertTrue(pssProto.energyConsumerResult[i].id == i);
+            assertTrue(pssProto.energyConsumerResult[i].timestampMs ==
+                    i + mPowerStatsLogger.getStartWallTime());
             assertTrue(pssProto.energyConsumerResult[i].energyUws == i);
+            assertTrue(pssProto.energyConsumerResult[i].attribution.length
+                    == ENERGY_CONSUMER_ATTRIBUTION_COUNT);
+            for (int j = 0; j < pssProto.energyConsumerResult[i].attribution.length; j++) {
+                assertTrue(pssProto.energyConsumerResult[i].attribution[j].uid == j);
+                assertTrue(pssProto.energyConsumerResult[i].attribution[j].energyUws  == j);
+            }
         }
     }
 
@@ -342,16 +398,16 @@ public class PowerStatsServiceTest {
         PowerStatsServiceResidencyProto pssProto =
                 PowerStatsServiceResidencyProto.parseFrom(fileContent);
 
-        // Validate the powerEntityInfo array matches what was written to on-device storage.
-        assertTrue(pssProto.powerEntityInfo.length == POWER_ENTITY_COUNT);
-        for (int i = 0; i < pssProto.powerEntityInfo.length; i++) {
-            PowerEntityInfoProto powerEntityInfo = pssProto.powerEntityInfo[i];
-            assertTrue(powerEntityInfo.powerEntityId == i);
-            assertTrue(powerEntityInfo.powerEntityName.equals(POWER_ENTITY_NAME + i));
-            for (int j = 0; j < powerEntityInfo.states.length; j++) {
-                StateInfoProto stateInfo = powerEntityInfo.states[j];
-                assertTrue(stateInfo.stateId == j);
-                assertTrue(stateInfo.stateName.equals(STATE_NAME + j));
+        // Validate the powerEntity array matches what was written to on-device storage.
+        assertTrue(pssProto.powerEntity.length == POWER_ENTITY_COUNT);
+        for (int i = 0; i < pssProto.powerEntity.length; i++) {
+            PowerEntityProto powerEntity = pssProto.powerEntity[i];
+            assertTrue(powerEntity.id == i);
+            assertTrue(powerEntity.name.equals(POWER_ENTITY_NAME + i));
+            for (int j = 0; j < powerEntity.states.length; j++) {
+                StateProto state = powerEntity.states[j];
+                assertTrue(state.id == j);
+                assertTrue(state.name.equals(STATE_NAME + j));
             }
         }
 
@@ -359,14 +415,15 @@ public class PowerStatsServiceTest {
         assertTrue(pssProto.stateResidencyResult.length == POWER_ENTITY_COUNT);
         for (int i = 0; i < pssProto.stateResidencyResult.length; i++) {
             StateResidencyResultProto stateResidencyResult = pssProto.stateResidencyResult[i];
-            assertTrue(stateResidencyResult.powerEntityId == i);
+            assertTrue(stateResidencyResult.id == i);
             assertTrue(stateResidencyResult.stateResidencyData.length == STATE_RESIDENCY_COUNT);
             for (int j = 0; j < stateResidencyResult.stateResidencyData.length; j++) {
                 StateResidencyProto stateResidency = stateResidencyResult.stateResidencyData[j];
-                assertTrue(stateResidency.stateId == j);
+                assertTrue(stateResidency.id == j);
                 assertTrue(stateResidency.totalTimeInStateMs == j);
                 assertTrue(stateResidency.totalStateEntryCount == j);
-                assertTrue(stateResidency.lastEntryTimestampMs == j);
+                assertTrue(stateResidency.lastEntryTimestampMs ==
+                        j + mPowerStatsLogger.getStartWallTime());
             }
         }
     }
@@ -400,12 +457,13 @@ public class PowerStatsServiceTest {
         // Parse the incident data into a PowerStatsServiceMeterProto object.
         PowerStatsServiceMeterProto pssProto = PowerStatsServiceMeterProto.parseFrom(fileContent);
 
-        // Valid channelInfo data is written to the incident report in the call to
+        // Valid channel data is written to the incident report in the call to
         // mPowerStatsLogger.writeMeterDataToFile().
-        assertTrue(pssProto.channelInfo.length == ENERGY_METER_COUNT);
-        for (int i = 0; i < pssProto.channelInfo.length; i++) {
-            assertTrue(pssProto.channelInfo[i].channelId == i);
-            assertTrue(pssProto.channelInfo[i].channelName.equals(CHANNEL_NAME + i));
+        assertTrue(pssProto.channel.length == ENERGY_METER_COUNT);
+        for (int i = 0; i < pssProto.channel.length; i++) {
+            assertTrue(pssProto.channel[i].id == i);
+            assertTrue(pssProto.channel[i].name.equals(CHANNEL_NAME + i));
+            assertTrue(pssProto.channel[i].subsystem.equals(CHANNEL_SUBSYSTEM + i));
         }
 
         // No energyMeasurements should be written to the incident report since it
@@ -442,11 +500,11 @@ public class PowerStatsServiceTest {
         // Parse the incident data into a PowerStatsServiceModelProto object.
         PowerStatsServiceModelProto pssProto = PowerStatsServiceModelProto.parseFrom(fileContent);
 
-        // Valid energyConsumerId data is written to the incident report in the call to
+        // Valid energyConsumer data is written to the incident report in the call to
         // mPowerStatsLogger.writeModelDataToFile().
-        assertTrue(pssProto.energyConsumerId.length == ENERGY_CONSUMER_COUNT);
-        for (int i = 0; i < pssProto.energyConsumerId.length; i++) {
-            assertTrue(pssProto.energyConsumerId[i].energyConsumerId == i);
+        assertTrue(pssProto.energyConsumer.length == ENERGY_CONSUMER_COUNT);
+        for (int i = 0; i < pssProto.energyConsumer.length; i++) {
+            assertTrue(pssProto.energyConsumer[i].id == i);
         }
 
         // No energyConsumerResults should be written to the incident report since it
@@ -484,17 +542,17 @@ public class PowerStatsServiceTest {
         PowerStatsServiceResidencyProto pssProto =
                 PowerStatsServiceResidencyProto.parseFrom(fileContent);
 
-        // Valid powerEntityInfo data is written to the incident report in the call to
+        // Valid powerEntity data is written to the incident report in the call to
         // mPowerStatsLogger.writeResidencyDataToFile().
-        assertTrue(pssProto.powerEntityInfo.length == POWER_ENTITY_COUNT);
-        for (int i = 0; i < pssProto.powerEntityInfo.length; i++) {
-            PowerEntityInfoProto powerEntityInfo = pssProto.powerEntityInfo[i];
-            assertTrue(powerEntityInfo.powerEntityId == i);
-            assertTrue(powerEntityInfo.powerEntityName.equals(POWER_ENTITY_NAME + i));
-            for (int j = 0; j < powerEntityInfo.states.length; j++) {
-                StateInfoProto stateInfo = powerEntityInfo.states[j];
-                assertTrue(stateInfo.stateId == j);
-                assertTrue(stateInfo.stateName.equals(STATE_NAME + j));
+        assertTrue(pssProto.powerEntity.length == POWER_ENTITY_COUNT);
+        for (int i = 0; i < pssProto.powerEntity.length; i++) {
+            PowerEntityProto powerEntity = pssProto.powerEntity[i];
+            assertTrue(powerEntity.id == i);
+            assertTrue(powerEntity.name.equals(POWER_ENTITY_NAME + i));
+            for (int j = 0; j < powerEntity.states.length; j++) {
+                StateProto state = powerEntity.states[j];
+                assertTrue(state.id == j);
+                assertTrue(state.name.equals(STATE_NAME + j));
             }
         }
 
@@ -533,12 +591,13 @@ public class PowerStatsServiceTest {
         // Parse the incident data into a PowerStatsServiceMeterProto object.
         PowerStatsServiceMeterProto pssProto = PowerStatsServiceMeterProto.parseFrom(fileContent);
 
-        // Valid channelInfo data is written to the incident report in the call to
+        // Valid channel data is written to the incident report in the call to
         // mPowerStatsLogger.writeMeterDataToFile().
-        assertTrue(pssProto.channelInfo.length == ENERGY_METER_COUNT);
-        for (int i = 0; i < pssProto.channelInfo.length; i++) {
-            assertTrue(pssProto.channelInfo[i].channelId == i);
-            assertTrue(pssProto.channelInfo[i].channelName.equals(CHANNEL_NAME + i));
+        assertTrue(pssProto.channel.length == ENERGY_METER_COUNT);
+        for (int i = 0; i < pssProto.channel.length; i++) {
+            assertTrue(pssProto.channel[i].id == i);
+            assertTrue(pssProto.channel[i].name.equals(CHANNEL_NAME + i));
+            assertTrue(pssProto.channel[i].subsystem.equals(CHANNEL_SUBSYSTEM + i));
         }
 
         // No energyMeasurements should be written to the incident report since the
@@ -576,11 +635,11 @@ public class PowerStatsServiceTest {
         // Parse the incident data into a PowerStatsServiceModelProto object.
         PowerStatsServiceModelProto pssProto = PowerStatsServiceModelProto.parseFrom(fileContent);
 
-        // Valid energyConsumerId data is written to the incident report in the call to
+        // Valid energyConsumer data is written to the incident report in the call to
         // mPowerStatsLogger.writeModelDataToFile().
-        assertTrue(pssProto.energyConsumerId.length == ENERGY_CONSUMER_COUNT);
-        for (int i = 0; i < pssProto.energyConsumerId.length; i++) {
-            assertTrue(pssProto.energyConsumerId[i].energyConsumerId == i);
+        assertTrue(pssProto.energyConsumer.length == ENERGY_CONSUMER_COUNT);
+        for (int i = 0; i < pssProto.energyConsumer.length; i++) {
+            assertTrue(pssProto.energyConsumer[i].id == i);
         }
 
         // No energyConsumerResults should be written to the incident report since the
@@ -619,22 +678,333 @@ public class PowerStatsServiceTest {
         PowerStatsServiceResidencyProto pssProto =
                 PowerStatsServiceResidencyProto.parseFrom(fileContent);
 
-        // Valid powerEntityInfo data is written to the incident report in the call to
+        // Valid powerEntity data is written to the incident report in the call to
         // mPowerStatsLogger.writeResidencyDataToFile().
-        assertTrue(pssProto.powerEntityInfo.length == POWER_ENTITY_COUNT);
-        for (int i = 0; i < pssProto.powerEntityInfo.length; i++) {
-            PowerEntityInfoProto powerEntityInfo = pssProto.powerEntityInfo[i];
-            assertTrue(powerEntityInfo.powerEntityId == i);
-            assertTrue(powerEntityInfo.powerEntityName.equals(POWER_ENTITY_NAME + i));
-            for (int j = 0; j < powerEntityInfo.states.length; j++) {
-                StateInfoProto stateInfo = powerEntityInfo.states[j];
-                assertTrue(stateInfo.stateId == j);
-                assertTrue(stateInfo.stateName.equals(STATE_NAME + j));
+        assertTrue(pssProto.powerEntity.length == POWER_ENTITY_COUNT);
+        for (int i = 0; i < pssProto.powerEntity.length; i++) {
+            PowerEntityProto powerEntity = pssProto.powerEntity[i];
+            assertTrue(powerEntity.id == i);
+            assertTrue(powerEntity.name.equals(POWER_ENTITY_NAME + i));
+            for (int j = 0; j < powerEntity.states.length; j++) {
+                StateProto state = powerEntity.states[j];
+                assertTrue(state.id == j);
+                assertTrue(state.name.equals(STATE_NAME + j));
             }
         }
 
         // No stateResidencyResults should be written to the incident report since the
         // input buffer had only length and no data.
         assertTrue(pssProto.stateResidencyResult.length == 0);
+    }
+
+    @Test
+    public void testDataStorageDeletedMeterMismatch() throws IOException {
+        // Create the directory where cached data will be stored.
+        mInjector.createDataStoragePath();
+
+        // In order to create cached data that will match the current data read by the
+        // PowerStatsService we need to write valid data from the TestPowerStatsHALWrapper that is
+        // returned from the Injector.
+        IPowerStatsHALWrapper powerStatsHALWrapper = mInjector.getPowerStatsHALWrapperImpl();
+
+        // Generate random array of bytes to emulate cached meter data.  Store to file.
+        Random rd = new Random();
+        byte[] bytes = new byte[100];
+        rd.nextBytes(bytes);
+        File onDeviceStorageFile = new File(mDataStorageDir, mInjector.createMeterCacheFilename());
+        FileOutputStream onDeviceStorageFos = new FileOutputStream(onDeviceStorageFile);
+        onDeviceStorageFos.write(bytes);
+        onDeviceStorageFos.close();
+
+        // Create cached energy consumer data and write to file.
+        EnergyConsumer[] energyConsumers = powerStatsHALWrapper.getEnergyConsumerInfo();
+        bytes = EnergyConsumerUtils.getProtoBytes(energyConsumers);
+        onDeviceStorageFile = new File(mDataStorageDir, mInjector.createModelCacheFilename());
+        onDeviceStorageFos = new FileOutputStream(onDeviceStorageFile);
+        onDeviceStorageFos.write(bytes);
+        onDeviceStorageFos.close();
+
+        // Create cached power entity info data and write to file.
+        PowerEntity[] powerEntityInfo = powerStatsHALWrapper.getPowerEntityInfo();
+        bytes = PowerEntityUtils.getProtoBytes(powerEntityInfo);
+        onDeviceStorageFile = new File(mDataStorageDir, mInjector.createResidencyCacheFilename());
+        onDeviceStorageFos = new FileOutputStream(onDeviceStorageFile);
+        onDeviceStorageFos.write(bytes);
+        onDeviceStorageFos.close();
+
+        // Create log files.
+        File meterFile = new File(mDataStorageDir, mInjector.createMeterFilename());
+        File modelFile = new File(mDataStorageDir, mInjector.createModelFilename());
+        File residencyFile = new File(mDataStorageDir, mInjector.createResidencyFilename());
+        meterFile.createNewFile();
+        modelFile.createNewFile();
+        residencyFile.createNewFile();
+
+        // Verify log files exist.
+        assertTrue(meterFile.exists());
+        assertTrue(modelFile.exists());
+        assertTrue(residencyFile.exists());
+
+        // Boot device after creating old cached data.
+        mService.onBootPhase(SystemService.PHASE_BOOT_COMPLETED);
+
+        // Since cached meter data is just random bytes it won't match the data read from the HAL.
+        // This mismatch of cached and current HAL data should force a delete.
+        assertTrue(mService.getDeleteMeterDataOnBoot());
+        assertFalse(mService.getDeleteModelDataOnBoot());
+        assertFalse(mService.getDeleteResidencyDataOnBoot());
+
+        // Verify log files were deleted.
+        assertFalse(meterFile.exists());
+        assertTrue(modelFile.exists());
+        assertTrue(residencyFile.exists());
+
+        // Verify cached meter data was updated to new HAL output.
+        Channel[] channels = powerStatsHALWrapper.getEnergyMeterInfo();
+        byte[] bytesExpected = ChannelUtils.getProtoBytes(channels);
+        onDeviceStorageFile = new File(mDataStorageDir, mInjector.createMeterCacheFilename());
+        byte[] bytesActual = new byte[(int) onDeviceStorageFile.length()];
+        FileInputStream onDeviceStorageFis = new FileInputStream(onDeviceStorageFile);
+        onDeviceStorageFis.read(bytesActual);
+        assertTrue(Arrays.equals(bytesExpected, bytesActual));
+    }
+
+    @Test
+    public void testDataStorageDeletedModelMismatch() throws IOException {
+        // Create the directory where cached data will be stored.
+        mInjector.createDataStoragePath();
+
+        // In order to create cached data that will match the current data read by the
+        // PowerStatsService we need to write valid data from the TestPowerStatsHALWrapper that is
+        // returned from the Injector.
+        IPowerStatsHALWrapper powerStatsHALWrapper = mInjector.getPowerStatsHALWrapperImpl();
+
+        // Create cached channel data and write to file.
+        Channel[] channels = powerStatsHALWrapper.getEnergyMeterInfo();
+        byte[] bytes = ChannelUtils.getProtoBytes(channels);
+        File onDeviceStorageFile = new File(mDataStorageDir, mInjector.createMeterCacheFilename());
+        FileOutputStream onDeviceStorageFos = new FileOutputStream(onDeviceStorageFile);
+        onDeviceStorageFos.write(bytes);
+        onDeviceStorageFos.close();
+
+        // Generate random array of bytes to emulate cached energy consumer data.  Store to file.
+        Random rd = new Random();
+        bytes = new byte[100];
+        rd.nextBytes(bytes);
+        onDeviceStorageFile = new File(mDataStorageDir, mInjector.createModelCacheFilename());
+        onDeviceStorageFos = new FileOutputStream(onDeviceStorageFile);
+        onDeviceStorageFos.write(bytes);
+        onDeviceStorageFos.close();
+
+        // Create cached power entity info data and write to file.
+        PowerEntity[] powerEntityInfo = powerStatsHALWrapper.getPowerEntityInfo();
+        bytes = PowerEntityUtils.getProtoBytes(powerEntityInfo);
+        onDeviceStorageFile = new File(mDataStorageDir, mInjector.createResidencyCacheFilename());
+        onDeviceStorageFos = new FileOutputStream(onDeviceStorageFile);
+        onDeviceStorageFos.write(bytes);
+        onDeviceStorageFos.close();
+
+        // Create log files.
+        File meterFile = new File(mDataStorageDir, mInjector.createMeterFilename());
+        File modelFile = new File(mDataStorageDir, mInjector.createModelFilename());
+        File residencyFile = new File(mDataStorageDir, mInjector.createResidencyFilename());
+        meterFile.createNewFile();
+        modelFile.createNewFile();
+        residencyFile.createNewFile();
+
+        // Verify log files exist.
+        assertTrue(meterFile.exists());
+        assertTrue(modelFile.exists());
+        assertTrue(residencyFile.exists());
+
+        // Boot device after creating old cached data.
+        mService.onBootPhase(SystemService.PHASE_BOOT_COMPLETED);
+
+        // Since cached energy consumer data is just random bytes it won't match the data read from
+        // the HAL.  This mismatch of cached and current HAL data should force a delete.
+        assertFalse(mService.getDeleteMeterDataOnBoot());
+        assertTrue(mService.getDeleteModelDataOnBoot());
+        assertFalse(mService.getDeleteResidencyDataOnBoot());
+
+        // Verify log files were deleted.
+        assertTrue(meterFile.exists());
+        assertFalse(modelFile.exists());
+        assertTrue(residencyFile.exists());
+
+        // Verify cached energy consumer data was updated to new HAL output.
+        EnergyConsumer[] energyConsumers = powerStatsHALWrapper.getEnergyConsumerInfo();
+        byte[] bytesExpected = EnergyConsumerUtils.getProtoBytes(energyConsumers);
+        onDeviceStorageFile = new File(mDataStorageDir, mInjector.createModelCacheFilename());
+        byte[] bytesActual = new byte[(int) onDeviceStorageFile.length()];
+        FileInputStream onDeviceStorageFis = new FileInputStream(onDeviceStorageFile);
+        onDeviceStorageFis.read(bytesActual);
+        assertTrue(Arrays.equals(bytesExpected, bytesActual));
+    }
+
+    @Test
+    public void testDataStorageDeletedResidencyMismatch() throws IOException {
+        // Create the directory where cached data will be stored.
+        mInjector.createDataStoragePath();
+
+        // In order to create cached data that will match the current data read by the
+        // PowerStatsService we need to write valid data from the TestPowerStatsHALWrapper that is
+        // returned from the Injector.
+        IPowerStatsHALWrapper powerStatsHALWrapper = mInjector.getPowerStatsHALWrapperImpl();
+
+        // Create cached channel data and write to file.
+        Channel[] channels = powerStatsHALWrapper.getEnergyMeterInfo();
+        byte[] bytes = ChannelUtils.getProtoBytes(channels);
+        File onDeviceStorageFile = new File(mDataStorageDir, mInjector.createMeterCacheFilename());
+        FileOutputStream onDeviceStorageFos = new FileOutputStream(onDeviceStorageFile);
+        onDeviceStorageFos.write(bytes);
+        onDeviceStorageFos.close();
+
+        // Create cached energy consumer data and write to file.
+        EnergyConsumer[] energyConsumers = powerStatsHALWrapper.getEnergyConsumerInfo();
+        bytes = EnergyConsumerUtils.getProtoBytes(energyConsumers);
+        onDeviceStorageFile = new File(mDataStorageDir, mInjector.createModelCacheFilename());
+        onDeviceStorageFos = new FileOutputStream(onDeviceStorageFile);
+        onDeviceStorageFos.write(bytes);
+        onDeviceStorageFos.close();
+
+        // Generate random array of bytes to emulate cached power entity info data.  Store to file.
+        Random rd = new Random();
+        bytes = new byte[100];
+        rd.nextBytes(bytes);
+        onDeviceStorageFile = new File(mDataStorageDir, mInjector.createResidencyCacheFilename());
+        onDeviceStorageFos = new FileOutputStream(onDeviceStorageFile);
+        onDeviceStorageFos.write(bytes);
+        onDeviceStorageFos.close();
+
+        // Create log files.
+        File meterFile = new File(mDataStorageDir, mInjector.createMeterFilename());
+        File modelFile = new File(mDataStorageDir, mInjector.createModelFilename());
+        File residencyFile = new File(mDataStorageDir, mInjector.createResidencyFilename());
+        meterFile.createNewFile();
+        modelFile.createNewFile();
+        residencyFile.createNewFile();
+
+        // Verify log files exist.
+        assertTrue(meterFile.exists());
+        assertTrue(modelFile.exists());
+        assertTrue(residencyFile.exists());
+
+        // Boot device after creating old cached data.
+        mService.onBootPhase(SystemService.PHASE_BOOT_COMPLETED);
+
+        // Since cached power entity info data is just random bytes it won't match the data read
+        // from the HAL.  This mismatch of cached and current HAL data should force a delete.
+        assertFalse(mService.getDeleteMeterDataOnBoot());
+        assertFalse(mService.getDeleteModelDataOnBoot());
+        assertTrue(mService.getDeleteResidencyDataOnBoot());
+
+        // Verify log files were deleted.
+        assertTrue(meterFile.exists());
+        assertTrue(modelFile.exists());
+        assertFalse(residencyFile.exists());
+
+        // Verify cached power entity data was updated to new HAL output.
+        PowerEntity[] powerEntityInfo = powerStatsHALWrapper.getPowerEntityInfo();
+        byte[] bytesExpected = PowerEntityUtils.getProtoBytes(powerEntityInfo);
+        onDeviceStorageFile = new File(mDataStorageDir, mInjector.createResidencyCacheFilename());
+        byte[] bytesActual = new byte[(int) onDeviceStorageFile.length()];
+        FileInputStream onDeviceStorageFis = new FileInputStream(onDeviceStorageFile);
+        onDeviceStorageFis.read(bytesActual);
+        assertTrue(Arrays.equals(bytesExpected, bytesActual));
+    }
+
+    @Test
+    public void testDataStorageNotDeletedNoCachedData() throws IOException {
+        // Create the directory where log files will be stored.
+        mInjector.createDataStoragePath();
+
+        // Create log files.
+        File meterFile = new File(mDataStorageDir, mInjector.createMeterFilename());
+        File modelFile = new File(mDataStorageDir, mInjector.createModelFilename());
+        File residencyFile = new File(mDataStorageDir, mInjector.createResidencyFilename());
+        meterFile.createNewFile();
+        modelFile.createNewFile();
+        residencyFile.createNewFile();
+
+        // Verify log files exist.
+        assertTrue(meterFile.exists());
+        assertTrue(modelFile.exists());
+        assertTrue(residencyFile.exists());
+
+        // This test mimics the device's first boot where there is no cached data.
+        mService.onBootPhase(SystemService.PHASE_BOOT_COMPLETED);
+
+        // Since there is no cached data on the first boot any log files that happen to exist
+        // should be deleted.
+        assertTrue(mService.getDeleteMeterDataOnBoot());
+        assertTrue(mService.getDeleteModelDataOnBoot());
+        assertTrue(mService.getDeleteResidencyDataOnBoot());
+
+        // Verify log files were deleted.
+        assertFalse(meterFile.exists());
+        assertFalse(modelFile.exists());
+        assertFalse(residencyFile.exists());
+    }
+
+    @Test
+    public void testDataStorageNotDeletedAllDataMatches() throws IOException {
+        // Create the directory where cached data will be stored.
+        mInjector.createDataStoragePath();
+
+        // In order to create cached data that will match the current data read by the
+        // PowerStatsService we need to write valid data from the TestPowerStatsHALWrapper that is
+        // returned from the Injector.
+        IPowerStatsHALWrapper powerStatsHALWrapper = mInjector.getPowerStatsHALWrapperImpl();
+
+        // Create cached channel data and write to file.
+        Channel[] channels = powerStatsHALWrapper.getEnergyMeterInfo();
+        byte[] bytes = ChannelUtils.getProtoBytes(channels);
+        File onDeviceStorageFile = new File(mDataStorageDir, mInjector.createMeterCacheFilename());
+        FileOutputStream onDeviceStorageFos = new FileOutputStream(onDeviceStorageFile);
+        onDeviceStorageFos.write(bytes);
+        onDeviceStorageFos.close();
+
+        // Create cached energy consumer data and write to file.
+        EnergyConsumer[] energyConsumers = powerStatsHALWrapper.getEnergyConsumerInfo();
+        bytes = EnergyConsumerUtils.getProtoBytes(energyConsumers);
+        onDeviceStorageFile = new File(mDataStorageDir, mInjector.createModelCacheFilename());
+        onDeviceStorageFos = new FileOutputStream(onDeviceStorageFile);
+        onDeviceStorageFos.write(bytes);
+        onDeviceStorageFos.close();
+
+        // Create cached power entity info data and write to file.
+        PowerEntity[] powerEntityInfo = powerStatsHALWrapper.getPowerEntityInfo();
+        bytes = PowerEntityUtils.getProtoBytes(powerEntityInfo);
+        onDeviceStorageFile = new File(mDataStorageDir, mInjector.createResidencyCacheFilename());
+        onDeviceStorageFos = new FileOutputStream(onDeviceStorageFile);
+        onDeviceStorageFos.write(bytes);
+        onDeviceStorageFos.close();
+
+        // Create log files.
+        File meterFile = new File(mDataStorageDir, mInjector.createMeterFilename());
+        File modelFile = new File(mDataStorageDir, mInjector.createModelFilename());
+        File residencyFile = new File(mDataStorageDir, mInjector.createResidencyFilename());
+        meterFile.createNewFile();
+        modelFile.createNewFile();
+        residencyFile.createNewFile();
+
+        // Verify log files exist.
+        assertTrue(meterFile.exists());
+        assertTrue(modelFile.exists());
+        assertTrue(residencyFile.exists());
+
+        // Boot device after creating old cached data.
+        mService.onBootPhase(SystemService.PHASE_BOOT_COMPLETED);
+
+        // All cached data created above should match current data read in PowerStatsService so we
+        // expect the data not to be deleted.
+        assertFalse(mService.getDeleteMeterDataOnBoot());
+        assertFalse(mService.getDeleteModelDataOnBoot());
+        assertFalse(mService.getDeleteResidencyDataOnBoot());
+
+        // Verify log files were not deleted.
+        assertTrue(meterFile.exists());
+        assertTrue(modelFile.exists());
+        assertTrue(residencyFile.exists());
     }
 }

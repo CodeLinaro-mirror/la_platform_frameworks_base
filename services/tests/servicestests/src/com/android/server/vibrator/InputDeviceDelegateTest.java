@@ -67,9 +67,8 @@ public class InputDeviceDelegateTest {
     private static final String REASON = "some reason";
     private static final VibrationAttributes VIBRATION_ATTRIBUTES =
             new VibrationAttributes.Builder().setUsage(VibrationAttributes.USAGE_ALARM).build();
-    private static final VibrationEffect EFFECT = VibrationEffect.createOneShot(100, 255);
     private static final CombinedVibrationEffect SYNCED_EFFECT =
-            CombinedVibrationEffect.createSynced(EFFECT);
+            CombinedVibrationEffect.createSynced(VibrationEffect.createOneShot(100, 255));
 
     @Rule public MockitoRule rule = MockitoJUnit.rule();
 
@@ -92,6 +91,7 @@ public class InputDeviceDelegateTest {
 
         mInputDeviceDelegate = new InputDeviceDelegate(
                 mContextSpy, new Handler(mTestLooper.getLooper()));
+        mInputDeviceDelegate.onSystemReady();
     }
 
     @After
@@ -100,11 +100,30 @@ public class InputDeviceDelegateTest {
     }
 
     @Test
+    public void beforeSystemReady_ignoresAnyUpdate() throws Exception {
+        when(mIInputManagerMock.getInputDeviceIds()).thenReturn(new int[0]);
+        InputDeviceDelegate inputDeviceDelegate = new InputDeviceDelegate(
+                mContextSpy, new Handler(mTestLooper.getLooper()));
+
+        inputDeviceDelegate.updateInputDeviceVibrators(/* vibrateInputDevices= */ true);
+        assertFalse(inputDeviceDelegate.isAvailable());
+
+        inputDeviceDelegate.onInputDeviceAdded(1);
+        assertFalse(inputDeviceDelegate.isAvailable());
+
+        updateInputDevices(new int[]{1});
+        assertFalse(inputDeviceDelegate.isAvailable());
+
+        verify(mIInputManagerMock, never()).getInputDevice(anyInt());
+    }
+
+    @Test
     public void onInputDeviceAdded_withSettingsDisabled_ignoresNewDevice() throws Exception {
         when(mIInputManagerMock.getInputDeviceIds()).thenReturn(new int[0]);
         mInputDeviceDelegate.updateInputDeviceVibrators(/* vibrateInputDevices= */ false);
         assertFalse(mInputDeviceDelegate.isAvailable());
 
+        when(mIInputManagerMock.getVibratorIds(eq(1))).thenReturn(new int[]{1});
         when(mIInputManagerMock.getInputDevice(eq(1))).thenReturn(createInputDeviceWithVibrator(1));
         mInputDeviceDelegate.onInputDeviceAdded(1);
 
@@ -118,6 +137,7 @@ public class InputDeviceDelegateTest {
         mInputDeviceDelegate.updateInputDeviceVibrators(/* vibrateInputDevices= */ true);
         assertFalse(mInputDeviceDelegate.isAvailable());
 
+        when(mIInputManagerMock.getVibratorIds(eq(1))).thenReturn(new int[0]);
         when(mIInputManagerMock.getInputDevice(eq(1)))
                 .thenReturn(createInputDeviceWithoutVibrator(1));
         updateInputDevices(new int[]{1});
@@ -132,6 +152,7 @@ public class InputDeviceDelegateTest {
         mInputDeviceDelegate.updateInputDeviceVibrators(/* vibrateInputDevices= */ true);
         assertFalse(mInputDeviceDelegate.isAvailable());
 
+        when(mIInputManagerMock.getVibratorIds(eq(1))).thenReturn(new int[]{1});
         when(mIInputManagerMock.getInputDevice(eq(1))).thenReturn(createInputDeviceWithVibrator(1));
         updateInputDevices(new int[]{1});
 
@@ -142,6 +163,7 @@ public class InputDeviceDelegateTest {
     @Test
     public void onInputDeviceChanged_withSettingsDisabled_ignoresDevice() throws Exception {
         when(mIInputManagerMock.getInputDeviceIds()).thenReturn(new int[]{1});
+        when(mIInputManagerMock.getVibratorIds(eq(1))).thenReturn(new int[]{1});
         when(mIInputManagerMock.getInputDevice(eq(1))).thenReturn(createInputDeviceWithVibrator(1));
         mInputDeviceDelegate.updateInputDeviceVibrators(/* vibrateInputDevices= */ false);
 
@@ -153,6 +175,7 @@ public class InputDeviceDelegateTest {
     @Test
     public void onInputDeviceChanged_deviceLosesVibrator_removesDevice() throws Exception {
         when(mIInputManagerMock.getInputDeviceIds()).thenReturn(new int[]{1});
+        when(mIInputManagerMock.getVibratorIds(eq(1))).thenReturn(new int[]{1}, new int[0]);
         when(mIInputManagerMock.getInputDevice(eq(1)))
                 .thenReturn(createInputDeviceWithVibrator(1), createInputDeviceWithoutVibrator(1));
 
@@ -167,6 +190,7 @@ public class InputDeviceDelegateTest {
     @Test
     public void onInputDeviceChanged_deviceLost_removesDevice() throws Exception {
         when(mIInputManagerMock.getInputDeviceIds()).thenReturn(new int[]{1});
+        when(mIInputManagerMock.getVibratorIds(eq(1))).thenReturn(new int[]{1}, new int[0]);
         when(mIInputManagerMock.getInputDevice(eq(1)))
                 .thenReturn(createInputDeviceWithVibrator(1), (InputDevice) null);
 
@@ -181,6 +205,7 @@ public class InputDeviceDelegateTest {
     @Test
     public void onInputDeviceChanged_deviceAddsVibrator_addsDevice() throws Exception {
         when(mIInputManagerMock.getInputDeviceIds()).thenReturn(new int[]{1});
+        when(mIInputManagerMock.getVibratorIds(eq(1))).thenReturn(new int[0], new int[]{1});
         when(mIInputManagerMock.getInputDevice(eq(1)))
                 .thenReturn(createInputDeviceWithoutVibrator(1), createInputDeviceWithVibrator(1));
 
@@ -195,8 +220,10 @@ public class InputDeviceDelegateTest {
     @Test
     public void onInputDeviceRemoved_removesDevice() throws Exception {
         when(mIInputManagerMock.getInputDeviceIds()).thenReturn(new int[]{1, 2});
+        when(mIInputManagerMock.getVibratorIds(eq(1))).thenReturn(new int[0]);
         when(mIInputManagerMock.getInputDevice(eq(1))).thenReturn(
                 createInputDeviceWithoutVibrator(1));
+        when(mIInputManagerMock.getVibratorIds(eq(2))).thenReturn(new int[]{1});
         when(mIInputManagerMock.getInputDevice(eq(2))).thenReturn(createInputDeviceWithVibrator(2));
 
         mInputDeviceDelegate.updateInputDeviceVibrators(/* vibrateInputDevices= */ true);
@@ -209,7 +236,9 @@ public class InputDeviceDelegateTest {
     @Test
     public void updateInputDeviceVibrators_usesFlagToLoadDeviceList() throws Exception {
         when(mIInputManagerMock.getInputDeviceIds()).thenReturn(new int[]{1, 2});
+        when(mIInputManagerMock.getVibratorIds(eq(1))).thenReturn(new int[]{1});
         when(mIInputManagerMock.getInputDevice(eq(1))).thenReturn(createInputDeviceWithVibrator(1));
+        when(mIInputManagerMock.getVibratorIds(eq(2))).thenReturn(new int[]{1});
         when(mIInputManagerMock.getInputDevice(eq(2))).thenReturn(createInputDeviceWithVibrator(2));
 
         mInputDeviceDelegate.updateInputDeviceVibrators(/* vibrateInputDevices= */ true);
@@ -223,6 +252,7 @@ public class InputDeviceDelegateTest {
     public void updateInputDeviceVibrators_withDeviceWithoutVibrator_deviceIsIgnored()
             throws Exception {
         when(mIInputManagerMock.getInputDeviceIds()).thenReturn(new int[]{1});
+        when(mIInputManagerMock.getVibratorIds(eq(1))).thenReturn(new int[0]);
         when(mIInputManagerMock.getInputDevice(eq(1)))
                 .thenReturn(createInputDeviceWithoutVibrator(1));
         mInputDeviceDelegate.updateInputDeviceVibrators(/* vibrateInputDevices= */ true);
@@ -240,14 +270,16 @@ public class InputDeviceDelegateTest {
     public void vibrateIfAvailable_withInputDevices_returnsTrueAndVibratesAllDevices()
             throws Exception {
         when(mIInputManagerMock.getInputDeviceIds()).thenReturn(new int[]{1, 2});
+        when(mIInputManagerMock.getVibratorIds(eq(1))).thenReturn(new int[]{1});
         when(mIInputManagerMock.getInputDevice(eq(1))).thenReturn(createInputDeviceWithVibrator(1));
+        when(mIInputManagerMock.getVibratorIds(eq(2))).thenReturn(new int[]{1});
         when(mIInputManagerMock.getInputDevice(eq(2))).thenReturn(createInputDeviceWithVibrator(2));
         mInputDeviceDelegate.updateInputDeviceVibrators(/* vibrateInputDevices= */ true);
 
         assertTrue(mInputDeviceDelegate.vibrateIfAvailable(
                 UID, PACKAGE_NAME, SYNCED_EFFECT, REASON, VIBRATION_ATTRIBUTES));
-        verify(mIInputManagerMock).vibrate(eq(1), same(EFFECT), any());
-        verify(mIInputManagerMock).vibrate(eq(2), same(EFFECT), any());
+        verify(mIInputManagerMock).vibrateCombined(eq(1), same(SYNCED_EFFECT), any());
+        verify(mIInputManagerMock).vibrateCombined(eq(2), same(SYNCED_EFFECT), any());
     }
 
     @Test
@@ -261,7 +293,9 @@ public class InputDeviceDelegateTest {
     public void cancelVibrateIfAvailable_withInputDevices_returnsTrueAndStopsAllDevices()
             throws Exception {
         when(mIInputManagerMock.getInputDeviceIds()).thenReturn(new int[]{1, 2});
+        when(mIInputManagerMock.getVibratorIds(eq(1))).thenReturn(new int[]{1});
         when(mIInputManagerMock.getInputDevice(eq(1))).thenReturn(createInputDeviceWithVibrator(1));
+        when(mIInputManagerMock.getVibratorIds(eq(2))).thenReturn(new int[]{1});
         when(mIInputManagerMock.getInputDevice(eq(2))).thenReturn(createInputDeviceWithVibrator(2));
         mInputDeviceDelegate.updateInputDeviceVibrators(/* vibrateInputDevices= */ true);
 
@@ -294,6 +328,8 @@ public class InputDeviceDelegateTest {
 
     private InputDevice createInputDevice(int id, boolean hasVibrator) {
         return new InputDevice(id, 0, 0, "name", 0, 0, "description", false, 0, 0,
-                null, hasVibrator, false, false, false /* hasSensor */);
+                null, hasVibrator, false, false, false /* hasSensor */, false /* hasBattery */);
+
+
     }
 }

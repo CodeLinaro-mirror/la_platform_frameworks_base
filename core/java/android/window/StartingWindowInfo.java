@@ -35,6 +35,31 @@ import android.view.WindowManager;
 @TestApi
 public final class StartingWindowInfo implements Parcelable {
     /**
+     * Prefer nothing or not care the type of starting window.
+     * @hide
+     */
+    public static final int STARTING_WINDOW_TYPE_NONE = 0;
+    /**
+     * Prefer splash screen starting window.
+     * @hide
+     */
+    public static final int STARTING_WINDOW_TYPE_SPLASH_SCREEN = 1;
+    /**
+     * Prefer snapshot starting window.
+     * @hide
+     */
+    public static final int STARTING_WINDOW_TYPE_SNAPSHOT = 2;
+    /**
+     * @hide
+     */
+    @IntDef(flag = true, prefix = "STARTING_WINDOW_TYPE_", value = {
+            STARTING_WINDOW_TYPE_NONE,
+            STARTING_WINDOW_TYPE_SPLASH_SCREEN,
+            STARTING_WINDOW_TYPE_SNAPSHOT
+    })
+    public @interface StartingWindowType {}
+
+    /**
      * The {@link TaskInfo} from this task.
      *  @hide
      */
@@ -95,6 +120,12 @@ public final class StartingWindowInfo implements Parcelable {
      */
     public int startingWindowTypeParameter;
 
+    /**
+     * Specifies a theme for the splash screen.
+     * @hide
+     */
+    public int splashScreenThemeResId;
+
     public StartingWindowInfo() {
 
     }
@@ -115,6 +146,7 @@ public final class StartingWindowInfo implements Parcelable {
         dest.writeTypedObject(topOpaqueWindowInsetsState, flags);
         dest.writeTypedObject(topOpaqueWindowLayoutParams, flags);
         dest.writeTypedObject(mainWindowLayoutParams, flags);
+        dest.writeInt(splashScreenThemeResId);
     }
 
     void readFromParcel(@NonNull Parcel source) {
@@ -124,6 +156,7 @@ public final class StartingWindowInfo implements Parcelable {
         topOpaqueWindowLayoutParams = source.readTypedObject(
                 WindowManager.LayoutParams.CREATOR);
         mainWindowLayoutParams = source.readTypedObject(WindowManager.LayoutParams.CREATOR);
+        splashScreenThemeResId = source.readInt();
     }
 
     @Override
@@ -135,7 +168,8 @@ public final class StartingWindowInfo implements Parcelable {
                 + Integer.toHexString(startingWindowTypeParameter)
                 + " insetsState=" + topOpaqueWindowInsetsState
                 + " topWindowLayoutParams=" + topOpaqueWindowLayoutParams
-                + " mainWindowLayoutParams=" + mainWindowLayoutParams;
+                + " mainWindowLayoutParams=" + mainWindowLayoutParams
+                + " splashScreenThemeResId " + Integer.toHexString(splashScreenThemeResId);
     }
 
     public static final @android.annotation.NonNull Creator<StartingWindowInfo> CREATOR =

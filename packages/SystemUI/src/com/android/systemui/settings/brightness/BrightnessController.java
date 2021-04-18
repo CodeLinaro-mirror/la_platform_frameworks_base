@@ -41,7 +41,7 @@ import android.service.vr.IVrStateCallbacks;
 import android.util.Log;
 import android.util.MathUtils;
 
-import com.android.internal.BrightnessSynchronizer;
+import com.android.internal.display.BrightnessSynchronizer;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.settingslib.RestrictedLockUtilsInternal;
@@ -72,13 +72,12 @@ public class BrightnessController implements ToggleSlider.Listener {
     private static final Uri BRIGHTNESS_FOR_VR_FLOAT_URI =
             Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_FOR_VR_FLOAT);
 
-    private final float mMinimumBacklight;
-    private final float mMaximumBacklight;
     private final float mDefaultBacklight;
     private final float mMinimumBacklightForVr;
     private final float mMaximumBacklightForVr;
     private final float mDefaultBacklightForVr;
 
+    private final int mDisplayId;
     private final Context mContext;
     private final ToggleSlider mControl;
     private final boolean mAutomaticAvailable;
@@ -311,11 +310,8 @@ public class BrightnessController implements ToggleSlider.Listener {
         };
         mBrightnessObserver = new BrightnessObserver(mHandler);
 
+        mDisplayId = mContext.getDisplayId();
         PowerManager pm = context.getSystemService(PowerManager.class);
-        mMinimumBacklight = pm.getBrightnessConstraint(
-                PowerManager.BRIGHTNESS_CONSTRAINT_TYPE_MINIMUM);
-        mMaximumBacklight = pm.getBrightnessConstraint(
-                PowerManager.BRIGHTNESS_CONSTRAINT_TYPE_MAXIMUM);
         mDefaultBacklight = mContext.getDisplay().getBrightnessDefault();
         mMinimumBacklightForVr = pm.getBrightnessConstraint(
                 PowerManager.BRIGHTNESS_CONSTRAINT_TYPE_MINIMUM_VR);
@@ -373,8 +369,8 @@ public class BrightnessController implements ToggleSlider.Listener {
             metric = mAutomatic
                     ? MetricsEvent.ACTION_BRIGHTNESS_AUTO
                     : MetricsEvent.ACTION_BRIGHTNESS;
-            minBacklight = mMinimumBacklight;
-            maxBacklight = mMaximumBacklight;
+            minBacklight = PowerManager.BRIGHTNESS_MIN;
+            maxBacklight = PowerManager.BRIGHTNESS_MAX;
             settingToChange = Settings.System.SCREEN_BRIGHTNESS_FLOAT;
         }
         final float valFloat = MathUtils.min(convertGammaToLinearFloat(value,
@@ -420,7 +416,7 @@ public class BrightnessController implements ToggleSlider.Listener {
     }
 
     private void setBrightness(float brightness) {
-        mDisplayManager.setTemporaryBrightness(brightness);
+        mDisplayManager.setTemporaryBrightness(mDisplayId, brightness);
     }
 
     private void updateVrMode(boolean isEnabled) {
@@ -437,8 +433,8 @@ public class BrightnessController implements ToggleSlider.Listener {
             min = mMinimumBacklightForVr;
             max = mMaximumBacklightForVr;
         } else {
-            min = mMinimumBacklight;
-            max = mMaximumBacklight;
+            min = PowerManager.BRIGHTNESS_MIN;
+            max = PowerManager.BRIGHTNESS_MAX;
         }
         // convertGammaToLinearFloat returns 0-1
         if (BrightnessSynchronizer.floatEquals(brightnessValue,

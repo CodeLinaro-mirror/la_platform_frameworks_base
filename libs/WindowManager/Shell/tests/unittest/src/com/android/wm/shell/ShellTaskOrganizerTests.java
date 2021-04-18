@@ -16,27 +16,34 @@
 
 package com.android.wm.shell;
 
+import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
+import static android.view.Display.DEFAULT_DISPLAY;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.spy;
+import static com.android.wm.shell.ShellTaskOrganizer.TASK_LISTENER_TYPE_FULLSCREEN;
 import static com.android.wm.shell.ShellTaskOrganizer.TASK_LISTENER_TYPE_MULTI_WINDOW;
 import static com.android.wm.shell.ShellTaskOrganizer.TASK_LISTENER_TYPE_PIP;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 import android.app.ActivityManager.RunningTaskInfo;
 import android.content.Context;
+import android.content.LocusId;
 import android.content.pm.ParceledListSlice;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.util.SparseArray;
 import android.view.SurfaceControl;
 import android.window.ITaskOrganizer;
 import android.window.ITaskOrganizerController;
@@ -48,6 +55,7 @@ import androidx.test.filters.SmallTest;
 import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.common.SyncTransactionQueue;
 import com.android.wm.shell.common.TransactionPool;
+import com.android.wm.shell.sizecompatui.SizeCompatUIController;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -59,6 +67,9 @@ import java.util.ArrayList;
 
 /**
  * Tests for the shell task organizer.
+ *
+ * Build/Install/Run:
+ *  atest WMShellUnitTests:ShellTaskOrganizerTests
  */
 @SmallTest
 @RunWith(AndroidJUnit4.class)
@@ -68,6 +79,8 @@ public class ShellTaskOrganizerTests {
     private ITaskOrganizerController mTaskOrganizerController;
     @Mock
     private Context mContext;
+    @Mock
+    private SizeCompatUIController mSizeCompatUI;
 
     ShellTaskOrganizer mOrganizer;
     private final SyncTransactionQueue mSyncTransactionQueue = mock(SyncTransactionQueue.class);
@@ -95,6 +108,20 @@ public class ShellTaskOrganizerTests {
         }
     }
 
+    private class TrackingLocusIdListener implements ShellTaskOrganizer.LocusIdListener {
+        final SparseArray<LocusId> visibleLocusTasks = new SparseArray<>();
+        final SparseArray<LocusId> invisibleLocusTasks = new SparseArray<>();
+        @Override
+        public void onVisibilityChanged(int taskId, LocusId locus, boolean visible) {
+            if (visible) {
+                visibleLocusTasks.put(taskId, locus);
+            } else {
+                invisibleLocusTasks.put(taskId, locus);
+            }
+        }
+    }
+
+
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
@@ -102,7 +129,8 @@ public class ShellTaskOrganizerTests {
             doReturn(ParceledListSlice.<TaskAppearedInfo>emptyList())
                     .when(mTaskOrganizerController).registerTaskOrganizer(any());
         } catch (RemoteException e) {}
-        mOrganizer = spy(new ShellTaskOrganizer(mTaskOrganizerController, mTestExecutor, mContext));
+        mOrganizer = spy(new ShellTaskOrganizer(mTaskOrganizerController, mTestExecutor, mContext,
+                mSizeCompatUI));
     }
 
     @Test
@@ -255,6 +283,154 @@ public class ShellTaskOrganizerTests {
         mOrganizer.onTaskAppeared(task2, null);
 
         assertTrue(mwListener.appeared.contains(task2));
+    }
+
+    @Test
+    public void testOnSizeCompatActivityChanged() {
+        final RunningTaskInfo taskInfo1 = createTaskInfo(12, WINDOWING_MODE_FULLSCREEN);
+        taskInfo1.displayId = DEFAULT_DISPLAY;
+        taskInfo1.topActivityToken = mock(IBinder.class);
+        taskInfo1.topActivityInSizeCompat = false;
+        final TrackingTaskListener taskListener = new TrackingTaskListener();
+        mOrganizer.addListenerForType(taskListener, TASK_LISTENER_TYPE_FULLSCREEN);
+        mOrganizer.onTaskAppeared(taskInfo1, null);
+
+        // sizeCompatActivity is null if top activity is not in size compat.
+        verify(mSizeCompatUI).onSizeCompatInfoChanged(taskInfo1.displayId, taskInfo1.taskId,
+                null /* taskConfig */, null /* sizeCompatActivity*/, null /* taskListener */);
+
+        // sizeCompatActivity is non-null if top activity is in size compat.
+        clearInvocations(mSizeCompatUI);
+        final RunningTaskInfo taskInfo2 =
+                createTaskInfo(taskInfo1.taskId, taskInfo1.getWindowingMode());
+        taskInfo2.displayId = taskInfo1.displayId;
+        taskInfo2.topActivityToken = taskInfo1.topActivityToken;
+        taskInfo2.topActivityInSizeCompat = true;
+        mOrganizer.onTaskInfoChanged(taskInfo2);
+        verify(mSizeCompatUI).onSizeCompatInfoChanged(taskInfo1.displayId, taskInfo1.taskId,
+                taskInfo1.configuration, taskInfo1.topActivityToken, taskListener);
+
+        clearInvocations(mSizeCompatUI);
+        mOrganizer.onTaskVanished(taskInfo1);
+        verify(mSizeCompatUI).onSizeCompatInfoChanged(taskInfo1.displayId, taskInfo1.taskId,
+                null /* taskConfig */, null /* sizeCompatActivity*/, null /* taskListener */);
+    }
+
+    @Test
+    public void testAddLocusListener() {
+        RunningTaskInfo task1 = createTaskInfo(1, WINDOWING_MODE_MULTI_WINDOW);
+        task1.isVisible = true;
+        task1.mTopActivityLocusId = new LocusId("10");
+
+        RunningTaskInfo task2 = createTaskInfo(2, WINDOWING_MODE_FULLSCREEN);
+        task2.isVisible = true;
+        task2.mTopActivityLocusId = new LocusId("20");
+
+        RunningTaskInfo task3 = createTaskInfo(3, WINDOWING_MODE_FULLSCREEN);
+        task3.isVisible = true;
+
+        mOrganizer.onTaskAppeared(task1, null);
+        mOrganizer.onTaskAppeared(task2, null);
+        mOrganizer.onTaskAppeared(task3, null);
+
+        TrackingLocusIdListener listener = new TrackingLocusIdListener();
+        mOrganizer.addLocusIdListener(listener);
+
+        // Listener should have the locus tasks even if added after the tasks appear
+        assertEquals(listener.visibleLocusTasks.get(task1.taskId), task1.mTopActivityLocusId);
+        assertEquals(listener.visibleLocusTasks.get(task2.taskId), task2.mTopActivityLocusId);
+        assertFalse(listener.visibleLocusTasks.contains(task3.taskId));
+    }
+
+    @Test
+    public void testLocusListener_appearVanish() {
+        TrackingLocusIdListener listener = new TrackingLocusIdListener();
+        mOrganizer.addLocusIdListener(listener);
+
+        RunningTaskInfo task1 = createTaskInfo(1, WINDOWING_MODE_FULLSCREEN);
+        task1.mTopActivityLocusId = new LocusId("10");
+
+        task1.isVisible = true;
+        mOrganizer.onTaskAppeared(task1, null);
+        assertTrue(listener.visibleLocusTasks.contains(task1.taskId));
+        assertEquals(listener.visibleLocusTasks.get(task1.taskId), task1.mTopActivityLocusId);
+
+        task1.isVisible = false;
+        mOrganizer.onTaskVanished(task1);
+        assertTrue(listener.invisibleLocusTasks.contains(task1.taskId));
+        assertEquals(listener.invisibleLocusTasks.get(task1.taskId), task1.mTopActivityLocusId);
+    }
+
+    @Test
+    public void testLocusListener_infoChanged() {
+        TrackingLocusIdListener listener = new TrackingLocusIdListener();
+        mOrganizer.addLocusIdListener(listener);
+
+        RunningTaskInfo task1 = createTaskInfo(1, WINDOWING_MODE_MULTI_WINDOW);
+        task1.isVisible = true;
+        mOrganizer.onTaskAppeared(task1, null);
+        assertEquals(listener.visibleLocusTasks.size(), 0);
+
+        task1.mTopActivityLocusId = new LocusId("10");
+        mOrganizer.onTaskInfoChanged(task1);
+        assertTrue(listener.visibleLocusTasks.contains(task1.taskId));
+        assertEquals(listener.visibleLocusTasks.get(task1.taskId), task1.mTopActivityLocusId);
+
+        LocusId prevLocus = task1.mTopActivityLocusId;
+        task1.mTopActivityLocusId = new LocusId("20");
+        mOrganizer.onTaskInfoChanged(task1);
+
+        // New locus is in visible list
+        assertTrue(listener.visibleLocusTasks.contains(task1.taskId));
+        assertEquals(listener.visibleLocusTasks.get(task1.taskId), task1.mTopActivityLocusId);
+        // Old locus in invisible list
+        assertTrue(listener.invisibleLocusTasks.contains(task1.taskId));
+        assertEquals(listener.invisibleLocusTasks.get(task1.taskId), prevLocus);
+    }
+
+    @Test
+    public void testLocusListener_infoChanged_notVisible() {
+        TrackingLocusIdListener listener = new TrackingLocusIdListener();
+        mOrganizer.addLocusIdListener(listener);
+
+        RunningTaskInfo task1 = createTaskInfo(1, WINDOWING_MODE_FULLSCREEN);
+        task1.isVisible = true;
+        mOrganizer.onTaskAppeared(task1, null);
+
+        task1.mTopActivityLocusId = new LocusId("10");
+        mOrganizer.onTaskInfoChanged(task1);
+        assertTrue(listener.visibleLocusTasks.contains(task1.taskId));
+        assertEquals(listener.visibleLocusTasks.get(task1.taskId), task1.mTopActivityLocusId);
+
+        LocusId prevLocus = task1.mTopActivityLocusId;
+        task1.mTopActivityLocusId = new LocusId("20");
+        task1.isVisible = false;
+        mOrganizer.onTaskInfoChanged(task1);
+
+        // New locus for previously reported task in invisible list (since the task wasn't visible).
+        assertTrue(listener.invisibleLocusTasks.contains(task1.taskId));
+        assertEquals(listener.invisibleLocusTasks.get(task1.taskId), prevLocus);
+    }
+
+    @Test
+    public void testLocusListener_noLocusNotNotified() {
+        TrackingLocusIdListener listener = new TrackingLocusIdListener();
+        mOrganizer.addLocusIdListener(listener);
+
+        RunningTaskInfo task1 = createTaskInfo(1, WINDOWING_MODE_MULTI_WINDOW);
+        task1.isVisible = true;
+        mOrganizer.onTaskAppeared(task1, null);
+        assertEquals(listener.visibleLocusTasks.size(), 0);
+        assertEquals(listener.invisibleLocusTasks.size(), 0);
+
+        mOrganizer.onTaskInfoChanged(task1);
+        assertEquals(listener.visibleLocusTasks.size(), 0);
+        assertEquals(listener.invisibleLocusTasks.size(), 0);
+
+        task1.isVisible = false;
+        mOrganizer.onTaskVanished(task1);
+        assertEquals(listener.visibleLocusTasks.size(), 0);
+        assertEquals(listener.invisibleLocusTasks.size(), 0);
     }
 
     private static RunningTaskInfo createTaskInfo(int taskId, int windowingMode) {

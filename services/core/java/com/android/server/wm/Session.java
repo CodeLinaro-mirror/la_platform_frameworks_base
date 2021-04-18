@@ -54,10 +54,10 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.Process;
+import android.os.RemoteCallback;
 import android.os.RemoteException;
 import android.os.Trace;
 import android.os.UserHandle;
-import android.service.attestation.ImpressionToken;
 import android.text.TextUtils;
 import android.util.ArraySet;
 import android.util.MergedConfiguration;
@@ -102,9 +102,8 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
     private final ArraySet<WindowSurfaceController> mAlertWindowSurfaces = new ArraySet<>();
     private final DragDropController mDragDropController;
     final boolean mCanAddInternalSystemWindow;
-    // If non-system overlays from this process can be hidden by the user or app using
-    // HIDE_NON_SYSTEM_OVERLAY_WINDOWS.
-    final boolean mOverlaysCanBeHidden;
+    private final boolean mCanStartTasksFromRecents;
+
     final boolean mCanCreateSystemApplicationOverlay;
     final boolean mCanHideNonSystemOverlayWindows;
     final boolean mCanAcquireSleepToken;
@@ -132,8 +131,8 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
         mCanCreateSystemApplicationOverlay =
                 service.mContext.checkCallingOrSelfPermission(SYSTEM_APPLICATION_OVERLAY)
                         == PERMISSION_GRANTED;
-        mOverlaysCanBeHidden = !mCanAddInternalSystemWindow
-                && !mService.mAtmInternal.isCallerRecents(mUid);
+        mCanStartTasksFromRecents = service.mContext.checkCallingOrSelfPermission(
+                START_TASKS_FROM_RECENTS) == PERMISSION_GRANTED;
         mCanAcquireSleepToken = service.mContext.checkCallingOrSelfPermission(DEVICE_POWER)
                 == PERMISSION_GRANTED;
         mShowingAlertWindowNotificationAllowed = mService.mShowAlertWindowNotifications;
@@ -188,32 +187,30 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
 
     @Override
     public int addToDisplay(IWindow window, WindowManager.LayoutParams attrs,
-            int viewVisibility, int displayId, InsetsState requestedVisibility, Rect outFrame,
+            int viewVisibility, int displayId, InsetsState requestedVisibility,
             InputChannel outInputChannel, InsetsState outInsetsState,
             InsetsSourceControl[] outActiveControls) {
         return mService.addWindow(this, window, attrs, viewVisibility, displayId,
-                UserHandle.getUserId(mUid), requestedVisibility, outFrame, outInputChannel,
-                outInsetsState, outActiveControls);
+                UserHandle.getUserId(mUid), requestedVisibility, outInputChannel, outInsetsState,
+                outActiveControls);
     }
 
 
     @Override
     public int addToDisplayAsUser(IWindow window, WindowManager.LayoutParams attrs,
             int viewVisibility, int displayId, int userId, InsetsState requestedVisibility,
-            Rect outFrame, InputChannel outInputChannel, InsetsState outInsetsState,
+            InputChannel outInputChannel, InsetsState outInsetsState,
             InsetsSourceControl[] outActiveControls) {
         return mService.addWindow(this, window, attrs, viewVisibility, displayId, userId,
-                requestedVisibility, outFrame, outInputChannel, outInsetsState,
-                outActiveControls);
+                requestedVisibility, outInputChannel, outInsetsState, outActiveControls);
     }
 
     @Override
     public int addToDisplayWithoutInputChannel(IWindow window, WindowManager.LayoutParams attrs,
             int viewVisibility, int displayId, InsetsState outInsetsState) {
         return mService.addWindow(this, window, attrs, viewVisibility, displayId,
-                UserHandle.getUserId(mUid), mDummyRequestedVisibility,
-                new Rect() /* outFrame */, null /* outInputChannel */, outInsetsState,
-                mDummyControls);
+                UserHandle.getUserId(mUid), mDummyRequestedVisibility, null /* outInputChannel */,
+                outInsetsState, mDummyControls);
     }
 
     @Override
@@ -248,11 +245,6 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
     @Override
     public boolean outOfMemory(IWindow window) {
         return mService.outOfMemoryWindow(this, window);
-    }
-
-    @Override
-    public void setTransparentRegion(IWindow window, Region region) {
-        mService.setTransparentRegionWindow(this, window, region);
     }
 
     @Override
@@ -370,8 +362,9 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
         } else if (hasShortcut) {
             // Restrict who can start a shortcut drag since it will start the shortcut as the
             // target shortcut package
-            mService.mAtmService.enforceCallerIsRecentsOrHasPermission(START_TASKS_FROM_RECENTS,
-                    "performDrag");
+            if (!mCanStartTasksFromRecents) {
+                throw new SecurityException("Requires START_TASKS_FROM_RECENTS permission");
+            }
             for (int i = 0; i < data.getItemCount(); i++) {
                 final ClipData.Item item = data.getItemAt(i);
                 final Intent intent = item.getIntent();
@@ -399,8 +392,9 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
             }
         } else if (hasTask) {
             // TODO(b/169894807): Consider opening this up for tasks from the same app as the caller
-            mService.mAtmService.enforceCallerIsRecentsOrHasPermission(START_TASKS_FROM_RECENTS,
-                    "performDrag");
+            if (!mCanStartTasksFromRecents) {
+                throw new SecurityException("Requires START_TASKS_FROM_RECENTS permission");
+            }
             for (int i = 0; i < data.getItemCount(); i++) {
                 final ClipData.Item item = data.getItemAt(i);
                 final Intent intent = item.getIntent();
@@ -678,7 +672,7 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
 
         boolean changed;
 
-        if (mOverlaysCanBeHidden && !mCanCreateSystemApplicationOverlay) {
+        if (!mCanAddInternalSystemWindow && !mCanCreateSystemApplicationOverlay) {
             // We want to track non-system apps adding alert windows so we can post an
             // on-going notification for the user to control their visibility.
             if (visible) {
@@ -856,11 +850,11 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
     }
 
     @Override
-    public ImpressionToken generateImpressionToken(IWindow window, Rect boundsInWindow,
-            String hashAlgorithm) {
+    public void generateDisplayHash(IWindow window, Rect boundsInWindow, String hashAlgorithm,
+            RemoteCallback callback) {
         final long origId = Binder.clearCallingIdentity();
         try {
-            return mService.generateImpressionToken(this, window, boundsInWindow, hashAlgorithm);
+            mService.generateDisplayHash(this, window, boundsInWindow, hashAlgorithm, callback);
         } finally {
             Binder.restoreCallingIdentity(origId);
         }

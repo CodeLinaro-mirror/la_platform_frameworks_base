@@ -16,9 +16,12 @@
 
 package android.view.translation;
 
-import android.service.translation.TranslationRequest;
+import android.os.IBinder;
+import android.view.autofill.AutofillId;
 import android.view.translation.TranslationSpec;
 import com.android.internal.os.IResultReceiver;
+
+import java.util.List;
 
 /**
  * Mediator between apps being translated and translation service implementation.
@@ -29,4 +32,12 @@ oneway interface ITranslationManager {
     void getSupportedLocales(in IResultReceiver receiver, int userId);
     void onSessionCreated(in TranslationSpec sourceSpec, in TranslationSpec destSpec,
          int sessionId, in IResultReceiver receiver, int userId);
+
+    void updateUiTranslationState(int state, in TranslationSpec sourceSpec,
+         in TranslationSpec destSpec, in List<AutofillId> viewIds, IBinder token, int taskId,
+         int userId);
+    // deprecated
+    void updateUiTranslationStateByTaskId(int state, in TranslationSpec sourceSpec,
+         in TranslationSpec destSpec, in List<AutofillId> viewIds, int taskId,
+         int userId);
 }

@@ -18,7 +18,7 @@ package com.android.systemui.people.widget;
 
 import android.app.INotificationManager;
 import android.app.people.IPeopleManager;
-import com.android.systemui.people.PeopleSpaceTile;
+import android.app.people.PeopleSpaceTile;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.LauncherApps;
@@ -28,9 +28,11 @@ import android.util.Log;
 import android.widget.RemoteViews;
 import android.widget.RemoteViewsService;
 
+import com.android.systemui.Dependency;
 import com.android.systemui.R;
 import com.android.systemui.people.PeopleSpaceTileView;
 import com.android.systemui.people.PeopleSpaceUtils;
+import com.android.systemui.statusbar.notification.NotificationEntryManager;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -42,6 +44,7 @@ public class PeopleSpaceWidgetRemoteViewsFactory implements RemoteViewsService.R
 
     private IPeopleManager mPeopleManager;
     private INotificationManager mNotificationManager;
+    private NotificationEntryManager mNotificationEntryManager;
     private PackageManager mPackageManager;
     private LauncherApps mLauncherApps;
     private List<PeopleSpaceTile> mTiles = new ArrayList<>();
@@ -56,6 +59,7 @@ public class PeopleSpaceWidgetRemoteViewsFactory implements RemoteViewsService.R
         if (DEBUG) Log.d(TAG, "onCreate called");
         mNotificationManager = INotificationManager.Stub.asInterface(
                 ServiceManager.getService(Context.NOTIFICATION_SERVICE));
+        mNotificationEntryManager = Dependency.get(NotificationEntryManager.class);
         mPackageManager = mContext.getPackageManager();
         mPeopleManager = IPeopleManager.Stub.asInterface(
                 ServiceManager.getService(Context.PEOPLE_SERVICE));
@@ -70,7 +74,7 @@ public class PeopleSpaceWidgetRemoteViewsFactory implements RemoteViewsService.R
     private void setTileViewsWithPriorityConversations() {
         try {
             mTiles = PeopleSpaceUtils.getTiles(mContext, mNotificationManager,
-                    mPeopleManager, mLauncherApps);
+                    mPeopleManager, mLauncherApps, mNotificationEntryManager);
         } catch (Exception e) {
             Log.e(TAG, "Couldn't retrieve conversations", e);
         }
@@ -119,7 +123,8 @@ public class PeopleSpaceWidgetRemoteViewsFactory implements RemoteViewsService.R
             fillInIntent.putExtra(PeopleSpaceWidgetProvider.EXTRA_TILE_ID, tile.getId());
             fillInIntent.putExtra(
                     PeopleSpaceWidgetProvider.EXTRA_PACKAGE_NAME, tile.getPackageName());
-            fillInIntent.putExtra(PeopleSpaceWidgetProvider.EXTRA_UID, tile.getUid());
+            fillInIntent.putExtra(PeopleSpaceWidgetProvider.EXTRA_USER_HANDLE,
+                    tile.getUserHandle());
             personView.setOnClickFillInIntent(R.id.item, fillInIntent);
         } catch (Exception e) {
             Log.e(TAG, "Couldn't retrieve shortcut information", e);

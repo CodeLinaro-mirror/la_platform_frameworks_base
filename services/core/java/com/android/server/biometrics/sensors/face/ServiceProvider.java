@@ -20,6 +20,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.hardware.biometrics.IInvalidationCallback;
 import android.hardware.biometrics.ITestSession;
+import android.hardware.biometrics.ITestSessionCallback;
 import android.hardware.face.Face;
 import android.hardware.face.FaceManager;
 import android.hardware.face.FaceSensorPropertiesInternal;
@@ -28,6 +29,7 @@ import android.os.IBinder;
 import android.os.NativeHandle;
 import android.util.proto.ProtoOutputStream;
 
+import com.android.server.biometrics.sensors.BaseClientMonitor;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.LockoutTracker;
 
@@ -94,7 +96,8 @@ public interface ServiceProvider {
 
     void scheduleEnroll(int sensorId, @NonNull IBinder token, @NonNull byte[] hardwareAuthToken,
             int userId, @NonNull IFaceServiceReceiver receiver, @NonNull String opPackageName,
-            @NonNull int[] disabledFeatures, @Nullable NativeHandle surfaceHandle);
+            @NonNull int[] disabledFeatures, @Nullable NativeHandle surfaceHandle,
+            boolean debugConsent);
 
     void cancelEnrollment(int sensorId, @NonNull IBinder token);
 
@@ -108,6 +111,9 @@ public interface ServiceProvider {
     void scheduleRemove(int sensorId, @NonNull IBinder token, int faceId, int userId,
             @NonNull IFaceServiceReceiver receiver, @NonNull String opPackageName);
 
+    void scheduleRemoveAll(int sensorId, @NonNull IBinder token, int userId,
+            @NonNull IFaceServiceReceiver receiver, @NonNull String opPackageName);
+
     void scheduleResetLockout(int sensorId, int userId, @NonNull byte[] hardwareAuthToken);
 
     void scheduleSetFeature(int sensorId, @NonNull IBinder token, int userId, int feature,
@@ -119,16 +125,19 @@ public interface ServiceProvider {
 
     void startPreparedClient(int sensorId, int cookie);
 
-    void scheduleInternalCleanup(int sensorId, int userId);
+    void scheduleInternalCleanup(int sensorId, int userId,
+            @Nullable BaseClientMonitor.Callback callback);
 
-    void dumpProtoState(int sensorId, @NonNull ProtoOutputStream proto);
+    void dumpProtoState(int sensorId, @NonNull ProtoOutputStream proto,
+            boolean clearSchedulerBuffer);
 
     void dumpProtoMetrics(int sensorId, @NonNull FileDescriptor fd);
 
     void dumpInternal(int sensorId, @NonNull PrintWriter pw);
 
     @NonNull
-    ITestSession createTestSession(int sensorId, @NonNull String opPackageName);
+    ITestSession createTestSession(int sensorId, @NonNull ITestSessionCallback callback,
+            @NonNull String opPackageName);
 
     void dumpHal(int sensorId, @NonNull FileDescriptor fd, @NonNull String[] args);
 }

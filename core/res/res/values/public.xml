@@ -3048,13 +3048,46 @@
     <public name="allowClickWhenDisabled" />
     <public name="windowLayoutAffinity" />
     <public name="canPauseRecording" />
-    <!-- @hide -->
-    <public name="windowBackgroundBlurRadius"/>
+    <public name="windowBlurBehindRadius"/>
+    <public name="windowBlurBehindEnabled"/>
     <public name="requireDeviceScreenOn" />
     <public name="pathSuffix" />
     <public name="sspSuffix" />
     <public name="pathAdvancedPattern" />
     <public name="sspAdvancedPattern" />
+    <public name="fontProviderSystemFontFamily" />
+    <public name="hand_second" />
+    <public name="memtagMode" />
+    <public name="nativeHeapZeroInit" />
+    <!-- @hide @SystemApi -->
+    <public name="hotwordDetectionService" />
+    <public name="previewLayout" />
+    <public name="clipToOutline" />
+    <public name="edgeEffectType" />
+    <public name="knownCerts" />
+    <public name="windowBackgroundBlurRadius"/>
+    <public name="windowSplashScreenBackground"/>
+    <public name="windowSplashScreenAnimatedIcon"/>
+    <public name="windowSplashScreenAnimationDuration"/>
+    <public name="windowSplashScreenBrandingImage"/>
+    <public name="splashScreenTheme" />
+    <public name="rippleStyle" />
+    <public name="maxResizeWidth" />
+    <public name="maxResizeHeight" />
+    <public name="targetCellWidth" />
+    <public name="targetCellHeight" />
+    <public name="dialTint"/>
+    <public name="dialTintMode"/>
+    <public name="hand_hourTint"/>
+    <public name="hand_hourTintMode"/>
+    <public name="hand_minuteTint"/>
+    <public name="hand_minuteTintMode"/>
+    <public name="hand_secondTint"/>
+    <public name="hand_secondTintMode"/>
+    <public name="dataExtractionRules"/>
+    <public name="passwordsActivity"/>
+    <public name="selectableAsDefault"/>
+    <public name="isAccessibilityTool"/>
   </public-group>
 
   <public-group type="drawable" first-id="0x010800b5">
@@ -3065,36 +3098,54 @@
     <!-- color definitions go here -->
 
     <!-- Material design dynamic system palette:-->
-    <!-- Dominant color -->
-    <public name="system_main_0" />
-    <public name="system_main_50" />
-    <public name="system_main_100" />
-    <public name="system_main_200" />
-    <public name="system_main_300" />
-    <public name="system_main_400" />
-    <public name="system_main_500" />
-    <public name="system_main_600" />
-    <public name="system_main_700" />
-    <public name="system_main_800" />
-    <public name="system_main_900" />
-    <public name="system_main_1000" />
-    <!-- Accent color -->
-    <public name="system_accent_0" />
-    <public name="system_accent_50" />
-    <public name="system_accent_100" />
-    <public name="system_accent_200" />
-    <public name="system_accent_300" />
-    <public name="system_accent_400" />
-    <public name="system_accent_500" />
-    <public name="system_accent_600" />
-    <public name="system_accent_700" />
-    <public name="system_accent_800" />
-    <public name="system_accent_900" />
-    <public name="system_accent_1000" />
+    <!-- Primary color -->
+    <public name="system_primary_0" />
+    <public name="system_primary_50" />
+    <public name="system_primary_100" />
+    <public name="system_primary_200" />
+    <public name="system_primary_300" />
+    <public name="system_primary_400" />
+    <public name="system_primary_500" />
+    <public name="system_primary_600" />
+    <public name="system_primary_700" />
+    <public name="system_primary_800" />
+    <public name="system_primary_900" />
+    <public name="system_primary_1000" />
+    <!-- Secondary color -->
+    <public name="system_secondary_0" />
+    <public name="system_secondary_50" />
+    <public name="system_secondary_100" />
+    <public name="system_secondary_200" />
+    <public name="system_secondary_300" />
+    <public name="system_secondary_400" />
+    <public name="system_secondary_500" />
+    <public name="system_secondary_600" />
+    <public name="system_secondary_700" />
+    <public name="system_secondary_800" />
+    <public name="system_secondary_900" />
+    <public name="system_secondary_1000" />
+    <!-- Neutral color -->
+    <public name="system_neutral_0" />
+    <public name="system_neutral_50" />
+    <public name="system_neutral_100" />
+    <public name="system_neutral_200" />
+    <public name="system_neutral_300" />
+    <public name="system_neutral_400" />
+    <public name="system_neutral_500" />
+    <public name="system_neutral_600" />
+    <public name="system_neutral_700" />
+    <public name="system_neutral_800" />
+    <public name="system_neutral_900" />
+    <public name="system_neutral_1000" />
   </public-group>
 
   <public-group type="dimen" first-id="0x01050008">
     <!-- dimension definitions go here -->
+
+    <!-- System-provided dimensions for app widgets. -->
+    <public name="system_app_widget_background_radius" />
+    <public name="system_app_widget_inner_radius" />
+    <public name="system_app_widget_internal_padding" />
   </public-group>
 
   <public-group type="bool" first-id="0x01110007">
@@ -3109,9 +3160,21 @@
     <!-- @hide @SystemApi @TestApi -->
     <public name="config_systemAutomotiveCluster" />
     <!-- @hide @SystemApi @TestApi -->
-    <public name="config_systemVideoCall" />
-    <!-- @hide @SystemApi @TestApi -->
     <public name="config_systemAutomotiveProjection" />
+    <!-- @hide @SystemApi -->
+    <public name="config_systemShell" />
+    <!-- @hide @SystemApi -->
+    <public name="config_systemContacts" />
+    <!-- @hide @SystemApi -->
+    <public name="config_customMediaKeyDispatcher" />
+    <!-- @hide @SystemApi -->
+    <public name="config_customMediaSessionPolicyProvider" />
+    <!-- @hide @SystemApi -->
+    <public name="config_systemSpeechRecognizer" />
+    <!-- @hide @SystemApi -->
+    <public name="config_systemWifiCoexManager" />
+    <!-- @hide @SystemApi -->
+    <public name="config_systemWellbeing" />
   </public-group>
 
   <public-group type="id" first-id="0x01020055">

@@ -16,40 +16,19 @@
 
 package com.android.server.wm.flicker.rotation
 
-import android.content.ComponentName
-import android.content.Intent
-import android.os.Bundle
 import android.platform.test.annotations.Presubmit
-import android.view.Surface
+import androidx.test.filters.FlakyTest
 import androidx.test.filters.RequiresDevice
-import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.uiautomator.By
-import androidx.test.uiautomator.Until
-import com.android.server.wm.flicker.Flicker
-import com.android.server.wm.flicker.FlickerTestRunner
-import com.android.server.wm.flicker.FlickerTestRunnerFactory
-import com.android.server.wm.flicker.endRotation
-import com.android.server.wm.flicker.focusDoesNotChange
+import com.android.server.wm.flicker.FlickerParametersRunnerFactory
+import com.android.server.wm.flicker.FlickerTestParameter
+import com.android.server.wm.flicker.FlickerTestParameterFactory
 import com.android.server.wm.flicker.appWindowAlwaysVisibleOnTop
+import com.android.server.wm.flicker.dsl.FlickerBuilder
+import com.android.server.wm.flicker.helpers.SeamlessRotationAppHelper
 import com.android.server.wm.flicker.layerAlwaysVisible
-import com.android.server.wm.flicker.helpers.WindowUtils
-import com.android.server.wm.flicker.helpers.buildTestTag
-import com.android.server.wm.flicker.helpers.setRotation
-import com.android.server.wm.flicker.helpers.stopPackage
-import com.android.server.wm.flicker.helpers.wakeUpAndGoToHomeScreen
-import com.android.server.wm.flicker.navBarLayerIsAlwaysVisible
-import com.android.server.wm.flicker.navBarLayerRotatesAndScales
-import com.android.server.wm.flicker.navBarWindowIsAlwaysVisible
-import com.android.server.wm.flicker.noUncoveredRegions
-import com.android.server.wm.flicker.visibleWindowsShownMoreThanOneConsecutiveEntry
-import com.android.server.wm.flicker.visibleLayersShownMoreThanOneConsecutiveEntry
-import com.android.server.wm.flicker.repetitions
-import com.android.server.wm.flicker.startRotation
-import com.android.server.wm.flicker.statusBarLayerIsAlwaysVisible
-import com.android.server.wm.flicker.statusBarLayerRotatesScales
-import com.android.server.wm.flicker.statusBarWindowIsAlwaysVisible
 import com.android.server.wm.flicker.testapp.ActivityOptions
 import org.junit.FixMethodOrder
+import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.MethodSorters
 import org.junit.runners.Parameterized
@@ -58,146 +37,88 @@ import org.junit.runners.Parameterized
  * Cycle through supported app rotations using seamless rotations.
  * To run this test: `atest FlickerTests:SeamlessAppRotationTest`
  */
-@Presubmit
 @RequiresDevice
 @RunWith(Parameterized::class)
+@Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class SeamlessAppRotationTest(
-    testName: String,
-    flickerSpec: Flicker
-) : FlickerTestRunner(testName, flickerSpec) {
-    companion object {
-        private const val APP_LAUNCH_TIMEOUT: Long = 10000
+    testSpec: FlickerTestParameter
+) : RotationTransition(testSpec) {
+    override val testApp = SeamlessRotationAppHelper(instrumentation)
 
-        private val Bundle.intent: Intent?
-            get() = this.getParcelable(Intent::class.java.simpleName)
-
-        private val Bundle.intentPackageName: String
-            get() = this.intent?.component?.packageName ?: ""
-
-        private val Bundle.intentId get() = if (this.intent?.getBooleanExtra(
-                ActivityOptions.EXTRA_STARVE_UI_THREAD, false) == true) {
-            "BUSY_UI_THREAD"
-        } else {
-            ""
+    override val transition: FlickerBuilder.(Map<String, Any?>) -> Unit
+        get() = {
+            super.transition(this, it)
+            setup {
+                test {
+                    testApp.launchViaIntent(wmHelper,
+                        stringExtras = mapOf(
+                            ActivityOptions.EXTRA_STARVE_UI_THREAD to it.starveUiThread.toString())
+                    )
+                }
+            }
         }
 
-        private fun Bundle.createConfig(starveUiThread: Boolean): Bundle {
-            val config = this.deepCopy()
-            val intent = Intent()
-            intent.addCategory(Intent.CATEGORY_LAUNCHER)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            intent.component = ComponentName("com.android.server.wm.flicker.testapp",
-                "com.android.server.wm.flicker.testapp.SeamlessRotationActivity")
+    @FlakyTest(bugId = 140855415)
+    @Test
+    override fun navBarWindowIsAlwaysVisible() = super.navBarWindowIsAlwaysVisible()
 
-            intent.putExtra(ActivityOptions.EXTRA_STARVE_UI_THREAD, starveUiThread)
+    @FlakyTest(bugId = 140855415)
+    @Test
+    override fun statusBarWindowIsAlwaysVisible() = super.statusBarWindowIsAlwaysVisible()
 
-            config.putParcelable(Intent::class.java.simpleName, intent)
+    @FlakyTest(bugId = 147659548)
+    @Test
+    override fun noUncoveredRegions() = super.noUncoveredRegions()
+
+    @Presubmit
+    @Test
+    fun appWindowAlwaysVisibleOnTop() = testSpec.appWindowAlwaysVisibleOnTop(testApp.`package`)
+
+    @Presubmit
+    @Test
+    fun layerAlwaysVisible() = testSpec.layerAlwaysVisible(testApp.`package`)
+
+    @FlakyTest(bugId = 147659548)
+    @Test
+    fun appLayerRotates() {
+        testSpec.assertLayers {
+            this.coversExactly(startingPos, testApp.`package`)
+        }
+    }
+
+    companion object {
+        private val testFactory = FlickerTestParameterFactory.getInstance()
+
+        private val Map<String, Any?>.starveUiThread
+            get() = this.getOrDefault(ActivityOptions.EXTRA_STARVE_UI_THREAD, false) as Boolean
+
+        private fun FlickerTestParameter.createConfig(
+            starveUiThread: Boolean
+        ): MutableMap<String, Any?> {
+            val config = this.config.toMutableMap()
+            config[ActivityOptions.EXTRA_STARVE_UI_THREAD] = starveUiThread
             return config
         }
 
         @JvmStatic
-        private fun FlickerTestRunnerFactory.getConfigurations(): List<Bundle> {
-            return this.getConfigRotationTests().flatMap {
+        private fun getConfigurations(): List<FlickerTestParameter> {
+            return testFactory.getConfigRotationTests(repetitions = 2).flatMap {
                 val defaultRun = it.createConfig(starveUiThread = false)
                 val busyUiRun = it.createConfig(starveUiThread = true)
-                listOf(defaultRun, busyUiRun)
+                listOf(
+                    FlickerTestParameter(defaultRun),
+                    FlickerTestParameter(busyUiRun,
+                        name = "${FlickerTestParameter.defaultName(busyUiRun)}_BUSY_UI_THREAD"
+                    )
+                )
             }
         }
 
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
-        fun getParams(): Collection<Array<Any>> {
-            val instrumentation = InstrumentationRegistry.getInstrumentation()
-            val factory = FlickerTestRunnerFactory(instrumentation)
-            val configurations = factory.getConfigurations()
-            return factory.buildRotationTest(configurations) { configuration ->
-                withTestName {
-                    buildTestTag("seamlessRotation_" + configuration.intentId,
-                        app = null, configuration = configuration)
-                }
-                repeat { configuration.repetitions }
-                setup {
-                    test {
-                        device.wakeUpAndGoToHomeScreen()
-                        instrumentation.targetContext.startActivity(configuration.intent)
-                        val searchQuery = By.pkg(configuration.intent?.component?.packageName)
-                            .depth(0)
-                        device.wait(Until.hasObject(searchQuery), APP_LAUNCH_TIMEOUT)
-                    }
-                    eachRun {
-                        this.setRotation(configuration.startRotation)
-                    }
-                }
-                teardown {
-                    test {
-                        this.setRotation(Surface.ROTATION_0)
-                        stopPackage(
-                            instrumentation.targetContext,
-                            configuration.intent?.component?.packageName
-                                ?: error("Unable to determine package name for intent"))
-                    }
-                }
-                transitions {
-                    this.setRotation(configuration.endRotation)
-                }
-                assertions {
-                    windowManagerTrace {
-                        navBarWindowIsAlwaysVisible(bugId = 140855415)
-                        statusBarWindowIsAlwaysVisible(bugId = 140855415)
-                        visibleWindowsShownMoreThanOneConsecutiveEntry()
-                        appWindowAlwaysVisibleOnTop(configuration.intentPackageName)
-                    }
-
-                    layersTrace {
-                        navBarLayerIsAlwaysVisible(bugId = 140855415)
-                        statusBarLayerIsAlwaysVisible(bugId = 140855415)
-                        noUncoveredRegions(configuration.startRotation,
-                            configuration.endRotation, allStates = false, bugId = 147659548)
-                        navBarLayerRotatesAndScales(configuration.startRotation,
-                            configuration.endRotation)
-                        statusBarLayerRotatesScales(configuration.startRotation,
-                            configuration.endRotation, enabled = false)
-                        visibleLayersShownMoreThanOneConsecutiveEntry(
-                                enabled = configuration.startRotation == configuration.endRotation)
-                        layerAlwaysVisible(configuration.intentPackageName)
-                    }
-
-                    layersTrace {
-                        val startingBounds = WindowUtils
-                            .getDisplayBounds(configuration.startRotation)
-                        val endingBounds = WindowUtils
-                            .getDisplayBounds(configuration.endRotation)
-
-                        all("appLayerRotates", bugId = 147659548) {
-                            if (startingBounds == endingBounds) {
-                                this.hasVisibleRegion(
-                                    configuration.intentPackageName, startingBounds)
-                            } else {
-                                this.hasVisibleRegion(configuration.intentPackageName,
-                                    startingBounds)
-                                    .then()
-                                    .hasVisibleRegion(configuration.intentPackageName,
-                                        endingBounds)
-                            }
-                        }
-
-                        all("noUncoveredRegions", bugId = 147659548) {
-                            if (startingBounds == endingBounds) {
-                                this.coversAtLeastRegion(startingBounds)
-                            } else {
-                                this.coversAtLeastRegion(startingBounds)
-                                    .then()
-                                    .coversAtLeastRegion(endingBounds)
-                            }
-                        }
-                    }
-
-                    eventLog {
-                        focusDoesNotChange(bugId = 151179149)
-                    }
-                }
-            }
+        fun getParams(): Collection<FlickerTestParameter> {
+            return getConfigurations()
         }
     }
 }

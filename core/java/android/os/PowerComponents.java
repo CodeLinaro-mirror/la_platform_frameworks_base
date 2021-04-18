@@ -29,43 +29,38 @@ class PowerComponents {
     public static final int CUSTOM_TIME_COMPONENT_OFFSET = BatteryConsumer.TIME_COMPONENT_COUNT
             - BatteryConsumer.FIRST_CUSTOM_TIME_COMPONENT_ID;
 
-    private final double mTotalPowerConsumed;
-    private final double[] mPowerComponents;
-    private final long[] mTimeComponents;
+    private final double mTotalConsumedPowerMah;
+    private final double[] mPowerComponentsMah;
+    private final long[] mTimeComponentsMs;
     private final int mCustomPowerComponentCount;
-    private final int mModeledPowerComponentOffset;
 
     PowerComponents(@NonNull Builder builder) {
-        mTotalPowerConsumed = builder.mTotalPowerConsumed;
         mCustomPowerComponentCount = builder.mCustomPowerComponentCount;
-        mModeledPowerComponentOffset = builder.mModeledPowerComponentOffset;
-        mPowerComponents = builder.mPowerComponents;
-        mTimeComponents = builder.mTimeComponents;
+        mPowerComponentsMah = builder.mPowerComponentsMah;
+        mTimeComponentsMs = builder.mTimeComponentsMs;
+        mTotalConsumedPowerMah = builder.getTotalPower();
     }
 
     PowerComponents(@NonNull Parcel source) {
-        mTotalPowerConsumed = source.readDouble();
+        mTotalConsumedPowerMah = source.readDouble();
         mCustomPowerComponentCount = source.readInt();
-        mModeledPowerComponentOffset =
-                BatteryConsumer.POWER_COMPONENT_COUNT + mCustomPowerComponentCount
-                        - BatteryConsumer.FIRST_MODELED_POWER_COMPONENT_ID;
-        mPowerComponents = source.createDoubleArray();
-        mTimeComponents = source.createLongArray();
+        mPowerComponentsMah = source.createDoubleArray();
+        mTimeComponentsMs = source.createLongArray();
     }
 
     /** Writes contents to Parcel */
     void writeToParcel(@NonNull Parcel dest, int flags) {
-        dest.writeDouble(mTotalPowerConsumed);
+        dest.writeDouble(mTotalConsumedPowerMah);
         dest.writeInt(mCustomPowerComponentCount);
-        dest.writeDoubleArray(mPowerComponents);
-        dest.writeLongArray(mTimeComponents);
+        dest.writeDoubleArray(mPowerComponentsMah);
+        dest.writeLongArray(mTimeComponentsMs);
     }
 
     /**
      * Total power consumed by this consumer, in mAh.
      */
-    public double getTotalPowerConsumed() {
-        return mTotalPowerConsumed;
+    public double getTotalConsumedPower() {
+        return mTotalConsumedPowerMah;
     }
 
     /**
@@ -81,7 +76,7 @@ class PowerComponents {
                     "Unsupported power component ID: " + componentId);
         }
         try {
-            return mPowerComponents[componentId];
+            return mPowerComponentsMah[componentId];
         } catch (ArrayIndexOutOfBoundsException e) {
             throw new IllegalArgumentException("Unsupported power component ID: " + componentId);
         }
@@ -97,18 +92,10 @@ class PowerComponents {
         if (componentId >= BatteryConsumer.FIRST_CUSTOM_POWER_COMPONENT_ID
                 && componentId < BatteryConsumer.LAST_CUSTOM_POWER_COMPONENT_ID) {
             try {
-                return mPowerComponents[CUSTOM_POWER_COMPONENT_OFFSET + componentId];
+                return mPowerComponentsMah[CUSTOM_POWER_COMPONENT_OFFSET + componentId];
             } catch (ArrayIndexOutOfBoundsException e) {
                 throw new IllegalArgumentException(
                         "Unsupported custom power component ID: " + componentId);
-            }
-        } else if (componentId >= BatteryConsumer.FIRST_MODELED_POWER_COMPONENT_ID
-                && componentId < BatteryConsumer.LAST_MODELED_POWER_COMPONENT_ID) {
-            try {
-                return mPowerComponents[mModeledPowerComponentOffset + componentId];
-            } catch (ArrayIndexOutOfBoundsException e) {
-                throw new IllegalArgumentException(
-                        "Unsupported modeled power component ID: " + componentId);
             }
         } else {
             throw new IllegalArgumentException(
@@ -129,7 +116,7 @@ class PowerComponents {
                     "Unsupported time component ID: " + componentId);
         }
         try {
-            return mTimeComponents[componentId];
+            return mTimeComponentsMs[componentId];
         } catch (ArrayIndexOutOfBoundsException e) {
             throw new IllegalArgumentException("Unsupported power component ID: " + componentId);
         }
@@ -147,7 +134,7 @@ class PowerComponents {
                     "Unsupported custom time component ID: " + componentId);
         }
         try {
-            return mTimeComponents[CUSTOM_TIME_COMPONENT_OFFSET + componentId];
+            return mTimeComponentsMs[CUSTOM_TIME_COMPONENT_OFFSET + componentId];
         } catch (ArrayIndexOutOfBoundsException e) {
             throw new IllegalArgumentException(
                     "Unsupported custom time component ID: " + componentId);
@@ -158,35 +145,17 @@ class PowerComponents {
      * Builder for PowerComponents.
      */
     static final class Builder {
-        private double mTotalPowerConsumed;
-        private final double[] mPowerComponents;
+        private final double[] mPowerComponentsMah;
         private final int mCustomPowerComponentCount;
-        private final long[] mTimeComponents;
-        private final int mModeledPowerComponentOffset;
+        private final long[] mTimeComponentsMs;
 
-        Builder(int customPowerComponentCount, int customTimeComponentCount,
-                boolean includeModeledPowerComponents) {
+        Builder(int customPowerComponentCount, int customTimeComponentCount) {
             mCustomPowerComponentCount = customPowerComponentCount;
             int powerComponentCount =
                     BatteryConsumer.POWER_COMPONENT_COUNT + customPowerComponentCount;
-            if (includeModeledPowerComponents) {
-                powerComponentCount += BatteryConsumer.POWER_COMPONENT_COUNT;
-            }
-            mPowerComponents = new double[powerComponentCount];
-            mModeledPowerComponentOffset =
-                    BatteryConsumer.POWER_COMPONENT_COUNT + mCustomPowerComponentCount
-                            - BatteryConsumer.FIRST_MODELED_POWER_COMPONENT_ID;
-            mTimeComponents =
+            mPowerComponentsMah = new double[powerComponentCount];
+            mTimeComponentsMs =
                     new long[BatteryConsumer.TIME_COMPONENT_COUNT + customTimeComponentCount];
-        }
-
-        /**
-         * Sets the sum amount of power consumed since BatteryStats reset.
-         */
-        @NonNull
-        public Builder setTotalPowerConsumed(double totalPowerConsumed) {
-            mTotalPowerConsumed = totalPowerConsumed;
-            return this;
         }
 
         /**
@@ -204,7 +173,7 @@ class PowerComponents {
                         "Unsupported power component ID: " + componentId);
             }
             try {
-                mPowerComponents[componentId] = componentPower;
+                mPowerComponentsMah[componentId] = componentPower;
             } catch (ArrayIndexOutOfBoundsException e) {
                 throw new IllegalArgumentException(
                         "Unsupported power component ID: " + componentId);
@@ -223,18 +192,11 @@ class PowerComponents {
             if (componentId >= BatteryConsumer.FIRST_CUSTOM_POWER_COMPONENT_ID
                     && componentId < BatteryConsumer.LAST_CUSTOM_POWER_COMPONENT_ID) {
                 try {
-                    mPowerComponents[CUSTOM_POWER_COMPONENT_OFFSET + componentId] = componentPower;
+                    mPowerComponentsMah[CUSTOM_POWER_COMPONENT_OFFSET + componentId] =
+                            componentPower;
                 } catch (ArrayIndexOutOfBoundsException e) {
                     throw new IllegalArgumentException(
                             "Unsupported custom power component ID: " + componentId);
-                }
-            } else if (componentId >= BatteryConsumer.FIRST_MODELED_POWER_COMPONENT_ID
-                    && componentId < BatteryConsumer.LAST_MODELED_POWER_COMPONENT_ID) {
-                try {
-                    mPowerComponents[mModeledPowerComponentOffset + componentId] = componentPower;
-                } catch (ArrayIndexOutOfBoundsException e) {
-                    throw new IllegalArgumentException(
-                            "Unsupported modeled power component ID: " + componentId);
                 }
             } else {
                 throw new IllegalArgumentException(
@@ -258,7 +220,7 @@ class PowerComponents {
                         "Unsupported time component ID: " + componentId);
             }
             try {
-                mTimeComponents[componentId] = componentUsageDurationMillis;
+                mTimeComponentsMs[componentId] = componentUsageDurationMillis;
             } catch (ArrayIndexOutOfBoundsException e) {
                 throw new IllegalArgumentException(
                         "Unsupported time component ID: " + componentId);
@@ -280,7 +242,7 @@ class PowerComponents {
                         "Unsupported custom time component ID: " + componentId);
             }
             try {
-                mTimeComponents[CUSTOM_TIME_COMPONENT_OFFSET + componentId] =
+                mTimeComponentsMs[CUSTOM_TIME_COMPONENT_OFFSET + componentId] =
                         componentUsageDurationMillis;
             } catch (ArrayIndexOutOfBoundsException e) {
                 throw new IllegalArgumentException(
@@ -290,12 +252,24 @@ class PowerComponents {
         }
 
         public void addPowerAndDuration(Builder other) {
-            for (int i = 0; i < mPowerComponents.length; i++) {
-                mPowerComponents[i] += other.mPowerComponents[i];
+            for (int i = 0; i < mPowerComponentsMah.length; i++) {
+                mPowerComponentsMah[i] += other.mPowerComponentsMah[i];
             }
-            for (int i = 0; i < mTimeComponents.length; i++) {
-                mTimeComponents[i] += other.mTimeComponents[i];
+            for (int i = 0; i < mTimeComponentsMs.length; i++) {
+                mTimeComponentsMs[i] += other.mTimeComponentsMs[i];
             }
+        }
+
+        /**
+         * Returns the total power accumulated by this builder so far. It may change
+         * by the time the {@code build()} method is called.
+         */
+        public double getTotalPower() {
+            double totalPowerMah = 0;
+            for (int i = mPowerComponentsMah.length - 1; i >= 0; i--) {
+                totalPowerMah += mPowerComponentsMah[i];
+            }
+            return totalPowerMah;
         }
 
         /**

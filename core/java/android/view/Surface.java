@@ -218,6 +218,15 @@ public class Surface implements Parcelable {
     public static final int FRAME_RATE_COMPATIBILITY_FIXED_SOURCE = 1;
 
     /**
+     * This surface belongs to an app on the High Refresh Rate Deny list, and needs the display
+     * to operate at the exact frame rate.
+     *
+     * This is used internally by the platform and should not be used by apps.
+     * @hide
+     */
+    public static final int FRAME_RATE_COMPATIBILITY_EXACT = 100;
+
+    /**
      * Create an empty surface, which will later be filled in by readFromParcel().
      * @hide
      */
@@ -919,7 +928,9 @@ public class Surface implements Parcelable {
      * seamless transition is one that doesn't have any visual interruptions, such as a black
      * screen for a second or two. True indicates that any frame rate changes caused by this
      * request should be seamless. False indicates that non-seamless refresh rates are also
-     * acceptable.
+     * acceptable. Non-seamless switches might be used when the benefit of matching the content's
+     * frame rate outweighs the cost of the transition, for example when displaying
+     * long-running video content.
      *
      * @throws IllegalArgumentException If frameRate or compatibility are invalid.
      */

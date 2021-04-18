@@ -18,7 +18,7 @@ package com.android.keyguard;
 
 import android.content.Context;
 import android.content.res.TypedArray;
-import android.graphics.drawable.Drawable;
+import android.graphics.drawable.LayerDrawable;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.AttributeSet;
@@ -48,6 +48,8 @@ public class NumPadKey extends ViewGroup {
     private int mTextViewResId;
     private PasswordTextView mTextView;
 
+    private NumPadAnimator mAnimator;
+
     private View.OnClickListener mListener = new View.OnClickListener() {
         @Override
         public void onClick(View thisView) {
@@ -73,7 +75,7 @@ public class NumPadKey extends ViewGroup {
     }
 
     public NumPadKey(Context context, AttributeSet attrs) {
-        this(context, attrs, 0);
+        this(context, attrs, R.attr.numPadKeyStyle);
     }
 
     public NumPadKey(Context context, AttributeSet attrs, int defStyle) {
@@ -84,7 +86,8 @@ public class NumPadKey extends ViewGroup {
         super(context, attrs, defStyle);
         setFocusable(true);
 
-        TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.NumPadKey);
+        TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.NumPadKey, defStyle,
+                contentResource);
 
         try {
             mDigit = a.getInt(R.styleable.NumPadKey_digit, mDigit);
@@ -116,20 +119,27 @@ public class NumPadKey extends ViewGroup {
                 final int len = klondike.length();
                 if (len > 0) {
                     mKlondikeText.setText(klondike);
-                } else {
+                } else if (mKlondikeText.getVisibility() != View.GONE) {
                     mKlondikeText.setVisibility(View.INVISIBLE);
                 }
             }
         }
 
-        a = context.obtainStyledAttributes(attrs, android.R.styleable.View);
-        if (!a.hasValueOrEmpty(android.R.styleable.View_background)) {
-            Drawable rippleDrawable = new ContextThemeWrapper(mContext,
-                    R.style.Widget_TextView_NumPadKey).getDrawable(R.drawable.ripple_drawable_pin);
-            setBackground(rippleDrawable);
-        }
-        a.recycle();
         setContentDescription(mDigitText.getText().toString());
+
+        mAnimator = new NumPadAnimator(context, (LayerDrawable) getBackground(),
+                R.style.NumPadKey);
+    }
+
+    /**
+     * By default, the new layout will be enabled. Invoking will revert to the old style
+     */
+    public void disableNewLayout() {
+        findViewById(R.id.klondike_text).setVisibility(View.VISIBLE);
+        mAnimator = null;
+        ContextThemeWrapper ctw = new ContextThemeWrapper(getContext(), R.style.NumPadKey);
+        setBackground(getContext().getResources().getDrawable(
+                R.drawable.ripple_drawable_pin, ctw.getTheme()));
     }
 
     /**
@@ -142,23 +152,38 @@ public class NumPadKey extends ViewGroup {
                 .getDefaultColor();
         mDigitText.setTextColor(textColor);
         mKlondikeText.setTextColor(klondikeColor);
-        Drawable rippleDrawable = new ContextThemeWrapper(mContext,
-                R.style.Widget_TextView_NumPadKey).getDrawable(R.drawable.ripple_drawable_pin);
-        setBackground(rippleDrawable);
+
+        if (mAnimator != null) mAnimator.reloadColors(getContext());
     }
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
             doHapticKeyClick();
+            if (mAnimator != null) mAnimator.start();
         }
+
         return super.onTouchEvent(event);
+    }
+
+    @Override
+    public void setLayoutParams(ViewGroup.LayoutParams params) {
+        if (mAnimator != null) mAnimator.updateMargin((ViewGroup.MarginLayoutParams) params);
+
+        super.setLayoutParams(params);
     }
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
         measureChildren(widthMeasureSpec, heightMeasureSpec);
+
+        // Set width/height to the same value to ensure a smooth circle for the bg, but shrink
+        // the height to match the old pin bouncer
+        int width = getMeasuredWidth();
+        int height = mAnimator == null ? (int) (width * .75f) : width;
+
+        setMeasuredDimension(getMeasuredWidth(), height);
     }
 
     @Override
@@ -176,6 +201,8 @@ public class NumPadKey extends ViewGroup {
 
         left = centerX - mKlondikeText.getMeasuredWidth() / 2;
         mKlondikeText.layout(left, top, left + mKlondikeText.getMeasuredWidth(), bottom);
+
+        if (mAnimator != null) mAnimator.onLayout(b - t);
     }
 
     @Override

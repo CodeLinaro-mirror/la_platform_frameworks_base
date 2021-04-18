@@ -24,6 +24,7 @@ import android.annotation.TestApi;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.LocusId;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Point;
@@ -36,7 +37,6 @@ import android.window.TaskSnapshot;
 import android.window.WindowContainerToken;
 
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 
 /**
@@ -52,13 +52,6 @@ public class TaskInfo {
      */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public int userId;
-
-    /**
-     * The id of the ActivityStack that currently contains this task.
-     * @hide
-     */
-    @UnsupportedAppUsage
-    public int stackId;
 
     /**
      * The identifier for this task.
@@ -131,6 +124,13 @@ public class TaskInfo {
     public ActivityManager.TaskDescription taskDescription;
 
     /**
+     * The locusId of the task.
+     * @hide
+     */
+    @Nullable
+    public LocusId mTopActivityLocusId;
+
+    /**
      * True if the task can go in the split-screen primary stack.
      * @hide
      */
@@ -178,6 +178,19 @@ public class TaskInfo {
      */
     @Nullable
     public ActivityInfo topActivityInfo;
+
+    /**
+     * The top activity in this task.
+     * @hide
+     */
+    @Nullable
+    public IBinder topActivityToken;
+
+    /**
+     * Whether the direct top activity is in size compat mode on foreground.
+     * @hide
+     */
+    public boolean topActivityInSizeCompat;
 
     /**
      * Whether this task is resizable. Unlike {@link #resizeMode} (which is what the top activity
@@ -325,11 +338,29 @@ public class TaskInfo {
     }
 
     /**
+     * @return {@code true} if parameters that are important for size compat have changed.
+     * @hide
+     */
+    public boolean equalsForSizeCompat(@Nullable TaskInfo that) {
+        if (that == null) {
+            return false;
+        }
+        return displayId == that.displayId
+                && taskId == that.taskId
+                && topActivityInSizeCompat == that.topActivityInSizeCompat
+                // TopActivityToken and bounds are important if top activity is in size compat
+                && (!topActivityInSizeCompat || topActivityToken.equals(that.topActivityToken))
+                && (!topActivityInSizeCompat || configuration.windowConfiguration.getBounds()
+                    .equals(that.configuration.windowConfiguration.getBounds()))
+                && (!topActivityInSizeCompat || configuration.getLayoutDirection()
+                    == that.configuration.getLayoutDirection());
+    }
+
+    /**
      * Reads the TaskInfo from a parcel.
      */
     void readFromParcel(Parcel source) {
         userId = source.readInt();
-        stackId = source.readInt();
         taskId = source.readInt();
         displayId = source.readInt();
         isRunning = source.readBoolean();
@@ -356,6 +387,9 @@ public class TaskInfo {
         parentTaskId = source.readInt();
         isFocused = source.readBoolean();
         isVisible = source.readBoolean();
+        topActivityToken = source.readStrongBinder();
+        topActivityInSizeCompat = source.readBoolean();
+        mTopActivityLocusId = source.readTypedObject(LocusId.CREATOR);
     }
 
     /**
@@ -363,7 +397,6 @@ public class TaskInfo {
      */
     void writeToParcel(Parcel dest, int flags) {
         dest.writeInt(userId);
-        dest.writeInt(stackId);
         dest.writeInt(taskId);
         dest.writeInt(displayId);
         dest.writeBoolean(isRunning);
@@ -391,11 +424,14 @@ public class TaskInfo {
         dest.writeInt(parentTaskId);
         dest.writeBoolean(isFocused);
         dest.writeBoolean(isVisible);
+        dest.writeStrongBinder(topActivityToken);
+        dest.writeBoolean(topActivityInSizeCompat);
+        dest.writeTypedObject(mTopActivityLocusId, flags);
     }
 
     @Override
     public String toString() {
-        return "TaskInfo{userId=" + userId + " stackId=" + stackId + " taskId=" + taskId
+        return "TaskInfo{userId=" + userId + " taskId=" + taskId
                 + " displayId=" + displayId
                 + " isRunning=" + isRunning
                 + " baseIntent=" + baseIntent + " baseActivity=" + baseActivity
@@ -415,6 +451,9 @@ public class TaskInfo {
                 + " parentTaskId=" + parentTaskId
                 + " isFocused=" + isFocused
                 + " isVisible=" + isVisible
+                + " topActivityToken=" + topActivityToken
+                + " topActivityInSizeCompat=" + topActivityInSizeCompat
+                + " locusId= " + mTopActivityLocusId
                 + "}";
     }
 }

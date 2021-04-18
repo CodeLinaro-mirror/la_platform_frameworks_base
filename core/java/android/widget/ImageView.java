@@ -648,6 +648,7 @@ public class ImageView extends View {
      * @see #getImageTintList()
      * @see Drawable#setTintList(ColorStateList)
      */
+    @android.view.RemotableViewMethod
     public void setImageTintList(@Nullable ColorStateList tint) {
         mDrawableTintList = tint;
         mHasDrawableTint = true;
@@ -695,6 +696,7 @@ public class ImageView extends View {
      * @see #getImageTintMode()
      * @see Drawable#setTintBlendMode(BlendMode)
      */
+    @RemotableViewMethod
     public void setImageTintBlendMode(@Nullable BlendMode blendMode) {
         mDrawableBlendMode = blendMode;
         mHasDrawableBlendMode = true;

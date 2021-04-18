@@ -16,10 +16,13 @@
 
 package com.android.systemui.qs.tiles;
 
-import static android.service.SensorPrivacyIndividualEnabledSensorProto.MICROPHONE;
+import static android.content.pm.PackageManager.FEATURE_MICROPHONE_TOGGLE;
+import static android.hardware.SensorPrivacyManager.Sensors.MICROPHONE;
 
 import static com.android.systemui.DejankUtils.whitelistIpcs;
 
+import android.hardware.SensorPrivacyManager;
+import android.hardware.SensorPrivacyManager.Sensors.Sensor;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.DeviceConfig;
@@ -36,6 +39,7 @@ import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.qs.QSHost;
 import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.statusbar.policy.IndividualSensorPrivacyController;
+import com.android.systemui.statusbar.policy.KeyguardStateController;
 
 import javax.inject.Inject;
 
@@ -49,21 +53,24 @@ public class MicrophoneToggleTile extends SensorPrivacyToggleTile {
             StatusBarStateController statusBarStateController,
             ActivityStarter activityStarter,
             QSLogger qsLogger,
-            IndividualSensorPrivacyController sensorPrivacyController) {
+            IndividualSensorPrivacyController sensorPrivacyController,
+            KeyguardStateController keyguardStateController) {
         super(host, backgroundLooper, mainHandler, metricsLogger, statusBarStateController,
-                activityStarter, qsLogger, sensorPrivacyController);
+                activityStarter, qsLogger, sensorPrivacyController, keyguardStateController);
     }
 
     @Override
     public boolean isAvailable() {
-        return whitelistIpcs(() -> DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_PRIVACY,
+        return getHost().getContext().getPackageManager()
+                .hasSystemFeature(FEATURE_MICROPHONE_TOGGLE)
+                && whitelistIpcs(() -> DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_PRIVACY,
                 "mic_toggle_enabled",
                 false));
     }
 
     @Override
     public @DrawableRes int getIconRes() {
-        return R.drawable.ic_mic_blocked;
+        return com.android.internal.R.drawable.ic_mic_blocked;
     }
 
     @Override
@@ -72,7 +79,7 @@ public class MicrophoneToggleTile extends SensorPrivacyToggleTile {
     }
 
     @Override
-    public int getSensorId() {
+    public @Sensor int getSensorId() {
         return MICROPHONE;
     }
 }

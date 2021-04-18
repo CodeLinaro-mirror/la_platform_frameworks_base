@@ -22,6 +22,7 @@ import android.annotation.Nullable;
 import android.annotation.SuppressLint;
 import android.app.appsearch.util.BundleUtil;
 import android.os.Bundle;
+import android.os.Parcelable;
 import android.util.Log;
 
 import com.android.internal.util.Preconditions;
@@ -35,11 +36,12 @@ import java.util.Set;
 /**
  * Represents a document unit.
  *
- * <p>Documents are constructed via {@link GenericDocument.Builder}.
+ * <p>Documents contain structured data conforming to their {@link AppSearchSchema} type. Each
+ * document is uniquely identified by a URI and namespace.
  *
- * @see AppSearchSession#putDocuments
+ * @see AppSearchSession#put
  * @see AppSearchSession#getByUri
- * @see AppSearchSession#query
+ * @see AppSearchSession#search
  */
 public class GenericDocument {
     private static final String TAG = "AppSearchGenericDocumen";
@@ -47,16 +49,10 @@ public class GenericDocument {
     /** The default empty namespace. */
     public static final String DEFAULT_NAMESPACE = "";
 
-    /**
-     * The maximum number of elements in a repeatable field. Will reject the request if exceed this
-     * limit.
-     */
+    /** The maximum number of elements in a repeatable field. */
     private static final int MAX_REPEATED_PROPERTY_LENGTH = 100;
 
-    /**
-     * The maximum {@link String#length} of a {@link String} field. Will reject the request if
-     * {@link String}s longer than this.
-     */
+    /** The maximum {@link String#length} of a {@link String} field. */
     private static final int MAX_STRING_LENGTH = 20_000;
 
     /** The maximum number of indexed properties a document can have. */
@@ -80,9 +76,9 @@ public class GenericDocument {
     /**
      * The maximum number of indexed properties a document can have.
      *
-     * <p>Indexed properties are properties where the {@link
-     * AppSearchSchema.PropertyConfig#getIndexingType()} constant is anything other than {@link
-     * AppSearchSchema.PropertyConfig.IndexingType#INDEXING_TYPE_NONE}.
+     * <p>Indexed properties are properties which are strings where the {@link
+     * AppSearchSchema.StringPropertyConfig#getIndexingType} value is anything other than {@link
+     * AppSearchSchema.StringPropertyConfig.IndexingType#INDEXING_TYPE_NONE}.
      */
     public static int getMaxIndexedProperties() {
         return MAX_INDEXED_PROPERTIES;
@@ -148,7 +144,7 @@ public class GenericDocument {
         return mBundle.getString(NAMESPACE_FIELD, DEFAULT_NAMESPACE);
     }
 
-    /** Returns the schema type of the {@link GenericDocument}. */
+    /** Returns the {@link AppSearchSchema} type of the {@link GenericDocument}. */
     @NonNull
     public String getSchemaType() {
         return mSchemaType;
@@ -164,14 +160,14 @@ public class GenericDocument {
     }
 
     /**
-     * Returns the TTL (Time To Live) of the {@link GenericDocument}, in milliseconds.
+     * Returns the TTL (time-to-live) of the {@link GenericDocument}, in milliseconds.
      *
      * <p>The TTL is measured against {@link #getCreationTimestampMillis}. At the timestamp of
      * {@code creationTimestampMillis + ttlMillis}, measured in the {@link System#currentTimeMillis}
      * time base, the document will be auto-deleted.
      *
      * <p>The default value is 0, which means the document is permanent and won't be auto-deleted
-     * until the app is uninstalled.
+     * until the app is uninstalled or {@link AppSearchSession#remove} is called.
      */
     public long getTtlMillis() {
         return mBundle.getLong(TTL_MILLIS_FIELD, DEFAULT_TTL_MILLIS);
@@ -181,12 +177,12 @@ public class GenericDocument {
      * Returns the score of the {@link GenericDocument}.
      *
      * <p>The score is a query-independent measure of the document's quality, relative to other
-     * {@link GenericDocument}s of the same type.
+     * {@link GenericDocument} objects of the same {@link AppSearchSchema} type.
      *
      * <p>Results may be sorted by score using {@link SearchSpec.Builder#setRankingStrategy}.
      * Documents with higher scores are considered better than documents with lower scores.
      *
-     * <p>Any nonnegative integer can be used a score.
+     * <p>Any non-negative integer can be used a score.
      */
     public int getScore() {
         return mBundle.getInt(SCORE_FIELD, DEFAULT_SCORE);
@@ -210,7 +206,7 @@ public class GenericDocument {
         Object property = mProperties.get(key);
         if (property instanceof ArrayList) {
             return getPropertyBytesArray(key);
-        } else if (property instanceof Bundle[]) {
+        } else if (property instanceof Parcelable[]) {
             return getPropertyDocumentArray(key);
         }
         return property;
@@ -354,7 +350,7 @@ public class GenericDocument {
     }
 
     /**
-     * Retrieves a repeated {@link String} property by key.
+     * Retrieves a repeated {@code long[]} property by key.
      *
      * @param key The key to look for.
      * @return The {@code long[]} associated with the given key, or {@code null} if no value is set
@@ -436,7 +432,7 @@ public class GenericDocument {
     @Nullable
     public GenericDocument[] getPropertyDocumentArray(@NonNull String key) {
         Preconditions.checkNotNull(key);
-        Bundle[] bundles = getAndCastPropertyArray(key, Bundle[].class);
+        Parcelable[] bundles = getAndCastPropertyArray(key, Parcelable[].class);
         if (bundles == null || bundles.length == 0) {
             return null;
         }
@@ -446,7 +442,18 @@ public class GenericDocument {
                 Log.e(TAG, "The inner bundle is null at " + i + ", for key: " + key);
                 continue;
             }
-            documents[i] = new GenericDocument(bundles[i]);
+            if (!(bundles[i] instanceof Bundle)) {
+                Log.e(
+                        TAG,
+                        "The inner element at "
+                                + i
+                                + " is a "
+                                + bundles[i].getClass()
+                                + ", not a Bundle for key: "
+                                + key);
+                continue;
+            }
+            documents[i] = new GenericDocument((Bundle) bundles[i]);
         }
         return documents;
     }
@@ -568,14 +575,17 @@ public class GenericDocument {
         private boolean mBuilt = false;
 
         /**
-         * Create a new {@link GenericDocument.Builder}.
+         * Creates a new {@link GenericDocument.Builder}.
          *
-         * @param uri The uri of {@link GenericDocument}.
-         * @param schemaType The schema type of the {@link GenericDocument}. The passed-in {@code
-         *     schemaType} must be defined using {@link AppSearchSession#setSchema} prior to
-         *     inserting a document of this {@code schemaType} into the AppSearch index using {@link
-         *     AppSearchSession#putDocuments}. Otherwise, the document will be rejected by {@link
-         *     AppSearchSession#putDocuments}.
+         * <p>Once {@link #build} is called, the instance can no longer be used.
+         *
+         * @param uri the URI to set for the {@link GenericDocument}.
+         * @param schemaType the {@link AppSearchSchema} type of the {@link GenericDocument}. The
+         *     provided {@code schemaType} must be defined using {@link AppSearchSession#setSchema}
+         *     prior to inserting a document of this {@code schemaType} into the AppSearch index
+         *     using {@link AppSearchSession#put}. Otherwise, the document will be rejected by
+         *     {@link AppSearchSession#put} with result code {@link
+         *     AppSearchResult#RESULT_NOT_FOUND}.
          */
         @SuppressWarnings("unchecked")
         public Builder(@NonNull String uri, @NonNull String schemaType) {
@@ -594,15 +604,18 @@ public class GenericDocument {
         }
 
         /**
-         * Sets the app-defined namespace this Document resides in. No special values are reserved
+         * Sets the app-defined namespace this document resides in. No special values are reserved
          * or understood by the infrastructure.
          *
          * <p>URIs are unique within a namespace.
          *
          * <p>The number of namespaces per app should be kept small for efficiency reasons.
+         *
+         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setNamespace(@NonNull String namespace) {
+            Preconditions.checkState(!mBuilt, "Builder has already been used");
             mBundle.putString(GenericDocument.NAMESPACE_FIELD, namespace);
             return mBuilderTypeInstance;
         }
@@ -611,14 +624,15 @@ public class GenericDocument {
          * Sets the score of the {@link GenericDocument}.
          *
          * <p>The score is a query-independent measure of the document's quality, relative to other
-         * {@link GenericDocument}s of the same type.
+         * {@link GenericDocument} objects of the same {@link AppSearchSchema} type.
          *
          * <p>Results may be sorted by score using {@link SearchSpec.Builder#setRankingStrategy}.
          * Documents with higher scores are considered better than documents with lower scores.
          *
-         * <p>Any nonnegative integer can be used a score.
+         * <p>Any non-negative integer can be used a score. By default, scores are set to 0.
          *
-         * @throws IllegalArgumentException If the provided value is negative.
+         * @param score any non-negative {@code int} representing the document's score.
+         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setScore(@IntRange(from = 0, to = Integer.MAX_VALUE) int score) {
@@ -633,8 +647,11 @@ public class GenericDocument {
         /**
          * Sets the creation timestamp of the {@link GenericDocument}, in milliseconds.
          *
-         * <p>Should be set using a value obtained from the {@link System#currentTimeMillis} time
-         * base.
+         * <p>This should be set using a value obtained from the {@link System#currentTimeMillis}
+         * time base.
+         *
+         * @param creationTimestampMillis a creation timestamp in milliseconds.
+         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setCreationTimestampMillis(long creationTimestampMillis) {
@@ -645,17 +662,17 @@ public class GenericDocument {
         }
 
         /**
-         * Sets the TTL (Time To Live) of the {@link GenericDocument}, in milliseconds.
+         * Sets the TTL (time-to-live) of the {@link GenericDocument}, in milliseconds.
          *
          * <p>The TTL is measured against {@link #getCreationTimestampMillis}. At the timestamp of
          * {@code creationTimestampMillis + ttlMillis}, measured in the {@link
          * System#currentTimeMillis} time base, the document will be auto-deleted.
          *
          * <p>The default value is 0, which means the document is permanent and won't be
-         * auto-deleted until the app is uninstalled.
+         * auto-deleted until the app is uninstalled or {@link AppSearchSession#remove} is called.
          *
-         * @param ttlMillis A non-negative duration in milliseconds.
-         * @throws IllegalArgumentException If the provided value is negative.
+         * @param ttlMillis a non-negative duration in milliseconds.
+         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setTtlMillis(long ttlMillis) {
@@ -670,8 +687,11 @@ public class GenericDocument {
         /**
          * Sets one or multiple {@code String} values for a property, replacing its previous values.
          *
-         * @param key The key associated with the {@code values}.
-         * @param values The {@code String} values of the property.
+         * @param key the key associated with the {@code values}.
+         * @param values the {@code String} values of the property.
+         * @throws IllegalArgumentException if no values are provided, if provided values exceed
+         *     maximum repeated property length, or if a passed in {@code String} is {@code null}.
+         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setPropertyString(@NonNull String key, @NonNull String... values) {
@@ -686,8 +706,11 @@ public class GenericDocument {
          * Sets one or multiple {@code boolean} values for a property, replacing its previous
          * values.
          *
-         * @param key The key associated with the {@code values}.
-         * @param values The {@code boolean} values of the property.
+         * @param key the key associated with the {@code values}.
+         * @param values the {@code boolean} values of the property.
+         * @throws IllegalArgumentException if no values are provided or if values exceed maximum
+         *     repeated property length.
+         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setPropertyBoolean(@NonNull String key, @NonNull boolean... values) {
@@ -701,8 +724,11 @@ public class GenericDocument {
         /**
          * Sets one or multiple {@code long} values for a property, replacing its previous values.
          *
-         * @param key The key associated with the {@code values}.
-         * @param values The {@code long} values of the property.
+         * @param key the key associated with the {@code values}.
+         * @param values the {@code long} values of the property.
+         * @throws IllegalArgumentException if no values are provided or if values exceed maximum
+         *     repeated property length.
+         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setPropertyLong(@NonNull String key, @NonNull long... values) {
@@ -716,8 +742,11 @@ public class GenericDocument {
         /**
          * Sets one or multiple {@code double} values for a property, replacing its previous values.
          *
-         * @param key The key associated with the {@code values}.
-         * @param values The {@code double} values of the property.
+         * @param key the key associated with the {@code values}.
+         * @param values the {@code double} values of the property.
+         * @throws IllegalArgumentException if no values are provided or if values exceed maximum
+         *     repeated property length.
+         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setPropertyDouble(@NonNull String key, @NonNull double... values) {
@@ -731,8 +760,11 @@ public class GenericDocument {
         /**
          * Sets one or multiple {@code byte[]} for a property, replacing its previous values.
          *
-         * @param key The key associated with the {@code values}.
-         * @param values The {@code byte[]} of the property.
+         * @param key the key associated with the {@code values}.
+         * @param values the {@code byte[]} of the property.
+         * @throws IllegalArgumentException if no values are provided, if provided values exceed
+         *     maximum repeated property length, or if a passed in {@code byte[]} is {@code null}.
+         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setPropertyBytes(@NonNull String key, @NonNull byte[]... values) {
@@ -747,8 +779,12 @@ public class GenericDocument {
          * Sets one or multiple {@link GenericDocument} values for a property, replacing its
          * previous values.
          *
-         * @param key The key associated with the {@code values}.
-         * @param values The {@link GenericDocument} values of the property.
+         * @param key the key associated with the {@code values}.
+         * @param values the {@link GenericDocument} values of the property.
+         * @throws IllegalArgumentException if no values are provided, if provided values exceed if
+         *     provided values exceed maximum repeated property length, or if a passed in {@link
+         *     GenericDocument} is {@code null}.
+         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setPropertyDocument(
@@ -817,7 +853,7 @@ public class GenericDocument {
 
         private void putInPropertyBundle(@NonNull String key, @NonNull GenericDocument[] values) {
             validateRepeatedPropertyLength(key, values.length);
-            Bundle[] documentBundles = new Bundle[values.length];
+            Parcelable[] documentBundles = new Parcelable[values.length];
             for (int i = 0; i < values.length; i++) {
                 if (values[i] == null) {
                     throw new IllegalArgumentException("The document at " + i + " is null.");
@@ -841,7 +877,11 @@ public class GenericDocument {
             }
         }
 
-        /** Builds the {@link GenericDocument} object. */
+        /**
+         * Builds the {@link GenericDocument} object.
+         *
+         * @throws IllegalStateException if the builder has already been used.
+         */
         @NonNull
         public GenericDocument build() {
             Preconditions.checkState(!mBuilt, "Builder has already been used");

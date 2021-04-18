@@ -43,6 +43,7 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -80,6 +81,14 @@ import java.util.Objects;
  *     &lt;intent-filter>
  *         &lt;action android:name="android.service.notification.NotificationListenerService" />
  *     &lt;/intent-filter>
+ *     &lt;meta-data
+ *               android:name="android.service.notification.default_filter_types"
+ *               android:value="1,2">
+ *           &lt;/meta-data>
+ *     &lt;meta-data
+ *               android:name="android.service.notification.disabled_filter_types"
+ *               android:value="2">
+ *           &lt;/meta-data>
  * &lt;/service></pre>
  *
  * <p>The service should wait for the {@link #onListenerConnected()} event
@@ -101,6 +110,34 @@ public abstract class NotificationListenerService extends Service {
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
     private final String TAG = getClass().getSimpleName();
+
+    /**
+     * The name of the {@code meta-data} tag containing a comma separated list of default
+     * integer notification types that should be provided to this listener. See
+     * {@link #FLAG_FILTER_TYPE_ONGOING},
+     * {@link #FLAG_FILTER_TYPE_CONVERSATIONS}, {@link #FLAG_FILTER_TYPE_ALERTING),
+     * and {@link #FLAG_FILTER_TYPE_SILENT}.
+     * <p>This value will only be read if the app has not previously specified a default type list,
+     * and if the user has not overridden the allowed types.</p>
+     * <p>An absent value means 'allow all types'.
+     * A present but empty value means 'allow no types'.</p>
+     *
+     */
+    public static final String META_DATA_DEFAULT_FILTER_TYPES
+            = "android.service.notification.default_filter_types";
+
+    /**
+     * The name of the {@code meta-data} tag containing a comma separated list of default
+     * integer notification types that this listener never wants to receive. See
+     * {@link #FLAG_FILTER_TYPE_ONGOING},
+     * {@link #FLAG_FILTER_TYPE_CONVERSATIONS}, {@link #FLAG_FILTER_TYPE_ALERTING),
+     * and {@link #FLAG_FILTER_TYPE_SILENT}.
+     * <p>Types provided in this list will appear as 'off' and 'disabled' in the user interface,
+     * so users don't enable a type that the listener will never bridge to their paired devices.</p>
+     *
+     */
+    public static final String META_DATA_DISABLED_FILTER_TYPES
+            = "android.service.notification.disabled_filter_types";
 
     /**
      * {@link #getCurrentInterruptionFilter() Interruption filter} constant -
@@ -150,7 +187,7 @@ public abstract class NotificationListenerService extends Service {
     public static final int HINT_HOST_DISABLE_NOTIFICATION_EFFECTS = 1 << 1;
 
     /** {@link #getCurrentListenerHints() Listener hints} constant - the primary device UI
-     * should disable phone call sounds, buyt not notification sound.
+     * should disable phone call sounds, but not notification sound.
      * This does not change the interruption filter, only the effects. **/
     public static final int HINT_HOST_DISABLE_CALL_EFFECTS = 1 << 2;
 
@@ -254,23 +291,19 @@ public abstract class NotificationListenerService extends Service {
     /**
      * A flag value indicating that this notification listener can see conversation type
      * notifications.
-     * @hide
      */
     public static final int FLAG_FILTER_TYPE_CONVERSATIONS = 1;
     /**
      * A flag value indicating that this notification listener can see altering type notifications.
-     * @hide
      */
     public static final int FLAG_FILTER_TYPE_ALERTING = 2;
     /**
      * A flag value indicating that this notification listener can see silent type notifications.
-     * @hide
      */
     public static final int FLAG_FILTER_TYPE_SILENT = 4;
     /**
      * A flag value indicating that this notification listener can see important
      * ( > {@link NotificationManager#IMPORTANCE_MIN}) ongoing type notifications.
-     * @hide
      */
     public static final int FLAG_FILTER_TYPE_ONGOING = 8;
 
@@ -1431,7 +1464,8 @@ public abstract class NotificationListenerService extends Service {
 
         @Override
         public void onNotificationEnqueuedWithChannel(
-                IStatusBarNotificationHolder notificationHolder, NotificationChannel channel)
+                IStatusBarNotificationHolder notificationHolder, NotificationChannel channel,
+                NotificationRankingUpdate update)
                 throws RemoteException {
             // no-op in the listener
         }
@@ -1487,6 +1521,11 @@ public abstract class NotificationListenerService extends Service {
         }
 
         @Override
+        public void onNotificationClicked(String key) {
+            // no-op in the listener
+        }
+
+        @Override
         public void onAllowedAdjustmentsChanged() {
             // no-op in the listener
         }
@@ -1522,6 +1561,14 @@ public abstract class NotificationListenerService extends Service {
             mHandler.obtainMessage(MyHandler.MSG_ON_STATUS_BAR_ICON_BEHAVIOR_CHANGED,
                     hideSilentStatusIcons).sendToTarget();
         }
+
+        @Override
+        public void onNotificationFeedbackReceived(String key, NotificationRankingUpdate update,
+                Bundle feedback) {
+            // no-op in the listener
+        }
+
+
     }
 
     /**
@@ -1607,6 +1654,7 @@ public abstract class NotificationListenerService extends Service {
         private int mSuppressedVisualEffects;
         private @NotificationManager.Importance int mImportance;
         private CharSequence mImportanceExplanation;
+        private float mRankingScore;
         // System specified group key.
         private String mOverrideGroupKey;
         // Notification assistant channel override.
@@ -1647,6 +1695,7 @@ public abstract class NotificationListenerService extends Service {
             out.writeInt(mSuppressedVisualEffects);
             out.writeInt(mImportance);
             out.writeCharSequence(mImportanceExplanation);
+            out.writeFloat(mRankingScore);
             out.writeString(mOverrideGroupKey);
             out.writeParcelable(mChannel, flags);
             out.writeStringList(mOverridePeople);
@@ -1684,6 +1733,7 @@ public abstract class NotificationListenerService extends Service {
             mSuppressedVisualEffects = in.readInt();
             mImportance = in.readInt();
             mImportanceExplanation = in.readCharSequence(); // may be null
+            mRankingScore = in.readFloat();
             mOverrideGroupKey = in.readString(); // may be null
             mChannel = in.readParcelable(cl); // may be null
             mOverridePeople = in.createStringArrayList();
@@ -1778,6 +1828,17 @@ public abstract class NotificationListenerService extends Service {
          */
         public CharSequence getImportanceExplanation() {
             return mImportanceExplanation;
+        }
+
+        /**
+         * Returns the ranking score provided by the {@link NotificationAssistantService} to
+         * sort the notifications in the shade
+         *
+         * @return the ranking score of the notification, range from -1 to 1
+         * @hide
+         */
+        public float getRankingScore() {
+            return mRankingScore;
         }
 
         /**

@@ -16,6 +16,7 @@
 
 package com.android.server.vibrator;
 
+import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.IUidObserver;
 import android.content.Context;
@@ -34,6 +35,7 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
 import android.util.SparseArray;
+import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -43,22 +45,19 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Controls all the system settings related to vibration. */
-// TODO(b/159207608): Make this package-private once vibrator services are moved to this package
-public final class VibrationSettings {
+final class VibrationSettings {
     private static final String TAG = "VibrationSettings";
 
     private static final long[] DOUBLE_CLICK_EFFECT_FALLBACK_TIMINGS = {0, 30, 100, 30};
 
     /** Listener for changes on vibration settings. */
-    public interface OnVibratorSettingsChanged {
+    interface OnVibratorSettingsChanged {
         /** Callback triggered when any of the vibrator settings change. */
         void onChange();
     }
 
     private final Object mLock = new Object();
     private final Context mContext;
-    private final Vibrator mVibrator;
-    private final AudioManager mAudioManager;
     private final SettingsObserver mSettingObserver;
     @VisibleForTesting
     final UidObserver mUidObserver;
@@ -66,6 +65,13 @@ public final class VibrationSettings {
     @GuardedBy("mLock")
     private final List<OnVibratorSettingsChanged> mListeners = new ArrayList<>();
     private final SparseArray<VibrationEffect> mFallbackEffects;
+
+    @GuardedBy("mLock")
+    @Nullable
+    private Vibrator mVibrator;
+    @GuardedBy("mLock")
+    @Nullable
+    private AudioManager mAudioManager;
 
     @GuardedBy("mLock")
     private boolean mVibrateInputDevices;
@@ -84,23 +90,10 @@ public final class VibrationSettings {
     @GuardedBy("mLock")
     private boolean mLowPowerMode;
 
-    public VibrationSettings(Context context, Handler handler) {
+    VibrationSettings(Context context, Handler handler) {
         mContext = context;
-        mVibrator = context.getSystemService(Vibrator.class);
-        mAudioManager = context.getSystemService(AudioManager.class);
         mSettingObserver = new SettingsObserver(handler);
         mUidObserver = new UidObserver();
-
-        registerSettingsObserver(Settings.System.getUriFor(Settings.System.VIBRATE_INPUT_DEVICES));
-        registerSettingsObserver(Settings.System.getUriFor(Settings.System.VIBRATE_WHEN_RINGING));
-        registerSettingsObserver(Settings.Global.getUriFor(Settings.Global.APPLY_RAMPING_RINGER));
-        registerSettingsObserver(Settings.Global.getUriFor(Settings.Global.ZEN_MODE));
-        registerSettingsObserver(
-                Settings.System.getUriFor(Settings.System.HAPTIC_FEEDBACK_INTENSITY));
-        registerSettingsObserver(
-                Settings.System.getUriFor(Settings.System.NOTIFICATION_VIBRATION_INTENSITY));
-        registerSettingsObserver(
-                Settings.System.getUriFor(Settings.System.RING_VIBRATION_INTENSITY));
 
         VibrationEffect clickEffect = createEffectFromResource(
                 com.android.internal.R.array.config_virtualKeyVibePattern);
@@ -119,6 +112,15 @@ public final class VibrationSettings {
         mFallbackEffects.put(VibrationEffect.EFFECT_TEXTURE_TICK,
                 VibrationEffect.get(VibrationEffect.EFFECT_TICK, false));
 
+        // Update with current values from settings.
+        updateSettings();
+    }
+
+    public void onSystemReady() {
+        synchronized (mLock) {
+            mVibrator = mContext.getSystemService(Vibrator.class);
+            mAudioManager = mContext.getSystemService(AudioManager.class);
+        }
         try {
             ActivityManager.getService().registerUidObserver(mUidObserver,
                     ActivityManager.UID_OBSERVER_PROCSTATE | ActivityManager.UID_OBSERVER_GONE,
@@ -148,7 +150,18 @@ public final class VibrationSettings {
                     }
                 });
 
-        // Update with current values from settings.
+        registerSettingsObserver(Settings.System.getUriFor(Settings.System.VIBRATE_INPUT_DEVICES));
+        registerSettingsObserver(Settings.System.getUriFor(Settings.System.VIBRATE_WHEN_RINGING));
+        registerSettingsObserver(Settings.Global.getUriFor(Settings.Global.APPLY_RAMPING_RINGER));
+        registerSettingsObserver(Settings.Global.getUriFor(Settings.Global.ZEN_MODE));
+        registerSettingsObserver(
+                Settings.System.getUriFor(Settings.System.HAPTIC_FEEDBACK_INTENSITY));
+        registerSettingsObserver(
+                Settings.System.getUriFor(Settings.System.NOTIFICATION_VIBRATION_INTENSITY));
+        registerSettingsObserver(
+                Settings.System.getUriFor(Settings.System.RING_VIBRATION_INTENSITY));
+
+        // Update with newly loaded services.
         updateSettings();
     }
 
@@ -178,17 +191,21 @@ public final class VibrationSettings {
      * @return The vibration intensity, one of Vibrator.VIBRATION_INTENSITY_*
      */
     public int getDefaultIntensity(int usageHint) {
-        if (isRingtone(usageHint)) {
-            return mVibrator.getDefaultRingVibrationIntensity();
-        } else if (isNotification(usageHint)) {
-            return mVibrator.getDefaultNotificationVibrationIntensity();
-        } else if (isHapticFeedback(usageHint)) {
-            return mVibrator.getDefaultHapticFeedbackIntensity();
-        } else if (isAlarm(usageHint)) {
+        if (isAlarm(usageHint)) {
             return Vibrator.VIBRATION_INTENSITY_HIGH;
-        } else {
-            return Vibrator.VIBRATION_INTENSITY_MEDIUM;
         }
+        synchronized (mLock) {
+            if (mVibrator != null) {
+                if (isRingtone(usageHint)) {
+                    return mVibrator.getDefaultRingVibrationIntensity();
+                } else if (isNotification(usageHint)) {
+                    return mVibrator.getDefaultNotificationVibrationIntensity();
+                } else if (isHapticFeedback(usageHint)) {
+                    return mVibrator.getDefaultHapticFeedbackIntensity();
+                }
+            }
+        }
+        return Vibrator.VIBRATION_INTENSITY_MEDIUM;
     }
 
     /**
@@ -234,8 +251,11 @@ public final class VibrationSettings {
         if (!isRingtone(usageHint)) {
             return true;
         }
-        int ringerMode = mAudioManager.getRingerModeInternal();
         synchronized (mLock) {
+            if (mAudioManager == null) {
+                return false;
+            }
+            int ringerMode = mAudioManager.getRingerModeInternal();
             if (mVibrateWhenRinging) {
                 return ringerMode != AudioManager.RINGER_MODE_SILENT;
             } else if (mApplyRampingRinger) {
@@ -304,12 +324,12 @@ public final class VibrationSettings {
             mVibrateWhenRinging = getSystemSetting(Settings.System.VIBRATE_WHEN_RINGING, 0) != 0;
             mApplyRampingRinger = getGlobalSetting(Settings.Global.APPLY_RAMPING_RINGER, 0) != 0;
             mHapticFeedbackIntensity = getSystemSetting(Settings.System.HAPTIC_FEEDBACK_INTENSITY,
-                    mVibrator.getDefaultHapticFeedbackIntensity());
+                    getDefaultIntensity(VibrationAttributes.USAGE_TOUCH));
             mNotificationIntensity = getSystemSetting(
                     Settings.System.NOTIFICATION_VIBRATION_INTENSITY,
-                    mVibrator.getDefaultNotificationVibrationIntensity());
+                    getDefaultIntensity(VibrationAttributes.USAGE_NOTIFICATION));
             mRingIntensity = getSystemSetting(Settings.System.RING_VIBRATION_INTENSITY,
-                    mVibrator.getDefaultRingVibrationIntensity());
+                    getDefaultIntensity(VibrationAttributes.USAGE_RINGTONE));
             mVibrateInputDevices = getSystemSetting(Settings.System.VIBRATE_INPUT_DEVICES, 0) > 0;
             mZenMode = getGlobalSetting(Settings.Global.ZEN_MODE, Settings.Global.ZEN_MODE_OFF);
         }
@@ -338,6 +358,24 @@ public final class VibrationSettings {
                 + ", mRingDefaultIntensity="
                 + intensityToString(getDefaultIntensity(VibrationAttributes.USAGE_RINGTONE))
                 + '}';
+    }
+
+    /** Write current settings into given {@link ProtoOutputStream}. */
+    public void dumpProto(ProtoOutputStream proto) {
+        synchronized (mLock) {
+            proto.write(VibratorManagerServiceDumpProto.HAPTIC_FEEDBACK_INTENSITY,
+                    mHapticFeedbackIntensity);
+            proto.write(VibratorManagerServiceDumpProto.HAPTIC_FEEDBACK_DEFAULT_INTENSITY,
+                    getDefaultIntensity(VibrationAttributes.USAGE_TOUCH));
+            proto.write(VibratorManagerServiceDumpProto.NOTIFICATION_INTENSITY,
+                    mNotificationIntensity);
+            proto.write(VibratorManagerServiceDumpProto.NOTIFICATION_DEFAULT_INTENSITY,
+                    getDefaultIntensity(VibrationAttributes.USAGE_NOTIFICATION));
+            proto.write(VibratorManagerServiceDumpProto.RING_INTENSITY,
+                    mRingIntensity);
+            proto.write(VibratorManagerServiceDumpProto.RING_DEFAULT_INTENSITY,
+                    getDefaultIntensity(VibrationAttributes.USAGE_RINGTONE));
+        }
     }
 
     private void notifyListeners() {

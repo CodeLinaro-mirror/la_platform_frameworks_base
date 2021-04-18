@@ -44,6 +44,7 @@ import android.hardware.biometrics.IBiometricServiceReceiver;
 import android.hardware.biometrics.IBiometricSysuiReceiver;
 import android.hardware.biometrics.IInvalidationCallback;
 import android.hardware.biometrics.ITestSession;
+import android.hardware.biometrics.ITestSessionCallback;
 import android.hardware.biometrics.PromptInfo;
 import android.hardware.biometrics.SensorPropertiesInternal;
 import android.hardware.fingerprint.FingerprintManager;
@@ -570,13 +571,13 @@ public class BiometricService extends SystemService {
      */
     private final class BiometricServiceWrapper extends IBiometricService.Stub {
         @Override // Binder call
-        public ITestSession createTestSession(int sensorId, @NonNull String opPackageName)
-                throws RemoteException {
+        public ITestSession createTestSession(int sensorId, @NonNull ITestSessionCallback callback,
+                @NonNull String opPackageName) throws RemoteException {
             checkInternalPermission();
 
             for (BiometricSensor sensor : mSensors) {
                 if (sensor.id == sensorId) {
-                    return sensor.impl.createTestSession(opPackageName);
+                    return sensor.impl.createTestSession(callback, opPackageName);
                 }
             }
 
@@ -665,14 +666,9 @@ public class BiometricService extends SystemService {
                 throw new SecurityException("Invalid authenticator configuration");
             }
 
-            final PromptInfo promptInfo = new PromptInfo();
-            promptInfo.setAuthenticators(authenticators);
-
             try {
-                PreAuthInfo preAuthInfo = PreAuthInfo.create(mTrustManager,
-                        mDevicePolicyManager, mSettingObserver, mSensors, userId, promptInfo,
-                        opPackageName,
-                        false /* checkDevicePolicyManager */);
+                final PreAuthInfo preAuthInfo =
+                        createPreAuthInfo(opPackageName, userId, authenticators);
                 return preAuthInfo.getCanAuthenticateResult();
             } catch (RemoteException e) {
                 Slog.e(TAG, "Remote exception", e);
@@ -806,6 +802,64 @@ public class BiometricService extends SystemService {
             return Authenticators.EMPTY_SET;
         }
 
+        @Override // Binder call
+        public int getCurrentModality(
+                String opPackageName,
+                int userId,
+                int callingUserId,
+                @Authenticators.Types int authenticators) {
+
+            checkInternalPermission();
+
+            Slog.d(TAG, "getCurrentModality: User=" + userId
+                    + ", Caller=" + callingUserId
+                    + ", Authenticators=" + authenticators);
+
+            if (!Utils.isValidAuthenticatorConfig(authenticators)) {
+                throw new SecurityException("Invalid authenticator configuration");
+            }
+
+            try {
+                final PreAuthInfo preAuthInfo =
+                        createPreAuthInfo(opPackageName, userId, authenticators);
+                return preAuthInfo.getPreAuthenticateStatus().first;
+            } catch (RemoteException e) {
+                Slog.e(TAG, "Remote exception", e);
+                return BiometricAuthenticator.TYPE_NONE;
+            }
+        }
+
+        @Override // Binder call
+        public int getSupportedModalities(@Authenticators.Types int authenticators) {
+            checkInternalPermission();
+
+            Slog.d(TAG, "getSupportedModalities: Authenticators=" + authenticators);
+
+            if (!Utils.isValidAuthenticatorConfig(authenticators)) {
+                throw new SecurityException("Invalid authenticator configuration");
+            }
+
+            @BiometricAuthenticator.Modality int modality =
+                    Utils.isCredentialRequested(authenticators)
+                            ? BiometricAuthenticator.TYPE_CREDENTIAL
+                            : BiometricAuthenticator.TYPE_NONE;
+
+            if (Utils.isBiometricRequested(authenticators)) {
+                @Authenticators.Types final int requestedStrength =
+                        Utils.getPublicBiometricStrength(authenticators);
+
+                // Add modalities of all biometric sensors that meet the authenticator requirements.
+                for (final BiometricSensor sensor : mSensors) {
+                    @Authenticators.Types final int sensorStrength = sensor.getCurrentStrength();
+                    if (Utils.isAtLeastStrength(sensorStrength, requestedStrength)) {
+                        modality |= sensor.modality;
+                    }
+                }
+            }
+
+            return modality;
+        }
+
         @Override
         protected void dump(@NonNull FileDescriptor fd, @NonNull PrintWriter pw, String[] args) {
             if (!DumpUtils.checkDumpPermission(getContext(), TAG, pw)) {
@@ -815,12 +869,16 @@ public class BiometricService extends SystemService {
             final long ident = Binder.clearCallingIdentity();
             try {
                 if (args.length > 0 && "--proto".equals(args[0])) {
+                    final boolean clearSchedulerBuffer = args.length > 1
+                            && "--clear-scheduler-buffer".equals(args[1]);
+                    Slog.d(TAG, "ClearSchedulerBuffer: " + clearSchedulerBuffer);
                     final ProtoOutputStream proto = new ProtoOutputStream(fd);
                     proto.write(BiometricServiceStateProto.AUTH_SESSION_STATE,
                             mCurrentAuthSession != null ? mCurrentAuthSession.getState()
                                     : STATE_AUTH_IDLE);
                     for (BiometricSensor sensor : mSensors) {
-                        byte[] serviceState = sensor.impl.dumpSensorServiceStateProto();
+                        byte[] serviceState = sensor.impl
+                                .dumpSensorServiceStateProto(clearSchedulerBuffer);
                         proto.write(BiometricServiceStateProto.SENSOR_SERVICE_STATES, serviceState);
                     }
                     proto.flush();
@@ -838,6 +896,19 @@ public class BiometricService extends SystemService {
     private void checkInternalPermission() {
         getContext().enforceCallingOrSelfPermission(USE_BIOMETRIC_INTERNAL,
                 "Must have USE_BIOMETRIC_INTERNAL permission");
+    }
+
+    @NonNull
+    private PreAuthInfo createPreAuthInfo(
+            @NonNull String opPackageName,
+            int userId,
+            @Authenticators.Types int authenticators) throws RemoteException {
+
+        final PromptInfo promptInfo = new PromptInfo();
+        promptInfo.setAuthenticators(authenticators);
+
+        return PreAuthInfo.create(mTrustManager, mDevicePolicyManager, mSettingObserver, mSensors,
+                userId, promptInfo, opPackageName, false /* checkDevicePolicyManager */);
     }
 
     /**

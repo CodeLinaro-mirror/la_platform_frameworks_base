@@ -384,7 +384,6 @@ public final class SmsManager {
      * where this operation may fail.
      * </p>
      *
-     *
      * @param destinationAddress the address to send the message to
      * @param scAddress is the service center address or null to use
      *  the current default SMSC
@@ -396,7 +395,6 @@ public final class SmsManager {
      *  <code>RESULT_ERROR_GENERIC_FAILURE</code><br>
      *  <code>RESULT_ERROR_RADIO_OFF</code><br>
      *  <code>RESULT_ERROR_NULL_PDU</code><br>
-     *  <code>RESULT_ERROR_NO_SERVICE</code><br>
      *  <code>RESULT_ERROR_NO_SERVICE</code><br>
      *  <code>RESULT_ERROR_LIMIT_EXCEEDED</code><br>
      *  <code>RESULT_ERROR_FDN_CHECK_FAILURE</code><br>
@@ -513,7 +511,6 @@ public final class SmsManager {
      *  <code>RESULT_ERROR_GENERIC_FAILURE</code><br>
      *  <code>RESULT_ERROR_RADIO_OFF</code><br>
      *  <code>RESULT_ERROR_NULL_PDU</code><br>
-     *  <code>RESULT_ERROR_NO_SERVICE</code><br>
      *  <code>RESULT_ERROR_NO_SERVICE</code><br>
      *  <code>RESULT_ERROR_LIMIT_EXCEEDED</code><br>
      *  <code>RESULT_ERROR_FDN_CHECK_FAILURE</code><br>
@@ -903,21 +900,19 @@ public final class SmsManager {
      * where this operation may fail.
      * </p>
      *
-     *
      * @param destinationAddress the address to send the message to
      * @param scAddress is the service center address or null to use
-     *   the current default SMSC
+     *  the current default SMSC
      * @param parts an <code>ArrayList</code> of strings that, in order,
-     *   comprise the original message
+     *  comprise the original message
      * @param sentIntents if not null, an <code>ArrayList</code> of
-     *   <code>PendingIntent</code>s (one for each message part) that is
-     *   broadcast when the corresponding message part has been sent.
-     *   The result code will be <code>Activity.RESULT_OK</code> for success,
-     *   or one of these errors:<br>
+     *  <code>PendingIntent</code>s (one for each message part) that is
+     *  broadcast when the corresponding message part has been sent.
+     *  The result code will be <code>Activity.RESULT_OK</code> for success,
+     *  or one of these errors:<br>
      *  <code>RESULT_ERROR_GENERIC_FAILURE</code><br>
      *  <code>RESULT_ERROR_RADIO_OFF</code><br>
      *  <code>RESULT_ERROR_NULL_PDU</code><br>
-     *  <code>RESULT_ERROR_NO_SERVICE</code><br>
      *  <code>RESULT_ERROR_NO_SERVICE</code><br>
      *  <code>RESULT_ERROR_LIMIT_EXCEEDED</code><br>
      *  <code>RESULT_ERROR_FDN_CHECK_FAILURE</code><br>
@@ -974,14 +969,14 @@ public final class SmsManager {
      *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> or any of the RESULT_RIL errors,
      *  the sentIntent may include the extra "errorCode" containing a radio technology specific
      *  value, generally only useful for troubleshooting.<br>
-     *   The per-application based SMS control checks sentIntent. If sentIntent
-     *   is NULL the caller will be checked against all unknown applications,
-     *   which cause smaller number of SMS to be sent in checking period.
+     *  The per-application based SMS control checks sentIntent. If sentIntent
+     *  is NULL the caller will be checked against all unknown applications,
+     *  which cause smaller number of SMS to be sent in checking period.
      * @param deliveryIntents if not null, an <code>ArrayList</code> of
-     *   <code>PendingIntent</code>s (one for each message part) that is
-     *   broadcast when the corresponding message part has been delivered
-     *   to the recipient.  The raw pdu of the status report is in the
-     *   extended data ("pdu").
+     *  <code>PendingIntent</code>s (one for each message part) that is
+     *  broadcast when the corresponding message part has been delivered
+     *  to the recipient.  The raw pdu of the status report is in the
+     *  extended data ("pdu").
      *
      * @throws IllegalArgumentException if destinationAddress or data are empty
      */
@@ -1163,21 +1158,20 @@ public final class SmsManager {
      * boolean value {@code true}. See {@link #getDefault()} for more information on the conditions
      * where this operation may fail.
      * </p>
-
+     *
      * @param destinationAddress the address to send the message to
      * @param scAddress is the service center address or null to use
-     *   the current default SMSC
+     *  the current default SMSC
      * @param parts an <code>ArrayList</code> of strings that, in order,
-     *   comprise the original message
+     *  comprise the original message
      * @param sentIntents if not null, an <code>ArrayList</code> of
-     *   <code>PendingIntent</code>s (one for each message part) that is
-     *   broadcast when the corresponding message part has been sent.
-     *   The result code will be <code>Activity.RESULT_OK</code> for success,
-     *   or one of these errors:<br>
+     *  <code>PendingIntent</code>s (one for each message part) that is
+     *  broadcast when the corresponding message part has been sent.
+     *  The result code will be <code>Activity.RESULT_OK</code> for success,
+     *  or one of these errors:<br>
      *  <code>RESULT_ERROR_GENERIC_FAILURE</code><br>
      *  <code>RESULT_ERROR_RADIO_OFF</code><br>
      *  <code>RESULT_ERROR_NULL_PDU</code><br>
-     *  <code>RESULT_ERROR_NO_SERVICE</code><br>
      *  <code>RESULT_ERROR_NO_SERVICE</code><br>
      *  <code>RESULT_ERROR_LIMIT_EXCEEDED</code><br>
      *  <code>RESULT_ERROR_FDN_CHECK_FAILURE</code><br>
@@ -1234,14 +1228,14 @@ public final class SmsManager {
      *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> or any of the RESULT_RIL errors,
      *  the sentIntent may include the extra "errorCode" containing a radio technology specific
      *  value, generally only useful for troubleshooting.<br>
-     *   The per-application based SMS control checks sentIntent. If sentIntent
-     *   is NULL the caller will be checked against all unknown applications,
-     *   which cause smaller number of SMS to be sent in checking period.
+     *  The per-application based SMS control checks sentIntent. If sentIntent
+     *  is NULL the caller will be checked against all unknown applications,
+     *  which cause smaller number of SMS to be sent in checking period.
      * @param deliveryIntents if not null, an <code>ArrayList</code> of
-     *   <code>PendingIntent</code>s (one for each message part) that is
-     *   broadcast when the corresponding message part has been delivered
-     *   to the recipient.  The raw pdu of the status report is in the
-     *   extended data ("pdu").
+     *  <code>PendingIntent</code>s (one for each message part) that is
+     *  broadcast when the corresponding message part has been delivered
+     *  to the recipient.  The raw pdu of the status report is in the
+     *  extended data ("pdu").
      * @param priority Priority level of the message
      *  Refer specification See 3GPP2 C.S0015-B, v2.0, table 4.5.9-1
      *  ---------------------------------
@@ -1379,7 +1373,6 @@ public final class SmsManager {
      *  <code>RESULT_ERROR_GENERIC_FAILURE</code><br>
      *  <code>RESULT_ERROR_RADIO_OFF</code><br>
      *  <code>RESULT_ERROR_NULL_PDU</code><br>
-     *  <code>RESULT_ERROR_NO_SERVICE</code><br>
      *  <code>RESULT_ERROR_NO_SERVICE</code><br>
      *  <code>RESULT_ERROR_LIMIT_EXCEEDED</code><br>
      *  <code>RESULT_ERROR_FDN_CHECK_FAILURE</code><br>
@@ -2656,6 +2649,37 @@ public final class SmsManager {
      */
     public void sendMultimediaMessage(Context context, Uri contentUri, String locationUrl,
             Bundle configOverrides, PendingIntent sentIntent) {
+        sendMultimediaMessage(context, contentUri, locationUrl, configOverrides, sentIntent,
+                0L /* messageId */);
+    }
+
+    /**
+     * Send an MMS message
+     *
+     * Same as {@link #sendMultimediaMessage(Context context, Uri contentUri, String locationUrl,
+     *           Bundle configOverrides, PendingIntent sentIntent)}, but adds an optional messageId.
+     * <p class="note"><strong>Note:</strong> If {@link #getDefault()} is used to instantiate this
+     * manager on a multi-SIM device, this operation may fail sending the MMS message because no
+     * suitable default subscription could be found. In this case, if {@code sentIntent} is
+     * non-null, then the {@link PendingIntent} will be sent with an error code
+     * {@code RESULT_NO_DEFAULT_SMS_APP}. See {@link #getDefault()} for more information on the
+     * conditions where this operation may fail.
+     * </p>
+     *
+     * @param context application context
+     * @param contentUri the content Uri from which the message pdu will be read
+     * @param locationUrl the optional location url where message should be sent to
+     * @param configOverrides the carrier-specific messaging configuration values to override for
+     *  sending the message.
+     * @param sentIntent if not NULL this <code>PendingIntent</code> is
+     *  broadcast when the message is successfully sent, or failed
+     * @param messageId an id that uniquely identifies the message requested to be sent.
+     * Used for logging and diagnostics purposes. The id may be 0.
+     * @throws IllegalArgumentException if contentUri is empty
+     */
+    public void sendMultimediaMessage(@NonNull Context context, @NonNull Uri contentUri,
+            @Nullable String locationUrl, @Nullable Bundle configOverrides,
+            @Nullable PendingIntent sentIntent, long messageId) {
         if (contentUri == null) {
             throw new IllegalArgumentException("Uri contentUri null");
         }
@@ -2665,7 +2689,7 @@ public final class SmsManager {
                 @Override
                 public void onSuccess(int subId) {
                     m.sendMultimediaMessage(subId, contentUri, locationUrl, configOverrides,
-                            sentIntent, 0L /* messageId */);
+                            sentIntent, messageId);
                 }
 
                 @Override
@@ -2699,6 +2723,39 @@ public final class SmsManager {
      */
     public void downloadMultimediaMessage(Context context, String locationUrl, Uri contentUri,
             Bundle configOverrides, PendingIntent downloadedIntent) {
+        downloadMultimediaMessage(context, locationUrl, contentUri, configOverrides,
+                downloadedIntent, 0L /* messageId */);
+    }
+
+    /**
+     * Download an MMS message from carrier by a given location URL
+     *
+     * Same as {@link #downloadMultimediaMessage(Context context, String locationUrl,
+     *      Uri contentUri, Bundle configOverrides, PendingIntent downloadedIntent)},
+     *      but adds an optional messageId.
+     * <p class="note"><strong>Note:</strong> If {@link #getDefault()} is used to instantiate this
+     * manager on a multi-SIM device, this operation may fail downloading the MMS message because no
+     * suitable default subscription could be found. In this case, if {@code downloadedIntent} is
+     * non-null, then the {@link PendingIntent} will be sent with an error code
+     * {@code RESULT_NO_DEFAULT_SMS_APP}. See {@link #getDefault()} for more information on the
+     * conditions where this operation may fail.
+     * </p>
+     *
+     * @param context application context
+     * @param locationUrl the location URL of the MMS message to be downloaded, usually obtained
+     *  from the MMS WAP push notification
+     * @param contentUri the content uri to which the downloaded pdu will be written
+     * @param configOverrides the carrier-specific messaging configuration values to override for
+     *  downloading the message.
+     * @param downloadedIntent if not NULL this <code>PendingIntent</code> is
+     *  broadcast when the message is downloaded, or the download is failed
+     * @param messageId an id that uniquely identifies the message requested to be downloaded.
+     * Used for logging and diagnostics purposes. The id may be 0.
+     * @throws IllegalArgumentException if locationUrl or contentUri is empty
+     */
+    public void downloadMultimediaMessage(@NonNull Context context, @NonNull String locationUrl,
+            @NonNull Uri contentUri, @Nullable Bundle configOverrides,
+            @Nullable PendingIntent downloadedIntent, long messageId) {
         if (TextUtils.isEmpty(locationUrl)) {
             throw new IllegalArgumentException("Empty MMS location URL");
         }
@@ -2711,7 +2768,7 @@ public final class SmsManager {
                 @Override
                 public void onSuccess(int subId) {
                     m.downloadMultimediaMessage(subId, locationUrl, contentUri, configOverrides,
-                            downloadedIntent, 0L /* messageId */);
+                            downloadedIntent, messageId);
                 }
 
                 @Override

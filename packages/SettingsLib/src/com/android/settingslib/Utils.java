@@ -1,6 +1,7 @@
 package com.android.settingslib;
 
 import android.annotation.ColorInt;
+import android.annotation.Nullable;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
@@ -23,6 +24,10 @@ import android.graphics.drawable.Drawable;
 import android.location.LocationManager;
 import android.media.AudioManager;
 import android.net.ConnectivityManager;
+import android.net.NetworkCapabilities;
+import android.net.TetheringManager;
+import android.net.vcn.VcnTransportInfo;
+import android.net.wifi.WifiInfo;
 import android.os.BatteryManager;
 import android.os.SystemProperties;
 import android.os.UserHandle;
@@ -86,10 +91,10 @@ public class Utils {
      * Return string resource that best describes combination of tethering
      * options available on this device.
      */
-    public static int getTetheringLabel(ConnectivityManager cm) {
-        String[] usbRegexs = cm.getTetherableUsbRegexs();
-        String[] wifiRegexs = cm.getTetherableWifiRegexs();
-        String[] bluetoothRegexs = cm.getTetherableBluetoothRegexs();
+    public static int getTetheringLabel(TetheringManager tm) {
+        String[] usbRegexs = tm.getTetherableUsbRegexs();
+        String[] wifiRegexs = tm.getTetherableWifiRegexs();
+        String[] bluetoothRegexs = tm.getTetherableBluetoothRegexs();
 
         boolean usbAvailable = usbRegexs.length != 0;
         boolean wifiAvailable = wifiRegexs.length != 0;
@@ -562,5 +567,22 @@ public class Utils {
         drawable.setBounds(0, 0, canvas.getWidth(), canvas.getHeight());
         drawable.draw(canvas);
         return roundedBitmap;
+    }
+
+    /**
+     * Returns the WifiInfo for the underlying WiFi network of the VCN network, returns null if the
+     * input NetworkCapabilities is not for a VCN network with underlying WiFi network.
+     *
+     * @param networkCapabilities NetworkCapabilities of the network.
+     */
+    @Nullable
+    public static WifiInfo tryGetWifiInfoForVcn(NetworkCapabilities networkCapabilities) {
+        if (networkCapabilities.getTransportInfo() == null
+                || !(networkCapabilities.getTransportInfo() instanceof VcnTransportInfo)) {
+            return null;
+        }
+        VcnTransportInfo vcnTransportInfo =
+                (VcnTransportInfo) networkCapabilities.getTransportInfo();
+        return vcnTransportInfo.getWifiInfo();
     }
 }

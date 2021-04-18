@@ -64,8 +64,12 @@
     <string name="wifi_security_eap" translatable="false">WPA/WPA2/WPA3-Enterprise</string>
     <!-- Do not translate.  Concise terminology for wifi with WPA 802.1x EAP security -->
     <string name="wifi_security_eap_wpa" translatable="false">WPA-Enterprise</string>
+    <!-- Do not translate.  Concise terminology for wifi with 802.1x EAP security -->
+    <string name="wifi_security_eap_wpa_wpa2" translatable="false">WPA/WPA2-Enterprise</string>
     <!-- Do not translate.  Concise terminology for wifi with WPA2/WPA3 802.1x EAP security -->
     <string name="wifi_security_eap_wpa2_wpa3" translatable="false">WPA2/WPA3-Enterprise</string>
+    <!-- Do not translate.  Concise terminology for wifi with WPA3 802.1x EAP security -->
+    <string name="wifi_security_eap_wpa3" translatable="false">WPA3-Enterprise</string>
     <!-- Do not translate.  Concise terminology for Passpoint network -->
     <string name="wifi_security_passpoint" translatable="false">Passpoint</string>
     <!-- Do not translate.  Terminology for wifi with WPA3 security -->
@@ -110,6 +114,9 @@
     <string name="wifi_no_internet">No internet access</string>
     <!-- Summary for saved networks -->
     <string name="saved_network">Saved by <xliff:g id="name">%1$s</xliff:g></string>
+    <!-- Summary for connect to metered access point [CHAR LIMIT=NONE] -->
+    <string name="connected_to_metered_access_point">Connected to metered network</string>
+
 
     <!-- Status message of Wi-Fi when it is automatically connected by a network recommendation provider. [CHAR LIMIT=NONE] -->
     <string name="connected_via_network_scorer">Automatically connected via %1$s</string>
@@ -1004,6 +1011,9 @@
     <!-- Settings item title to select the default behavior for transcoding if an encodig is not supported by an app. [CHAR LIMIT=85] -->
     <string name="transcode_default">Assume apps support modern formats</string>
 
+    <!-- Settings item title to select whether to show transcoding notifications. [CHAR LIMIT=85] -->
+    <string name="transcode_notification">Show transcoding notifications</string>
+
     <!-- Services settings screen, setting option name for the user to go to the screen to view running services -->
     <string name="runningservices_settings_title">Running services</string>
     <!-- Services settings screen, setting option summary for the user to go to the screen to view running services  -->
@@ -1053,7 +1063,14 @@
     <!-- Title for the accessibility preference to configure display color space correction. [CHAR LIMIT=NONE] -->
     <string name="accessibility_display_daltonizer_preference_title">Color correction</string>
     <!-- Subtitle for the accessibility preference to configure display color space correction. [CHAR LIMIT=NONE] -->
-    <string name="accessibility_display_daltonizer_preference_subtitle"><![CDATA[Color correction allows you to adjust how colors are displayed on your device]]></string>
+    <string name="accessibility_display_daltonizer_preference_subtitle">
+        <![CDATA[
+        Adjust how colors display on your device. This can be helpful when you want to:<br/><br/>
+        <ol>
+            <li> See colors more accurately</li>
+            <li> Remove colors to help you focus</li>
+        </ol>
+        ]]></string>
     <!-- Summary shown for color space correction preference when its value is overridden by another preference [CHAR LIMIT=35] -->
     <string name="daltonizer_type_overridden">Overridden by <xliff:g id="title" example="Simulate color space">%1$s</xliff:g></string>
 
@@ -1289,6 +1306,8 @@
 
     <!-- Name of the phone device. [CHAR LIMIT=30] -->
     <string name="media_transfer_this_device_name">Phone speaker</string>
+    <!-- Name of the phone device with an active remote session. [CHAR LIMIT=30] -->
+    <string name="media_transfer_this_phone">This phone</string>
 
     <!-- Warning message to tell user is have problem during profile connect, it need to turn off device and back on. [CHAR_LIMIT=NONE] -->
     <string name="profile_connect_timeout_subtext">Problem connecting. Turn device off &amp; back on</string>
@@ -1377,7 +1396,7 @@
     <!-- Label for adding a new guest in the user switcher [CHAR LIMIT=35] -->
     <string name="guest_new_guest">Add guest</string>
     <!-- Label for exiting and removing the guest session in the user switcher [CHAR LIMIT=35] -->
-    <string name="guest_exit_guest">End guest session</string>
+    <string name="guest_exit_guest">Remove guest</string>
     <!-- Name for the guest user [CHAR LIMIT=35] -->
     <string name="guest_nickname">Guest</string>
 
@@ -1481,5 +1500,8 @@
     <!-- Content description of the Ethernet connection when disconnected for accessibility (not shown on the screen). [CHAR LIMIT=NONE] -->
     <string name="accessibility_ethernet_disconnected">Ethernet disconnected.</string>
     <!-- Content description of the Ethernet connection when connected for accessibility (not shown on the screen). [CHAR LIMIT=NONE] -->
-    <string name="accessibility_ethernet_connected">Ethernet connected.</string>
+    <string name="accessibility_ethernet_connected">Ethernet.</string>
+
+    <!-- Content description of the no calling for accessibility (not shown on the screen). [CHAR LIMIT=NONE] -->
+    <string name="accessibility_no_calling">No calling.</string>
 </resources>

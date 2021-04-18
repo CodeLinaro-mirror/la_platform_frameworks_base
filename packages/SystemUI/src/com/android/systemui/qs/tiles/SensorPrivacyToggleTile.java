@@ -17,7 +17,7 @@
 package com.android.systemui.qs.tiles;
 
 import android.content.Intent;
-import android.hardware.SensorPrivacyManager.IndividualSensor;
+import android.hardware.SensorPrivacyManager.Sensors.Sensor;
 import android.os.Handler;
 import android.os.Looper;
 import android.service.quicksettings.Tile;
@@ -35,6 +35,7 @@ import com.android.systemui.qs.QSHost;
 import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.qs.tileimpl.QSTileImpl;
 import com.android.systemui.statusbar.policy.IndividualSensorPrivacyController;
+import com.android.systemui.statusbar.policy.KeyguardStateController;
 
 /**
  * Superclass to toggle individual sensor privacy via quick settings tiles
@@ -42,12 +43,13 @@ import com.android.systemui.statusbar.policy.IndividualSensorPrivacyController;
 public abstract class SensorPrivacyToggleTile extends QSTileImpl<QSTile.BooleanState> implements
         IndividualSensorPrivacyController.Callback {
 
+    private final KeyguardStateController mKeyguard;
     private IndividualSensorPrivacyController mSensorPrivacyController;
 
     /**
      * @return Id of the sensor that will be toggled
      */
-    public abstract @IndividualSensor int getSensorId();
+    public abstract @Sensor int getSensorId();
 
     /**
      * @return icon for the QS tile
@@ -61,10 +63,12 @@ public abstract class SensorPrivacyToggleTile extends QSTileImpl<QSTile.BooleanS
             StatusBarStateController statusBarStateController,
             ActivityStarter activityStarter,
             QSLogger qsLogger,
-            IndividualSensorPrivacyController sensorPrivacyController) {
+            IndividualSensorPrivacyController sensorPrivacyController,
+            KeyguardStateController keyguardStateController) {
         super(host, backgroundLooper, mainHandler, metricsLogger, statusBarStateController,
                 activityStarter, qsLogger);
         mSensorPrivacyController = sensorPrivacyController;
+        mKeyguard = keyguardStateController;
         mSensorPrivacyController.observe(getLifecycle(), this);
     }
 
@@ -75,6 +79,13 @@ public abstract class SensorPrivacyToggleTile extends QSTileImpl<QSTile.BooleanS
 
     @Override
     protected void handleClick() {
+        if (mKeyguard.isMethodSecure() && mKeyguard.isShowing()) {
+            mActivityStarter.postQSRunnableDismissingKeyguard(() -> {
+                mSensorPrivacyController.setSensorBlocked(getSensorId(),
+                        !mSensorPrivacyController.isSensorBlocked(getSensorId()));
+            });
+            return;
+        }
         mSensorPrivacyController.setSensorBlocked(getSensorId(),
                 !mSensorPrivacyController.isSensorBlocked(getSensorId()));
     }

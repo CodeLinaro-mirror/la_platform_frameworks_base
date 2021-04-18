@@ -27,14 +27,13 @@ namespace android {
 
 /////////////// LnbClient ///////////////////////
 
-// TODO: pending aidl interface
-LnbClient::LnbClient() {
-    //mTunerLnb = tunerLnb;
+LnbClient::LnbClient(shared_ptr<ITunerLnb> tunerLnb) {
+    mTunerLnb = tunerLnb;
     mId = -1;
 }
 
 LnbClient::~LnbClient() {
-    //mTunerLnb = NULL;
+    mTunerLnb = NULL;
     mLnb = NULL;
     mId = -1;
 }
@@ -45,19 +44,26 @@ void LnbClient::setHidlLnb(sp<ILnb> lnb) {
 }
 
 Result LnbClient::setCallback(sp<LnbClientCallback> cb) {
-    // TODO: pending aidl interface
-    /*if (mTunerFrontend != NULL) {
-        mAidlCallback = ::ndk::SharedRefBase::make<TunerLnbCallback>(cb);
-        mTunerLnb->setCallback(mAidlCallback);
-        return Result::SUCCESS;
-    }*/
+    if (mTunerLnb != NULL) {
+        shared_ptr<TunerLnbCallback> aidlCallback =
+                ::ndk::SharedRefBase::make<TunerLnbCallback>(cb);
+        Status s = mTunerLnb->setCallback(aidlCallback);
+        return ClientHelper::getServiceSpecificErrorCode(s);
+    }
 
-    mHidlCallback = new HidlLnbCallback(cb);
-    return mLnb->setCallback(mHidlCallback);
+    if (mLnb != NULL) {
+        sp<HidlLnbCallback> hidlCallback = new HidlLnbCallback(cb);
+        return mLnb->setCallback(hidlCallback);
+    }
+
+    return Result::INVALID_STATE;
 }
 
 Result LnbClient::setVoltage(LnbVoltage voltage) {
-    // TODO: pending aidl interface
+    if (mTunerLnb != NULL) {
+        Status s = mTunerLnb->setVoltage((int)voltage);
+        return ClientHelper::getServiceSpecificErrorCode(s);
+    }
 
     if (mLnb != NULL) {
         return mLnb->setVoltage(voltage);
@@ -67,7 +73,10 @@ Result LnbClient::setVoltage(LnbVoltage voltage) {
 }
 
 Result LnbClient::setTone(LnbTone tone) {
-    // TODO: pending aidl interface
+    if (mTunerLnb != NULL) {
+        Status s = mTunerLnb->setTone((int)tone);
+        return ClientHelper::getServiceSpecificErrorCode(s);
+    }
 
     if (mLnb != NULL) {
         return mLnb->setTone(tone);
@@ -77,7 +86,10 @@ Result LnbClient::setTone(LnbTone tone) {
 }
 
 Result LnbClient::setSatellitePosition(LnbPosition position) {
-    // TODO: pending aidl interface
+    if (mTunerLnb != NULL) {
+        Status s = mTunerLnb->setSatellitePosition((int)position);
+        return ClientHelper::getServiceSpecificErrorCode(s);
+    }
 
     if (mLnb != NULL) {
         return mLnb->setSatellitePosition(position);
@@ -87,7 +99,10 @@ Result LnbClient::setSatellitePosition(LnbPosition position) {
 }
 
 Result LnbClient::sendDiseqcMessage(vector<uint8_t> diseqcMessage) {
-    // TODO: pending aidl interface
+    if (mTunerLnb != NULL) {
+        Status s = mTunerLnb->sendDiseqcMessage(diseqcMessage);
+        return ClientHelper::getServiceSpecificErrorCode(s);
+    }
 
     if (mLnb != NULL) {
         return mLnb->sendDiseqcMessage(diseqcMessage);
@@ -97,10 +112,16 @@ Result LnbClient::sendDiseqcMessage(vector<uint8_t> diseqcMessage) {
 }
 
 Result LnbClient::close() {
-    // TODO: pending aidl interface
+    if (mTunerLnb != NULL) {
+        Status s = mTunerLnb->close();
+        mTunerLnb = NULL;
+        return ClientHelper::getServiceSpecificErrorCode(s);
+    }
 
     if (mLnb != NULL) {
-        return mLnb->close();
+        Result res = mLnb->close();
+        mLnb = NULL;
+        return res;
     }
 
     return Result::INVALID_STATE;
@@ -125,6 +146,25 @@ Return<void> HidlLnbCallback::onDiseqcMessage(const hidl_vec<uint8_t>& diseqcMes
     return Void();
 }
 
-/////////////// LnbClient Helper Methods ///////////////////////
+/////////////// TunerLnbCallback ///////////////////////
 
+TunerLnbCallback::TunerLnbCallback(sp<LnbClientCallback> lnbClientCallback)
+        : mLnbClientCallback(lnbClientCallback) {}
+
+Status TunerLnbCallback::onEvent(int lnbEventType) {
+    if (mLnbClientCallback != NULL) {
+        mLnbClientCallback->onEvent(static_cast<LnbEventType>(lnbEventType));
+        return Status::ok();
+    }
+    return Status::fromServiceSpecificError(static_cast<int32_t>(Result::INVALID_STATE));
+}
+
+Status TunerLnbCallback::onDiseqcMessage(const vector<uint8_t>& diseqcMessage) {
+    if (mLnbClientCallback != NULL) {
+        hidl_vec<uint8_t> msg(begin(diseqcMessage), end(diseqcMessage));
+        mLnbClientCallback->onDiseqcMessage(msg);
+        return Status::ok();
+    }
+    return Status::fromServiceSpecificError(static_cast<int32_t>(Result::INVALID_STATE));
+}
 }  // namespace android

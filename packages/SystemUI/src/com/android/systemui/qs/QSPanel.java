@@ -26,13 +26,13 @@ import android.content.res.Resources;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
-import android.provider.Settings;
 import android.util.AttributeSet;
 import android.util.Pair;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewStub;
 import android.widget.LinearLayout;
 
 import com.android.internal.logging.UiEventLogger;
@@ -113,7 +113,7 @@ public class QSPanel extends LinearLayout implements Tunable {
     private int mMediaTotalBottomMargin;
     private int mFooterMarginStartHorizontal;
     private Consumer<Boolean> mMediaVisibilityChangedListener;
-    private final boolean mSideLabels;
+    protected boolean mSideLabels;
 
     public QSPanel(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -121,12 +121,28 @@ public class QSPanel extends LinearLayout implements Tunable {
         mMediaTotalBottomMargin = getResources().getDimensionPixelSize(
                 R.dimen.quick_settings_bottom_margin_media);
         mContext = context;
-        mSideLabels = Settings.Secure.getInt(
-                mContext.getContentResolver(), "sysui_side_labels", 0) != 0;
 
         setOrientation(VERTICAL);
 
         mMovableContentStartIndex = getChildCount();
+
+    }
+
+    protected void inflateQSFooter(boolean newFooter) {
+        ViewStub stub = findViewById(R.id.qs_footer_stub);
+        if (stub != null) {
+            stub.setLayoutResource(
+                    newFooter ? R.layout.qs_footer_impl_two_lines : R.layout.qs_footer_impl);
+            stub.inflate();
+            mFooter = findViewById(R.id.qs_footer);
+        }
+    }
+
+    void initialize(boolean sideLabels) {
+        mSideLabels = sideLabels;
+
+        inflateQSFooter(sideLabels);
+
         mRegularTileLayout = createRegularTileLayout();
         mTileLayout = mRegularTileLayout;
 
@@ -199,16 +215,20 @@ public class QSPanel extends LinearLayout implements Tunable {
                 mFooterPageIndicator.setNumPages(((PagedTileLayout) mTileLayout).getNumPages());
             }
 
-            // Allow the UI to be as big as it want's to, we're in a scroll view
-            int newHeight = 10000;
-            int availableHeight = MeasureSpec.getSize(heightMeasureSpec);
-            int excessHeight = newHeight - availableHeight;
-            // Measure with EXACTLY. That way, The content will only use excess height and will
-            // be measured last, after other views and padding is accounted for. This only
-            // works because our Layouts in here remeasure themselves with the exact content
-            // height.
-            heightMeasureSpec = MeasureSpec.makeMeasureSpec(newHeight, MeasureSpec.EXACTLY);
-            ((PagedTileLayout) mTileLayout).setExcessHeight(excessHeight);
+            // In landscape, mTileLayout's parent is not the panel but a view that contains the
+            // tile layout and the media controls.
+            if (((View) mTileLayout).getParent() == this) {
+                // Allow the UI to be as big as it want's to, we're in a scroll view
+                int newHeight = 10000;
+                int availableHeight = MeasureSpec.getSize(heightMeasureSpec);
+                int excessHeight = newHeight - availableHeight;
+                // Measure with EXACTLY. That way, The content will only use excess height and will
+                // be measured last, after other views and padding is accounted for. This only
+                // works because our Layouts in here remeasure themselves with the exact content
+                // height.
+                heightMeasureSpec = MeasureSpec.makeMeasureSpec(newHeight, MeasureSpec.EXACTLY);
+                ((PagedTileLayout) mTileLayout).setExcessHeight(excessHeight);
+            }
         }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
 
@@ -338,7 +358,6 @@ public class QSPanel extends LinearLayout implements Tunable {
     @Override
     protected void onFinishInflate() {
         super.onFinishInflate();
-        mFooter = findViewById(R.id.qs_footer);
         mDivider = findViewById(R.id.divider);
     }
 
@@ -756,7 +775,7 @@ public class QSPanel extends LinearLayout implements Tunable {
                 // Let's use 3 columns to match the current layout
                 int columns;
                 if (mSideLabels) {
-                    columns = horizontal ? 1 : 2;
+                    columns = horizontal ? 2 : 4;
                 } else {
                     columns = horizontal ? 3 : TileLayout.NO_MAX_COLUMNS;
                 }
@@ -773,10 +792,6 @@ public class QSPanel extends LinearLayout implements Tunable {
         updateMediaHostContentMargins(mediaHostView);
         updateHorizontalLinearLayoutMargins();
         updatePadding();
-    }
-
-    boolean useSideLabels() {
-        return mSideLabels;
     }
 
     private class H extends Handler {
@@ -845,8 +860,6 @@ public class QSPanel extends LinearLayout implements Tunable {
         default void setExpansion(float expansion) {}
 
         int getNumVisibleTiles();
-
-        default void setShowLabels(boolean show) {}
     }
 
     interface OnConfigurationChangedListener {

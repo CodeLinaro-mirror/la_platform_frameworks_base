@@ -20,8 +20,6 @@ import static android.view.InsetsStateProto.DISPLAY_CUTOUT;
 import static android.view.InsetsStateProto.DISPLAY_FRAME;
 import static android.view.InsetsStateProto.SOURCES;
 import static android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
-import static android.view.WindowInsets.Type.MANDATORY_SYSTEM_GESTURES;
-import static android.view.WindowInsets.Type.SYSTEM_GESTURES;
 import static android.view.WindowInsets.Type.displayCutout;
 import static android.view.WindowInsets.Type.ime;
 import static android.view.WindowInsets.Type.indexOf;
@@ -106,14 +104,11 @@ public class InsetsState implements Parcelable {
     public static final int ITYPE_NAVIGATION_BAR = 1;
     public static final int ITYPE_CAPTION_BAR = 2;
 
-    // The always visible types are visible to all windows regardless of the z-order.
-    public static final int FIRST_ALWAYS_VISIBLE_TYPE = 3;
-    public static final int ITYPE_TOP_GESTURES = FIRST_ALWAYS_VISIBLE_TYPE;
+    public static final int ITYPE_TOP_GESTURES = 3;
     public static final int ITYPE_BOTTOM_GESTURES = 4;
     public static final int ITYPE_LEFT_GESTURES = 5;
     public static final int ITYPE_RIGHT_GESTURES = 6;
 
-    /** Additional gesture inset types that map into {@link Type.MANDATORY_SYSTEM_GESTURES}. */
     public static final int ITYPE_TOP_MANDATORY_GESTURES = 7;
     public static final int ITYPE_BOTTOM_MANDATORY_GESTURES = 8;
     public static final int ITYPE_LEFT_MANDATORY_GESTURES = 9;
@@ -123,7 +118,6 @@ public class InsetsState implements Parcelable {
     public static final int ITYPE_TOP_DISPLAY_CUTOUT = 12;
     public static final int ITYPE_RIGHT_DISPLAY_CUTOUT = 13;
     public static final int ITYPE_BOTTOM_DISPLAY_CUTOUT = 14;
-    public static final int LAST_ALWAYS_VISIBLE_TYPE = ITYPE_BOTTOM_DISPLAY_CUTOUT;
 
     public static final int ITYPE_LEFT_TAPPABLE_ELEMENT = 15;
     public static final int ITYPE_TOP_TAPPABLE_ELEMENT = 16;
@@ -162,7 +156,7 @@ public class InsetsState implements Parcelable {
     static final int ISIDE_FLOATING = 4;
     static final int ISIDE_UNKNOWN = 5;
 
-    private InsetsSource[] mSources = new InsetsSource[SIZE];
+    private final InsetsSource[] mSources = new InsetsSource[SIZE];
 
     /**
      * The frame of the display these sources are relative to.
@@ -173,6 +167,9 @@ public class InsetsState implements Parcelable {
     private final DisplayCutout.ParcelableWrapper mDisplayCutout =
             new DisplayCutout.ParcelableWrapper();
 
+    /** The rounded corners on the display */
+    private RoundedCorners mRoundedCorners = RoundedCorners.NO_ROUNDED_CORNERS;
+
     public InsetsState() {
     }
 
@@ -182,18 +179,6 @@ public class InsetsState implements Parcelable {
 
     public InsetsState(InsetsState copy, boolean copySources) {
         set(copy, copySources);
-    }
-
-    /**
-     * Mirror the always visible sources from the other state. They will share the same object for
-     * the always visible types.
-     *
-     * @param other the state to mirror the mirrored sources from.
-     */
-    public void mirrorAlwaysVisibleInsetsSources(InsetsState other) {
-        for (int type = FIRST_ALWAYS_VISIBLE_TYPE; type <= LAST_ALWAYS_VISIBLE_TYPE; type++) {
-            mSources[type] = other.mSources[type];
-        }
     }
 
     /**
@@ -256,7 +241,8 @@ public class InsetsState implements Parcelable {
         }
 
         return new WindowInsets(typeInsetsMap, typeMaxInsetsMap, typeVisibilityMap, isScreenRound,
-                alwaysConsumeSystemBars, calculateRelativeCutout(frame), compatInsetsTypes,
+                alwaysConsumeSystemBars, calculateRelativeCutout(frame),
+                calculateRelativeRoundedCorners(frame), compatInsetsTypes,
                 (legacySystemUiFlags & SYSTEM_UI_FLAG_LAYOUT_STABLE) != 0);
     }
 
@@ -279,6 +265,20 @@ public class InsetsState implements Parcelable {
             return DisplayCutout.NO_CUTOUT;
         }
         return raw.inset(insetLeft, insetTop, insetRight, insetBottom);
+    }
+
+    private RoundedCorners calculateRelativeRoundedCorners(Rect frame) {
+        if (mDisplayFrame.equals(frame)) {
+            return mRoundedCorners;
+        }
+        if (frame == null) {
+            return RoundedCorners.NO_ROUNDED_CORNERS;
+        }
+        final int insetLeft = frame.left - mDisplayFrame.left;
+        final int insetTop = frame.top - mDisplayFrame.top;
+        final int insetRight = mDisplayFrame.right - frame.right;
+        final int insetBottom = mDisplayFrame.bottom - frame.bottom;
+        return mRoundedCorners.inset(insetLeft, insetTop, insetRight, insetBottom);
     }
 
     public Rect calculateInsets(Rect frame, @InsetsType int types, boolean ignoreVisibility) {
@@ -362,14 +362,14 @@ public class InsetsState implements Parcelable {
         processSourceAsPublicType(source, typeInsetsMap, typeSideMap, typeVisibilityMap,
                 insets, type);
 
-        if (type == MANDATORY_SYSTEM_GESTURES) {
+        if (type == Type.MANDATORY_SYSTEM_GESTURES) {
             // Mandatory system gestures are also system gestures.
             // TODO: find a way to express this more generally. One option would be to define
             //       Type.systemGestureInsets() as NORMAL | MANDATORY, but then we lose the
             //       ability to set systemGestureInsets() independently from
             //       mandatorySystemGestureInsets() in the Builder.
             processSourceAsPublicType(source, typeInsetsMap, typeSideMap, typeVisibilityMap,
-                    insets, SYSTEM_GESTURES);
+                    insets, Type.SYSTEM_GESTURES);
         }
     }
 
@@ -462,14 +462,27 @@ public class InsetsState implements Parcelable {
         return mDisplayCutout.get();
     }
 
+    public void setRoundedCorners(RoundedCorners roundedCorners) {
+        mRoundedCorners = roundedCorners;
+    }
+
+    public RoundedCorners getRoundedCorners() {
+        return mRoundedCorners;
+    }
+
     /**
      * Modifies the state of this class to exclude a certain type to make it ready for dispatching
      * to the client.
      *
      * @param type The {@link InternalInsetsType} of the source to remove
+     * @return {@code true} if this InsetsState was modified; {@code false} otherwise.
      */
-    public void removeSource(@InternalInsetsType int type) {
+    public boolean removeSource(@InternalInsetsType int type) {
+        if (mSources[type] == null) {
+            return false;
+        }
         mSources[type] = null;
+        return true;
     }
 
     /**
@@ -493,6 +506,7 @@ public class InsetsState implements Parcelable {
     public void scale(float scale) {
         mDisplayFrame.scale(scale);
         mDisplayCutout.scale(scale);
+        mRoundedCorners = mRoundedCorners.scale(scale);
         for (int i = 0; i < SIZE; i++) {
             final InsetsSource source = mSources[i];
             if (source != null) {
@@ -512,6 +526,7 @@ public class InsetsState implements Parcelable {
     public void set(InsetsState other, boolean copySources) {
         mDisplayFrame.set(other.mDisplayFrame);
         mDisplayCutout.set(other.mDisplayCutout);
+        mRoundedCorners = other.getRoundedCorners();
         if (copySources) {
             for (int i = 0; i < SIZE; i++) {
                 InsetsSource source = other.mSources[i];
@@ -521,6 +536,24 @@ public class InsetsState implements Parcelable {
             for (int i = 0; i < SIZE; i++) {
                 mSources[i] = other.mSources[i];
             }
+        }
+    }
+
+    /**
+     * Sets the values from the other InsetsState. But for sources, only specific types of source
+     * would be set.
+     *
+     * @param other the other InsetsState.
+     * @param types the only types of sources would be set.
+     */
+    public void set(InsetsState other, @InsetsType int types) {
+        mDisplayFrame.set(other.mDisplayFrame);
+        mDisplayCutout.set(other.mDisplayCutout);
+        mRoundedCorners = other.getRoundedCorners();
+        final ArraySet<Integer> t = toInternalType(types);
+        for (int i = t.size() - 1; i >= 0; i--) {
+            final int type = t.valueAt(i);
+            mSources[type] = other.mSources[type];
         }
     }
 
@@ -546,6 +579,18 @@ public class InsetsState implements Parcelable {
         }
         if ((types & Type.CAPTION_BAR) != 0) {
             result.add(ITYPE_CAPTION_BAR);
+        }
+        if ((types & Type.SYSTEM_GESTURES) != 0) {
+            result.add(ITYPE_LEFT_GESTURES);
+            result.add(ITYPE_TOP_GESTURES);
+            result.add(ITYPE_RIGHT_GESTURES);
+            result.add(ITYPE_BOTTOM_GESTURES);
+        }
+        if ((types & Type.MANDATORY_SYSTEM_GESTURES) != 0) {
+            result.add(ITYPE_LEFT_MANDATORY_GESTURES);
+            result.add(ITYPE_TOP_MANDATORY_GESTURES);
+            result.add(ITYPE_RIGHT_MANDATORY_GESTURES);
+            result.add(ITYPE_BOTTOM_MANDATORY_GESTURES);
         }
         if ((types & Type.DISPLAY_CUTOUT) != 0) {
             result.add(ITYPE_LEFT_DISPLAY_CUTOUT);
@@ -576,13 +621,13 @@ public class InsetsState implements Parcelable {
                 return Type.CAPTION_BAR;
             case ITYPE_IME:
                 return Type.IME;
-            case ITYPE_TOP_GESTURES:
-            case ITYPE_BOTTOM_GESTURES:
             case ITYPE_TOP_MANDATORY_GESTURES:
             case ITYPE_BOTTOM_MANDATORY_GESTURES:
             case ITYPE_LEFT_MANDATORY_GESTURES:
             case ITYPE_RIGHT_MANDATORY_GESTURES:
                 return Type.MANDATORY_SYSTEM_GESTURES;
+            case ITYPE_TOP_GESTURES:
+            case ITYPE_BOTTOM_GESTURES:
             case ITYPE_LEFT_GESTURES:
             case ITYPE_RIGHT_GESTURES:
                 return Type.SYSTEM_GESTURES;
@@ -619,11 +664,15 @@ public class InsetsState implements Parcelable {
     }
 
     public void dump(String prefix, PrintWriter pw) {
+        final String newPrefix = prefix + "  ";
         pw.println(prefix + "InsetsState");
+        pw.println(newPrefix + "mDisplayFrame=" + mDisplayFrame);
+        pw.println(newPrefix + "mDisplayCutout=" + mDisplayCutout.get());
+        pw.println(newPrefix + "mRoundedCorners=" + mRoundedCorners);
         for (int i = 0; i < SIZE; i++) {
             InsetsSource source = mSources[i];
             if (source == null) continue;
-            source.dump(prefix + "  ", pw);
+            source.dump(newPrefix + "  ", pw);
         }
     }
 
@@ -713,7 +762,8 @@ public class InsetsState implements Parcelable {
         InsetsState state = (InsetsState) o;
 
         if (!mDisplayFrame.equals(state.mDisplayFrame)
-                || !mDisplayCutout.equals(state.mDisplayCutout)) {
+                || !mDisplayCutout.equals(state.mDisplayCutout)
+                || !mRoundedCorners.equals(state.mRoundedCorners)) {
             return false;
         }
         for (int i = 0; i < SIZE; i++) {
@@ -737,7 +787,8 @@ public class InsetsState implements Parcelable {
 
     @Override
     public int hashCode() {
-        return Objects.hash(mDisplayFrame, mDisplayCutout, Arrays.hashCode(mSources));
+        return Objects.hash(mDisplayFrame, mDisplayCutout, Arrays.hashCode(mSources),
+                mRoundedCorners);
     }
 
     public InsetsState(Parcel in) {
@@ -753,7 +804,8 @@ public class InsetsState implements Parcelable {
     public void writeToParcel(Parcel dest, int flags) {
         mDisplayFrame.writeToParcel(dest, flags);
         mDisplayCutout.writeToParcel(dest, flags);
-        dest.writeParcelableArray(mSources, 0);
+        dest.writeTypedArray(mSources, 0 /* parcelableFlags */);
+        dest.writeTypedObject(mRoundedCorners, flags);
     }
 
     public static final @android.annotation.NonNull Creator<InsetsState> CREATOR = new Creator<InsetsState>() {
@@ -768,9 +820,10 @@ public class InsetsState implements Parcelable {
     };
 
     public void readFromParcel(Parcel in) {
-        mDisplayFrame.set(Rect.CREATOR.createFromParcel(in));
-        mDisplayCutout.set(DisplayCutout.ParcelableWrapper.CREATOR.createFromParcel(in));
-        mSources = in.readParcelableArray(null, InsetsSource.class);
+        mDisplayFrame.readFromParcel(in);
+        mDisplayCutout.readFromParcel(in);
+        in.readTypedArray(mSources, InsetsSource.CREATOR);
+        mRoundedCorners = in.readTypedObject(RoundedCorners.CREATOR);
     }
 
     @Override
@@ -785,6 +838,7 @@ public class InsetsState implements Parcelable {
         return "InsetsState: {"
                 + "mDisplayFrame=" + mDisplayFrame
                 + ", mDisplayCutout=" + mDisplayCutout
+                + ", mRoundedCorners=" + mRoundedCorners
                 + ", mSources= { " + joiner
                 + " }";
     }

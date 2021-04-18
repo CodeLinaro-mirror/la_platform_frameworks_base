@@ -28,17 +28,19 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.service.translation.ITranslationCallback;
 import android.util.Log;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.os.IResultReceiver;
 import com.android.internal.util.SyncResultReceiver;
 
+import java.io.PrintWriter;
 import java.lang.ref.WeakReference;
-import java.util.ArrayList;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * The {@link Translator} for translation, defined by a source and a dest {@link TranslationSpec}.
@@ -218,13 +220,19 @@ public class Translator {
         return mId;
     }
 
+    /** @hide */
+    public void dump(@NonNull String prefix, @NonNull PrintWriter pw) {
+        pw.print(prefix); pw.print("sourceSpec: "); pw.println(mSourceSpec);
+        pw.print(prefix); pw.print("destSpec: "); pw.println(mDestSpec);
+    }
+
     /**
      * Requests a translation for the provided {@link TranslationRequest} using the Translator's
      * source spec and destination spec.
      *
      * <p><strong>NOTE: </strong>Call on a worker thread.
      *
-     * @param request {@link TranslationRequest} request to be translated.
+     * @param request {@link TranslationRequest} request to be translate.
      *
      * @return {@link TranslationRequest} containing translated request,
      *         or null if translation could not be done.
@@ -240,17 +248,11 @@ public class Translator {
             throw new IllegalStateException(
                     "This translator has been destroyed");
         }
-        final ArrayList<TranslationRequest> requests = new ArrayList<>();
-        requests.add(request);
-        final android.service.translation.TranslationRequest internalRequest =
-                new android.service.translation.TranslationRequest
-                        .Builder(getNextRequestId(), mSourceSpec, mDestSpec, requests)
-                        .build();
 
         TranslationResponse response = null;
         try {
             final SyncResultReceiver receiver = new SyncResultReceiver(SYNC_CALLS_TIMEOUT_MS);
-            mDirectServiceBinder.onTranslationRequest(internalRequest, mId, null, receiver);
+            mDirectServiceBinder.onTranslationRequest(request, mId, null, receiver);
 
             response = receiver.getParcelableResult();
         } catch (RemoteException e) {
@@ -295,4 +297,45 @@ public class Translator {
     }
 
     // TODO: add methods for UI-toolkit case.
+    /** @hide */
+    public void requestUiTranslate(@NonNull TranslationRequest request,
+            @NonNull Consumer<TranslationResponse> responseCallback) {
+        if (mDirectServiceBinder == null) {
+            Log.wtf(TAG, "Translator created without proper initialization.");
+            return;
+        }
+        final ITranslationCallback callback =
+                new TranslationResponseCallbackImpl(responseCallback);
+        try {
+            mDirectServiceBinder.onTranslationRequest(request, mId, callback, null);
+        } catch (RemoteException e) {
+            Log.w(TAG, "RemoteException calling flushRequest");
+        }
+    }
+
+    private static class TranslationResponseCallbackImpl extends ITranslationCallback.Stub {
+
+        private final WeakReference<Consumer<TranslationResponse>> mResponseCallback;
+
+        TranslationResponseCallbackImpl(Consumer<TranslationResponse> responseCallback) {
+            mResponseCallback = new WeakReference<>(responseCallback);
+        }
+
+        @Override
+        public void onTranslationComplete(TranslationResponse response) throws RemoteException {
+            provideTranslationResponse(response);
+        }
+
+        @Override
+        public void onError() throws RemoteException {
+            provideTranslationResponse(null);
+        }
+
+        private void provideTranslationResponse(TranslationResponse response) {
+            final Consumer<TranslationResponse> responseCallback = mResponseCallback.get();
+            if (responseCallback != null) {
+                responseCallback.accept(response);
+            }
+        }
+    }
 }

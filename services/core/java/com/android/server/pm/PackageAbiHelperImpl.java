@@ -16,8 +16,9 @@
 
 package com.android.server.pm;
 
+import static android.content.pm.PackageManager.INSTALL_FAILED_CPU_ABI_INCOMPATIBLE;
 import static android.content.pm.PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
-import static android.content.pm.PackageParser.isApkFile;
+import static android.content.pm.parsing.ApkLiteParseUtils.isApkFile;
 import static android.os.Trace.TRACE_TAG_PACKAGE_MANAGER;
 import static android.os.incremental.IncrementalManager.isIncrementalPath;
 
@@ -400,15 +401,27 @@ final class PackageAbiHelperImpl implements PackageAbiHelper {
                 String[] abiList = (cpuAbiOverride != null)
                         ? new String[]{cpuAbiOverride} : Build.SUPPORTED_ABIS;
 
-                // Enable gross and lame hacks for apps that are built with old
-                // SDK tools. We must scan their APKs for renderscript bitcode and
-                // not launch them if it's present. Don't bother checking on devices
-                // that don't have 64 bit support.
+                // If an app that contains RenderScript has target API level < 21, it needs to run
+                // with 32-bit ABI, and its APK file will contain a ".bc" file.
+                // If an app that contains RenderScript has target API level >= 21, it can run with
+                // either 32-bit or 64-bit ABI, and its APK file will not contain a ".bc" file.
+                // Therefore, on a device that supports both 32-bit and 64-bit ABIs, we scan the app
+                // APK to see if it has a ".bc" file. If so, we will run it with 32-bit ABI.
+                // However, if the device only supports 64-bit ABI but does not support 32-bit ABI,
+                // we will fail the installation for such an app because it won't be able to run.
                 boolean needsRenderScriptOverride = false;
+                // No need to check if the device only supports 32-bit
                 if (Build.SUPPORTED_64_BIT_ABIS.length > 0 && cpuAbiOverride == null
                         && NativeLibraryHelper.hasRenderscriptBitcode(handle)) {
-                    abiList = Build.SUPPORTED_32_BIT_ABIS;
-                    needsRenderScriptOverride = true;
+                    if (Build.SUPPORTED_32_BIT_ABIS.length > 0) {
+                        abiList = Build.SUPPORTED_32_BIT_ABIS;
+                        needsRenderScriptOverride = true;
+                    } else {
+                        throw new PackageManagerException(
+                                INSTALL_FAILED_CPU_ABI_INCOMPATIBLE,
+                                "Apps that contain RenderScript with target API level < 21 are not "
+                                        + "supported on 64-bit only platforms");
+                    }
                 }
 
                 final int copyRet;

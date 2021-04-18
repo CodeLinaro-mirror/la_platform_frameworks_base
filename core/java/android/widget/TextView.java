@@ -129,6 +129,7 @@ import android.text.method.TextKeyListener;
 import android.text.method.TimeKeyListener;
 import android.text.method.TransformationMethod;
 import android.text.method.TransformationMethod2;
+import android.text.method.TranslationTransformationMethod;
 import android.text.method.WordIterator;
 import android.text.style.CharacterStyle;
 import android.text.style.ClickableSpan;
@@ -193,6 +194,9 @@ import android.view.textclassifier.TextClassifier;
 import android.view.textclassifier.TextLinks;
 import android.view.textservice.SpellCheckerSubtype;
 import android.view.textservice.TextServicesManager;
+import android.view.translation.TranslationRequestValue;
+import android.view.translation.ViewTranslationRequest;
+import android.view.translation.ViewTranslationResponse;
 import android.widget.RemoteViews.RemoteView;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -495,9 +499,9 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
     private TextUtils.TruncateAt mEllipsize;
 
     // A flag to indicate the cursor was hidden by IME.
-    private boolean mImeTemporarilyConsumesInput;
+    private boolean mImeIsConsumingInput;
 
-    // Whether cursor is visible without regard to {@link mImeTemporarilyConsumesInput}.
+    // Whether cursor is visible without regard to {@link mImeConsumesInput}.
     // {code true} is the default value.
     private boolean mCursorVisibleFromAttr = true;
 
@@ -732,6 +736,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
     private MovementMethod mMovement;
 
     private TransformationMethod mTransformation;
+    private TranslationTransformationMethod mTranslationTransformation;
     @UnsupportedAppUsage
     private boolean mAllowTransformationLengthChange;
     @UnsupportedAppUsage
@@ -4753,6 +4758,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      * @see #getJustificationMode()
      */
     @Layout.JustificationMode
+    @android.view.RemotableViewMethod
     public void setJustificationMode(@Layout.JustificationMode int justificationMode) {
         mJustificationMode = justificationMode;
         if (mLayout != null) {
@@ -5229,6 +5235,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      * @see android.view.Gravity
      * @attr ref android.R.styleable#TextView_gravity
      */
+    @android.view.RemotableViewMethod
     public void setGravity(int gravity) {
         if ((gravity & Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK) == 0) {
             gravity |= Gravity.START;
@@ -5823,6 +5830,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      *
      * @attr ref android.R.styleable#TextView_lineHeight
      */
+    @android.view.RemotableViewMethod
     public void setLineHeight(@Px @IntRange(from = 0) int lineHeight) {
         Preconditions.checkArgumentNonnegative(lineHeight);
 
@@ -8747,7 +8755,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                 }
             }
             if (getResources().getConfiguration().orientation == ORIENTATION_PORTRAIT) {
-                outAttrs.internalImeOptions |= EditorInfo.IME_FLAG_APP_WINDOW_PORTRAIT;
+                outAttrs.internalImeOptions |= EditorInfo.IME_INTERNAL_FLAG_APP_WINDOW_PORTRAIT;
             }
             if (isMultilineInputType(outAttrs.inputType)) {
                 // Multi-line text editors should always show an enter key.
@@ -10274,6 +10282,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      * @see #setTransformationMethod(TransformationMethod)
      * @attr ref android.R.styleable#TextView_textAllCaps
      */
+    @android.view.RemotableViewMethod
     public void setAllCaps(boolean allCaps) {
         if (allCaps) {
             setTransformationMethod(new AllCapsTransformationMethod(getContext()));
@@ -10503,8 +10512,8 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
 
     /**
      * Set whether the cursor is visible. The default is true. Note that this property only
-     * makes sense for editable TextView. If IME is temporarily consuming the input, the cursor will
-     * be always invisible, visibility will be updated as the last state when IME does not consume
+     * makes sense for editable TextView. If IME is consuming the input, the cursor will always be
+     * invisible, visibility will be updated as the last state when IME does not consume
      * the input anymore.
      *
      * @see #isCursorVisible()
@@ -10518,20 +10527,20 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
     }
 
     /**
-     * Sets the IME is temporarily consuming the input and make the cursor invisible if
-     * {@code imeTemporarilyConsumesInput} is {@code true}. Otherwise, make the cursor visible.
+     * Sets the IME is consuming the input and make the cursor invisible if {@code imeConsumesInput}
+     * is {@code true}. Otherwise, make the cursor visible.
      *
-     * @param imeTemporarilyConsumesInput {@code true} if IME is temporarily consuming the input
+     * @param imeConsumesInput {@code true} if IME is consuming the input
      *
      * @hide
      */
-    public void setImeTemporarilyConsumesInput(boolean imeTemporarilyConsumesInput) {
-        mImeTemporarilyConsumesInput = imeTemporarilyConsumesInput;
+    public void setImeConsumesInput(boolean imeConsumesInput) {
+        mImeIsConsumingInput = imeConsumesInput;
         updateCursorVisibleInternal();
     }
 
     private void updateCursorVisibleInternal()  {
-        boolean visible = mCursorVisibleFromAttr && !mImeTemporarilyConsumesInput;
+        boolean visible = mCursorVisibleFromAttr && !mImeIsConsumingInput;
         if (visible && mEditor == null) return; // visible is the default value with no edit data
         createEditorIfNeeded();
         if (mEditor.mCursorVisible != visible) {
@@ -10547,7 +10556,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
 
     /**
      * @return whether or not the cursor is visible (assuming this TextView is editable). This
-     * method may return {@code false} when the IME is temporarily consuming the input even if the
+     * method may return {@code false} when the IME is consuming the input even if the
      * {@code mEditor.mCursorVisible} attribute is {@code true} or {@code #setCursorVisible(true)}
      * is called.
      *
@@ -12937,17 +12946,11 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             return false;
         }
 
-        final ClipData clipData = getClipboardManagerForUser().getPrimaryClip();
-        final ClipDescription description = clipData.getDescription();
+        final ClipDescription description =
+                getClipboardManagerForUser().getPrimaryClipDescription();
         final boolean isPlainType = description.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN);
-        final CharSequence text = clipData.getItemAt(0).getText();
-        if (isPlainType && (text instanceof Spanned)) {
-            Spanned spanned = (Spanned) text;
-            if (TextUtils.hasStyleSpan(spanned)) {
-                return true;
-            }
-        }
-        return description.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML);
+        return (isPlainType && description.isStyledText())
+                || description.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML);
     }
 
     boolean canProcessText() {
@@ -13813,5 +13816,123 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         } else {
             Log.d(LOG_TAG, location + ": " + String.format(msgFormat, msgArgs));
         }
+    }
+
+    /**
+     * Provides a {@link ViewTranslationRequest} that represents the content to be translated via
+     * translation service.
+     *
+     * <p>NOTE: When overriding the method, it should not translate the password. We also suggest
+     * that not translating the text is selectable or editable. We use the transformation method to
+     * implement showing the translated text. The TextView does not support the transformation
+     * method text length change. If the text is selectable or editable, it will crash while
+     * selecting the text. To support it, it needs broader changes to text APIs, we only allow to
+     * translate non selectable and editable text now.
+     *
+     * @hide
+     */
+    @Nullable
+    @Override
+    public ViewTranslationRequest onCreateTranslationRequest() {
+        if (mText == null || mText.length() == 0) {
+            return null;
+        }
+        // Not translate password, editable text and not important for translation
+        // TODO(b/177214256): support selectable text translation. It needs to broader changes to
+        //  text selection apis, not support in S.
+        boolean isPassword = isAnyPasswordInputType() || hasPasswordTransformationMethod();
+        if (isTextEditable() || isPassword || isTextSelectable()) {
+            return null;
+        }
+        // TODO(b/176488462): apply the view's important for translation property
+        // TODO(b/174283799): remove the spans from the mText and save the spans information
+        // TODO: use fixed ids for request texts.
+        ViewTranslationRequest request =
+                new ViewTranslationRequest.Builder(getAutofillId())
+                        .setValue(ViewTranslationRequest.ID_TEXT,
+                                TranslationRequestValue.forText(mText))
+                        .build();
+        return request;
+    }
+
+    /**
+     * Provides the implementation that pauses the ongoing Ui translation, it will show the original
+     * text instead of the translated text and restore the original transformation method.
+     *
+     * <p>NOTE: If this method is overridden, other translation related methods such as
+     * {@link onRestoreUiTranslation}, {@link onFinishUiTranslation}, {@link onTranslationComplete}
+     * should also be overridden.
+     *
+     * @hide
+     */
+    @Override
+    public void onPauseUiTranslation() {
+        // Restore to original text content.
+        if (mTranslationTransformation != null) {
+            setTransformationMethod(mTranslationTransformation.getOriginalTransformationMethod());
+        }
+    }
+
+    /**
+     * Provides the implementation that restoes the paused Ui translation, it will show the
+     * translated text again if the text had been translated. This method will replace the current
+     * tansformation method with {@link TranslationTransformationMethod}.
+     *
+     * <p>NOTE: If this method is overridden, other translation related methods such as
+     * {@link onPauseUiTranslation}, {@link onFinishUiTranslation}, {@link onTranslationComplete}
+     * should also be overridden.
+     *
+     * @hide
+     */
+    @Override
+    public void onRestoreUiTranslation() {
+        if (mTranslationTransformation != null) {
+            setTransformationMethod(mTranslationTransformation);
+        } else {
+            Log.w(LOG_TAG, "onResumeTranslatedText(): no translated text.");
+        }
+    }
+
+    /**
+     * Provides the implementation that finishes the current Ui translation and it's no longer to
+     * show the translated text. This method restores the original transformation method and resets
+     * the saved {@link TranslationTransformationMethod}.
+     *
+     * <p>NOTE: If this method is overridden, other translation related methods such as
+     * {@link onPauseUiTranslation}, {@link onRestoreUiTranslation}, {@link onTranslationComplete}
+     * should also be overridden.
+     *
+     * @hide
+     */
+    @Override
+    public void onFinishUiTranslation() {
+        // Restore to original text content and clear TranslationTransformation
+        if (mTranslationTransformation != null) {
+            setTransformationMethod(mTranslationTransformation.getOriginalTransformationMethod());
+            mTranslationTransformation = null;
+        }
+    }
+
+    /**
+     * Default {@link TextView} implementation after the translation request is done by the
+     * translation service, it's ok to show the translated text. This method will save the original
+     * transformation method and replace the current transformation method with
+     * {@link TranslationTransformationMethod}.
+     *
+     * <p>NOTE: If this method is overridden, other translation related methods such as
+     * {@link onPauseUiTranslation}, {@link onRestoreUiTranslation}, {@link onFinishUiTranslation}
+     * should also be overridden.
+     *
+     * @hide
+     */
+    @Override
+    public void onTranslationComplete(@NonNull ViewTranslationResponse response) {
+        // Show the translated text.
+        TransformationMethod originalTranslationMethod = mTranslationTransformation != null
+                ? mTranslationTransformation.getOriginalTransformationMethod() : mTransformation;
+        mTranslationTransformation =
+                new TranslationTransformationMethod(response, originalTranslationMethod);
+        // TODO(b/178353965): well-handle setTransformationMethod.
+        setTransformationMethod(mTranslationTransformation);
     }
 }

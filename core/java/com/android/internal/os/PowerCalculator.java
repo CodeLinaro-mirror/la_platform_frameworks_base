@@ -30,6 +30,8 @@ import java.util.Locale;
  */
 public abstract class PowerCalculator {
 
+    protected static final double MILLIAMPHOUR_PER_MICROCOULOMB = 1.0 / 1000.0 / 60.0 / 60.0;
+
     /**
      * Attributes the total amount of power used by this subsystem to various consumers such
      * as apps.
@@ -67,17 +69,10 @@ public abstract class PowerCalculator {
      * @param batteryStats  The recorded battery stats.
      * @param rawRealtimeUs The raw system realtime in microseconds.
      * @param rawUptimeUs   The raw system uptime in microseconds.
-     * @param statsType     The type of stats. As of {@link android.os.Build.VERSION_CODES#Q}, this
-     *                      can only be {@link BatteryStats#STATS_SINCE_CHARGED}, since
-     *                      {@link BatteryStats#STATS_CURRENT} and
-     *                      {@link BatteryStats#STATS_SINCE_UNPLUGGED} are deprecated.
-     * @param asUsers       An array of users for which the attribution is requested.  It may
-     *                      contain {@link UserHandle#USER_ALL} to indicate that the attribution
-     *                      should be performed for all users.
+     * @param query         The query parameters for the calculator.
      */
     public void calculate(BatteryUsageStats.Builder builder, BatteryStats batteryStats,
-            long rawRealtimeUs, long rawUptimeUs, BatteryUsageStatsQuery query,
-            SparseArray<UserHandle> asUsers) {
+            long rawRealtimeUs, long rawUptimeUs, BatteryUsageStatsQuery query) {
         final SparseArray<UidBatteryConsumer.Builder> uidBatteryConsumerBuilders =
                 builder.getUidBatteryConsumerBuilders();
         for (int i = uidBatteryConsumerBuilders.size() - 1; i >= 0; i--) {
@@ -99,19 +94,6 @@ public abstract class PowerCalculator {
      */
     protected void calculateApp(BatterySipper app, BatteryStats.Uid u, long rawRealtimeUs,
                                       long rawUptimeUs, int statsType) {
-
-        // TODO(b/175156498): Temporary code during the transition from BatterySippers to
-        //  BatteryConsumers.
-        UidBatteryConsumer.Builder builder = new UidBatteryConsumer.Builder(0, 0, false, u);
-        calculateApp(builder, u, rawRealtimeUs, rawUptimeUs, BatteryUsageStatsQuery.DEFAULT);
-        final UidBatteryConsumer uidBatteryConsumer = builder.build();
-        app.cpuPowerMah = uidBatteryConsumer.getConsumedPower(
-                UidBatteryConsumer.POWER_COMPONENT_CPU);
-        app.cpuTimeMs = uidBatteryConsumer.getUsageDurationMillis(
-                UidBatteryConsumer.TIME_COMPONENT_CPU);
-        app.cpuFgTimeMs = uidBatteryConsumer.getUsageDurationMillis(
-                UidBatteryConsumer.TIME_COMPONENT_CPU_FOREGROUND);
-        app.packageWithHighestDrain = uidBatteryConsumer.getPackageWithHighestDrain();
     }
 
     /**
@@ -130,6 +112,19 @@ public abstract class PowerCalculator {
      * Reset any state maintained in this calculator.
      */
     public void reset() {
+    }
+
+    /**
+     * Returns either the measured energy converted to mAh or a usage-based estimate.
+     */
+    protected static double getMeasuredOrEstimatedPower(long measuredEnergyUC,
+            UsageBasedPowerEstimator powerEstimator, long durationMs,
+            boolean forceUsePowerProfileModel) {
+        if (measuredEnergyUC != BatteryStats.POWER_DATA_UNAVAILABLE
+                && !forceUsePowerProfileModel) {
+            return uCtoMah(measuredEnergyUC);
+        }
+        return powerEstimator.calculatePower(durationMs);
     }
 
     /**
@@ -161,5 +156,9 @@ public abstract class PowerCalculator {
 
         // Use English locale because this is never used in UI (only in checkin and dump).
         return String.format(Locale.ENGLISH, format, power);
+    }
+
+    static double uCtoMah(long chargeUC) {
+        return chargeUC * MILLIAMPHOUR_PER_MICROCOULOMB;
     }
 }

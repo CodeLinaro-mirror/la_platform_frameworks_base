@@ -31,7 +31,6 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
-import android.os.PowerManager;
 import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.DeviceConfig;
@@ -67,7 +66,7 @@ import java.util.Objects;
  */
 public class DisplayModeDirector {
     private static final String TAG = "DisplayModeDirector";
-    private static final boolean DEBUG = false;
+    private boolean mLoggingEnabled;
 
     private static final int MSG_REFRESH_RATE_RANGE_CHANGED = 1;
     private static final int MSG_LOW_BRIGHTNESS_THRESHOLDS_CHANGED = 2;
@@ -79,6 +78,8 @@ public class DisplayModeDirector {
     // Special ID used to indicate that given vote is to be applied globally, rather than to a
     // specific display.
     private static final int GLOBAL_ID = -1;
+
+    private static final int INVALID_DISPLAY_MODE_ID = -1;
 
     // The tolerance within which we consider something approximately equals.
     private static final float FLOAT_TOLERANCE = 0.01f;
@@ -153,6 +154,14 @@ public class DisplayModeDirector {
             // notify them to pick up our newly initialized state.
             notifyDesiredDisplayModeSpecsChangedLocked();
         }
+    }
+
+    public void setLoggingEnabled(boolean loggingEnabled) {
+        if (mLoggingEnabled == loggingEnabled) {
+            return;
+        }
+        mLoggingEnabled = loggingEnabled;
+        mBrightnessObserver.setLoggingEnabled(loggingEnabled);
     }
 
     @NonNull
@@ -269,7 +278,7 @@ public class DisplayModeDirector {
 
                 availableModes = filterModes(modes, primarySummary);
                 if (availableModes.length > 0) {
-                    if (DEBUG) {
+                    if (mLoggingEnabled) {
                         Slog.w(TAG, "Found available modes=" + Arrays.toString(availableModes)
                                 + " with lowest priority considered "
                                 + Vote.priorityToString(lowestConsideredPriority)
@@ -282,7 +291,7 @@ public class DisplayModeDirector {
                     break;
                 }
 
-                if (DEBUG) {
+                if (mLoggingEnabled) {
                     Slog.w(TAG, "Couldn't find available modes with lowest priority set to "
                             + Vote.priorityToString(lowestConsideredPriority)
                             + " and with the following constraints: "
@@ -307,19 +316,37 @@ public class DisplayModeDirector {
                     Math.min(appRequestSummary.minRefreshRate, primarySummary.minRefreshRate);
             appRequestSummary.maxRefreshRate =
                     Math.max(appRequestSummary.maxRefreshRate, primarySummary.maxRefreshRate);
-            if (DEBUG) {
+            if (mLoggingEnabled) {
                 Slog.i(TAG,
                         String.format("App request range: [%.0f %.0f]",
                                 appRequestSummary.minRefreshRate,
                                 appRequestSummary.maxRefreshRate));
             }
 
-            // If the application requests a given mode with preferredModeId function, it will be
-            // stored as baseModeId.
-            int baseModeId = defaultMode.getModeId();
-            if (availableModes.length > 0) {
+            int baseModeId = INVALID_DISPLAY_MODE_ID;
+
+            // Select the default mode if available. This is important because SurfaceFlinger
+            // can do only seamless switches by default. Some devices (e.g. TV) don't support
+            // seamless switching so the mode we select here won't be changed.
+            for (int availableMode : availableModes) {
+                if (availableMode == defaultMode.getModeId()) {
+                    baseModeId = defaultMode.getModeId();
+                    break;
+                }
+            }
+
+            // If the application requests a display mode by setting
+            // LayoutParams.preferredDisplayModeId, it will be the only available mode and it'll
+            // be stored as baseModeId.
+            if (baseModeId == INVALID_DISPLAY_MODE_ID && availableModes.length > 0) {
                 baseModeId = availableModes[0];
             }
+
+            if (baseModeId == INVALID_DISPLAY_MODE_ID) {
+                throw new IllegalStateException("Can't select a base display mode for display "
+                        + displayId + ". The votes are " + mVotesByDisplay.valueAt(displayId));
+            }
+
             if (mModeSwitchingType == DisplayManager.SWITCHING_TYPE_NONE) {
                 Display.Mode baseMode = null;
                 for (Display.Mode mode : modes) {
@@ -343,6 +370,7 @@ public class DisplayModeDirector {
 
             boolean allowGroupSwitching =
                     mModeSwitchingType == DisplayManager.SWITCHING_TYPE_ACROSS_AND_WITHIN_GROUPS;
+
             return new DesiredDisplayModeSpecs(baseModeId,
                     allowGroupSwitching,
                     new RefreshRateRange(
@@ -357,7 +385,7 @@ public class DisplayModeDirector {
         for (Display.Mode mode : supportedModes) {
             if (mode.getPhysicalWidth() != summary.width
                     || mode.getPhysicalHeight() != summary.height) {
-                if (DEBUG) {
+                if (mLoggingEnabled) {
                     Slog.w(TAG, "Discarding mode " + mode.getModeId() + ", wrong size"
                             + ": desiredWidth=" + summary.width
                             + ": desiredHeight=" + summary.height
@@ -372,7 +400,7 @@ public class DisplayModeDirector {
             // comparison.
             if (refreshRate < (summary.minRefreshRate - FLOAT_TOLERANCE)
                     || refreshRate > (summary.maxRefreshRate + FLOAT_TOLERANCE)) {
-                if (DEBUG) {
+                if (mLoggingEnabled) {
                     Slog.w(TAG, "Discarding mode " + mode.getModeId()
                             + ", outside refresh rate bounds"
                             + ": minRefreshRate=" + summary.minRefreshRate
@@ -516,7 +544,7 @@ public class DisplayModeDirector {
     }
 
     private void updateVoteLocked(int displayId, int priority, Vote vote) {
-        if (DEBUG) {
+        if (mLoggingEnabled) {
             Slog.i(TAG, "updateVoteLocked(displayId=" + displayId
                     + ", priority=" + Vote.priorityToString(priority)
                     + ", vote=" + vote + ")");
@@ -537,7 +565,7 @@ public class DisplayModeDirector {
         }
 
         if (votes.size() == 0) {
-            if (DEBUG) {
+            if (mLoggingEnabled) {
                 Slog.i(TAG, "No votes left for display " + displayId + ", removing.");
             }
             mVotesByDisplay.remove(displayId);
@@ -1287,6 +1315,7 @@ public class DisplayModeDirector {
         private boolean mShouldObserveAmbientLowChange;
         private boolean mShouldObserveDisplayHighChange;
         private boolean mShouldObserveAmbientHighChange;
+        private boolean mLoggingEnabled;
 
         private SensorManager mSensorManager;
         private Sensor mLightSensor;
@@ -1303,7 +1332,6 @@ public class DisplayModeDirector {
         // changeable and low power mode off. After initialization, these states will
         // be updated from the same handler thread.
         private int mDefaultDisplayState = Display.STATE_UNKNOWN;
-        private boolean mIsDeviceActive = false;
         private boolean mRefreshRateChangeable = false;
         private boolean mLowPowerModeEnabled = false;
 
@@ -1415,6 +1443,14 @@ public class DisplayModeDirector {
             mDeviceConfigDisplaySettings.startListening();
         }
 
+        public void setLoggingEnabled(boolean loggingEnabled) {
+            if (mLoggingEnabled == loggingEnabled) {
+                return;
+            }
+            mLoggingEnabled = loggingEnabled;
+            mLightSensorListener.setLoggingEnabled(loggingEnabled);
+        }
+
         public void onRefreshRateSettingChangedLocked(float min, float max) {
             boolean changeable = (max - min > 1f && max > 60f);
             if (mRefreshRateChangeable != changeable) {
@@ -1485,7 +1521,6 @@ public class DisplayModeDirector {
             pw.println("    mAmbientLux: " + mAmbientLux);
             pw.println("    mBrightness: " + mBrightness);
             pw.println("    mDefaultDisplayState: " + mDefaultDisplayState);
-            pw.println("    mIsDeviceActive: " + mIsDeviceActive);
             pw.println("    mLowPowerModeEnabled: " + mLowPowerModeEnabled);
             pw.println("    mRefreshRateChangeable: " + mRefreshRateChangeable);
             pw.println("    mShouldObserveDisplayLowChange: " + mShouldObserveDisplayLowChange);
@@ -1691,7 +1726,7 @@ public class DisplayModeDirector {
                 vote = Vote.forRefreshRates(mRefreshRateInHighZone, mRefreshRateInHighZone);
             }
 
-            if (DEBUG) {
+            if (mLoggingEnabled) {
                 Slog.d(TAG, "Display brightness " + mBrightness + ", ambient lux " +  mAmbientLux
                         + ", Vote " + vote);
             }
@@ -1720,6 +1755,11 @@ public class DisplayModeDirector {
 
         @VisibleForTesting
         public void setDefaultDisplayState(int state) {
+            if (mLoggingEnabled) {
+                Slog.d(TAG, "setDefaultDisplayState: mDefaultDisplayState = "
+                        + mDefaultDisplayState + ", state = " + state);
+            }
+
             if (mDefaultDisplayState != state) {
                 mDefaultDisplayState = state;
                 updateSensorStatus();
@@ -1731,36 +1771,58 @@ public class DisplayModeDirector {
                 return;
             }
 
+            if (mLoggingEnabled) {
+                Slog.d(TAG, "updateSensorStatus: mShouldObserveAmbientLowChange = "
+                        + mShouldObserveAmbientLowChange + ", mShouldObserveAmbientHighChange = "
+                        + mShouldObserveAmbientHighChange);
+                Slog.d(TAG, "updateSensorStatus: mLowPowerModeEnabled = "
+                        + mLowPowerModeEnabled + ", mRefreshRateChangeable = "
+                        + mRefreshRateChangeable);
+            }
+
             if ((mShouldObserveAmbientLowChange || mShouldObserveAmbientHighChange)
                      && isDeviceActive() && !mLowPowerModeEnabled && mRefreshRateChangeable) {
                 mSensorManager.registerListener(mLightSensorListener,
                         mLightSensor, LIGHT_SENSOR_RATE_MS * 1000, mHandler);
+                if (mLoggingEnabled) {
+                    Slog.d(TAG, "updateSensorStatus: registerListener");
+                }
             } else {
                 mLightSensorListener.removeCallbacks();
                 mSensorManager.unregisterListener(mLightSensorListener);
+                if (mLoggingEnabled) {
+                    Slog.d(TAG, "updateSensorStatus: unregisterListener");
+                }
             }
         }
 
         private boolean isDeviceActive() {
-            mIsDeviceActive = mInjector.isDeviceInteractive(mContext);
-            return (mDefaultDisplayState == Display.STATE_ON)
-                    && mIsDeviceActive;
+            return mDefaultDisplayState == Display.STATE_ON;
         }
 
         private final class LightSensorEventListener implements SensorEventListener {
             final private static int INJECT_EVENTS_INTERVAL_MS = LIGHT_SENSOR_RATE_MS;
             private float mLastSensorData;
             private long mTimestamp;
+            private boolean mLoggingEnabled;
 
             public void dumpLocked(PrintWriter pw) {
                 pw.println("    mLastSensorData: " + mLastSensorData);
                 pw.println("    mTimestamp: " + formatTimestamp(mTimestamp));
             }
 
+
+            public void setLoggingEnabled(boolean loggingEnabled) {
+                if (mLoggingEnabled == loggingEnabled) {
+                    return;
+                }
+                mLoggingEnabled = loggingEnabled;
+            }
+
             @Override
             public void onSensorChanged(SensorEvent event) {
                 mLastSensorData = event.values[0];
-                if (DEBUG) {
+                if (mLoggingEnabled) {
                     Slog.d(TAG, "On sensor changed: " + mLastSensorData);
                 }
 
@@ -2009,8 +2071,6 @@ public class DisplayModeDirector {
 
         void registerPeakRefreshRateObserver(@NonNull ContentResolver cr,
                 @NonNull ContentObserver observer);
-
-        boolean isDeviceInteractive(@NonNull Context context);
     }
 
     @VisibleForTesting
@@ -2040,11 +2100,6 @@ public class DisplayModeDirector {
                 @NonNull ContentObserver observer) {
             cr.registerContentObserver(PEAK_REFRESH_RATE_URI, false /*notifyDescendants*/,
                     observer, UserHandle.USER_SYSTEM);
-        }
-
-        @Override
-        public boolean isDeviceInteractive(@NonNull Context ctx) {
-            return ctx.getSystemService(PowerManager.class).isInteractive();
         }
     }
 

@@ -27,6 +27,7 @@ import android.util.Log
 import com.android.wm.shell.bubbles.storage.BubbleEntity
 import com.android.wm.shell.bubbles.storage.BubblePersistentRepository
 import com.android.wm.shell.bubbles.storage.BubbleVolatileRepository
+import com.android.wm.shell.common.ShellExecutor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,12 +35,15 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 
-internal class BubbleDataRepository(context: Context, private val launcherApps: LauncherApps) {
+internal class BubbleDataRepository(
+    context: Context,
+    private val launcherApps: LauncherApps,
+    private val mainExecutor: ShellExecutor
+) {
     private val volatileRepository = BubbleVolatileRepository(launcherApps)
     private val persistentRepository = BubblePersistentRepository(context)
 
     private val ioScope = CoroutineScope(Dispatchers.IO)
-    private val uiScope = CoroutineScope(Dispatchers.Main)
     private var job: Job? = null
 
     /**
@@ -76,7 +80,9 @@ internal class BubbleDataRepository(context: Context, private val launcherApps: 
                     b.key,
                     b.rawDesiredHeight,
                     b.rawDesiredHeightResId,
-                    b.title
+                    b.title,
+                    b.taskId,
+                    b.locusId?.id
             )
         }
     }
@@ -109,6 +115,8 @@ internal class BubbleDataRepository(context: Context, private val launcherApps: 
 
     /**
      * Load bubbles from disk.
+     * @param cb The callback to be run after the bubbles are loaded.  This callback is always made
+     *           on the main thread of the hosting process.
      */
     @SuppressLint("WrongConstant")
     fun loadBubbles(cb: (List<Bubble>) -> Unit) = ioScope.launch {
@@ -163,10 +171,13 @@ internal class BubbleDataRepository(context: Context, private val launcherApps: 
                             shortcutInfo,
                             entity.desiredHeight,
                             entity.desiredHeightResId,
-                            entity.title
+                            entity.title,
+                            entity.taskId,
+                            entity.locus,
+                            mainExecutor
                     ) }
         }
-        uiScope.launch { cb(bubbles) }
+        mainExecutor.execute { cb(bubbles) }
     }
 }
 

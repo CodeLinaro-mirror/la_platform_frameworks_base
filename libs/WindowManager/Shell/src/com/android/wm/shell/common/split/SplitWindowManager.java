@@ -39,12 +39,14 @@ import android.view.IWindow;
 import android.view.LayoutInflater;
 import android.view.SurfaceControl;
 import android.view.SurfaceControlViewHost;
+import android.view.SurfaceSession;
 import android.view.WindowManager;
 import android.view.WindowlessWindowManager;
 
 import androidx.annotation.Nullable;
 
 import com.android.wm.shell.R;
+import com.android.wm.shell.common.DisplayImeController;
 
 /**
  * Holds view hierarchy of a root surface and helps to inflate {@link DividerView} for a split.
@@ -52,22 +54,27 @@ import com.android.wm.shell.R;
 public final class SplitWindowManager extends WindowlessWindowManager {
     private static final String TAG = SplitWindowManager.class.getSimpleName();
 
+    private final String mWindowName;
+    private final DisplayImeController mDisplayImeController;
     private final ParentContainerCallbacks mParentContainerCallbacks;
     private Context mContext;
     private SurfaceControlViewHost mViewHost;
+    private SurfaceControl mLeash;
     private boolean mResizingSplits;
-    private final String mWindowName;
+    private DividerView mDividerView;
 
     public interface ParentContainerCallbacks {
         void attachToParentSurface(SurfaceControl.Builder b);
     }
 
     public SplitWindowManager(String windowName, Context context, Configuration config,
-            ParentContainerCallbacks parentContainerCallbacks) {
+            ParentContainerCallbacks parentContainerCallbacks,
+            DisplayImeController displayImeController) {
         super(config, null /* rootSurface */, null /* hostInputToken */);
         mContext = context.createConfigurationContext(config);
         mParentContainerCallbacks = parentContainerCallbacks;
         mWindowName = windowName;
+        mDisplayImeController = displayImeController;
     }
 
     @Override
@@ -87,20 +94,30 @@ public final class SplitWindowManager extends WindowlessWindowManager {
     }
 
     @Override
-    protected void attachToParentSurface(SurfaceControl.Builder b) {
-        mParentContainerCallbacks.attachToParentSurface(b);
+    protected void attachToParentSurface(IWindow window, SurfaceControl.Builder b) {
+        // Can't set position for the ViewRootImpl SC directly. Create a leash to manipulate later.
+        final SurfaceControl.Builder builder = new SurfaceControl.Builder(new SurfaceSession())
+                .setContainerLayer()
+                .setName(TAG)
+                .setHidden(false)
+                .setCallsite("SplitWindowManager#attachToParentSurface");
+        mParentContainerCallbacks.attachToParentSurface(builder);
+        mLeash = builder.build();
+        b.setParent(mLeash);
     }
 
     /** Inflates {@link DividerView} on to the root surface. */
     void init(SplitLayout splitLayout) {
-        if (mViewHost == null) {
-            mViewHost = new SurfaceControlViewHost(mContext, mContext.getDisplay(), this);
+        if (mDividerView != null || mViewHost != null) {
+            throw new UnsupportedOperationException(
+                    "Try to inflate divider view again without release first");
         }
 
-        final Rect dividerBounds = splitLayout.getDividerBounds();
-        final DividerView dividerView = (DividerView) LayoutInflater.from(mContext)
+        mViewHost = new SurfaceControlViewHost(mContext, mContext.getDisplay(), this);
+        mDividerView = (DividerView) LayoutInflater.from(mContext)
                 .inflate(R.layout.split_divider, null /* root */);
 
+        final Rect dividerBounds = splitLayout.getDividerBounds();
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                 dividerBounds.width(), dividerBounds.height(), TYPE_DOCK_DIVIDER,
                 FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL | FLAG_WATCH_OUTSIDE_TOUCH
@@ -109,8 +126,9 @@ public final class SplitWindowManager extends WindowlessWindowManager {
         lp.token = new Binder();
         lp.setTitle(mWindowName);
         lp.privateFlags |= PRIVATE_FLAG_NO_MOVE_ANIMATION | PRIVATE_FLAG_TRUSTED_OVERLAY;
-        mViewHost.setView(dividerView, lp);
-        dividerView.setup(splitLayout, mViewHost);
+        mViewHost.setView(mDividerView, lp);
+        mDividerView.setup(splitLayout, mViewHost);
+        mDisplayImeController.addPositionProcessor(mDividerView);
     }
 
     /**
@@ -118,9 +136,20 @@ public final class SplitWindowManager extends WindowlessWindowManager {
      * hierarchy.
      */
     void release() {
-        if (mViewHost == null) return;
-        mViewHost.release();
-        mViewHost = null;
+        if (mDividerView != null) {
+            mDisplayImeController.removePositionProcessor(mDividerView);
+            mDividerView = null;
+        }
+
+        if (mViewHost != null){
+            mViewHost.release();
+            mViewHost = null;
+        }
+
+        if (mLeash != null) {
+            new SurfaceControl.Transaction().remove(mLeash).apply();
+            mLeash = null;
+        }
     }
 
     void setResizingSplits(boolean resizing) {
@@ -139,6 +168,6 @@ public final class SplitWindowManager extends WindowlessWindowManager {
      */
     @Nullable
     SurfaceControl getSurfaceControl() {
-        return mViewHost == null ? null : getSurfaceControl(mViewHost.getWindowToken());
+        return mLeash;
     }
 }

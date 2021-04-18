@@ -517,6 +517,9 @@
     <!-- Flag indicating whether we should enable smart battery. -->
     <bool name="config_smart_battery_available">false</bool>
 
+    <!-- Flag indicating whether we should enable camera-based autorotate -->
+    <bool name="config_camera_autorotate">false</bool>
+
     <!-- Fast brightness animation ramp rate in brightness units per second-->
     <integer translatable="false" name="config_brightness_ramp_rate_fast">180</integer>
 
@@ -660,9 +663,15 @@
          The default is false. -->
     <bool name="config_lidControlsSleep">false</bool>
 
-    <!-- The device state (supplied by DeviceStateManager) that should be treated as folded by the
-         display fold controller. Default is DeviceStateManager.INVALID_DEVICE_STATE. -->
-    <integer name="config_foldedDeviceState">-1</integer>
+    <!-- The device states (supplied by DeviceStateManager) that should be treated as folded by the
+         display fold controller. Default is empty. -->
+    <integer-array name="config_foldedDeviceStates">
+        <!-- Example:
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        -->
+    </integer-array>
 
     <!-- Indicate the display area rect for foldable devices in folded state. -->
     <string name="config_foldedArea"></string>
@@ -822,29 +831,31 @@
         <!-- B y-intercept --> <item>-0.198650895</item>
     </string-array>
 
-    <string-array name="config_reduceBrightColorsCoefficientsNative">
-        <!-- R a-coefficient --> <item>-0.691218457</item>
-        <!-- R b-coefficient --> <item>0.050135153</item>
-        <!-- R y-intercept --> <item>0.917684143</item>
-        <!-- G a-coefficient --> <item>-0.691218457</item>
-        <!-- G b-coefficient --> <item>0.050135153</item>
-        <!-- G y-intercept --> <item>0.917684143</item>
-        <!-- B a-coefficient --> <item>-0.691218457</item>
-        <!-- B b-coefficient --> <item>0.050135153</item>
-        <!-- B y-intercept --> <item>0.917684143</item>
+    <!-- Control whether bright color reduction is available. This should only be enabled on devices
+         that have a HWC implementation that can apply the matrix passed to setColorTransform
+         without impacting power, performance, and app compatibility (e.g. protected content). -->
+    <bool name="config_reduceBrightColorsAvailable">@bool/config_setColorTransformAccelerated</bool>
+
+    <string-array name="config_reduceBrightColorsCoefficientsNonlinear">
+        <!-- a-coefficient --> <item>-0.4429953456</item>
+        <!-- b-coefficient --> <item>-0.2434077725</item>
+        <!-- y-intercept --> <item>0.9809063061</item>
     </string-array>
 
     <string-array name="config_reduceBrightColorsCoefficients">
-        <!-- R a-coefficient --> <item>0.00000000000000154</item>
-        <!-- R b-coefficient --> <item>-1.0</item>
-        <!-- R y-intercept --> <item>1.045977011</item>
-        <!-- G a-coefficient --> <item>0.00000000000000224</item>
-        <!-- G b-coefficient --> <item>-1.0</item>
-        <!-- G y-intercept --> <item>1.045977011</item>
-        <!-- B a-coefficient --> <item>0.0000000000000022</item>
-        <!-- B b-coefficient --> <item>-1.0</item>
-        <!-- B y-intercept --> <item>1.045977011</item>
+        <!-- a-coefficient --> <item>-0.000000000000001</item>
+        <!-- b-coefficient --> <item>-0.955555555555554</item>
+        <!-- y-intercept --> <item>1.000000000000000</item>
     </string-array>
+
+    <!-- Default strength, in percentage, of bright color reduction when activated. -->
+    <integer name="config_reduceBrightColorsStrengthDefault">0</integer>
+
+    <!-- Minimum strength, in percentage, supported by bright color reduction. -->
+    <integer name="config_reduceBrightColorsStrengthMin">0</integer>
+
+    <!-- Maximum strength, in percentage, supported by bright color reduction. -->
+    <integer name="config_reduceBrightColorsStrengthMax">100</integer>
 
     <!-- Boolean indicating whether display white balance is supported. -->
     <bool name="config_displayWhiteBalanceAvailable">false</bool>
@@ -897,6 +908,21 @@
         <item>2</item>
         -->
     </integer-array>
+
+    <!-- Mapping for default ColorDisplayManager.COLOR_MODE_xxx to other color modes, if
+         if applicable. By default, all map to the same value. -->
+    <integer-array name="config_mappedColorModes">
+        <item>0</item> <!-- COLOR_MODE_NATURAL -->
+        <item>1</item> <!-- COLOR_MODE_BOOSTED -->
+        <item>2</item> <!-- COLOR_MODE_SATURATED -->
+        <item>3</item> <!-- COLOR_MODE_AUTOMATIC -->
+    </integer-array>
+
+    <!-- Hint to decide whether restored vendor color modes are compatible with the new device. If
+         unset or a match is not made, only the standard color modes will be restored. If set, it
+         should be a unique identifier for the kinds of vendor modes this device supports, such as a
+         manufacturer name. -->
+    <string name="config_vendorColorModesRestoreHint" translatable="false"></string>
 
     <!-- Color mode to use when accessibility transforms are enabled. This color mode must be
          supported by the device, but not necessarily appear in config_availableColorModes. The
@@ -1155,6 +1181,9 @@
 
     <!-- Default value for LED off time when the battery is low on charge in miliseconds -->
     <integer name="config_notificationsBatteryLedOff">2875</integer>
+
+    <!-- If true, only colorized CallStyle notifications will apply custom colors -->
+    <bool name="config_callNotificationActionColorsRequireColorized">true</bool>
 
     <!-- Number of notifications to keep in the notification service historical archive -->
     <integer name="config_notificationServiceArchiveSize">100</integer>
@@ -1573,9 +1602,13 @@
          take precedence over lower ones.
          See com.android.server.timedetector.TimeDetectorStrategy for available sources. -->
     <string-array name="config_autoTimeSourcesPriority">
-        <item>telephony</item>
         <item>network</item>
+        <item>telephony</item>
     </string-array>
+
+    <!-- Enables the GnssTimeUpdate service. This is the global switch for enabling Gnss time based
+         suggestions to TimeDetector service. See also config_autoTimeSourcesPriority. -->
+    <bool name="config_enableGnssTimeUpdateService">false</bool>
 
     <!-- Enables the TimeZoneRuleManager service. This is the global switch for the updateable time
          zone update mechanism. -->
@@ -1728,13 +1761,6 @@
         <item>com.android.location.fused</item>
     </string-array>
 
-    <!-- Gnss Psds Servers -->
-    <string name="config_longterm_psds_server_1" translatable="false"></string>
-    <string name="config_longterm_psds_server_2" translatable="false"></string>
-    <string name="config_longterm_psds_server_3" translatable="false"></string>
-    <string name="config_normal_psds_server" translatable="false"></string>
-    <string name="config_realtime_psds_server" translatable="false"></string>
-
     <!-- This string array can be overriden to enable test location providers initially. -->
     <!-- Array of "[locationProviderName],[requiresNetwork],
          [requiresSatellite],[requiresCell],[hasMonetaryCost],
@@ -1759,7 +1785,7 @@
              * SDK level 28 makes the following algorithms mandatory : "cbc(aes)", "hmac(md5)",
                "hmac(sha1)", "hmac(sha256)", "hmac(sha384)", "hmac(sha512)", "rfc4106(gcm(aes))"
              * SDK level 31 makes the following algorithms mandatory : "rfc3686(ctr(aes))",
-               "xcbc(aes)", "rfc7539esp(chacha20,poly1305)"
+               "xcbc(aes)", "cmac(aes)", "rfc7539esp(chacha20,poly1305)"
      -->
     <string-array name="config_optionalIpSecAlgorithms" translatable="false">
         <!-- Add algorithm here -->
@@ -1925,8 +1951,16 @@
     <string name="config_systemAutomotiveProjection" translatable="false"></string>
     <!-- The name of the package that will hold the system cluster service role. -->
     <string name="config_systemAutomotiveCluster" translatable="false"></string>
-    <!-- The name of the package that will hold the system video call role. -->
-    <string name="config_systemVideoCall" translatable="false"></string>
+    <!-- The name of the package that will hold the system shell role. -->
+    <string name="config_systemShell" translatable="false">com.android.shell</string>
+    <!-- The name of the package that will hold the system contacts role. -->
+    <string name="config_systemContacts" translatable="false">com.android.contacts</string>
+    <!-- The name of the package that will hold the speech recognizer role by default. -->
+    <string name="config_systemSpeechRecognizer" translatable="false"></string>
+    <!-- The name of the package that will hold the system Wi-Fi coex manager role. -->
+    <string name="config_systemWifiCoexManager" translateable="false"></string>
+    <!-- The name of the package that will hold the wellbeing role. -->
+    <string name="config_systemWellbeing" translatable="false"></string>
 
     <!-- The name of the package that will be allowed to change its components' label/icon. -->
     <string name="config_overrideComponentUiPackage" translatable="false"></string>
@@ -2488,10 +2522,9 @@
     <string name="config_ethernet_tcp_buffers" translatable="false">524288,1048576,3145728,524288,1048576,2097152</string>
 
     <!-- What source to use to estimate link upstream and downstream bandwidth capacities.
-         Default is carrier_config, but it should be set to modem if the modem is returning
-         predictive (instead of instantaneous) bandwidth estimate.
-         Values are carrier_config and modem. -->
-    <string name="config_bandwidthEstimateSource">carrier_config</string>
+         Default is bandwidth_estimator.
+         Values are bandwidth_estimator, carrier_config and modem. -->
+    <string name="config_bandwidthEstimateSource">bandwidth_estimator</string>
 
     <!-- Whether WiFi display is supported by this device.
          There are many prerequisites for this feature to work correctly.
@@ -2648,6 +2681,11 @@
          in. -->
     <string name="config_usbResolverActivity" translatable="false"
             >com.android.systemui/com.android.systemui.usb.UsbResolverActivity</string>
+
+    <!-- Component name of the activity used to inform a user about a sensory being blocked because
+     of privacy settings. -->
+    <string name="config_sensorUseStartedActivity" translatable="false"
+            >com.android.systemui/com.android.systemui.sensorprivacy.SensorUseStartedActivity</string>
 
     <!-- Name of the dialog that is used to request the user's consent for a Platform VPN -->
     <string name="config_platformVpnConfirmDialogComponent" translatable="false"
@@ -3178,6 +3216,10 @@
          panning to scaling the magnification viewport. -->
     <item name="config_screen_magnification_scaling_threshold" format="float" type="dimen">0.3</item>
 
+    <!-- Whether to support magnification area. If not enabled, it would hide the entry in
+         magnification settings and adjust the default magnification capability.  -->
+    <bool name="config_magnification_area">true</bool>
+
     <!-- If true, the display will be shifted around in ambient mode. -->
     <bool name="config_enableBurnInProtection">false</bool>
 
@@ -3451,6 +3493,11 @@
     <!-- The alarm window (in milliseconds) that JobScheduler uses to enter the idle state -->
     <integer name="config_jobSchedulerIdleWindowSlop">300000</integer>
 
+    <!-- If true, jobs from background user will be restricted -->
+    <bool name="config_jobSchedulerRestrictBackgroundUser">false</bool>
+    <!-- The length of grace period after user becomes background user -->
+    <integer name="config_jobSchedulerUserGracePeriod">60000</integer>
+
     <!-- If true, all guest users created on the device will be ephemeral. -->
     <bool name="config_guestUserEphemeral">false</bool>
 
@@ -3700,6 +3747,12 @@
     -->
     <string name="config_defaultAttentionService" translatable="false"></string>
 
+    <!-- The component name for the default system rotation resolver service.
+        This service must be trusted, as it can be activated without explicit consent of the user.
+        See android.service.rotationresolver.RotationResolverService.
+   -->
+    <string name="config_defaultRotationResolverService" translatable="false"></string>
+
     <!-- The component name for the system-wide captions service.
          This service must be trusted, as it controls part of the UI of the volume bar.
          Example: "com.android.captions/.SystemCaptionsService"
@@ -3769,6 +3822,21 @@
      Example: "com.android.intelliegence/.SearchUiService"
 -->
     <string name="config_defaultSearchUiService" translatable="false"></string>
+
+    <!-- The package name for the system's smartspace service.
+     This service returns smartspace results.
+
+     This service must be trusted, as it can be activated without explicit consent of the user.
+     If no service with the specified name exists on the device, smartspace will be disabled.
+     Example: "com.android.intelligence/.SmartspaceService"
+-->
+    <string name="config_defaultSmartspaceService" translatable="false"></string>
+
+    <!-- The package name for the system's speech recognition service.
+         This service must be trusted, as it can be activated without explicit consent of the user.
+         Example: "com.android.speech/.RecognitionService"
+    -->
+    <string name="config_defaultOnDeviceSpeechRecognitionService" translatable="false"></string>
 
     <string name="config_defaultMusicRecognitionService" translatable="false"></string>
 
@@ -3876,6 +3944,10 @@
     <!-- Flag indicating that the actions buttons for a notification should be tinted with by the
          color supplied by the Notification.Builder if present. -->
     <bool name="config_tintNotificationActionButtons">true</bool>
+
+    <!-- Flag indicating that tinted items (actions, expander, etc) are to be tinted using the
+         theme color, rather than the notification color. -->
+    <bool name="config_tintNotificationsWithTheme">true</bool>
 
     <!-- Show area update info settings in CellBroadcastReceiver and information in SIM status in Settings app -->
     <bool name="config_showAreaUpdateInfoSettings">false</bool>
@@ -4001,13 +4073,13 @@
     <string name="config_misprovisionedBrandValue" translatable="false"></string>
 
     <!-- Pre-scale volume at volume step 1 for Absolute Volume -->
-    <fraction name="config_prescaleAbsoluteVolume_index1">50%</fraction>
+    <fraction name="config_prescaleAbsoluteVolume_index1">60%</fraction>
 
     <!-- Pre-scale volume at volume step 2 for Absolute Volume -->
-    <fraction name="config_prescaleAbsoluteVolume_index2">70%</fraction>
+    <fraction name="config_prescaleAbsoluteVolume_index2">80%</fraction>
 
     <!-- Pre-scale volume at volume step 3 for Absolute Volume -->
-    <fraction name="config_prescaleAbsoluteVolume_index3">85%</fraction>
+    <fraction name="config_prescaleAbsoluteVolume_index3">90%</fraction>
 
     <!-- Whether or not the "SMS app service" feature is enabled -->
     <bool name="config_useSmsAppService">true</bool>
@@ -4359,6 +4431,15 @@
     <!--If true, allows the device to load udfps components on older HIDL implementations -->
     <bool name="allow_test_udfps" translatable="false" >false</bool>
 
+    <!-- The properties of a UDFPS sensor in pixels, in the order listed below: -->
+    <integer-array name="config_udfps_sensor_props" translatable="false" >
+      <!--
+        <item>sensorLocationX</item>
+        <item>sensorLocationY</item>
+        <item>sensorRadius</item>
+      -->
+    </integer-array>
+
     <!-- Messages that should not be shown to the user during face auth enrollment. This should be
          used to hide messages that may be too chatty or messages that the user can't do much about.
          Entries are defined in android.hardware.biometrics.face@1.0 types.hal -->
@@ -4526,11 +4607,12 @@
         <item>com.android.systemui</item>
     </string-array>
 
-    <!-- Package name of custom media key dispatcher class used by MediaSessionService. -->
+    <!-- Component name of custom media key dispatcher class used by MediaSessionService. -->
     <string name="config_customMediaKeyDispatcher"></string>
 
-    <!-- Package name of custom session policy provider class used by MediaSessionService. -->
-    <string name="config_customSessionPolicyProvider"></string>
+    <!-- Component name of custom media session policy provider class used by
+         MediaSessionService. -->
+    <string name="config_customMediaSessionPolicyProvider"></string>
 
     <!-- The max scale for the wallpaper when it's zoomed in -->
     <item name="config_wallpaperMaxScale" format="float" type="dimen">1.10</item>
@@ -4581,23 +4663,43 @@
     <!-- WindowsManager JetPack display features -->
     <string name="config_display_features" translatable="false" />
 
-    <!-- Physical Display IDs of the display-devices that are swapped when a folding device folds.
-         This list is expected to contain two elements: the first is the display to use
-         when the device is folded, the second is the display to use when unfolded. If the array
-         is empty or the display IDs are not recognized, this feature is turned off and the value
-         ignored.
-         TODO: b/170470621 - remove once we can have multiple Internal displays in DMS as
-               well as a notification from DisplayStateManager. -->
-    <string-array name="config_internalFoldedPhysicalDisplayIds" translatable="false" />
+    <!-- Aspect ratio of letterboxing for fixed orientation. Values <= 1.0 will be ignored.
+         Note: Activity min/max aspect ratio restrictions will still be respected.
+         Therefore this override can control the maximum screen area that can be occupied by
+         the app in the letterbox mode. -->
+    <item name="config_fixedOrientationLetterboxAspectRatio" format="float" type="dimen">0.0</item>
 
-    <!-- Aspect ratio of task level letterboxing. Values <= 1.0 will be ignored.
-         Note: Activity min/max aspect ratio restrictions will still be respected by the
-         activity-level letterboxing (size-compat mode). Therefore this override can control the
-         maximum screen area that can be occupied by the app in the letterbox mode. -->
-    <item name="config_taskLetterboxAspectRatio" format="float" type="dimen">0.0</item>
+    <!-- Corners radius for activity presented the letterbox mode. Values < 0 will be ignored and
+         corners of the activity won't be rounded. -->
+    <integer name="config_letterboxActivityCornersRadius">0</integer>
+
+    <!-- Corners appearance of the letterbox background.
+            0 - Solid background using color specified in R.color.config_letterboxBackgroundColor.
+            1 - Color specified in R.attr.colorBackground for the letterboxed application.
+            2 - Color specified in R.attr.colorBackgroundFloating for the letterboxed application.
+        If given value is outside of this range, the option 0 will be assummed. -->
+    <integer name="config_letterboxBackgroundType">0</integer>
+
+    <!-- Color of the letterbox background if one following conditions is true
+            - Option 0 is selected for R.integer.config_letterboxBackgroundType.
+            - Option 1 is selected for R.integer.config_letterboxBackgroundType and
+            R.attr.colorBackground isn't specified for the app.
+            - Option 2 is selected for R.integer.config_letterboxBackgroundType and
+            R.attr.colorBackgroundFloating isn't specified for the app.
+        Defaults to black if not specified.
+     -->
+    <color name="config_letterboxBackgroundColor">#000</color>
 
     <!-- If true, hide the display cutout with display area -->
     <bool name="config_hideDisplayCutoutWithDisplayArea">false</bool>
+
+    <!-- The timeout value in milliseconds used by SelectionActionModeHelper for each selections
+     when TextClassifier has been initialized. -->
+    <integer name="config_smartSelectionInitializedTimeoutMillis">200</integer>
+
+    <!-- The timeout value in milliseconds used by SelectionActionModeHelper for each selections
+         when TextClassifier has not been initialized. -->
+    <integer name="config_smartSelectionInitializingTimeoutMillis">500</integer>
 
     <!-- Indicates that default fitness tracker app needs to request sensor and location permissions. -->
     <bool name="config_trackerAppNeedsPermissions">false</bool>
@@ -4622,4 +4724,18 @@
          dreaming. This allows the AoD to rotate on devices without a wake device_orientation
          sensor. Note that this flag should only be enabled for development/testing use. -->
     <bool name="config_forceOrientationListenerEnabledWhileDreaming">false</bool>
+
+    <!-- Whether the device enable the standalone (SA) mode of 5G NR.-->
+    <bool name="config_telephony5gStandalone">false</bool>
+    <!-- Whether the device enable the non-standalone (NSA) mode of 5G NR.-->
+    <bool name="config_telephony5gNonStandalone">false</bool>
+
+    <!-- Whether to select voice/data/sms preference without user confirmation -->
+    <bool name="config_voice_data_sms_auto_fallback">false</bool>
+
+    <!-- Whether to enable the one-handed keyguard on the lock screen for wide-screen devices. -->
+    <bool name="config_enableOneHandedKeyguard">false</bool>
+
+    <!-- Whether to allow the caching of the SIM PIN for verification after unattended reboot -->
+    <bool name="config_allow_pin_storage_for_unattended_reboot">true</bool>
 </resources>

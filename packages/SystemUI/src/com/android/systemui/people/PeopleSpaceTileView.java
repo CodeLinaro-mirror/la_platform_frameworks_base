@@ -16,11 +16,11 @@
 
 package com.android.systemui.people;
 
+import android.app.people.PeopleSpaceTile;
 import android.content.Context;
 import android.content.pm.LauncherApps;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
-import android.os.UserHandle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -81,7 +81,7 @@ public class PeopleSpaceTileView extends LinearLayout {
     public void setOnClickListener(LauncherApps launcherApps, PeopleSpaceTile tile) {
         mTileView.setOnClickListener(v ->
                 launcherApps.startShortcut(tile.getPackageName(), tile.getId(), null, null,
-                        UserHandle.getUserHandleForUid(tile.getUid())));
+                        tile.getUserHandle()));
     }
 
     /** Sets the click listener of the tile directly. */

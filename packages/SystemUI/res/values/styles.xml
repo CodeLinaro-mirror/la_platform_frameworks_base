@@ -15,8 +15,6 @@
 -->
 
 <resources xmlns:android="http://schemas.android.com/apk/res/android">
-    <style name="BubbleOverflow" parent="@android:style/Theme.NoTitleBar"></style>
-
     <style name="ClearAllButtonDefaultMargins">
         <item name="android:layout_marginStart">0dp</item>
         <item name="android:layout_marginTop">0dp</item>
@@ -116,12 +114,12 @@
     <style name="TextAppearance.StatusBar.Expanded.UserSwitcher">
         <item name="android:textSize">@dimen/kg_user_switcher_text_size</item>
         <item name="android:textStyle">normal</item>
-        <item name="android:textColor">?android:attr/textColorSecondary</item>
+        <item name="android:fontFamily">@*android:string/config_headlineFontFamily</item>
+        <item name="android:textColor">?attr/wallpaperTextColor</item>
     </style>
 
     <style name="TextAppearance.StatusBar.Expanded.UserSwitcher.Activated">
         <item name="android:fontWeight">700</item>
-        <item name="android:textStyle">bold</item>
     </style>
 
     <style name="TextAppearance" />
@@ -198,7 +196,7 @@
 
     <style name="TextAppearance.QS.TileLabel">
         <item name="android:textSize">@dimen/qs_tile_text_size</item>
-        <item name="android:fontFamily">@*android:string/config_headlineFontFamily</item>
+        <item name="android:fontFamily">@string/qs_tile_label_fontFamily</item>
     </style>
 
     <style name="TextAppearance.QS.TileLabel.Secondary">
@@ -246,6 +244,8 @@
         <item name="android:paddingTop">12dp</item>
         <item name="android:paddingHorizontal">24dp</item>
         <item name="android:textSize">24sp</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:ellipsize">marquee</item>
     </style>
 
     <style name="TextAppearance.AuthCredential.Subtitle">
@@ -253,6 +253,8 @@
         <item name="android:paddingTop">8dp</item>
         <item name="android:paddingHorizontal">24dp</item>
         <item name="android:textSize">16sp</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:ellipsize">marquee</item>
     </style>
 
     <style name="TextAppearance.AuthCredential.Description">
@@ -260,6 +262,8 @@
         <item name="android:paddingTop">8dp</item>
         <item name="android:paddingHorizontal">24dp</item>
         <item name="android:textSize">14sp</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:ellipsize">marquee</item>
     </style>
 
     <style name="TextAppearance.AuthCredential.Error">
@@ -321,6 +325,7 @@
         <item name="android:colorControlHighlight">@*android:color/primary_text_material_dark</item>
         <item name="*android:lockPatternStyle">@style/LockPatternStyle</item>
         <item name="passwordStyle">@style/PasswordTheme</item>
+        <item name="numPadKeyStyle">@style/NumPadKey</item>
         <item name="backgroundProtectedStyle">@style/BackgroundProtectedStyle</item>
         <item name="android:homeAsUpIndicator">@drawable/ic_arrow_back</item>
         <item name="shadowRadius">@dimen/keyguard_shadow_radius</item>
@@ -355,15 +360,17 @@
     </style>
 
     <style name="LockPatternStyle">
-        <item name="*android:regularColor">?android:attr/textColorPrimary</item>
+        <item name="*android:regularColor">?android:attr/colorAccent</item>
         <item name="*android:successColor">?android:attr/textColorPrimary</item>
         <item name="*android:errorColor">?android:attr/colorError</item>
+        <item name="*android:dotColor">?android:attr/textColorSecondary</item>
     </style>
 
     <style name="LockPatternStyleBiometricPrompt">
         <item name="*android:regularColor">?android:attr/colorForeground</item>
         <item name="*android:successColor">?android:attr/colorForeground</item>
         <item name="*android:errorColor">?android:attr/colorError</item>
+        <item name="*android:dotColor">?android:attr/textColorSecondary</item>
     </style>
 
     <style name="qs_theme" parent="@*android:style/Theme.DeviceDefault.QuickSettings">
@@ -581,7 +588,7 @@
 
     <style name="MediaPlayer.Button" parent="@android:style/Widget.Material.Button.Borderless.Small">
         <item name="android:background">@drawable/qs_media_light_source</item>
-        <item name="android:tint">@android:color/white</item>
+        <item name="android:tint">?android:attr/textColorPrimary</item>
         <item name="android:stateListAnimator">@anim/media_button_state_list_animator</item>
     </style>
 
@@ -605,6 +612,11 @@
         <item name="android:windowIsFloating">true</item>
         <item name="android:backgroundDimEnabled">true</item>
         <item name="android:windowCloseOnTouchOutside">true</item>
+    </style>
+
+    <!-- Privacy dialog -->
+    <style name="PrivacyDialog" parent="ScreenRecord">
+        <item name="android:windowAnimationStyle">@android:style/Animation.Dialog</item>
     </style>
 
     <!-- USB Contaminant dialog -->
@@ -659,6 +671,19 @@
     <style name="Animation.Bottomsheet">
       <item name="android:windowEnterAnimation">@anim/bottomsheet_in</item>
       <item name="android:windowExitAnimation">@anim/bottomsheet_out</item>
+    </style>
+
+    <style name="Theme.SystemUI.Dialog.Control.LockScreen" parent="@android:style/Theme.DeviceDefault.Dialog.NoActionBar">
+      <item name="android:windowAnimationStyle">@style/Animation.ControlDialog</item>
+      <item name="android:windowFullscreen">true</item>
+      <item name="android:windowIsFloating">false</item>
+      <item name="android:windowBackground">@null</item>
+      <item name="android:backgroundDimEnabled">true</item>
+    </style>
+
+    <style name="Animation.ControlDialog">
+      <item name="android:windowEnterAnimation">@*android:anim/dialog_enter</item>
+      <item name="android:windowExitAnimation">@*android:anim/dialog_exit</item>
     </style>
 
     <style name="Control" />
@@ -746,4 +771,18 @@
           * Title: headline, medium 20sp
           * Message: body, 16 sp -->
     <style name="Theme.ControlsRequestDialog" parent="@*android:style/Theme.DeviceDefault.Dialog.Alert"/>
+
+    <style name="TextAppearance.PrivacyDialog">
+        <item name="android:textSize">14sp</item>
+        <item name="android:fontFamily">@*android:string/config_headlineFontFamily</item>
+        <item name="android:textColor">?android:attr/textColorPrimary</item>
+    </style>
+
+    <style name="UdfpsProgressBarStyle"
+        parent="android:style/Widget.Material.ProgressBar.Horizontal">
+        <item name="android:indeterminate">false</item>
+        <item name="android:max">10000</item>
+        <item name="android:mirrorForRtl">false</item>
+        <item name="android:progressDrawable">@drawable/udfps_progress_bar</item>
+    </style>
 </resources>

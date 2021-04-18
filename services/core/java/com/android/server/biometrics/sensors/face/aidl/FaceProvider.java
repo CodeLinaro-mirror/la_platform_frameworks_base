@@ -25,6 +25,7 @@ import android.content.Context;
 import android.content.pm.UserInfo;
 import android.hardware.biometrics.IInvalidationCallback;
 import android.hardware.biometrics.ITestSession;
+import android.hardware.biometrics.ITestSessionCallback;
 import android.hardware.biometrics.face.IFace;
 import android.hardware.biometrics.face.SensorProps;
 import android.hardware.face.Face;
@@ -177,7 +178,8 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
         for (int i = 0; i < mSensors.size(); i++) {
             final int sensorId = mSensors.keyAt(i);
             scheduleLoadAuthenticatorIds(sensorId);
-            scheduleInternalCleanup(sensorId, ActivityManager.getCurrentUser());
+            scheduleInternalCleanup(sensorId, ActivityManager.getCurrentUser(),
+                    null /* callback */);
         }
 
         return mDaemon;
@@ -382,7 +384,7 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
     public void scheduleEnroll(int sensorId, @NonNull IBinder token,
             @NonNull byte[] hardwareAuthToken, int userId, @NonNull IFaceServiceReceiver receiver,
             @NonNull String opPackageName, @NonNull int[] disabledFeatures,
-            @Nullable NativeHandle previewSurface) {
+            @Nullable NativeHandle previewSurface, boolean debugConsent) {
         mHandler.post(() -> {
             final IFace daemon = getHalInstance();
             if (daemon == null) {
@@ -404,7 +406,8 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
                         mSensors.get(sensorId).getLazySession(), token,
                         new ClientMonitorCallbackConverter(receiver), userId, hardwareAuthToken,
                         opPackageName, FaceUtils.getInstance(sensorId), disabledFeatures,
-                        ENROLL_TIMEOUT_SEC, previewSurface, sensorId, maxTemplatesPerUser);
+                        ENROLL_TIMEOUT_SEC, previewSurface, sensorId, maxTemplatesPerUser,
+                        debugConsent);
                 scheduleForSensor(sensorId, client, new BaseClientMonitor.Callback() {
                     @Override
                     public void onClientFinished(@NonNull BaseClientMonitor clientMonitor,
@@ -451,7 +454,7 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
                         mContext, mSensors.get(sensorId).getLazySession(), token, callback, userId,
                         operationId, restricted, opPackageName, cookie,
                         false /* requireConfirmation */, sensorId, isStrongBiometric, statsClient,
-                        mUsageStats, mSensors.get(sensorId).getLockoutCache());
+                        mUsageStats, mSensors.get(sensorId).getLockoutCache(), isKeyguard);
                 mSensors.get(sensorId).getScheduler().scheduleClientMonitor(client);
             } catch (RemoteException e) {
                 Slog.e(getTag(), "Remote exception when scheduling authenticate", e);
@@ -467,6 +470,25 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
     @Override
     public void scheduleRemove(int sensorId, @NonNull IBinder token, int faceId, int userId,
             @NonNull IFaceServiceReceiver receiver, @NonNull String opPackageName) {
+        scheduleRemoveSpecifiedIds(sensorId, token, new int[] {faceId}, userId, receiver,
+                opPackageName);
+    }
+
+    @Override
+    public void scheduleRemoveAll(int sensorId, @NonNull IBinder token, int userId,
+            @NonNull IFaceServiceReceiver receiver, @NonNull String opPackageName) {
+        final List<Face> faces = FaceUtils.getInstance(sensorId)
+                .getBiometricsForUser(mContext, userId);
+        final int[] faceIds = new int[faces.size()];
+        for (int i = 0; i < faces.size(); i++) {
+            faceIds[i] = faces.get(i).getBiometricId();
+        }
+
+        scheduleRemoveSpecifiedIds(sensorId, token, faceIds, userId, receiver, opPackageName);
+    }
+
+    private void scheduleRemoveSpecifiedIds(int sensorId, @NonNull IBinder token, int[] faceIds,
+            int userId, @NonNull IFaceServiceReceiver receiver, @NonNull String opPackageName) {
         mHandler.post(() -> {
             final IFace daemon = getHalInstance();
             if (daemon == null) {
@@ -484,7 +506,7 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
 
                 final FaceRemovalClient client = new FaceRemovalClient(mContext,
                         mSensors.get(sensorId).getLazySession(), token,
-                        new ClientMonitorCallbackConverter(receiver), faceId, userId,
+                        new ClientMonitorCallbackConverter(receiver), faceIds, userId,
                         opPackageName, FaceUtils.getInstance(sensorId), sensorId,
                         mSensors.get(sensorId).getAuthenticatorIds());
 
@@ -542,7 +564,8 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
     }
 
     @Override
-    public void scheduleInternalCleanup(int sensorId, int userId) {
+    public void scheduleInternalCleanup(int sensorId, int userId,
+            @Nullable BaseClientMonitor.Callback callback) {
         mHandler.post(() -> {
             final IFace daemon = getHalInstance();
             if (daemon == null) {
@@ -563,7 +586,7 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
                                 FaceUtils.getInstance(sensorId),
                                 mSensors.get(sensorId).getAuthenticatorIds());
 
-                mSensors.get(sensorId).getScheduler().scheduleClientMonitor(client);
+                mSensors.get(sensorId).getScheduler().scheduleClientMonitor(client, callback);
             } catch (RemoteException e) {
                 Slog.e(getTag(), "Remote exception when scheduling internal cleanup", e);
             }
@@ -571,9 +594,10 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
     }
 
     @Override
-    public void dumpProtoState(int sensorId, @NonNull ProtoOutputStream proto) {
+    public void dumpProtoState(int sensorId, @NonNull ProtoOutputStream proto,
+            boolean clearSchedulerBuffer) {
         if (mSensors.contains(sensorId)) {
-            mSensors.get(sensorId).dumpProtoState(sensorId, proto);
+            mSensors.get(sensorId).dumpProtoState(sensorId, proto, clearSchedulerBuffer);
         }
     }
 
@@ -625,8 +649,9 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
 
     @NonNull
     @Override
-    public ITestSession createTestSession(int sensorId, @NonNull String opPackageName) {
-        return mSensors.get(sensorId).createTestSession();
+    public ITestSession createTestSession(int sensorId, @NonNull ITestSessionCallback callback,
+            @NonNull String opPackageName) {
+        return mSensors.get(sensorId).createTestSession(callback);
     }
 
     @Override
@@ -641,8 +666,7 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
                 final Sensor sensor = mSensors.valueAt(i);
                 final int sensorId = mSensors.keyAt(i);
                 PerformanceTracker.getInstanceForSensorId(sensorId).incrementHALDeathCount();
-                sensor.getScheduler().recordCrashState();
-                sensor.getScheduler().reset();
+                sensor.onBinderDied();
             }
         });
     }

@@ -70,6 +70,7 @@ import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledSince;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
@@ -131,6 +132,7 @@ import android.widget.TextView;
 import android.window.WindowMetricsHelper;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.inputmethod.IInputContentUriToken;
 import com.android.internal.inputmethod.IInputMethodPrivilegedOperations;
 import com.android.internal.inputmethod.InputMethodPrivilegedOperations;
@@ -410,6 +412,11 @@ public class InputMethodService extends AbstractInputMethodService {
     private static final int BACK_DISPOSITION_MIN = BACK_DISPOSITION_DEFAULT;
     private static final int BACK_DISPOSITION_MAX = BACK_DISPOSITION_ADJUST_NOTHING;
 
+    /**
+     * Timeout after which hidden IME surface will be removed from memory
+     */
+    private static final long TIMEOUT_SURFACE_REMOVAL_MILLIS = 5000;
+
     InputMethodManager mImm;
     private InputMethodPrivilegedOperations mPrivOps = new InputMethodPrivilegedOperations();
 
@@ -506,6 +513,10 @@ public class InputMethodService extends AbstractInputMethodService {
 
     private boolean mAutomotiveHideNavBarForKeyboard;
     private boolean mIsAutomotive;
+    private Handler mHandler;
+    private boolean mImeSurfaceScheduledForRemoval;
+    private Configuration mLastKnownConfig;
+    private int mHandledConfigChanges;
 
     /**
      * An opaque {@link Binder} token of window requesting {@link InputMethodImpl#showSoftInput}
@@ -581,12 +592,13 @@ public class InputMethodService extends AbstractInputMethodService {
         @MainThread
         @Override
         public final void initializeInternal(@NonNull IBinder token, int displayId,
-                IInputMethodPrivilegedOperations privilegedOperations) {
+                IInputMethodPrivilegedOperations privilegedOperations, int configChanges) {
             if (InputMethodPrivilegedOperationsRegistry.isRegistered(token)) {
                 Log.w(TAG, "The token has already registered, ignore this initialization.");
                 return;
             }
             Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "IMS.initializeInternal");
+            mHandledConfigChanges = configChanges;
             mPrivOps.set(privilegedOperations);
             InputMethodPrivilegedOperationsRegistry.put(token, mPrivOps);
             updateInputMethodDisplay(displayId);
@@ -814,6 +826,9 @@ public class InputMethodService extends AbstractInputMethodService {
                 setImeWindowStatus(mapToImeWindowStatus(), mBackDisposition);
             }
             final boolean isVisible = isInputViewShown();
+            if (isVisible && getResources() != null) {
+                mLastKnownConfig = new Configuration(getResources().getConfiguration());
+            }
             final boolean visibilityChanged = isVisible != wasVisible;
             if (resultReceiver != null) {
                 resultReceiver.send(visibilityChanged
@@ -903,10 +918,30 @@ public class InputMethodService extends AbstractInputMethodService {
         requestHideSelf(0);
     }
 
+    private void scheduleImeSurfaceRemoval() {
+        if (mShowInputRequested || mWindowVisible || mWindow == null
+                || mImeSurfaceScheduledForRemoval) {
+            return;
+        }
+        if (mHandler == null) {
+            mHandler = new Handler(getMainLooper());
+        }
+        mImeSurfaceScheduledForRemoval = true;
+        mHandler.postDelayed(() -> removeImeSurface(), TIMEOUT_SURFACE_REMOVAL_MILLIS);
+    }
+
     private void removeImeSurface() {
-        if (!mShowInputRequested && !mWindowVisible) {
-            // hiding a window removes its surface.
+        // hiding a window removes its surface.
+        if (mWindow != null) {
             mWindow.hide();
+        }
+        mImeSurfaceScheduledForRemoval = false;
+    }
+
+    private void cancelImeSurfaceRemoval() {
+        if (mHandler != null && mImeSurfaceScheduledForRemoval) {
+            mHandler.removeCallbacksAndMessages(null /* token */);
+            mImeSurfaceScheduledForRemoval = false;
         }
     }
 
@@ -1043,7 +1078,7 @@ public class InputMethodService extends AbstractInputMethodService {
          * @hide
          */
         public final void removeImeSurface() {
-            InputMethodService.this.removeImeSurface();
+            InputMethodService.this.scheduleImeSurfaceRemoval();
         }
     }
     
@@ -1401,10 +1436,30 @@ public class InputMethodService extends AbstractInputMethodService {
      * state: {@link #onStartInput} if input is active, and
      * {@link #onCreateInputView} and {@link #onStartInputView} and related
      * appropriate functions if the UI is displayed.
+     * <p>Starting with {@link Build.VERSION_CODES#S}, IMEs can opt into handling configuration
+     * changes themselves instead of being restarted with
+     * {@link android.R.styleable#InputMethod_configChanges}.
      */
     @Override public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        resetStateForNewConfiguration();
+        if (shouldImeRestartForConfig(newConfig)) {
+            resetStateForNewConfiguration();
+        }
+    }
+
+    /**
+     * @return {@code true} if {@link InputMethodService} needs to restart to handle
+     * .{@link #onConfigurationChanged(Configuration)}
+     */
+    @VisibleForTesting
+    boolean shouldImeRestartForConfig(@NonNull Configuration newConfig) {
+        if (mLastKnownConfig == null) {
+            return true;
+        }
+        // If the new config is the same as the config this Service is already running with,
+        // then don't bother calling resetStateForNewConfiguration.
+        int unhandledDiff = (mLastKnownConfig.diffPublicOnly(newConfig) & ~mHandledConfigChanges);
+        return unhandledDiff != 0;
     }
 
     private void resetStateForNewConfiguration() {
@@ -1705,7 +1760,7 @@ public class InputMethodService extends AbstractInputMethodService {
                 // If app window has portrait orientation, regardless of what display orientation
                 // is, IME shouldn't use fullscreen-mode.
                 || (mInputEditorInfo.internalImeOptions
-                        & EditorInfo.IME_FLAG_APP_WINDOW_PORTRAIT) != 0) {
+                        & EditorInfo.IME_INTERNAL_FLAG_APP_WINDOW_PORTRAIT) != 0) {
             return false;
         }
         return true;
@@ -2271,6 +2326,9 @@ public class InputMethodService extends AbstractInputMethodService {
         ImeTracing.getInstance().triggerServiceDump(
                 "InputMethodService#applyVisibilityInInsetsConsumerIfNecessary", this,
                 null /* icProto */);
+        if (setVisible) {
+            cancelImeSurfaceRemoval();
+        }
         mPrivOps.applyImeVisibility(setVisible
                 ? mCurShowInputToken : mCurHideInputToken, setVisible);
     }
@@ -3151,7 +3209,17 @@ public class InputMethodService extends AbstractInputMethodService {
             requestHideSelf(InputMethodManager.HIDE_NOT_ALWAYS);
         }
     }
-    
+
+    @VisibleForTesting
+    void setLastKnownConfig(@NonNull Configuration config) {
+        mLastKnownConfig = config;
+    }
+
+    @VisibleForTesting
+    void setHandledConfigChanges(int configChanges) {
+        mHandledConfigChanges = configChanges;
+    }
+
     void startExtractingText(boolean inputChanged) {
         final ExtractEditText eet = mExtractEditText;
         if (eet != null && getCurrentInputStarted()

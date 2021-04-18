@@ -16,20 +16,25 @@
 
 package com.android.wm.shell.onehanded;
 
+import static android.view.Display.DEFAULT_DISPLAY;
+
 import static com.google.common.truth.Truth.assertThat;
 
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.when;
 
 import android.testing.AndroidTestingRunner;
-import android.testing.TestableLooper;
+import android.view.Surface;
+import android.view.ViewConfiguration;
+import android.window.WindowContainerTransaction;
 
 import androidx.test.filters.SmallTest;
 
 import com.android.wm.shell.common.DisplayController;
+import com.android.wm.shell.common.DisplayLayout;
 import com.android.wm.shell.common.ShellExecutor;
 
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
@@ -38,19 +43,25 @@ import org.mockito.MockitoAnnotations;
 @SmallTest
 @RunWith(AndroidTestingRunner.class)
 public class OneHandedGestureHandlerTest extends OneHandedTestCase {
-    OneHandedTutorialHandler mTutorialHandler;
     OneHandedGestureHandler mGestureHandler;
     @Mock
     DisplayController mMockDisplayController;
     @Mock
+    DisplayLayout mMockDisplayLayout;
+    @Mock
     ShellExecutor mMockShellMainExecutor;
+    @Mock
+    WindowContainerTransaction mMockWct;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
+        final int mockNavBarHeight = 100;
         MockitoAnnotations.initMocks(this);
-        mTutorialHandler = new OneHandedTutorialHandler(mContext, mMockShellMainExecutor);
-        mGestureHandler = new OneHandedGestureHandler(mContext, mMockDisplayController,
+        mGestureHandler = new OneHandedGestureHandler(mContext, mWindowManager,
+                mMockDisplayController, ViewConfiguration.get(mTestContext),
                 mMockShellMainExecutor);
+        when(mMockDisplayLayout.navBarFrameHeight()).thenReturn(mockNavBarHeight);
+        when(mMockDisplayController.getDisplayLayout(anyInt())).thenReturn(mMockDisplayLayout);
     }
 
     @Test
@@ -68,16 +79,6 @@ public class OneHandedGestureHandlerTest extends OneHandedTestCase {
         assertThat(mGestureHandler.mGestureEventCallback).isEqualTo(callback);
     }
 
-    @Ignore("b/167943723, refactor it and fix it")
-    @Test
-    public void testReceiveNewConfig_whenThreeButtonModeEnabled() {
-        mGestureHandler.onOneHandedEnabled(true);
-        mGestureHandler.onThreeButtonModeEnabled(true);
-
-        assertThat(mGestureHandler.mInputMonitor).isNotNull();
-        assertThat(mGestureHandler.mInputEventReceiver).isNotNull();
-    }
-
     @Test
     public void testOneHandedDisabled_shouldDisposeInputChannel() {
         mGestureHandler.onOneHandedEnabled(false);
@@ -90,6 +91,16 @@ public class OneHandedGestureHandlerTest extends OneHandedTestCase {
     public void testChangeNavBarToNon3Button_shouldDisposeInputChannel() {
         mGestureHandler.onOneHandedEnabled(true);
         mGestureHandler.onThreeButtonModeEnabled(false);
+
+        assertThat(mGestureHandler.mInputMonitor).isNull();
+        assertThat(mGestureHandler.mInputEventReceiver).isNull();
+    }
+
+    @Test
+    public void testOnlyHandleGestureInPortraitMode() {
+        mGestureHandler.onOneHandedEnabled(true);
+        mGestureHandler.onRotateDisplay(DEFAULT_DISPLAY, Surface.ROTATION_0, Surface.ROTATION_90,
+                mMockWct);
 
         assertThat(mGestureHandler.mInputMonitor).isNull();
         assertThat(mGestureHandler.mInputEventReceiver).isNull();

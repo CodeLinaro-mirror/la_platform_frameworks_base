@@ -16,95 +16,31 @@
 
 package com.android.server.wm.flicker.helpers
 
-import android.os.Bundle
 import android.os.RemoteException
-import android.os.SystemClock
-import android.platform.helpers.IAppHelper
 import android.view.Surface
 import com.android.server.wm.flicker.Flicker
-import com.android.server.wm.flicker.endRotation
-import com.android.server.wm.flicker.startRotation
 
+/**
+ * Changes the device [rotation] and wait for the rotation animation to complete
+ *
+ * @param rotation New device rotation
+ */
 fun Flicker.setRotation(rotation: Int) {
     try {
         when (rotation) {
-            Surface.ROTATION_270 -> device.setOrientationLeft()
-            Surface.ROTATION_90 -> device.setOrientationRight()
+            Surface.ROTATION_270 -> device.setOrientationRight()
+            Surface.ROTATION_90 -> device.setOrientationLeft()
             Surface.ROTATION_0 -> device.setOrientationNatural()
             else -> device.setOrientationNatural()
         }
-        // Wait for animation to complete
-        SystemClock.sleep(1000)
+
+        wmHelper.waitForRotation(rotation)
+        wmHelper.waitForNavBarStatusBarVisible()
+        wmHelper.waitForAppTransitionIdle()
+
+        // Ensure WindowManagerService wait until all animations have completed
+        instrumentation.uiAutomation.syncInputTransactions()
     } catch (e: RemoteException) {
         throw RuntimeException(e)
     }
-}
-
-/**
- * Build a test tag for the test
- * @param testName Name of the transition(s) being tested
- * @param app App being launcher
- * @param beginRotation Initial screen rotation
- * @param endRotation End screen rotation (if any, otherwise use same as initial)
- *
- * @return test tag with pattern <NAME>__<APP>__<BEGIN_ROTATION>-<END_ROTATION>
-</END_ROTATION></BEGIN_ROTATION></APP></NAME> */
-fun buildTestTag(
-    testName: String,
-    app: IAppHelper,
-    beginRotation: Int,
-    endRotation: Int
-): String {
-    return buildTestTag(
-        testName, app.launcherName, beginRotation, endRotation, app2 = null, extraInfo = "")
-}
-
-/**
- * Build a test tag for the test
- * @param testName Name of the transition(s) being tested
- * @param app App being launcher
- * @param rotation Screen rotation configuration for the test
- *
- * @return test tag with pattern <NAME>__<APP>__<BEGIN_ROTATION>-<END_ROTATION>
-</END_ROTATION></BEGIN_ROTATION></APP></NAME> */
-fun buildTestTag(
-    testName: String,
-    app: IAppHelper?,
-    configuration: Bundle
-): String {
-    return buildTestTag(testName, app?.launcherName ?: "", configuration.startRotation,
-        configuration.endRotation, app2 = null, extraInfo = "")
-}
-
-/**
- * Build a test tag for the test
- * @param testName Name of the transition(s) being tested
- * @param app App being launcher
- * @param app2 Second app being launched (if any)
- * @param beginRotation Initial screen rotation
- * @param endRotation End screen rotation (if any, otherwise use same as initial)
- * @param extraInfo Additional information to append to the tag
- *
- * @return test tag with pattern <NAME>__<APP></APP>(S)>__<ROTATION></ROTATION>(S)>[__<EXTRA>]
-</EXTRA></NAME> */
-fun buildTestTag(
-    testName: String,
-    app: String,
-    beginRotation: Int,
-    endRotation: Int,
-    app2: String?,
-    extraInfo: String
-): String {
-    var testTag = "${testName}__$app"
-    if (app2 != null) {
-        testTag += "-$app2"
-    }
-    testTag += "__${Surface.rotationToString(beginRotation)}"
-    if (endRotation != beginRotation) {
-        testTag += "-${Surface.rotationToString(endRotation)}"
-    }
-    if (extraInfo.isNotEmpty()) {
-        testTag += "__$extraInfo"
-    }
-    return testTag
 }

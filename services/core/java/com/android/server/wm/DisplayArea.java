@@ -429,6 +429,10 @@ public class DisplayArea<T extends WindowContainer> extends WindowContainer<T> {
 
     void setOrganizer(IDisplayAreaOrganizer organizer, boolean skipDisplayAreaAppeared) {
         if (mOrganizer == organizer) return;
+        if (mDisplayContent == null || !mDisplayContent.isTrusted()) {
+            throw new IllegalStateException(
+                    "Don't organize or trigger events for unavailable or untrusted display.");
+        }
         IDisplayAreaOrganizer lastOrganizer = mOrganizer;
         // Update the new display area organizer before calling sendDisplayAreaVanished since it
         // could result in a new SurfaceControl getting created that would notify the old organizer
@@ -462,6 +466,23 @@ public class DisplayArea<T extends WindowContainer> extends WindowContainer<T> {
     }
 
     @Override
+    void resolveOverrideConfiguration(Configuration newParentConfiguration) {
+        super.resolveOverrideConfiguration(newParentConfiguration);
+        final Configuration resolvedConfig = getResolvedOverrideConfiguration();
+        final Rect overrideBounds = resolvedConfig.windowConfiguration.getBounds();
+        final Rect overrideAppBounds = resolvedConfig.windowConfiguration.getAppBounds();
+        final Rect parentAppBounds = newParentConfiguration.windowConfiguration.getAppBounds();
+
+        // If there is no override of appBounds, restrict appBounds to the override bounds.
+        if (!overrideBounds.isEmpty() && (overrideAppBounds == null || overrideAppBounds.isEmpty())
+                && parentAppBounds != null && !parentAppBounds.isEmpty()) {
+            final Rect appBounds = new Rect(overrideBounds);
+            appBounds.intersect(parentAppBounds);
+            resolvedConfig.windowConfiguration.setAppBounds(appBounds);
+        }
+    }
+
+    @Override
     boolean isOrganized() {
         return mOrganizer != null;
     }
@@ -474,6 +495,21 @@ public class DisplayArea<T extends WindowContainer> extends WindowContainer<T> {
         return info;
     }
 
+    /**
+     * Gets the stable bounds of the DisplayArea, which is the bounds excluding insets for
+     * navigation bar, cutout, and status bar.
+     */
+    void getStableRect(Rect out) {
+        if (mDisplayContent == null) {
+            getBounds(out);
+            return;
+        }
+
+        // Intersect with the display stable bounds to get the DisplayArea stable bounds.
+        mDisplayContent.getStableRect(out);
+        out.intersect(getBounds());
+    }
+
     @Override
     public boolean providesMaxBounds() {
         return true;
@@ -481,6 +517,17 @@ public class DisplayArea<T extends WindowContainer> extends WindowContainer<T> {
 
     protected boolean isTaskDisplayArea() {
         return false;
+    }
+
+    @Override
+    void removeImmediately() {
+        setOrganizer(null);
+        super.removeImmediately();
+    }
+
+    @Override
+    DisplayArea getDisplayArea() {
+        return this;
     }
 
     /**
@@ -561,11 +608,6 @@ public class DisplayArea<T extends WindowContainer> extends WindowContainer<T> {
         final DisplayArea.Tokens asTokens() {
             return this;
         }
-    }
-
-    @Override
-    DisplayArea getDisplayArea() {
-        return this;
     }
 
     /**

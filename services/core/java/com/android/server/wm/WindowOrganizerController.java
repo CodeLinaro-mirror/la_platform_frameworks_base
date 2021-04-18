@@ -20,6 +20,7 @@ import static android.Manifest.permission.READ_FRAME_BUFFER;
 import static android.window.WindowContainerTransaction.HierarchyOp.HIERARCHY_OP_TYPE_CHILDREN_TASKS_REPARENT;
 import static android.window.WindowContainerTransaction.HierarchyOp.HIERARCHY_OP_TYPE_REORDER;
 import static android.window.WindowContainerTransaction.HierarchyOp.HIERARCHY_OP_TYPE_REPARENT;
+import static android.window.WindowContainerTransaction.HierarchyOp.HIERARCHY_OP_TYPE_SET_ADJACENT_ROOTS;
 import static android.window.WindowContainerTransaction.HierarchyOp.HIERARCHY_OP_TYPE_SET_LAUNCH_ROOT;
 
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_WINDOW_ORGANIZER;
@@ -38,6 +39,7 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.os.Binder;
 import android.os.IBinder;
+import android.os.Parcel;
 import android.os.RemoteException;
 import android.util.ArraySet;
 import android.util.Slog;
@@ -107,6 +109,16 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
 
     TransitionController getTransitionController() {
         return mTransitionController;
+    }
+
+    @Override
+    public boolean onTransact(int code, Parcel data, Parcel reply, int flags)
+            throws RemoteException {
+        try {
+            return super.onTransact(code, data, reply, flags);
+        } catch (RuntimeException e) {
+            throw ActivityTaskManagerService.logAndRethrowRuntimeExceptionOnTransact(TAG, e);
+        }
     }
 
     @Override
@@ -208,10 +220,12 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
                 if (t != null && callback != null) {
                     syncId = startSyncWithOrganizer(callback);
                 }
-                getTransitionController().finishTransition(transitionToken);
+                // apply the incoming transaction before finish in case it alters the visibility
+                // of the participants.
                 if (t != null) {
                     applyTransaction(t, syncId, null /*transition*/);
                 }
+                getTransitionController().finishTransition(transitionToken);
                 if (syncId >= 0) {
                     setSyncReady(syncId);
                 }
@@ -261,54 +275,63 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
             }
             // Hierarchy changes
             final List<WindowContainerTransaction.HierarchyOp> hops = t.getHierarchyOps();
-            for (int i = 0, n = hops.size(); i < n; ++i) {
-                final WindowContainerTransaction.HierarchyOp hop = hops.get(i);
-                switch (hop.getType()) {
-                    case HIERARCHY_OP_TYPE_SET_LAUNCH_ROOT: {
-                        final WindowContainer wc = WindowContainer.fromBinder(hop.getContainer());
-                        final Task task = wc != null ? wc.asTask() : null;
-                        if (task != null) {
-                            task.getDisplayArea().setLaunchRootTask(task,
-                                    hop.getWindowingModes(), hop.getActivityTypes());
-                        } else {
-                            throw new IllegalArgumentException(
-                                    "Cannot set non-task as launch root: " + wc);
+            if (!hops.isEmpty() && mService.isInLockTaskMode()) {
+                Slog.w(TAG, "Attempt to perform hierarchy operations while in lock task mode...");
+            } else {
+                for (int i = 0, n = hops.size(); i < n; ++i) {
+                    final WindowContainerTransaction.HierarchyOp hop = hops.get(i);
+                    switch (hop.getType()) {
+                        case HIERARCHY_OP_TYPE_SET_LAUNCH_ROOT: {
+                            final WindowContainer wc = WindowContainer.fromBinder(
+                                    hop.getContainer());
+                            final Task task = wc != null ? wc.asTask() : null;
+                            if (task != null) {
+                                task.getDisplayArea().setLaunchRootTask(task,
+                                        hop.getWindowingModes(), hop.getActivityTypes());
+                            } else {
+                                throw new IllegalArgumentException(
+                                        "Cannot set non-task as launch root: " + wc);
+                            }
+                            break;
                         }
-                        break;
-                    }
-                    case HIERARCHY_OP_TYPE_CHILDREN_TASKS_REPARENT:
-                        effects |= reparentChildrenTasksHierarchyOp(hop, transition, syncId);
-                        break;
-                    case HIERARCHY_OP_TYPE_REORDER:
-                    case HIERARCHY_OP_TYPE_REPARENT:
-                        final WindowContainer wc = WindowContainer.fromBinder(hop.getContainer());
-                        if (wc == null || !wc.isAttached()) {
-                            Slog.e(TAG, "Attempt to operate on detached container: " + wc);
-                            continue;
-                        }
-                        if (syncId >= 0) {
-                            addToSyncSet(syncId, wc);
-                        }
-                        if (transition != null) {
-                            transition.collect(wc);
-                            if (hop.isReparent()) {
-                                if (wc.getParent() != null) {
-                                    // Collect the current parent. It's visibility may change as
-                                    // a result of this reparenting.
-                                    transition.collect(wc.getParent());
-                                }
-                                if (hop.getNewParent() != null) {
-                                    final WindowContainer parentWc =
-                                            WindowContainer.fromBinder(hop.getNewParent());
-                                    if (parentWc == null) {
-                                        Slog.e(TAG, "Can't resolve parent window from token");
-                                        continue;
+                        case HIERARCHY_OP_TYPE_CHILDREN_TASKS_REPARENT:
+                            effects |= reparentChildrenTasksHierarchyOp(hop, transition, syncId);
+                            break;
+                        case HIERARCHY_OP_TYPE_SET_ADJACENT_ROOTS:
+                            effects |= setAdjacentRootsHierarchyOp(hop);
+                            break;
+                        case HIERARCHY_OP_TYPE_REORDER:
+                        case HIERARCHY_OP_TYPE_REPARENT:
+                            final WindowContainer wc = WindowContainer.fromBinder(
+                                    hop.getContainer());
+                            if (wc == null || !wc.isAttached()) {
+                                Slog.e(TAG, "Attempt to operate on detached container: " + wc);
+                                continue;
+                            }
+                            if (syncId >= 0) {
+                                addToSyncSet(syncId, wc);
+                            }
+                            if (transition != null) {
+                                transition.collect(wc);
+                                if (hop.isReparent()) {
+                                    if (wc.getParent() != null) {
+                                        // Collect the current parent. It's visibility may change as
+                                        // a result of this reparenting.
+                                        transition.collect(wc.getParent());
                                     }
-                                    transition.collect(parentWc);
+                                    if (hop.getNewParent() != null) {
+                                        final WindowContainer parentWc =
+                                                WindowContainer.fromBinder(hop.getNewParent());
+                                        if (parentWc == null) {
+                                            Slog.e(TAG, "Can't resolve parent window from token");
+                                            continue;
+                                        }
+                                        transition.collect(parentWc);
+                                    }
                                 }
                             }
-                        }
-                        effects |= sanitizeAndApplyHierarchyOp(wc, hop);
+                            effects |= sanitizeAndApplyHierarchyOp(wc, hop);
+                    }
                 }
             }
             // Queue-up bounds-change transactions for tasks which are now organized. Do
@@ -392,11 +415,7 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
                         new Configuration(container.getRequestedOverrideConfiguration());
                 c.setTo(change.getConfiguration(), configMask, windowMask);
                 container.onRequestedOverrideConfigurationChanged(c);
-                // TODO(b/145675353): remove the following once we could apply new bounds to the
-                // pinned stack together with its children.
             }
-            resizePinnedStackIfNeeded(container, configMask, windowMask,
-                    container.getRequestedOverrideConfiguration());
             effects |= TRANSACT_EFFECTS_CLIENT_CONFIG;
         }
         if ((change.getChangeMask() & WindowContainerTransaction.Change.CHANGE_FOCUSABLE) != 0) {
@@ -406,6 +425,11 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
         }
 
         if (windowingMode > -1) {
+            if (mService.isInLockTaskMode()
+                    && WindowConfiguration.inMultiWindowMode(windowingMode)) {
+                throw new UnsupportedOperationException("Not supported to set multi-window"
+                        + " windowing mode during locked task mode.");
+            }
             container.setWindowingMode(windowingMode);
         }
         return effects;
@@ -486,15 +510,23 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
                     return 0;
                 }
                 if (task.getParent() != newParent) {
-                    if (newParent instanceof TaskDisplayArea) {
+                    if (newParent.asTaskDisplayArea() != null) {
                         // For now, reparenting to displayarea is different from other reparents...
-                        as.reparent((TaskDisplayArea) newParent, hop.getToTop());
-                    } else if (newParent.inMultiWindowMode() && !task.isResizeable()
-                            && task.isLeafTask()) {
-                        Slog.w(TAG, "Can't support task that doesn't support multi-window mode in"
-                                + " multi-window mode... newParent=" + newParent + " task=" + task);
-                        return 0;
+                        as.reparent(newParent.asTaskDisplayArea(), hop.getToTop());
                     } else {
+                        if (newParent.inMultiWindowMode() && task.isLeafTask()) {
+                            if (newParent.inPinnedWindowingMode()) {
+                                Slog.w(TAG, "Can't support moving a task to another PIP window..."
+                                        + " newParent=" + newParent + " task=" + task);
+                                return 0;
+                            }
+                            if (!task.supportsMultiWindow()) {
+                                Slog.w(TAG, "Can't support task that doesn't support multi-window"
+                                        + " mode in multi-window mode... newParent=" + newParent
+                                        + " task=" + task);
+                                return 0;
+                            }
+                        }
                         task.reparent((Task) newParent,
                                 hop.getToTop() ? POSITION_TOP : POSITION_BOTTOM,
                                 false /*moveParents*/, "sanitizeAndApplyHierarchyOp");
@@ -546,6 +578,11 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
                     + newParent + " hop=" + hop);
             return 0;
         }
+        if (newParent.inPinnedWindowingMode()) {
+            Slog.e(TAG, "reparentChildrenTasksHierarchyOp newParent in PIP="
+                    + newParent + " hop=" + hop);
+            return 0;
+        }
 
         final boolean newParentInMultiWindow = newParent.inMultiWindowMode();
         final WindowContainer finalCurrentParent = currentParent;
@@ -563,11 +600,11 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
                 // are reparenting from.
                 return;
             }
-
-            if (newParentInMultiWindow && !task.isResizeable()) {
-                Slog.e(TAG, "reparentChildrenTasksHierarchyOp non-resizeable task=" + task);
+            if (newParentInMultiWindow && !task.supportsMultiWindow()) {
+                Slog.e(TAG, "reparentChildrenTasksHierarchyOp non-resizeable task to multi window,"
+                        + " task=" + task);
+                return;
             }
-
             if (!ArrayUtils.contains(hop.getActivityTypes(), task.getActivityType())) return;
             if (!ArrayUtils.contains(hop.getWindowingModes(), task.getWindowingMode())) return;
 
@@ -597,6 +634,17 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
         return TRANSACT_EFFECTS_LIFECYCLE;
     }
 
+    private int setAdjacentRootsHierarchyOp(WindowContainerTransaction.HierarchyOp hop) {
+        final Task root1 = WindowContainer.fromBinder(hop.getContainer()).asTask();
+        final Task root2 = WindowContainer.fromBinder(hop.getAdjacentRoot()).asTask();
+        if (!root1.mCreatedByOrganizer || !root2.mCreatedByOrganizer) {
+            throw new IllegalArgumentException("setAdjacentRootsHierarchyOp: Not created by"
+                    + " organizer root1=" + root1 + " root2=" + root2);
+        }
+        root1.setAdjacentTask(root2);
+        return TRANSACT_EFFECTS_LIFECYCLE;
+    }
+
     private void sanitizeWindowContainer(WindowContainer wc) {
         if (!(wc instanceof Task) && !(wc instanceof DisplayArea)) {
             throw new RuntimeException("Invalid token in task or displayArea transaction");
@@ -616,19 +664,6 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
         }
 
         return effects;
-    }
-
-    private void resizePinnedStackIfNeeded(ConfigurationContainer container, int configMask,
-            int windowMask, Configuration config) {
-        if ((container instanceof Task)
-                && ((configMask & ActivityInfo.CONFIG_WINDOW_CONFIGURATION) != 0)
-                && ((windowMask & WindowConfiguration.WINDOW_CONFIG_BOUNDS) != 0)) {
-            final Task stack = (Task) container;
-            if (stack.inPinnedWindowingMode()) {
-                stack.resize(config.windowConfiguration.getBounds(),
-                        PRESERVE_WINDOWS, true /* deferResume */);
-            }
-        }
     }
 
     @Override

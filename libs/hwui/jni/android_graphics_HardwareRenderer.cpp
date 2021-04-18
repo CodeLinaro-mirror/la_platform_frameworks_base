@@ -189,6 +189,13 @@ static void android_view_ThreadedRenderer_setSurface(JNIEnv* env, jobject clazz,
     }
 }
 
+static void android_view_ThreadedRenderer_setSurfaceControl(JNIEnv* env, jobject clazz,
+        jlong proxyPtr, jlong surfaceControlPtr) {
+    RenderProxy* proxy = reinterpret_cast<RenderProxy*>(proxyPtr);
+    ASurfaceControl* surfaceControl = reinterpret_cast<ASurfaceControl*>(surfaceControlPtr);
+    proxy->setSurfaceControl(surfaceControl);
+}
+
 static jboolean android_view_ThreadedRenderer_pause(JNIEnv* env, jobject clazz,
         jlong proxyPtr) {
     RenderProxy* proxy = reinterpret_cast<RenderProxy*>(proxyPtr);
@@ -233,8 +240,8 @@ static void android_view_ThreadedRenderer_setSdrWhitePoint(JNIEnv* env, jobject 
 static int android_view_ThreadedRenderer_syncAndDrawFrame(JNIEnv* env, jobject clazz,
         jlong proxyPtr, jlongArray frameInfo, jint frameInfoSize) {
     LOG_ALWAYS_FATAL_IF(frameInfoSize != UI_THREAD_FRAME_INFO_SIZE,
-            "Mismatched size expectations, given %d expected %d",
-            frameInfoSize, UI_THREAD_FRAME_INFO_SIZE);
+                        "Mismatched size expectations, given %d expected %zu", frameInfoSize,
+                        UI_THREAD_FRAME_INFO_SIZE);
     RenderProxy* proxy = reinterpret_cast<RenderProxy*>(proxyPtr);
     env->GetLongArrayRegion(frameInfo, 0, frameInfoSize, proxy->frameInfo());
     return proxy->syncAndDrawFrame();
@@ -603,14 +610,12 @@ static void android_view_ThreadedRenderer_setDisplayDensityDpi(JNIEnv*, jclass, 
 
 static void android_view_ThreadedRenderer_initDisplayInfo(JNIEnv*, jclass, jint physicalWidth,
                                                           jint physicalHeight, jfloat refreshRate,
-                                                          jfloat maxRefreshRate,
                                                           jint wideColorDataspace,
                                                           jlong appVsyncOffsetNanos,
                                                           jlong presentationDeadlineNanos) {
     DeviceInfo::setWidth(physicalWidth);
     DeviceInfo::setHeight(physicalHeight);
     DeviceInfo::setRefreshRate(refreshRate);
-    DeviceInfo::setMaxRefreshRate(maxRefreshRate);
     DeviceInfo::setWideColorDataspace(static_cast<ADataSpace>(wideColorDataspace));
     DeviceInfo::setAppVsyncOffsetNanos(appVsyncOffsetNanos);
     DeviceInfo::setPresentationDeadlineNanos(presentationDeadlineNanos);
@@ -673,6 +678,8 @@ static const JNINativeMethod gMethods[] = {
         {"nSetName", "(JLjava/lang/String;)V", (void*)android_view_ThreadedRenderer_setName},
         {"nSetSurface", "(JLandroid/view/Surface;Z)V",
          (void*)android_view_ThreadedRenderer_setSurface},
+        {"nSetSurfaceControl", "(JJ)V",
+         (void*)android_view_ThreadedRenderer_setSurfaceControl},
         {"nPause", "(J)Z", (void*)android_view_ThreadedRenderer_pause},
         {"nSetStopped", "(JZ)V", (void*)android_view_ThreadedRenderer_setStopped},
         {"nSetLightAlpha", "(JFF)V", (void*)android_view_ThreadedRenderer_setLightAlpha},
@@ -735,7 +742,7 @@ static const JNINativeMethod gMethods[] = {
         {"nSetForceDark", "(JZ)V", (void*)android_view_ThreadedRenderer_setForceDark},
         {"nSetDisplayDensityDpi", "(I)V",
          (void*)android_view_ThreadedRenderer_setDisplayDensityDpi},
-        {"nInitDisplayInfo", "(IIFFIJJ)V", (void*)android_view_ThreadedRenderer_initDisplayInfo},
+        {"nInitDisplayInfo", "(IIFIJJ)V", (void*)android_view_ThreadedRenderer_initDisplayInfo},
         {"preload", "()V", (void*)android_view_ThreadedRenderer_preload},
 };
 

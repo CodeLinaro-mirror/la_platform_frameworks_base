@@ -24,10 +24,7 @@ import static junit.framework.TestCase.fail;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -53,8 +50,6 @@ import com.android.systemui.statusbar.notification.collection.NotifPipeline;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.collection.NotificationEntryBuilder;
 import com.android.systemui.util.time.FakeSystemClock;
-
-import junit.framework.Assert;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -84,8 +79,7 @@ public class ForegroundServiceControllerTest extends SysuiTestCase {
         MockitoAnnotations.initMocks(this);
         mFsc = new ForegroundServiceController(mAppOpsController, mMainHandler);
         mListener = new ForegroundServiceNotificationListener(
-                mContext, mFsc, mEntryManager, mNotifPipeline,
-                mock(ForegroundServiceLifetimeExtender.class), mClock);
+                mContext, mFsc, mEntryManager, mNotifPipeline, mClock);
         ArgumentCaptor<NotificationEntryListener> entryListenerCaptor =
                 ArgumentCaptor.forClass(NotificationEntryListener.class);
         verify(mEntryManager).addNotificationEntryListener(
@@ -312,17 +306,6 @@ public class ForegroundServiceControllerTest extends SysuiTestCase {
 
         assertFalse(mFsc.isDisclosureNeededForUser(USERID_ONE));
         assertFalse(mFsc.isDisclosureNeededForUser(USERID_TWO));
-    }
-
-    @Test
-    public void testOverlayPredicate() {
-        StatusBarNotification sbn_user1_app1 = makeMockSBN(USERID_ONE, "com.example.app1",
-                5000, "monkeys", Notification.FLAG_AUTO_CANCEL);
-        StatusBarNotification sbn_user1_overlay = makeMockSBN(USERID_ONE, "android",
-                0, "AlertWindowNotification", Notification.FLAG_NO_CLEAR);
-
-        assertTrue(mFsc.isSystemAlertNotification(sbn_user1_overlay));
-        assertFalse(mFsc.isSystemAlertNotification(sbn_user1_app1));
     }
 
     @Test

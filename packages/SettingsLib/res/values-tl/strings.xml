@@ -36,6 +36,7 @@
     <string name="wifi_no_internet_no_reconnect" msgid="821591791066497347">"Hindi awtomatikong kokonekta"</string>
     <string name="wifi_no_internet" msgid="1774198889176926299">"Walang access sa internet"</string>
     <string name="saved_network" msgid="7143698034077223645">"Na-save ng <xliff:g id="NAME">%1$s</xliff:g>"</string>
+    <string name="connected_to_metered_access_point" msgid="9179693207918156341">"Nakakonekta sa nakametrong network"</string>
     <string name="connected_via_network_scorer" msgid="7665725527352893558">"Awtomatikong nakakonekta sa pamamagitan ng %1$s"</string>
     <string name="connected_via_network_scorer_default" msgid="7973529709744526285">"Awtomatikong nakakonekta sa pamamagitan ng provider ng rating ng network"</string>
     <string name="connected_via_passpoint" msgid="7735442932429075684">"Nakakonekta sa pamamagitan ng %1$s"</string>
@@ -403,6 +404,7 @@
     <string name="transcode_user_control" msgid="6176368544817731314">"I-override ang mga default ng pagta-transcode"</string>
     <string name="transcode_enable_all" msgid="2411165920039166710">"I-enable ang pagta-transcode"</string>
     <string name="transcode_default" msgid="3784803084573509491">"Ipagpalagay na sinusuportahan ng mga app ang mga modernong format"</string>
+    <string name="transcode_notification" msgid="5560515979793436168">"Ipakita ang mga notification sa pag-transcode"</string>
     <string name="runningservices_settings_title" msgid="6460099290493086515">"Mga tumatakbong serbisyo"</string>
     <string name="runningservices_settings_summary" msgid="1046080643262665743">"Tingnan at kontrolin ang mga kasalukuyang tumatakbong serbisyo"</string>
     <string name="select_webview_provider_title" msgid="3917815648099445503">"Pagpapatupad sa WebView"</string>
@@ -422,7 +424,7 @@
     <string name="daltonizer_mode_protanomaly" msgid="7805583306666608440">"Protanomaly (pula-berde)"</string>
     <string name="daltonizer_mode_tritanomaly" msgid="7135266249220732267">"Tritanomaly (asul-dilaw)"</string>
     <string name="accessibility_display_daltonizer_preference_title" msgid="1810693571332381974">"Pagtatama ng kulay"</string>
-    <string name="accessibility_display_daltonizer_preference_subtitle" msgid="1284746051652993443">"Nagbibigay-daan sa iyo ang pagtatama ng kulay na maisaayos kung paano ipinapakita ang mga kulay sa iyong device"</string>
+    <string name="accessibility_display_daltonizer_preference_subtitle" msgid="8625527799885140826">"Isaayos kung paano ipinapakita ang mga kulay sa iyong device. Makakatulong ito kapag gusto mong:&lt;br/&gt;&lt;br/&gt; &lt;ol&gt; &lt;li&gt; Makakita ng mas tumpak na mga kulay&lt;/li&gt; &lt;li&gt; Mag-alis ng mga kulay para matulungan kang mag-focus&lt;/li&gt; &lt;/ol&gt;"</string>
     <string name="daltonizer_type_overridden" msgid="4509604753672535721">"Na-override ng <xliff:g id="TITLE">%1$s</xliff:g>"</string>
     <string name="power_remaining_settings_home_page" msgid="4885165789445462557">"<xliff:g id="PERCENTAGE">%1$s</xliff:g> - <xliff:g id="TIME_STRING">%2$s</xliff:g>"</string>
     <string name="power_remaining_duration_only" msgid="8264199158671531431">"Humigit-kumulang <xliff:g id="TIME_REMAINING">%1$s</xliff:g> ang natitira"</string>
@@ -513,6 +515,7 @@
     <string name="zen_mode_forever" msgid="3339224497605461291">"Hanggang sa i-off mo"</string>
     <string name="time_unit_just_now" msgid="3006134267292728099">"Ngayon lang"</string>
     <string name="media_transfer_this_device_name" msgid="2716555073132169240">"Speaker ng telepono"</string>
+    <string name="media_transfer_this_phone" msgid="7194341457812151531">"Ang teleponong ito"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Nagkaproblema sa pagkonekta. I-off at pagkatapos ay i-on ang device"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Wired na audio device"</string>
     <string name="help_label" msgid="3528360748637781274">"Tulong at feedback"</string>
@@ -553,7 +556,7 @@
     <string name="creating_new_user_dialog_message" msgid="7232880257538970375">"Gumagawa ng bagong user…"</string>
     <string name="user_nickname" msgid="262624187455825083">"Nickname"</string>
     <string name="guest_new_guest" msgid="3482026122932643557">"Magdagdag ng bisita"</string>
-    <string name="guest_exit_guest" msgid="4754204715192830850">"Tapusin ang session ng bisita"</string>
+    <string name="guest_exit_guest" msgid="5908239569510734136">"Alisin ang bisita"</string>
     <string name="guest_nickname" msgid="6332276931583337261">"Bisita"</string>
     <string name="user_image_take_photo" msgid="467512954561638530">"Kumuha ng larawan"</string>
     <string name="user_image_choose_photo" msgid="1363820919146782908">"Pumili ng larawan"</string>
@@ -590,5 +593,6 @@
     <string name="accessibility_data_three_bars" msgid="2813876214466722413">"Data na tatlong bar."</string>
     <string name="accessibility_data_signal_full" msgid="1808301899314382337">"Puno ang signal ng data."</string>
     <string name="accessibility_ethernet_disconnected" msgid="2832501530856497489">"Nadiskonekta ang Ethernet."</string>
-    <string name="accessibility_ethernet_connected" msgid="2093872142317190618">"Nakakonekta ang Ethernet."</string>
+    <string name="accessibility_ethernet_connected" msgid="6175942685957461563">"Ethernet."</string>
+    <string name="accessibility_no_calling" msgid="3540827068323895748">"Hindi makakatawag."</string>
 </resources>

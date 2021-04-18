@@ -47,6 +47,7 @@ import android.content.pm.PackageManagerInternal;
 import android.content.pm.ShortcutServiceInternal;
 import android.content.pm.UserInfo;
 import android.content.pm.UserInfo.UserInfoFlag;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.os.Binder;
@@ -79,6 +80,7 @@ import android.os.UserManager;
 import android.os.UserManager.EnforcingUser;
 import android.os.UserManager.QuietModeFlag;
 import android.os.storage.StorageManager;
+import android.provider.Settings;
 import android.security.GateKeeper;
 import android.service.gatekeeper.IGateKeeperService;
 import android.stats.devicepolicy.DevicePolicyEnums;
@@ -92,6 +94,7 @@ import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.util.SparseIntArray;
 import android.util.TimeUtils;
+import android.util.TypedValue;
 import android.util.TypedXmlPullParser;
 import android.util.TypedXmlSerializer;
 import android.util.Xml;
@@ -106,6 +109,7 @@ import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.Preconditions;
 import com.android.internal.util.XmlUtils;
 import com.android.internal.widget.LockPatternUtils;
+import com.android.server.BundleUtils;
 import com.android.server.LocalServices;
 import com.android.server.LockGuard;
 import com.android.server.SystemService;
@@ -139,6 +143,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Service for {@link UserManager}.
@@ -461,6 +466,26 @@ public class UserManagerService extends IUserManager.Stub {
         }
     };
 
+    /**
+     * Cache the owner name string, since it could be read repeatedly on a critical code path
+     * but hit by slow IO. This could be eliminated once we have the cached UserInfo in place.
+     */
+    private final AtomicReference<String> mOwnerName = new AtomicReference<>();
+
+    private final TypedValue mOwnerNameTypedValue = new TypedValue();
+
+    private final Configuration mLastConfiguration = new Configuration();
+
+    private final BroadcastReceiver mConfigurationChangeReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (!Intent.ACTION_CONFIGURATION_CHANGED.equals(intent.getAction())) {
+                return;
+            }
+            invalidateOwnerNameIfNecessary(context.getResources(), false /* forceUpdate */);
+        }
+    };
+
     // TODO(b/161915546): remove once userWithName() is fixed / removed
     // Use to debug / dump when user 0 is allocated at userWithName()
     public static final boolean DBG_ALLOCATION = false; // DO NOT SUBMIT WITH TRUE
@@ -636,6 +661,7 @@ public class UserManagerService extends IUserManager.Stub {
         mHandler = new MainHandler();
         mUserDataPreparer = userDataPreparer;
         mUserTypes = UserTypeFactory.getUserTypes();
+        invalidateOwnerNameIfNecessary(context.getResources(), true /* forceUpdate */);
         synchronized (mPackagesLock) {
             mUsersDir = new File(dataDir, USER_INFO_DIR);
             mUsersDir.mkdirs();
@@ -668,6 +694,10 @@ public class UserManagerService extends IUserManager.Stub {
 
         mContext.registerReceiver(mDisableQuietModeCallback,
                 new IntentFilter(ACTION_DISABLE_QUIET_MODE_AFTER_UNLOCK),
+                null, mHandler);
+
+        mContext.registerReceiver(mConfigurationChangeReceiver,
+                new IntentFilter(Intent.ACTION_CONFIGURATION_CHANGED),
                 null, mHandler);
     }
 
@@ -953,7 +983,11 @@ public class UserManagerService extends IUserManager.Stub {
 
     @Override
     public UserInfo getProfileParent(@UserIdInt int userId) {
-        checkManageUsersPermission("get the profile parent");
+        if (!hasManageUsersOrPermission(android.Manifest.permission.INTERACT_ACROSS_USERS)) {
+            throw new SecurityException(
+                    "You need MANAGE_USERS or INTERACT_ACROSS_USERS permission to get the "
+                            + "profile parent");
+        }
         synchronized (mUsersLock) {
             return getProfileParentLU(userId);
         }
@@ -1492,12 +1526,30 @@ public class UserManagerService extends IUserManager.Stub {
     }
 
     @Override
-    public String getUserName() {
-        if (!hasManageUsersOrPermission(android.Manifest.permission.GET_ACCOUNTS_PRIVILEGED)) {
-            throw new SecurityException("You need MANAGE_USERS or GET_ACCOUNTS_PRIVILEGED "
-                    + "permissions to: get user name");
+    public boolean isUserForeground(@UserIdInt int userId) {
+        final int callingUserId = UserHandle.getCallingUserId();
+        if (callingUserId != userId
+                && !hasManageUsersOrPermission(android.Manifest.permission.INTERACT_ACROSS_USERS)) {
+            throw new SecurityException("Caller from user " + callingUserId + " needs MANAGE_USERS "
+                    + "or INTERACT_ACROSS_USERS permission to check if another user (" + userId
+                    + ") is running in the foreground");
         }
-        final int userId = UserHandle.getUserId(Binder.getCallingUid());
+
+        int currentUser = Binder.withCleanCallingIdentity(() -> ActivityManager.getCurrentUser());
+        // TODO(b/179163496): should return true for profile users of the current user as well
+        return currentUser == userId;
+    }
+
+    @Override
+    public String getUserName() {
+        final int callingUid = Binder.getCallingUid();
+        if (!hasManageOrCreateUsersPermission()
+                && !hasPermissionGranted(
+                        android.Manifest.permission.GET_ACCOUNTS_PRIVILEGED, callingUid)) {
+            throw new SecurityException("You need MANAGE_USERS or CREATE_USERS or "
+                    + "GET_ACCOUNTS_PRIVILEGED permissions to: get user name");
+        }
+        final int userId = UserHandle.getUserId(callingUid);
         synchronized (mUsersLock) {
             UserInfo userInfo = userWithName(getUserInfoLU(userId));
             return userInfo == null ? "" : userInfo.name;
@@ -1932,11 +1984,11 @@ public class UserManagerService extends IUserManager.Stub {
         final Bundle global = mDevicePolicyGlobalUserRestrictions.mergeAll();
         final RestrictionsSet local = getDevicePolicyLocalRestrictionsForTargetUserLR(userId);
 
-        if (UserRestrictionsUtils.isEmpty(global) && local.isEmpty()) {
+        if (BundleUtils.isEmpty(global) && local.isEmpty()) {
             // Common case first.
             return baseRestrictions;
         }
-        final Bundle effective = UserRestrictionsUtils.clone(baseRestrictions);
+        final Bundle effective = BundleUtils.clone(baseRestrictions);
         UserRestrictionsUtils.merge(effective, global);
         UserRestrictionsUtils.merge(effective, local.mergeAll());
 
@@ -2077,7 +2129,7 @@ public class UserManagerService extends IUserManager.Stub {
     @Override
     public Bundle getUserRestrictions(@UserIdInt int userId) {
         checkManageOrInteractPermissionIfCallerInOtherProfileGroup(userId, "getUserRestrictions");
-        return UserRestrictionsUtils.clone(getEffectiveUserRestrictions(userId));
+        return BundleUtils.clone(getEffectiveUserRestrictions(userId));
     }
 
     @Override
@@ -2101,7 +2153,7 @@ public class UserManagerService extends IUserManager.Stub {
         synchronized (mRestrictionsLock) {
             // Note we can't modify Bundles stored in mBaseUserRestrictions directly, so create
             // a copy.
-            final Bundle newRestrictions = UserRestrictionsUtils.clone(
+            final Bundle newRestrictions = BundleUtils.clone(
                     mBaseUserRestrictions.getRestrictions(userId));
             newRestrictions.putBoolean(key, value);
 
@@ -2699,7 +2751,7 @@ public class UserManagerService extends IUserManager.Stub {
         if (userVersion < 7) {
             // Previously only one user could enforce global restrictions, now it is per-user.
             synchronized (mRestrictionsLock) {
-                if (!UserRestrictionsUtils.isEmpty(oldGlobalUserRestrictions)
+                if (!BundleUtils.isEmpty(oldGlobalUserRestrictions)
                         && mDeviceOwnerUserId != UserHandle.USER_NULL) {
                     mDevicePolicyGlobalUserRestrictions.updateRestrictions(
                             mDeviceOwnerUserId, oldGlobalUserRestrictions);
@@ -2851,7 +2903,16 @@ public class UserManagerService extends IUserManager.Stub {
     }
 
     private String getOwnerName() {
-        return mContext.getResources().getString(com.android.internal.R.string.owner_name);
+        return mOwnerName.get();
+    }
+
+    private void invalidateOwnerNameIfNecessary(@NonNull Resources res, boolean forceUpdate) {
+        final int configChanges = mLastConfiguration.updateFrom(res.getConfiguration());
+        if (forceUpdate || (configChanges & mOwnerNameTypedValue.changingConfigurations) != 0) {
+            res.getValue(com.android.internal.R.string.owner_name, mOwnerNameTypedValue, true);
+            final CharSequence ownerName = mOwnerNameTypedValue.coerceToString();
+            mOwnerName.set(ownerName != null ? ownerName.toString() : null);
+        }
     }
 
     private void scheduleWriteUser(UserData userData) {
@@ -3240,7 +3301,7 @@ public class UserManagerService extends IUserManager.Stub {
      * as well as for {@link UserManager#USER_TYPE_FULL_RESTRICTED}.
      */
     @Override
-    public UserInfo createProfileForUserWithThrow(String name, @NonNull String userType,
+    public UserInfo createProfileForUserWithThrow(@Nullable String name, @NonNull String userType,
             @UserInfoFlag int flags, @UserIdInt int userId, @Nullable String[] disallowedPackages)
             throws ServiceSpecificException {
         checkManageOrCreateUsersPermission(flags);
@@ -3262,7 +3323,7 @@ public class UserManagerService extends IUserManager.Stub {
         checkManageOrCreateUsersPermission(flags);
         try {
             return createUserInternalUnchecked(name, userType, flags, userId,
-                    /* preCreate= */ false, disallowedPackages);
+                    /* preCreate= */ false, disallowedPackages, /* token= */ null);
         } catch (UserManager.CheckedUserOperationException e) {
             throw e.toServiceSpecificException();
         }
@@ -3295,7 +3356,7 @@ public class UserManagerService extends IUserManager.Stub {
         try {
             return createUserInternalUnchecked(/* name= */ null, userType, flags,
                     /* parentId= */ UserHandle.USER_NULL, /* preCreate= */ true,
-                    /* disallowedPackages= */ null);
+                    /* disallowedPackages= */ null, /* token= */ null);
         } catch (UserManager.CheckedUserOperationException e) {
             throw e.toServiceSpecificException();
         }
@@ -3311,12 +3372,13 @@ public class UserManagerService extends IUserManager.Stub {
         enforceUserRestriction(restriction, UserHandle.getCallingUserId(),
                 "Cannot add user");
         return createUserInternalUnchecked(name, userType, flags, parentId,
-                /* preCreate= */ false, disallowedPackages);
+                /* preCreate= */ false, disallowedPackages, /* token= */ null);
     }
 
     private UserInfo createUserInternalUnchecked(@Nullable String name,
             @NonNull String userType, @UserInfoFlag int flags, @UserIdInt int parentId,
-            boolean preCreate, @Nullable String[] disallowedPackages)
+            boolean preCreate, @Nullable String[] disallowedPackages,
+            @Nullable Object token)
             throws UserManager.CheckedUserOperationException {
         final int nextProbableUserId = getNextAvailableId();
         final TimingsTraceAndSlog t = new TimingsTraceAndSlog();
@@ -3325,7 +3387,7 @@ public class UserManagerService extends IUserManager.Stub {
         UserInfo newUser = null;
         try {
             newUser = createUserInternalUncheckedNoTracing(name, userType, flags, parentId,
-                        preCreate, disallowedPackages, t);
+                        preCreate, disallowedPackages, t, token);
             return newUser;
         } finally {
             logUserCreateJourneyFinish(sessionId, nextProbableUserId, newUser != null);
@@ -3336,7 +3398,8 @@ public class UserManagerService extends IUserManager.Stub {
     private UserInfo createUserInternalUncheckedNoTracing(@Nullable String name,
             @NonNull String userType, @UserInfoFlag int flags, @UserIdInt int parentId,
             boolean preCreate, @Nullable String[] disallowedPackages,
-            @NonNull TimingsTraceAndSlog t) throws UserManager.CheckedUserOperationException {
+            @NonNull TimingsTraceAndSlog t, @Nullable Object token)
+                    throws UserManager.CheckedUserOperationException {
         final UserTypeDetails userTypeDetails = mUserTypes.get(userType);
         if (userTypeDetails == null) {
             Slog.e(LOG_TAG, "Cannot create user of invalid user type: " + userType);
@@ -3362,7 +3425,8 @@ public class UserManagerService extends IUserManager.Stub {
 
         // Try to use a pre-created user (if available).
         if (!preCreate && parentId < 0 && isUserTypeEligibleForPreCreation(userTypeDetails)) {
-            final UserInfo preCreatedUser = convertPreCreatedUserIfPossible(userType, flags, name);
+            final UserInfo preCreatedUser = convertPreCreatedUserIfPossible(userType, flags, name,
+                    token);
             if (preCreatedUser != null) {
                 return preCreatedUser;
             }
@@ -3525,6 +3589,9 @@ public class UserManagerService extends IUserManager.Stub {
             t.traceBegin("PM.onNewUserCreated-" + userId);
             mPm.onNewUserCreated(userId, /* convertedFromPreCreated= */ false);
             t.traceEnd();
+            applyDefaultUserSettings(userTypeDetails, userId);
+            setDefaultCrossProfileIntentFilters(userId, userTypeDetails, restrictions, parentId);
+
             if (preCreate) {
                 // Must start user (which will be stopped right away, through
                 // UserController.finishUserUnlockedCompleted) so services can properly
@@ -3538,7 +3605,7 @@ public class UserManagerService extends IUserManager.Stub {
                     Slog.w(LOG_TAG, "could not start pre-created user " + userId, e);
                 }
             } else {
-                dispatchUserAdded(userInfo);
+                dispatchUserAdded(userInfo, token);
             }
 
         } finally {
@@ -3560,13 +3627,85 @@ public class UserManagerService extends IUserManager.Stub {
         return userInfo;
     }
 
+    private void applyDefaultUserSettings(UserTypeDetails userTypeDetails, @UserIdInt int userId) {
+        final Bundle systemSettings = userTypeDetails.getDefaultSystemSettings();
+        final Bundle secureSettings = userTypeDetails.getDefaultSecureSettings();
+        if (systemSettings.isEmpty() && secureSettings.isEmpty()) {
+            return;
+        }
+
+        final int systemSettingsSize = systemSettings.size();
+        final String[] systemSettingsArray = systemSettings.keySet().toArray(
+                new String[systemSettingsSize]);
+        for (int i = 0; i < systemSettingsSize; i++) {
+            final String setting = systemSettingsArray[i];
+            if (!Settings.System.putStringForUser(
+                    mContext.getContentResolver(), setting, systemSettings.getString(setting),
+                    userId)) {
+                Slog.e(LOG_TAG, "Failed to insert default system setting: " + setting);
+            }
+        }
+
+        final int secureSettingsSize = secureSettings.size();
+        final String[] secureSettingsArray = secureSettings.keySet().toArray(
+                new String[secureSettingsSize]);
+        for (int i = 0; i < secureSettingsSize; i++) {
+            final String setting = secureSettingsArray[i];
+            if (!Settings.Secure.putStringForUser(
+                    mContext.getContentResolver(), setting, secureSettings.getString(setting),
+                    userId)) {
+                Slog.e(LOG_TAG, "Failed to insert default secure setting: " + setting);
+            }
+        }
+    }
+
+    /**
+     * Sets all default cross profile intent filters between {@code parentUserId} and
+     * {@code profileUserId}, does nothing if {@code userType} is not a profile.
+     */
+    private void setDefaultCrossProfileIntentFilters(
+            @UserIdInt int profileUserId, UserTypeDetails profileDetails,
+            Bundle profileRestrictions, @UserIdInt int parentUserId) {
+        if (profileDetails == null || !profileDetails.isProfile()) {
+            return;
+        }
+        final List<DefaultCrossProfileIntentFilter> filters =
+                profileDetails.getDefaultCrossProfileIntentFilters();
+        if (filters.isEmpty()) {
+            return;
+        }
+
+        // Skip filters that allow data to be shared into the profile, if admin has disabled it.
+        final boolean disallowSharingIntoProfile =
+                profileRestrictions.getBoolean(
+                        UserManager.DISALLOW_SHARE_INTO_MANAGED_PROFILE,
+                        /* defaultValue = */ false);
+        final int size = profileDetails.getDefaultCrossProfileIntentFilters().size();
+        for (int i = 0; i < size; i++) {
+            final DefaultCrossProfileIntentFilter filter =
+                    profileDetails.getDefaultCrossProfileIntentFilters().get(i);
+            if (disallowSharingIntoProfile && filter.letsPersonalDataIntoProfile) {
+                continue;
+            }
+            if (filter.direction == DefaultCrossProfileIntentFilter.Direction.TO_PARENT) {
+                mPm.addCrossProfileIntentFilter(
+                        filter.filter, mContext.getOpPackageName(), profileUserId, parentUserId,
+                        filter.flags);
+            } else {
+                mPm.addCrossProfileIntentFilter(
+                        filter.filter, mContext.getOpPackageName(), parentUserId, profileUserId,
+                        filter.flags);
+            }
+        }
+    }
+
     /**
      * Finds and converts a previously pre-created user into a regular user, if possible.
      *
      * @return the converted user, or {@code null} if no pre-created user could be converted.
      */
     private @Nullable UserInfo convertPreCreatedUserIfPossible(String userType,
-            @UserInfoFlag int flags, String name) {
+            @UserInfoFlag int flags, String name, @Nullable Object token) {
         final UserData preCreatedUserData;
         synchronized (mUsersLock) {
             preCreatedUserData = getPreCreatedUserLU(userType);
@@ -3604,7 +3743,7 @@ public class UserManagerService extends IUserManager.Stub {
         }
         updateUserIds();
         mPm.onNewUserCreated(preCreatedUser.id, /* convertedFromPreCreated= */ true);
-        dispatchUserAdded(preCreatedUser);
+        dispatchUserAdded(preCreatedUser, token);
         return preCreatedUser;
     }
 
@@ -3636,11 +3775,11 @@ public class UserManagerService extends IUserManager.Stub {
         return (now > EPOCH_PLUS_30_YEARS) ? now : 0;
     }
 
-    private void dispatchUserAdded(@NonNull UserInfo userInfo) {
+    private void dispatchUserAdded(@NonNull UserInfo userInfo, @Nullable Object token) {
         // Notify internal listeners first...
         synchronized (mUserLifecycleListeners) {
             for (int i = 0; i < mUserLifecycleListeners.size(); i++) {
-                mUserLifecycleListeners.get(i).onUserCreated(userInfo);
+                mUserLifecycleListeners.get(i).onUserCreated(userInfo, token);
             }
         }
 
@@ -3746,7 +3885,7 @@ public class UserManagerService extends IUserManager.Stub {
      * @hide
      */
     @Override
-    public UserInfo createRestrictedProfileWithThrow(String name, int parentUserId) {
+    public UserInfo createRestrictedProfileWithThrow(@Nullable String name, int parentUserId) {
         checkManageOrCreateUsersPermission("setupRestrictedProfile");
         final UserInfo user = createProfileForUserWithThrow(
                 name, UserManager.USER_TYPE_FULL_RESTRICTED, 0, parentUserId, null);
@@ -3843,7 +3982,7 @@ public class UserManagerService extends IUserManager.Stub {
      */
     @Override
     public boolean removeUser(@UserIdInt int userId) {
-        Slog.i(LOG_TAG, "removeUser u" + userId, new Exception());
+        Slog.i(LOG_TAG, "removeUser u" + userId);
         checkManageOrCreateUsersPermission("Only the system can remove users");
 
         final String restriction = getUserRemovalRestriction(userId);
@@ -3968,13 +4107,16 @@ public class UserManagerService extends IUserManager.Stub {
     }
 
     @Override
-    public @UserManager.RemoveResult int removeUserOrSetEphemeral(@UserIdInt int userId) {
-        Slog.i(LOG_TAG, "removeUserOrSetEphemeral u" + userId);
+    public @UserManager.RemoveResult int removeUserOrSetEphemeral(@UserIdInt int userId,
+            boolean evenWhenDisallowed) {
         checkManageOrCreateUsersPermission("Only the system can remove users");
-        final String restriction = getUserRemovalRestriction(userId);
-        if (getUserRestrictions(UserHandle.getCallingUserId()).getBoolean(restriction, false)) {
-            Slog.w(LOG_TAG, "Cannot remove user. " + restriction + " is enabled.");
-            return UserManager.REMOVE_RESULT_ERROR;
+
+        if (!evenWhenDisallowed) {
+            final String restriction = getUserRemovalRestriction(userId);
+            if (getUserRestrictions(UserHandle.getCallingUserId()).getBoolean(restriction, false)) {
+                Slog.w(LOG_TAG, "Cannot remove user. " + restriction + " is enabled.");
+                return UserManager.REMOVE_RESULT_ERROR;
+            }
         }
         if (userId == UserHandle.USER_SYSTEM) {
             Slog.e(LOG_TAG, "System user cannot be removed.");
@@ -4003,7 +4145,7 @@ public class UserManagerService extends IUserManager.Stub {
                 final int currentUser = ActivityManager.getCurrentUser();
                 if (currentUser != userId) {
                     // Attempt to remove the user. This will fail if the user is the current user
-                    if (removeUser(userId)) {
+                    if (removeUserUnchecked(userId)) {
                         return UserManager.REMOVE_RESULT_REMOVED;
                     }
                 }
@@ -5242,10 +5384,10 @@ public class UserManagerService extends IUserManager.Stub {
 
         @Override
         public UserInfo createUserEvenWhenDisallowed(String name, @NonNull String userType,
-                @UserInfoFlag int flags, String[] disallowedPackages)
+                @UserInfoFlag int flags, String[] disallowedPackages, @Nullable Object token)
                 throws UserManager.CheckedUserOperationException {
             return createUserInternalUnchecked(name, userType, flags,
-                    UserHandle.USER_NULL, /* preCreated= */ false, disallowedPackages);
+                    UserHandle.USER_NULL, /* preCreated= */ false, disallowedPackages, token);
         }
 
         @Override
@@ -5421,6 +5563,15 @@ public class UserManagerService extends IUserManager.Stub {
                 }
                 return allInfos;
             }
+        }
+
+        @Override
+        public void setDefaultCrossProfileIntentFilters(
+                @UserIdInt int parentUserId, @UserIdInt int profileUserId) {
+            final UserTypeDetails userTypeDetails = getUserTypeDetailsNoChecks(profileUserId);
+            final Bundle restrictions = getEffectiveUserRestrictions(profileUserId);
+            UserManagerService.this.setDefaultCrossProfileIntentFilters(
+                    profileUserId, userTypeDetails, restrictions, parentUserId);
         }
     }
 
@@ -5686,8 +5837,8 @@ public class UserManagerService extends IUserManager.Stub {
 
         // merge existing base restrictions with the new type's default restrictions
         synchronized (mRestrictionsLock) {
-            if (!UserRestrictionsUtils.isEmpty(newUserType.getDefaultRestrictions())) {
-                final Bundle newRestrictions = UserRestrictionsUtils.clone(
+            if (!BundleUtils.isEmpty(newUserType.getDefaultRestrictions())) {
+                final Bundle newRestrictions = BundleUtils.clone(
                         mBaseUserRestrictions.getRestrictions(userInfo.id));
                 UserRestrictionsUtils.merge(newRestrictions,
                         newUserType.getDefaultRestrictions());

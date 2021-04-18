@@ -217,7 +217,8 @@ public final class MediaTranscodeManager {
 
             // Updates the session status and result.
             session.updateStatusAndResult(TranscodingSession.STATUS_FINISHED,
-                    TranscodingSession.RESULT_SUCCESS);
+                    TranscodingSession.RESULT_SUCCESS,
+                    TranscodingSession.ERROR_NONE);
 
             // Notifies client the session is done.
             if (session.mListener != null && session.mListenerExecutor != null) {
@@ -241,7 +242,7 @@ public final class MediaTranscodeManager {
 
             // Updates the session status and result.
             session.updateStatusAndResult(TranscodingSession.STATUS_FINISHED,
-                    TranscodingSession.RESULT_ERROR);
+                    TranscodingSession.RESULT_ERROR, errorCode);
 
             // Notifies client the session failed.
             if (session.mListener != null && session.mListenerExecutor != null) {
@@ -295,8 +296,8 @@ public final class MediaTranscodeManager {
                 /* ignore */
             }
         }
-
-        throw new UnsupportedOperationException("Failed to connect to MediaTranscoding service");
+        Log.w(TAG, "Failed to get service");
+        return null;
     }
 
     /*
@@ -330,7 +331,8 @@ public final class MediaTranscodeManager {
 
                     if (session.getStatus() == TranscodingSession.STATUS_RUNNING) {
                         session.updateStatusAndResult(TranscodingSession.STATUS_FINISHED,
-                                TranscodingSession.RESULT_ERROR);
+                                TranscodingSession.RESULT_ERROR,
+                                TranscodingSession.ERROR_SERVICE_DIED);
 
                         // Remove the session from pending sessions.
                         mPendingTranscodingSessions.remove(entry.getKey());
@@ -463,8 +465,7 @@ public final class MediaTranscodeManager {
                 }
             };
 
-    private ITranscodingClient registerClient(IMediaTranscodingService service)
-            throws UnsupportedOperationException {
+    private ITranscodingClient registerClient(IMediaTranscodingService service) {
         synchronized (mLock) {
             try {
                 // Registers the client with MediaTranscoding service.
@@ -476,13 +477,12 @@ public final class MediaTranscodeManager {
                 if (mTranscodingClient != null) {
                     mTranscodingClient.asBinder().linkToDeath(() -> onClientDied(), /* flags */ 0);
                 }
-                return mTranscodingClient;
-            } catch (RemoteException re) {
-                Log.e(TAG, "Failed to register new client due to exception " + re);
+            } catch (Exception ex) {
+                Log.e(TAG, "Failed to register new client due to exception " + ex);
                 mTranscodingClient = null;
             }
         }
-        throw new UnsupportedOperationException("Failed to register new client");
+        return mTranscodingClient;
     }
 
     /**
@@ -495,7 +495,9 @@ public final class MediaTranscodeManager {
         mUid = Os.getuid();
         mPid = Os.getpid();
         IMediaTranscodingService service = getService(false /*retry*/);
-        mTranscodingClient = registerClient(service);
+        if (service != null) {
+            mTranscodingClient = registerClient(service);
+        }
     }
 
     public static final class TranscodingRequest {
@@ -504,6 +506,12 @@ public final class MediaTranscodeManager {
 
         /** Uri of the destination media file. */
         private @NonNull Uri mDestinationUri;
+
+        /** FileDescriptor of the source media file. */
+        private @Nullable ParcelFileDescriptor mSourceFileDescriptor;
+
+        /** FileDescriptor of the destination media file. */
+        private @Nullable ParcelFileDescriptor mDestinationFileDescriptor;
 
         /**
          *  The UID of the client that the TranscodingRequest is for. Only privileged caller could
@@ -554,7 +562,9 @@ public final class MediaTranscodeManager {
 
         private TranscodingRequest(Builder b) {
             mSourceUri = b.mSourceUri;
+            mSourceFileDescriptor = b.mSourceFileDescriptor;
             mDestinationUri = b.mDestinationUri;
+            mDestinationFileDescriptor = b.mDestinationFileDescriptor;
             mClientUid = b.mClientUid;
             mClientPid = b.mClientPid;
             mPriority = b.mPriority;
@@ -577,6 +587,15 @@ public final class MediaTranscodeManager {
             return mSourceUri;
         }
 
+        /**
+         * Return source file descriptor of the transcoding.
+         * This will be null if client has not provided it.
+         */
+        @Nullable
+        public ParcelFileDescriptor getSourceFileDescriptor() {
+            return mSourceFileDescriptor;
+        }
+
         /** Return the UID of the client that this request is for. -1 means not available. */
         public int getClientUid() {
             return mClientUid;
@@ -591,6 +610,15 @@ public final class MediaTranscodeManager {
         @NonNull
         public Uri getDestinationUri() {
             return mDestinationUri;
+        }
+
+        /**
+         * Return destination file descriptor of the transcoding.
+         * This will be null if client has not provided it.
+         */
+        @Nullable
+        public ParcelFileDescriptor getDestinationFileDescriptor() {
+            return mDestinationFileDescriptor;
         }
 
         /** Return priority of the transcoding. */
@@ -623,7 +651,9 @@ public final class MediaTranscodeManager {
             parcel.priority = mPriority;
             parcel.transcodingType = mType;
             parcel.sourceFilePath = mSourceUri.toString();
+            parcel.sourceFd = mSourceFileDescriptor;
             parcel.destinationFilePath = mDestinationUri.toString();
+            parcel.destinationFd = mDestinationFileDescriptor;
             parcel.clientUid = mClientUid;
             parcel.clientPid = mClientPid;
             if (mClientUid < 0) {
@@ -713,6 +743,8 @@ public final class MediaTranscodeManager {
         public static final class Builder {
             private @NonNull Uri mSourceUri;
             private @NonNull Uri mDestinationUri;
+            private @Nullable ParcelFileDescriptor mSourceFileDescriptor = null;
+            private @Nullable ParcelFileDescriptor mDestinationFileDescriptor = null;
             private int mClientUid = -1;
             private int mClientPid = -1;
             private @TranscodingType int mType = TRANSCODING_TYPE_UNKNOWN;
@@ -725,11 +757,14 @@ public final class MediaTranscodeManager {
             /**
              * Specifies the uri of source media file.
              *
+             * Client must set the source Uri. If client also provides the source fileDescriptor
+             * through is provided by {@link #setSourceFileDescriptor(ParcelFileDescriptor)},
+             * TranscodingSession will use the fd instead of calling back to the client to open the
+             * sourceUri.
              * @param sourceUri Content uri for the source media file.
              * @return The same builder instance.
              * @throws IllegalArgumentException if Uri is null or empty.
              */
-            // TODO(hkuang): Add documentation on how the app could generate the correct Uri.
             @NonNull
             public Builder setSourceUri(@NonNull Uri sourceUri) {
                 if (sourceUri == null || Uri.EMPTY.equals(sourceUri)) {
@@ -741,8 +776,33 @@ public final class MediaTranscodeManager {
             }
 
             /**
+             * Specifies the fileDescriptor opened from the source media file.
+             *
+             * This call is optional. If the source fileDescriptor is provided, TranscodingSession
+             * will use it directly instead of opening the uri from {@link #setSourceUri(Uri)}. It
+             * is client's responsibility to make sure the fileDescriptor is opened from the source
+             * uri.
+             * @param fileDescriptor a {@link ParcelFileDescriptor} opened from source media file.
+             * @return The same builder instance.
+             * @throws IllegalArgumentException if fileDescriptor is invalid.
+             */
+            @NonNull
+            public Builder setSourceFileDescriptor(@NonNull ParcelFileDescriptor fileDescriptor) {
+                if (fileDescriptor == null || fileDescriptor.getFd() < 0) {
+                    throw new IllegalArgumentException(
+                            "Invalid source descriptor.");
+                }
+                mSourceFileDescriptor = fileDescriptor;
+                return this;
+            }
+
+            /**
              * Specifies the uri of the destination media file.
              *
+             * Client must set the destination Uri. If client also provides the destination
+             * fileDescriptor through {@link #setDestinationFileDescriptor(ParcelFileDescriptor)},
+             * TranscodingSession will use the fd instead of calling back to the client to open the
+             * destinationUri.
              * @param destinationUri Content uri for the destination media file.
              * @return The same builder instance.
              * @throws IllegalArgumentException if Uri is null or empty.
@@ -754,6 +814,29 @@ public final class MediaTranscodeManager {
                             "You must specify a non-empty destination Uri.");
                 }
                 mDestinationUri = destinationUri;
+                return this;
+            }
+
+            /**
+             * Specifies the fileDescriptor opened from the destination media file.
+             *
+             * This call is optional. If the destination fileDescriptor is provided,
+             * TranscodingSession will use it directly instead of opening the uri from
+             * {@link #setDestinationUri(Uri)} upon transcoding starts. It is client's
+             * responsibility to make sure the fileDescriptor is opened from the destination uri.
+             * @param fileDescriptor a {@link ParcelFileDescriptor} opened from destination media
+             *                       file.
+             * @return The same builder instance.
+             * @throws IllegalArgumentException if fileDescriptor is invalid.
+             */
+            @NonNull
+            public Builder setDestinationFileDescriptor(
+                    @NonNull ParcelFileDescriptor fileDescriptor) {
+                if (fileDescriptor == null || fileDescriptor.getFd() < 0) {
+                    throw new IllegalArgumentException(
+                            "Invalid destination descriptor.");
+                }
+                mDestinationFileDescriptor = fileDescriptor;
                 return this;
             }
 
@@ -981,14 +1064,8 @@ public final class MediaTranscodeManager {
                             "Source video format hint must be set!");
                 }
 
-                boolean supportHevc = false;
-                try {
-                    supportHevc = mClientCaps.isVideoMimeTypeSupported(
-                            MediaFormat.MIMETYPE_VIDEO_HEVC);
-                } catch (ApplicationMediaCapabilities.FormatNotFoundException ex) {
-                    // Set to false if application did not specify.
-                    supportHevc = false;
-                }
+                boolean supportHevc = mClientCaps.isVideoMimeTypeSupported(
+                        MediaFormat.MIMETYPE_VIDEO_HEVC);
                 if (!supportHevc && MediaFormat.MIMETYPE_VIDEO_HEVC.equals(
                         mSrcVideoFormatHint.getString(MediaFormat.KEY_MIME))) {
                     return true;
@@ -1023,10 +1100,13 @@ public final class MediaTranscodeManager {
                             "Source Width and height must be larger than 0");
                 }
 
-                float frameRate = mSrcVideoFormatHint.getFloat(MediaFormat.KEY_FRAME_RATE);
-                if (frameRate <= 0) {
-                    throw new IllegalArgumentException(
-                            "frameRate must be larger than 0");
+                float frameRate = 30.0f; // default to 30fps.
+                if (mSrcVideoFormatHint.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                    frameRate = mSrcVideoFormatHint.getFloat(MediaFormat.KEY_FRAME_RATE);
+                    if (frameRate <= 0) {
+                        throw new IllegalArgumentException(
+                                "frameRate must be larger than 0");
+                    }
                 }
 
                 int bitrate = getAVCBitrate(width, height, frameRate);
@@ -1161,6 +1241,33 @@ public final class MediaTranscodeManager {
         @Retention(RetentionPolicy.SOURCE)
         public @interface Result {}
 
+
+        // The error code exposed here should be in sync with:
+        // frameworks/av/media/libmediatranscoding/aidl/android/media/TranscodingErrorCode.aidl
+        /** @hide */
+        @IntDef(prefix = { "TRANSCODING_SESSION_ERROR_" }, value = {
+                ERROR_NONE,
+                ERROR_DROPPED_BY_SERVICE,
+                ERROR_SERVICE_DIED})
+        @Retention(RetentionPolicy.SOURCE)
+        public @interface TranscodingSessionErrorCode{}
+        /**
+         * Constant indicating that no error occurred.
+         */
+        public static final int ERROR_NONE = 0;
+
+        /**
+         * Constant indicating that the session is dropped by Transcoding service due to hitting
+         * the limit, e.g. too many back to back transcoding happen in a short time frame.
+         */
+        public static final int ERROR_DROPPED_BY_SERVICE = 1;
+
+        /**
+         * Constant indicating the backing transcoding service is died. Client should enqueue the
+         * the request again.
+         */
+        public static final int ERROR_SERVICE_DIED = 2;
+
         /** Listener that gets notified when the progress changes. */
         @FunctionalInterface
         public interface OnProgressUpdateListener {
@@ -1193,6 +1300,8 @@ public final class MediaTranscodeManager {
         private @Status int mStatus = STATUS_PENDING;
         @GuardedBy("mLock")
         private @Result int mResult = RESULT_NONE;
+        @GuardedBy("mLock")
+        private @TranscodingSessionErrorCode int mErrorCode = ERROR_NONE;
         @GuardedBy("mLock")
         private boolean mHasRetried = false;
         // The original request that associated with this session.
@@ -1247,10 +1356,20 @@ public final class MediaTranscodeManager {
         }
 
         private void updateStatusAndResult(@Status int sessionStatus,
-                @Result int sessionResult) {
+                @Result int sessionResult, @TranscodingSessionErrorCode int errorCode) {
             synchronized (mLock) {
                 mStatus = sessionStatus;
                 mResult = sessionResult;
+                mErrorCode = errorCode;
+            }
+        }
+
+        /**
+         * Retrieve the error code associated with the RESULT_ERROR.
+         */
+        public @TranscodingSessionErrorCode int getErrorCode() {
+            synchronized (mLock) {
+                return mErrorCode;
             }
         }
 
@@ -1260,19 +1379,16 @@ public final class MediaTranscodeManager {
          * could be retried only once. After that, Client need to enqueue a new request if they want
          * to try again.
          *
-         * @throws MediaTranscodingException.ServiceNotAvailableException if the service
-         *         is temporarily unavailable due to internal service rebooting. Client could retry
-         *         again after receiving this exception.
+         * @return true if successfully resubmit the job to service. False otherwise.
          * @throws UnsupportedOperationException if the retry could not be fulfilled.
          * @hide
          */
-        public void retry() throws MediaTranscodingException.ServiceNotAvailableException {
-            retryInternal(true /*setHasRetried*/);
+        public boolean retry() {
+            return retryInternal(true /*setHasRetried*/);
         }
 
         // TODO(hkuang): Add more test for it.
-        private void retryInternal(boolean setHasRetried)
-                throws MediaTranscodingException.ServiceNotAvailableException {
+        private boolean retryInternal(boolean setHasRetried) {
             synchronized (mLock) {
                 if (mStatus == STATUS_PENDING || mStatus == STATUS_RUNNING) {
                     throw new UnsupportedOperationException(
@@ -1286,8 +1402,8 @@ public final class MediaTranscodeManager {
                 // Get the client interface.
                 ITranscodingClient client = mManager.getTranscodingClient();
                 if (client == null) {
-                    throw new MediaTranscodingException.ServiceNotAvailableException(
-                            "Service rebooting. Try again later");
+                    Log.e(TAG, "Service rebooting. Try again later");
+                    return false;
                 }
 
                 synchronized (mManager.mPendingTranscodingSessions) {
@@ -1305,13 +1421,13 @@ public final class MediaTranscodeManager {
                         // Adds the new session back into pending sessions.
                         mManager.mPendingTranscodingSessions.put(mSessionId, this);
                     } catch (RemoteException re) {
-                        throw new MediaTranscodingException.ServiceNotAvailableException(
-                                "Failed to resubmit request to Transcoding service");
+                        return false;
                     }
                     mStatus = STATUS_PENDING;
                     mHasRetried = setHasRetried ? true : false;
                 }
             }
+            return true;
         }
 
         /**
@@ -1451,24 +1567,20 @@ public final class MediaTranscodeManager {
      * <p> Upon successfully accepting the request, MediaTranscodeManager will return a
      * {@link TranscodingSession} to the client. Client should use {@link TranscodingSession} to
      * track the progress and get the result.
+     * <p> MediaTranscodeManager will return null if fails to accept the request due to service
+     * rebooting. Client could retry again after receiving null.
      *
      * @param transcodingRequest The TranscodingRequest to enqueue.
      * @param listenerExecutor   Executor on which the listener is notified.
      * @param listener           Listener to get notified when the transcoding session is finished.
      * @return A TranscodingSession for this operation.
-     * @throws FileNotFoundException if the source Uri or destination Uri could not be opened.
      * @throws UnsupportedOperationException if the request could not be fulfilled.
-     * @throws MediaTranscodingException.ServiceNotAvailableException if the service
-     *         is temporarily unavailable due to internal service rebooting. Client could retry
-     *         again after receiving this exception.
      */
-    @NonNull
+    @Nullable
     public TranscodingSession enqueueRequest(
             @NonNull TranscodingRequest transcodingRequest,
             @NonNull @CallbackExecutor Executor listenerExecutor,
-            @NonNull OnTranscodingFinishedListener listener)
-            throws FileNotFoundException,
-            MediaTranscodingException.ServiceNotAvailableException {
+            @NonNull OnTranscodingFinishedListener listener) {
         Log.i(TAG, "enqueueRequest called.");
         Objects.requireNonNull(transcodingRequest, "transcodingRequest must not be null");
         Objects.requireNonNull(listenerExecutor, "listenerExecutor must not be null");
@@ -1489,11 +1601,15 @@ public final class MediaTranscodeManager {
                     if (mTranscodingClient == null) {
                         // Try to register with the service again.
                         IMediaTranscodingService service = getService(false /*retry*/);
+                        if (service == null) {
+                            Log.w(TAG, "Service rebooting. Try again later");
+                            return null;
+                        }
                         mTranscodingClient = registerClient(service);
                         // If still fails, throws an exception to tell client to try later.
                         if (mTranscodingClient == null) {
-                            throw new MediaTranscodingException.ServiceNotAvailableException(
-                                    "Service rebooting. Try again later");
+                            Log.w(TAG, "Service rebooting. Try again later");
+                            return null;
                         }
                     }
 
@@ -1513,9 +1629,12 @@ public final class MediaTranscodeManager {
                 mPendingTranscodingSessions.put(session.getSessionId(), session);
                 return session;
             }
-        } catch (RemoteException | ServiceSpecificException ex) {
+        } catch (RemoteException ex) {
+            Log.w(TAG, "Service rebooting. Try again later");
+            return null;
+        } catch (ServiceSpecificException ex) {
             throw new UnsupportedOperationException(
-                    "Failed to submit request to Transcoding service");
+                    "Failed to submit request to Transcoding service. Error: " + ex);
         }
     }
 }

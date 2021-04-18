@@ -71,6 +71,7 @@ import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.internal.util.ContrastColorUtil;
 import com.android.internal.widget.CachingIconView;
+import com.android.internal.widget.CallLayout;
 import com.android.internal.widget.MessagingLayout;
 import com.android.systemui.Dependency;
 import com.android.systemui.Interpolators;
@@ -103,7 +104,7 @@ import com.android.systemui.statusbar.notification.stack.SwipeableView;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.statusbar.phone.StatusBar;
 import com.android.systemui.statusbar.policy.HeadsUpManager;
-import com.android.systemui.statusbar.policy.InflatedSmartReplies.SmartRepliesAndActions;
+import com.android.systemui.statusbar.policy.InflatedSmartReplyState;
 import com.android.systemui.wmshell.BubblesManager;
 
 import java.io.FileDescriptor;
@@ -329,7 +330,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     private boolean mHeadsupDisappearRunning;
     private View mChildAfterViewWhenDismissed;
     private View mGroupParentWhenDismissed;
-    private boolean mShelfIconVisible;
     private boolean mAboveShelf;
     private OnUserInteractionCallback mOnUserInteractionCallback;
     private NotificationGutsManager mNotificationGutsManager;
@@ -566,7 +566,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         // The public layouts expand button is always visible
         mPublicLayout.updateExpandButtons(true);
         updateLimits();
-        updateIconVisibilities();
         updateShelfIconColor();
         updateRippleAllowed();
         if (mUpdateBackgroundOnUpdate) {
@@ -645,8 +644,9 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     }
 
     private void updateLimitsForView(NotificationContentView layout) {
-        boolean customView = layout.getContractedChild() != null
-                && layout.getContractedChild().getId()
+        View contractedView = layout.getContractedChild();
+        boolean customView = contractedView != null
+                && contractedView.getId()
                 != com.android.internal.R.id.status_bar_latest_event_content;
         boolean beforeN = mEntry.targetSdk < Build.VERSION_CODES.N;
         boolean beforeP = mEntry.targetSdk < Build.VERSION_CODES.P;
@@ -661,7 +661,8 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         View expandedView = layout.getExpandedChild();
         boolean isMediaLayout = expandedView != null
                 && expandedView.findViewById(com.android.internal.R.id.media_actions) != null;
-        boolean isMessagingLayout = layout.getContractedChild() instanceof MessagingLayout;
+        boolean isMessagingLayout = contractedView instanceof MessagingLayout;
+        boolean isCallLayout = contractedView instanceof CallLayout;
         boolean showCompactMediaSeekbar = mMediaManager.getShowCompactMediaSeekbar();
 
         if (customView && beforeS && !mIsSummaryWithChildren) {
@@ -684,6 +685,8 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             //  make sure we don't crop them terribly.  We actually need to revisit this and give
             //  them a headerless design, then remove this hack.
             smallHeight = mMaxSmallHeightLarge;
+        } else if (isCallLayout) {
+            smallHeight = mMaxExpandedHeight;
         } else if (mUseIncreasedCollapsedHeight && layout == mPrivateLayout) {
             smallHeight = mMaxSmallHeightLarge;
         } else {
@@ -877,7 +880,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             setDistanceToTopRoundness(NO_ROUNDNESS);
             mNotificationParent.updateBackgroundForGroupState();
         }
-        updateIconVisibilities();
         updateBackgroundClipping();
     }
 
@@ -1475,21 +1477,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         return getShelfTransformationTarget() != null;
     }
 
-    /**
-     * Set the icons to be visible of this notification.
-     */
-    public void setShelfIconVisible(boolean iconVisible) {
-        if (iconVisible != mShelfIconVisible) {
-            mShelfIconVisible = iconVisible;
-            updateIconVisibilities();
-        }
-    }
-
-    @Override
-    protected void onBelowSpeedBumpChanged() {
-        updateIconVisibilities();
-    }
-
     @Override
     protected void updateContentTransformation() {
         if (mExpandAnimationRunning) {
@@ -1513,18 +1500,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             mChildrenContainer.setAlpha(contentAlpha);
             mChildrenContainer.setTranslationY(translationY);
             // TODO: handle children fade out better
-        }
-    }
-
-    /** Refreshes the visibility of notification icons */
-    public void updateIconVisibilities() {
-        // The shelf icon is never hidden for children in groups
-        boolean visible = !isChildInGroup() && mShelfIconVisible;
-        for (NotificationContentView l : mLayouts) {
-            l.setShelfIconVisible(visible);
-        }
-        if (mChildrenContainer != null) {
-            mChildrenContainer.setShelfIconVisible(visible);
         }
     }
 
@@ -2044,8 +2019,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
                 mNotificationLaunchHeight,
                 zProgress);
         setTranslationZ(translationZ);
-        float extraWidthForClipping = params.getWidth() - getWidth()
-                + MathUtils.lerp(0, mOutlineRadius * 2, params.getProgress());
+        float extraWidthForClipping = params.getWidth() - getWidth();
         setExtraWidthForClipping(extraWidthForClipping);
         int top = params.getTop();
         float interpolation = Interpolators.FAST_OUT_SLOW_IN.getInterpolation(params.getProgress());
@@ -3188,8 +3162,8 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     /**
      * Returns the Smart Suggestions backing the smart suggestion buttons in the notification.
      */
-    public SmartRepliesAndActions getExistingSmartRepliesAndActions() {
-        return mPrivateLayout.getCurrentSmartRepliesAndActions();
+    public InflatedSmartReplyState getExistingSmartReplyState() {
+        return mPrivateLayout.getCurrentSmartReplyState();
     }
 
     @VisibleForTesting

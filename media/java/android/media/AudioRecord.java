@@ -21,6 +21,7 @@ import android.annotation.FloatRange;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.annotation.TestApi;
 import android.app.ActivityThread;
@@ -67,7 +68,14 @@ import java.util.concurrent.Executor;
  * fill with the new audio data. The size of this buffer, specified during the construction,
  * determines how long an AudioRecord can record before "over-running" data that has not
  * been read yet. Data should be read from the audio hardware in chunks of sizes inferior to
- * the total recording buffer size.
+ * the total recording buffer size.</p>
+ * <p>
+ * Applications creating an AudioRecord instance need
+ * {@link android.Manifest.permission#RECORD_AUDIO} or the Builder will throw
+ * {@link java.lang.UnsupportedOperationException} on
+ * {@link android.media.AudioRecord.Builder#build build()},
+ * and the constructor will return an instance in state
+ * {@link #STATE_UNINITIALIZED}.</p>
  */
 public class AudioRecord implements AudioRouting, MicrophoneDirection,
         AudioRecordingMonitor, AudioRecordingMonitorClient
@@ -267,6 +275,12 @@ public class AudioRecord implements AudioRouting, MicrophoneDirection,
     private AudioAttributes mAudioAttributes;
     private boolean mIsSubmixFullVolume = false;
 
+    /**
+     * The log session id used for metrics.
+     * A null or empty string here means it is not set.
+     */
+    private String mLogSessionId;
+
     //---------------------------------------------------------
     // Constructor, Finalize
     //--------------------
@@ -297,6 +311,7 @@ public class AudioRecord implements AudioRouting, MicrophoneDirection,
      *   smaller than getMinBufferSize() will result in an initialization failure.
      * @throws java.lang.IllegalArgumentException
      */
+    @RequiresPermission(android.Manifest.permission.RECORD_AUDIO)
     public AudioRecord(int audioSource, int sampleRateInHz, int channelConfig, int audioFormat,
             int bufferSizeInBytes)
     throws IllegalArgumentException {
@@ -334,6 +349,7 @@ public class AudioRecord implements AudioRouting, MicrophoneDirection,
      * @throws IllegalArgumentException
      */
     @SystemApi
+    @RequiresPermission(android.Manifest.permission.RECORD_AUDIO)
     public AudioRecord(AudioAttributes attributes, AudioFormat format, int bufferSizeInBytes,
             int sessionId) throws IllegalArgumentException {
         mRecordingState = RECORDSTATE_STOPPED;
@@ -718,6 +734,7 @@ public class AudioRecord implements AudioRouting, MicrophoneDirection,
          *     were incompatible, or if they are not supported by the device,
          *     or if the device was not available.
          */
+        @RequiresPermission(android.Manifest.permission.RECORD_AUDIO)
         public AudioRecord build() throws UnsupportedOperationException {
             if (mAudioPlaybackCaptureConfiguration != null) {
                 return buildAudioPlaybackCaptureRecord();
@@ -1902,6 +1919,25 @@ public class AudioRecord implements AudioRouting, MicrophoneDirection,
         return native_set_preferred_microphone_field_dimension(zoom) == AudioSystem.SUCCESS;
     }
 
+    /**
+     * Sets a string handle to this AudioRecord for metrics collection.
+     *
+     * @param logSessionId a string which is used to identify this object
+     *        to the metrics service.  Proper generated Ids must be obtained
+     *        from the Java metrics service and should be considered opaque.
+     *        Use null to remove the logSessionId association.
+     * @throws IllegalStateException if AudioRecord not initialized.
+     *
+     * @hide
+     */
+    public void setLogSessionId(@Nullable String logSessionId) {
+        if (mState == STATE_UNINITIALIZED) {
+            throw new IllegalStateException("AudioRecord not initialized");
+        }
+        native_setLogSessionId(logSessionId);
+        mLogSessionId = logSessionId;
+    }
+
     //---------------------------------------------------------
     // Interface definitions
     //--------------------
@@ -2060,6 +2096,8 @@ public class AudioRecord implements AudioRouting, MicrophoneDirection,
 
     private native int native_set_preferred_microphone_direction(int direction);
     private native int native_set_preferred_microphone_field_dimension(float zoom);
+
+    private native void native_setLogSessionId(@Nullable String logSessionId);
 
     //---------------------------------------------------------
     // Utility methods

@@ -139,6 +139,20 @@ public class Instrumentation {
     }
 
     /**
+     * Returns if it is being called in an instrumentation environment.
+     *
+     * @hide
+     */
+    public boolean isInstrumenting() {
+        // Check if we have an instrumentation context, as init should only get called by
+        // the system in startup processes that are being instrumented.
+        if (mInstrContext == null) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * Called when the instrumentation is starting, before any application code
      * has been loaded.  Usually this will be implemented to simply call
      * {@link #start} to begin the instrumentation thread, which will then
@@ -1233,7 +1247,8 @@ public class Instrumentation {
                 info, title, parent, id,
                 (Activity.NonConfigurationInstances)lastNonConfigurationInstance,
                 new Configuration(), null /* referrer */, null /* voiceInteractor */,
-                null /* window */, null /* activityConfigCallback */, null /*assistToken*/);
+                null /* window */, null /* activityConfigCallback */, null /*assistToken*/,
+                null /*shareableActivityToken*/);
         return activity;
     }
 

@@ -17,6 +17,7 @@
 package com.android.server.vibrator;
 
 import android.annotation.Nullable;
+import android.hardware.vibrator.IVibratorManager;
 import android.os.CombinedVibrationEffect;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -39,12 +40,9 @@ import com.google.android.collect.Lists;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.PriorityQueue;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 /** Plays a {@link Vibration} in dedicated thread. */
-// TODO(b/159207608): Make this package-private once vibrator services are moved to this package
-public final class VibrationThread extends Thread implements IBinder.DeathRecipient {
+final class VibrationThread extends Thread implements IBinder.DeathRecipient {
     private static final String TAG = "VibrationThread";
     private static final boolean DEBUG = false;
 
@@ -55,7 +53,7 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
     private static final long CALLBACKS_EXTRA_TIMEOUT = 100;
 
     /** Callbacks for playing a {@link Vibration}. */
-    public interface VibrationCallbacks {
+    interface VibrationCallbacks {
 
         /**
          * Callback triggered before starting a synchronized vibration step. This will be called
@@ -67,10 +65,13 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
          *                             IVibratorManager.CAP_MIXED_TRIGGER_*.
          * @param vibratorIds          The id of the vibrators to be prepared.
          */
-        void prepareSyncedVibration(int requiredCapabilities, int[] vibratorIds);
+        boolean prepareSyncedVibration(long requiredCapabilities, int[] vibratorIds);
 
         /** Callback triggered after synchronized vibrations were prepared. */
-        void triggerSyncedVibration(long vibrationId);
+        boolean triggerSyncedVibration(long vibrationId);
+
+        /** Callback triggered to cancel a prepared synced vibration. */
+        void cancelSyncedVibration();
 
         /** Callback triggered when vibration thread is complete. */
         void onVibrationEnded(long vibrationId, Vibration.Status status);
@@ -87,17 +88,10 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
     @GuardedBy("mLock")
     @Nullable
     private VibrateStep mCurrentVibrateStep;
-    @GuardedBy("this")
+    @GuardedBy("mLock")
     private boolean mForceStop;
 
-    // TODO(b/159207608): Remove this constructor once VibratorService is removed
-    public VibrationThread(Vibration vib, VibratorController vibrator,
-            PowerManager.WakeLock wakeLock, IBatteryStats batteryStatsService,
-            VibrationCallbacks callbacks) {
-        this(vib, toSparseArray(vibrator), wakeLock, batteryStatsService, callbacks);
-    }
-
-    public VibrationThread(Vibration vib, SparseArray<VibratorController> availableVibrators,
+    VibrationThread(Vibration vib, SparseArray<VibratorController> availableVibrators,
             PowerManager.WakeLock wakeLock, IBatteryStats batteryStatsService,
             VibrationCallbacks callbacks) {
         mVibration = vib;
@@ -118,6 +112,9 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
 
     @Override
     public void binderDied() {
+        if (DEBUG) {
+            Slog.d(TAG, "Binder died, cancelling vibration...");
+        }
         cancel();
     }
 
@@ -139,19 +136,40 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
 
     /** Cancel current vibration and shuts down the thread gracefully. */
     public void cancel() {
-        synchronized (this) {
+        synchronized (mLock) {
             mForceStop = true;
-            notify();
+            mLock.notify();
+        }
+    }
+
+    /** Notify current vibration that a synced step has completed. */
+    public void syncedVibrationComplete() {
+        synchronized (mLock) {
+            if (DEBUG) {
+                Slog.d(TAG, "Synced vibration complete reported by vibrator manager");
+            }
+            if (mCurrentVibrateStep != null) {
+                for (int i = 0; i < mVibrators.size(); i++) {
+                    mCurrentVibrateStep.vibratorComplete(mVibrators.keyAt(i));
+                }
+            }
         }
     }
 
     /** Notify current vibration that a step has completed on given vibrator. */
     public void vibratorComplete(int vibratorId) {
         synchronized (mLock) {
+            if (DEBUG) {
+                Slog.d(TAG, "Vibration complete reported by vibrator " + vibratorId);
+            }
             if (mCurrentVibrateStep != null) {
                 mCurrentVibrateStep.vibratorComplete(vibratorId);
             }
         }
+    }
+
+    Vibration getVibration() {
+        return mVibration;
     }
 
     @VisibleForTesting
@@ -260,12 +278,6 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
         return filteredEffects;
     }
 
-    private static SparseArray<VibratorController> toSparseArray(VibratorController controller) {
-        SparseArray<VibratorController> array = new SparseArray<>(1);
-        array.put(controller.getVibratorInfo().getId(), controller);
-        return array;
-    }
-
     /**
      * Get the duration the vibrator will be on for given {@code waveform}, starting at {@code
      * startIndex} until the next time it's vibrating amplitude is zero.
@@ -298,42 +310,48 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
      * Sleeps until given {@code wakeUpTime}.
      *
      * <p>This stops immediately when {@link #cancel()} is called.
+     *
+     * @return true if waited until wake-up time, false if it was cancelled.
      */
-    private void waitUntil(long wakeUpTime) {
-        synchronized (this) {
+    private boolean waitUntil(long wakeUpTime) {
+        synchronized (mLock) {
             long durationRemaining = wakeUpTime - SystemClock.uptimeMillis();
             while (durationRemaining > 0) {
                 try {
-                    VibrationThread.this.wait(durationRemaining);
+                    mLock.wait(durationRemaining);
                 } catch (InterruptedException e) {
                 }
                 if (mForceStop) {
-                    break;
+                    return false;
                 }
                 durationRemaining = wakeUpTime - SystemClock.uptimeMillis();
             }
         }
+        return true;
     }
 
     /**
-     * Sleeps until given {@link CountDownLatch} has finished or {@code wakeUpTime} was reached.
+     * Sleeps until given {@link VibrateStep#isVibrationComplete()}, or until {@code wakeUpTime}.
      *
      * <p>This stops immediately when {@link #cancel()} is called.
+     *
+     * @return true if finished on vibration complete, false if it was cancelled or timed out.
      */
-    private void awaitUntil(CountDownLatch counter, long wakeUpTime) {
-        synchronized (this) {
+    private boolean waitForVibrationComplete(VibrateStep step, long wakeUpTime) {
+        synchronized (mLock) {
             long durationRemaining = wakeUpTime - SystemClock.uptimeMillis();
-            while (counter.getCount() > 0 && durationRemaining > 0) {
+            while (!step.isVibrationComplete() && durationRemaining > 0) {
                 try {
-                    counter.await(durationRemaining, TimeUnit.MILLISECONDS);
+                    mLock.wait(durationRemaining);
                 } catch (InterruptedException e) {
                 }
                 if (mForceStop) {
-                    break;
+                    return false;
                 }
                 durationRemaining = wakeUpTime - SystemClock.uptimeMillis();
             }
         }
+        return step.isVibrationComplete();
     }
 
     private void noteVibratorOn(long duration) {
@@ -365,18 +383,28 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
     private interface VibrateStep extends Step {
         /** Callback to notify a vibrator has finished playing a effect. */
         void vibratorComplete(int vibratorId);
+
+        /** Returns true if the vibration played by this step is complete. */
+        boolean isVibrationComplete();
     }
 
     /** Represent a vibration on a single vibrator. */
     private final class SingleVibrateStep implements VibrateStep {
         private final VibratorController mVibrator;
         private final VibrationEffect mEffect;
-        private final CountDownLatch mCounter;
+
+        @GuardedBy("mLock")
+        private boolean mVibrationComplete;
 
         SingleVibrateStep(VibratorController vibrator, VibrationEffect effect) {
             mVibrator = vibrator;
             mEffect = effect;
-            mCounter = new CountDownLatch(1);
+        }
+
+        @GuardedBy("mLock")
+        @Override
+        public boolean isVibrationComplete() {
+            return mVibrationComplete;
         }
 
         @Override
@@ -390,7 +418,10 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
                 return;
             }
             mVibrator.off();
-            mCounter.countDown();
+            synchronized (mLock) {
+                mVibrationComplete = true;
+                mLock.notify();
+            }
         }
 
         @Override
@@ -408,8 +439,13 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
                     noteVibratorOn(duration);
                     // Vibration is playing with no need to control amplitudes, just wait for native
                     // callback or timeout.
-                    awaitUntil(mCounter, startTime + duration + CALLBACKS_EXTRA_TIMEOUT);
-                    return Vibration.Status.FINISHED;
+                    if (waitForVibrationComplete(this,
+                            startTime + duration + CALLBACKS_EXTRA_TIMEOUT)) {
+                        return Vibration.Status.FINISHED;
+                    }
+                    // Timed out or vibration cancelled. Stop vibrator anyway.
+                    mVibrator.off();
+                    return mForceStop ? Vibration.Status.CANCELLED : Vibration.Status.FINISHED;
                 }
 
                 startTime = SystemClock.uptimeMillis();
@@ -427,8 +463,7 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
                     noteVibratorOn(duration);
                 }
                 while (amplitudeStep != null) {
-                    waitUntil(amplitudeStep.startTime);
-                    if (mForceStop) {
+                    if (!waitUntil(amplitudeStep.startTime)) {
                         mVibrator.off();
                         return Vibration.Status.CANCELLED;
                     }
@@ -442,7 +477,7 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
                     noteVibratorOff();
                 }
                 if (DEBUG) {
-                    Slog.d(TAG, "SingleVibrateStep step done.");
+                    Slog.d(TAG, "SingleVibrateStep done.");
                 }
                 Trace.traceEnd(Trace.TRACE_TAG_VIBRATOR);
             }
@@ -499,20 +534,26 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
     /** Represent a synchronized vibration step on multiple vibrators. */
     private final class SyncedVibrateStep implements VibrateStep {
         private final SparseArray<VibrationEffect> mEffects;
-        private final CountDownLatch mActiveVibratorCounter;
-
-        private final int mRequiredCapabilities;
+        private final long mRequiredCapabilities;
         private final int[] mVibratorIds;
+
+        @GuardedBy("mLock")
+        private int mActiveVibratorCounter;
 
         SyncedVibrateStep(SparseArray<VibrationEffect> effects) {
             mEffects = effects;
-            mActiveVibratorCounter = new CountDownLatch(mEffects.size());
-            // TODO(b/159207608): Calculate required capabilities for syncing this step.
-            mRequiredCapabilities = 0;
+            mActiveVibratorCounter = mEffects.size();
+            mRequiredCapabilities = calculateRequiredSyncCapabilities(effects);
             mVibratorIds = new int[effects.size()];
             for (int i = 0; i < effects.size(); i++) {
                 mVibratorIds[i] = effects.keyAt(i);
             }
+        }
+
+        @GuardedBy("mLock")
+        @Override
+        public boolean isVibrationComplete() {
+            return mActiveVibratorCounter <= 0;
         }
 
         @Override
@@ -527,28 +568,33 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
                 return;
             }
             mVibrators.get(vibratorId).off();
-            mActiveVibratorCounter.countDown();
+            synchronized (mLock) {
+                --mActiveVibratorCounter;
+                mLock.notify();
+            }
         }
 
         @Override
         public Vibration.Status play() {
             Trace.traceBegin(Trace.TRACE_TAG_VIBRATOR, "SyncedVibrateStep");
-            long timeout = -1;
+            long duration = -1;
             try {
                 if (DEBUG) {
                     Slog.d(TAG, "SyncedVibrateStep starting...");
                 }
                 final PriorityQueue<AmplitudeStep> nextSteps = new PriorityQueue<>(mEffects.size());
                 long startTime = SystemClock.uptimeMillis();
-                mCallbacks.prepareSyncedVibration(mRequiredCapabilities, mVibratorIds);
-                timeout = startVibrating(startTime, nextSteps);
-                mCallbacks.triggerSyncedVibration(mVibration.id);
-                noteVibratorOn(timeout);
+                duration = startVibratingSynced(startTime, nextSteps);
 
+                if (duration <= 0) {
+                    // Vibrate step failed, vibrator could not be turned on for this step.
+                    return Vibration.Status.IGNORED;
+                }
+
+                noteVibratorOn(duration);
                 while (!nextSteps.isEmpty()) {
                     AmplitudeStep step = nextSteps.poll();
-                    waitUntil(step.startTime);
-                    if (mForceStop) {
+                    if (!waitUntil(step.startTime)) {
                         stopAllVibrators();
                         return Vibration.Status.CANCELLED;
                     }
@@ -556,18 +602,28 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
                     AmplitudeStep nextStep = step.nextStep();
                     if (nextStep == null) {
                         // This vibrator has finished playing the effect for this step.
-                        mActiveVibratorCounter.countDown();
+                        synchronized (mLock) {
+                            mActiveVibratorCounter--;
+                        }
                     } else {
                         nextSteps.add(nextStep);
                     }
                 }
 
-                // All OneShot and Waveform effects have finished. Just wait for the other effects
-                // to end via native callbacks before finishing this synced step.
-                awaitUntil(mActiveVibratorCounter, startTime + timeout + CALLBACKS_EXTRA_TIMEOUT);
-                return Vibration.Status.FINISHED;
+                synchronized (mLock) {
+                    // All OneShot and Waveform effects have finished. Just wait for the other
+                    // effects to end via native callbacks before finishing this synced step.
+                    final long wakeUpTime = startTime + duration + CALLBACKS_EXTRA_TIMEOUT;
+                    if (mActiveVibratorCounter <= 0 || waitForVibrationComplete(this, wakeUpTime)) {
+                        return Vibration.Status.FINISHED;
+                    }
+
+                    // Timed out or vibration cancelled. Stop all vibrators anyway.
+                    stopAllVibrators();
+                    return mForceStop ? Vibration.Status.CANCELLED : Vibration.Status.FINISHED;
+                }
             } finally {
-                if (timeout > 0) {
+                if (duration > 0) {
                     noteVibratorOff();
                 }
                 if (DEBUG) {
@@ -578,14 +634,48 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
         }
 
         /**
+         * Starts playing effects on designated vibrators, in sync.
+         *
+         * @return A positive duration, in millis, to wait for the completion of this effect.
+         * Non-positive values indicate the vibrator has ignored this effect. Repeating waveform
+         * returns the duration of a single run to be used as timeout for callbacks.
+         */
+        private long startVibratingSynced(long startTime, PriorityQueue<AmplitudeStep> nextSteps) {
+            // This synchronization of vibrators should be executed one at a time, even if we are
+            // vibrating different sets of vibrators in parallel. The manager can only prepareSynced
+            // one set of vibrators at a time.
+            synchronized (mLock) {
+                boolean hasPrepared = false;
+                boolean hasTriggered = false;
+                try {
+                    hasPrepared = mCallbacks.prepareSyncedVibration(mRequiredCapabilities,
+                            mVibratorIds);
+                    long timeout = startVibrating(startTime, nextSteps);
+
+                    // Check if preparation was successful, otherwise devices area already vibrating
+                    if (hasPrepared) {
+                        hasTriggered = mCallbacks.triggerSyncedVibration(mVibration.id);
+                    }
+                    return timeout;
+                } finally {
+                    if (hasPrepared && !hasTriggered) {
+                        mCallbacks.cancelSyncedVibration();
+                        return 0;
+                    }
+                }
+            }
+        }
+
+        /**
          * Starts playing effects on designated vibrators.
          *
          * <p>This includes the {@link VibrationEffect.OneShot} and {@link VibrationEffect.Waveform}
          * effects, that should start in sync with all other effects in this step. The waveforms are
          * controlled by {@link AmplitudeStep} added to the {@code nextSteps} queue.
          *
-         * @return A duration, in millis, to wait for the completion of all vibrations. This ignores
-         * any repeating waveform duration and returns the duration of a single run.
+         * @return A positive duration, in millis, to wait for the completion of this effect.
+         * Non-positive values indicate the vibrator has ignored this effect. Repeating waveform
+         * returns the duration of a single run to be used as timeout for callbacks.
          */
         private long startVibrating(long startTime, PriorityQueue<AmplitudeStep> nextSteps) {
             long maxDuration = 0;
@@ -601,9 +691,9 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
         /**
          * Play a single effect on a single vibrator.
          *
-         * @return A duration, in millis, to wait for the completion of this effect. This ignores
-         * any repeating waveform duration and returns the duration of a single run to be used as
-         * timeout for callbacks.
+         * @return A positive duration, in millis, to wait for the completion of this effect.
+         * Non-positive values indicate the vibrator has ignored this effect. Repeating waveform
+         * returns the duration of a single run to be used as timeout for callbacks.
          */
         private long startVibrating(VibratorController controller, VibrationEffect effect,
                 long startTime, PriorityQueue<AmplitudeStep> nextSteps) {
@@ -647,6 +737,49 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
                     controller.off();
                 }
             }
+        }
+
+        /**
+         * Return all capabilities required from the {@link IVibratorManager} to prepare and
+         * trigger all given effects in sync.
+         *
+         * @return {@link IVibratorManager#CAP_SYNC} together with all required
+         * IVibratorManager.CAP_PREPARE_* and IVibratorManager.CAP_MIXED_TRIGGER_* capabilities.
+         */
+        private long calculateRequiredSyncCapabilities(SparseArray<VibrationEffect> effects) {
+            long prepareCap = 0;
+            for (int i = 0; i < effects.size(); i++) {
+                VibrationEffect effect = effects.valueAt(i);
+                if (effect instanceof VibrationEffect.OneShot
+                        || effect instanceof VibrationEffect.Waveform) {
+                    prepareCap |= IVibratorManager.CAP_PREPARE_ON;
+                } else if (effect instanceof VibrationEffect.Prebaked) {
+                    prepareCap |= IVibratorManager.CAP_PREPARE_PERFORM;
+                } else if (effect instanceof VibrationEffect.Composed) {
+                    prepareCap |= IVibratorManager.CAP_PREPARE_COMPOSE;
+                }
+            }
+            int triggerCap = 0;
+            if (requireMixedTriggerCapability(prepareCap, IVibratorManager.CAP_PREPARE_ON)) {
+                triggerCap |= IVibratorManager.CAP_MIXED_TRIGGER_ON;
+            }
+            if (requireMixedTriggerCapability(prepareCap, IVibratorManager.CAP_PREPARE_PERFORM)) {
+                triggerCap |= IVibratorManager.CAP_MIXED_TRIGGER_PERFORM;
+            }
+            if (requireMixedTriggerCapability(prepareCap, IVibratorManager.CAP_PREPARE_COMPOSE)) {
+                triggerCap |= IVibratorManager.CAP_MIXED_TRIGGER_COMPOSE;
+            }
+            return IVibratorManager.CAP_SYNC | prepareCap | triggerCap;
+        }
+
+        /**
+         * Return true if {@code prepareCapabilities} contains this {@code capability} mixed with
+         * different ones, requiring a mixed trigger capability from the vibrator manager for
+         * syncing all effects.
+         */
+        private boolean requireMixedTriggerCapability(long prepareCapabilities, long capability) {
+            return (prepareCapabilities & capability) != 0
+                    && (prepareCapabilities & ~capability) != 0;
         }
     }
 
@@ -744,12 +877,12 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
                 // Waveform has ended, no more steps to run.
                 return null;
             }
-            long nextWakeUpTime = startTime + waveform.getTimings()[currentIndex];
+            long nextStartTime = startTime + waveform.getTimings()[currentIndex];
             int nextIndex = currentIndex + 1;
             if (nextIndex >= waveform.getTimings().length) {
                 nextIndex = waveform.getRepeatIndex();
             }
-            return new AmplitudeStep(vibratorId, waveform, nextIndex, nextWakeUpTime,
+            return new AmplitudeStep(vibratorId, waveform, nextIndex, nextStartTime,
                     nextVibratorStopTime());
         }
 
@@ -778,8 +911,10 @@ public final class VibrationThread extends Thread implements IBinder.DeathRecipi
                 if (DEBUG) {
                     Slog.d(TAG, "DelayStep of " + mDelay + "ms starting...");
                 }
-                waitUntil(SystemClock.uptimeMillis() + mDelay);
-                return Vibration.Status.FINISHED;
+                if (waitUntil(SystemClock.uptimeMillis() + mDelay)) {
+                    return Vibration.Status.FINISHED;
+                }
+                return Vibration.Status.CANCELLED;
             } finally {
                 if (DEBUG) {
                     Slog.d(TAG, "DelayStep done.");

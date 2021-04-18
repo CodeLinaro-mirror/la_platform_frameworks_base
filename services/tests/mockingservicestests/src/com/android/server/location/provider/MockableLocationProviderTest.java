@@ -43,6 +43,8 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import java.util.Collections;
+
 @Presubmit
 @SmallTest
 @RunWith(AndroidJUnit4.class)
@@ -71,7 +73,8 @@ public class MockableLocationProviderTest {
                         .setPowerUsage(POWER_USAGE_LOW)
                         .setAccuracy(ACCURACY_FINE)
                         .build(),
-                CallerIdentity.forTest(0, 1, "testpackage", "test"));
+                CallerIdentity.forTest(0, 1, "testpackage", "test"),
+                Collections.emptySet());
 
         mProvider = new MockableLocationProvider(lock);
         mProvider.getController().setListener(mListener);
@@ -185,8 +188,8 @@ public class MockableLocationProviderTest {
 
     @Test
     public void testReportLocation() {
-        LocationResult realLocation = LocationResult.create(new Location("real"));
-        LocationResult mockLocation = LocationResult.create(new Location("mock"));
+        LocationResult realLocation = LocationResult.wrap(new Location("real"));
+        LocationResult mockLocation = LocationResult.wrap(new Location("mock"));
 
         mRealProvider.reportLocation(realLocation);
         assertThat(mListener.getNextLocationResult()).isEqualTo(realLocation);

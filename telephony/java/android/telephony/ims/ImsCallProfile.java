@@ -138,6 +138,8 @@ public final class ImsCallProfile implements Parcelable {
      * Indicates if the session is for a conference call or not. If not defined, should be
      * considered {@code false}.
      * Boolean extra properties - {@code true} / {@code false}.
+     *
+     * This extra is set on an instance of {@link ImsCallProfile} via {@link #setCallExtraBoolean}.
      * @hide
      */
     @SystemApi
@@ -174,6 +176,8 @@ public final class ImsCallProfile implements Parcelable {
      * Indicates if the session can be extended to a conference call. If not defined, should be
      * considered {@code false}.
      * Boolean extra properties - {@code true} / {@code false}.
+     *
+     * This extra is set on an instance of {@link ImsCallProfile} via {@link #setCallExtraBoolean}.
      * @hide
      */
     @SystemApi
@@ -276,6 +280,15 @@ public final class ImsCallProfile implements Parcelable {
      * Reference: RCC.20 Section 2.4.3.2
      */
     public static final String EXTRA_PICTURE_URL = "android.telephony.ims.extra.PICTURE_URL";
+
+    /**
+     * Boolean extra indicating whether the call is a business call.
+     *
+     * This extra will be set to {@code true} if and only if the SIP INVITE headers contain the
+     * "Organization" header.
+     */
+    public static final String EXTRA_IS_BUSINESS_CALL =
+            "android.telephony.ims.extra.IS_BUSINESS_CALL";
 
     /**
      * Values for EXTRA_OIR / EXTRA_CNAP
@@ -787,7 +800,9 @@ public final class ImsCallProfile implements Parcelable {
                 + ", emergencyCallTesting=" + mEmergencyCallTesting
                 + ", hasKnownUserIntentEmergency=" + mHasKnownUserIntentEmergency
                 + ", mRestrictCause=" + mRestrictCause
-                + ", mCallerNumberVerstat= " + mCallerNumberVerificationStatus + " }";
+                + ", mCallerNumberVerstat= " + mCallerNumberVerificationStatus
+                + ", mAcceptedRtpHeaderExtensions= " + mAcceptedRtpHeaderExtensionTypes
+                + " }";
     }
 
     @Override

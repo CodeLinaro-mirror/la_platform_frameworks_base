@@ -14,6 +14,8 @@
 
 package com.android.systemui.qs.customize;
 
+import static com.android.systemui.qs.dagger.QSFlagsModule.QS_LABELS_FLAG;
+
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.res.Resources;
@@ -30,6 +32,7 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.view.AccessibilityDelegateCompat;
 import androidx.core.view.ViewCompat;
 import androidx.recyclerview.widget.GridLayoutManager.SpanSizeLookup;
@@ -41,6 +44,7 @@ import androidx.recyclerview.widget.RecyclerView.ViewHolder;
 
 import com.android.internal.logging.UiEventLogger;
 import com.android.systemui.R;
+import com.android.systemui.plugins.qs.QSTile;
 import com.android.systemui.qs.QSEditEvent;
 import com.android.systemui.qs.QSTileHost;
 import com.android.systemui.qs.customize.TileAdapter.Holder;
@@ -49,11 +53,13 @@ import com.android.systemui.qs.customize.TileQueryHelper.TileStateListener;
 import com.android.systemui.qs.dagger.QSScope;
 import com.android.systemui.qs.external.CustomTile;
 import com.android.systemui.qs.tileimpl.QSIconViewImpl;
+import com.android.systemui.qs.tileimpl.QSTileView;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import javax.inject.Inject;
+import javax.inject.Named;
 
 /** */
 @QSScope
@@ -61,7 +67,6 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
     private static final long DRAG_LENGTH = 100;
     private static final float DRAG_SCALE = 1.2f;
     public static final long MOVE_DURATION = 150;
-    public static final int NUM_COLUMNS = 4;
 
     private static final int TYPE_TILE = 0;
     private static final int TYPE_EDIT = 1;
@@ -76,6 +81,8 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
     private static final int ACTION_ADD = 1;
     private static final int ACTION_MOVE = 2;
 
+    private static final int NUM_COLUMNS_ID = R.integer.quick_settings_num_columns;
+
     private final Context mContext;
 
     private final Handler mHandler = new Handler();
@@ -88,6 +95,7 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
     private int mEditIndex;
     private int mTileDividerIndex;
     private int mFocusIndex;
+
     private boolean mNeedsFocus;
     private List<String> mCurrentSpecs;
     private List<TileInfo> mOtherTiles;
@@ -99,9 +107,12 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
     private final UiEventLogger mUiEventLogger;
     private final AccessibilityDelegateCompat mAccessibilityDelegate;
     private RecyclerView mRecyclerView;
+    private int mNumColumns;
+    private final boolean mUseHorizontalTiles;
 
     @Inject
-    public TileAdapter(Context context, QSTileHost qsHost, UiEventLogger uiEventLogger) {
+    public TileAdapter(Context context, QSTileHost qsHost, UiEventLogger uiEventLogger,
+            @Named(QS_LABELS_FLAG) boolean useHorizontalTiles) {
         mContext = context;
         mHost = qsHost;
         mUiEventLogger = uiEventLogger;
@@ -109,7 +120,9 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
         mDecoration = new TileItemDecoration(context);
         mMarginDecoration = new MarginTileDecoration();
         mMinNumTiles = context.getResources().getInteger(R.integer.quick_settings_min_num_tiles);
+        mNumColumns = context.getResources().getInteger(NUM_COLUMNS_ID);
         mAccessibilityDelegate = new TileAdapterDelegate();
+        mUseHorizontalTiles = useHorizontalTiles;
     }
 
     @Override
@@ -120,6 +133,25 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
     @Override
     public void onDetachedFromRecyclerView(@NonNull RecyclerView recyclerView) {
         mRecyclerView = null;
+    }
+
+    /**
+     * Update the number of columns to show, from resources.
+     *
+     * @return {@code true} if the number of columns changed, {@code false} otherwise
+     */
+    public boolean updateNumColumns() {
+        int numColumns = mContext.getResources().getInteger(NUM_COLUMNS_ID);
+        if (numColumns != mNumColumns) {
+            mNumColumns = numColumns;
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    public int getNumColumns() {
+        return mNumColumns;
     }
 
     public ItemTouchHelper getItemTouchHelper() {
@@ -248,7 +280,10 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
         }
         FrameLayout frame = (FrameLayout) inflater.inflate(R.layout.qs_customize_tile_frame, parent,
                 false);
-        frame.addView(new CustomizeTileView(context, new QSIconViewImpl(context)));
+        View view = mUseHorizontalTiles
+                ? new CustomizeTileViewHorizontal(context, new QSIconViewImpl(context))
+                : new CustomizeTileView(context, new QSIconViewImpl(context));
+        frame.addView(view);
         return new Holder(frame);
     }
 
@@ -331,8 +366,9 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
         }
         info.state.expandedAccessibilityClassName = "";
 
-        holder.mTileView.handleStateChanged(info.state);
-        holder.mTileView.setShowAppLabel(position > mEditIndex && !info.isSystem);
+        // The holder has a tileView, therefore this call is not null
+        holder.getTileAsCustomizeView().changeState(info.state);
+        holder.getTileAsCustomizeView().setShowAppLabel(position > mEditIndex && !info.isSystem);
         holder.mTileView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         holder.mTileView.setClickable(true);
         holder.mTileView.setOnClickListener(null);
@@ -436,15 +472,17 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
         return position > mEditIndex;
     }
 
-    private void addFromPosition(int position) {
-        if (!canAddFromPosition(position)) return;
+    private boolean addFromPosition(int position) {
+        if (!canAddFromPosition(position)) return false;
         move(position, mEditIndex);
+        return true;
     }
 
-    private void removeFromPosition(int position) {
-        if (!canRemoveFromPosition(position)) return;
+    private boolean removeFromPosition(int position) {
+        if (!canRemoveFromPosition(position)) return false;
         TileInfo info = mTiles.get(position);
         move(position, info.isSystem ? mEditIndex : mTileDividerIndex);
+        return true;
     }
 
     public SpanSizeLookup getSizeLookup() {
@@ -509,25 +547,34 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
     }
 
     public class Holder extends ViewHolder {
-        private CustomizeTileView mTileView;
+        private QSTileView mTileView;
 
         public Holder(View itemView) {
             super(itemView);
             if (itemView instanceof FrameLayout) {
-                mTileView = (CustomizeTileView) ((FrameLayout) itemView).getChildAt(0);
-                mTileView.setBackground(null);
+                mTileView = (QSTileView) ((FrameLayout) itemView).getChildAt(0);
+                if (mTileView instanceof CustomizeTileView) {
+                    mTileView.setBackground(null);
+                }
                 mTileView.getIcon().disableAnimation();
                 mTileView.setTag(this);
                 ViewCompat.setAccessibilityDelegate(mTileView, mAccessibilityDelegate);
             }
         }
 
+        @Nullable
+        public CustomizeView getTileAsCustomizeView() {
+            return (CustomizeView) mTileView;
+        }
+
         public void clearDrag() {
             itemView.clearAnimation();
-            mTileView.findViewById(R.id.tile_label).clearAnimation();
-            mTileView.findViewById(R.id.tile_label).setAlpha(1);
-            mTileView.getAppLabel().clearAnimation();
-            mTileView.getAppLabel().setAlpha(.6f);
+            if (mTileView instanceof CustomizeTileView) {
+                mTileView.findViewById(R.id.tile_label).clearAnimation();
+                mTileView.findViewById(R.id.tile_label).setAlpha(1);
+                mTileView.getAppLabel().clearAnimation();
+                mTileView.getAppLabel().setAlpha(.6f);
+            }
         }
 
         public void startDrag() {
@@ -535,12 +582,14 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
                     .setDuration(DRAG_LENGTH)
                     .scaleX(DRAG_SCALE)
                     .scaleY(DRAG_SCALE);
-            mTileView.findViewById(R.id.tile_label).animate()
-                    .setDuration(DRAG_LENGTH)
-                    .alpha(0);
-            mTileView.getAppLabel().animate()
-                    .setDuration(DRAG_LENGTH)
-                    .alpha(0);
+            if (mTileView instanceof CustomizeTileView) {
+                mTileView.findViewById(R.id.tile_label).animate()
+                        .setDuration(DRAG_LENGTH)
+                        .alpha(0);
+                mTileView.getAppLabel().animate()
+                        .setDuration(DRAG_LENGTH)
+                        .alpha(0);
+            }
         }
 
         public void stopDrag() {
@@ -548,12 +597,14 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
                     .setDuration(DRAG_LENGTH)
                     .scaleX(1)
                     .scaleY(1);
-            mTileView.findViewById(R.id.tile_label).animate()
-                    .setDuration(DRAG_LENGTH)
-                    .alpha(1);
-            mTileView.getAppLabel().animate()
-                    .setDuration(DRAG_LENGTH)
-                    .alpha(.6f);
+            if (mTileView instanceof CustomizeTileView) {
+                mTileView.findViewById(R.id.tile_label).animate()
+                        .setDuration(DRAG_LENGTH)
+                        .alpha(1);
+                mTileView.getAppLabel().animate()
+                        .setDuration(DRAG_LENGTH)
+                        .alpha(.6f);
+            }
         }
 
         boolean canRemove() {
@@ -573,11 +624,17 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
         }
 
         private void add() {
-            addFromPosition(getLayoutPosition());
+            if (addFromPosition(getLayoutPosition())) {
+                itemView.announceForAccessibility(
+                        itemView.getContext().getText(R.string.accessibility_qs_edit_tile_added));
+            }
         }
 
         private void remove() {
-            removeFromPosition(getLayoutPosition());
+            if (removeFromPosition(getLayoutPosition())) {
+                itemView.announceForAccessibility(
+                        itemView.getContext().getText(R.string.accessibility_qs_edit_tile_removed));
+            }
         }
 
         boolean isCurrentTile() {
@@ -602,7 +659,7 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
         public int getSpanSize(int position) {
             final int type = getItemViewType(position);
             if (type == TYPE_EDIT || type == TYPE_DIVIDER || type == TYPE_HEADER) {
-                return NUM_COLUMNS;
+                return mNumColumns;
             } else {
                 return 1;
             }
@@ -691,7 +748,7 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
                 int position = mCurrentDrag.getAdapterPosition();
                 if (position == RecyclerView.NO_POSITION) return;
                 TileInfo info = mTiles.get(position);
-                mCurrentDrag.mTileView.setShowAppLabel(
+                ((CustomizeView) mCurrentDrag.mTileView).setShowAppLabel(
                         position > mEditIndex && !info.isSystem);
                 mCurrentDrag.stopDrag();
                 mCurrentDrag = null;
@@ -751,4 +808,9 @@ public class TileAdapter extends RecyclerView.Adapter<Holder> implements TileSta
         public void onSwiped(ViewHolder viewHolder, int direction) {
         }
     };
+
+    interface CustomizeView {
+        void setShowAppLabel(boolean showAppLabel);
+        void changeState(@NonNull QSTile.State state);
+    }
 }

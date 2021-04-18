@@ -19,6 +19,7 @@ package android.media;
 import static android.Manifest.permission.BIND_IMS_SERVICE;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 
+import android.annotation.CallbackExecutor;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -91,6 +92,7 @@ import java.util.Scanner;
 import java.util.Set;
 import java.util.UUID;
 import java.util.Vector;
+import java.util.concurrent.Executor;
 
 
 /**
@@ -663,6 +665,10 @@ public class MediaPlayer extends PlayerBase
      * result in an exception.</p>
      */
     public MediaPlayer() {
+        this(AudioSystem.AUDIO_SESSION_ALLOCATE);
+    }
+
+    private MediaPlayer(int sessionId) {
         super(new AudioAttributes.Builder().build(),
                 AudioPlaybackConfiguration.PLAYER_TYPE_JAM_MEDIAPLAYER);
 
@@ -684,7 +690,7 @@ public class MediaPlayer extends PlayerBase
         native_setup(new WeakReference<MediaPlayer>(this),
                 getCurrentOpPackageName());
 
-        baseRegisterPlayer();
+        baseRegisterPlayer(sessionId);
     }
 
     /*
@@ -913,11 +919,11 @@ public class MediaPlayer extends PlayerBase
             AudioAttributes audioAttributes, int audioSessionId) {
 
         try {
-            MediaPlayer mp = new MediaPlayer();
+            MediaPlayer mp = new MediaPlayer(audioSessionId);
             final AudioAttributes aa = audioAttributes != null ? audioAttributes :
                 new AudioAttributes.Builder().build();
             mp.setAudioAttributes(aa);
-            mp.setAudioSessionId(audioSessionId);
+            mp.native_setAudioSessionId(audioSessionId);
             mp.setDataSource(context, uri);
             if (holder != null) {
                 mp.setDisplay(holder);
@@ -978,12 +984,12 @@ public class MediaPlayer extends PlayerBase
             AssetFileDescriptor afd = context.getResources().openRawResourceFd(resid);
             if (afd == null) return null;
 
-            MediaPlayer mp = new MediaPlayer();
+            MediaPlayer mp = new MediaPlayer(audioSessionId);
 
             final AudioAttributes aa = audioAttributes != null ? audioAttributes :
                 new AudioAttributes.Builder().build();
             mp.setAudioAttributes(aa);
-            mp.setAudioSessionId(audioSessionId);
+            mp.native_setAudioSessionId(audioSessionId);
 
             mp.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
             afd.close();
@@ -1352,7 +1358,9 @@ public class MediaPlayer extends PlayerBase
     }
 
     private void startImpl() {
+        baseStart(0); // unknown device at this point
         stayAwake(true);
+        tryToEnableNativeRoutingCallback();
         _start();
     }
 
@@ -1377,6 +1385,8 @@ public class MediaPlayer extends PlayerBase
     public void stop() throws IllegalStateException {
         stayAwake(false);
         _stop();
+        baseStop();
+        tryToDisableNativeRoutingCallback();
     }
 
     private native void _stop() throws IllegalStateException;
@@ -1390,6 +1400,7 @@ public class MediaPlayer extends PlayerBase
     public void pause() throws IllegalStateException {
         stayAwake(false);
         _pause();
+        basePause();
     }
 
     private native void _pause() throws IllegalStateException;
@@ -1517,8 +1528,9 @@ public class MediaPlayer extends PlayerBase
                 native_enableDeviceCallback(true);
                 return true;
             } catch (IllegalStateException e) {
-                // Fail silently as media player state could have changed in between start
-                // and enabling routing callback, return false to indicate not enabled
+                if (Log.isLoggable(TAG, Log.DEBUG)) {
+                    Log.d(TAG, "testEnableNativeRoutingCallbacks failed", e);
+                }
             }
         }
         return false;
@@ -1581,7 +1593,7 @@ public class MediaPlayer extends PlayerBase
             Handler handler) {
         synchronized (mRoutingChangeListeners) {
             if (listener != null && !mRoutingChangeListeners.containsKey(listener)) {
-                testEnableNativeRoutingCallbacksLocked();
+                mEnableSelfRoutingMonitor = testEnableNativeRoutingCallbacksLocked();
                 mRoutingChangeListeners.put(
                         listener, new NativeRoutingEventHandlerDelegate(this, listener,
                                 handler != null ? handler : mEventHandler));
@@ -2165,7 +2177,7 @@ public class MediaPlayer extends PlayerBase
         mOnVideoSizeChangedListener = null;
         mOnTimedTextListener = null;
         mOnRtpRxNoticeListener = null;
-        mOnRtpRxNoticeHandler = null;
+        mOnRtpRxNoticeExecutor = null;
         synchronized (mTimeProviderLock) {
             if (mTimeProvider != null) {
                 mTimeProvider.close();
@@ -2365,7 +2377,13 @@ public class MediaPlayer extends PlayerBase
      * This method must be called before one of the overloaded <code> setDataSource </code> methods.
      * @throws IllegalStateException if it is called in an invalid state
      */
-    public native void setAudioSessionId(int sessionId)  throws IllegalArgumentException, IllegalStateException;
+    public void setAudioSessionId(int sessionId)
+            throws IllegalArgumentException, IllegalStateException {
+        native_setAudioSessionId(sessionId);
+        baseUpdateSessionId(sessionId);
+    }
+
+    private native void native_setAudioSessionId(int sessionId);
 
     /**
      * Returns the audio session ID.
@@ -3468,8 +3486,6 @@ public class MediaPlayer extends PlayerBase
 
             case MEDIA_STOPPED:
                 {
-                    tryToDisableNativeRoutingCallback();
-                    baseStop();
                     TimeProvider timeProvider = mTimeProvider;
                     if (timeProvider != null) {
                         timeProvider.onStopped();
@@ -3478,16 +3494,9 @@ public class MediaPlayer extends PlayerBase
                 break;
 
             case MEDIA_STARTED:
-                {
-                    baseStart(native_getRoutedDeviceId());
-                    tryToEnableNativeRoutingCallback();
-                }
                 // fall through
             case MEDIA_PAUSED:
                 {
-                    if (msg.what == MEDIA_PAUSED) {
-                        basePause();
-                    }
                     TimeProvider timeProvider = mTimeProvider;
                     if (timeProvider != null) {
                         timeProvider.onPaused(msg.what == MEDIA_PAUSED);
@@ -3695,7 +3704,6 @@ public class MediaPlayer extends PlayerBase
 
             case MEDIA_RTP_RX_NOTICE:
                 final OnRtpRxNoticeListener rtpRxNoticeListener = mOnRtpRxNoticeListener;
-                final Handler rtpRxNoticeHandler = mOnRtpRxNoticeHandler;
                 if (rtpRxNoticeListener == null) {
                     return;
                 }
@@ -3714,14 +3722,9 @@ public class MediaPlayer extends PlayerBase
                     } finally {
                         parcel.recycle();
                     }
-                    if (rtpRxNoticeHandler == null) {
-                        rtpRxNoticeListener.onRtpRxNotice(mMediaPlayer, noticeType, data);
-                    } else {
-                        rtpRxNoticeHandler.post(
-                                () ->
-                                        rtpRxNoticeListener
-                                                .onRtpRxNotice(mMediaPlayer, noticeType, data));
-                    }
+                    mOnRtpRxNoticeExecutor.execute(() ->
+                            rtpRxNoticeListener
+                                    .onRtpRxNotice(mMediaPlayer, noticeType, data));
                 }
                 return;
 
@@ -4289,28 +4292,26 @@ public class MediaPlayer extends PlayerBase
      *
      * @see OnRtpRxNoticeListener
      *
-     * @param listener the listener called after a notice from RTP Rx
-     * @param handler the {@link Handler} that receives RTP Tx events. If null is passed,
-     *                notifications will be posted on the thread that created this MediaPlayer
-     *                instance. If the creating thread does not have a {@link Looper}, then
-     *                notifications will be posted on the main thread.
+     * @param listener the listener called after a notice from RTP Rx.
+     * @param executor the {@link Executor} on which to post RTP Tx events.
      * @hide
      */
     @SystemApi
     @RequiresPermission(BIND_IMS_SERVICE)
     public void setOnRtpRxNoticeListener(
             @NonNull Context context,
-            @NonNull OnRtpRxNoticeListener listener, @Nullable Handler handler) {
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull OnRtpRxNoticeListener listener) {
         Objects.requireNonNull(context);
         Preconditions.checkArgument(
                 context.checkSelfPermission(BIND_IMS_SERVICE) == PERMISSION_GRANTED,
                 BIND_IMS_SERVICE + " permission not granted.");
         mOnRtpRxNoticeListener = Objects.requireNonNull(listener);
-        mOnRtpRxNoticeHandler = handler;
+        mOnRtpRxNoticeExecutor = Objects.requireNonNull(executor);
     }
 
     private OnRtpRxNoticeListener mOnRtpRxNoticeListener;
-    private Handler mOnRtpRxNoticeHandler;
+    private Executor mOnRtpRxNoticeExecutor;
 
     /**
      * Register a callback to be invoked when a selected track has timed metadata available.

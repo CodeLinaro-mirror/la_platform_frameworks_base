@@ -17,6 +17,7 @@
 package com.android.server.input;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -37,6 +38,7 @@ import android.content.res.Resources.NotFoundException;
 import android.content.res.TypedArray;
 import android.content.res.XmlResourceParser;
 import android.database.ContentObserver;
+import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.DisplayViewport;
 import android.hardware.input.IInputDevicesChangedListener;
@@ -50,6 +52,8 @@ import android.hardware.input.InputManagerInternal.LidSwitchCallback;
 import android.hardware.input.InputSensorInfo;
 import android.hardware.input.KeyboardLayout;
 import android.hardware.input.TouchCalibration;
+import android.hardware.lights.Light;
+import android.hardware.lights.LightState;
 import android.media.AudioManager;
 import android.os.Binder;
 import android.os.Bundle;
@@ -57,6 +61,7 @@ import android.os.CombinedVibrationEffect;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.IVibratorStateListener;
 import android.os.InputEventInjectionResult;
 import android.os.InputEventInjectionSync;
 import android.os.LocaleList;
@@ -64,9 +69,11 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.MessageQueue;
 import android.os.Process;
+import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.ResultReceiver;
 import android.os.ShellCallback;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.VibrationEffect;
 import android.provider.DeviceConfig;
@@ -77,6 +84,7 @@ import android.util.ArrayMap;
 import android.util.Log;
 import android.util.Slog;
 import android.util.SparseArray;
+import android.util.SparseBooleanArray;
 import android.view.Display;
 import android.view.IInputFilter;
 import android.view.IInputFilterHost;
@@ -100,6 +108,7 @@ import com.android.internal.notification.SystemNotificationChannels;
 import com.android.internal.os.SomeArgs;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.DumpUtils;
+import com.android.internal.util.Preconditions;
 import com.android.internal.util.XmlUtils;
 import com.android.server.DisplayThread;
 import com.android.server.LocalServices;
@@ -164,6 +173,9 @@ public class InputManagerService extends IInputManager.Stub
     /** TODO(b/169067926): Remove this. */
     private static final boolean UNTRUSTED_TOUCHES_TOAST = false;
 
+    public static final boolean ENABLE_PER_WINDOW_INPUT_ROTATION =
+            SystemProperties.getBoolean("persist.debug.per_window_input_rotation", false);
+
     // Pointer to native input manager service object.
     private final long mPtr;
 
@@ -220,6 +232,21 @@ public class InputManagerService extends IInputManager.Stub
     private Object mVibratorLock = new Object();
     private Map<IBinder, VibratorToken> mVibratorTokens = new ArrayMap<IBinder, VibratorToken>();
     private int mNextVibratorTokenValue;
+
+    // List of currently registered vibrator state changed listeners by device id.
+    @GuardedBy("mVibratorLock")
+    private final SparseArray<RemoteCallbackList<IVibratorStateListener>> mVibratorStateListeners =
+            new SparseArray<RemoteCallbackList<IVibratorStateListener>>();
+    // List of vibrator states by device id.
+    @GuardedBy("mVibratorLock")
+    private final SparseBooleanArray mIsVibrating = new SparseBooleanArray();
+    private Object mLightLock = new Object();
+    // State for light tokens. A light token marks a lights manager session, it is generated
+    // by light session open() and deleted in session close().
+    // When lights session requests light states, the token will be used to find the light session.
+    @GuardedBy("mLightLock")
+    private final ArrayMap<IBinder, LightSession> mLightSessions =
+            new ArrayMap<IBinder, LightSession>();
 
     // State for lid switch
     // Lock for the lid switch state. Held when triggering callbacks to guarantee lid switch events
@@ -289,6 +316,14 @@ public class InputManagerService extends IInputManager.Stub
     private static native void nativeCancelVibrate(long ptr, int deviceId, int token);
     private static native boolean nativeIsVibrating(long ptr, int deviceId);
     private static native int[] nativeGetVibratorIds(long ptr, int deviceId);
+    private static native int nativeGetBatteryCapacity(long ptr, int deviceId);
+    private static native int nativeGetBatteryStatus(long ptr, int deviceId);
+    private static native List<Light> nativeGetLights(long ptr, int deviceId);
+    private static native int nativeGetLightPlayerId(long ptr, int deviceId, int lightId);
+    private static native int nativeGetLightColor(long ptr, int deviceId, int lightId);
+    private static native void nativeSetLightPlayerId(long ptr, int deviceId, int lightId,
+            int playerId);
+    private static native void nativeSetLightColor(long ptr, int deviceId, int lightId, int color);
     private static native void nativeReloadKeyboardLayouts(long ptr);
     private static native void nativeReloadDeviceAliases(long ptr);
     private static native String nativeDump(long ptr);
@@ -522,8 +557,54 @@ public class InputManagerService extends IInputManager.Stub
         nativeReloadDeviceAliases(mPtr);
     }
 
+    /** Rotates CCW by `delta` 90-degree increments. */
+    private static void rotateBounds(Rect inOutBounds, int parentW, int parentH, int delta) {
+        int rdelta = ((delta % 4) + 4) % 4;
+        int origLeft = inOutBounds.left;
+        switch (rdelta) {
+            case 0:
+                return;
+            case 1:
+                inOutBounds.left = inOutBounds.top;
+                inOutBounds.top = parentW - inOutBounds.right;
+                inOutBounds.right = inOutBounds.bottom;
+                inOutBounds.bottom = parentW - origLeft;
+                return;
+            case 2:
+                inOutBounds.left = parentW - inOutBounds.right;
+                inOutBounds.right = parentW - origLeft;
+                return;
+            case 3:
+                inOutBounds.left = parentH - inOutBounds.bottom;
+                inOutBounds.bottom = inOutBounds.right;
+                inOutBounds.right = parentH - inOutBounds.top;
+                inOutBounds.top = origLeft;
+                return;
+        }
+    }
+
     private void setDisplayViewportsInternal(List<DisplayViewport> viewports) {
-        nativeSetDisplayViewports(mPtr, viewports.toArray(new DisplayViewport[0]));
+        final DisplayViewport[] vArray = new DisplayViewport[viewports.size()];
+        if (ENABLE_PER_WINDOW_INPUT_ROTATION) {
+            // Remove all viewport operations. They will be built-into the window transforms.
+            for (int i = viewports.size() - 1; i >= 0; --i) {
+                final DisplayViewport v = vArray[i] = viewports.get(i).makeCopy();
+                // deviceWidth/Height are apparently in "rotated" space, so flip them if needed.
+                if (v.orientation % 2 != 0) {
+                    final int dw = v.deviceWidth;
+                    v.deviceWidth = v.deviceHeight;
+                    v.deviceHeight = dw;
+                }
+                v.logicalFrame.set(0, 0, v.deviceWidth, v.deviceHeight);
+                v.physicalFrame.set(0, 0, v.deviceWidth, v.deviceHeight);
+                v.orientation = 0;
+            }
+        } else {
+            for (int i = viewports.size() - 1; i >= 0; --i) {
+                vArray[i] = viewports.get(i);
+            }
+        }
+        nativeSetDisplayViewports(mPtr, vArray);
     }
 
     /**
@@ -1818,8 +1899,7 @@ public class InputManagerService extends IInputManager.Stub
     }
 
     private void updateMaximumObscuringOpacityForTouchFromSettings() {
-        final float opacity = InputManager.getInstance().getMaximumObscuringOpacityForTouch(
-                mContext);
+        final float opacity = InputManager.getInstance().getMaximumObscuringOpacityForTouch();
         if (opacity < 0 || opacity > 1) {
             Log.e(TAG, "Invalid maximum obscuring opacity " + opacity
                     + ", it should be >= 0 and <= 1, rejecting update.");
@@ -2007,6 +2087,104 @@ public class InputManagerService extends IInputManager.Stub
         }
     }
 
+    // Native callback.
+    private void notifyVibratorState(int deviceId, boolean isOn) {
+        if (DEBUG) {
+            Slog.d(TAG, "notifyVibratorState: deviceId=" + deviceId + " isOn=" + isOn);
+        }
+        synchronized (mVibratorLock) {
+            mIsVibrating.put(deviceId, isOn);
+            notifyVibratorStateListenersLocked(deviceId);
+        }
+    }
+
+    @GuardedBy("mVibratorLock")
+    private void notifyVibratorStateListenersLocked(int deviceId) {
+        if (!mVibratorStateListeners.contains(deviceId)) {
+            if (DEBUG) {
+                Slog.v(TAG, "Device " + deviceId + " doesn't have vibrator state listener.");
+            }
+            return;
+        }
+        RemoteCallbackList<IVibratorStateListener> listeners =
+                mVibratorStateListeners.get(deviceId);
+        final int length = listeners.beginBroadcast();
+        try {
+            for (int i = 0; i < length; i++) {
+                notifyVibratorStateListenerLocked(deviceId, listeners.getBroadcastItem(i));
+            }
+        } finally {
+            listeners.finishBroadcast();
+        }
+    }
+
+    @GuardedBy("mVibratorLock")
+    private void notifyVibratorStateListenerLocked(int deviceId, IVibratorStateListener listener) {
+        try {
+            listener.onVibrating(mIsVibrating.get(deviceId));
+        } catch (RemoteException | RuntimeException e) {
+            Slog.e(TAG, "Vibrator state listener failed to call", e);
+        }
+    }
+
+    @Override // Binder call
+    public boolean registerVibratorStateListener(int deviceId, IVibratorStateListener listener) {
+        Preconditions.checkNotNull(listener, "listener must not be null");
+
+        RemoteCallbackList<IVibratorStateListener> listeners;
+        synchronized (mVibratorLock) {
+            if (!mVibratorStateListeners.contains(deviceId)) {
+                listeners = new RemoteCallbackList<>();
+                mVibratorStateListeners.put(deviceId, listeners);
+            } else {
+                listeners = mVibratorStateListeners.get(deviceId);
+            }
+
+            final long token = Binder.clearCallingIdentity();
+            try {
+                if (!listeners.register(listener)) {
+                    Slog.e(TAG, "Could not register vibrator state listener " + listener);
+                    return false;
+                }
+                // Notify its callback after new client registered.
+                notifyVibratorStateListenerLocked(deviceId, listener);
+                return true;
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+    }
+
+    @Override // Binder call
+    public boolean unregisterVibratorStateListener(int deviceId, IVibratorStateListener listener) {
+        synchronized (mVibratorLock) {
+            final long token = Binder.clearCallingIdentity();
+            try {
+                if (!mVibratorStateListeners.contains(deviceId)) {
+                    Slog.w(TAG, "Vibrator state listener " + deviceId + " doesn't exist");
+                    return false;
+                }
+                RemoteCallbackList<IVibratorStateListener> listeners =
+                        mVibratorStateListeners.get(deviceId);
+                return listeners.unregister(listener);
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+    }
+
+    // Binder call
+    @Override
+    public int getBatteryStatus(int deviceId) {
+        return nativeGetBatteryStatus(mPtr, deviceId);
+    }
+
+    // Binder call
+    @Override
+    public int getBatteryCapacity(int deviceId) {
+        return nativeGetBatteryCapacity(mPtr, deviceId);
+    }
+
     // Binder call
     @Override
     public void setPointerIconType(int iconId) {
@@ -2150,6 +2328,151 @@ public class InputManagerService extends IInputManager.Stub
     public void disableSensor(int deviceId, int sensorType) {
         synchronized (mInputDevicesLock) {
             nativeDisableSensor(mPtr, deviceId, sensorType);
+        }
+    }
+
+    /**
+     * LightSession represents a light session for lights manager.
+     */
+    private final class LightSession implements DeathRecipient {
+        private final int mDeviceId;
+        private final IBinder mToken;
+        private final String mOpPkg;
+        // The light ids and states that are requested by the light seesion
+        private int[] mLightIds;
+        private LightState[] mLightStates;
+
+        LightSession(int deviceId, String opPkg, IBinder token) {
+            mDeviceId = deviceId;
+            mOpPkg = opPkg;
+            mToken = token;
+        }
+
+        @Override
+        public void binderDied() {
+            if (DEBUG) {
+                Slog.d(TAG, "Light token died.");
+            }
+            synchronized (mLightLock) {
+                closeLightSession(mDeviceId, mToken);
+                mLightSessions.remove(mToken);
+            }
+        }
+    }
+
+    /**
+     * Returns the lights available for apps to control on the specified input device.
+     * Only lights that aren't reserved for system use are available to apps.
+     */
+    @Override // Binder call
+    public List<Light> getLights(int deviceId) {
+        return nativeGetLights(mPtr, deviceId);
+    }
+
+    /**
+     * Set specified light state with for a specific input device.
+     */
+    private void setLightStateInternal(int deviceId, Light light, LightState lightState) {
+        Preconditions.checkNotNull(light, "light does not exist");
+        if (DEBUG) {
+            Slog.d(TAG, "setLightStateInternal device " + deviceId + " light " + light
+                    + "lightState " + lightState);
+        }
+        if (light.getType() == Light.LIGHT_TYPE_INPUT_PLAYER_ID) {
+            nativeSetLightPlayerId(mPtr, deviceId, light.getId(), lightState.getPlayerId());
+        } else if (light.getType() == Light.LIGHT_TYPE_INPUT_SINGLE
+                || light.getType() == Light.LIGHT_TYPE_INPUT_RGB) {
+            // Set ARGB format color to input device light
+            // Refer to https://developer.android.com/reference/kotlin/android/graphics/Color
+            nativeSetLightColor(mPtr, deviceId, light.getId(), lightState.getColor());
+        } else {
+            Slog.e(TAG, "setLightStates for unsupported light type " + light.getType());
+        }
+    }
+
+    /**
+     * Set multiple light states with multiple light ids for a specific input device.
+     */
+    private void setLightStatesInternal(int deviceId, int[] lightIds, LightState[] lightStates) {
+        final List<Light> lights = nativeGetLights(mPtr, deviceId);
+        SparseArray<Light> lightArray = new SparseArray<>();
+        for (int i = 0; i < lights.size(); i++) {
+            lightArray.put(lights.get(i).getId(), lights.get(i));
+        }
+        for (int i = 0; i < lightIds.length; i++) {
+            if (lightArray.contains(lightIds[i])) {
+                setLightStateInternal(deviceId, lightArray.get(lightIds[i]), lightStates[i]);
+            }
+        }
+    }
+
+    /**
+     * Set states for multiple lights for an opened light session.
+     */
+    @Override
+    public void setLightStates(int deviceId, int[] lightIds, LightState[] lightStates,
+            IBinder token) {
+        Preconditions.checkArgument(lightIds.length == lightStates.length,
+                "lights and light states are not same length");
+        synchronized (mLightLock) {
+            LightSession lightSession = mLightSessions.get(token);
+            Preconditions.checkArgument(lightSession != null, "not registered");
+            Preconditions.checkState(lightSession.mDeviceId == deviceId, "Incorrect device ID");
+            lightSession.mLightIds = lightIds.clone();
+            lightSession.mLightStates = lightStates.clone();
+            if (DEBUG) {
+                Slog.d(TAG, "setLightStates for " + lightSession.mOpPkg + " device " + deviceId);
+            }
+        }
+        setLightStatesInternal(deviceId, lightIds, lightStates);
+    }
+
+    @Override
+    public @Nullable LightState getLightState(int deviceId, int lightId) {
+        synchronized (mLightLock) {
+            int color = nativeGetLightColor(mPtr, deviceId, lightId);
+            int playerId = nativeGetLightPlayerId(mPtr, deviceId, lightId);
+
+            return new LightState(color, playerId);
+        }
+    }
+
+    @Override
+    public void openLightSession(int deviceId, String opPkg, IBinder token) {
+        Preconditions.checkNotNull(token);
+        synchronized (mLightLock) {
+            Preconditions.checkState(mLightSessions.get(token) == null, "already registered");
+            LightSession lightSession = new LightSession(deviceId, opPkg, token);
+            try {
+                token.linkToDeath(lightSession, 0);
+            } catch (RemoteException ex) {
+                // give up
+                ex.rethrowAsRuntimeException();
+            }
+            mLightSessions.put(token, lightSession);
+            if (DEBUG) {
+                Slog.d(TAG, "Open light session for " + opPkg + " device " + deviceId);
+            }
+        }
+    }
+
+    @Override
+    public void closeLightSession(int deviceId, IBinder token) {
+        Preconditions.checkNotNull(token);
+        synchronized (mLightLock) {
+            LightSession lightSession = mLightSessions.get(token);
+            Preconditions.checkState(lightSession != null, "not registered");
+            // Turn off the lights that were previously requested by the session to be closed.
+            Arrays.fill(lightSession.mLightStates, new LightState(0));
+            setLightStatesInternal(deviceId, lightSession.mLightIds,
+                    lightSession.mLightStates);
+            mLightSessions.remove(token);
+            // If any other session is still pending with light request, apply the first session's
+            // request.
+            if (!mLightSessions.isEmpty()) {
+                LightSession nextSession = mLightSessions.valueAt(0);
+                setLightStatesInternal(deviceId, nextSession.mLightIds, nextSession.mLightStates);
+            }
         }
     }
 

@@ -42,7 +42,9 @@ import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.phone.StatusBar;
 import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
 import com.android.wm.shell.pip.Pip;
-import com.android.wm.shell.transition.Transitions;
+import com.android.wm.shell.splitscreen.SplitScreen;
+import com.android.wm.shell.startingsurface.StartingSurface;
+import com.android.wm.shell.transition.RemoteTransitions;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -71,12 +73,14 @@ public class OverviewProxyServiceTest extends SysuiTestCase {
     @Mock private NavigationModeController mMockNavModeController;
     @Mock private NotificationShadeWindowController mMockStatusBarWinController;
     @Mock private Optional<Pip> mMockPipOptional;
-    @Mock private Optional<LegacySplitScreen> mMockSplitScreenOptional;
+    @Mock private Optional<LegacySplitScreen> mMockLegacySplitScreenOptional;
+    @Mock private Optional<SplitScreen> mMockSplitScreenOptional;
     @Mock private Optional<Lazy<StatusBar>> mMockStatusBarOptionalLazy;
     @Mock private Optional<com.android.wm.shell.onehanded.OneHanded> mMockOneHandedOptional;
     @Mock private PackageManager mPackageManager;
     @Mock private SysUiState mMockSysUiState;
-    @Mock private Transitions mMockTransitions;
+    @Mock private RemoteTransitions mMockTransitions;
+    @Mock private Optional<StartingSurface> mStartingSurface;
 
     @Before
     public void setUp() throws RemoteException {
@@ -89,9 +93,9 @@ public class OverviewProxyServiceTest extends SysuiTestCase {
 
         mSpiedOverviewProxyService = spy(new OverviewProxyService(mSpiedContext, mMockCommandQueue,
                 mMockNavBarControllerLazy, mMockNavModeController, mMockStatusBarWinController,
-                mMockSysUiState, mMockPipOptional, mMockSplitScreenOptional,
-                mMockStatusBarOptionalLazy, mMockOneHandedOptional,
-                mMockBroadcastDispatcher, mMockTransitions));
+                mMockSysUiState, mMockPipOptional, mMockLegacySplitScreenOptional,
+                mMockSplitScreenOptional, mMockStatusBarOptionalLazy, mMockOneHandedOptional,
+                mMockBroadcastDispatcher, mMockTransitions, mStartingSurface));
     }
 
     @Test

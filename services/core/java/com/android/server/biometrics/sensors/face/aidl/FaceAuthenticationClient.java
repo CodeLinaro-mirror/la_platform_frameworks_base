@@ -28,6 +28,7 @@ import android.hardware.biometrics.BiometricsProtoEnums;
 import android.hardware.biometrics.common.ICancellationSignal;
 import android.hardware.biometrics.face.IFace;
 import android.hardware.biometrics.face.ISession;
+import android.hardware.face.FaceAuthenticationFrame;
 import android.hardware.face.FaceManager;
 import android.os.IBinder;
 import android.os.RemoteException;
@@ -40,6 +41,7 @@ import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.LockoutCache;
 import com.android.server.biometrics.sensors.LockoutConsumer;
 import com.android.server.biometrics.sensors.LockoutTracker;
+import com.android.server.biometrics.sensors.face.ReEnrollNotificationUtils;
 import com.android.server.biometrics.sensors.face.UsageStats;
 
 import java.util.ArrayList;
@@ -67,11 +69,11 @@ class FaceAuthenticationClient extends AuthenticationClient<ISession> implements
             @NonNull ClientMonitorCallbackConverter listener, int targetUserId, long operationId,
             boolean restricted, String owner, int cookie, boolean requireConfirmation, int sensorId,
             boolean isStrongBiometric, int statsClient, @NonNull UsageStats usageStats,
-            @NonNull LockoutCache lockoutCache) {
+            @NonNull LockoutCache lockoutCache, boolean isKeyguard) {
         super(context, lazyDaemon, token, listener, targetUserId, operationId, restricted,
                 owner, cookie, requireConfirmation, sensorId, isStrongBiometric,
                 BiometricsProtoEnums.MODALITY_FACE, statsClient, null /* taskStackListener */,
-                lockoutCache);
+                lockoutCache, isKeyguard);
         mUsageStats = usageStats;
         mLockoutCache = lockoutCache;
         mNotificationManager = context.getSystemService(NotificationManager.class);
@@ -162,6 +164,9 @@ class FaceAuthenticationClient extends AuthenticationClient<ISession> implements
                     vibrateError();
                 }
                 break;
+            case BiometricConstants.BIOMETRIC_ERROR_RE_ENROLL:
+                ReEnrollNotificationUtils.showReEnrollmentNotification(getContext());
+                break;
             default:
                 break;
         }
@@ -177,20 +182,40 @@ class FaceAuthenticationClient extends AuthenticationClient<ISession> implements
         return isBiometricPrompt() ? mBiometricPromptIgnoreListVendor : mKeyguardIgnoreListVendor;
     }
 
-    private boolean shouldSend(int acquireInfo, int vendorCode) {
-        if (acquireInfo == FaceManager.FACE_ACQUIRED_VENDOR) {
-            return !Utils.listContains(getAcquireVendorIgnorelist(), vendorCode);
-        } else {
-            return !Utils.listContains(getAcquireIgnorelist(), acquireInfo);
-        }
+    private boolean shouldSendAcquiredMessage(int acquireInfo, int vendorCode) {
+        return acquireInfo == FaceManager.FACE_ACQUIRED_VENDOR
+                ? !Utils.listContains(getAcquireVendorIgnorelist(), vendorCode)
+                : !Utils.listContains(getAcquireIgnorelist(), acquireInfo);
     }
 
     @Override
     public void onAcquired(int acquireInfo, int vendorCode) {
         mLastAcquire = acquireInfo;
-
-        final boolean shouldSend = shouldSend(acquireInfo, vendorCode);
+        final boolean shouldSend = shouldSendAcquiredMessage(acquireInfo, vendorCode);
         onAcquiredInternal(acquireInfo, vendorCode, shouldSend);
+    }
+
+    /**
+     * Called each time a new frame is received during face authentication.
+     *
+     * @param frame Information about the current frame.
+     */
+    public void onAuthenticationFrame(@NonNull FaceAuthenticationFrame frame) {
+        // Log acquisition but don't send it to the client yet, since that's handled below.
+        final int acquireInfo = frame.getData().getAcquiredInfo();
+        final int vendorCode = frame.getData().getVendorCode();
+        mLastAcquire = acquireInfo;
+        onAcquiredInternal(acquireInfo, vendorCode, false /* shouldSend */);
+
+        final boolean shouldSend = shouldSendAcquiredMessage(acquireInfo, vendorCode);
+        if (shouldSend && getListener() != null) {
+            try {
+                getListener().onAuthenticationFrame(frame);
+            } catch (RemoteException e) {
+                Slog.w(TAG, "Failed to send authentication frame", e);
+                mCallback.onClientFinished(this, false /* success */);
+            }
+        }
     }
 
     @Override public void onLockoutTimed(long durationMillis) {
