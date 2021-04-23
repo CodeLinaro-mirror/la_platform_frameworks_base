@@ -46,6 +46,7 @@ import android.net.wifi.hotspot2.IProvisioningCallback;
 import android.net.wifi.hotspot2.OsuProvider;
 import android.net.wifi.hotspot2.PasspointConfiguration;
 import android.net.wifi.hotspot2.ProvisioningCallback;
+import android.net.wifi.ThermalData;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
@@ -6527,6 +6528,23 @@ public class WifiManager {
                 + threshold + ", interval=" + interval);
         try {
             return mService.setCongestionReport(ifname, enable, threshold, interval);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * get thermal info
+     *
+     * @param ifname is the interface to get thermal info
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS)
+    public ThermalData getThermalInfo(String ifname) {
+        if (ifname == null) throw new IllegalArgumentException("ifname cannot be null");
+        Log.v(TAG, "getThermalInfo: ifname=" + ifname);
+        try {
+            return mService.getThermalInfo(ifname);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

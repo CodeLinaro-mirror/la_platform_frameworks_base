@@ -41,6 +41,7 @@ import android.net.wifi.SoftApConfiguration;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiNetworkSuggestion;
+import android.net.wifi.ThermalData;
 
 import android.os.Messenger;
 import android.os.ResultReceiver;
@@ -299,4 +300,5 @@ interface IWifiManager
 
     boolean setCongestionReport(String ifname, boolean enable, int threshold, int interval);
 
+    ThermalData getThermalInfo(String ifname);
 }
