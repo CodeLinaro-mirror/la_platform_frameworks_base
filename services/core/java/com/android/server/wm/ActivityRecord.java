@@ -1753,24 +1753,27 @@ public final class ActivityRecord extends WindowToken implements WindowManagerSe
             return false;
         }
 
-        final ActivityManager.TaskSnapshot snapshot =
+        int type = STARTING_WINDOW_TYPE_NONE;
+        if (task != null) {
+            final ActivityManager.TaskSnapshot snapshot =
                 mWmService.mTaskSnapshotController.getSnapshot(task.mTaskId, task.mUserId,
                         false /* restoreFromDisk */, false /* isLowResolution */);
-        final int type = getStartingWindowType(newTask, taskSwitch, processRunning,
-                allowTaskSnapshot, activityCreated, snapshot);
+                type = getStartingWindowType(newTask, taskSwitch, processRunning,
+                    allowTaskSnapshot, activityCreated, snapshot);
 
-        if (type == STARTING_WINDOW_TYPE_SNAPSHOT) {
-            if (isActivityTypeHome()) {
-                // The snapshot of home is only used once because it won't be updated while screen
-                // is on (see {@link TaskSnapshotController#screenTurningOff}).
-                mWmService.mTaskSnapshotController.removeSnapshotCache(task.mTaskId);
-                if ((mDisplayContent.mAppTransition.getTransitFlags()
-                        & WindowManager.TRANSIT_FLAG_KEYGUARD_GOING_AWAY_NO_ANIMATION) == 0) {
-                    // Only use snapshot of home as starting window when unlocking directly.
-                    return false;
+            if (type == STARTING_WINDOW_TYPE_SNAPSHOT) {
+                if (isActivityTypeHome()) {
+                    // The snapshot of home is only used once because it won't be updated while screen
+                    // is on (see {@link TaskSnapshotController#screenTurningOff}).
+                    mWmService.mTaskSnapshotController.removeSnapshotCache(task.mTaskId);
+                    if ((mDisplayContent.mAppTransition.getTransitFlags()
+                                & WindowManager.TRANSIT_FLAG_KEYGUARD_GOING_AWAY_NO_ANIMATION) == 0) {
+                        // Only use snapshot of home as starting window when unlocking directly.
+                        return false;
+                    }
                 }
+                return createSnapshot(snapshot);
             }
-            return createSnapshot(snapshot);
         }
 
         // If this is a translucent window, then don't show a starting window -- the current
