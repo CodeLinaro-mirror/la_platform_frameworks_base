@@ -2271,6 +2271,7 @@ public final class OomAdjuster {
                 }
             } else if (mService.mWakefulness != PowerManagerInternal.WAKEFULNESS_AWAKE
                     && app.setAdj < ProcessList.FOREGROUND_APP_ADJ
+		    && app.setAdj > ProcessList.SYSTEM_ADJ
                     // Because these can fire independent of oom_adj/procstate changes, we need
                     // to throttle the actual dispatch of these requests in addition to the
                     // processing of the requests. As a result, there is throttling both here
