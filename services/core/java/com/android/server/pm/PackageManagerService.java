@@ -14926,19 +14926,33 @@ public class PackageManagerService extends IPackageManager.Stub
 
             // Verify: if target already has an installer package, it must
             // be signed with the same cert as the caller.
-            if (targetPackageSetting.installerPackageName != null) {
-                PackageSetting setting = mSettings.mPackages.get(
-                        targetPackageSetting.installerPackageName);
-                // If the currently set package isn't valid, then it's always
-                // okay to change it.
-                if (setting != null) {
-                    if (compareSignatures(callerSignature,
-                            setting.signatures.mSigningDetails.signatures)
-                            != PackageManager.SIGNATURE_MATCH) {
-                        throw new SecurityException(
-                                "Caller does not have same cert as old installer package "
-                                + targetPackageSetting.installerPackageName);
-                    }
+            String targetInstallerPackageName =
+                    targetPackageSetting.installerPackageName;
+            PackageSetting targetInstallerPkgSetting = targetInstallerPackageName == null ? null :
+                    mSettings.mPackages.get(targetInstallerPackageName);
+
+            if (targetInstallerPkgSetting != null) {
+                if (compareSignatures(callerSignature,
+                        targetInstallerPkgSetting.signatures.mSigningDetails.signatures)
+                        != PackageManager.SIGNATURE_MATCH) {
+                    throw new SecurityException(
+                            "Caller does not have same cert as old installer package "
+                                    + targetInstallerPackageName);
+                }
+            } else if (mContext.checkCallingOrSelfPermission(Manifest.permission.INSTALL_PACKAGES)
+                    != PackageManager.PERMISSION_GRANTED) {
+                // This is probably an attempt to exploit vulnerability b/150857253 of taking
+                // privileged installer permissions when the installer has been uninstalled or
+                // was never set.
+                EventLog.writeEvent(0x534e4554, "150857253", callingUid, "");
+
+                // Backport, use raw SDK value
+                if (getUidTargetSdkVersionLockedLPr(callingUid) > 29) {
+                    throw new SecurityException("Neither user " + callingUid
+                            + " nor current process has " + Manifest.permission.INSTALL_PACKAGES);
+                } else {
+                    // If not targeting >29, fail silently for backwards compatibility
+                    return;
                 }
             }
 
@@ -17725,48 +17739,36 @@ public class PackageManagerService extends IPackageManager.Stub
         int count = 0;
         final String packageName = pkg.packageName;
 
-        boolean handlesWebUris = false;
-        final boolean alreadyVerified;
         synchronized (mPackages) {
             // If this is a new install and we see that we've already run verification for this
             // package, we have nothing to do: it means the state was restored from backup.
-            final IntentFilterVerificationInfo ivi =
-                    mSettings.getIntentFilterVerificationLPr(packageName);
-            alreadyVerified = (ivi != null);
-            if (!replacing && alreadyVerified) {
-                if (DEBUG_DOMAIN_VERIFICATION) {
-                    Slog.i(TAG, "Package " + packageName + " already verified: status="
-                            + ivi.getStatusString());
+            if (!replacing) {
+                IntentFilterVerificationInfo ivi =
+                        mSettings.getIntentFilterVerificationLPr(packageName);
+                if (ivi != null) {
+                    if (DEBUG_DOMAIN_VERIFICATION) {
+                        Slog.i(TAG, "Package " + packageName+ " already verified: status="
+                                + ivi.getStatusString());
+                    }
+                    return;
                 }
-                return;
             }
 
-            // If any filters need to be verified, then all need to be.  In addition, we need to
-            // know whether an updating app has any web navigation intent filters, to re-
-            // examine handling policy even if not re-verifying.
+            // If any filters need to be verified, then all need to be.
             boolean needToVerify = false;
             for (PackageParser.Activity a : pkg.activities) {
                 for (ActivityIntentInfo filter : a.intents) {
-                    if (filter.handlesWebUris(true)) {
-                        handlesWebUris = true;
-                    }
                     if (filter.needsVerification() && needsNetworkVerificationLPr(filter)) {
                         if (DEBUG_DOMAIN_VERIFICATION) {
                             Slog.d(TAG,
                                     "Intent filter needs verification, so processing all filters");
                         }
                         needToVerify = true;
-                        // It's safe to break out here because filter.needsVerification()
-                        // can only be true if filter.handlesWebUris(true) returns true, so
-                        // we've already noted that.
                         break;
                     }
                 }
             }
 
-            // Note whether this app publishes any web navigation handling support at all,
-            // and whether there are any web-nav filters that fit the profile for running
-            // a verification pass now.
             if (needToVerify) {
                 final int verificationId = mIntentFilterVerificationToken++;
                 for (PackageParser.Activity a : pkg.activities) {
@@ -17786,23 +17788,13 @@ public class PackageManagerService extends IPackageManager.Stub
         }
 
         if (count > 0) {
-            // count > 0 means that we're running a full verification pass
             if (DEBUG_DOMAIN_VERIFICATION) Slog.d(TAG, "Starting " + count
                     + " IntentFilter verification" + (count > 1 ? "s" : "")
                     +  " for userId:" + userId);
             mIntentFilterVerifier.startVerifications(userId);
-        } else if (alreadyVerified && handlesWebUris) {
-            // App used autoVerify in the past, no longer does, but still handles web
-            // navigation starts.
-            if (DEBUG_DOMAIN_VERIFICATION) {
-                Slog.d(TAG, "App changed web filters but no longer verifying - resetting policy");
-            }
-            synchronized (mPackages) {
-                clearIntentFilterVerificationsLPw(packageName, userId);
-            }
         } else {
             if (DEBUG_DOMAIN_VERIFICATION) {
-                Slog.d(TAG, "No web filters or no prior verify policy for " + packageName);
+                Slog.d(TAG, "No filters or not all autoVerify for " + packageName);
             }
         }
     }
