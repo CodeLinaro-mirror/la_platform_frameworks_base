@@ -121,7 +121,7 @@ interface IActivityManager {
     oneway void activityIdle(in IBinder token, in Configuration config,
             in boolean stopProfiling);
     void activityPaused(in IBinder token);
-    oneway void activityStopped(in IBinder token, in Bundle state,
+    void activityStopped(in IBinder token, in Bundle state,
             in PersistableBundle persistentState, in CharSequence description);
     String getCallingPackage(in IBinder token);
     ComponentName getCallingActivity(in IBinder token);
@@ -278,7 +278,8 @@ interface IActivityManager {
     boolean isImmersive(in IBinder token);
     void setImmersive(in IBinder token, boolean immersive);
     boolean isTopActivityImmersive();
-    void crashApplication(int uid, int initialPid, in String packageName, int userId, in String message);
+    void crashApplication(int uid, int initialPid, in String packageName, int userId,
+            in String message, boolean force);
     String getProviderMimeType(in Uri uri, int userId);
     IBinder newUriPermissionOwner(in String name);
     void grantUriPermissionFromOwner(in IBinder owner, int fromUid, in String targetPkg,

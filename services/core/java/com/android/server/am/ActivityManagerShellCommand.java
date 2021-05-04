@@ -558,9 +558,6 @@ final class ActivityManagerShellCommand extends ShellCommand {
                 if (result.who != null) {
                     pw.println("Activity: " + result.who.flattenToShortString());
                 }
-                if (result.thisTime >= 0) {
-                    pw.println("ThisTime: " + result.thisTime);
-                }
                 if (result.totalTime >= 0) {
                     pw.println("TotalTime: " + result.totalTime);
                 }
@@ -990,7 +987,7 @@ final class ActivityManagerShellCommand extends ShellCommand {
         } catch (NumberFormatException e) {
             packageName = arg;
         }
-        mInterface.crashApplication(-1, pid, packageName, userId, "shell-induced crash");
+        mInterface.crashApplication(-1, pid, packageName, userId, "shell-induced crash", false);
         return 0;
     }
 

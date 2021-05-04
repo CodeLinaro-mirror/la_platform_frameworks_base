@@ -286,6 +286,14 @@ public class ActivityStartController {
     final int startActivitiesInPackage(int uid, String callingPackage, Intent[] intents,
             String[] resolvedTypes, IBinder resultTo, SafeActivityOptions options, int userId,
             boolean validateIncomingUser, PendingIntentRecord originatingPendingIntent) {
+				        return startActivitiesInPackage(uid, 0, UserHandle.USER_NULL,
+            callingPackage, intents, resolvedTypes, resultTo, options, userId,
+            validateIncomingUser);
+   }
+
+    final int startActivitiesInPackage(int uid, int realCallingPid, int realCallingUid,
+           String callingPackage, Intent[] intents, String[] resolvedTypes, IBinder resultTo,
+           SafeActivityOptions options, int userId, boolean validateIncomingUser) {
 
         final String reason = "startActivityInPackage";
 
@@ -293,13 +301,13 @@ public class ActivityStartController {
                 Binder.getCallingUid(), reason);
 
         // TODO: Switch to user app stacks here.
-        return startActivities(null, uid, callingPackage, intents, resolvedTypes, resultTo, options,
-                userId, reason, originatingPendingIntent);
+         return startActivities(null, uid, realCallingPid, realCallingUid, callingPackage, intents,
+               resolvedTypes, resultTo, options, userId, reason);
     }
 
-    int startActivities(IApplicationThread caller, int callingUid, String callingPackage,
-            Intent[] intents, String[] resolvedTypes, IBinder resultTo, SafeActivityOptions options,
-            int userId, String reason, PendingIntentRecord originatingPendingIntent) {
+     int startActivities(IApplicationThread caller, int callingUid, int incomingRealCallingPid,
+           int incomingRealCallingUid, String callingPackage, Intent[] intents, String[] resolvedTypes,
+           IBinder resultTo, SafeActivityOptions options, int userId, String reason) {
         if (intents == null) {
             throw new NullPointerException("intents is null");
         }
@@ -310,8 +318,12 @@ public class ActivityStartController {
             throw new IllegalArgumentException("intents are length different than resolvedTypes");
         }
 
-        final int realCallingPid = Binder.getCallingPid();
-        final int realCallingUid = Binder.getCallingUid();
+	   final int realCallingPid = incomingRealCallingPid != 0
+							   ? incomingRealCallingPid
+							  : Binder.getCallingPid();
+	   final int realCallingUid = incomingRealCallingUid != UserHandle.USER_NULL
+							   ? incomingRealCallingUid
+							  : Binder.getCallingUid();
 
         int callingPid;
         if (callingUid >= 0) {
@@ -322,6 +334,9 @@ public class ActivityStartController {
         } else {
             callingPid = callingUid = -1;
         }
+        boolean forceNewTask = false;
+        final int filterCallingUid = ActivityStarter.computeResolveFilterUid(
+                callingUid, realCallingUid, UserHandle.USER_NULL);
         final long origId = Binder.clearCallingIdentity();
         try {
             synchronized (mService) {
@@ -341,11 +356,13 @@ public class ActivityStartController {
 
                     // Don't modify the client's object!
                     intent = new Intent(intent);
+                    if (forceNewTask) {
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    }
 
                     // Collect information about the target of the Intent.
                     ActivityInfo aInfo = mSupervisor.resolveActivity(intent, resolvedTypes[i], 0,
-                            null, userId, ActivityStarter.computeResolveFilterUid(
-                                    callingUid, realCallingUid, UserHandle.USER_NULL));
+                            null, userId, filterCallingUid);
                     // TODO: New, check if this is correct
                     aInfo = mService.getActivityInfoForUser(aInfo, userId);
 
@@ -378,14 +395,23 @@ public class ActivityStartController {
                             // Top activity decides on animation being run, so we allow only for the
                             // top one as otherwise an activity below might consume it.
                             .setAllowPendingRemoteAnimationRegistryLookup(top /* allowLookup*/)
-                            .setOriginatingPendingIntent(originatingPendingIntent)
                             .execute();
 
                     if (res < 0) {
                         return res;
                     }
 
-                    resultTo = outActivity[0] != null ? outActivity[0].appToken : null;
+                    final ActivityRecord started = outActivity[0];
+                    if (started != null && started.getUid() == filterCallingUid) {
+                        // Only the started activity which has the same uid as the source caller can
+                        // be the caller of next activity.
+                        resultTo = started.appToken;
+                        forceNewTask = false;
+                    } else {
+                        // Different apps not adjacent to the caller are forced to be new task.
+                        resultTo = null;
+                        forceNewTask = true;
+                    }
                 }
             }
         } finally {

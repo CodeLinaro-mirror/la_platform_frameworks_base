@@ -581,6 +581,12 @@ public class ActivityManagerService extends IActivityManager.Stub
     // before we decide it must be hung.
     static final int CONTENT_PROVIDER_PUBLISH_TIMEOUT = 10*1000;
 
+    /**
+     * How long we wait for an provider to be published. Should be longer than
+     * {@link #CONTENT_PROVIDER_PUBLISH_TIMEOUT}.
+     */
+    static final int CONTENT_PROVIDER_WAIT_TIMEOUT = 20 * 1000;
+
     // How long we wait for a launched process to attach to the activity manager
     // before we decide it's never going to come up for real, when the process was
     // started with a wrapper for instrumentation (such as Valgrind) because it
@@ -3989,7 +3995,8 @@ public class ActivityManagerService extends IActivityManager.Stub
             final int procCount = procs.size();
             for (int i = 0; i < procCount; i++) {
                 final int procUid = procs.keyAt(i);
-                if (UserHandle.isApp(procUid) || !UserHandle.isSameUser(procUid, uid)) {
+                if (UserHandle.isApp(procUid) || !UserHandle.isSameUser(procUid, uid)
+                        || UserHandle.isIsolated(procUid)) {
                     // Don't use an app process or different user process for system component.
                     continue;
                 }
@@ -4218,6 +4225,7 @@ public class ActivityManagerService extends IActivityManager.Stub
             }
             checkTime(startTime, "startProcess: done removing from pids map");
             app.setPid(0);
+            app.startSeq = 0;
         }
 
         if (DEBUG_PROCESSES && mProcessesOnHold.contains(app)) Slog.v(TAG_PROCESSES,
@@ -4408,6 +4416,14 @@ public class ActivityManagerService extends IActivityManager.Stub
         app.killedByAm = false;
         app.removed = false;
         app.killed = false;
+        if (app.startSeq != 0) {
+            Slog.wtf(TAG, "startProcessLocked processName:" + app.processName
+                    + " with non-zero startSeq:" + app.startSeq);
+        }
+        if (app.pid != 0) {
+            Slog.wtf(TAG, "startProcessLocked processName:" + app.processName
+                    + " with non-zero pid:" + app.pid);
+        }
         final long startSeq = app.startSeq = ++mProcStartSeqCounter;
         app.setStartParams(uid, hostingType, hostingNameStr, seInfo, startTime);
         if (mConstants.FLAG_PROCESS_START_ASYNC) {
@@ -4593,8 +4609,11 @@ public class ActivityManagerService extends IActivityManager.Stub
         // If there is already an app occupying that pid that hasn't been cleaned up
         if (oldApp != null && !app.isolated) {
             // Clean up anything relating to this pid first
-            Slog.w(TAG, "Reusing pid " + pid
-                    + " while app is still mapped to it");
+          Slog.wtf(TAG, "handleProcessStartedLocked process:" + app.processName
+                  + " startSeq:" + app.startSeq
+                  + " pid:" + pid
+                  + " belongs to another existing app:" + oldApp.processName
+                  + " startSeq:" + oldApp.startSeq);
             cleanUpApplicationRecordLocked(oldApp, false, false, -1,
                     true /*replacingPid*/);
         }
@@ -4808,9 +4827,18 @@ public class ActivityManagerService extends IActivityManager.Stub
         return procState;
     }
 
+    private boolean isCallerShell() {
+        final int callingUid = Binder.getCallingUid();
+        return callingUid == SHELL_UID || callingUid == ROOT_UID;
+    }
+
     @Override
     public boolean setProcessMemoryTrimLevel(String process, int userId, int level)
             throws RemoteException {
+        if (!isCallerShell()) {
+            EventLog.writeEvent(0x534e4554, 160390416, Binder.getCallingUid(), "");
+            throw new SecurityException("Only shell can call it");
+        }
         synchronized (this) {
             final ProcessRecord app = findProcessLocked(process, userId, "setProcessMemoryTrimLevel");
             if (app == null) {
@@ -5589,9 +5617,9 @@ public class ActivityManagerService extends IActivityManager.Stub
         userId = mUserController.handleIncomingUser(Binder.getCallingPid(), Binder.getCallingUid(),
                 userId, false, ALLOW_FULL_ONLY, reason, null);
         // TODO: Switch to user app stacks here.
-        int ret = mActivityStartController.startActivities(caller, -1, callingPackage,
-                intents, resolvedTypes, resultTo, SafeActivityOptions.fromBundle(bOptions), userId,
-                reason, null /* originatingPendingIntent */);
+              int ret = mActivityStartController.startActivities(caller, -1, 0,
+              UserHandle.USER_NULL, callingPackage, intents, resolvedTypes, resultTo,
+              SafeActivityOptions.fromBundle(bOptions), userId, reason);
         return ret;
     }
 
@@ -5753,7 +5781,7 @@ public class ActivityManagerService extends IActivityManager.Stub
 
     @Override
     public void crashApplication(int uid, int initialPid, String packageName, int userId,
-            String message) {
+            String message, boolean force) {
         if (checkCallingPermission(android.Manifest.permission.FORCE_STOP_PACKAGES)
                 != PackageManager.PERMISSION_GRANTED) {
             String msg = "Permission Denial: crashApplication() from pid="
@@ -5765,7 +5793,8 @@ public class ActivityManagerService extends IActivityManager.Stub
         }
 
         synchronized(this) {
-            mAppErrors.scheduleAppCrashLocked(uid, initialPid, packageName, userId, message);
+            mAppErrors.scheduleAppCrashLocked(uid, initialPid, packageName, userId,
+                    message, force);
         }
     }
 
@@ -5929,19 +5958,6 @@ public class ActivityManagerService extends IActivityManager.Stub
             }
         } finally {
             mWindowManager.continueSurfaceLayout();
-        }
-
-        // Hack for pi
-        // When an app process is removed, activities from the process may be relaunched. In the
-        // case of forceStopPackageLocked the activities are finished before any window is drawn,
-        // and the launch time is not cleared. This will be incorrectly used to calculate launch
-        // time for the next launched activity launched in the same windowing mode.
-        if (clearLaunchStartTime) {
-            final LaunchTimeTracker.Entry entry = mStackSupervisor
-                    .getLaunchTimeTracker().getEntry(mStackSupervisor.getWindowingMode());
-            if (entry != null) {
-                entry.mLaunchStartTime = 0;
-            }
         }
     }
 
@@ -7586,7 +7602,7 @@ public class ActivityManagerService extends IActivityManager.Stub
     }
 
     @GuardedBy("this")
-    private final boolean attachApplicationLocked(IApplicationThread thread,
+    private boolean attachApplicationLocked(@NonNull IApplicationThread thread,
             int pid, int callingUid, long startSeq) {
 
         // Find the application record that is being attached...  either via
@@ -7598,6 +7614,26 @@ public class ActivityManagerService extends IActivityManager.Stub
             synchronized (mPidsSelfLocked) {
                 app = mPidsSelfLocked.get(pid);
             }
+            if (app != null && (app.startUid != callingUid || app.startSeq != startSeq)) {
+                String processName = null;
+                final ProcessRecord pending = mPendingStarts.get(startSeq);
+                if (pending != null) {
+                    processName = pending.processName;
+                }
+                final String msg = "attachApplicationLocked process:" + processName
+                      + " startSeq:" + startSeq
+                      + " pid:" + pid
+                      + " belongs to another existing app:" + app.processName
+                      + " startSeq:" + app.startSeq;
+                Slog.wtf(TAG, msg);
+                // SafetyNet logging for b/131105245.
+                EventLog.writeEvent(0x534e4554, "131105245", app.startUid, msg);
+                // If there is already an app occupying that pid that hasn't been cleaned up
+                cleanUpApplicationRecordLocked(app, false, false, -1,
+                    true /*replacingPid*/);
+                mPidsSelfLocked.remove(pid);
+                app = null;
+            }
         } else {
             app = null;
         }
@@ -7606,7 +7642,7 @@ public class ActivityManagerService extends IActivityManager.Stub
         // update the internal state.
         if (app == null && startSeq > 0) {
             final ProcessRecord pending = mPendingStarts.get(startSeq);
-            if (pending != null && pending.startUid == callingUid
+            if (pending != null && pending.startUid == callingUid && pending.startSeq == startSeq
                     && handleProcessStartedLocked(pending, pid, pending.usingWrapper,
                             startSeq, true)) {
                 app = pending;
@@ -7947,6 +7983,9 @@ public class ActivityManagerService extends IActivityManager.Stub
 
     @Override
     public final void attachApplication(IApplicationThread thread, long startSeq) {
+        if (thread == null) {
+            throw new SecurityException("Invalid application interface");
+        }
         synchronized (this) {
             int callingPid = Binder.getCallingPid();
             final int callingUid = Binder.getCallingUid();
@@ -8775,6 +8814,14 @@ public class ActivityManagerService extends IActivityManager.Stub
 
     @Override
     public boolean isAppForeground(int uid) {
+        int callerUid = Binder.getCallingUid();
+        if (UserHandle.isCore(callerUid) || callerUid == uid) {
+            return isAppForegroundInternal(uid);
+        }
+        return false;
+    }
+
+    private boolean isAppForegroundInternal(int uid) {
         synchronized (this) {
             UidRecord uidRec = mActiveUids.get(uid);
             if (uidRec == null || uidRec.idle) {
@@ -12174,6 +12221,7 @@ public class ActivityManagerService extends IActivityManager.Stub
         ContentProviderRecord cpr;
         ContentProviderConnection conn = null;
         ProviderInfo cpi = null;
+        boolean providerRunning = false;
 
         synchronized(this) {
             long startTime = SystemClock.uptimeMillis();
@@ -12213,7 +12261,26 @@ public class ActivityManagerService extends IActivityManager.Stub
                 }
             }
 
-            boolean providerRunning = cpr != null && cpr.proc != null && !cpr.proc.killed;
+            if (cpr != null && cpr.proc != null) {
+                providerRunning = !cpr.proc.killed;
+
+                // Note if killedByAm is also set, this means the provider process has just been
+                // killed by AM (in ProcessRecord.kill()), but appDiedLocked() hasn't been called
+                // yet. So we need to call appDiedLocked() here and let it clean up.
+                // (See the commit message on I2c4ba1e87c2d47f2013befff10c49b3dc337a9a7 to see
+                // how to test this case.)
+                if (cpr.proc.killed && cpr.proc.killedByAm) {
+                    checkTime(startTime, "getContentProviderImpl: before appDied (killedByAm)");
+                    final long iden = Binder.clearCallingIdentity();
+                    try {
+                        appDiedLocked(cpr.proc);
+                    } finally {
+                        Binder.restoreCallingIdentity(iden);
+                    }
+                    checkTime(startTime, "getContentProviderImpl: after appDied (killedByAm)");
+                }
+            }
+
             if (providerRunning) {
                 cpi = cpr.info;
                 String msg;
@@ -12506,6 +12573,7 @@ public class ActivityManagerService extends IActivityManager.Stub
         }
 
         // Wait for the provider to be published...
+        final long timeout = SystemClock.uptimeMillis() + CONTENT_PROVIDER_WAIT_TIMEOUT;
         synchronized (cpr) {
             while (cpr.provider == null) {
                 if (cpr.launchingApp == null) {
@@ -12520,13 +12588,22 @@ public class ActivityManagerService extends IActivityManager.Stub
                     return null;
                 }
                 try {
+                    final long wait = Math.max(0L, timeout - SystemClock.uptimeMillis());
                     if (DEBUG_MU) Slog.v(TAG_MU,
                             "Waiting to start provider " + cpr
-                            + " launchingApp=" + cpr.launchingApp);
+                            + " launchingApp=" + cpr.launchingApp + " for " + wait + " ms");
                     if (conn != null) {
                         conn.waiting = true;
                     }
-                    cpr.wait();
+                    cpr.wait(wait);
+                    if (cpr.provider == null) {
+                        Slog.wtf(TAG, "Timeout waiting for provider "
+                                + cpi.applicationInfo.packageName + "/"
+                                + cpi.applicationInfo.uid + " for provider "
+                                + name
+                                + " providerRunning=" + providerRunning);
+                        return null;
+                    }
                 } catch (InterruptedException ex) {
                 } finally {
                     if (conn != null) {

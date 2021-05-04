@@ -53,12 +53,16 @@ import android.os.Process;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.os.UserManagerInternal;
 import android.os.UserManagerInternal.UserRestrictionsListener;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
+import android.text.TextUtils;
+import android.util.FeatureFlagUtils;
+import android.util.Log;
 import android.util.Slog;
 import android.util.StatsLog;
 
@@ -72,6 +76,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -385,6 +390,15 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
         registerForBleScanModeChange();
         mCallbacks = new RemoteCallbackList<IBluetoothManagerCallback>();
         mStateChangeCallbacks = new RemoteCallbackList<IBluetoothStateChangeCallback>();
+
+        // TODO: We need a more generic way to initialize the persist keys of FeatureFlagUtils
+        boolean isHearingAidEnabled;
+        String value = SystemProperties.get(FeatureFlagUtils.PERSIST_PREFIX + FeatureFlagUtils.HEARING_AID_SETTINGS);
+        if (!TextUtils.isEmpty(value)) {
+            isHearingAidEnabled = Boolean.parseBoolean(value);
+            Log.v(TAG, "set feature flag HEARING_AID_SETTINGS to " + isHearingAidEnabled);
+            FeatureFlagUtils.setEnabled(context, FeatureFlagUtils.HEARING_AID_SETTINGS, isHearingAidEnabled);
+        }
 
         IntentFilter filter = new IntentFilter();
         filter.addAction(BluetoothAdapter.ACTION_LOCAL_NAME_CHANGED);
@@ -1067,11 +1081,21 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
     public void unbindBluetoothProfileService(int bluetoothProfile,
             IBluetoothProfileServiceConnection proxy) {
         synchronized (mProfileServices) {
-            ProfileServiceConnections psc = mProfileServices.get(new Integer(bluetoothProfile));
+            Integer profile = new Integer(bluetoothProfile);
+            ProfileServiceConnections psc = mProfileServices.get(profile);
             if (psc == null) {
                 return;
             }
             psc.removeProxy(proxy);
+            if (psc.isEmpty()) {
+                // All prxoies are disconnected, unbind with the service.
+                try {
+                    mContext.unbindService(psc);
+                } catch (IllegalArgumentException e) {
+                    Slog.e(TAG, "Unable to unbind service with intent: " + psc.mIntent, e);
+                }
+                mProfileServices.remove(profile);
+            }
         }
     }
 
@@ -1161,6 +1185,26 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
         }
 
         private boolean bindService() {
+            int state = BluetoothAdapter.STATE_OFF;
+            try {
+                mBluetoothLock.readLock().lock();
+                if (mBluetooth != null) {
+                    state = mBluetooth.getState();
+                }
+            } catch (RemoteException e) {
+                Slog.e(TAG, "Unable to call getState", e);
+                return false;
+            } finally {
+                mBluetoothLock.readLock().unlock();
+            }
+
+            if (!mEnable || state != BluetoothAdapter.STATE_ON) {
+                if (DBG) {
+                    Slog.d(TAG, "Unable to bindService while Bluetooth is disabled");
+                }
+                return false;
+            }
+
             if (mIntent != null && mService == null && doBind(mIntent, this, 0,
                     UserHandle.CURRENT_OR_SELF)) {
                 Message msg = mHandler.obtainMessage(MESSAGE_BIND_PROFILE_SERVICE);
@@ -1208,6 +1252,10 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
             mProxies.kill();
         }
 
+        private boolean isEmpty() {
+            return mProxies.getRegisteredCallbackCount() == 0;
+        }
+
         @Override
         public void onServiceConnected(ComponentName className, IBinder service) {
             // remove timeout message
@@ -1246,7 +1294,11 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
             if (mService == null) {
                 return;
             }
-            mService.unlinkToDeath(this, 0);
+            try {
+                mService.unlinkToDeath(this, 0);
+            } catch (NoSuchElementException e) {
+                Log.e(TAG, "error unlinking to death", e);
+            }
             mService = null;
             mClassName = null;
 

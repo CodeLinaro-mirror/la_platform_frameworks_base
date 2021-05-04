@@ -82,6 +82,13 @@ public class WifiTracker implements LifecycleObserver, OnStart, OnStop, OnDestro
     /** Maximum age of scan results to hold onto while actively scanning. **/
     private static final long MAX_SCAN_RESULT_AGE_MILLIS = 25000;
 
+    /*
+     * Tracks whether the latest SCAN_RESULTS_AVAILABLE_ACTION contained new scans. If not, then
+     * we treat the last scan as an aborted scan and keep last scan result to avoid
+     * completely flushing the AP list before the next successful scan completes.
+     */
+    private boolean mLastScanSucceeded = false;
+
     private static final String TAG = "WifiTracker";
     private static final boolean DBG() {
         return Log.isLoggable(TAG, Log.DEBUG);
@@ -443,7 +450,7 @@ public class WifiTracker implements LifecycleObserver, OnStart, OnStop, OnDestro
         }
 
         // Don't evict old results if no new scan results
-        if (!mStaleScanResults) {
+        if (!mStaleScanResults && mLastScanSucceeded) {
             evictOldScans();
         }
 
@@ -735,11 +742,15 @@ public class WifiTracker implements LifecycleObserver, OnStart, OnStop, OnDestro
                         intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE,
                                 WifiManager.WIFI_STATE_UNKNOWN));
             } else if (WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(action)) {
+
                 mStaleScanResults = false;
+                mLastScanSucceeded =
+                        intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false);
 
                 fetchScansAndConfigsAndUpdateAccessPoints();
             } else if (WifiManager.CONFIGURED_NETWORKS_CHANGED_ACTION.equals(action)
                     || WifiManager.LINK_CONFIGURATION_CHANGED_ACTION.equals(action)) {
+                mLastScanSucceeded = false;
                 fetchScansAndConfigsAndUpdateAccessPoints();
             } else if (WifiManager.NETWORK_STATE_CHANGED_ACTION.equals(action)) {
                 // TODO(sghuman): Refactor these methods so they cannot result in duplicate

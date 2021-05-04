@@ -195,7 +195,7 @@ public class Notification implements Parcelable
      * <p>
      * Avoids spamming the system with overly large strings such as full e-mails.
      */
-    private static final int MAX_CHARSEQUENCE_LENGTH = 5 * 1024;
+    private static final int MAX_CHARSEQUENCE_LENGTH = 1024;
 
     /**
      * Maximum entries of reply text that are accepted by Builder and friends.
@@ -3482,7 +3482,7 @@ public class Notification implements Parcelable
 
         /**
          * Set the small icon, which will be used to represent the notification in the
-         * status bar and content view (unless overriden there by a
+         * status bar and content view (unless overridden there by a
          * {@link #setLargeIcon(Bitmap) large icon}).
          *
          * @param icon An Icon object to use.
@@ -6183,7 +6183,7 @@ public class Notification implements Parcelable
         public abstract boolean areNotificationsVisiblyDifferent(Style other);
 
         /**
-         * @return the the text that should be displayed in the statusBar when heads-upped.
+         * @return the text that should be displayed in the statusBar when heads-upped.
          * If {@code null} is returned, the default implementation will be used.
          *
          * @hide
@@ -6670,7 +6670,7 @@ public class Notification implements Parcelable
         }
 
         /**
-         * @return the the text that should be displayed in the statusBar when heads upped.
+         * @return the text that should be displayed in the statusBar when heads upped.
          * If {@code null} is returned, the default implementation will be used.
          *
          * @hide
@@ -7240,7 +7240,7 @@ public class Notification implements Parcelable
              */
             public Message(@NonNull CharSequence text, long timestamp, @Nullable Person sender,
                     boolean remoteInputHistory) {
-                mText = text;
+                mText = safeCharSequence(text);
                 mTimestamp = timestamp;
                 mSender = sender;
                 mRemoteInputHistory = remoteInputHistory;
@@ -7326,7 +7326,7 @@ public class Notification implements Parcelable
             }
 
             /**
-             * Get the the Uri pointing to the content of the message. Can be null, in which case
+             * Get the Uri pointing to the content of the message. Can be null, in which case
              * {@see #getText()} is used.
              */
             public Uri getDataUri() {
@@ -7350,7 +7350,7 @@ public class Notification implements Parcelable
                 bundle.putLong(KEY_TIMESTAMP, mTimestamp);
                 if (mSender != null) {
                     // Legacy listeners need this
-                    bundle.putCharSequence(KEY_SENDER, mSender.getName());
+                    bundle.putCharSequence(KEY_SENDER, safeCharSequence(mSender.getName()));
                     bundle.putParcelable(KEY_SENDER_PERSON, mSender);
                 }
                 if (mDataMimeType != null) {
