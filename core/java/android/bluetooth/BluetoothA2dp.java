@@ -101,12 +101,15 @@ public final class BluetoothA2dp implements BluetoothProfile {
     /**
      * Intent used to broadcast the selection of a connected device as active.
      *
-     * <p>This intent will have one extra:
+     * <p>This intent will have two extra:
      * <ul>
      * <li> {@link BluetoothDevice#EXTRA_DEVICE} - The remote device. It can
      * be null if no device is active. </li>
      * </ul>
      *
+     * <li> {@link Boolean#EXTRA_ACTIVE} - active status. It may be ignored when
+     * {@link BluetoothDevice#EXTRA_DEVICE} is null </li>
+
      * <p>Requires {@link android.Manifest.permission#BLUETOOTH} permission to
      * receive.
      *
@@ -116,6 +119,19 @@ public final class BluetoothA2dp implements BluetoothProfile {
     @UnsupportedAppUsage
     public static final String ACTION_ACTIVE_DEVICE_CHANGED =
             "android.bluetooth.a2dp.profile.action.ACTIVE_DEVICE_CHANGED";
+
+    /**
+     * Used as an Boolean extra field in {@link #ACTION_ACTIVE_DEVICE_CHANGED}
+     * intent.
+     * {@link BluetoothDevice#EXTRA_DEVICE} is active when this field is true.
+     * {@link BluetoothDevice#EXTRA_DEVICE} is inactive when this filed is false
+     * {@link BluetoothDevice#EXTRA_DEVICE} is null means no any active device
+     * and this field maybe ignored
+     *
+     * @hide
+     */
+    public static final String EXTRA_ACTIVE =
+            "android.bluetooth.a2dp.profile.extra.ACTIVE";
 
     /**
      * Intent used to broadcast the change in the Audio Codec state of the
