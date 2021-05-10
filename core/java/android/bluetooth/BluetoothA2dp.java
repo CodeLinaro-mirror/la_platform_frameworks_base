@@ -788,6 +788,35 @@ public final class BluetoothA2dp implements BluetoothProfile {
         }
     }
 
+    /**
+      * Bond a media player with a Bluetooth device to support dual AVRCP Target.
+      *
+      * <p>Requires {@link android.Manifest.permission#BLUETOOTH}
+      * permission.
+      *
+      * @param package The media player package name.
+      * @param device Bluetooth device.
+      *
+      * @hide
+      */
+     @RequiresPermission(Manifest.permission.BLUETOOTH)
+     @Nullable
+     @UnsupportedAppUsage
+     public void bondPlayerWithDevice(String packagename, BluetoothDevice device) {
+         if (VDBG) log("bondPlayerWithDevice(" + packagename + "," + device + ")");
+         try {
+             final IBluetoothA2dp service = getService();
+             if (service != null && isEnabled()) {
+                 service.bondPlayerWithDevice(packagename, device);
+             }
+             if (service == null) Log.w(TAG, "Proxy not attached to service");
+             return;
+         } catch (RemoteException e) {
+             Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+             return;
+         }
+     }
+
     private boolean isEnabled() {
         if (mAdapter.getState() == BluetoothAdapter.STATE_ON) return true;
         return false;
