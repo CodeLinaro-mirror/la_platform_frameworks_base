@@ -304,6 +304,7 @@ public class KeyguardSimPinView extends KeyguardPinBasedInputView {
             mSimUnlockProgressDialog.setCancelable(false);
             mSimUnlockProgressDialog.getWindow().setType(
                     WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
+            mSimUnlockProgressDialog.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN);
         }
         return mSimUnlockProgressDialog;
     }
@@ -318,6 +319,7 @@ public class KeyguardSimPinView extends KeyguardPinBasedInputView {
             mRemainingAttemptsDialog = builder.create();
             mRemainingAttemptsDialog.getWindow().setType(
                     WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
+            mRemainingAttemptsDialog.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN);
         } else {
             mRemainingAttemptsDialog.setMessage(msg);
         }
