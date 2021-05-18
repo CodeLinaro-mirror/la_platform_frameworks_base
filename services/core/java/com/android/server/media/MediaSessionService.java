@@ -1267,6 +1267,114 @@ public class MediaSessionService extends SystemService implements Monitor {
         }
 
         /**
+         * Dispaches media key events. This is called when the foreground activity didn't handled
+         * the incoming media key event.
+         * <p>
+         * Handles the dispatching of the media button events to one of the
+         * registered listeners, or if there was none, broadcast an
+         * ACTION_MEDIA_BUTTON intent to the rest of the system.
+         *
+         * @param packageName The caller package
+         * @param asSystemService {@code true} if the event sent to the session as if it was come
+         *          from the system service instead of the app process. This helps sessions to
+         *          distinguish between the key injection by the app and key events from the
+         *          hardware devices. Should be used only when the volume key events aren't handled
+         *          by foreground activity. {@code false} otherwise to tell session about the real
+         *          caller.
+         * @param keyEvent a non-null KeyEvent whose key code is one of the
+         *            supported media buttons
+         * @param needWakeLock true if a PARTIAL_WAKE_LOCK needs to be held
+         *            while this key event is dispatched.
+         * @param mediaPlayerPackagename name of the media player to which event is sent
+         */
+        @Override
+        public void dispatchMediaKeyEventToMediaPlayer(String packageName, boolean asSystemService,
+                KeyEvent keyEvent, boolean needWakeLock, String mediaPlayerPackagename) {
+            if (keyEvent == null || !KeyEvent.isMediaSessionKey(keyEvent.getKeyCode())) {
+                Log.w(TAG, "Attempted to dispatch null or non-media key event.");
+                return;
+            }
+
+            final int pid = Binder.getCallingPid();
+            final int uid = Binder.getCallingUid();
+            final long token = Binder.clearCallingIdentity();
+            try {
+                if (DEBUG) {
+                    Log.d(TAG, "dispatchMediaKeyEvent, pkg=" + packageName + " pid=" + pid
+                            + ", uid=" + uid + ", asSystem=" + asSystemService + ", event="
+                            + keyEvent);
+                }
+                if (!isUserSetupComplete()) {
+                    // Global media key handling can have the side-effect of starting new
+                    // activities which is undesirable while setup is in progress.
+                    Slog.i(TAG, "Not dispatching media key event because user "
+                            + "setup is in progress.");
+                    return;
+                }
+
+                synchronized (mLock) {
+                    boolean isGlobalPriorityActive = isGlobalPriorityActiveLocked();
+                    if (isGlobalPriorityActive && uid != Process.SYSTEM_UID) {
+                        // Prevent dispatching key event through reflection while the global
+                        // priority session is active.
+                        Slog.i(TAG, "Only the system can dispatch media key event "
+                                + "to the global priority session.");
+                        return;
+                    }
+                    if (!isGlobalPriorityActive) {
+                        if (mCurrentFullUserRecord.mOnMediaKeyListener != null) {
+                            if (DEBUG_KEY_EVENT) {
+                                Log.d(TAG, "Send " + keyEvent + " to the media key listener");
+                            }
+                            try {
+                                mCurrentFullUserRecord.mOnMediaKeyListener.onMediaKey(keyEvent,
+                                        new MediaKeyListenerResultReceiver(packageName, pid, uid,
+                                                asSystemService, keyEvent, needWakeLock));
+                                return;
+                            } catch (RemoteException e) {
+                                Log.w(TAG, "Failed to send " + keyEvent
+                                        + " to the media key listener");
+                            }
+                        }
+                    }
+                    if (!isGlobalPriorityActive && isVoiceKey(keyEvent.getKeyCode())) {
+                        handleVoiceKeyEventLocked(packageName, pid, uid, asSystemService, keyEvent,
+                                needWakeLock);
+                    } else {
+                       // send event to particular media player
+                        ArrayList<MediaSessionRecord> sessions = mCurrentFullUserRecord.mPriorityStack.getActiveSessions(USER_ALL);
+                        Log.d(TAG, "no of sessions "+sessions.size());
+                        for (MediaSessionRecord session:sessions) {
+                        Log.d(TAG, "session info "+session.toString());
+                             if (session != null && session.getPackageName().equals(mediaPlayerPackagename)) {
+                                 if (DEBUG_KEY_EVENT) {
+                                     Log.d(TAG, "Sending  " + keyEvent + " to " + session +"Which matches packagename = "+ mediaPlayerPackagename);
+                                 }
+                                 if (needWakeLock) {
+                                     mKeyEventReceiver.aquireWakeLockLocked();
+                                 }
+                                 // If we don't need a wakelock use -1 as the id so we won't release it later.
+                                 session.sendMediaButton(packageName, pid, uid, asSystemService, keyEvent,
+                                         needWakeLock ? mKeyEventReceiver.mLastTimeoutId : -1,
+                                         mKeyEventReceiver);
+                                 if (mCurrentFullUserRecord.mCallback != null) {
+                                     try {
+                                          mCurrentFullUserRecord.mCallback.onMediaKeyEventDispatchedToMediaSession(
+                                          keyEvent, session.getSessionToken());
+                                      } catch (RemoteException e) {
+                                          Log.w(TAG, "Failed to send callback", e);
+                                      }
+                                 }
+                             }
+                        }
+                    }
+                }
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        /**
          * Dispatches media key events to session as system service. This is used only when the
          * foreground activity has set
          * {@link android.app.Activity#setMediaController(MediaController)} and a media key was
