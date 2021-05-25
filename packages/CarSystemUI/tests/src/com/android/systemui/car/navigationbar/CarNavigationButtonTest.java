@@ -19,14 +19,12 @@ package com.android.systemui.car.navigationbar;
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import android.app.ActivityManager;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.drawable.Drawable;
 import android.testing.AndroidTestingRunner;
@@ -70,12 +68,10 @@ public class CarNavigationButtonTest extends SysuiTestCase {
     @Before
     public void setUp() {
         mContext = spy(mContext);
-        ActivityManager am = mContext.getSystemService(ActivityManager.class);
-        mActivityManager = spy(am);
-        when(mContext.getSystemService(ActivityManager.class)).thenReturn(mActivityManager);
         mTestView = (LinearLayout) LayoutInflater.from(mContext).inflate(
                 R.layout.car_navigation_button_test, /* root= */ null);
         mDefaultButton = mTestView.findViewById(R.id.default_no_selection_state);
+        mActivityManager = (ActivityManager) mContext.getSystemService(Context.ACTIVITY_SERVICE);
     }
 
     @Test
@@ -272,27 +268,6 @@ public class CarNavigationButtonTest extends SysuiTestCase {
             }
         }), any());
     }
-
-    @Test
-    public void onClick_requestBackstackClear_clearBackStack() {
-        CarNavigationButton appGridButton =
-                mTestView.findViewById(R.id.app_grid_activity_clear_backstack);
-
-        appGridButton.performClick();
-
-        verify(mActivityManager).moveTaskToFront(anyInt(), anyInt());
-    }
-
-    @Test
-    public void onClick_useBroadcast_requestBackstackClear_doesNotClearingBackstack() {
-        CarNavigationButton appGridButton =
-                mTestView.findViewById(R.id.broadcast_try_clear_backstack);
-
-        appGridButton.performClick();
-
-        verify(mActivityManager, never()).moveTaskToFront(anyInt(), anyInt());
-    }
-
 
     @Test
     public void onSetUnseen_hasUnseen_showsUnseenIndicator() {

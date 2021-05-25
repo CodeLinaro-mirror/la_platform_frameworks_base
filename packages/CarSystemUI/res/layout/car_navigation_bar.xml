@@ -57,7 +57,6 @@
             systemui:intent="intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.APP_MAPS;launchFlags=0x14000000;end"
             systemui:selectedIcon="@drawable/car_ic_navigation_selected"
             systemui:highlightWhenSelected="true"
-            systemui:clearBackStack="true"
         />
 
         <Space
@@ -74,7 +73,6 @@
             systemui:packages="com.android.car.media"
             systemui:selectedIcon="@drawable/car_ic_music_selected"
             systemui:highlightWhenSelected="true"
-            systemui:clearBackStack="true"
         />
 
         <Space
@@ -90,7 +88,6 @@
             systemui:packages="com.android.car.dialer"
             systemui:selectedIcon="@drawable/car_ic_phone_selected"
             systemui:highlightWhenSelected="true"
-            systemui:clearBackStack="true"
         />
 
         <Space
@@ -106,7 +103,6 @@
             systemui:intent="intent:#Intent;component=com.android.car.carlauncher/.AppGridActivity;launchFlags=0x24000000;end"
             systemui:selectedIcon="@drawable/car_ic_apps_selected"
             systemui:highlightWhenSelected="true"
-            systemui:clearBackStack="true"
         />
 
         <Space

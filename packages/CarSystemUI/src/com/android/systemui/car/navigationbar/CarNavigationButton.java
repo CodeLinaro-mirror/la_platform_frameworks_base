@@ -16,7 +16,6 @@
 
 package com.android.systemui.car.navigationbar;
 
-import android.app.ActivityManager;
 import android.app.ActivityOptions;
 import android.app.role.RoleManager;
 import android.content.Context;
@@ -37,7 +36,6 @@ import com.android.systemui.R;
 import com.android.systemui.statusbar.AlphaOptimizedImageView;
 
 import java.net.URISyntaxException;
-import java.util.List;
 
 /**
  * CarNavigationButton is an image button that allows for a bit more configuration at the
@@ -54,15 +52,13 @@ public class CarNavigationButton extends LinearLayout {
     private static final String EXTRA_BUTTON_CATEGORIES = "categories";
     private static final String EXTRA_BUTTON_PACKAGES = "packages";
 
-    private final Context mContext;
-    private final ActivityManager mActivityManager;
+    private Context mContext;
     private AlphaOptimizedImageView mIcon;
     private AlphaOptimizedImageView mMoreIcon;
     private ImageView mUnseenIcon;
     private String mIntent;
     private String mLongIntent;
     private boolean mBroadcastIntent;
-    private boolean mClearBackStack;
     private boolean mHasUnseen = false;
     private boolean mSelected = false;
     private float mSelectedAlpha;
@@ -84,7 +80,6 @@ public class CarNavigationButton extends LinearLayout {
     public CarNavigationButton(Context context, AttributeSet attrs) {
         super(context, attrs);
         mContext = context;
-        mActivityManager = mContext.getSystemService(ActivityManager.class);
         View.inflate(mContext, R.layout.car_navigation_button, /* root= */ this);
         // CarNavigationButton attrs
         TypedArray typedArray = context.obtainStyledAttributes(attrs,
@@ -210,9 +205,6 @@ public class CarNavigationButton extends LinearLayout {
         mLongIntent = typedArray.getString(R.styleable.CarNavigationButton_longIntent);
         mBroadcastIntent = typedArray.getBoolean(R.styleable.CarNavigationButton_broadcast, false);
 
-        mClearBackStack = typedArray.getBoolean(R.styleable.CarNavigationButton_clearBackStack,
-                false);
-
         String categoryString = typedArray.getString(R.styleable.CarNavigationButton_categories);
         String packageString = typedArray.getString(R.styleable.CarNavigationButton_packages);
         String componentNameString =
@@ -262,17 +254,6 @@ public class CarNavigationButton extends LinearLayout {
                 options.setLaunchDisplayId(mContext.getDisplayId());
                 mContext.startActivityAsUser(toSend, options.toBundle(),
                         UserHandle.CURRENT);
-
-                if (mClearBackStack) {
-                    List<ActivityManager.RunningTaskInfo> runningTasks =
-                            mActivityManager.getRunningTasks(1);
-                    if (!runningTasks.isEmpty()) {
-                        mActivityManager.moveTaskToFront(runningTasks.get(0).taskId,
-                                ActivityManager.MOVE_TASK_WITH_HOME);
-                    } else {
-                        Log.e(TAG, "No backstack to clear");
-                    }
-                }
             } catch (Exception e) {
                 Log.e(TAG, "Failed to launch intent", e);
             }

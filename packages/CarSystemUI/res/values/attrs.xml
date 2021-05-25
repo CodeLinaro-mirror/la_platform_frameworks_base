@@ -69,11 +69,6 @@
              relevant for buttons associated to specific roles (e.g.: AssistantButton).
              Defaults false -->
         <attr name="useDefaultAppIconForRole" format="boolean"/>
-        <!-- whether to clear the back stack when this button is pressed. Only relevant for buttons
-             that have declared an intent that isn't used as a broadcast
-             (i.e. CarNavigationButton_intent is defined, CarNavigationButton_broadcast is false).
-             Defaults false. -->
-        <attr name="clearBackStack" format="boolean"/>
     </declare-styleable>
 
     <!-- Custom attributes to configure hvac values -->
