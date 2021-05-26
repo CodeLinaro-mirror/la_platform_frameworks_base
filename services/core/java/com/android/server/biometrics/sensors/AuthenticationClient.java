@@ -22,13 +22,17 @@ import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
 import android.app.TaskStackListener;
 import android.content.ComponentName;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.hardware.biometrics.BiometricAuthenticator;
 import android.hardware.biometrics.BiometricConstants;
+import android.hardware.biometrics.BiometricManager;
 import android.hardware.biometrics.BiometricsProtoEnums;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.os.VibrationEffect;
+import android.provider.Settings;
 import android.security.KeyStore;
 import android.util.EventLog;
 import android.util.Slog;
@@ -50,33 +54,41 @@ public abstract class AuthenticationClient<T> extends AcquisitionClient<T>
     private final boolean mIsStrongBiometric;
     private final boolean mRequireConfirmation;
     private final ActivityTaskManager mActivityTaskManager;
+    private final BiometricManager mBiometricManager;
     @Nullable private final TaskStackListener mTaskStackListener;
     private final LockoutTracker mLockoutTracker;
     private final boolean mIsRestricted;
-    private final boolean mIsKeyguard;
+    private final boolean mAllowBackgroundAuthentication;
+    @NonNull private final ContentResolver mContentResolver;
 
     protected final long mOperationId;
 
     private long mStartTimeMs;
 
     protected boolean mAuthAttempted;
+    private final boolean mCustomHaptics;
 
     public AuthenticationClient(@NonNull Context context, @NonNull LazyDaemon<T> lazyDaemon,
             @NonNull IBinder token, @NonNull ClientMonitorCallbackConverter listener,
             int targetUserId, long operationId, boolean restricted, @NonNull String owner,
             int cookie, boolean requireConfirmation, int sensorId, boolean isStrongBiometric,
             int statsModality, int statsClient, @Nullable TaskStackListener taskStackListener,
-            @NonNull LockoutTracker lockoutTracker, boolean isKeyguard) {
+            @NonNull LockoutTracker lockoutTracker, boolean allowBackgroundAuthentication) {
         super(context, lazyDaemon, token, listener, targetUserId, owner, cookie, sensorId,
                 statsModality, BiometricsProtoEnums.ACTION_AUTHENTICATE, statsClient);
         mIsStrongBiometric = isStrongBiometric;
         mOperationId = operationId;
         mRequireConfirmation = requireConfirmation;
         mActivityTaskManager = ActivityTaskManager.getInstance();
+        mBiometricManager = context.getSystemService(BiometricManager.class);
         mTaskStackListener = taskStackListener;
         mLockoutTracker = lockoutTracker;
         mIsRestricted = restricted;
-        mIsKeyguard = isKeyguard;
+        mAllowBackgroundAuthentication = allowBackgroundAuthentication;
+
+        mContentResolver = context.getContentResolver();
+        mCustomHaptics = Settings.Global.getInt(mContentResolver,
+                "fp_custom_success_error", 0) == 1;
     }
 
     public @LockoutTracker.LockoutMode int handleFailedAttempt(int userId) {
@@ -117,7 +129,7 @@ public abstract class AuthenticationClient<T> extends AcquisitionClient<T>
     }
 
     public boolean isKeyguard() {
-        return mIsKeyguard;
+        return Utils.isKeyguard(getContext(), getOwnerString());
     }
 
     @Override
@@ -149,9 +161,15 @@ public abstract class AuthenticationClient<T> extends AcquisitionClient<T>
                 pm.incrementAuthForUser(getTargetUserId(), authenticated);
             }
 
+            if (mAllowBackgroundAuthentication) {
+                Slog.w(TAG, "Allowing background authentication,"
+                        + " this is allowed only for platform or test invocations");
+            }
+
             // Ensure authentication only succeeds if the client activity is on top.
             boolean isBackgroundAuth = false;
-            if (authenticated && !Utils.isKeyguard(getContext(), getOwnerString())
+            if (!mAllowBackgroundAuthentication && authenticated
+                    && !Utils.isKeyguard(getContext(), getOwnerString())
                     && !Utils.isSystem(getContext(), getOwnerString())) {
                 final List<ActivityManager.RunningTaskInfo> tasks =
                         mActivityTaskManager.getTasks(1);
@@ -207,13 +225,21 @@ public abstract class AuthenticationClient<T> extends AcquisitionClient<T>
                 for (int i = 0; i < hardwareAuthToken.size(); i++) {
                     byteToken[i] = hardwareAuthToken.get(i);
                 }
+
+                if (mIsStrongBiometric) {
+                    mBiometricManager.resetLockoutTimeBound(getToken(),
+                            getContext().getOpPackageName(),
+                            getSensorId(), getTargetUserId(), byteToken);
+                }
+
                 if (isBiometricPrompt() && listener != null) {
                     // BiometricService will add the token to keystore
                     listener.onAuthenticationSucceeded(getSensorId(), identifier, byteToken,
                             getTargetUserId(), mIsStrongBiometric);
                 } else if (!isBiometricPrompt() && listener != null) {
                     if (mIsStrongBiometric) {
-                        KeyStore.getInstance().addAuthToken(byteToken);
+                        final int result = KeyStore.getInstance().addAuthToken(byteToken);
+                        Slog.d(TAG, "addAuthToken: " + result);
                     } else {
                         Slog.d(TAG, "Skipping addAuthToken");
                     }
@@ -315,5 +341,26 @@ public abstract class AuthenticationClient<T> extends AcquisitionClient<T>
     @Override
     public boolean interruptsPrecedingClients() {
         return true;
+    }
+
+    @Override
+    protected @NonNull VibrationEffect getSuccessVibrationEffect() {
+        if (!mCustomHaptics) {
+            return super.getSuccessVibrationEffect();
+        }
+
+        return getVibration(Settings.Global.getString(mContentResolver,
+                "fp_success_type"), super.getSuccessVibrationEffect());
+    }
+
+    @Override
+    protected @NonNull VibrationEffect getErrorVibrationEffect() {
+        if (!mCustomHaptics) {
+            return super.getErrorVibrationEffect();
+        }
+
+        return getVibration(Settings.Global.getString(mContentResolver,
+                "fp_error_type"), super.getErrorVibrationEffect());
+
     }
 }

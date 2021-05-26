@@ -18,6 +18,7 @@ package com.android.server.wm;
 
 import static android.app.ActivityManager.PROCESS_STATE_NONEXISTENT;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_UNDEFINED;
+import static android.content.res.Configuration.ASSETS_SEQ_UNDEFINED;
 import static android.os.Build.VERSION_CODES.Q;
 import static android.os.InputConstants.DEFAULT_DISPATCHING_TIMEOUT_MILLIS;
 
@@ -225,6 +226,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     private static final int ACTIVITY_STATE_FLAG_IS_STOPPING_FINISHING = 1 << 19;
     private static final int ACTIVITY_STATE_FLAG_IS_WINDOW_VISIBLE = 1 << 20;
     private static final int ACTIVITY_STATE_FLAG_HAS_RESUMED = 1 << 21;
+    private static final int ACTIVITY_STATE_FLAG_HAS_ACTIVITY_IN_VISIBLE_TASK = 1 << 22;
     private static final int ACTIVITY_STATE_FLAG_MASK_MIN_TASK_LAYER = 0x0000ffff;
 
     /**
@@ -479,7 +481,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     }
 
     void setLastActivityFinishTimeIfNeeded(long finishTime) {
-        if (finishTime <= mLastActivityFinishTime || !hasVisibleActivities()) {
+        if (finishTime <= mLastActivityFinishTime || !hasActivityInVisibleTask()) {
             return;
         }
         mLastActivityFinishTime = finishTime;
@@ -516,7 +518,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     private boolean areBackgroundActivityStartsAllowed(boolean appSwitchAllowed,
             boolean isCheckingForFgsStart) {
         return mBgLaunchController.areBackgroundActivityStartsAllowed(mPid, mUid, mInfo.packageName,
-                appSwitchAllowed, isCheckingForFgsStart, hasVisibleActivities(),
+                appSwitchAllowed, isCheckingForFgsStart, hasActivityInVisibleTask(),
                 mInstrumentingWithBackgroundActivityStartPrivileges,
                 mAtm.getLastStopAppSwitchesTime(),
                 mLastActivityLaunchTime, mLastActivityFinishTime);
@@ -651,6 +653,10 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     @HotPath(caller = HotPath.OOM_ADJUSTMENT)
     public boolean hasVisibleActivities() {
         return (mActivityStateFlags & ACTIVITY_STATE_FLAG_IS_VISIBLE) != 0;
+    }
+
+    boolean hasActivityInVisibleTask() {
+        return (mActivityStateFlags & ACTIVITY_STATE_FLAG_HAS_ACTIVITY_IN_VISIBLE_TASK) != 0;
     }
 
     @HotPath(caller = HotPath.LRU_UPDATE)
@@ -996,11 +1002,14 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             if (r.isVisible()) {
                 stateFlags |= ACTIVITY_STATE_FLAG_IS_WINDOW_VISIBLE;
             }
+            final Task task = r.getTask();
+            if (task != null && task.mLayerRank != Task.LAYER_RANK_INVISIBLE) {
+                stateFlags |= ACTIVITY_STATE_FLAG_HAS_ACTIVITY_IN_VISIBLE_TASK;
+            }
             if (r.mVisibleRequested) {
                 if (r.isState(RESUMED)) {
                     stateFlags |= ACTIVITY_STATE_FLAG_HAS_RESUMED;
                 }
-                final Task task = r.getTask();
                 if (task != null && minTaskLayer > 0) {
                     final int layer = task.mLayerRank;
                     if (layer >= 0 && minTaskLayer > layer) {
@@ -1048,7 +1057,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
 
     /** Called when the process has some oom related changes and it is going to update oom-adj. */
     private void prepareOomAdjustment() {
-        mAtm.mRootWindowContainer.rankTaskLayersIfNeeded();
+        mAtm.mRootWindowContainer.rankTaskLayers();
         mAtm.mTaskSupervisor.computeProcessActivityStateBatch();
     }
 
@@ -1310,6 +1319,11 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
 
     @Override
     void resolveOverrideConfiguration(Configuration newParentConfig) {
+        final Configuration requestedOverrideConfig = getRequestedOverrideConfiguration();
+        if (requestedOverrideConfig.assetsSeq != ASSETS_SEQ_UNDEFINED
+                && newParentConfig.assetsSeq > requestedOverrideConfig.assetsSeq) {
+            requestedOverrideConfig.assetsSeq = ASSETS_SEQ_UNDEFINED;
+        }
         super.resolveOverrideConfiguration(newParentConfig);
         final Configuration resolvedConfig = getResolvedOverrideConfiguration();
         // Make sure that we don't accidentally override the activity type.
@@ -1386,6 +1400,28 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         }
         mPauseConfigurationDispatchCount--;
         return mHasPendingConfigurationChange;
+    }
+
+    void updateAssetConfiguration(int assetSeq) {
+        // Update the process override configuration directly if the process configuration will
+        // not be override from its activities.
+        if (!mHasActivities || !mIsActivityConfigOverrideAllowed) {
+            Configuration overrideConfig = new Configuration(getRequestedOverrideConfiguration());
+            overrideConfig.assetsSeq = assetSeq;
+            onRequestedOverrideConfigurationChanged(overrideConfig);
+            return;
+        }
+
+        // Otherwise, we can just update the activity override configuration.
+        for (int i = mActivities.size() - 1; i >= 0; i--) {
+            ActivityRecord r = mActivities.get(i);
+            Configuration overrideConfig = new Configuration(r.getRequestedOverrideConfiguration());
+            overrideConfig.assetsSeq = assetSeq;
+            r.onRequestedOverrideConfigurationChanged(overrideConfig);
+            if (r.mVisibleRequested) {
+                r.ensureActivityConfiguration(0, true);
+            }
+        }
     }
 
     /**

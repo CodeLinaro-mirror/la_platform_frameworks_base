@@ -56,6 +56,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 
 /**
  * White-box unit tests for {@link TimeZoneDetectorStrategyImpl}.
@@ -90,7 +91,7 @@ public class TimeZoneDetectorStrategyImplTest {
     private static final ConfigurationInternal CONFIG_INT_USER_RESTRICTED_AUTO_DISABLED =
             new ConfigurationInternal.Builder(USER_ID)
                     .setUserConfigAllowed(false)
-                    .setAutoDetectionFeatureSupported(true)
+                    .setTelephonyDetectionFeatureSupported(true)
                     .setGeoDetectionFeatureSupported(true)
                     .setAutoDetectionEnabled(false)
                     .setLocationEnabled(true)
@@ -100,7 +101,7 @@ public class TimeZoneDetectorStrategyImplTest {
     private static final ConfigurationInternal CONFIG_INT_USER_RESTRICTED_AUTO_ENABLED =
             new ConfigurationInternal.Builder(USER_ID)
                     .setUserConfigAllowed(false)
-                    .setAutoDetectionFeatureSupported(true)
+                    .setTelephonyDetectionFeatureSupported(true)
                     .setGeoDetectionFeatureSupported(true)
                     .setAutoDetectionEnabled(true)
                     .setLocationEnabled(true)
@@ -110,17 +111,17 @@ public class TimeZoneDetectorStrategyImplTest {
     private static final ConfigurationInternal CONFIG_INT_AUTO_DETECT_NOT_SUPPORTED =
             new ConfigurationInternal.Builder(USER_ID)
                     .setUserConfigAllowed(true)
-                    .setAutoDetectionFeatureSupported(false)
+                    .setTelephonyDetectionFeatureSupported(false)
                     .setGeoDetectionFeatureSupported(false)
                     .setAutoDetectionEnabled(false)
                     .setLocationEnabled(true)
                     .setGeoDetectionEnabled(false)
                     .build();
 
-    private static final ConfigurationInternal CONFIG_INT_AUTO_SUPPORTED_GEO_NOT_SUPPORTED =
+    private static final ConfigurationInternal CONFIG_INT_TELEPHONY_SUPPORTED_GEO_NOT_SUPPORTED =
             new ConfigurationInternal.Builder(USER_ID)
                     .setUserConfigAllowed(true)
-                    .setAutoDetectionFeatureSupported(true)
+                    .setTelephonyDetectionFeatureSupported(true)
                     .setGeoDetectionFeatureSupported(false)
                     .setAutoDetectionEnabled(true)
                     .setLocationEnabled(true)
@@ -130,7 +131,7 @@ public class TimeZoneDetectorStrategyImplTest {
     private static final ConfigurationInternal CONFIG_INT_AUTO_DISABLED_GEO_DISABLED =
             new ConfigurationInternal.Builder(USER_ID)
                     .setUserConfigAllowed(true)
-                    .setAutoDetectionFeatureSupported(true)
+                    .setTelephonyDetectionFeatureSupported(true)
                     .setGeoDetectionFeatureSupported(true)
                     .setAutoDetectionEnabled(false)
                     .setLocationEnabled(true)
@@ -139,7 +140,7 @@ public class TimeZoneDetectorStrategyImplTest {
 
     private static final ConfigurationInternal CONFIG_INT_AUTO_ENABLED_GEO_DISABLED =
             new ConfigurationInternal.Builder(USER_ID)
-                    .setAutoDetectionFeatureSupported(true)
+                    .setTelephonyDetectionFeatureSupported(true)
                     .setGeoDetectionFeatureSupported(true)
                     .setUserConfigAllowed(true)
                     .setAutoDetectionEnabled(true)
@@ -149,7 +150,7 @@ public class TimeZoneDetectorStrategyImplTest {
 
     private static final ConfigurationInternal CONFIG_INT_AUTO_ENABLED_GEO_ENABLED =
             new ConfigurationInternal.Builder(USER_ID)
-                    .setAutoDetectionFeatureSupported(true)
+                    .setTelephonyDetectionFeatureSupported(true)
                     .setGeoDetectionFeatureSupported(true)
                     .setUserConfigAllowed(true)
                     .setAutoDetectionEnabled(true)
@@ -237,12 +238,17 @@ public class TimeZoneDetectorStrategyImplTest {
         // The settings should not have been changed: user shouldn't have the capabilities.
         script.verifyConfigurationNotChanged();
 
-        // Try to update the configuration to enable geolocation time zone detection.
+        // Try to update the configuration to enable geolocation time zone detection: this should
+        // succeed, the geolocation time zone detection setting is not covered by the restriction).
         script.simulateUpdateConfiguration(
-                USER_ID, CONFIG_GEO_DETECTION_ENABLED,  false /* expectedResult */);
+                USER_ID, CONFIG_GEO_DETECTION_DISABLED,  true /* expectedResult */);
 
-        // The settings should not have been changed: user shouldn't have the capabilities.
-        script.verifyConfigurationNotChanged();
+        // The settings should have been changed.
+        ConfigurationInternal expectedConfig = new ConfigurationInternal.Builder(
+                CONFIG_INT_USER_RESTRICTED_AUTO_ENABLED)
+                .setGeoDetectionEnabled(false)
+                .build();
+        script.verifyConfigurationChangedAndReset(expectedConfig);
     }
 
     @Test
@@ -266,7 +272,8 @@ public class TimeZoneDetectorStrategyImplTest {
 
     @Test
     public void testUpdateConfiguration_autoDetectSupportedGeoNotSupported() {
-        Script script = new Script().initializeConfig(CONFIG_INT_AUTO_SUPPORTED_GEO_NOT_SUPPORTED);
+        Script script = new Script().initializeConfig(
+                CONFIG_INT_TELEPHONY_SUPPORTED_GEO_NOT_SUPPORTED);
 
         // Update the configuration with auto detection disabled.
         script.simulateUpdateConfiguration(
@@ -274,7 +281,7 @@ public class TimeZoneDetectorStrategyImplTest {
 
         // The settings should have been changed and the StrategyListener onChange() called.
         ConfigurationInternal expectedConfig =
-                new ConfigurationInternal.Builder(CONFIG_INT_AUTO_SUPPORTED_GEO_NOT_SUPPORTED)
+                new ConfigurationInternal.Builder(CONFIG_INT_TELEPHONY_SUPPORTED_GEO_NOT_SUPPORTED)
                         .setAutoDetectionEnabled(false)
                         .build();
         script.verifyConfigurationChangedAndReset(expectedConfig);
@@ -675,6 +682,8 @@ public class TimeZoneDetectorStrategyImplTest {
         script.simulateManualTimeZoneSuggestion(
                 USER_ID, createManualSuggestion("Europe/Paris"), false /* expectedResult */)
                 .verifyTimeZoneNotChanged();
+
+        assertNull(mTimeZoneDetectorStrategy.getLatestManualSuggestion());
     }
 
     @Test
@@ -687,6 +696,8 @@ public class TimeZoneDetectorStrategyImplTest {
         script.simulateManualTimeZoneSuggestion(
                 USER_ID, createManualSuggestion("Europe/Paris"), false /* expectedResult */)
                 .verifyTimeZoneNotChanged();
+
+        assertNull(mTimeZoneDetectorStrategy.getLatestManualSuggestion());
     }
 
     @Test
@@ -700,6 +711,8 @@ public class TimeZoneDetectorStrategyImplTest {
         script.simulateManualTimeZoneSuggestion(
                 USER_ID, manualSuggestion, true /* expectedResult */)
             .verifyTimeZoneChangedAndReset(manualSuggestion);
+
+        assertEquals(manualSuggestion, mTimeZoneDetectorStrategy.getLatestManualSuggestion());
     }
 
     @Test
@@ -713,6 +726,8 @@ public class TimeZoneDetectorStrategyImplTest {
         script.simulateManualTimeZoneSuggestion(
                 USER_ID, manualSuggestion, false /* expectedResult */)
                 .verifyTimeZoneNotChanged();
+
+        assertNull(mTimeZoneDetectorStrategy.getLatestManualSuggestion());
     }
 
     @Test
@@ -726,6 +741,8 @@ public class TimeZoneDetectorStrategyImplTest {
         script.simulateManualTimeZoneSuggestion(
                 USER_ID, manualSuggestion, true /* expectedResult */)
                 .verifyTimeZoneChangedAndReset(manualSuggestion);
+
+        assertEquals(manualSuggestion, mTimeZoneDetectorStrategy.getLatestManualSuggestion());
     }
 
     @Test
@@ -912,6 +929,106 @@ public class TimeZoneDetectorStrategyImplTest {
         mTimeZoneDetectorStrategy.dump(ipw, args);
 
         assertTrue(dumpCalled.get());
+    }
+
+    @Test
+    public void testGenerateMetricsState() {
+        ConfigurationInternal expectedInternalConfig = CONFIG_INT_AUTO_DISABLED_GEO_DISABLED;
+        String expectedDeviceTimeZoneId = "InitialZoneId";
+
+        Script script = new Script()
+                .initializeConfig(expectedInternalConfig)
+                .initializeTimeZoneSetting(expectedDeviceTimeZoneId);
+
+        assertMetricsState(expectedInternalConfig, expectedDeviceTimeZoneId, null, null,
+                null, MetricsTimeZoneDetectorState.DETECTION_MODE_MANUAL);
+
+        // Make sure the manual suggestion is recorded.
+        ManualTimeZoneSuggestion manualSuggestion = createManualSuggestion("Zone1");
+        script.simulateManualTimeZoneSuggestion(USER_ID, manualSuggestion,
+                true /* expectedResult */)
+                .verifyTimeZoneChangedAndReset(manualSuggestion);
+        expectedDeviceTimeZoneId = manualSuggestion.getZoneId();
+        assertMetricsState(expectedInternalConfig, expectedDeviceTimeZoneId,
+                manualSuggestion, null, null,
+                MetricsTimeZoneDetectorState.DETECTION_MODE_MANUAL);
+
+        // With time zone auto detection off, telephony suggestions will be recorded, but geo
+        // suggestions won't out of an abundance of caution around respecting user privacy when
+        // geo detection is off.
+        TelephonyTimeZoneSuggestion telephonySuggestion =
+                createTelephonySuggestion(0 /* slotIndex */, MATCH_TYPE_NETWORK_COUNTRY_ONLY,
+                        QUALITY_SINGLE_ZONE, "Zone2");
+        GeolocationTimeZoneSuggestion geolocationTimeZoneSuggestion =
+                createGeoLocationSuggestion(Arrays.asList("Zone3", "Zone2"));
+        script.simulateTelephonyTimeZoneSuggestion(telephonySuggestion)
+                .verifyTimeZoneNotChanged()
+                .simulateGeolocationTimeZoneSuggestion(geolocationTimeZoneSuggestion)
+                .verifyTimeZoneNotChanged();
+
+        assertMetricsState(expectedInternalConfig, expectedDeviceTimeZoneId,
+                manualSuggestion, telephonySuggestion, null /* expectedGeoSuggestion */,
+                MetricsTimeZoneDetectorState.DETECTION_MODE_MANUAL);
+
+        // Update the config and confirm that the config metrics state updates also.
+        TimeZoneConfiguration configUpdate =
+                createConfig(true /* autoDetection */, true /* geoDetection */);
+        expectedInternalConfig = new ConfigurationInternal.Builder(expectedInternalConfig)
+                .setAutoDetectionEnabled(true)
+                .setGeoDetectionEnabled(true)
+                .build();
+        script.simulateUpdateConfiguration(USER_ID, configUpdate, true /* expectedResult */)
+                .verifyConfigurationChangedAndReset(expectedInternalConfig)
+                .verifyTimeZoneNotChanged();
+        assertMetricsState(expectedInternalConfig, expectedDeviceTimeZoneId,
+                manualSuggestion, telephonySuggestion, null  /* expectedGeoSuggestion */,
+                MetricsTimeZoneDetectorState.DETECTION_MODE_GEO);
+
+        // Now simulate a geo suggestion and confirm it is used and reported in the metrics too.
+        expectedDeviceTimeZoneId = geolocationTimeZoneSuggestion.getZoneIds().get(0);
+        script.simulateGeolocationTimeZoneSuggestion(geolocationTimeZoneSuggestion)
+                .verifyTimeZoneChangedAndReset(expectedDeviceTimeZoneId);
+        assertMetricsState(expectedInternalConfig, expectedDeviceTimeZoneId,
+                manualSuggestion, telephonySuggestion, geolocationTimeZoneSuggestion,
+                MetricsTimeZoneDetectorState.DETECTION_MODE_GEO);
+    }
+
+    /**
+     * Asserts that the information returned by {@link
+     * TimeZoneDetectorStrategy#generateMetricsState()} matches expectations.
+     */
+    private void assertMetricsState(
+            ConfigurationInternal expectedInternalConfig,
+            String expectedDeviceTimeZoneId, ManualTimeZoneSuggestion expectedManualSuggestion,
+            TelephonyTimeZoneSuggestion expectedTelephonySuggestion,
+            GeolocationTimeZoneSuggestion expectedGeolocationTimeZoneSuggestion,
+            int expectedDetectionMode) {
+
+        MetricsTimeZoneDetectorState actualState = mTimeZoneDetectorStrategy.generateMetricsState();
+
+        // Check the various feature state values are what we expect.
+        assertFeatureStateMatchesConfig(expectedInternalConfig, actualState, expectedDetectionMode);
+
+        OrdinalGenerator<String> tzIdOrdinalGenerator = new OrdinalGenerator<>(Function.identity());
+        MetricsTimeZoneDetectorState expectedState =
+                MetricsTimeZoneDetectorState.create(
+                        tzIdOrdinalGenerator, expectedInternalConfig, expectedDeviceTimeZoneId,
+                        expectedManualSuggestion, expectedTelephonySuggestion,
+                        expectedGeolocationTimeZoneSuggestion);
+        // Rely on MetricsTimeZoneDetectorState.equals() for time zone ID ordinal comparisons.
+        assertEquals(expectedState, actualState);
+    }
+
+    private static void assertFeatureStateMatchesConfig(ConfigurationInternal config,
+            MetricsTimeZoneDetectorState actualState, int expectedDetectionMode) {
+        assertEquals(config.isTelephonyDetectionSupported(),
+                actualState.isTelephonyDetectionSupported());
+        assertEquals(config.isGeoDetectionSupported(), actualState.isGeoDetectionSupported());
+        assertEquals(config.getAutoDetectionEnabledSetting(),
+                actualState.getAutoDetectionEnabledSetting());
+        assertEquals(config.getGeoDetectionEnabledSetting(),
+                actualState.getGeoDetectionEnabledSetting());
+        assertEquals(expectedDetectionMode, actualState.getDetectionMode());
     }
 
     private static ManualTimeZoneSuggestion createManualSuggestion(String zoneId) {

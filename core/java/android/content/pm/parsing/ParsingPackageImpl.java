@@ -44,6 +44,7 @@ import android.content.pm.parsing.component.ParsedPermissionGroup;
 import android.content.pm.parsing.component.ParsedProcess;
 import android.content.pm.parsing.component.ParsedProvider;
 import android.content.pm.parsing.component.ParsedService;
+import android.content.pm.parsing.component.ParsedUsesPermission;
 import android.content.res.TypedArray;
 import android.os.Build;
 import android.os.Bundle;
@@ -225,10 +226,18 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
     @NonNull
     @DataClass.ParcelWith(ForInternedStringList.class)
     protected List<String> adoptPermissions = emptyList();
+    /**
+     * @deprecated consider migrating to {@link #getUsesPermissions} which has
+     *             more parsed details, such as flags
+     */
+    @NonNull
+    @Deprecated
+    @DataClass.ParcelWith(ForInternedStringList.class)
+    protected List<String> requestedPermissions = emptyList();
 
     @NonNull
-    @DataClass.ParcelWith(ForInternedStringList.class)
-    private List<String> requestedPermissions = emptyList();
+    private List<ParsedUsesPermission> usesPermissions = emptyList();
+
     @NonNull
     @DataClass.ParcelWith(ForInternedStringList.class)
     private List<String> implicitPermissions = emptyList();
@@ -380,12 +389,18 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
 
     private int autoRevokePermissions;
 
-    protected int gwpAsanMode;
-    protected int memtagMode;
+    @ApplicationInfo.GwpAsanMode
+    private int gwpAsanMode;
+
+    @ApplicationInfo.MemtagMode
+    private int memtagMode;
+
+    @ApplicationInfo.NativeHeapZeroInitialized
+    private int nativeHeapZeroInitialized;
 
     @Nullable
     @DataClass.ParcelWith(ForBoolean.class)
-    private Boolean nativeHeapZeroInit;
+    private Boolean requestRawExternalStorageAccess;
 
     // TODO(chiuwinson): Non-null
     @Nullable
@@ -448,6 +463,7 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
                 FORCE_QUERYABLE,
                 CROSS_PROFILE,
                 ENABLED,
+                DISALLOW_PROFILING,
         })
         public @interface Values {}
         private static final long EXTERNAL_STORAGE = 1L;
@@ -495,6 +511,7 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
         private static final long FORCE_QUERYABLE = 1L << 42;
         private static final long CROSS_PROFILE = 1L << 43;
         private static final long ENABLED = 1L << 44;
+        private static final long DISALLOW_PROFILING = 1L << 45;
     }
 
     private ParsingPackageImpl setBoolean(@Booleans.Values long flag, boolean value) {
@@ -691,9 +708,13 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
     }
 
     @Override
-    public ParsingPackageImpl addRequestedPermission(String permission) {
-        this.requestedPermissions = CollectionUtils.add(this.requestedPermissions,
-                TextUtils.safeIntern(permission));
+    public ParsingPackageImpl addUsesPermission(ParsedUsesPermission permission) {
+        this.usesPermissions = CollectionUtils.add(this.usesPermissions, permission);
+
+        // Continue populating legacy data structures to avoid performance
+        // issues until all that code can be migrated
+        this.requestedPermissions = CollectionUtils.add(this.requestedPermissions, permission.name);
+
         return this;
     }
 
@@ -989,6 +1010,7 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
         ApplicationInfo appInfo = toAppInfoWithoutStateWithoutFlags();
         appInfo.flags = PackageInfoWithoutStateUtils.appInfoFlags(this);
         appInfo.privateFlags = PackageInfoWithoutStateUtils.appInfoPrivateFlags(this);
+        appInfo.privateFlagsExt = PackageInfoWithoutStateUtils.appInfoPrivateFlagsExt(this);
         return appInfo;
     }
 
@@ -1066,7 +1088,8 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
         appInfo.zygotePreloadName = zygotePreloadName;
         appInfo.setGwpAsanMode(gwpAsanMode);
         appInfo.setMemtagMode(memtagMode);
-        appInfo.setNativeHeapZeroInit(nativeHeapZeroInit);
+        appInfo.setNativeHeapZeroInitialized(nativeHeapZeroInitialized);
+        appInfo.setRequestRawExternalStorageAccess(requestRawExternalStorageAccess);
         appInfo.setBaseCodePath(mBaseApkPath);
         appInfo.setBaseResourcePath(mBaseApkPath);
         appInfo.setCodePath(mPath);
@@ -1135,6 +1158,7 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
         dest.writeStringList(this.originalPackages);
         sForInternedStringList.parcel(this.adoptPermissions, dest, flags);
         sForInternedStringList.parcel(this.requestedPermissions, dest, flags);
+        dest.writeTypedList(this.usesPermissions);
         sForInternedStringList.parcel(this.implicitPermissions, dest, flags);
         sForStringSet.parcel(this.upgradeKeySets, dest, flags);
         dest.writeMap(this.keySetMapping);
@@ -1201,7 +1225,8 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
         dest.writeLong(this.mBooleans);
         dest.writeMap(this.mProperties);
         dest.writeInt(this.memtagMode);
-        sForBoolean.parcel(this.nativeHeapZeroInit, dest, flags);
+        dest.writeInt(this.nativeHeapZeroInitialized);
+        sForBoolean.parcel(this.requestRawExternalStorageAccess, dest, flags);
     }
 
     public ParsingPackageImpl(Parcel in) {
@@ -1256,6 +1281,7 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
         this.originalPackages = in.createStringArrayList();
         this.adoptPermissions = sForInternedStringList.unparcel(in);
         this.requestedPermissions = sForInternedStringList.unparcel(in);
+        this.usesPermissions = in.createTypedArrayList(ParsedUsesPermission.CREATOR);
         this.implicitPermissions = sForInternedStringList.unparcel(in);
         this.upgradeKeySets = sForStringSet.unparcel(in);
         this.keySetMapping = in.readHashMap(boot);
@@ -1322,9 +1348,10 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
         this.gwpAsanMode = in.readInt();
         this.minExtensionVersions = in.readSparseIntArray();
         this.mBooleans = in.readLong();
-        this.mProperties = in.createTypedArrayMap(Property.CREATOR);
+        this.mProperties = in.readHashMap(boot);
         this.memtagMode = in.readInt();
-        this.nativeHeapZeroInit = sForBoolean.unparcel(in);
+        this.nativeHeapZeroInitialized = in.readInt();
+        this.requestRawExternalStorageAccess = sForBoolean.unparcel(in);
         assignDerivedFields();
     }
 
@@ -1548,10 +1575,21 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
         return adoptPermissions;
     }
 
+    /**
+     * @deprecated consider migrating to {@link #getUsesPermissions} which has
+     *             more parsed details, such as flags
+     */
     @NonNull
     @Override
+    @Deprecated
     public List<String> getRequestedPermissions() {
         return requestedPermissions;
+    }
+
+    @NonNull
+    @Override
+    public List<ParsedUsesPermission> getUsesPermissions() {
+        return usesPermissions;
     }
 
     @NonNull
@@ -2053,7 +2091,12 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
 
     @Override
     public boolean isProfileableByShell() {
-        return getBoolean(Booleans.PROFILEABLE_BY_SHELL);
+        return isProfileable() && getBoolean(Booleans.PROFILEABLE_BY_SHELL);
+    }
+
+    @Override
+    public boolean isProfileable() {
+        return !getBoolean(Booleans.DISALLOW_PROFILING);
     }
 
     @Override
@@ -2076,20 +2119,28 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
         return getBoolean(Booleans.DIRECT_BOOT_AWARE);
     }
 
+    @ApplicationInfo.GwpAsanMode
     @Override
     public int getGwpAsanMode() {
         return gwpAsanMode;
     }
 
+    @ApplicationInfo.MemtagMode
     @Override
     public int getMemtagMode() {
         return memtagMode;
     }
 
+    @ApplicationInfo.NativeHeapZeroInitialized
+    @Override
+    public int getNativeHeapZeroInitialized() {
+        return nativeHeapZeroInitialized;
+    }
+
     @Nullable
     @Override
-    public Boolean isNativeHeapZeroInit() {
-        return nativeHeapZeroInit;
+    public Boolean hasRequestRawExternalStorageAccess() {
+        return requestRawExternalStorageAccess;
     }
 
     @Override
@@ -2504,6 +2555,11 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
     }
 
     @Override
+    public ParsingPackageImpl setProfileable(boolean value) {
+        return setBoolean(Booleans.DISALLOW_PROFILING, !value);
+    }
+
+    @Override
     public ParsingPackageImpl setBackupInForeground(boolean value) {
         return setBoolean(Booleans.BACKUP_IN_FOREGROUND, value);
     }
@@ -2524,23 +2580,29 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
     }
 
     @Override
-    public ParsingPackageImpl setGwpAsanMode(int value) {
+    public ParsingPackageImpl setGwpAsanMode(@ApplicationInfo.GwpAsanMode int value) {
         gwpAsanMode = value;
         return this;
     }
 
     @Override
-    public ParsingPackageImpl setMemtagMode(int value) {
+    public ParsingPackageImpl setMemtagMode(@ApplicationInfo.MemtagMode int value) {
         memtagMode = value;
         return this;
     }
 
     @Override
-    public ParsingPackageImpl setNativeHeapZeroInit(@Nullable Boolean value) {
-        nativeHeapZeroInit = value;
+    public ParsingPackageImpl setNativeHeapZeroInitialized(
+            @ApplicationInfo.NativeHeapZeroInitialized int value) {
+        nativeHeapZeroInitialized = value;
         return this;
     }
 
+    @Override
+    public ParsingPackageImpl setRequestRawExternalStorageAccess(@Nullable Boolean value) {
+        requestRawExternalStorageAccess = value;
+        return this;
+    }
     @Override
     public ParsingPackageImpl setPartiallyDirectBootAware(boolean value) {
         return setBoolean(Booleans.PARTIALLY_DIRECT_BOOT_AWARE, value);

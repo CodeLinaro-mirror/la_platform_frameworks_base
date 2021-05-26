@@ -23,6 +23,7 @@ import android.annotation.ColorInt;
 import android.annotation.DrawableRes;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -336,7 +337,7 @@ public final class Icon implements Parcelable {
      */
     public Drawable loadDrawable(Context context) {
         final Drawable result = loadDrawableInner(context);
-        if (result != null && (mTintList != null || mBlendMode != DEFAULT_BLEND_MODE)) {
+        if (result != null && hasTint()) {
             result.mutate();
             result.setTintList(mTintList);
             result.setTintBlendMode(mBlendMode);
@@ -368,7 +369,9 @@ public final class Icon implements Parcelable {
                         final PackageManager pm = context.getPackageManager();
                         try {
                             ApplicationInfo ai = pm.getApplicationInfo(
-                                    resPackage, PackageManager.MATCH_UNINSTALLED_PACKAGES);
+                                    resPackage,
+                                    PackageManager.MATCH_UNINSTALLED_PACKAGES
+                                    | PackageManager.GET_SHARED_LIBRARY_FILES);
                             if (ai != null) {
                                 mObj1 = pm.getResourcesForApplication(ai);
                             } else {
@@ -762,6 +765,11 @@ public final class Icon implements Parcelable {
         return this;
     }
 
+    /** @hide */
+    public @Nullable ColorStateList getTintList() {
+        return mTintList;
+    }
+
     /**
      * Store a blending mode to use whenever this Icon is drawn.
      *
@@ -782,6 +790,11 @@ public final class Icon implements Parcelable {
     public @NonNull Icon setTintBlendMode(@NonNull BlendMode mode) {
         mBlendMode = mode;
         return this;
+    }
+
+    /** @hide */
+    public @NonNull BlendMode getTintBlendMode() {
+        return mBlendMode;
     }
 
     /** @hide */

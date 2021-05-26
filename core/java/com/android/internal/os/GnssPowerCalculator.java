@@ -46,24 +46,53 @@ public class GnssPowerCalculator extends PowerCalculator {
     @Override
     public void calculate(BatteryUsageStats.Builder builder, BatteryStats batteryStats,
             long rawRealtimeUs, long rawUptimeUs, BatteryUsageStatsQuery query) {
+        double appsPowerMah = 0;
         final double averageGnssPowerMa = getAverageGnssPower(batteryStats, rawRealtimeUs,
                 BatteryStats.STATS_SINCE_CHARGED);
         final SparseArray<UidBatteryConsumer.Builder> uidBatteryConsumerBuilders =
                 builder.getUidBatteryConsumerBuilders();
         for (int i = uidBatteryConsumerBuilders.size() - 1; i >= 0; i--) {
             final UidBatteryConsumer.Builder app = uidBatteryConsumerBuilders.valueAt(i);
-            calculateApp(app, app.getBatteryStatsUid(), rawRealtimeUs, rawUptimeUs, query,
-                    averageGnssPowerMa);
+            final long consumptionUC =
+                    app.getBatteryStatsUid().getGnssMeasuredBatteryConsumptionUC();
+            final int powerModel = getPowerModel(consumptionUC, query);
+            appsPowerMah += calculateApp(app, app.getBatteryStatsUid(), powerModel,
+                    rawRealtimeUs, averageGnssPowerMa, consumptionUC);
         }
+
+        final long consumptionUC = batteryStats.getGnssMeasuredBatteryConsumptionUC();
+        final int powerModel = getPowerModel(consumptionUC, query);
+        double powerMah;
+        if (powerModel == BatteryConsumer.POWER_MODEL_MEASURED_ENERGY) {
+            powerMah = uCtoMah(consumptionUC);
+        } else {
+            powerMah = appsPowerMah;
+        }
+        builder.getAggregateBatteryConsumerBuilder(
+                BatteryUsageStats.AGGREGATE_BATTERY_CONSUMER_SCOPE_DEVICE)
+                .setConsumedPower(BatteryConsumer.POWER_COMPONENT_GNSS, powerMah, powerModel);
+        builder.getAggregateBatteryConsumerBuilder(
+                BatteryUsageStats.AGGREGATE_BATTERY_CONSUMER_SCOPE_ALL_APPS)
+                .setConsumedPower(BatteryConsumer.POWER_COMPONENT_GNSS, appsPowerMah, powerModel);
     }
 
-    private void calculateApp(UidBatteryConsumer.Builder app, BatteryStats.Uid u,
-            long rawRealtimeUs, long rawUptimeUs, BatteryUsageStatsQuery query,
-            double averageGnssPowerMa) {
+    private double calculateApp(UidBatteryConsumer.Builder app, BatteryStats.Uid u,
+            @BatteryConsumer.PowerModel int powerModel, long rawRealtimeUs,
+            double averageGnssPowerMa, long measuredChargeUC) {
         final long durationMs = computeDuration(u, rawRealtimeUs, BatteryStats.STATS_SINCE_CHARGED);
-        double powerMah = computePower(durationMs, averageGnssPowerMa);
-        app.setUsageDurationMillis(BatteryConsumer.TIME_COMPONENT_GNSS, durationMs)
-                .setConsumedPower(BatteryConsumer.POWER_COMPONENT_GNSS, powerMah);
+        final double powerMah;
+        switch (powerModel) {
+            case BatteryConsumer.POWER_MODEL_MEASURED_ENERGY:
+                powerMah = uCtoMah(measuredChargeUC);
+                break;
+            case BatteryConsumer.POWER_MODEL_POWER_PROFILE:
+            default:
+                powerMah = computePower(durationMs, averageGnssPowerMa);
+        }
+
+        app.setUsageDurationMillis(BatteryConsumer.POWER_COMPONENT_GNSS, durationMs)
+                .setConsumedPower(BatteryConsumer.POWER_COMPONENT_GNSS, powerMah, powerModel);
+        return powerMah;
     }
 
     @Override
@@ -73,15 +102,29 @@ public class GnssPowerCalculator extends PowerCalculator {
         for (int i = sippers.size() - 1; i >= 0; i--) {
             final BatterySipper app = sippers.get(i);
             if (app.drainType == BatterySipper.DrainType.APP) {
-                calculateApp(app, app.uidObj, rawRealtimeUs, statsType, averageGnssPowerMa);
+                final long consumptionUC =
+                        app.uidObj.getGnssMeasuredBatteryConsumptionUC();
+                final int powerModel = getPowerModel(consumptionUC);
+                calculateApp(app, app.uidObj, powerModel, rawRealtimeUs, averageGnssPowerMa,
+                        consumptionUC);
             }
         }
     }
 
-    protected void calculateApp(BatterySipper app, BatteryStats.Uid u, long rawRealtimeUs,
-            int statsType, double averageGnssPowerMa) {
+    private void calculateApp(BatterySipper app, BatteryStats.Uid u,
+            @BatteryConsumer.PowerModel int powerModel, long rawRealtimeUs,
+            double averageGnssPowerMa, long measuredChargeUC) {
         final long durationMs = computeDuration(u, rawRealtimeUs, BatteryStats.STATS_SINCE_CHARGED);
-        double powerMah = computePower(durationMs, averageGnssPowerMa);
+
+        final double powerMah;
+        switch (powerModel) {
+            case BatteryConsumer.POWER_MODEL_MEASURED_ENERGY:
+                powerMah = uCtoMah(measuredChargeUC);
+                break;
+            case BatteryConsumer.POWER_MODEL_POWER_PROFILE:
+            default:
+                powerMah = computePower(durationMs, averageGnssPowerMa);
+        }
 
         app.gpsTimeMs = durationMs;
         app.gpsPowerMah = powerMah;

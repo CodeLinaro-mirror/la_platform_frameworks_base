@@ -28,15 +28,16 @@ import android.graphics.Rect;
 import android.graphics.drawable.Icon;
 import android.util.AttributeSet;
 import android.util.Property;
+import android.view.ContextThemeWrapper;
 import android.view.View;
 import android.view.animation.Interpolator;
 
 import androidx.collection.ArrayMap;
 
 import com.android.internal.statusbar.StatusBarIcon;
-import com.android.keyguard.KeyguardUpdateMonitor;
-import com.android.systemui.Interpolators;
+import com.android.settingslib.Utils;
 import com.android.systemui.R;
+import com.android.systemui.animation.Interpolators;
 import com.android.systemui.statusbar.AlphaOptimizedFrameLayout;
 import com.android.systemui.statusbar.StatusBarIconView;
 import com.android.systemui.statusbar.notification.stack.AnimationFilter;
@@ -149,7 +150,7 @@ public class NotificationIconContainer extends AlphaOptimizedFrameLayout {
     private float mActualPaddingStart = NO_VALUE;
     private boolean mDozing;
     private boolean mOnLockScreen;
-    private int mLockScreenMode = KeyguardUpdateMonitor.LOCK_SCREEN_MODE_NORMAL;
+    private boolean mInNotificationIconShelf;
     private boolean mChangingViewPositions;
     private int mAddAnimationStartIndex = -1;
     private int mCannedAnimationStartIndex = -1;
@@ -168,6 +169,7 @@ public class NotificationIconContainer extends AlphaOptimizedFrameLayout {
     private Rect mIsolatedIconLocation;
     private int[] mAbsolutePosition = new int[2];
     private View mIsolatedIconForAnimation;
+    private int mThemedTextColorPrimary;
 
     public NotificationIconContainer(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -179,6 +181,10 @@ public class NotificationIconContainer extends AlphaOptimizedFrameLayout {
         mDotPadding = getResources().getDimensionPixelSize(R.dimen.overflow_icon_dot_padding);
         mStaticDotRadius = getResources().getDimensionPixelSize(R.dimen.overflow_dot_radius);
         mStaticDotDiameter = 2 * mStaticDotRadius;
+        final Context themedContext = new ContextThemeWrapper(getContext(),
+                com.android.internal.R.style.Theme_DeviceDefault_DayNight);
+        mThemedTextColorPrimary = Utils.getColorAttr(themedContext,
+                com.android.internal.R.attr.textColorPrimary).getDefaultColor();
     }
 
     @Override
@@ -456,33 +462,6 @@ public class NotificationIconContainer extends AlphaOptimizedFrameLayout {
             mFirstVisibleIconState = mIconStates.get(getChildAt(0));
         }
 
-        boolean center = mOnLockScreen
-                && mLockScreenMode == KeyguardUpdateMonitor.LOCK_SCREEN_MODE_NORMAL;
-        if (center && translationX < getLayoutEnd()) {
-            float initialTranslation =
-                    mFirstVisibleIconState == null ? 0 : mFirstVisibleIconState.xTranslation;
-
-            float contentWidth = 0;
-            if (mLastVisibleIconState != null) {
-                contentWidth = mLastVisibleIconState.xTranslation + mIconSize;
-                contentWidth = Math.min(getWidth(), contentWidth) - initialTranslation;
-            }
-            float availableSpace = getLayoutEnd() - getActualPaddingStart();
-            float delta = (availableSpace - contentWidth) / 2;
-
-            if (firstOverflowIndex != -1) {
-                // If we have an overflow, only count those half for centering because the dots
-                // don't have a lot of visual weight.
-                float deltaIgnoringOverflow = (getLayoutEnd() - mVisualOverflowStart) / 2;
-                delta = (deltaIgnoringOverflow + delta) / 2;
-            }
-            for (int i = 0; i < childCount; i++) {
-                View view = getChildAt(i);
-                IconState iconState = mIconStates.get(view);
-                iconState.xTranslation += delta;
-            }
-        }
-
         if (isLayoutRtl()) {
             for (int i = 0; i < childCount; i++) {
                 View view = getChildAt(i);
@@ -690,9 +669,12 @@ public class NotificationIconContainer extends AlphaOptimizedFrameLayout {
      * Set whether the device is on the lockscreen and which lockscreen mode the device is
      * configured to. Depending on these values, the layout of the AOD icons change.
      */
-    public void setOnLockScreen(boolean onLockScreen, int lockScreenMode) {
+    public void setOnLockScreen(boolean onLockScreen) {
         mOnLockScreen = onLockScreen;
-        mLockScreenMode = lockScreenMode;
+    }
+
+    public void setInNotificationIconShelf(boolean inShelf) {
+        mInNotificationIconShelf = inShelf;
     }
 
     public class IconState extends ViewState {
@@ -806,7 +788,8 @@ public class NotificationIconContainer extends AlphaOptimizedFrameLayout {
                     }
                 }
                 icon.setVisibleState(visibleState, animationsAllowed);
-                icon.setIconColor(iconColor, needsCannedAnimation && animationsAllowed);
+                icon.setIconColor(mInNotificationIconShelf ? mThemedTextColorPrimary : iconColor,
+                        needsCannedAnimation && animationsAllowed);
                 if (animate) {
                     animateTo(icon, animationProperties);
                 } else {

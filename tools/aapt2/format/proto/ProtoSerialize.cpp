@@ -345,28 +345,29 @@ void SerializeTableToPb(const ResourceTable& table, pb::ResourceTable* out_table
   pb_fingerprint->set_version(util::GetToolFingerprint());
 
   std::vector<Overlayable*> overlayables;
-  for (const std::unique_ptr<ResourceTablePackage>& package : table.packages) {
+  auto table_view = table.GetPartitionedView();
+  for (const auto& package : table_view.packages) {
     pb::Package* pb_package = out_table->add_package();
-    if (package->id) {
-      pb_package->mutable_package_id()->set_id(package->id.value());
+    if (package.id) {
+      pb_package->mutable_package_id()->set_id(package.id.value());
     }
-    pb_package->set_package_name(package->name);
+    pb_package->set_package_name(package.name);
 
-    for (const std::unique_ptr<ResourceTableType>& type : package->types) {
+    for (const auto& type : package.types) {
       pb::Type* pb_type = pb_package->add_type();
-      if (type->id) {
-        pb_type->mutable_type_id()->set_id(type->id.value());
+      if (type.id) {
+        pb_type->mutable_type_id()->set_id(type.id.value());
       }
-      pb_type->set_name(to_string(type->type).to_string());
+      pb_type->set_name(to_string(type.type).to_string());
 
       // hardcoded string uses characters which make it an invalid resource name
       static const char* obfuscated_resource_name = "0_resource_name_obfuscated";
-      for (const std::unique_ptr<ResourceEntry>& entry : type->entries) {
+      for (const auto& entry : type.entries) {
         pb::Entry* pb_entry = pb_type->add_entry();
         if (entry->id) {
-          pb_entry->mutable_entry_id()->set_id(entry->id.value());
+          pb_entry->mutable_entry_id()->set_id(entry->id.value().entry_id());
         }
-        ResourceName resource_name({}, type->type, entry->name);
+        ResourceName resource_name({}, type.type, entry->name);
         if (options.collapse_key_stringpool &&
             options.name_collapse_exemptions.find(resource_name) ==
             options.name_collapse_exemptions.end()) {
@@ -377,6 +378,7 @@ void SerializeTableToPb(const ResourceTable& table, pb::ResourceTable* out_table
 
         // Write the Visibility struct.
         pb::Visibility* pb_visibility = pb_entry->mutable_visibility();
+        pb_visibility->set_staged_api(entry->visibility.staged_api);
         pb_visibility->set_level(SerializeVisibilityToPb(entry->visibility.level));
         if (source_pool != nullptr) {
           SerializeSourceToPb(entry->visibility.source, source_pool.get(),
@@ -437,6 +439,36 @@ static void SerializeReferenceToPb(const Reference& ref, pb::Reference* pb_ref) 
   pb_ref->set_type(SerializeReferenceTypeToPb(ref.reference_type));
   if (ref.is_dynamic) {
     pb_ref->mutable_is_dynamic()->set_value(ref.is_dynamic);
+  }
+  if (ref.type_flags) {
+    pb_ref->set_type_flags(*ref.type_flags);
+  }
+  pb_ref->set_allow_raw(ref.allow_raw);
+}
+
+static void SerializeMacroToPb(const Macro& ref, pb::MacroBody* pb_macro) {
+  pb_macro->set_raw_string(ref.raw_value);
+
+  auto pb_style_str = pb_macro->mutable_style_string();
+  pb_style_str->set_str(ref.style_string.str);
+  for (const auto& span : ref.style_string.spans) {
+    auto pb_span = pb_style_str->add_spans();
+    pb_span->set_name(span.name);
+    pb_span->set_start_index(span.first_char);
+    pb_span->set_end_index(span.last_char);
+  }
+
+  for (const auto& untranslatable_section : ref.untranslatable_sections) {
+    auto pb_section = pb_macro->add_untranslatable_sections();
+    pb_section->set_start_index(untranslatable_section.start);
+    pb_section->set_end_index(untranslatable_section.end);
+  }
+
+  for (const auto& namespace_decls : ref.alias_namespaces) {
+    auto pb_namespace = pb_macro->add_namespace_stack();
+    pb_namespace->set_prefix(namespace_decls.alias);
+    pb_namespace->set_package_name(namespace_decls.package_name);
+    pb_namespace->set_is_private(namespace_decls.is_private);
   }
 }
 
@@ -639,6 +671,11 @@ class ValueSerializer : public ConstValueVisitor {
       SerializeItemMetaDataToPb(*plural->values[i], pb_entry, src_pool_);
       SerializeItemToPb(*plural->values[i], pb_entry->mutable_item());
     }
+  }
+
+  void Visit(const Macro* macro) override {
+    pb::MacroBody* pb_macro = out_value_->mutable_compound_value()->mutable_macro();
+    SerializeMacroToPb(*macro, pb_macro);
   }
 
   void VisitAny(const Value* unknown) override {

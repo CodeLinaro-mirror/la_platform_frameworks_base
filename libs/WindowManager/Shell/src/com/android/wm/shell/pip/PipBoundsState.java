@@ -19,10 +19,14 @@ package com.android.wm.shell.pip;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.ActivityTaskManager;
+import android.app.PictureInPictureUiState;
 import android.content.ComponentName;
 import android.content.Context;
 import android.graphics.Point;
 import android.graphics.Rect;
+import android.os.RemoteException;
+import android.util.Log;
 import android.util.Size;
 import android.view.Display;
 
@@ -35,6 +39,7 @@ import java.io.PrintWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * Singleton source of truth for the current state of PIP bounds.
@@ -84,6 +89,7 @@ public final class PipBoundsState {
 
     private @Nullable Runnable mOnMinimalSizeChangeCallback;
     private @Nullable TriConsumer<Boolean, Integer, Boolean> mOnShelfVisibilityChangeCallback;
+    private @Nullable Consumer<Rect> mOnPipExclusionBoundsChangeCallback;
 
     public PipBoundsState(@NonNull Context context) {
         mContext = context;
@@ -102,6 +108,9 @@ public final class PipBoundsState {
     /** Set the current PIP bounds. */
     public void setBounds(@NonNull Rect bounds) {
         mBounds.set(bounds);
+        if (mOnPipExclusionBoundsChangeCallback != null) {
+            mOnPipExclusionBoundsChangeCallback.accept(bounds);
+        }
     }
 
     /** Get the current PIP bounds. */
@@ -180,7 +189,18 @@ public final class PipBoundsState {
 
     /** Dictate where PiP currently should be stashed, if at all. */
     public void setStashed(@StashType int stashedState) {
+        if (mStashedState == stashedState) {
+            return;
+        }
+
         mStashedState = stashedState;
+        try {
+            ActivityTaskManager.getService().onPictureInPictureStateChanged(
+                    new PictureInPictureUiState(stashedState != STASH_TYPE_NONE /* isStashed */)
+            );
+        } catch (RemoteException e) {
+            Log.e(TAG, "Unable to set alert PiP state change.");
+        }
     }
 
     /**
@@ -384,6 +404,18 @@ public final class PipBoundsState {
     public void setOnShelfVisibilityChangeCallback(
             @Nullable TriConsumer<Boolean, Integer, Boolean> onShelfVisibilityChangeCallback) {
         mOnShelfVisibilityChangeCallback = onShelfVisibilityChangeCallback;
+    }
+
+    /**
+     * Set a callback to watch out for PiP bounds. This is mostly used by SystemUI's
+     * Back-gesture handler, to avoid conflicting with PiP when it's stashed.
+     */
+    public void setPipExclusionBoundsChangeCallback(
+            @Nullable Consumer<Rect> onPipExclusionBoundsChangeCallback) {
+        mOnPipExclusionBoundsChangeCallback = onPipExclusionBoundsChangeCallback;
+        if (mOnPipExclusionBoundsChangeCallback != null) {
+            mOnPipExclusionBoundsChangeCallback.accept(getBounds());
+        }
     }
 
     /** Source of truth for the current bounds of PIP that may be in motion. */

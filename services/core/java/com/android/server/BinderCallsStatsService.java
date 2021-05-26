@@ -19,6 +19,15 @@ package com.android.server;
 import static android.content.pm.PackageManager.MATCH_DIRECT_BOOT_AWARE;
 import static android.content.pm.PackageManager.MATCH_DIRECT_BOOT_UNAWARE;
 
+import static com.android.internal.os.BinderCallsStats.SettingsObserver.SETTINGS_COLLECT_LATENCY_DATA_KEY;
+import static com.android.internal.os.BinderCallsStats.SettingsObserver.SETTINGS_DETAILED_TRACKING_KEY;
+import static com.android.internal.os.BinderCallsStats.SettingsObserver.SETTINGS_ENABLED_KEY;
+import static com.android.internal.os.BinderCallsStats.SettingsObserver.SETTINGS_IGNORE_BATTERY_STATUS_KEY;
+import static com.android.internal.os.BinderCallsStats.SettingsObserver.SETTINGS_MAX_CALL_STATS_KEY;
+import static com.android.internal.os.BinderCallsStats.SettingsObserver.SETTINGS_SAMPLING_INTERVAL_KEY;
+import static com.android.internal.os.BinderCallsStats.SettingsObserver.SETTINGS_TRACK_DIRECT_CALLING_UID_KEY;
+import static com.android.internal.os.BinderCallsStats.SettingsObserver.SETTINGS_TRACK_SCREEN_INTERACTIVE_KEY;
+
 import android.app.ActivityThread;
 import android.content.Context;
 import android.content.pm.PackageInfo;
@@ -124,15 +133,6 @@ public class BinderCallsStatsService extends Binder {
 
     /** Listens for flag changes. */
     private static class SettingsObserver extends ContentObserver {
-        private static final String SETTINGS_ENABLED_KEY = "enabled";
-        private static final String SETTINGS_DETAILED_TRACKING_KEY = "detailed_tracking";
-        private static final String SETTINGS_UPLOAD_DATA_KEY = "upload_data";
-        private static final String SETTINGS_SAMPLING_INTERVAL_KEY = "sampling_interval";
-        private static final String SETTINGS_TRACK_SCREEN_INTERACTIVE_KEY = "track_screen_state";
-        private static final String SETTINGS_TRACK_DIRECT_CALLING_UID_KEY = "track_calling_uid";
-        private static final String SETTINGS_MAX_CALL_STATS_KEY = "max_call_stats_count";
-        private static final String SETTINGS_IGNORE_BATTERY_STATUS_KEY = "ignore_battery_status";
-
         private boolean mEnabled;
         private final Uri mUri = Settings.Global.getUriFor(Settings.Global.BINDER_CALLS_STATS);
         private final Context mContext;
@@ -188,7 +188,13 @@ public class BinderCallsStatsService extends Binder {
             mBinderCallsStats.setIgnoreBatteryStatus(
                     mParser.getBoolean(SETTINGS_IGNORE_BATTERY_STATUS_KEY,
                     BinderCallsStats.DEFAULT_IGNORE_BATTERY_STATUS));
-
+            mBinderCallsStats.setCollectLatencyData(
+                    mParser.getBoolean(SETTINGS_COLLECT_LATENCY_DATA_KEY,
+                    BinderCallsStats.DEFAULT_COLLECT_LATENCY_DATA));
+            // Binder latency observer settings.
+            BinderCallsStats.SettingsObserver.configureLatencyObserver(
+                    mParser,
+                    mBinderCallsStats.getLatencyObserver());
 
             final boolean enabled =
                     mParser.getBoolean(SETTINGS_ENABLED_KEY, BinderCallsStats.ENABLED_DEFAULT);
@@ -206,6 +212,7 @@ public class BinderCallsStatsService extends Binder {
                 mEnabled = enabled;
                 mBinderCallsStats.reset();
                 mBinderCallsStats.setAddDebugEntries(enabled);
+                mBinderCallsStats.getLatencyObserver().reset();
             }
         }
     }

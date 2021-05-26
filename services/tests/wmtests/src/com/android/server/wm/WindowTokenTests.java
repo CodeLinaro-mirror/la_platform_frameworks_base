@@ -16,6 +16,7 @@
 
 package com.android.server.wm;
 
+import static android.view.InsetsState.ITYPE_IME;
 import static android.view.WindowManager.LayoutParams.FIRST_SUB_WINDOW;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
@@ -37,6 +38,7 @@ import android.content.res.Configuration;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.platform.test.annotations.Presubmit;
+import android.window.WindowContext;
 
 import androidx.test.filters.SmallTest;
 
@@ -182,49 +184,28 @@ public class WindowTokenTests extends WindowTestsBase {
     }
 
     /**
-     * Test that {@link WindowToken} constructor parameters is set with expectation.
-     */
-    @Test
-    public void testWindowTokenConstructorValidity() {
-        WindowToken token = new WindowToken(mDisplayContent.mWmService, mock(IBinder.class),
-                TYPE_TOAST, true /* persistOnEmpty */, mDisplayContent,
-                true /* ownerCanManageAppTokens */);
-        assertFalse(token.mRoundedCornerOverlay);
-        assertFalse(token.isFromClient());
-
-        token = new WindowToken(mDisplayContent.mWmService, mock(IBinder.class), TYPE_TOAST,
-                true /* persistOnEmpty */, mDisplayContent, true /* ownerCanManageAppTokens */,
-                true /* roundedCornerOverlay */);
-        assertTrue(token.mRoundedCornerOverlay);
-        assertFalse(token.isFromClient());
-
-        token = new WindowToken(mDisplayContent.mWmService, mock(IBinder.class), TYPE_TOAST,
-                true /* persistOnEmpty */, mDisplayContent, true /* ownerCanManageAppTokens */,
-                true /* roundedCornerOverlay */, true /* fromClientToken */, null /* options */);
-        assertTrue(token.mRoundedCornerOverlay);
-        assertTrue(token.isFromClient());
-    }
-
-    /**
      * Test that {@link android.view.SurfaceControl} should not be created for the
-     * {@link WindowToken} which was created for {@link android.app.WindowContext} initially, the
+     * {@link WindowToken} which was created for {@link WindowContext} initially, the
      * surface should be create after addWindow for this token.
      */
     @Test
     public void testSurfaceCreatedForWindowToken() {
-        final WindowToken fromClientToken = new WindowToken(mDisplayContent.mWmService,
-                mock(IBinder.class), TYPE_APPLICATION_OVERLAY, true /* persistOnEmpty */,
-                mDisplayContent, true /* ownerCanManageAppTokens */,
-                true /* roundedCornerOverlay */, true /* fromClientToken */, null /* options */);
+        final WindowToken fromClientToken = new WindowToken.Builder(mDisplayContent.mWmService,
+                mock(IBinder.class), TYPE_APPLICATION_OVERLAY)
+                .setDisplayContent(mDisplayContent)
+                .setFromClientToken(true)
+                .build();
+
         assertNull(fromClientToken.mSurfaceControl);
 
         createWindow(null, TYPE_APPLICATION_OVERLAY, fromClientToken, "window");
         assertNotNull(fromClientToken.mSurfaceControl);
 
-        final WindowToken nonClientToken = new WindowToken(mDisplayContent.mWmService,
-                mock(IBinder.class), TYPE_TOAST, true /* persistOnEmpty */, mDisplayContent,
-                true /* ownerCanManageAppTokens */, true /* roundedCornerOverlay */,
-                false /* fromClientToken */, null /* options */);
+        final WindowToken nonClientToken = new WindowToken.Builder(mDisplayContent.mWmService,
+                mock(IBinder.class), TYPE_APPLICATION_OVERLAY)
+                .setDisplayContent(mDisplayContent)
+                .setFromClientToken(false)
+                .build();
         assertNotNull(nonClientToken.mSurfaceControl);
     }
 
@@ -235,19 +216,49 @@ public class WindowTokenTests extends WindowTestsBase {
                         .mSelectRootForWindowFunc;
         spyOn(selectFunc);
 
-        final WindowToken token1 = new WindowToken(mDisplayContent.mWmService, mock(IBinder.class),
-                TYPE_STATUS_BAR, true /* persistOnEmpty */, mDisplayContent,
-                true /* ownerCanManageAppTokens */, true /* roundedCornerOverlay */,
-                false /* fromClientToken */, null /* options */);
+        final WindowToken token1 = new WindowToken.Builder(mDisplayContent.mWmService,
+                mock(IBinder.class), TYPE_STATUS_BAR)
+                .setDisplayContent(mDisplayContent)
+                .setPersistOnEmpty(true)
+                .setOwnerCanManageAppTokens(true)
+                .build();
 
         verify(selectFunc).apply(token1.windowType, null);
 
         final Bundle options = new Bundle();
-        final WindowToken token2 = new WindowToken(mDisplayContent.mWmService, mock(IBinder.class),
-                TYPE_STATUS_BAR, true /* persistOnEmpty */, mDisplayContent,
-                true /* ownerCanManageAppTokens */, true /* roundedCornerOverlay */,
-                false /* fromClientToken */, options /* options */);
+        final WindowToken token2 = new WindowToken.Builder(mDisplayContent.mWmService,
+                mock(IBinder.class), TYPE_STATUS_BAR)
+                .setDisplayContent(mDisplayContent)
+                .setPersistOnEmpty(true)
+                .setOwnerCanManageAppTokens(true)
+                .setOptions(options)
+                .build();
 
         verify(selectFunc).apply(token2.windowType, options);
+    }
+
+    /**
+     * Test that {@link WindowToken#setInsetsFrozen(boolean)} will set the frozen insets
+     * states for its children windows and by default it shouldn't let IME window setting
+     * the frozen insets state even the window of the window token is the IME layering target.
+     */
+    @UseTestDisplay(addWindows = W_INPUT_METHOD)
+    @Test
+    public void testSetInsetsFrozen_notAffectImeWindowState() {
+        // Pre-condition: make the IME window be controlled by IME insets provider.
+        mDisplayContent.getInsetsStateController().getSourceProvider(ITYPE_IME).setWindow(
+                mDisplayContent.mInputMethodWindow, null, null);
+
+        // Simulate an app window to be the IME layering target, assume the app window has no
+        // frozen insets state by default.
+        final WindowState app = createWindow(null, TYPE_APPLICATION, "app");
+        mDisplayContent.setImeLayeringTarget(app);
+        assertNull(app.getFrozenInsetsState());
+        assertTrue(app.isImeLayeringTarget());
+
+        // Verify invoking setInsetsFrozen shouldn't let IME window setting the frozen insets state.
+        app.mToken.setInsetsFrozen(true);
+        assertNotNull(app.getFrozenInsetsState());
+        assertNull(mDisplayContent.mInputMethodWindow.getFrozenInsetsState());
     }
 }

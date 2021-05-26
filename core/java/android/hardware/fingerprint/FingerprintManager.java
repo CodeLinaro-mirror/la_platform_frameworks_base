@@ -23,6 +23,11 @@ import static android.Manifest.permission.TEST_BIOMETRIC;
 import static android.Manifest.permission.USE_BIOMETRIC;
 import static android.Manifest.permission.USE_BIOMETRIC_INTERNAL;
 import static android.Manifest.permission.USE_FINGERPRINT;
+import static android.hardware.fingerprint.FingerprintSensorProperties.TYPE_POWER_BUTTON;
+
+import static com.android.internal.util.FrameworkStatsLog.AUTH_DEPRECATED_APIUSED__DEPRECATED_API__API_FINGERPRINT_MANAGER_AUTHENTICATE;
+import static com.android.internal.util.FrameworkStatsLog.AUTH_DEPRECATED_APIUSED__DEPRECATED_API__API_FINGERPRINT_MANAGER_HAS_ENROLLED_FINGERPRINTS;
+import static com.android.internal.util.FrameworkStatsLog.AUTH_DEPRECATED_APIUSED__DEPRECATED_API__API_FINGERPRINT_MANAGER_IS_HARDWARE_DETECTED;
 
 import android.annotation.IntDef;
 import android.annotation.NonNull;
@@ -55,6 +60,8 @@ import android.os.UserHandle;
 import android.security.identity.IdentityCredential;
 import android.util.Slog;
 import android.view.Surface;
+
+import com.android.internal.util.FrameworkStatsLog;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -452,7 +459,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
          *         {@link #remove} is called on a group, this should be the number of remaining
          *         fingerprints in the group, and 0 after the last fingerprint is removed.
          */
-        public void onRemovalSucceeded(Fingerprint fp, int remaining) { }
+        public void onRemovalSucceeded(@Nullable Fingerprint fp, int remaining) { }
     }
 
     /**
@@ -533,6 +540,11 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     @RequiresPermission(anyOf = {USE_BIOMETRIC, USE_FINGERPRINT})
     public void authenticate(@Nullable CryptoObject crypto, @Nullable CancellationSignal cancel,
             @NonNull AuthenticationCallback callback, Handler handler, int sensorId, int userId) {
+
+        FrameworkStatsLog.write(FrameworkStatsLog.AUTH_DEPRECATED_API_USED,
+                AUTH_DEPRECATED_APIUSED__DEPRECATED_API__API_FINGERPRINT_MANAGER_AUTHENTICATE,
+                mContext.getApplicationInfo().uid,
+                mContext.getApplicationInfo().targetSdkVersion);
 
         if (callback == null) {
             throw new IllegalArgumentException("Must supply an authentication callback");
@@ -683,17 +695,6 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
             return;
         }
         generateChallenge(sensorProps.sensorId, userId, callback);
-    }
-
-    /**
-     * Revokes the current challenge.
-     * @hide
-     */
-    @RequiresPermission(MANAGE_FINGERPRINT)
-    public void revokeChallenge(int userId) {
-        // On HALs with only single in-flight challenge such as IBiometricsFingerprint@2.1,
-        // this parameter is ignored.
-        revokeChallenge(userId, 0L);
     }
 
     /**
@@ -878,6 +879,19 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     }
 
     /**
+     * Forwards FingerprintStateListener to FingerprintService
+     * @param listener new FingerprintStateListener being added
+     * @hide
+     */
+    public void registerFingerprintStateListener(@NonNull FingerprintStateListener listener) {
+        try {
+            mService.registerFingerprintStateListener(listener);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * @hide
      */
     @RequiresPermission(USE_BIOMETRIC_INTERNAL)
@@ -921,6 +935,11 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     @Deprecated
     @RequiresPermission(USE_FINGERPRINT)
     public boolean hasEnrolledFingerprints() {
+        FrameworkStatsLog.write(FrameworkStatsLog.AUTH_DEPRECATED_API_USED,
+                AUTH_DEPRECATED_APIUSED__DEPRECATED_API__API_FINGERPRINT_MANAGER_HAS_ENROLLED_FINGERPRINTS,
+                mContext.getApplicationInfo().uid,
+                mContext.getApplicationInfo().targetSdkVersion);
+
         return hasEnrolledFingerprints(UserHandle.myUserId());
     }
 
@@ -949,6 +968,11 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     @Deprecated
     @RequiresPermission(USE_FINGERPRINT)
     public boolean isHardwareDetected() {
+        FrameworkStatsLog.write(FrameworkStatsLog.AUTH_DEPRECATED_API_USED,
+                AUTH_DEPRECATED_APIUSED__DEPRECATED_API__API_FINGERPRINT_MANAGER_IS_HARDWARE_DETECTED,
+                mContext.getApplicationInfo().uid,
+                mContext.getApplicationInfo().targetSdkVersion);
+
         if (mService != null) {
             try {
                 return mService.isHardwareDetectedDeprecated(mContext.getOpPackageName());
@@ -975,6 +999,41 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
             return mService.getSensorPropertiesInternal(mContext.getOpPackageName());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Returns whether the device has a power button fingerprint sensor.
+     * @return boolean indicating whether power button is fingerprint sensor
+     * @hide
+     */
+    public boolean isPowerbuttonFps() {
+        final FingerprintSensorPropertiesInternal sensorProps = getFirstFingerprintSensor();
+        return sensorProps.sensorType == TYPE_POWER_BUTTON;
+    }
+
+    /**
+     * Adds a callback that gets called when the service registers all of the fingerprint
+     * authenticators (HALs).
+     *
+     * If the fingerprint authenticators are already registered when the callback is added, the
+     * callback is invoked immediately.
+     *
+     * The callback is automatically removed after it's invoked.
+     *
+     * @hide
+     */
+    @RequiresPermission(USE_BIOMETRIC_INTERNAL)
+    public void addAuthenticatorsRegisteredCallback(
+            IFingerprintAuthenticatorsRegisteredCallback callback) {
+        if (mService != null) {
+            try {
+                mService.addAuthenticatorsRegisteredCallback(callback);
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+        } else {
+            Slog.w(TAG, "addProvidersAvailableCallback(): Service not connected!");
         }
     }
 
@@ -1279,12 +1338,17 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
                 return context.getString(
                         com.android.internal.R.string.fingerprint_error_security_update_required);
             case FINGERPRINT_ERROR_VENDOR: {
-                    String[] msgArray = context.getResources().getStringArray(
-                            com.android.internal.R.array.fingerprint_error_vendor);
-                    if (vendorCode < msgArray.length) {
+                String[] msgArray = context.getResources().getStringArray(
+                        com.android.internal.R.array.fingerprint_error_vendor);
+                if (vendorCode < msgArray.length) {
+                    if (Build.IS_ENG || Build.IS_USERDEBUG) {
                         return msgArray[vendorCode];
+                    } else {
+                        return context.getString(
+                            com.android.internal.R.string.fingerprint_error_unable_to_process);
                     }
                 }
+            }
         }
         Slog.w(TAG, "Invalid error message: " + errMsg + ", " + vendorCode);
         return null;
@@ -1313,12 +1377,17 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
                 return context.getString(
                     com.android.internal.R.string.fingerprint_acquired_too_fast);
             case FINGERPRINT_ACQUIRED_VENDOR: {
-                    String[] msgArray = context.getResources().getStringArray(
-                            com.android.internal.R.array.fingerprint_acquired_vendor);
-                    if (vendorCode < msgArray.length) {
+                String[] msgArray = context.getResources().getStringArray(
+                        com.android.internal.R.array.fingerprint_acquired_vendor);
+                if (vendorCode < msgArray.length) {
+                    if (Build.IS_ENG || Build.IS_USERDEBUG) {
                         return msgArray[vendorCode];
+                    } else {
+                        return context.getString(
+                            com.android.internal.R.string.fingerprint_error_unable_to_process);
                     }
                 }
+            }
                 break;
             case FINGERPRINT_ACQUIRED_START:
                 return null;

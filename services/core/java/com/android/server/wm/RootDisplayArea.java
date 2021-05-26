@@ -37,7 +37,7 @@ import java.util.Map;
  * of the whole logical display, or a {@link DisplayAreaGroup} as the root of a partition of the
  * logical display.
  */
-class RootDisplayArea extends DisplayArea<DisplayArea> {
+class RootDisplayArea extends DisplayArea.Dimmable {
 
     /** {@link Feature} that are supported in this {@link DisplayArea} hierarchy. */
     List<DisplayAreaPolicyBuilder.Feature> mFeatures;
@@ -79,10 +79,6 @@ class RootDisplayArea extends DisplayArea<DisplayArea> {
      */
     void placeImeContainer(DisplayArea.Tokens imeContainer) {
         final RootDisplayArea previousRoot = imeContainer.getRootDisplayArea();
-        if (previousRoot == this) {
-            // No need to reparent if IME container is below the same root.
-            return;
-        }
 
         List<Feature> features = mFeatures;
         for (int i = 0; i < features.size(); i++) {

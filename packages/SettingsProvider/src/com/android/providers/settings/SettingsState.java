@@ -17,14 +17,13 @@
 package com.android.providers.settings;
 
 import static android.os.Process.FIRST_APPLICATION_UID;
-import static android.os.Process.INVALID_UID;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.pm.Signature;
 import android.os.Binder;
 import android.os.Build;
 import android.os.FileUtils;
@@ -37,10 +36,10 @@ import android.provider.Settings;
 import android.providers.settings.SettingsOperationProto;
 import android.text.TextUtils;
 import android.util.ArrayMap;
+import android.util.ArraySet;
 import android.util.AtomicFile;
 import android.util.Base64;
 import android.util.Slog;
-import android.util.SparseIntArray;
 import android.util.TimeUtils;
 import android.util.TypedXmlPullParser;
 import android.util.TypedXmlSerializer;
@@ -149,13 +148,7 @@ final class SettingsState {
 
     private static final String NULL_VALUE = "null";
 
-    private static final Object sLock = new Object();
-
-    @GuardedBy("sLock")
-    private static final SparseIntArray sSystemUids = new SparseIntArray();
-
-    @GuardedBy("sLock")
-    private static Signature sSystemSignature;
+    private static final ArraySet<String> sSystemPackages = new ArraySet<>();
 
     private final Object mWriteLock = new Object();
 
@@ -641,7 +634,7 @@ final class SettingsState {
     /**
      * Dump historical operations as a proto buf.
      *
-     * @param proto The proto buf stream to dump to
+     * @param proto   The proto buf stream to dump to
      * @param fieldId The repeated field ID to use to save an operation to.
      */
     void dumpHistoricalOperations(@NonNull ProtoOutputStream proto, long fieldId) {
@@ -815,14 +808,14 @@ final class SettingsState {
                 for (int i = 0; i < settingCount; i++) {
                     Setting setting = settings.valueAt(i);
 
-                    writeSingleSetting(mVersion, serializer, setting.getId(), setting.getName(),
+                    if (writeSingleSetting(mVersion, serializer, setting.getId(), setting.getName(),
                             setting.getValue(), setting.getDefaultValue(), setting.getPackageName(),
                             setting.getTag(), setting.isDefaultFromSystem(),
-                            setting.isValuePreservedInRestore());
-
-                    if (DEBUG_PERSISTENCE) {
-                        Slog.i(LOG_TAG, "[PERSISTED]" + setting.getName() + "="
-                                + setting.getValue());
+                            setting.isValuePreservedInRestore())) {
+                        if (DEBUG_PERSISTENCE) {
+                            Slog.i(LOG_TAG, "[PERSISTED]" + setting.getName() + "="
+                                    + setting.getValue());
+                        }
                     }
                 }
                 serializer.endTag(null, TAG_SETTINGS);
@@ -831,10 +824,11 @@ final class SettingsState {
                 for (int i = 0; i < namespaceBannedHashes.size(); i++) {
                     String namespace = namespaceBannedHashes.keyAt(i);
                     String bannedHash = namespaceBannedHashes.get(namespace);
-                    writeSingleNamespaceHash(serializer, namespace, bannedHash);
-                    if (DEBUG_PERSISTENCE) {
-                        Slog.i(LOG_TAG, "[PERSISTED] namespace=" + namespace
-                                + ", bannedHash=" + bannedHash);
+                    if (writeSingleNamespaceHash(serializer, namespace, bannedHash)) {
+                        if (DEBUG_PERSISTENCE) {
+                            Slog.i(LOG_TAG, "[PERSISTED] namespace=" + namespace
+                                    + ", bannedHash=" + bannedHash);
+                        }
                     }
                 }
                 serializer.endTag(null, TAG_NAMESPACE_HASHES);
@@ -905,14 +899,20 @@ final class SettingsState {
         }
     }
 
-    static void writeSingleSetting(int version, TypedXmlSerializer serializer, String id,
+    static boolean writeSingleSetting(int version, TypedXmlSerializer serializer, String id,
             String name, String value, String defaultValue, String packageName,
             String tag, boolean defaultSysSet, boolean isValuePreservedInRestore)
             throws IOException {
         if (id == null || isBinary(id) || name == null || isBinary(name)
                 || packageName == null || isBinary(packageName)) {
-            // This shouldn't happen.
-            return;
+            if (DEBUG_PERSISTENCE) {
+                Slog.w(LOG_TAG, "Invalid arguments for writeSingleSetting: version=" + version
+                        + ", id=" + id + ", name=" + name + ", value=" + value
+                        + ", defaultValue=" + defaultValue + ", packageName=" + packageName
+                        + ", tag=" + tag + ", defaultSysSet=" + defaultSysSet
+                        + ", isValuePreservedInRestore=" + isValuePreservedInRestore);
+            }
+            return false;
         }
         serializer.startTag(null, TAG_SETTING);
         serializer.attribute(null, ATTR_ID, id);
@@ -931,6 +931,7 @@ final class SettingsState {
             serializer.attributeBoolean(null, ATTR_PRESERVE_IN_RESTORE, true);
         }
         serializer.endTag(null, TAG_SETTING);
+        return true;
     }
 
     static void setValueAttribute(String attr, String attrBase64, int version,
@@ -953,15 +954,20 @@ final class SettingsState {
         }
     }
 
-    private static void writeSingleNamespaceHash(TypedXmlSerializer serializer, String namespace,
+    private static boolean writeSingleNamespaceHash(TypedXmlSerializer serializer, String namespace,
             String bannedHashCode) throws IOException {
         if (namespace == null || bannedHashCode == null) {
-            return;
+            if (DEBUG_PERSISTENCE) {
+                Slog.w(LOG_TAG, "Invalid arguments for writeSingleNamespaceHash: namespace="
+                        + namespace + ", bannedHashCode=" + bannedHashCode);
+            }
+            return false;
         }
         serializer.startTag(null, TAG_NAMESPACE_HASH);
         serializer.attribute(null, ATTR_NAMESPACE, namespace);
         serializer.attribute(null, ATTR_BANNED_HASH, bannedHashCode);
         serializer.endTag(null, TAG_NAMESPACE_HASH);
+        return true;
     }
 
     private static String hashCode(Map<String, String> keyValues) {
@@ -1048,6 +1054,7 @@ final class SettingsState {
 
     /**
      * Uses AtomicFile to check if the file or its backup exists.
+     *
      * @param file The file to check for existence
      * @return whether the original or backup exist
      */
@@ -1307,9 +1314,9 @@ final class SettingsState {
             if (NULL_VALUE.equals(value)) {
                 value = null;
             }
-
             final boolean callerSystem = !forceNonSystemPackage &&
-                    !isNull() && isSystemPackage(mContext, packageName);
+                    !isNull() && (isCalledFromSystem(packageName)
+                    || isSystemPackage(mContext, packageName));
             // Settings set by the system are always defaults.
             if (callerSystem) {
                 setDefault = true;
@@ -1434,98 +1441,98 @@ final class SettingsState {
         return sb.toString();
     }
 
-    // Check if a specific package belonging to the caller is part of the system package.
-    public static boolean isSystemPackage(Context context, String packageName) {
-        final int callingUid = Binder.getCallingUid();
-        final int callingUserId = UserHandle.getUserId(callingUid);
-        return isSystemPackage(context, packageName, callingUid, callingUserId);
+    // Cache the list of names of system packages. This is only called once on system boot.
+    public static void cacheSystemPackageNamesAndSystemSignature(@NonNull Context context) {
+        final PackageManager packageManager = context.getPackageManager();
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            sSystemPackages.add(SYSTEM_PACKAGE_NAME);
+            // Cache SetupWizard package name.
+            final String setupWizPackageName = packageManager.getSetupWizardPackageName();
+            if (setupWizPackageName != null) {
+                sSystemPackages.add(setupWizPackageName);
+            }
+            final List<PackageInfo> packageInfos = packageManager.getInstalledPackages(0);
+            final int installedPackagesCount = packageInfos.size();
+            for (int i = 0; i < installedPackagesCount; i++) {
+                if (shouldAddToSystemPackages(packageInfos.get(i))) {
+                    sSystemPackages.add(packageInfos.get(i).packageName);
+                }
+            }
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
     }
 
-    // Check if a specific package, uid, and user ID are part of the system package.
-    public static boolean isSystemPackage(Context context, String packageName, int uid,
-            int userId) {
-        synchronized (sLock) {
-            if (SYSTEM_PACKAGE_NAME.equals(packageName)) {
-                return true;
-            }
-
-            // Shell and Root are not considered a part of the system
-            if (SHELL_PACKAGE_NAME.equals(packageName)
-                    || ROOT_PACKAGE_NAME.equals(packageName)) {
-                return false;
-            }
-
-            if (uid != INVALID_UID) {
-                // Native services running as a special UID get a pass
-                final int callingAppId = UserHandle.getAppId(uid);
-                if (callingAppId < FIRST_APPLICATION_UID) {
-                    sSystemUids.put(callingAppId, callingAppId);
-                    return true;
-                }
-            }
-
-            final long identity = Binder.clearCallingIdentity();
-            try {
-                try {
-                    uid = context.getPackageManager().getPackageUidAsUser(packageName, 0, userId);
-                } catch (PackageManager.NameNotFoundException e) {
-                    return false;
-                }
-
-                // If the system or a special system UID (like telephony), done.
-                if (UserHandle.getAppId(uid) < FIRST_APPLICATION_UID) {
-                    sSystemUids.put(uid, uid);
-                    return true;
-                }
-
-                // If already known system component, done.
-                if (sSystemUids.indexOfKey(uid) >= 0) {
-                    return true;
-                }
-
-                // If SetupWizard, done.
-                String setupWizPackage = context.getPackageManager().getSetupWizardPackageName();
-                if (packageName.equals(setupWizPackage)) {
-                    sSystemUids.put(uid, uid);
-                    return true;
-                }
-
-                // If a persistent system app, done.
-                PackageInfo packageInfo;
-                try {
-                    packageInfo = context.getPackageManager().getPackageInfoAsUser(
-                            packageName, PackageManager.GET_SIGNATURES, userId);
-                    if ((packageInfo.applicationInfo.flags
-                            & ApplicationInfo.FLAG_PERSISTENT) != 0
-                            && (packageInfo.applicationInfo.flags
-                            & ApplicationInfo.FLAG_SYSTEM) != 0) {
-                        sSystemUids.put(uid, uid);
-                        return true;
-                    }
-                } catch (PackageManager.NameNotFoundException e) {
-                    return false;
-                }
-
-                // Last check if system signed.
-                if (sSystemSignature == null) {
-                    try {
-                        sSystemSignature = context.getPackageManager().getPackageInfoAsUser(
-                                SYSTEM_PACKAGE_NAME, PackageManager.GET_SIGNATURES,
-                                UserHandle.USER_SYSTEM).signatures[0];
-                    } catch (PackageManager.NameNotFoundException e) {
-                        /* impossible */
-                        return false;
-                    }
-                }
-                if (sSystemSignature.equals(packageInfo.signatures[0])) {
-                    sSystemUids.put(uid, uid);
-                    return true;
-                }
-            } finally {
-                Binder.restoreCallingIdentity(identity);
-            }
-
+    private static boolean shouldAddToSystemPackages(@NonNull PackageInfo packageInfo) {
+        // Shell and Root are not considered a part of the system
+        if (isShellOrRoot(packageInfo.packageName)) {
             return false;
         }
+        // Already added
+        if (sSystemPackages.contains(packageInfo.packageName)) {
+            return false;
+        }
+        return isSystemPackage(packageInfo.applicationInfo);
+    }
+
+    private static boolean isShellOrRoot(@NonNull String packageName) {
+        return (SHELL_PACKAGE_NAME.equals(packageName)
+                || ROOT_PACKAGE_NAME.equals(packageName));
+    }
+
+    private static boolean isCalledFromSystem(@NonNull String packageName) {
+        // Shell and Root are not considered a part of the system
+        if (isShellOrRoot(packageName)) {
+            return false;
+        }
+        final int callingUid = Binder.getCallingUid();
+        // Native services running as a special UID get a pass
+        final int callingAppId = UserHandle.getAppId(callingUid);
+        return (callingAppId < FIRST_APPLICATION_UID);
+    }
+
+    public static boolean isSystemPackage(@NonNull Context context, @NonNull String packageName) {
+        // Check shell or root before trying to retrieve ApplicationInfo to fail fast
+        if (isShellOrRoot(packageName)) {
+            return false;
+        }
+        // If it's a known system package or known to be platform signed
+        if (sSystemPackages.contains(packageName)) {
+            return true;
+        }
+
+        ApplicationInfo aInfo = null;
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            try {
+                // Notice that this makes a call to package manager inside the lock
+                aInfo = context.getPackageManager().getApplicationInfo(packageName, 0);
+            } catch (PackageManager.NameNotFoundException ignored) {
+            }
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+        return isSystemPackage(aInfo);
+    }
+
+    private static boolean isSystemPackage(@Nullable ApplicationInfo aInfo) {
+        if (aInfo == null) {
+            return false;
+        }
+        // If the system or a special system UID (like telephony), done.
+        if (aInfo.uid < FIRST_APPLICATION_UID) {
+            return true;
+        }
+        // If a persistent system app, done.
+        if ((aInfo.flags & ApplicationInfo.FLAG_PERSISTENT) != 0
+                && (aInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+            return true;
+        }
+        // Platform signed packages are considered to be from the system
+        if (aInfo.isSignedWithPlatformKey()) {
+            return true;
+        }
+        return false;
     }
 }

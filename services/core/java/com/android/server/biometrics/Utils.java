@@ -176,7 +176,8 @@ public class Utils {
      * @param requestedStrength the strength that it must meet
      * @return true only if the sensor is at least as strong as the requested strength
      */
-    public static boolean isAtLeastStrength(int sensorStrength, int requestedStrength) {
+    public static boolean isAtLeastStrength(@Authenticators.Types int sensorStrength,
+            @Authenticators.Types int requestedStrength) {
         // Clear out any bits that are not reserved for biometric
         sensorStrength &= Authenticators.BIOMETRIC_MIN_STRENGTH;
 
@@ -406,6 +407,23 @@ public class Utils {
         } catch (RemoteException e) {
             Slog.e(TAG, "RemoteException", e);
             return false;
+        }
+    }
+
+    /**
+     * Returns the sensor's current strength, taking any updated strengths into effect.
+     *
+     * @param sensorId The sensor Id
+     * @return see {@link BiometricManager.Authenticators}
+     */
+    public static @Authenticators.Types int getCurrentStrength(int sensorId) {
+        IBiometricService service = IBiometricService.Stub.asInterface(
+                ServiceManager.getService(Context.BIOMETRIC_SERVICE));
+        try {
+            return service.getCurrentStrength(sensorId);
+        } catch (RemoteException e) {
+            Slog.e(TAG, "RemoteException", e);
+            return Authenticators.EMPTY_SET;
         }
     }
 

@@ -16,6 +16,7 @@
 
 package android.uwb;
 
+import android.content.AttributionSource;
 import android.os.PersistableBundle;
 import android.uwb.IUwbAdapterStateCallbacks;
 import android.uwb.IUwbRangingCallbacks;
@@ -62,9 +63,6 @@ interface IUwbAdapter {
   /**
    * Request to open a new ranging session
    *
-   * This function must return before calling any functions in
-   * IUwbAdapterCallbacks.
-   *
    * This function does not start the ranging session, but all necessary
    * components must be initialized and ready to start a new ranging
    * session prior to calling IUwbAdapterCallback#onRangingOpened.
@@ -77,12 +75,18 @@ interface IUwbAdapter {
    * RANGING_SESSION_OPEN_THRESHOLD_MS milliseconds of #openRanging being called
    * if the ranging session fails to be opened.
    *
+   * If the provided sessionHandle is already open for the calling client, then
+   * #onRangingOpenFailed must be called and the new session must not be opened.
+   *
+   * @param attributionSource AttributionSource to use for permission enforcement.
+   * @param sessionHandle the session handle to open ranging for
    * @param rangingCallbacks the callbacks used to deliver ranging information
    * @param parameters the configuration to use for ranging
-   * @return a SessionHandle used to identify this ranging request
    */
-  SessionHandle openRanging(in IUwbRangingCallbacks rangingCallbacks,
-                            in PersistableBundle parameters);
+  void openRanging(in AttributionSource attributionSource,
+                   in SessionHandle sessionHandle,
+                   in IUwbRangingCallbacks rangingCallbacks,
+                   in PersistableBundle parameters);
 
   /**
    * Request to start ranging
@@ -144,6 +148,31 @@ interface IUwbAdapter {
    */
   void closeRanging(in SessionHandle sessionHandle);
 
+   /**
+     * Disables or enables UWB for a user
+     *
+     * The provided callback's IUwbAdapterStateCallbacks#onAdapterStateChanged
+     * function must be called immediately following state change.
+     *
+     * @param enabled value representing intent to disable or enable UWB. If
+     * true, any subsequent calls to #openRanging will be allowed. If false,
+     * all active ranging sessions will be closed and subsequent calls to
+     * #openRanging will be disallowed.
+     */
+    void setEnabled(boolean enabled);
+
+   /**
+    * Returns the current enabled/disabled UWB state.
+    *
+    * Possible values are:
+    * IUwbAdapterState#STATE_DISABLED
+    * IUwbAdapterState#STATE_ENABLED_ACTIVE
+    * IUwbAdapterState#STATE_ENABLED_INACTIVE
+    *
+    * @return value representing enabled/disabled UWB state.
+    */
+   int getAdapterState();
+
   /**
    * The maximum allowed time to open a ranging session.
    */
@@ -159,14 +188,4 @@ interface IUwbAdapter {
    * closed.
    */
   const int RANGING_SESSION_CLOSE_THRESHOLD_MS = 3000; // Value TBD
-
-  /**
-   * Ranging scheduling time unit (RSTU) for High Rate Pulse (HRP) PHY
-   */
-  const int HIGH_RATE_PULSE_CHIRPS_PER_RSTU = 416;
-
-  /**
-   * Ranging scheduling time unit (RSTU) for Low Rate Pulse (LRP) PHY
-   */
-  const int LOW_RATE_PULSE_CHIRPS_PER_RSTU = 1;
 }

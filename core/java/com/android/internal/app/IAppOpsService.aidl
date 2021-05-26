@@ -20,6 +20,7 @@ import android.app.AppOpsManager;
 import android.app.AsyncNotedAppOp;
 import android.app.SyncNotedAppOp;
 import android.app.RuntimeAppOpAccessMessage;
+import android.content.AttributionSource;
 import android.content.pm.ParceledListSlice;
 import android.os.Bundle;
 import android.os.RemoteCallback;
@@ -32,12 +33,12 @@ import com.android.internal.app.MessageSamplingConfig;
 
 interface IAppOpsService {
     // These methods are also called by native code, so must
-    // be kept in sync with frameworks/native/libs/binder/include/binder/IAppOpsService.h
+    // be kept in sync with frameworks/native/libs/permission/include/binder/IAppOpsService.h
     // and not be reordered
     int checkOperation(int code, int uid, String packageName);
-    int noteOperation(int code, int uid, String packageName, @nullable String attributionTag,
+    SyncNotedAppOp noteOperation(int code, int uid, String packageName, @nullable String attributionTag,
             boolean shouldCollectAsyncNotedOp, String message, boolean shouldCollectMessage);
-    int startOperation(IBinder clientId, int code, int uid, String packageName,
+    SyncNotedAppOp startOperation(IBinder clientId, int code, int uid, String packageName,
             @nullable String attributionTag, boolean startIfModeDefault,
             boolean shouldCollectAsyncNotedOp, String message, boolean shouldCollectMessage);
     @UnsupportedAppUsage
@@ -52,17 +53,13 @@ interface IAppOpsService {
     // End of methods also called by native code.
     // Any new method exposed to native must be added after the last one, do not reorder
 
-    int noteProxyOperation(int code, int proxiedUid, String proxiedPackageName,
-            String proxiedAttributionTag, int proxyUid, String proxyPackageName,
-            String proxyAttributionTag, boolean shouldCollectAsyncNotedOp, String message,
-            boolean shouldCollectMessage);
-    int startProxyOperation(IBinder clientId, int code, int proxiedUid, String proxiedPackageName,
-            @nullable String proxiedAttributionTag, int proxyUid, String proxyPackageName,
-            @nullable String proxyAttributionTag, boolean startIfModeDefault,
-            boolean shouldCollectAsyncNotedOp, String message, boolean shouldCollectMessage);
-    void finishProxyOperation(IBinder clientId, int code, int proxiedUid, String proxiedPackageName,
-            @nullable String proxiedAttributionTag, int proxyUid, String proxyPackageName,
-            @nullable String proxyAttributionTag);
+    SyncNotedAppOp noteProxyOperation(int code, in AttributionSource attributionSource,
+            boolean shouldCollectAsyncNotedOp, String message, boolean shouldCollectMessage,
+            boolean skipProxyOperation);
+    SyncNotedAppOp startProxyOperation(IBinder clientId, int code, in AttributionSource attributionSource,
+            boolean startIfModeDefault, boolean shouldCollectAsyncNotedOp, String message,
+            boolean shouldCollectMessage, boolean skipProxyOperation);
+    void finishProxyOperation(IBinder clientId, int code, in AttributionSource attributionSource);
 
     // Remaining methods are only used in Java.
     int checkPackage(int uid, String packageName);
@@ -83,6 +80,7 @@ interface IAppOpsService {
     void setHistoryParameters(int mode, long baseSnapshotInterval, int compressionStep);
     void addHistoricalOps(in AppOpsManager.HistoricalOps ops);
     void resetHistoryParameters();
+    void resetPackageOpsNoHistory(String packageName);
     void clearHistory();
     void rebootHistory(long offlineDurationMillis);
     List<AppOpsManager.PackageOps> getUidOps(int uid, in int[] ops);
@@ -100,6 +98,8 @@ interface IAppOpsService {
     void startWatchingActive(in int[] ops, IAppOpsActiveCallback callback);
     void stopWatchingActive(IAppOpsActiveCallback callback);
     boolean isOperationActive(int code, int uid, String packageName);
+    boolean isProxying(int op, String proxyPackageName, String proxyAttributionTag, int proxiedUid,
+            String proxiedPackageName);
 
     void startWatchingStarted(in int[] ops, IAppOpsStartedCallback callback);
     void stopWatchingStarted(IAppOpsStartedCallback callback);

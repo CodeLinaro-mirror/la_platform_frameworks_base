@@ -19,20 +19,22 @@ package com.android.systemui.media;
 import static android.provider.Settings.ACTION_MEDIA_CONTROLS_SETTINGS;
 
 import android.app.PendingIntent;
+import android.app.smartspace.SmartspaceAction;
+import android.app.smartspace.SmartspaceTarget;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
-import android.graphics.Outline;
+import android.graphics.PorterDuff;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
 import android.media.session.MediaController;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
-import android.os.SystemProperties;
+import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
-import android.view.ViewOutlineProvider;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
@@ -42,15 +44,18 @@ import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
 import androidx.constraintlayout.widget.ConstraintSet;
 
-import com.android.settingslib.Utils;
 import com.android.settingslib.widget.AdaptiveIcon;
 import com.android.systemui.R;
+import com.android.systemui.animation.ActivityLaunchAnimator;
+import com.android.systemui.animation.GhostedViewLaunchAnimatorController;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.media.dialog.MediaOutputDialogFactory;
 import com.android.systemui.plugins.ActivityStarter;
+import com.android.systemui.shared.system.SysUiStatsLog;
 import com.android.systemui.statusbar.phone.KeyguardDismissUtil;
 import com.android.systemui.util.animation.TransitionLayout;
 
+import java.net.URISyntaxException;
 import java.util.List;
 import java.util.concurrent.Executor;
 
@@ -64,11 +69,12 @@ import dagger.Lazy;
 public class MediaControlPanel {
     private static final String TAG = "MediaControlPanel";
     private static final float DISABLED_ALPHA = 0.38f;
-
-    private final boolean mShowAppName = SystemProperties.getBoolean(
-            "persist.sysui.qs_media_show_app_name", false);
-    private final boolean mShowDeviceName = SystemProperties.getBoolean(
-            "persist.sysui.qs_media_show_device_name", false);
+    private static final String EXTRAS_MEDIA_SOURCE_PACKAGE_NAME = "package_name";
+    private static final String EXTRAS_SMARTSPACE_INTENT =
+            "com.google.android.apps.gsa.smartspace.extra.SMARTSPACE_INTENT";
+    private static final String KEY_SMARTSPACE_OPEN_IN_FOREGROUND = "KEY_OPEN_IN_FOREGROUND";
+    private static final int MEDIA_RECOMMENDATION_ITEMS_PER_ROW = 3;
+    private static final int MEDIA_RECOMMENDATION_MAX_NUM = 6;
 
     private static final Intent SETTINGS_INTENT = new Intent(ACTION_MEDIA_CONTROLS_SETTINGS);
 
@@ -87,7 +93,8 @@ public class MediaControlPanel {
     private final ActivityStarter mActivityStarter;
 
     private Context mContext;
-    private PlayerViewHolder mViewHolder;
+    private PlayerViewHolder mPlayerViewHolder;
+    private RecommendationViewHolder mRecommendationViewHolder;
     private String mKey;
     private MediaViewController mMediaViewController;
     private MediaSession.Token mToken;
@@ -95,23 +102,25 @@ public class MediaControlPanel {
     private KeyguardDismissUtil mKeyguardDismissUtil;
     private Lazy<MediaDataManager> mMediaDataManagerLazy;
     private int mBackgroundColor;
+    private int mDevicePadding;
     private int mAlbumArtSize;
-    private int mAlbumArtRadius;
-    // This will provide the corners for the album art.
-    private final ViewOutlineProvider mViewOutlineProvider;
+    // Instance id for logging purpose.
+    protected int mInstanceId = -1;
+    private MediaCarouselController mMediaCarouselController;
     private final MediaOutputDialogFactory mMediaOutputDialogFactory;
+
     /**
      * Initialize a new control panel
-     * @param context
+     *
      * @param backgroundExecutor background executor, used for processing artwork
-     * @param activityStarter activity starter
+     * @param activityStarter    activity starter
      */
     @Inject
     public MediaControlPanel(Context context, @Background Executor backgroundExecutor,
             ActivityStarter activityStarter, MediaViewController mediaViewController,
             SeekBarViewModel seekBarViewModel, Lazy<MediaDataManager> lazyMediaDataManager,
             KeyguardDismissUtil keyguardDismissUtil, MediaOutputDialogFactory
-            mediaOutputDialogFactory) {
+            mediaOutputDialogFactory, MediaCarouselController mediaCarouselController) {
         mContext = context;
         mBackgroundExecutor = backgroundExecutor;
         mActivityStarter = activityStarter;
@@ -120,14 +129,8 @@ public class MediaControlPanel {
         mMediaDataManagerLazy = lazyMediaDataManager;
         mKeyguardDismissUtil = keyguardDismissUtil;
         mMediaOutputDialogFactory = mediaOutputDialogFactory;
+        mMediaCarouselController = mediaCarouselController;
         loadDimens();
-
-        mViewOutlineProvider = new ViewOutlineProvider() {
-            @Override
-            public void getOutline(View view, Outline outline) {
-                outline.setRoundRect(0, 0, mAlbumArtSize, mAlbumArtSize, mAlbumArtRadius);
-            }
-        };
     }
 
     public void onDestroy() {
@@ -139,22 +142,33 @@ public class MediaControlPanel {
     }
 
     private void loadDimens() {
-        mAlbumArtRadius = mContext.getResources().getDimensionPixelSize(
-                Utils.getThemeAttr(mContext, android.R.attr.dialogCornerRadius));
         mAlbumArtSize = mContext.getResources().getDimensionPixelSize(R.dimen.qs_media_album_size);
+        mDevicePadding = mContext.getResources()
+                .getDimensionPixelSize(R.dimen.qs_media_album_device_padding);
     }
 
     /**
-     * Get the view holder used to display media controls
-     * @return the view holder
+     * Get the player view holder used to display media controls.
+     *
+     * @return the player view holder
      */
     @Nullable
-    public PlayerViewHolder getView() {
-        return mViewHolder;
+    public PlayerViewHolder getPlayerViewHolder() {
+        return mPlayerViewHolder;
+    }
+
+    /**
+     * Get the recommendation view holder used to display Smartspace media recs.
+     * @return the recommendation view holder
+     */
+    @Nullable
+    public RecommendationViewHolder getRecommendationViewHolder() {
+        return mRecommendationViewHolder;
     }
 
     /**
      * Get the view controller used to display media controls
+     *
      * @return the media view controller
      */
     @NonNull
@@ -164,7 +178,7 @@ public class MediaControlPanel {
 
     /**
      * Sets the listening state of the player.
-     *
+     * <p>
      * Should be set to true when the QS panel is open. Otherwise, false. This is a signal to avoid
      * unnecessary work when the QS panel is closed.
      *
@@ -176,27 +190,24 @@ public class MediaControlPanel {
 
     /**
      * Get the context
+     *
      * @return context
      */
     public Context getContext() {
         return mContext;
     }
 
-    /** Attaches the player to the view holder. */
-    public void attach(PlayerViewHolder vh) {
-        mViewHolder = vh;
+    /** Attaches the player to the player view holder. */
+    public void attachPlayer(PlayerViewHolder vh) {
+        mPlayerViewHolder = vh;
         TransitionLayout player = vh.getPlayer();
-
-        ImageView albumView = vh.getAlbumView();
-        albumView.setOutlineProvider(mViewOutlineProvider);
-        albumView.setClipToOutline(true);
 
         mSeekBarObserver = new SeekBarObserver(vh);
         mSeekBarViewModel.getProgress().observeForever(mSeekBarObserver);
         mSeekBarViewModel.attachTouchHandlers(vh.getSeekBar());
-        mMediaViewController.attach(player);
+        mMediaViewController.attach(player, MediaViewController.TYPE.PLAYER);
 
-        mViewHolder.getPlayer().setOnLongClickListener(v -> {
+        mPlayerViewHolder.getPlayer().setOnLongClickListener(v -> {
             if (!mMediaViewController.isGutsVisible()) {
                 mMediaViewController.openGuts();
                 return true;
@@ -204,23 +215,46 @@ public class MediaControlPanel {
                 return false;
             }
         });
-        mViewHolder.getCancel().setOnClickListener(v -> {
+        mPlayerViewHolder.getCancel().setOnClickListener(v -> {
             closeGuts();
         });
-        mViewHolder.getSettings().setOnClickListener(v -> {
+        mPlayerViewHolder.getSettings().setOnClickListener(v -> {
             mActivityStarter.startActivity(SETTINGS_INTENT, true /* dismissShade */);
         });
     }
 
-    /**
-     * Bind this view based on the data given
-     */
-    public void bind(@NonNull MediaData data, String key) {
-        if (mViewHolder == null) {
+    /** Attaches the recommendations to the recommendation view holder. */
+    public void attachRecommendation(RecommendationViewHolder vh) {
+        mRecommendationViewHolder = vh;
+        TransitionLayout recommendations = vh.getRecommendations();
+
+        mMediaViewController.attach(recommendations, MediaViewController.TYPE.RECOMMENDATION);
+
+        mRecommendationViewHolder.getRecommendations().setOnLongClickListener(v -> {
+            if (!mMediaViewController.isGutsVisible()) {
+                mMediaViewController.openGuts();
+                return true;
+            } else {
+                return false;
+            }
+        });
+        mRecommendationViewHolder.getCancel().setOnClickListener(v -> {
+            closeGuts();
+        });
+        mRecommendationViewHolder.getSettings().setOnClickListener(v -> {
+            mActivityStarter.startActivity(SETTINGS_INTENT, true /* dismissShade */);
+        });
+    }
+
+    /** Bind this player view based on the data given. */
+    public void bindPlayer(@NonNull MediaData data, String key) {
+        if (mPlayerViewHolder == null) {
             return;
         }
         mKey = key;
         MediaSession.Token token = data.getToken();
+        mInstanceId = data.getPackageName().hashCode();
+
         mBackgroundColor = data.getBackgroundColor();
         if (mToken == null || !mToken.equals(token)) {
             mToken = token;
@@ -235,29 +269,39 @@ public class MediaControlPanel {
         ConstraintSet expandedSet = mMediaViewController.getExpandedLayout();
         ConstraintSet collapsedSet = mMediaViewController.getCollapsedLayout();
 
-        mViewHolder.getPlayer().setBackgroundTintList(
-                ColorStateList.valueOf(mBackgroundColor));
-
         // Click action
         PendingIntent clickIntent = data.getClickIntent();
         if (clickIntent != null) {
-            mViewHolder.getPlayer().setOnClickListener(v -> {
+            mPlayerViewHolder.getPlayer().setOnClickListener(v -> {
                 if (mMediaViewController.isGutsVisible()) return;
-                mActivityStarter.postStartActivityDismissingKeyguard(clickIntent);
+
+                logSmartspaceCardReported(760, // SMARTSPACE_CARD_CLICK
+                        false);
+                mActivityStarter.postStartActivityDismissingKeyguard(clickIntent,
+                        buildLaunchAnimatorController(mPlayerViewHolder.getPlayer()));
             });
         }
 
-        ImageView albumView = mViewHolder.getAlbumView();
+        ImageView albumView = mPlayerViewHolder.getAlbumView();
         boolean hasArtwork = data.getArtwork() != null;
         if (hasArtwork) {
             Drawable artwork = scaleDrawable(data.getArtwork());
+            albumView.setPadding(0, 0, 0, 0);
             albumView.setImageDrawable(artwork);
+        } else {
+            Drawable deviceIcon;
+            if (data.getDevice() != null && data.getDevice().getIcon() != null) {
+                deviceIcon = data.getDevice().getIcon().getConstantState().newDrawable().mutate();
+            } else {
+                deviceIcon = getContext().getDrawable(R.drawable.ic_headphone);
+            }
+            deviceIcon.setTintList(ColorStateList.valueOf(mBackgroundColor));
+            albumView.setPadding(mDevicePadding, mDevicePadding, mDevicePadding, mDevicePadding);
+            albumView.setImageDrawable(deviceIcon);
         }
-        setVisibleAndAlpha(collapsedSet, R.id.album_art, hasArtwork);
-        setVisibleAndAlpha(expandedSet, R.id.album_art, hasArtwork);
 
         // App icon
-        ImageView appIcon = mViewHolder.getAppIcon();
+        ImageView appIcon = mPlayerViewHolder.getAppIcon();
         if (data.getAppIcon() != null) {
             appIcon.setImageIcon(data.getAppIcon());
         } else {
@@ -265,52 +309,42 @@ public class MediaControlPanel {
         }
 
         // Song name
-        TextView titleText = mViewHolder.getTitleText();
+
+        TextView titleText = mPlayerViewHolder.getTitleText();
         titleText.setText(data.getSong());
 
-        // App title
-        TextView appName = mViewHolder.getAppName();
-        appName.setText(data.getApp());
-        appName.setVisibility(mShowAppName ? View.VISIBLE : View.GONE);
-        setVisibleAndAlpha(collapsedSet, R.id.app_name, mShowAppName);
-        setVisibleAndAlpha(expandedSet, R.id.app_name, mShowAppName);
-
         // Artist name
-        TextView artistText = mViewHolder.getArtistText();
+        TextView artistText = mPlayerViewHolder.getArtistText();
         artistText.setText(data.getArtist());
 
         // Transfer chip
-        mViewHolder.getSeamless().setVisibility(View.VISIBLE);
+        mPlayerViewHolder.getSeamless().setVisibility(View.VISIBLE);
         setVisibleAndAlpha(collapsedSet, R.id.media_seamless, true /*visible */);
         setVisibleAndAlpha(expandedSet, R.id.media_seamless, true /*visible */);
-        mViewHolder.getSeamless().setOnClickListener(v -> {
+        mPlayerViewHolder.getSeamless().setOnClickListener(v -> {
             mMediaOutputDialogFactory.create(data.getPackageName(), true);
         });
-        TextView mDeviceName = mViewHolder.getSeamlessText();
-        mDeviceName.setVisibility(mShowDeviceName ? View.VISIBLE : View.GONE);
-        setVisibleAndAlpha(collapsedSet, R.id.media_seamless_text, mShowDeviceName);
-        setVisibleAndAlpha(expandedSet, R.id.media_seamless_text, mShowDeviceName);
 
-        ImageView iconView = mViewHolder.getSeamlessIcon();
-        TextView deviceName = mViewHolder.getSeamlessText();
+        ImageView iconView = mPlayerViewHolder.getSeamlessIcon();
+        TextView deviceName = mPlayerViewHolder.getSeamlessText();
 
         final MediaDeviceData device = data.getDevice();
-        final int seamlessId = mViewHolder.getSeamless().getId();
-        final int seamlessFallbackId = mViewHolder.getSeamlessFallback().getId();
+        final int seamlessId = mPlayerViewHolder.getSeamless().getId();
+        final int seamlessFallbackId = mPlayerViewHolder.getSeamlessFallback().getId();
         final boolean showFallback = device != null && !device.getEnabled();
         final int seamlessFallbackVisibility = showFallback ? View.VISIBLE : View.GONE;
-        mViewHolder.getSeamlessFallback().setVisibility(seamlessFallbackVisibility);
+        mPlayerViewHolder.getSeamlessFallback().setVisibility(seamlessFallbackVisibility);
         expandedSet.setVisibility(seamlessFallbackId, seamlessFallbackVisibility);
         collapsedSet.setVisibility(seamlessFallbackId, seamlessFallbackVisibility);
         final int seamlessVisibility = showFallback ? View.GONE : View.VISIBLE;
-        mViewHolder.getSeamless().setVisibility(seamlessVisibility);
+        mPlayerViewHolder.getSeamless().setVisibility(seamlessVisibility);
         expandedSet.setVisibility(seamlessId, seamlessVisibility);
         collapsedSet.setVisibility(seamlessId, seamlessVisibility);
         final float seamlessAlpha = data.getResumption() ? DISABLED_ALPHA : 1.0f;
         expandedSet.setAlpha(seamlessId, seamlessAlpha);
         collapsedSet.setAlpha(seamlessId, seamlessAlpha);
         // Disable clicking on output switcher for resumption controls.
-        mViewHolder.getSeamless().setEnabled(!data.getResumption());
+        mPlayerViewHolder.getSeamless().setEnabled(!data.getResumption());
         if (showFallback) {
             iconView.setImageDrawable(null);
             deviceName.setText(null);
@@ -338,7 +372,7 @@ public class MediaControlPanel {
         List<MediaAction> actionIcons = data.getActions();
         for (; i < actionIcons.size() && i < ACTION_IDS.length; i++) {
             int actionId = ACTION_IDS[i];
-            final ImageButton button = mViewHolder.getAction(actionId);
+            final ImageButton button = mPlayerViewHolder.getAction(actionId);
             MediaAction mediaAction = actionIcons.get(i);
             button.setImageIcon(mediaAction.getIcon());
             button.setContentDescription(mediaAction.getContentDescription());
@@ -349,6 +383,8 @@ public class MediaControlPanel {
             } else {
                 button.setEnabled(true);
                 button.setOnClickListener(v -> {
+                    logSmartspaceCardReported(760, // SMARTSPACE_CARD_CLICK
+                            false);
                     action.run();
                 });
             }
@@ -359,8 +395,12 @@ public class MediaControlPanel {
 
         // Hide any unused buttons
         for (; i < ACTION_IDS.length; i++) {
-            setVisibleAndAlpha(expandedSet, ACTION_IDS[i], false /*visible */);
             setVisibleAndAlpha(collapsedSet, ACTION_IDS[i], false /*visible */);
+            setVisibleAndAlpha(expandedSet, ACTION_IDS[i], false /* visible */);
+        }
+        // If no expanded buttons, set the first view as INVISIBLE so z remains constant
+        if (actionIcons.size() == 0) {
+            expandedSet.setVisibility(ACTION_IDS[0], ConstraintSet.INVISIBLE);
         }
 
         // Seek Bar
@@ -369,14 +409,17 @@ public class MediaControlPanel {
 
         // Guts label
         boolean isDismissible = data.isClearable();
-        mViewHolder.getSettingsText().setText(isDismissible
+        mPlayerViewHolder.getSettingsText().setText(isDismissible
                 ? R.string.controls_media_close_session
                 : R.string.controls_media_active_session);
 
         // Dismiss
-        mViewHolder.getDismissLabel().setAlpha(isDismissible ? 1 : DISABLED_ALPHA);
-        mViewHolder.getDismiss().setEnabled(isDismissible);
-        mViewHolder.getDismiss().setOnClickListener(v -> {
+        mPlayerViewHolder.getDismissLabel().setAlpha(isDismissible ? 1 : DISABLED_ALPHA);
+        mPlayerViewHolder.getDismiss().setEnabled(isDismissible);
+        mPlayerViewHolder.getDismiss().setOnClickListener(v -> {
+            logSmartspaceCardReported(761, // SMARTSPACE_CARD_DISMISS
+                    false);
+
             if (mKey != null) {
                 closeGuts();
                 mKeyguardDismissUtil.executeWhenUnlocked(() -> {
@@ -395,8 +438,147 @@ public class MediaControlPanel {
         mMediaViewController.refreshState();
     }
 
+    @Nullable
+    private ActivityLaunchAnimator.Controller buildLaunchAnimatorController(
+            TransitionLayout player) {
+        // TODO(b/174236650): Make sure that the carousel indicator also fades out.
+        // TODO(b/174236650): Instrument the animation to measure jank.
+        return new GhostedViewLaunchAnimatorController(player) {
+            @Override
+            protected float getCurrentTopCornerRadius() {
+                return ((IlluminationDrawable) player.getBackground()).getCornerRadius();
+            }
+
+            @Override
+            protected float getCurrentBottomCornerRadius() {
+                // TODO(b/184121838): Make IlluminationDrawable support top and bottom radius.
+                return getCurrentTopCornerRadius();
+            }
+
+            @Override
+            protected void setBackgroundCornerRadius(Drawable background, float topCornerRadius,
+                    float bottomCornerRadius) {
+                // TODO(b/184121838): Make IlluminationDrawable support top and bottom radius.
+                float radius = Math.min(topCornerRadius, bottomCornerRadius);
+                ((IlluminationDrawable) background).setCornerRadiusOverride(radius);
+            }
+
+            @Override
+            public void onLaunchAnimationEnd(boolean isExpandingFullyAbove) {
+                super.onLaunchAnimationEnd(isExpandingFullyAbove);
+                ((IlluminationDrawable) player.getBackground()).setCornerRadiusOverride(null);
+            }
+        };
+    }
+
+    /** Bind this recommendation view based on the data given. */
+    public void bindRecommendation(
+            @NonNull SmartspaceTarget target,
+            @NonNull int backgroundColor,
+            @Nullable View.OnClickListener callback) {
+        if (mRecommendationViewHolder == null) {
+            return;
+        }
+
+        mInstanceId = target.getSmartspaceTargetId().hashCode();
+        mRecommendationViewHolder.getRecommendations()
+                .setBackgroundTintList(ColorStateList.valueOf(backgroundColor));
+        mBackgroundColor = backgroundColor;
+
+        List<SmartspaceAction> mediaRecommendationList = target.getIconGrid();
+        if (mediaRecommendationList == null || mediaRecommendationList.isEmpty()) {
+            Log.w(TAG, "Empty media recommendations");
+            return;
+        }
+
+        List<ImageView> mediaCoverItems = mRecommendationViewHolder.getMediaCoverItems();
+        List<ImageView> mediaLogoItems = mRecommendationViewHolder.getMediaLogoItems();
+        List<Integer> mediaCoverItemsResIds = mRecommendationViewHolder.getMediaCoverItemsResIds();
+        List<Integer> mediaLogoItemsResIds = mRecommendationViewHolder.getMediaLogoItemsResIds();
+        ConstraintSet expandedSet = mMediaViewController.getExpandedLayout();
+        ConstraintSet collapsedSet = mMediaViewController.getCollapsedLayout();
+        int mediaRecommendationNum = Math.min(mediaRecommendationList.size(),
+                MEDIA_RECOMMENDATION_MAX_NUM);
+        for (int itemIndex = 0, uiComponentIndex = 0;
+                itemIndex < mediaRecommendationNum && uiComponentIndex < mediaRecommendationNum;
+                itemIndex++) {
+            SmartspaceAction recommendation = mediaRecommendationList.get(itemIndex);
+            if (recommendation.getIcon() == null) {
+                Log.w(TAG, "No media cover is provided. Skipping this item...");
+                continue;
+            }
+
+            // Get media source app's logo.
+            Bundle extras = recommendation.getExtras();
+            Drawable icon = null;
+            if (extras != null && extras.getString(EXTRAS_MEDIA_SOURCE_PACKAGE_NAME) != null) {
+                // Get the logo from app's package name when applicable.
+                String packageName = extras.getString(EXTRAS_MEDIA_SOURCE_PACKAGE_NAME);
+                try {
+                    icon = mContext.getPackageManager().getApplicationIcon(
+                            packageName);
+                } catch (PackageManager.NameNotFoundException e) {
+                    Log.w(TAG, "No media source icon can be fetched via package name", e);
+                }
+            } else {
+                Log.w(TAG, "No media source icon is provided. Skipping this item...");
+                continue;
+            }
+
+            // Set up media source app's logo.
+            ImageView mediaSourceLogoImageView = mediaLogoItems.get(uiComponentIndex);
+            mediaSourceLogoImageView.setImageDrawable(icon);
+            // TODO(b/186699032): Tint the app logo using the accent color.
+            mediaSourceLogoImageView.setColorFilter(backgroundColor, PorterDuff.Mode.XOR);
+
+            // Set up media item cover.
+            ImageView mediaCoverImageView = mediaCoverItems.get(uiComponentIndex);
+            mediaCoverImageView.setImageIcon(recommendation.getIcon());
+
+            // Set up the click listener if applicable.
+            setSmartspaceRecItemOnClickListener(
+                    mediaCoverImageView,
+                    recommendation,
+                    callback);
+
+            if (uiComponentIndex < MEDIA_RECOMMENDATION_ITEMS_PER_ROW) {
+                setVisibleAndAlpha(collapsedSet,
+                        mediaCoverItemsResIds.get(uiComponentIndex), true);
+                setVisibleAndAlpha(collapsedSet,
+                        mediaLogoItemsResIds.get(uiComponentIndex), true);
+            } else {
+                setVisibleAndAlpha(collapsedSet,
+                        mediaCoverItemsResIds.get(uiComponentIndex), false);
+                setVisibleAndAlpha(collapsedSet,
+                        mediaLogoItemsResIds.get(uiComponentIndex), false);
+            }
+            setVisibleAndAlpha(expandedSet,
+                    mediaCoverItemsResIds.get(uiComponentIndex), true);
+            setVisibleAndAlpha(expandedSet,
+                    mediaLogoItemsResIds.get(uiComponentIndex), true);
+
+            uiComponentIndex++;
+        }
+
+        // Set up long press to show guts setting panel.
+        mRecommendationViewHolder.getDismiss().setOnClickListener(v -> {
+            logSmartspaceCardReported(761, // SMARTSPACE_CARD_DISMISS
+                    true);
+            closeGuts();
+            mKeyguardDismissUtil.executeWhenUnlocked(() -> {
+                mMediaDataManagerLazy.get().dismissSmartspaceRecommendation(
+                        MediaViewController.GUTS_ANIMATION_DURATION + 100L);
+                return true;
+            }, true /* requiresShadeOpen */);
+        });
+
+        mController = null;
+        mMediaViewController.refreshState();
+    }
+
     /**
      * Close the guts for this player.
+     *
      * @param immediate {@code true} if it should be closed without animation
      */
     public void closeGuts(boolean immediate) {
@@ -426,7 +608,7 @@ public class MediaControlPanel {
         if (bounds.width() > mAlbumArtSize || bounds.height() > mAlbumArtSize) {
             float offsetX = (bounds.width() - mAlbumArtSize) / 2.0f;
             float offsetY = (bounds.height() - mAlbumArtSize) / 2.0f;
-            bounds.offset((int) -offsetX,(int) -offsetY);
+            bounds.offset((int) -offsetX, (int) -offsetY);
         }
         drawable.setBounds(bounds);
         return drawable;
@@ -434,6 +616,7 @@ public class MediaControlPanel {
 
     /**
      * Get the current media controller
+     *
      * @return the controller
      */
     public MediaController getController() {
@@ -442,6 +625,7 @@ public class MediaControlPanel {
 
     /**
      * Check whether the media controlled by this player is currently playing
+     *
      * @return whether it is playing, or false if no controller information
      */
     public boolean isPlaying() {
@@ -450,6 +634,7 @@ public class MediaControlPanel {
 
     /**
      * Check whether the given controller is currently playing
+     *
      * @param controller media controller to check
      * @return whether it is playing, or false if no controller information
      */
@@ -467,7 +652,84 @@ public class MediaControlPanel {
     }
 
     private void setVisibleAndAlpha(ConstraintSet set, int actionId, boolean visible) {
-        set.setVisibility(actionId, visible? ConstraintSet.VISIBLE : ConstraintSet.GONE);
+        set.setVisibility(actionId, visible ? ConstraintSet.VISIBLE : ConstraintSet.GONE);
         set.setAlpha(actionId, visible ? 1.0f : 0.0f);
+    }
+
+    private void setSmartspaceRecItemOnClickListener(
+            @NonNull View view,
+            @NonNull SmartspaceAction action,
+            @Nullable View.OnClickListener callback) {
+        if (view == null || action == null || action.getIntent() == null) {
+            Log.e(TAG, "No tap action can be set up");
+            return;
+        }
+
+        view.setOnClickListener(v -> {
+            // When media recommendation card is shown, it will always be the top card.
+            logSmartspaceCardReported(760, // SMARTSPACE_CARD_CLICK
+                    true);
+
+            if (shouldSmartspaceRecItemOpenInForeground(action)) {
+                // Request to unlock the device if the activity needs to be opened in foreground.
+                mActivityStarter.postStartActivityDismissingKeyguard(
+                        action.getIntent(),
+                        0 /* delay */,
+                        buildLaunchAnimatorController(
+                                mRecommendationViewHolder.getRecommendations()));
+            } else {
+                // Otherwise, open the activity in background directly.
+                view.getContext().startActivity(action.getIntent());
+            }
+
+            if (callback != null) {
+                callback.onClick(v);
+            }
+        });
+    }
+
+    /** Returns if the Smartspace action will open the activity in foreground. */
+    private boolean shouldSmartspaceRecItemOpenInForeground(SmartspaceAction action) {
+        if (action == null || action.getIntent() == null
+                || action.getIntent().getExtras() == null) {
+            return false;
+        }
+
+        String intentString = action.getIntent().getExtras().getString(EXTRAS_SMARTSPACE_INTENT);
+        if (intentString == null) {
+            return false;
+        }
+
+        try {
+            Intent wrapperIntent = Intent.parseUri(intentString, Intent.URI_INTENT_SCHEME);
+            return wrapperIntent.getBooleanExtra(KEY_SMARTSPACE_OPEN_IN_FOREGROUND, false);
+        } catch (URISyntaxException e) {
+            Log.wtf(TAG, "Failed to create intent from URI: " + intentString);
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
+    /**
+     * Get the surface given the current end location for MediaViewController
+     * @return surface used for Smartspace logging
+     */
+    protected int getSurfaceForSmartspaceLogging() {
+        int currentEndLocation = mMediaViewController.getCurrentEndLocation();
+        if (currentEndLocation == MediaHierarchyManager.LOCATION_QQS
+                || currentEndLocation == MediaHierarchyManager.LOCATION_QS) {
+            return SysUiStatsLog.SMART_SPACE_CARD_REPORTED__DISPLAY_SURFACE__SHADE;
+        } else if (currentEndLocation == MediaHierarchyManager.LOCATION_LOCKSCREEN) {
+            return SysUiStatsLog.SMART_SPACE_CARD_REPORTED__DISPLAY_SURFACE__LOCKSCREEN;
+        }
+        return SysUiStatsLog.SMART_SPACE_CARD_REPORTED__DISPLAY_SURFACE__DEFAULT_SURFACE;
+    }
+
+    private void logSmartspaceCardReported(int eventId, boolean isRecommendationCard) {
+        mMediaCarouselController.logSmartspaceCardReported(eventId,
+                mInstanceId,
+                isRecommendationCard,
+                getSurfaceForSmartspaceLogging());
     }
 }

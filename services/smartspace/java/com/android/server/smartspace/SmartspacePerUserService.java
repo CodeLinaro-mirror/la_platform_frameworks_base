@@ -87,7 +87,10 @@ public class SmartspacePerUserService extends
     protected boolean updateLocked(boolean disabled) {
         final boolean enabledChanged = super.updateLocked(disabled);
         if (enabledChanged) {
-            if (!isEnabledLocked()) {
+            if (isEnabledLocked()) {
+                // Send the pending sessions over to the service
+                resurrectSessionsLocked();
+            } else {
                 // Clear the remote service for the next call
                 updateRemoteServiceLocked();
             }
@@ -406,6 +409,8 @@ public class SmartspacePerUserService extends
                         + callbackCount + " callbacks.");
             }
             service.onCreateSmartspaceSessionLocked(mSmartspaceConfig, mSessionId, token);
+            mCallbacks.broadcast(
+                    callback -> service.registerSmartspaceUpdatesLocked(mSessionId, callback));
         }
     }
 }

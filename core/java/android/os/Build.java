@@ -27,6 +27,7 @@ import android.app.ActivityThread;
 import android.app.Application;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
+import android.sysprop.DeviceProperties;
 import android.sysprop.SocProperties;
 import android.sysprop.TelephonyProperties;
 import android.text.TextUtils;
@@ -116,15 +117,20 @@ public class Build {
     public static final String HARDWARE = getString("ro.hardware");
 
     /**
-     * The SKU of the hardware (from the kernel command line). The SKU is reported by the bootloader
-     * to configure system software features.
+     * The SKU of the hardware (from the kernel command line).
+     *
+     * <p>The SKU is reported by the bootloader to configure system software features.
+     * If no value is supplied by the bootloader, this is reported as {@link #UNKNOWN}.
+
      */
     @NonNull
     public static final String SKU = getString("ro.boot.hardware.sku");
 
     /**
-     * The SKU of the device as set by the original design manufacturer (ODM). This is a
-     * runtime-initialized property set during startup to configure device services.
+     * The SKU of the device as set by the original design manufacturer (ODM).
+     *
+     * <p>This is a runtime-initialized property set during startup to configure device
+     * services. If no value is set, this is reported as {@link #UNKNOWN}.
      *
      * <p>The ODM SKU may have multiple variants for the same system SKU in case a manufacturer
      * produces variants of the same design. For example, the same build may be released with
@@ -139,7 +145,7 @@ public class Build {
      */
     @UnsupportedAppUsage
     @TestApi
-    public static final boolean IS_EMULATOR = getString("ro.kernel.qemu").equals("1");
+    public static final boolean IS_EMULATOR = getString("ro.boot.qemu").equals("1");
 
     /**
      * A hardware serial number, if available. Alphanumeric only, case-insensitive.
@@ -168,15 +174,13 @@ public class Build {
      * <ul>
      *     <li>If the calling app has been granted the READ_PRIVILEGED_PHONE_STATE permission; this
      *     is a privileged permission that can only be granted to apps preloaded on the device.
-     *     <li>If the calling app is the device or profile owner and has been granted the
-     *     {@link Manifest.permission#READ_PHONE_STATE} permission. The profile owner is an app that
-     *     owns a managed profile on the device; for more details see <a
-     *     href="https://developer.android.com/work/managed-profiles">Work profiles</a>.
-     *     Profile owner access is deprecated and will be removed in a future release.
      *     <li>If the calling app has carrier privileges (see {@link
      *     android.telephony.TelephonyManager#hasCarrierPrivileges}) on any active subscription.
      *     <li>If the calling app is the default SMS role holder (see {@link
      *     android.app.role.RoleManager#isRoleHeld(String)}).
+     *     <li>If the calling app is the device owner of a fully-managed device, a profile
+     *     owner of an organization-owned device, or their delegates (see {@link
+     *     android.app.admin.DevicePolicyManager#getEnrollmentSpecificId()}).
      * </ul>
      *
      * <p>If the calling app does not meet one of these requirements then this method will behave
@@ -298,6 +302,19 @@ public class Build {
                 "ro.build.version.security_patch", "");
 
         /**
+         * The media performance class of the device or 0 if none.
+         * <p>
+         * If this value is not <code>0</code>, the device conforms to the media performance class
+         * definition of the SDK version of this value. This value never changes while a device is
+         * booted, but it may increase when the hardware manufacturer provides an OTA update.
+         * <p>
+         * Possible non-zero values are defined in {@link Build.VERSION_CODES} starting with
+         * {@link Build.VERSION_CODES#S}.
+         */
+        public static final int MEDIA_PERFORMANCE_CLASS =
+                DeviceProperties.media_performance_class().orElse(0);
+
+        /**
          * The user-visible SDK version of the framework in its raw String
          * representation; use {@link #SDK_INT} instead.
          *
@@ -329,7 +346,7 @@ public class Build {
          */
         @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
         @TestApi
-        public static final int FIRST_SDK_INT = SystemProperties
+        public static final int DEVICE_INITIAL_SDK_INT = SystemProperties
                 .getInt("ro.product.first_api_level", 0);
 
         /**
@@ -1305,9 +1322,24 @@ public class Build {
      * Debuggable builds allow users to gain root access via local shell, attach debuggers to any
      * application regardless of whether they have the "debuggable" attribute set, or downgrade
      * selinux into "permissive" mode in particular.
+     * @hide
      */
     public static final boolean IS_DEBUGGABLE =
             SystemProperties.getInt("ro.debuggable", 0) == 1;
+
+    /**
+     * Returns true if the device is running a debuggable build such as "userdebug" or "eng".
+     *
+     * Debuggable builds allow users to gain root access via local shell, attach debuggers to any
+     * application regardless of whether they have the "debuggable" attribute set, or downgrade
+     * selinux into "permissive" mode in particular.
+     * @hide
+     */
+    @TestApi
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+    public static boolean isDebuggable() {
+        return IS_DEBUGGABLE;
+    }
 
     /** {@hide} */
     public static final boolean IS_ENG = "eng".equals(TYPE);

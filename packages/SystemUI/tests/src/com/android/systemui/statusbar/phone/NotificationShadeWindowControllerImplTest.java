@@ -119,7 +119,7 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
 
     @Test
     public void testSetForcePluginOpen_beforeStatusBarInitialization() {
-        mNotificationShadeWindowController.setForcePluginOpen(true);
+        mNotificationShadeWindowController.setForcePluginOpen(true, this);
     }
 
     @Test
@@ -129,6 +129,19 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
         mNotificationShadeWindowController.attach();
 
         verify(mNotificationShadeWindowView).setVisibility(eq(View.VISIBLE));
+        verify(mWindowManager).updateViewLayout(any(), mLayoutParameters.capture());
+        assertThat((mLayoutParameters.getValue().flags & FLAG_SHOW_WALLPAPER) != 0).isTrue();
+    }
+
+    @Test
+    public void attach_animatingKeyguardAndSurface_wallpaperVisible() {
+        clearInvocations(mWindowManager);
+        when(mKeyguardViewMediator.isShowingAndNotOccluded()).thenReturn(true);
+        when(mKeyguardViewMediator
+                .isAnimatingBetweenKeyguardAndSurfaceBehindOrWillBe())
+                .thenReturn(true);
+        mNotificationShadeWindowController.attach();
+
         verify(mWindowManager).updateViewLayout(any(), mLayoutParameters.capture());
         assertThat((mLayoutParameters.getValue().flags & FLAG_SHOW_WALLPAPER) != 0).isTrue();
     }

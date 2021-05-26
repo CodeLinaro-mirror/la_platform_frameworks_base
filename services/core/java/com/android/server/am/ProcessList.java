@@ -36,7 +36,6 @@ import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_LRU;
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_NETWORK;
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_PROCESSES;
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_PROCESS_OBSERVERS;
-import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_PSS;
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_UID_OBSERVERS;
 import static com.android.server.am.ActivityManagerDebugConfig.POSTFIX_PROCESS_OBSERVERS;
 import static com.android.server.am.ActivityManagerDebugConfig.TAG_AM;
@@ -54,8 +53,8 @@ import static com.android.server.am.ActivityManagerService.TAG_LRU;
 import static com.android.server.am.ActivityManagerService.TAG_NETWORK;
 import static com.android.server.am.ActivityManagerService.TAG_PROCESSES;
 import static com.android.server.am.ActivityManagerService.TAG_UID_OBSERVERS;
-import static com.android.server.am.AppProfiler.TAG_PSS;
 
+import android.Manifest;
 import android.annotation.NonNull;
 import android.app.ActivityManager;
 import android.app.ActivityManager.ProcessCapability;
@@ -78,6 +77,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.IPackageManager;
+import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.content.res.Resources;
 import android.graphics.Point;
@@ -125,6 +125,7 @@ import com.android.internal.os.Zygote;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.MemInfoReader;
+import com.android.server.AppStateTracker;
 import com.android.server.LocalServices;
 import com.android.server.ServiceThread;
 import com.android.server.SystemConfig;
@@ -135,6 +136,7 @@ import com.android.server.pm.dex.DexManager;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
 import com.android.server.wm.ActivityServiceConnectionsHolder;
 import com.android.server.wm.WindowManagerService;
+import com.android.server.wm.WindowProcessController;
 
 import dalvik.system.VMRuntime;
 
@@ -687,6 +689,12 @@ public final class ProcessList {
     @GuardedBy("mService")
     final ArrayList<ProcessRecord> mRemovedProcesses = new ArrayList<ProcessRecord>();
 
+    /**
+     * Processes that are killed by us and being waiting for the death notification.
+     */
+    @GuardedBy("mService")
+    final ProcessMap<ProcessRecord> mDyingProcesses = new ProcessMap<>();
+
     // Self locked with the inner lock within the RemoteCallbackList
     private final RemoteCallbackList<IProcessObserver> mProcessObservers =
             new RemoteCallbackList<>();
@@ -786,7 +794,7 @@ public final class ProcessList {
         mAppDataIsolationEnabled =
                 SystemProperties.getBoolean(ANDROID_APP_DATA_ISOLATION_ENABLED_PROPERTY, true);
         mVoldAppDataIsolationEnabled = SystemProperties.getBoolean(
-                ANDROID_VOLD_APP_DATA_ISOLATION_ENABLED_PROPERTY, false);
+                ANDROID_VOLD_APP_DATA_ISOLATION_ENABLED_PROPERTY, true);
         mAppDataIsolationAllowlistedApps = new ArrayList<>(
                 SystemConfig.getInstance().getAppDataIsolationWhitelistedApps());
 
@@ -1501,8 +1509,7 @@ public final class ProcessList {
     }
 
     @GuardedBy("mService")
-    final ProcessRecord getProcessRecordLocked(String processName, int uid, boolean
-            keepIfLarge) {
+    ProcessRecord getProcessRecordLocked(String processName, int uid) {
         if (uid == SYSTEM_UID) {
             // The system gets to run in any process.  If there are multiple
             // processes with the same uid, just pick the first (this
@@ -1519,41 +1526,7 @@ public final class ProcessList {
                 return procs.valueAt(i);
             }
         }
-        ProcessRecord proc = mProcessNames.get(processName, uid);
-        if (false && proc != null && !keepIfLarge
-                && proc.mState.getSetProcState() >= ActivityManager.PROCESS_STATE_CACHED_EMPTY
-                && proc.mProfile.getLastCachedPss() >= 4000) {
-            // Turn this condition on to cause killing to happen regularly, for testing.
-            synchronized (mService.mAppProfiler.mProfilerLock) {
-                proc.mProfile.reportCachedKill();
-            }
-            proc.killLocked(Long.toString(proc.mProfile.getLastCachedPss()) + "k from cached",
-                    ApplicationExitInfo.REASON_OTHER,
-                    ApplicationExitInfo.SUBREASON_LARGE_CACHED,
-                    true);
-        } else if (proc != null && !keepIfLarge
-                && !mService.mAppProfiler.isLastMemoryLevelNormal()
-                && proc.mState.getSetProcState() >= ActivityManager.PROCESS_STATE_CACHED_EMPTY) {
-            final long lastCachedPss;
-            boolean doKilling = false;
-            synchronized (mService.mAppProfiler.mProfilerLock) {
-                lastCachedPss = proc.mProfile.getLastCachedPss();
-                if (lastCachedPss >= getCachedRestoreThresholdKb()) {
-                    proc.mProfile.reportCachedKill();
-                    doKilling = true;
-                }
-            }
-            if (DEBUG_PSS) {
-                Slog.d(TAG_PSS, "May not keep " + proc + ": pss=" + lastCachedPss);
-            }
-            if (doKilling) {
-                proc.killLocked(Long.toString(lastCachedPss) + "k from cached",
-                        ApplicationExitInfo.REASON_OTHER,
-                        ApplicationExitInfo.SUBREASON_LARGE_CACHED,
-                        true);
-            }
-        }
-        return proc;
+        return mProcessNames.get(processName, uid);
     }
 
     void getMemoryInfo(ActivityManager.MemoryInfo outInfo) {
@@ -1598,7 +1571,8 @@ public final class ProcessList {
         }
     }
 
-    private int[] computeGidsForProcess(int mountExternal, int uid, int[] permGids) {
+    private int[] computeGidsForProcess(int mountExternal, int uid, int[] permGids,
+            boolean externalStorageAccess) {
         ArrayList<Integer> gidList = new ArrayList<>(permGids.length + 5);
 
         final int sharedAppGid = UserHandle.getSharedAppGid(UserHandle.getAppId(uid));
@@ -1643,6 +1617,11 @@ public final class ProcessList {
             // EmulatedVolumes: /data/media and /mnt/expand/<volume>/data/media
             // PublicVolumes: /mnt/media_rw/<volume>
             gidList.add(Process.MEDIA_RW_GID);
+        }
+        if (externalStorageAccess) {
+            // Apps with MANAGE_EXTERNAL_STORAGE PERMISSION need the external_storage gid to access
+            // USB OTG (unreliable) volumes on /mnt/media_rw/<vol name>
+            gidList.add(Process.EXTERNAL_STORAGE_GID);
         }
 
         int[] gidArray = new int[gidList.size()];
@@ -1750,12 +1729,13 @@ public final class ProcessList {
 
     private boolean enableNativeHeapZeroInit(ProcessRecord app) {
         // Look at the process attribute first.
-        if (app.processInfo != null && app.processInfo.nativeHeapZeroInit != null) {
-            return app.processInfo.nativeHeapZeroInit;
+        if (app.processInfo != null
+                && app.processInfo.nativeHeapZeroInitialized != ApplicationInfo.ZEROINIT_DEFAULT) {
+            return app.processInfo.nativeHeapZeroInitialized == ApplicationInfo.ZEROINIT_ENABLED;
         }
         // Then at the application attribute.
-        if (app.info.isNativeHeapZeroInit() != null) {
-            return app.info.isNativeHeapZeroInit();
+        if (app.info.getNativeHeapZeroInitialized() != ApplicationInfo.ZEROINIT_DEFAULT) {
+            return app.info.getNativeHeapZeroInitialized() == ApplicationInfo.ZEROINIT_ENABLED;
         }
         // Compat feature last.
         if (mPlatformCompat.isChangeEnabled(NATIVE_HEAP_ZERO_INIT, app.info)) {
@@ -1784,6 +1764,9 @@ public final class ProcessList {
             app.setPid(0);
             app.setStartSeq(0);
         }
+        // Clear any residual death recipient link as the ProcessRecord could be reused.
+        app.unlinkDeathRecipient();
+        app.setDyingPid(0);
 
         if (DEBUG_PROCESSES && mService.mProcessesOnHold.contains(app)) Slog.v(
                 TAG_PROCESSES,
@@ -1795,8 +1778,8 @@ public final class ProcessList {
         checkSlow(startTime, "startProcess: done updating cpu stats");
 
         try {
+            final int userId = UserHandle.getUserId(app.uid);
             try {
-                final int userId = UserHandle.getUserId(app.uid);
                 AppGlobals.getPackageManager().checkPackageStartable(app.info.packageName, userId);
             } catch (RemoteException e) {
                 throw e.rethrowAsRuntimeException();
@@ -1805,6 +1788,7 @@ public final class ProcessList {
             int uid = app.uid;
             int[] gids = null;
             int mountExternal = Zygote.MOUNT_EXTERNAL_NONE;
+            boolean externalStorageAccess = false;
             if (!app.isolated) {
                 int[] permGids = null;
                 try {
@@ -1816,6 +1800,14 @@ public final class ProcessList {
                             StorageManagerInternal.class);
                     mountExternal = storageManagerInternal.getExternalStorageMountMode(uid,
                             app.info.packageName);
+                    externalStorageAccess = storageManagerInternal.hasExternalStorageAccess(uid,
+                            app.info.packageName);
+                    if (pm.checkPermission(Manifest.permission.INSTALL_PACKAGES,
+                            app.info.packageName, userId)
+                            == PackageManager.PERMISSION_GRANTED) {
+                        Slog.i(TAG, app.info.packageName + " is exempt from freezer");
+                        app.mOptRecord.setFreezeExempt(true);
+                    }
                 } catch (RemoteException e) {
                     throw e.rethrowAsRuntimeException();
                 }
@@ -1835,7 +1827,7 @@ public final class ProcessList {
                     }
                 }
 
-                gids = computeGidsForProcess(mountExternal, uid, permGids);
+                gids = computeGidsForProcess(mountExternal, uid, permGids, externalStorageAccess);
             }
             app.setMountMode(mountExternal);
             checkSlow(startTime, "startProcess: building args");
@@ -1864,6 +1856,9 @@ public final class ProcessList {
             }
             if ((app.info.privateFlags & ApplicationInfo.PRIVATE_FLAG_PROFILEABLE_BY_SHELL) != 0) {
                 runtimeFlags |= Zygote.PROFILE_FROM_SHELL;
+            }
+            if ((app.info.privateFlagsExt & ApplicationInfo.PRIVATE_FLAG_EXT_PROFILEABLE) != 0) {
+                runtimeFlags |= Zygote.PROFILEABLE;
             }
             if ("1".equals(SystemProperties.get("debug.checkjni"))) {
                 runtimeFlags |= Zygote.DEBUG_ENABLE_CHECKJNI;
@@ -2077,14 +2072,14 @@ public final class ProcessList {
         // If there is a preceding instance of the process, wait for its death with a timeout.
         // Use local reference since we are not using locks here
         final ProcessRecord predecessor = app.mPredecessor;
-        if (predecessor != null) {
-            final int pid = predecessor.getPid();
+        int prevPid;
+        if (predecessor != null && (prevPid = predecessor.getDyingPid()) > 0) {
             long now = System.currentTimeMillis();
             final long end = now + PROC_KILL_TIMEOUT;
             final int oldPolicy = StrictMode.getThreadPolicyMask();
             try {
                 StrictMode.setThreadPolicyMask(0);
-                Process.waitForProcessDeath(pid, PROC_KILL_TIMEOUT);
+                Process.waitForProcessDeath(prevPid, PROC_KILL_TIMEOUT);
                 // It's killed successfully, but we'd make sure the cleanup work is done.
                 synchronized (predecessor) {
                     if (app.mPredecessor != null) {
@@ -2094,17 +2089,22 @@ public final class ProcessList {
                                 predecessor.wait(end - now);
                             } catch (InterruptedException e) {
                             }
+                            if (System.currentTimeMillis() >= end) {
+                                Slog.w(TAG, predecessor + " " + prevPid
+                                        + " has died but its obituary delivery is slow.");
+                            }
                         }
                     }
-                    if (app.mPredecessor != null) {
+                    if (app.mPredecessor != null && app.mPredecessor.getPid() > 0) {
                         // The cleanup work hasn't be done yet, let's log it and continue.
-                        Slog.w(TAG, predecessor + " has died, but its cleanup isn't done");
+                        Slog.w(TAG, predecessor + " " + prevPid
+                                + " has died, but its cleanup isn't done");
                     }
                 }
             } catch (Exception e) {
                 // It's still alive... maybe blocked at uninterruptible sleep ?
-                Slog.wtf(TAG, predecessor.toString() + " refused to die, but we need to launch "
-                        + app, e);
+                Slog.wtf(TAG, predecessor.toString() + " " + prevPid
+                        + " refused to die, but we need to launch " + app, e);
             } finally {
                 StrictMode.setThreadPolicyMask(oldPolicy);
             }
@@ -2315,11 +2315,12 @@ public final class ProcessList {
             StorageManagerInternal storageManagerInternal = LocalServices.getService(
                     StorageManagerInternal.class);
             if (needsStorageDataIsolation(storageManagerInternal, app)) {
-                bindMountAppStorageDirs = true;
-                if (pkgDataInfoMap == null ||
-                        !storageManagerInternal.prepareStorageDirs(userId, pkgDataInfoMap.keySet(),
-                        app.processName)) {
-                    // Cannot prepare Android/app and Android/obb directory or inode == 0,
+                // We will run prepareStorageDirs() after we trigger zygote fork, so it won't
+                // slow down app starting speed as those dirs might not be cached.
+                if (pkgDataInfoMap != null && storageManagerInternal.isFuseMounted(userId)) {
+                    bindMountAppStorageDirs = true;
+                } else {
+                    // Fuse is not mounted or inode == 0,
                     // so we won't mount it in zygote, but resume the mount after unlocking device.
                     app.setBindMountPending(true);
                     bindMountAppStorageDirs = false;
@@ -2331,6 +2332,12 @@ public final class ProcessList {
             if (app.isolated) {
                 pkgDataInfoMap = null;
                 allowlistedAppDataInfoMap = null;
+            }
+
+            AppStateTracker ast = LocalServices.getService(AppStateTracker.class);
+            if (ast != null) {
+                app.mState.setForcedAppStandby(ast.isAppInForcedAppStandby(
+                        app.info.uid, app.info.packageName));
             }
 
             final Process.ProcessStartResult startResult;
@@ -2367,6 +2374,13 @@ public final class ProcessList {
                         allowlistedAppDataInfoMap, bindMountAppsData, bindMountAppStorageDirs,
                         new String[]{PROC_START_SEQ_IDENT + app.getStartSeq()});
             }
+            // This runs after Process.start() as this method may block app process starting time
+            // if dir is not cached. Running this method after Process.start() can make it
+            // cache the dir asynchronously, so zygote can use it without waiting for it.
+            if (bindMountAppStorageDirs) {
+                storageManagerInternal.prepareStorageDirs(userId, pkgDataInfoMap.keySet(),
+                        app.processName);
+            }
             checkSlow(startTime, "startProcess: returned from zygote!");
             return startResult;
         } finally {
@@ -2391,12 +2405,11 @@ public final class ProcessList {
     ProcessRecord startProcessLocked(String processName, ApplicationInfo info,
             boolean knownToBeDead, int intentFlags, HostingRecord hostingRecord,
             int zygotePolicyFlags, boolean allowWhileBooting, boolean isolated, int isolatedUid,
-            boolean keepIfLarge, String abiOverride, String entryPoint, String[] entryPointArgs,
-            Runnable crashHandler) {
+            String abiOverride, String entryPoint, String[] entryPointArgs, Runnable crashHandler) {
         long startTime = SystemClock.uptimeMillis();
         ProcessRecord app;
         if (!isolated) {
-            app = getProcessRecordLocked(processName, info.uid, keepIfLarge);
+            app = getProcessRecordLocked(processName, info.uid);
             checkSlow(startTime, "startProcess: after getProcessRecord");
 
             if ((intentFlags & Intent.FLAG_FROM_BACKGROUND) != 0) {
@@ -2459,12 +2472,8 @@ public final class ProcessList {
             ProcessList.killProcessGroup(app.uid, app.getPid());
             checkSlow(startTime, "startProcess: done killing old proc");
 
-            if (!app.isKilled()
-                    || mService.mAppProfiler.isLastMemoryLevelNormal()
-                    || app.mState.getSetProcState() < ActivityManager.PROCESS_STATE_CACHED_EMPTY
-                    || app.mProfile.getLastCachedPss() < getCachedRestoreThresholdKb()) {
-                // Throw a wtf if it's not killed, or killed but not because the system was in
-                // memory pressure + the app was in "cch-empty" and used large amount of memory
+            if (!app.isKilled()) {
+                // Throw a wtf if it's not killed
                 Slog.wtf(TAG_PROCESSES, app.toString() + " is attached to a previous process");
             } else {
                 Slog.w(TAG_PROCESSES, app.toString() + " is attached to a previous process");
@@ -2473,6 +2482,18 @@ public final class ProcessList {
             // routine of it yet, but we'd set it as the predecessor of the new process.
             predecessor = app;
             app = null;
+        } else if (!isolated) {
+            // This app may have been removed from process name maps, probably because we killed it
+            // and did the cleanup before the actual death notification. Check the dying processes.
+            predecessor = mDyingProcesses.get(processName, info.uid);
+            if (predecessor != null) {
+                if (app != null) {
+                    app.mPredecessor = predecessor;
+                    predecessor.mSuccessor = app;
+                }
+                Slog.w(TAG_PROCESSES, predecessor.toString() + " is attached to a previous process "
+                        + predecessor.getDyingPid());
+            }
         }
 
         if (app == null) {
@@ -2641,7 +2662,7 @@ public final class ProcessList {
                     + " belongs to another existing app:" + oldApp.processName
                     + " startSeq:" + oldApp.getStartSeq());
             mService.cleanUpApplicationRecordLocked(oldApp, pid, false, false, -1,
-                    true /*replacingPid*/);
+                    true /*replacingPid*/, false /* fromBinderDied */);
         }
         mService.addPidLocked(app);
         synchronized (mService.mPidsSelfLocked) {
@@ -2855,7 +2876,8 @@ public final class ProcessList {
                 }
             }
             app.killLocked(reason, reasonCode, subReason, true);
-            mService.handleAppDiedLocked(app, pid, willRestart, allowRestart);
+            mService.handleAppDiedLocked(app, pid, willRestart, allowRestart,
+                    false /* fromBinderDied */);
             if (willRestart) {
                 removeLruProcessLocked(app);
                 mService.addAppLocked(app.info, null, false, null /* ABI override */,
@@ -3400,6 +3422,11 @@ public final class ProcessList {
             // to move it.  It should be kept in the front of the list with other
             // processes that have activities, and we don't want those to change their
             // order except due to activity operations.
+            return;
+        }
+
+        if (app.getPid() == 0 && !app.isPendingStart()) {
+            // This process has been killed and its cleanup is done, don't proceed the LRU update.
             return;
         }
 
@@ -4612,6 +4639,7 @@ public final class ProcessList {
     @GuardedBy(anyOf = {"mService", "mProcLock"})
     void updateApplicationInfoLOSP(List<String> packagesToUpdate, int userId,
             boolean updateFrameworkRes) {
+        final ArrayList<WindowProcessController> targetProcesses = new ArrayList<>();
         for (int i = mLruProcesses.size() - 1; i >= 0; i--) {
             final ProcessRecord app = mLruProcesses.get(i);
             if (app.getThread() == null) {
@@ -4632,6 +4660,7 @@ public final class ProcessList {
                             if (ai.packageName.equals(app.info.packageName)) {
                                 app.info = ai;
                             }
+                            targetProcesses.add(app.getWindowProcessController());
                         }
                     } catch (RemoteException e) {
                         Slog.w(TAG, String.format("Failed to update %s ApplicationInfo for %s",
@@ -4640,6 +4669,9 @@ public final class ProcessList {
                 }
             });
         }
+
+        mService.mActivityTaskManager.updateAssetConfiguration(
+                updateFrameworkRes ? null : targetProcesses);
     }
 
     @GuardedBy("mService")
@@ -4886,6 +4918,103 @@ public final class ProcessList {
     }
 
     /**
+     * Handle the death notification if it's a dying app.
+     *
+     * @return {@code true} if it's a dying app that we were tracking.
+     */
+    @GuardedBy("mService")
+    boolean handleDyingAppDeathLocked(ProcessRecord app, int pid) {
+        if (mProcessNames.get(app.processName, app.uid) != app
+                && mDyingProcesses.get(app.processName, app.uid) == app) {
+            // App has been removed already, meaning cleanup has done.
+            Slog.v(TAG, "Got obituary of " + pid + ":" + app.processName);
+            app.unlinkDeathRecipient();
+            handlePrecedingAppDiedLocked(app);
+            // It's really gone now, let's remove from the dying process list.
+            mDyingProcesses.remove(app.processName, app.uid);
+            app.setDyingPid(0);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Handle the case where the given app is a preceding instance of another process instance.
+     *
+     * @return {@code false} if this given app should not be allowed to restart.
+     */
+    @GuardedBy("mService")
+    boolean handlePrecedingAppDiedLocked(ProcessRecord app) {
+        synchronized (app) {
+            if (app.mSuccessor != null) {
+                // We don't allow restart with this ProcessRecord now,
+                // because we have created a new one already.
+                // If it's persistent, add the successor to mPersistentStartingProcesses
+                if (app.isPersistent() && !app.isRemoved()) {
+                    if (mService.mPersistentStartingProcesses.indexOf(app.mSuccessor) < 0) {
+                        mService.mPersistentStartingProcesses.add(app.mSuccessor);
+                    }
+                }
+                // clean up the field so the successor's proc starter could proceed.
+                app.mSuccessor.mPredecessor = null;
+                app.mSuccessor = null;
+                // Notify if anyone is waiting for it.
+                app.notifyAll();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @GuardedBy("mService")
+    void updateForceAppStandbyForUidPackageLocked(int uid, String packageName, boolean standby) {
+        final UidRecord uidRec = getUidRecordLOSP(uid);
+        if (uidRec != null) {
+            uidRec.forEachProcess(app -> {
+                if (TextUtils.equals(app.info.packageName, packageName)) {
+                    app.mState.setForcedAppStandby(standby);
+                    killAppIfForceStandbyAndCachedIdleLocked(app);
+                }
+            });
+        }
+    }
+
+    @GuardedBy("mService")
+    void updateForcedAppStandbyForAllAppsLocked() {
+        if (!mService.mConstants.mKillForceAppStandByAndCachedIdle) {
+            return;
+        }
+        final AppStateTracker ast = LocalServices.getService(AppStateTracker.class);
+        for (int i = mLruProcesses.size() - 1; i >= 0; i--) {
+            final ProcessRecord app = mLruProcesses.get(i);
+            final boolean standby = ast.isAppInForcedAppStandby(
+                    app.info.uid, app.info.packageName);
+            app.mState.setForcedAppStandby(standby);
+            if (standby) {
+                killAppIfForceStandbyAndCachedIdleLocked(app);
+            }
+        }
+    }
+
+    @GuardedBy("mService")
+    void killAppIfForceStandbyAndCachedIdleLocked(ProcessRecord app) {
+        final UidRecord uidRec = app.getUidRecord();
+        if (mService.mConstants.mKillForceAppStandByAndCachedIdle
+                && uidRec != null && uidRec.isIdle()
+                && app.isCached() && app.mState.isForcedAppStandby()) {
+            app.killLocked("cached idle & forced-app-standby",
+                    ApplicationExitInfo.REASON_OTHER,
+                    ApplicationExitInfo.SUBREASON_CACHED_IDLE_FORCED_APP_STANDBY,
+                    true);
+        }
+    }
+
+    @GuardedBy("mService")
+    void killAppIfForceStandbyAndCachedIdleLocked(UidRecord uidRec) {
+        uidRec.forEachProcess(app -> killAppIfForceStandbyAndCachedIdleLocked(app));
+    }
+
+    /**
      * Called by ActivityManagerService when a process died.
      */
     @GuardedBy("mService")
@@ -4895,21 +5024,33 @@ public final class ProcessList {
         }
 
         Watchdog.getInstance().processDied(app.processName, app.getPid());
+        if (app.getDeathRecipient() == null) {
+            // If we've done unlinkDeathRecipient before calling into this, remove from dying list.
+            mDyingProcesses.remove(app.processName, app.uid);
+            app.setDyingPid(0);
+        }
         mAppExitInfoTracker.scheduleNoteProcessDied(app);
     }
 
     /**
      * Called by ActivityManagerService when it decides to kill an application process.
      */
+    @GuardedBy("mService")
     void noteAppKill(final ProcessRecord app, final @Reason int reason,
             final @SubReason int subReason, final String msg) {
         if (DEBUG_PROCESSES) {
             Slog.i(TAG, "note: " + app + " is being killed, reason: " + reason
                     + ", sub-reason: " + subReason + ", message: " + msg);
         }
+        if (app.getPid() > 0 && !app.isolated && app.getDeathRecipient() != null) {
+            // We are killing it, put it into the dying process list.
+            mDyingProcesses.put(app.processName, app.uid, app);
+            app.setDyingPid(app.getPid());
+        }
         mAppExitInfoTracker.scheduleNoteAppKill(app, reason, subReason, msg);
     }
 
+    @GuardedBy("mService")
     void noteAppKill(final int pid, final int uid, final @Reason int reason,
             final @SubReason int subReason, final String msg) {
         if (DEBUG_PROCESSES) {
@@ -4917,6 +5058,15 @@ public final class ProcessList {
                     + ", sub-reason: " + subReason + ", message: " + msg);
         }
 
+        final ProcessRecord app;
+        synchronized (mService.mPidsSelfLocked) {
+            app = mService.mPidsSelfLocked.get(pid);
+        }
+        if (app != null && app.uid == uid && !app.isolated && app.getDeathRecipient() != null) {
+            // We are killing it, put it into the dying process list.
+            mDyingProcesses.put(app.processName, uid, app);
+            app.setDyingPid(app.getPid());
+        }
         mAppExitInfoTracker.scheduleNoteAppKill(pid, uid, reason, subReason, msg);
     }
 

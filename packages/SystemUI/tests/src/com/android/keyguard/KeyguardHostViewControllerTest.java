@@ -16,6 +16,9 @@
 
 package com.android.keyguard;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -26,11 +29,15 @@ import android.telephony.TelephonyManager;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
+import android.testing.TestableResources;
+import android.view.Gravity;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 
+import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.plugins.ActivityStarter.OnDismissAction;
 
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -43,10 +50,9 @@ import org.mockito.junit.MockitoRule;
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
 public class KeyguardHostViewControllerTest extends SysuiTestCase {
-
     @Mock
     private KeyguardUpdateMonitor mKeyguardUpdateMonitor;
-    @Mock
+
     private KeyguardHostView mKeyguardHostView;
     @Mock
     private AudioManager mAudioManager;
@@ -62,10 +68,21 @@ public class KeyguardHostViewControllerTest extends SysuiTestCase {
     @Rule
     public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
+    private TestableResources mTestableResources;
     private KeyguardHostViewController mKeyguardHostViewController;
 
     @Before
     public void setup() {
+        mTestableResources = mContext.getOrCreateTestableResources();
+
+        mKeyguardHostView = new KeyguardHostView(mContext);
+
+        // Explicitly disable one handed keyguard.
+        mTestableResources.addOverride(
+                R.bool.can_use_one_handed_bouncer, false);
+        mTestableResources.addOverride(
+                com.android.internal.R.bool.config_enableOneHandedKeyguard, false);
+
         when(mKeyguardSecurityContainerControllerFactory.create(any(
                 KeyguardSecurityContainer.SecurityCallback.class)))
                 .thenReturn(mKeyguardSecurityContainerController);
@@ -76,15 +93,86 @@ public class KeyguardHostViewControllerTest extends SysuiTestCase {
 
     @Test
     public void testHasDismissActions() {
-        Assert.assertFalse("Action not set yet", mKeyguardHostViewController.hasDismissActions());
+        assertFalse("Action not set yet", mKeyguardHostViewController.hasDismissActions());
         mKeyguardHostViewController.setOnDismissAction(mock(OnDismissAction.class),
                 null /* cancelAction */);
-        Assert.assertTrue("Action should exist", mKeyguardHostViewController.hasDismissActions());
+        assertTrue("Action should exist", mKeyguardHostViewController.hasDismissActions());
     }
 
     @Test
     public void testOnStartingToHide() {
         mKeyguardHostViewController.onStartingToHide();
         verify(mKeyguardSecurityContainerController).onStartingToHide();
+    }
+
+    @Test
+    public void testGravityReappliedOnConfigurationChange() {
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT);
+        mKeyguardHostView.setLayoutParams(lp);
+
+        // Set initial gravity
+        mTestableResources.addOverride(R.integer.keyguard_host_view_gravity,
+                Gravity.CENTER);
+
+        // Kick off the initial pass...
+        mKeyguardHostViewController.init();
+        assertEquals(
+                ((FrameLayout.LayoutParams) mKeyguardHostView.getLayoutParams()).gravity,
+                Gravity.CENTER);
+
+        // Now simulate a config change
+        mTestableResources.addOverride(R.integer.keyguard_host_view_gravity,
+                Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+
+        mKeyguardHostViewController.updateResources();
+        assertEquals(
+                ((FrameLayout.LayoutParams) mKeyguardHostView.getLayoutParams()).gravity,
+                Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+    }
+
+    @Test
+    public void testGravityUsesOneHandGravityWhenApplicable() {
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT);
+        mKeyguardHostView.setLayoutParams(lp);
+
+        mTestableResources.addOverride(
+                R.integer.keyguard_host_view_gravity,
+                Gravity.CENTER);
+        mTestableResources.addOverride(
+                R.integer.keyguard_host_view_one_handed_gravity,
+                Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+
+        // Start disabled.
+        mTestableResources.addOverride(
+                R.bool.can_use_one_handed_bouncer, false);
+        mTestableResources.addOverride(
+                com.android.internal.R.bool.config_enableOneHandedKeyguard, false);
+
+        mKeyguardHostViewController.init();
+        assertEquals(
+                ((FrameLayout.LayoutParams) mKeyguardHostView.getLayoutParams()).gravity,
+                Gravity.CENTER);
+
+        // And enable
+        mTestableResources.addOverride(
+                R.bool.can_use_one_handed_bouncer, true);
+        mTestableResources.addOverride(
+                com.android.internal.R.bool.config_enableOneHandedKeyguard, true);
+
+        mKeyguardHostViewController.updateResources();
+        assertEquals(
+                ((FrameLayout.LayoutParams) mKeyguardHostView.getLayoutParams()).gravity,
+                Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+    }
+
+    @Test
+    public void testUpdateKeyguardPositionDelegatesToSecurityContainer() {
+        mKeyguardHostViewController.updateKeyguardPosition(1.0f);
+
+        verify(mKeyguardSecurityContainerController).updateKeyguardPosition(1.0f);
     }
 }

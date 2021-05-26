@@ -288,7 +288,7 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
     private static final Date DEFAULT_CERT_NOT_AFTER = new Date(2461449600000L); // Jan 1 2048
 
     private final String mKeystoreAlias;
-    private final int mNamespace;
+    private final @KeyProperties.Namespace int mNamespace;
     private final int mKeySize;
     private final AlgorithmParameterSpec mSpec;
     private final X500Principal mCertificateSubject;
@@ -331,7 +331,7 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
      */
     public KeyGenParameterSpec(
             String keyStoreAlias,
-            int namespace,
+            @KeyProperties.Namespace int namespace,
             int keySize,
             AlgorithmParameterSpec spec,
             X500Principal certificateSubject,
@@ -353,7 +353,7 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
             boolean userPresenceRequired,
             byte[] attestationChallenge,
             boolean devicePropertiesAttestationIncluded,
-            int[] attestationIds,
+            @NonNull int[] attestationIds,
             boolean uniqueIdIncluded,
             boolean userAuthenticationValidWhileOnBody,
             boolean invalidatedByBiometricEnrollment,
@@ -446,13 +446,6 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
     @UnsupportedAppUsage
     @Deprecated
     public int getUid() {
-        if (!AndroidKeyStoreProvider.isKeystore2Enabled()) {
-            // If Keystore2 has not been enabled we have to behave as if mNamespace is actually
-            // a UID, because we are still being used with the old Keystore SPI.
-            // TODO This if statement and body can be removed when the Keystore 2 migration is
-            //      complete. b/171563717
-            return mNamespace;
-        }
         try {
             return KeyProperties.namespaceToLegacyUid(mNamespace);
         } catch (IllegalArgumentException e) {
@@ -467,12 +460,12 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
      *
      * @return The numeric namespace as configured in the keystore2_key_contexts files of Android's
      *         SEPolicy.
-     *         TODO b/171806779 link to public Keystore 2.0 documentation.
-     *              See bug for more details for now.
+     *         See <a href="https://source.android.com/security/keystore#access-control">
+     *             Keystore 2.0 access control</a>
      * @hide
      */
     @SystemApi
-    public int getNamespace() {
+    public @KeyProperties.Namespace int getNamespace() {
         return mNamespace;
     }
 
@@ -786,9 +779,8 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
      * @return integer array representing the requested device IDs to attest.
      */
     @SystemApi
-    @Nullable
-    public int[] getAttestationIds() {
-        return Utils.cloneIfNotNull(mAttestationIds);
+    public @NonNull int[] getAttestationIds() {
+        return mAttestationIds.clone();
     }
 
     /**
@@ -896,7 +888,7 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
         private final String mKeystoreAlias;
         private @KeyProperties.PurposeEnum int mPurposes;
 
-        private int mNamespace = KeyProperties.NAMESPACE_APPLICATION;
+        private @KeyProperties.Namespace int mNamespace = KeyProperties.NAMESPACE_APPLICATION;
         private int mKeySize = -1;
         private AlgorithmParameterSpec mSpec;
         private X500Principal mCertificateSubject;
@@ -918,7 +910,7 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
         private boolean mUserPresenceRequired = false;
         private byte[] mAttestationChallenge = null;
         private boolean mDevicePropertiesAttestationIncluded = false;
-        private int[] mAttestationIds = null;
+        private int[] mAttestationIds = new int[0];
         private boolean mUniqueIdIncluded = false;
         private boolean mUserAuthenticationValidWhileOnBody;
         private boolean mInvalidatedByBiometricEnrollment = true;
@@ -1021,14 +1013,6 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
         @NonNull
         @Deprecated
         public Builder setUid(int uid) {
-            if (!AndroidKeyStoreProvider.isKeystore2Enabled()) {
-                // If Keystore2 has not been enabled we have to behave as if mNamespace is actually
-                // a UID, because we are still being used with the old Keystore SPI.
-                // TODO This if statement and body can be removed when the Keystore 2 migration is
-                //      complete. b/171563717
-                mNamespace = uid;
-                return this;
-            }
             mNamespace = KeyProperties.legacyUidToNamespace(uid);
             return this;
         }
@@ -1042,16 +1026,16 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
          * keys between system and vendor components, e.g., WIFI settings and WPA supplicant.
          *
          * @param namespace Numeric SELinux namespace as configured in keystore2_key_contexts
-         *                  of Android's SEPolicy.
-         *                  TODO b/171806779 link to public Keystore 2.0 documentation.
-         *                       See bug for more details for now.
+         *         of Android's SEPolicy.
+         *         See <a href="https://source.android.com/security/keystore#access-control">
+         *             Keystore 2.0 access control</a>
          * @return this Builder object.
          *
          * @hide
          */
         @SystemApi
         @NonNull
-        public Builder setNamespace(int namespace) {
+        public Builder setNamespace(@KeyProperties.Namespace int namespace) {
             mNamespace = namespace;
             return this;
         }
@@ -1666,9 +1650,10 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
          * Set whether this key is critical to the device encryption flow
          *
          * This is a special flag only available to system servers to indicate the current key
-         * is part of the device encryption flow.
+         * is part of the device encryption flow. Setting this flag causes the key to not
+         * be cryptographically bound to the LSKF even if the key is otherwise authentication
+         * bound.
          *
-         * @see android.security.KeyStore#FLAG_CRITICAL_TO_DEVICE_ENCRYPTION
          * @hide
          */
         public Builder setCriticalToDeviceEncryption(boolean critical) {

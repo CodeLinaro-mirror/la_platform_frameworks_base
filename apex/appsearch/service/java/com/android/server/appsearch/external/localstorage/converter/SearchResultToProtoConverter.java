@@ -16,6 +16,8 @@
 
 package com.android.server.appsearch.external.localstorage.converter;
 
+import static com.android.server.appsearch.external.localstorage.util.PrefixUtil.createPrefix;
+
 import android.annotation.NonNull;
 import android.app.appsearch.GenericDocument;
 import android.app.appsearch.SearchResult;
@@ -24,6 +26,7 @@ import android.os.Bundle;
 
 import com.android.internal.util.Preconditions;
 
+import com.google.android.icing.proto.SchemaTypeConfigProto;
 import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchResultProtoOrBuilder;
 import com.google.android.icing.proto.SnippetMatchProto;
@@ -31,6 +34,7 @@ import com.google.android.icing.proto.SnippetProto;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Translates a {@link SearchResultProto} into {@link SearchResult}s.
@@ -49,23 +53,33 @@ public class SearchResultToProtoConverter {
      * @param databaseNames A parallel array of database names. The database name at index 'i' of
      *     this list shold be the database that indexed the document at index 'i' of
      *     proto.getResults(i).
+     * @param schemaMap A map of prefixes to an inner-map of prefixed schema type to
+     *     SchemaTypeConfigProtos, used for setting a default value for results with DocumentProtos
+     *     that have empty values.
      * @return {@link SearchResultPage} of results.
      */
     @NonNull
     public static SearchResultPage toSearchResultPage(
             @NonNull SearchResultProtoOrBuilder proto,
             @NonNull List<String> packageNames,
-            @NonNull List<String> databaseNames) {
+            @NonNull List<String> databaseNames,
+            @NonNull Map<String, Map<String, SchemaTypeConfigProto>> schemaMap) {
         Preconditions.checkArgument(
                 proto.getResultsCount() == packageNames.size(),
-                "Size of " + "results does not match the number of package names.");
+                "Size of results does not match the number of package names.");
         Bundle bundle = new Bundle();
         bundle.putLong(SearchResultPage.NEXT_PAGE_TOKEN_FIELD, proto.getNextPageToken());
         ArrayList<Bundle> resultBundles = new ArrayList<>(proto.getResultsCount());
         for (int i = 0; i < proto.getResultsCount(); i++) {
-            resultBundles.add(
-                    toSearchResultBundle(
-                            proto.getResults(i), packageNames.get(i), databaseNames.get(i)));
+            String prefix = createPrefix(packageNames.get(i), databaseNames.get(i));
+            Map<String, SchemaTypeConfigProto> schemaTypeMap = schemaMap.get(prefix);
+            SearchResult result =
+                    toSearchResult(
+                            proto.getResults(i),
+                            packageNames.get(i),
+                            databaseNames.get(i),
+                            schemaTypeMap);
+            resultBundles.add(result.getBundle());
         }
         bundle.putParcelableArrayList(SearchResultPage.RESULTS_FIELD, resultBundles);
         return new SearchResultPage(bundle);
@@ -77,53 +91,51 @@ public class SearchResultToProtoConverter {
      * @param proto The proto to be converted.
      * @param packageName The package name associated with the document in {@code proto}.
      * @param databaseName The database name associated with the document in {@code proto}.
+     * @param schemaTypeToProtoMap A map of prefixed schema types to their corresponding
+     *     SchemaTypeConfigProto, used for setting a default value for results with DocumentProtos
+     *     that have empty values.
      * @return A {@link SearchResult} bundle.
      */
     @NonNull
-    private static Bundle toSearchResultBundle(
+    private static SearchResult toSearchResult(
             @NonNull SearchResultProto.ResultProtoOrBuilder proto,
             @NonNull String packageName,
-            @NonNull String databaseName) {
-        Bundle bundle = new Bundle();
+            @NonNull String databaseName,
+            @NonNull Map<String, SchemaTypeConfigProto> schemaTypeToProtoMap) {
+        String prefix = createPrefix(packageName, databaseName);
         GenericDocument document =
-                GenericDocumentToProtoConverter.toGenericDocument(proto.getDocument());
-        bundle.putBundle(SearchResult.DOCUMENT_FIELD, document.getBundle());
-        bundle.putString(SearchResult.PACKAGE_NAME_FIELD, packageName);
-        bundle.putString(SearchResult.DATABASE_NAME_FIELD, databaseName);
-
-        ArrayList<Bundle> matchList = new ArrayList<>();
+                GenericDocumentToProtoConverter.toGenericDocument(
+                        proto.getDocument(), prefix, schemaTypeToProtoMap);
+        SearchResult.Builder builder =
+                new SearchResult.Builder(packageName, databaseName)
+                        .setGenericDocument(document)
+                        .setRankingSignal(proto.getScore());
         if (proto.hasSnippet()) {
             for (int i = 0; i < proto.getSnippet().getEntriesCount(); i++) {
                 SnippetProto.EntryProto entry = proto.getSnippet().getEntries(i);
                 for (int j = 0; j < entry.getSnippetMatchesCount(); j++) {
-                    Bundle matchInfoBundle =
-                            convertToMatchInfoBundle(
-                                    entry.getSnippetMatches(j), entry.getPropertyName());
-                    matchList.add(matchInfoBundle);
+                    SearchResult.MatchInfo matchInfo =
+                            toMatchInfo(entry.getSnippetMatches(j), entry.getPropertyName());
+                    builder.addMatchInfo(matchInfo);
                 }
             }
         }
-        bundle.putParcelableArrayList(SearchResult.MATCHES_FIELD, matchList);
-
-        return bundle;
+        return builder.build();
     }
 
-    private static Bundle convertToMatchInfoBundle(
-            SnippetMatchProto snippetMatchProto, String propertyPath) {
-        Bundle bundle = new Bundle();
-        bundle.putString(SearchResult.MatchInfo.PROPERTY_PATH_FIELD, propertyPath);
-        bundle.putInt(
-                SearchResult.MatchInfo.EXACT_MATCH_POSITION_LOWER_FIELD,
-                snippetMatchProto.getExactMatchPosition());
-        bundle.putInt(
-                SearchResult.MatchInfo.EXACT_MATCH_POSITION_UPPER_FIELD,
-                snippetMatchProto.getExactMatchPosition() + snippetMatchProto.getExactMatchBytes());
-        bundle.putInt(
-                SearchResult.MatchInfo.WINDOW_POSITION_LOWER_FIELD,
-                snippetMatchProto.getWindowPosition());
-        bundle.putInt(
-                SearchResult.MatchInfo.WINDOW_POSITION_UPPER_FIELD,
-                snippetMatchProto.getWindowPosition() + snippetMatchProto.getWindowBytes());
-        return bundle;
+    private static SearchResult.MatchInfo toMatchInfo(
+            @NonNull SnippetMatchProto snippetMatchProto, @NonNull String propertyPath) {
+        return new SearchResult.MatchInfo.Builder(propertyPath)
+                .setExactMatchRange(
+                        new SearchResult.MatchRange(
+                                snippetMatchProto.getExactMatchPosition(),
+                                snippetMatchProto.getExactMatchPosition()
+                                        + snippetMatchProto.getExactMatchBytes()))
+                .setSnippetRange(
+                        new SearchResult.MatchRange(
+                                snippetMatchProto.getWindowPosition(),
+                                snippetMatchProto.getWindowPosition()
+                                        + snippetMatchProto.getWindowBytes()))
+                .build();
     }
 }

@@ -15,25 +15,25 @@
  */
 package android.window;
 
+import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
 import static android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS;
 
-import android.animation.Animator;
-import android.animation.ValueAnimator;
 import android.annotation.ColorInt;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.TestApi;
+import android.annotation.UiThread;
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Rect;
-import android.graphics.drawable.Animatable;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.os.SystemClock;
+import android.os.Trace;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -45,6 +45,9 @@ import android.widget.FrameLayout;
 
 import com.android.internal.R;
 import com.android.internal.policy.DecorView;
+
+import java.time.Duration;
+import java.time.Instant;
 
 /**
  * <p>The view which allows an activity to customize its splash screen exit animation.</p>
@@ -67,39 +70,42 @@ public final class SplashScreenView extends FrameLayout {
     private static final boolean DEBUG = false;
 
     private boolean mNotCopyable;
+    private boolean mRevealAnimationSupported = true;
     private int mInitBackgroundColor;
+    private int mInitIconBackgroundColor;
     private View mIconView;
     private Bitmap mParceledIconBitmap;
     private View mBrandingImageView;
     private Bitmap mParceledBrandingBitmap;
-    private long mIconAnimationDuration;
-    private long mIconAnimationStart;
+    private Duration mIconAnimationDuration;
+    private Instant mIconAnimationStart;
 
-    private Animatable mAnimatableIcon;
-    private ValueAnimator mAnimator;
-
+    // The host activity when transfer view to it.
+    private Activity mHostActivity;
     // cache original window and status
     private Window mWindow;
     private boolean mDrawBarBackground;
     private int mStatusBarColor;
     private int mNavigationBarColor;
+    private boolean mHasRemoved;
 
     /**
-     * Internal builder to create a SplashScreenWindowView object.
+     * Internal builder to create a SplashScreenView object.
      * @hide
      */
     public static class Builder {
         private final Context mContext;
         private int mIconSize;
         private @ColorInt int mBackgroundColor;
+        private @ColorInt int mIconBackground;
         private Bitmap mParceledIconBitmap;
         private Drawable mIconDrawable;
         private int mBrandingImageWidth;
         private int mBrandingImageHeight;
         private Drawable mBrandingDrawable;
         private Bitmap mParceledBrandingBitmap;
-        private long mIconAnimationStart;
-        private long mIconAnimationDuration;
+        private Instant mIconAnimationStart;
+        private Duration mIconAnimationDuration;
 
         public Builder(@NonNull Context context) {
             mContext = context;
@@ -112,6 +118,7 @@ public final class SplashScreenView extends FrameLayout {
         public Builder createFromParcel(SplashScreenViewParcelable parcelable) {
             mIconSize = parcelable.getIconSize();
             mBackgroundColor = parcelable.getBackgroundColor();
+            mIconBackground = parcelable.getIconBackground();
             if (parcelable.mIconBitmap != null) {
                 mIconDrawable = new BitmapDrawable(mContext.getResources(), parcelable.mIconBitmap);
                 mParceledIconBitmap = parcelable.mIconBitmap;
@@ -122,8 +129,8 @@ public final class SplashScreenView extends FrameLayout {
                         parcelable.mBrandingHeight);
                 mParceledBrandingBitmap = parcelable.mBrandingBitmap;
             }
-            mIconAnimationStart = parcelable.mIconAnimationStart;
-            mIconAnimationDuration = parcelable.mIconAnimationDuration;
+            mIconAnimationStart = Instant.ofEpochMilli(parcelable.mIconAnimationStartMillis);
+            mIconAnimationDuration = Duration.ofMillis(parcelable.mIconAnimationDurationMillis);
             return this;
         }
 
@@ -152,10 +159,18 @@ public final class SplashScreenView extends FrameLayout {
         }
 
         /**
+         * Set the background color for the icon.
+         */
+        public Builder setIconBackground(int color) {
+            mIconBackground = color;
+            return this;
+        }
+
+        /**
          * Set the animation duration if icon is animatable.
          */
-        public Builder setAnimationDuration(int duration) {
-            mIconAnimationDuration = duration;
+        public Builder setAnimationDurationMillis(int duration) {
+            mIconAnimationDuration = Duration.ofMillis(duration);
             return this;
         }
 
@@ -173,10 +188,12 @@ public final class SplashScreenView extends FrameLayout {
          * Create SplashScreenWindowView object from materials.
          */
         public SplashScreenView build() {
+            Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "SplashScreenView#build");
             final LayoutInflater layoutInflater = LayoutInflater.from(mContext);
             final SplashScreenView view = (SplashScreenView)
                     layoutInflater.inflate(R.layout.splash_screen_view, null, false);
             view.mInitBackgroundColor = mBackgroundColor;
+            view.mInitIconBackgroundColor = mIconBackground;
             view.setBackgroundColor(mBackgroundColor);
             view.mIconView = view.findViewById(R.id.splashscreen_icon_view);
             view.mBrandingImageView = view.findViewById(R.id.splashscreen_branding_view);
@@ -189,7 +206,8 @@ public final class SplashScreenView extends FrameLayout {
             }
             if (mIconDrawable != null) {
                 view.mIconView.setBackground(mIconDrawable);
-                view.initIconAnimation(mIconDrawable, mIconAnimationDuration);
+                view.initIconAnimation(mIconDrawable,
+                        mIconAnimationDuration != null ? mIconAnimationDuration.toMillis() : 0);
             }
             view.mIconAnimationStart = mIconAnimationStart;
             view.mIconAnimationDuration = mIconAnimationDuration;
@@ -197,14 +215,14 @@ public final class SplashScreenView extends FrameLayout {
                 view.mParceledIconBitmap = mParceledIconBitmap;
             }
             // branding image
-            if (mBrandingImageHeight > 0 && mBrandingImageWidth > 0) {
+            if (mBrandingImageHeight > 0 && mBrandingImageWidth > 0 && mBrandingDrawable != null) {
                 final ViewGroup.LayoutParams params = view.mBrandingImageView.getLayoutParams();
                 params.width = mBrandingImageWidth;
                 params.height = mBrandingImageHeight;
                 view.mBrandingImageView.setLayoutParams(params);
-            }
-            if (mBrandingDrawable != null) {
                 view.mBrandingImageView.setBackground(mBrandingDrawable);
+            } else {
+                view.mBrandingImageView.setVisibility(GONE);
             }
             if (mParceledBrandingBitmap != null) {
                 view.mParceledBrandingBitmap = mParceledBrandingBitmap;
@@ -215,6 +233,7 @@ public final class SplashScreenView extends FrameLayout {
                         + view.mBrandingImageView + " drawable: " + mBrandingDrawable
                         + " size w: " + mBrandingImageWidth + " h: " + mBrandingImageHeight);
             }
+            Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
             return view;
         }
     }
@@ -246,61 +265,53 @@ public final class SplashScreenView extends FrameLayout {
     }
 
     /**
+     * If set to true, indicates to the system that this view can be dismissed by playing the
+     * Reveal animation.
+     * <p>
+     * If the exit animation is handled by the client, the animation won't be played anyway.
+     * @hide
+     */
+    public void setRevealAnimationSupported(boolean support) {
+        mRevealAnimationSupported = support;
+    }
+
+    /**
+     * Whether this view support reveal animation.
+     * @hide
+     */
+    public boolean isRevealAnimationSupported() {
+        return mRevealAnimationSupported;
+    }
+
+    /**
      * Returns the duration of the icon animation if icon is animatable.
      *
      * @see android.R.attr#windowSplashScreenAnimatedIcon
      * @see android.R.attr#windowSplashScreenAnimationDuration
      */
-    public long getIconAnimationDurationMillis() {
+    @Nullable
+    public Duration getIconAnimationDuration() {
         return mIconAnimationDuration;
     }
 
     /**
-     * If the replaced icon is animatable, return the animation start time in millisecond based on
-     * system. The start time is set using {@link SystemClock#uptimeMillis()}.
+     * If the replaced icon is animatable, return the animation start time based on system clock.
      */
-    public long getIconAnimationStartMillis() {
+    @Nullable
+    public Instant getIconAnimationStart() {
         return mIconAnimationStart;
     }
 
     void initIconAnimation(Drawable iconDrawable, long duration) {
-        if (iconDrawable instanceof Animatable) {
-            mAnimatableIcon = (Animatable) iconDrawable;
-            mAnimator = ValueAnimator.ofInt(0, 1);
-            mAnimator.setDuration(duration);
-            mAnimator.addListener(new Animator.AnimatorListener() {
-                @Override
-                public void onAnimationStart(Animator animation) {
-                    mIconAnimationStart = SystemClock.uptimeMillis();
-                    mAnimatableIcon.start();
-                }
-
-                @Override
-                public void onAnimationEnd(Animator animation) {
-                    mAnimatableIcon.stop();
-                }
-
-                @Override
-                public void onAnimationCancel(Animator animation) {
-                    mAnimatableIcon.stop();
-                }
-
-                @Override
-                public void onAnimationRepeat(Animator animation) {
-                    // do not repeat
-                    mAnimatableIcon.stop();
-                }
-            });
+        if (!(iconDrawable instanceof SplashscreenIconDrawable)) {
+            return;
         }
+        SplashscreenIconDrawable aniDrawable = (SplashscreenIconDrawable) iconDrawable;
+        aniDrawable.prepareAnimate(duration, this::animationStartCallback);
     }
 
-    /**
-     * @hide
-     */
-    public void startIntroAnimation() {
-        if (mAnimatableIcon != null) {
-            mAnimator.start();
-        }
+    private void animationStartCallback() {
+        mIconAnimationStart = Instant.now();
     }
 
     /**
@@ -308,7 +319,11 @@ public final class SplashScreenView extends FrameLayout {
      * <p><strong>Do not</strong> invoke this method from a drawing method
      * ({@link #onDraw(android.graphics.Canvas)} for instance).</p>
      */
+    @UiThread
     public void remove() {
+        if (mHasRemoved) {
+            return;
+        }
         setVisibility(GONE);
         if (mParceledIconBitmap != null) {
             mIconView.setBackground(null);
@@ -331,6 +346,18 @@ public final class SplashScreenView extends FrameLayout {
             restoreSystemUIColors();
             mWindow = null;
         }
+        if (mHostActivity != null) {
+            mHostActivity.detachSplashScreenView();
+        }
+        mHasRemoved = true;
+    }
+
+    /**
+     * Called when this view is attached to an activity.
+     * @hide
+     */
+    public void attachHostActivity(Activity activity) {
+        mHostActivity = activity;
     }
 
     /**
@@ -388,11 +415,37 @@ public final class SplashScreenView extends FrameLayout {
     }
 
     /**
+     * Get the icon background color
+     * @hide
+     */
+    @TestApi
+    public @ColorInt int getIconBackgroundColor() {
+        return mInitIconBackgroundColor;
+    }
+
+    /**
      * Get the initial background color of this view.
      * @hide
      */
-    @ColorInt int getInitBackgroundColor() {
+    public @ColorInt int getInitBackgroundColor() {
         return mInitBackgroundColor;
+    }
+
+    /**
+     * A lightweight Drawable object to make the view drawing faster and keep this
+     * drawable masked by config_icon_mask.
+     * @hide
+     */
+    public abstract static class SplashscreenIconDrawable extends Drawable {
+        /**
+         * Prepare the animation if this drawable also be animatable.
+         * @param duration The animation duration.
+         * @param startListener The callback listener used to receive the start of the animation.
+         * @return true if this drawable object can also be animated and it can be played now.
+         */
+        protected boolean prepareAnimate(long duration, Runnable startListener) {
+            return false;
+        }
     }
 
     /**
@@ -402,28 +455,33 @@ public final class SplashScreenView extends FrameLayout {
     public static class SplashScreenViewParcelable implements Parcelable {
         private int mIconSize;
         private int mBackgroundColor;
+        private int mIconBackground;
 
         private Bitmap mIconBitmap;
         private int mBrandingWidth;
         private int mBrandingHeight;
         private Bitmap mBrandingBitmap;
 
-        private long mIconAnimationStart;
-        private long mIconAnimationDuration;
+        private long mIconAnimationStartMillis;
+        private long mIconAnimationDurationMillis;
 
         public SplashScreenViewParcelable(SplashScreenView view) {
             ViewGroup.LayoutParams params = view.getIconView().getLayoutParams();
             mIconSize = params.height;
             mBackgroundColor = view.getInitBackgroundColor();
-
+            mIconBackground = view.getIconBackgroundColor();
             mIconBitmap = copyDrawable(view.getIconView().getBackground());
             mBrandingBitmap = copyDrawable(view.getBrandingView().getBackground());
             params = view.getBrandingView().getLayoutParams();
             mBrandingWidth = params.width;
             mBrandingHeight = params.height;
 
-            mIconAnimationStart = view.getIconAnimationStartMillis();
-            mIconAnimationDuration = view.getIconAnimationDurationMillis();
+            if (view.getIconAnimationStart() != null) {
+                mIconAnimationStartMillis = view.getIconAnimationStart().toEpochMilli();
+            }
+            if (view.getIconAnimationDuration() != null) {
+                mIconAnimationDurationMillis = view.getIconAnimationDuration().toMillis();
+            }
         }
 
         private Bitmap copyDrawable(Drawable drawable) {
@@ -454,8 +512,9 @@ public final class SplashScreenView extends FrameLayout {
             mBrandingWidth = source.readInt();
             mBrandingHeight = source.readInt();
             mBrandingBitmap = source.readTypedObject(Bitmap.CREATOR);
-            mIconAnimationStart = source.readLong();
-            mIconAnimationDuration = source.readLong();
+            mIconAnimationStartMillis = source.readLong();
+            mIconAnimationDurationMillis = source.readLong();
+            mIconBackground = source.readInt();
         }
 
         @Override
@@ -471,8 +530,9 @@ public final class SplashScreenView extends FrameLayout {
             dest.writeInt(mBrandingWidth);
             dest.writeInt(mBrandingHeight);
             dest.writeTypedObject(mBrandingBitmap, flags);
-            dest.writeLong(mIconAnimationStart);
-            dest.writeLong(mIconAnimationDuration);
+            dest.writeLong(mIconAnimationStartMillis);
+            dest.writeLong(mIconAnimationDurationMillis);
+            dest.writeInt(mIconBackground);
         }
 
         public static final @NonNull Parcelable.Creator<SplashScreenViewParcelable> CREATOR =
@@ -505,6 +565,10 @@ public final class SplashScreenView extends FrameLayout {
 
         int getBackgroundColor() {
             return mBackgroundColor;
+        }
+
+        int getIconBackground() {
+            return mIconBackground;
         }
     }
 }

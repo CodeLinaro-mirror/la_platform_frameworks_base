@@ -50,14 +50,9 @@ public class QuickQSPanel extends QSPanel {
     }
 
     @Override
-    void initialize(boolean sideLabels) {
-        super.initialize(sideLabels);
+    void initialize() {
+        super.initialize();
         applyBottomMargin((View) mRegularTileLayout);
-    }
-
-    @Override
-    protected void inflateQSFooter(boolean newFooter) {
-        // No footer
     }
 
     private void applyBottomMargin(View view) {
@@ -74,22 +69,14 @@ public class QuickQSPanel extends QSPanel {
 
     @Override
     public TileLayout createRegularTileLayout() {
-        if (mSideLabels) {
-            return new QQSSideLabelTileLayout(mContext);
-        } else {
-            return new QuickQSPanel.HeaderTileLayout(mContext);
-        }
+        return new QQSSideLabelTileLayout(mContext);
     }
 
     @Override
     protected QSTileLayout createHorizontalTileLayout() {
-        if (mSideLabels) {
-            TileLayout t = createRegularTileLayout();
-            t.setMaxColumns(2);
-            return t;
-        } else {
-            return new DoubleLineTileLayout(mContext);
-        }
+        TileLayout t = createRegularTileLayout();
+        t.setMaxColumns(2);
+        return t;
     }
 
     @Override
@@ -298,8 +285,6 @@ public class QuickQSPanel extends QSPanel {
                     if (record.tileView.getVisibility() == GONE) continue;
                     previousView = record.tileView.updateAccessibilityOrder(previousView);
                 }
-                mRecords.get(mRecords.size() - 1).tileView.setAccessibilityTraversalBefore(
-                        R.id.expand_indicator);
             }
         }
 
@@ -348,19 +333,20 @@ public class QuickQSPanel extends QSPanel {
     }
 
     static class QQSSideLabelTileLayout extends SideLabelTileLayout {
+
         QQSSideLabelTileLayout(Context context) {
             super(context, null);
             setClipChildren(false);
             setClipToPadding(false);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT,
                     LayoutParams.WRAP_CONTENT);
-            lp.gravity = Gravity.CENTER_HORIZONTAL;
             setLayoutParams(lp);
             setMaxColumns(4);
         }
 
         @Override
         public boolean updateResources() {
+            mCellHeightResId = R.dimen.qs_quick_tile_size;
             boolean b = super.updateResources();
             mMaxAllowedRows = 2;
             return b;
@@ -378,6 +364,39 @@ public class QuickQSPanel extends QSPanel {
             // columns, just use as many as needed.
             updateMaxRows(10000, mRecords.size());
             super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        }
+
+        @Override
+        public void setListening(boolean listening, UiEventLogger uiEventLogger) {
+            boolean startedListening = !mListening && listening;
+            super.setListening(listening, uiEventLogger);
+            if (startedListening) {
+                // getNumVisibleTiles() <= mRecords.size()
+                for (int i = 0; i < getNumVisibleTiles(); i++) {
+                    QSTile tile = mRecords.get(i).tile;
+                    uiEventLogger.logWithInstanceId(QSEvent.QQS_TILE_VISIBLE, 0,
+                            tile.getMetricsSpec(), tile.getInstanceId());
+                }
+            }
+        }
+
+        @Override
+        public void setExpansion(float expansion) {
+            if (expansion > 0f && expansion < 1f) {
+                return;
+            }
+            boolean selected = expansion == 0f;
+            // Expansion == 0f is when QQS is fully showing (as opposed to 1f, which is QS). At this
+            // point we want them to be selected so the tiles will marquee (but not at other points
+            // of expansion.
+            // We set it as not important while we change this, so setting each tile as selected
+            // will not cause them to announce themselves until the user has actually selected the
+            // item.
+            setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+            for (int i = 0; i < getChildCount(); i++) {
+                getChildAt(i).setSelected(selected);
+            }
+            setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
         }
     }
 }

@@ -19,6 +19,7 @@ package com.android.server.job.controllers;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_CONGESTED;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED;
+import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED;
 import static android.net.NetworkCapabilities.TRANSPORT_CELLULAR;
@@ -41,10 +42,11 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.app.job.JobInfo;
 import android.content.ComponentName;
 import android.content.Context;
@@ -53,8 +55,6 @@ import android.net.ConnectivityManager;
 import android.net.ConnectivityManager.NetworkCallback;
 import android.net.Network;
 import android.net.NetworkCapabilities;
-import android.net.NetworkInfo;
-import android.net.NetworkInfo.DetailedState;
 import android.net.NetworkPolicyManager;
 import android.os.Build;
 import android.os.Looper;
@@ -136,8 +136,8 @@ public class ConnectivityControllerTest {
     }
 
     @Test
-    public void testInsane() throws Exception {
-        final Network net = new Network(101);
+    public void testUsable() throws Exception {
+        final Network net = mock(Network.class);
         final JobInfo.Builder job = createJob()
                 .setEstimatedNetworkBytes(DataUnit.MEBIBYTES.toBytes(1),
                         DataUnit.MEBIBYTES.toBytes(1))
@@ -148,47 +148,72 @@ public class ConnectivityControllerTest {
 
         // Slow network is too slow
         assertFalse(controller.isSatisfied(createJobStatus(job), net,
-                createCapabilities().setLinkUpstreamBandwidthKbps(1)
-                        .setLinkDownstreamBandwidthKbps(1), mConstants));
+                createCapabilitiesBuilder().setLinkUpstreamBandwidthKbps(1)
+                        .setLinkDownstreamBandwidthKbps(1).build(), mConstants));
         // Slow downstream
         assertFalse(controller.isSatisfied(createJobStatus(job), net,
-                createCapabilities().setLinkUpstreamBandwidthKbps(1024)
-                        .setLinkDownstreamBandwidthKbps(1), mConstants));
+                createCapabilitiesBuilder().setLinkUpstreamBandwidthKbps(1024)
+                        .setLinkDownstreamBandwidthKbps(1).build(), mConstants));
         // Slow upstream
         assertFalse(controller.isSatisfied(createJobStatus(job), net,
-                createCapabilities().setLinkUpstreamBandwidthKbps(1)
-                        .setLinkDownstreamBandwidthKbps(1024), mConstants));
+                createCapabilitiesBuilder().setLinkUpstreamBandwidthKbps(1)
+                        .setLinkDownstreamBandwidthKbps(1024).build(), mConstants));
         // Fast network looks great
         assertTrue(controller.isSatisfied(createJobStatus(job), net,
-                createCapabilities().setLinkUpstreamBandwidthKbps(1024)
-                        .setLinkDownstreamBandwidthKbps(1024), mConstants));
+                createCapabilitiesBuilder().setLinkUpstreamBandwidthKbps(1024)
+                        .setLinkDownstreamBandwidthKbps(1024).build(), mConstants));
         // Slow network still good given time
         assertTrue(controller.isSatisfied(createJobStatus(job), net,
-                createCapabilities().setLinkUpstreamBandwidthKbps(130)
-                        .setLinkDownstreamBandwidthKbps(130), mConstants));
+                createCapabilitiesBuilder().setLinkUpstreamBandwidthKbps(130)
+                        .setLinkDownstreamBandwidthKbps(130).build(), mConstants));
 
         when(mService.getMaxJobExecutionTimeMs(any())).thenReturn(60_000L);
 
         // Slow network is too slow
         assertFalse(controller.isSatisfied(createJobStatus(job), net,
-                createCapabilities().setLinkUpstreamBandwidthKbps(1)
-                        .setLinkDownstreamBandwidthKbps(1), mConstants));
+                createCapabilitiesBuilder().setLinkUpstreamBandwidthKbps(1)
+                        .setLinkDownstreamBandwidthKbps(1).build(), mConstants));
         // Slow downstream
         assertFalse(controller.isSatisfied(createJobStatus(job), net,
-                createCapabilities().setLinkUpstreamBandwidthKbps(137)
-                        .setLinkDownstreamBandwidthKbps(1), mConstants));
+                createCapabilitiesBuilder().setLinkUpstreamBandwidthKbps(137)
+                        .setLinkDownstreamBandwidthKbps(1).build(), mConstants));
         // Slow upstream
         assertFalse(controller.isSatisfied(createJobStatus(job), net,
-                createCapabilities().setLinkUpstreamBandwidthKbps(1)
-                        .setLinkDownstreamBandwidthKbps(137), mConstants));
+                createCapabilitiesBuilder().setLinkUpstreamBandwidthKbps(1)
+                        .setLinkDownstreamBandwidthKbps(137).build(), mConstants));
         // Network good enough
         assertTrue(controller.isSatisfied(createJobStatus(job), net,
-                createCapabilities().setLinkUpstreamBandwidthKbps(137)
-                        .setLinkDownstreamBandwidthKbps(137), mConstants));
+                createCapabilitiesBuilder().setLinkUpstreamBandwidthKbps(137)
+                        .setLinkDownstreamBandwidthKbps(137).build(), mConstants));
         // Network slightly too slow given reduced time
         assertFalse(controller.isSatisfied(createJobStatus(job), net,
-                createCapabilities().setLinkUpstreamBandwidthKbps(130)
-                        .setLinkDownstreamBandwidthKbps(130), mConstants));
+                createCapabilitiesBuilder().setLinkUpstreamBandwidthKbps(130)
+                        .setLinkDownstreamBandwidthKbps(130).build(), mConstants));
+    }
+
+    @Test
+    public void testInsane() throws Exception {
+        final Network net = mock(Network.class);
+        final JobInfo.Builder job = createJob()
+                .setEstimatedNetworkBytes(DataUnit.MEBIBYTES.toBytes(1),
+                        DataUnit.MEBIBYTES.toBytes(1))
+                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY);
+
+        final ConnectivityController controller = new ConnectivityController(mService);
+        when(mService.getMaxJobExecutionTimeMs(any())).thenReturn(10 * 60_000L);
+
+
+        // Suspended networks aren't usable.
+        assertFalse(controller.isSatisfied(createJobStatus(job), net,
+                createCapabilitiesBuilder().removeCapability(NET_CAPABILITY_NOT_SUSPENDED)
+                        .setLinkUpstreamBandwidthKbps(1024).setLinkDownstreamBandwidthKbps(1024)
+                        .build(),
+                mConstants));
+
+        // Not suspended networks are usable.
+        assertTrue(controller.isSatisfied(createJobStatus(job), net,
+                createCapabilitiesBuilder().setLinkUpstreamBandwidthKbps(1024)
+                        .setLinkDownstreamBandwidthKbps(1024).build(), mConstants));
     }
 
     @Test
@@ -205,17 +230,17 @@ public class ConnectivityControllerTest {
 
         // Uncongested network is whenever
         {
-            final Network net = new Network(101);
-            final NetworkCapabilities caps = createCapabilities()
-                    .addCapability(NET_CAPABILITY_NOT_CONGESTED);
+            final Network net = mock(Network.class);
+            final NetworkCapabilities caps = createCapabilitiesBuilder()
+                    .addCapability(NET_CAPABILITY_NOT_CONGESTED).build();
             assertTrue(controller.isSatisfied(early, net, caps, mConstants));
             assertTrue(controller.isSatisfied(late, net, caps, mConstants));
         }
 
         // Congested network is more selective
         {
-            final Network net = new Network(101);
-            final NetworkCapabilities caps = createCapabilities();
+            final Network net = mock(Network.class);
+            final NetworkCapabilities caps = createCapabilitiesBuilder().build();
             assertFalse(controller.isSatisfied(early, net, caps, mConstants));
             assertTrue(controller.isSatisfied(late, net, caps, mConstants));
         }
@@ -239,10 +264,11 @@ public class ConnectivityControllerTest {
 
         // Unmetered network is whenever
         {
-            final Network net = new Network(101);
-            final NetworkCapabilities caps = createCapabilities()
+            final Network net = mock(Network.class);
+            final NetworkCapabilities caps = createCapabilitiesBuilder()
                     .addCapability(NET_CAPABILITY_NOT_CONGESTED)
-                    .addCapability(NET_CAPABILITY_NOT_METERED);
+                    .addCapability(NET_CAPABILITY_NOT_METERED)
+                    .build();
             assertTrue(controller.isSatisfied(early, net, caps, mConstants));
             assertTrue(controller.isSatisfied(late, net, caps, mConstants));
             assertTrue(controller.isSatisfied(earlyPrefetch, net, caps, mConstants));
@@ -251,9 +277,10 @@ public class ConnectivityControllerTest {
 
         // Metered network is only when prefetching and late
         {
-            final Network net = new Network(101);
-            final NetworkCapabilities caps = createCapabilities()
-                    .addCapability(NET_CAPABILITY_NOT_CONGESTED);
+            final Network net = mock(Network.class);
+            final NetworkCapabilities caps = createCapabilitiesBuilder()
+                    .addCapability(NET_CAPABILITY_NOT_CONGESTED)
+                    .build();
             assertFalse(controller.isSatisfied(early, net, caps, mConstants));
             assertFalse(controller.isSatisfied(late, net, caps, mConstants));
             assertFalse(controller.isSatisfied(earlyPrefetch, net, caps, mConstants));
@@ -263,17 +290,26 @@ public class ConnectivityControllerTest {
 
     @Test
     public void testUpdates() throws Exception {
-        final ArgumentCaptor<NetworkCallback> callback = ArgumentCaptor
-                .forClass(NetworkCallback.class);
-        doNothing().when(mConnManager).registerNetworkCallback(any(), callback.capture());
+        final ArgumentCaptor<NetworkCallback> callbackCaptor =
+                ArgumentCaptor.forClass(NetworkCallback.class);
+        doNothing().when(mConnManager).registerNetworkCallback(any(), callbackCaptor.capture());
+        final ArgumentCaptor<NetworkCallback> redCallbackCaptor =
+                ArgumentCaptor.forClass(NetworkCallback.class);
+        doNothing().when(mConnManager).registerDefaultNetworkCallbackForUid(
+                eq(UID_RED), redCallbackCaptor.capture(), any());
+        final ArgumentCaptor<NetworkCallback> blueCallbackCaptor =
+                ArgumentCaptor.forClass(NetworkCallback.class);
+        doNothing().when(mConnManager).registerDefaultNetworkCallbackForUid(
+                eq(UID_BLUE), blueCallbackCaptor.capture(), any());
 
         final ConnectivityController controller = new ConnectivityController(mService);
 
-        final Network meteredNet = new Network(101);
-        final NetworkCapabilities meteredCaps = createCapabilities();
-        final Network unmeteredNet = new Network(202);
-        final NetworkCapabilities unmeteredCaps = createCapabilities()
-                .addCapability(NET_CAPABILITY_NOT_METERED);
+        final Network meteredNet = mock(Network.class);
+        final NetworkCapabilities meteredCaps = createCapabilitiesBuilder().build();
+        final Network unmeteredNet = mock(Network.class);
+        final NetworkCapabilities unmeteredCaps = createCapabilitiesBuilder()
+                .addCapability(NET_CAPABILITY_NOT_METERED)
+                .build();
 
         final JobStatus red = createJobStatus(createJob()
                 .setEstimatedNetworkBytes(DataUnit.MEBIBYTES.toBytes(1), 0)
@@ -281,15 +317,16 @@ public class ConnectivityControllerTest {
         final JobStatus blue = createJobStatus(createJob()
                 .setEstimatedNetworkBytes(DataUnit.MEBIBYTES.toBytes(1), 0)
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY), UID_BLUE);
+        controller.maybeStartTrackingJobLocked(red, null);
+        controller.maybeStartTrackingJobLocked(blue, null);
+        final NetworkCallback generalCallback = callbackCaptor.getValue();
+        final NetworkCallback redCallback = redCallbackCaptor.getValue();
+        final NetworkCallback blueCallback = blueCallbackCaptor.getValue();
 
         // Pretend we're offline when job is added
         {
-            reset(mConnManager);
-            answerNetwork(UID_RED, null, null);
-            answerNetwork(UID_BLUE, null, null);
-
-            controller.maybeStartTrackingJobLocked(red, null);
-            controller.maybeStartTrackingJobLocked(blue, null);
+            answerNetwork(generalCallback, redCallback, null, null, null);
+            answerNetwork(generalCallback, blueCallback, null, null, null);
 
             assertFalse(red.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
             assertFalse(blue.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
@@ -297,11 +334,10 @@ public class ConnectivityControllerTest {
 
         // Metered network
         {
-            reset(mConnManager);
-            answerNetwork(UID_RED, meteredNet, meteredCaps);
-            answerNetwork(UID_BLUE, meteredNet, meteredCaps);
+            answerNetwork(generalCallback, redCallback, null, meteredNet, meteredCaps);
+            answerNetwork(generalCallback, blueCallback, null, meteredNet, meteredCaps);
 
-            callback.getValue().onCapabilitiesChanged(meteredNet, meteredCaps);
+            generalCallback.onCapabilitiesChanged(meteredNet, meteredCaps);
 
             assertFalse(red.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
             assertTrue(blue.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
@@ -309,11 +345,10 @@ public class ConnectivityControllerTest {
 
         // Unmetered network background
         {
-            reset(mConnManager);
-            answerNetwork(UID_RED, meteredNet, meteredCaps);
-            answerNetwork(UID_BLUE, meteredNet, meteredCaps);
+            answerNetwork(generalCallback, redCallback, meteredNet, meteredNet, meteredCaps);
+            answerNetwork(generalCallback, blueCallback, meteredNet, meteredNet, meteredCaps);
 
-            callback.getValue().onCapabilitiesChanged(unmeteredNet, unmeteredCaps);
+            generalCallback.onCapabilitiesChanged(unmeteredNet, unmeteredCaps);
 
             assertFalse(red.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
             assertTrue(blue.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
@@ -321,11 +356,10 @@ public class ConnectivityControllerTest {
 
         // Lost metered network
         {
-            reset(mConnManager);
-            answerNetwork(UID_RED, unmeteredNet, unmeteredCaps);
-            answerNetwork(UID_BLUE, unmeteredNet, unmeteredCaps);
+            answerNetwork(generalCallback, redCallback, meteredNet, unmeteredNet, unmeteredCaps);
+            answerNetwork(generalCallback, blueCallback, meteredNet, unmeteredNet, unmeteredCaps);
 
-            callback.getValue().onLost(meteredNet);
+            generalCallback.onLost(meteredNet);
 
             assertTrue(red.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
             assertTrue(blue.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
@@ -333,11 +367,10 @@ public class ConnectivityControllerTest {
 
         // Specific UID was blocked
         {
-            reset(mConnManager);
-            answerNetwork(UID_RED, null, null);
-            answerNetwork(UID_BLUE, unmeteredNet, unmeteredCaps);
+            answerNetwork(generalCallback, redCallback, unmeteredNet, null, null);
+            answerNetwork(generalCallback, blueCallback, unmeteredNet, unmeteredNet, unmeteredCaps);
 
-            callback.getValue().onCapabilitiesChanged(unmeteredNet, unmeteredCaps);
+            generalCallback.onCapabilitiesChanged(unmeteredNet, unmeteredCaps);
 
             assertFalse(red.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
             assertTrue(blue.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
@@ -404,6 +437,8 @@ public class ConnectivityControllerTest {
         final JobStatus blue = createJobStatus(createJob()
                 .setEstimatedNetworkBytes(DataUnit.MEBIBYTES.toBytes(1), 0)
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY), UID_BLUE);
+        controller.maybeStartTrackingJobLocked(red, null);
+        controller.maybeStartTrackingJobLocked(blue, null);
 
         InOrder inOrder = inOrder(mNetPolicyManagerInternal);
 
@@ -560,6 +595,18 @@ public class ConnectivityControllerTest {
 
     @Test
     public void testRestrictedJobTracking() {
+        final ArgumentCaptor<NetworkCallback> callback =
+                ArgumentCaptor.forClass(NetworkCallback.class);
+        doNothing().when(mConnManager).registerNetworkCallback(any(), callback.capture());
+        final ArgumentCaptor<NetworkCallback> redCallback =
+                ArgumentCaptor.forClass(NetworkCallback.class);
+        doNothing().when(mConnManager).registerDefaultNetworkCallbackForUid(
+                eq(UID_RED), redCallback.capture(), any());
+        final ArgumentCaptor<NetworkCallback> blueCallback =
+                ArgumentCaptor.forClass(NetworkCallback.class);
+        doNothing().when(mConnManager).registerDefaultNetworkCallbackForUid(
+                eq(UID_BLUE), blueCallback.capture(), any());
+
         final JobStatus networked = createJobStatus(createJob()
                 .setEstimatedNetworkBytes(DataUnit.MEBIBYTES.toBytes(1), 0)
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_CELLULAR), UID_RED);
@@ -567,16 +614,14 @@ public class ConnectivityControllerTest {
         networked.setStandbyBucket(FREQUENT_INDEX);
         unnetworked.setStandbyBucket(FREQUENT_INDEX);
 
-        final Network cellularNet = new Network(101);
+        final Network cellularNet = mock(Network.class);
         final NetworkCapabilities cellularCaps =
-                createCapabilities().addTransportType(TRANSPORT_CELLULAR);
-        reset(mConnManager);
-        answerNetwork(UID_RED, cellularNet, cellularCaps);
-        answerNetwork(UID_BLUE, cellularNet, cellularCaps);
+                createCapabilitiesBuilder().addTransportType(TRANSPORT_CELLULAR).build();
 
         final ConnectivityController controller = new ConnectivityController(mService);
         controller.maybeStartTrackingJobLocked(networked, null);
         controller.maybeStartTrackingJobLocked(unnetworked, null);
+        answerNetwork(callback.getValue(), redCallback.getValue(), null, cellularNet, cellularCaps);
 
         assertTrue(networked.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
         assertFalse(unnetworked.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
@@ -600,18 +645,28 @@ public class ConnectivityControllerTest {
         assertFalse(unnetworked.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY));
     }
 
-    private void answerNetwork(int uid, Network net, NetworkCapabilities caps) {
-        when(mConnManager.getActiveNetworkForUid(eq(uid), anyBoolean())).thenReturn(net);
-        when(mConnManager.getNetworkCapabilities(eq(net))).thenReturn(caps);
-        if (net != null) {
-            final NetworkInfo ni = new NetworkInfo(ConnectivityManager.TYPE_WIFI, 0, null, null);
-            ni.setDetailedState(DetailedState.CONNECTED, null, null);
-            when(mConnManager.getNetworkInfoForUid(eq(net), eq(uid), anyBoolean())).thenReturn(ni);
+    private void answerNetwork(@NonNull NetworkCallback generalCallback,
+            @Nullable NetworkCallback uidCallback, @Nullable Network lastNetwork,
+            @Nullable Network net, @Nullable NetworkCapabilities caps) {
+        if (net == null) {
+            generalCallback.onLost(lastNetwork);
+            if (uidCallback != null) {
+                uidCallback.onLost(lastNetwork);
+            }
+        } else {
+            generalCallback.onAvailable(net);
+            generalCallback.onCapabilitiesChanged(net, caps);
+            if (uidCallback != null) {
+                uidCallback.onAvailable(net);
+                uidCallback.onBlockedStatusChanged(net, ConnectivityManager.BLOCKED_REASON_NONE);
+                uidCallback.onCapabilitiesChanged(net, caps);
+            }
         }
     }
 
-    private static NetworkCapabilities createCapabilities() {
-        return new NetworkCapabilities().addCapability(NET_CAPABILITY_INTERNET)
+    private static NetworkCapabilities.Builder createCapabilitiesBuilder() {
+        return new NetworkCapabilities.Builder().addCapability(NET_CAPABILITY_INTERNET)
+                .addCapability(NET_CAPABILITY_NOT_SUSPENDED)
                 .addCapability(NET_CAPABILITY_NOT_VCN_MANAGED)
                 .addCapability(NET_CAPABILITY_VALIDATED);
     }

@@ -18,10 +18,15 @@ package com.android.internal.app;
 
 import android.content.ComponentName;
 import android.content.Intent;
+import android.media.AudioFormat;
 import android.media.permission.Identity;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
+import android.os.PersistableBundle;
 import android.os.RemoteCallback;
+import android.os.SharedMemory;
 
+import com.android.internal.app.IHotwordRecognitionStatusCallback;
 import com.android.internal.app.IVoiceActionCheckCallback;
 import com.android.internal.app.IVoiceInteractionSessionShowCallback;
 import com.android.internal.app.IVoiceInteractor;
@@ -31,6 +36,7 @@ import android.hardware.soundtrigger.KeyphraseMetadata;
 import android.hardware.soundtrigger.SoundTrigger;
 import android.service.voice.IVoiceInteractionService;
 import android.service.voice.IVoiceInteractionSession;
+import android.service.voice.IMicrophoneHotwordDetectionVoiceInteractionCallback;
 
 interface IVoiceInteractionManagerService {
     void showSession(in Bundle sessionArgs, int flags);
@@ -110,7 +116,6 @@ interface IVoiceInteractionManagerService {
     KeyphraseMetadata getEnrolledKeyphraseMetadata(String keyphrase, String bcp47Locale);
     /**
      * @return the component name for the currently active voice interaction service
-     * @RequiresPermission Manifest.permission.ACCESS_VOICE_INTERACTION_SERVICE
      */
     ComponentName getActiveServiceComponentName();
 
@@ -225,14 +230,42 @@ interface IVoiceInteractionManagerService {
             IBinder client);
 
     /**
-     * Sets hotword detection configuration.
+     * Set configuration and pass read-only data to hotword detection service.
      *
-     * Note: Currently it will trigger hotword detection service after calling this function when
-     * all conditions meet the requirements.
-     *
-     * @param options Config data.
-     * @return {@link VoiceInteractionService#HOTWORD_CONFIG_SUCCESS} in case of success,
-     * {@link VoiceInteractionService#HOTWORD_CONFIG_FAILURE} in case of failure.
+     * @param options Application configuration data to provide to the
+     * {@link HotwordDetectionService}. PersistableBundle does not allow any remotable objects or
+     * other contents that can be used to communicate with other processes.
+     * @param sharedMemory The unrestricted data blob to provide to the
+     * {@link HotwordDetectionService}. Use this to provide the hotword models data or other
+     * such data to the trusted process.
+     * @param callback Use this to report {@link HotwordDetectionService} status.
      */
-    int setHotwordDetectionConfig(in Bundle options);
+    void updateState(
+            in PersistableBundle options,
+            in SharedMemory sharedMemory,
+            in IHotwordRecognitionStatusCallback callback);
+
+    /**
+     * Requests to shutdown hotword detection service.
+     */
+    void shutdownHotwordDetectionService();
+
+    void startListeningFromMic(
+        in AudioFormat audioFormat,
+        in IMicrophoneHotwordDetectionVoiceInteractionCallback callback);
+
+    void stopListeningFromMic();
+
+    void startListeningFromExternalSource(
+        in ParcelFileDescriptor audioStream,
+        in AudioFormat audioFormat,
+        in PersistableBundle options,
+        in IMicrophoneHotwordDetectionVoiceInteractionCallback callback);
+
+    /**
+     * Test API to simulate to trigger hardware recognition event for test.
+     */
+    void triggerHardwareRecognitionEventForTest(
+            in SoundTrigger.KeyphraseRecognitionEvent event,
+            in IHotwordRecognitionStatusCallback callback);
 }

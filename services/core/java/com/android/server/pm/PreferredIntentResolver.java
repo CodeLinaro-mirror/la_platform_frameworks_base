@@ -19,14 +19,15 @@ package com.android.server.pm;
 import android.annotation.NonNull;
 import android.content.IntentFilter;
 
-import com.android.server.WatchableIntentResolver;
+import com.android.server.WatchedIntentResolver;
 import com.android.server.utils.Snappable;
+import com.android.server.utils.SnapshotCache;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
 
 public class PreferredIntentResolver
-        extends WatchableIntentResolver<PreferredActivity, PreferredActivity>
+        extends WatchedIntentResolver<PreferredActivity, PreferredActivity>
         implements Snappable {
     @Override
     protected PreferredActivity[] newArray(int size) {
@@ -46,7 +47,7 @@ public class PreferredIntentResolver
 
     @Override
     protected IntentFilter getIntentFilter(@NonNull PreferredActivity input) {
-        return input;
+        return input.getIntentFilter();
     }
 
     public boolean shouldAddPreferredActivity(PreferredActivity pa) {
@@ -69,14 +70,40 @@ public class PreferredIntentResolver
         return true;
     }
 
+    public PreferredIntentResolver() {
+        super();
+        mSnapshot = makeCache();
+    }
+
+    // Take the snapshot of F
+    protected PreferredActivity snapshot(PreferredActivity f) {
+        return (f == null) ? null : f.snapshot();
+    }
+
+    // Copy constructor used only to create a snapshot.
+    private PreferredIntentResolver(PreferredIntentResolver f) {
+        copyFrom(f);
+        mSnapshot = new SnapshotCache.Sealed();
+    }
+
+    // The cache for snapshots, so they are not rebuilt if the base object has not
+    // changed.
+    final SnapshotCache<PreferredIntentResolver> mSnapshot;
+
+    private SnapshotCache makeCache() {
+        return new SnapshotCache<PreferredIntentResolver>(this, this) {
+            @Override
+            public PreferredIntentResolver createSnapshot() {
+                return new PreferredIntentResolver(mSource);
+            }};
+    }
+
     /**
      * Return a snapshot of the current object.  The snapshot is a read-only copy suitable
      * for read-only methods.
      * @return A snapshot of the current object.
      */
     public PreferredIntentResolver snapshot() {
-        PreferredIntentResolver result = new PreferredIntentResolver();
-        result.copyFrom(this);
-        return result;
+        return mSnapshot.snapshot();
     }
 }

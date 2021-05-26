@@ -19,6 +19,8 @@ package android.app.appsearch;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import com.android.server.appsearch.testing.AppSearchEmail;
+
 import com.google.common.collect.ImmutableSet;
 
 import org.junit.Test;
@@ -31,12 +33,12 @@ public class PutDocumentsRequestTest {
     public void addGenericDocument_byCollection() {
         Set<AppSearchEmail> emails =
                 ImmutableSet.of(
-                        new AppSearchEmail.Builder("test1").build(),
-                        new AppSearchEmail.Builder("test2").build());
+                        new AppSearchEmail.Builder("namespace", "test1").build(),
+                        new AppSearchEmail.Builder("namespace", "test2").build());
         PutDocumentsRequest request =
                 new PutDocumentsRequest.Builder().addGenericDocuments(emails).build();
 
-        assertThat(request.getGenericDocuments().get(0).getUri()).isEqualTo("test1");
-        assertThat(request.getGenericDocuments().get(1).getUri()).isEqualTo("test2");
+        assertThat(request.getGenericDocuments().get(0).getId()).isEqualTo("test1");
+        assertThat(request.getGenericDocuments().get(1).getId()).isEqualTo("test2");
     }
 }

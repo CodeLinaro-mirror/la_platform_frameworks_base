@@ -20,6 +20,7 @@ import static android.hardware.biometrics.BiometricAuthenticator.TYPE_FACE;
 import static android.hardware.biometrics.BiometricAuthenticator.TYPE_FINGERPRINT;
 import static android.hardware.biometrics.BiometricManager.Authenticators;
 
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
@@ -29,6 +30,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Configuration;
+import android.graphics.PointF;
 import android.graphics.RectF;
 import android.hardware.biometrics.BiometricConstants;
 import android.hardware.biometrics.BiometricPrompt;
@@ -38,6 +40,7 @@ import android.hardware.face.FaceManager;
 import android.hardware.face.FaceSensorPropertiesInternal;
 import android.hardware.fingerprint.FingerprintManager;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
+import android.hardware.fingerprint.IFingerprintAuthenticatorsRegisteredCallback;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -56,6 +59,7 @@ import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.CommandQueue;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import javax.inject.Inject;
@@ -72,23 +76,20 @@ public class AuthController extends SystemUI implements CommandQueue.Callbacks,
     private static final String TAG = "AuthController";
     private static final boolean DEBUG = true;
 
+    private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final CommandQueue mCommandQueue;
     private final StatusBarStateController mStatusBarStateController;
     private final ActivityTaskManager mActivityTaskManager;
     @Nullable private final FingerprintManager mFingerprintManager;
     @Nullable private final FaceManager mFaceManager;
     private final Provider<UdfpsController> mUdfpsControllerFactory;
-
-    @Nullable private final List<FingerprintSensorPropertiesInternal> mFpProps;
-    @Nullable private final List<FaceSensorPropertiesInternal> mFaceProps;
-    @Nullable private final List<FingerprintSensorPropertiesInternal> mUdfpsProps;
+    @Nullable private final PointF mFaceAuthSensorLocation;
 
     // TODO: These should just be saved from onSaveState
     private SomeArgs mCurrentDialogArgs;
     @VisibleForTesting
     AuthDialog mCurrentDialog;
 
-    private Handler mHandler = new Handler(Looper.getMainLooper());
     private WindowManager mWindowManager;
     @Nullable
     private UdfpsController mUdfpsController;
@@ -96,6 +97,9 @@ public class AuthController extends SystemUI implements CommandQueue.Callbacks,
     TaskStackListener mTaskStackListener;
     @VisibleForTesting
     IBiometricSysuiReceiver mReceiver;
+    @Nullable private final List<FaceSensorPropertiesInternal> mFaceProps;
+    @Nullable private List<FingerprintSensorPropertiesInternal> mFpProps;
+    @Nullable private List<FingerprintSensorPropertiesInternal> mUdfpsProps;
 
     private class BiometricTaskStackListener extends TaskStackListener {
         @Override
@@ -104,8 +108,31 @@ public class AuthController extends SystemUI implements CommandQueue.Callbacks,
         }
     }
 
-    @VisibleForTesting
-    final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
+    @NonNull
+    private final IFingerprintAuthenticatorsRegisteredCallback
+            mFingerprintAuthenticatorsRegisteredCallback =
+            new IFingerprintAuthenticatorsRegisteredCallback.Stub() {
+                @Override public void onAllAuthenticatorsRegistered(
+                        List<FingerprintSensorPropertiesInternal> sensors) {
+                    if (DEBUG) {
+                        Log.d(TAG, "onFingerprintProvidersAvailable | sensors: " + Arrays.toString(
+                                sensors.toArray()));
+                    }
+                    mFpProps = sensors;
+                    List<FingerprintSensorPropertiesInternal> udfpsProps = new ArrayList<>();
+                    for (FingerprintSensorPropertiesInternal props : mFpProps) {
+                        if (props.isAnyUdfpsType()) {
+                            udfpsProps.add(props);
+                        }
+                    }
+                    mUdfpsProps = !udfpsProps.isEmpty() ? udfpsProps : null;
+                    if (mUdfpsProps != null) {
+                        mUdfpsController = mUdfpsControllerFactory.get();
+                    }
+                }
+            };
+
+    @VisibleForTesting final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (mCurrentDialog != null
@@ -261,10 +288,34 @@ public class AuthController extends SystemUI implements CommandQueue.Callbacks,
     }
 
     /**
-     * @return where the UDFPS exists on the screen in pixels.
+     * @return where the UDFPS exists on the screen in pixels in portrait mode.
      */
-    public RectF getUdfpsRegion() {
-        return mUdfpsController == null ? null : mUdfpsController.getSensorLocation();
+    @Nullable public RectF getUdfpsRegion() {
+        return mUdfpsController == null
+                ? null
+                : mUdfpsController.getSensorLocation();
+    }
+
+    /**
+     * @return where the UDFPS exists on the screen in pixels in portrait mode.
+     */
+    @Nullable public PointF getUdfpsSensorLocation() {
+        if (mUdfpsController == null) {
+            return null;
+        }
+        return new PointF(mUdfpsController.getSensorLocation().centerX(),
+                mUdfpsController.getSensorLocation().centerY());
+    }
+
+    /**
+     * @return where the face authentication sensor exists relative to the screen in pixels in
+     * portrait mode.
+     */
+    @Nullable public PointF getFaceAuthSensorLocation() {
+        if (mFaceProps == null || mFaceAuthSensorLocation == null) {
+            return null;
+        }
+        return new PointF(mFaceAuthSensorLocation.x, mFaceAuthSensorLocation.y);
     }
 
     /**
@@ -283,18 +334,14 @@ public class AuthController extends SystemUI implements CommandQueue.Callbacks,
     }
 
     /**
-     * Cancel a fingerprint scan.
-     *
-     * The sensor that triggers an AOD interrupt for fingerprint doesn't give
-     * ACTION_UP/ACTION_CANCEL events, so the scan needs to be cancelled manually. This should be
-     * called when authentication either succeeds or fails. Failing to cancel the scan will leave
-     * the screen in high brightness mode.
+     * Cancel a fingerprint scan manually. This will get rid of the white circle on the udfps
+     * sensor area even if the user hasn't explicitly lifted their finger yet.
      */
-    private void onCancelAodInterrupt() {
+    public void onCancelUdfps() {
         if (mUdfpsController == null) {
             return;
         }
-        mUdfpsController.onCancelAodInterrupt();
+        mUdfpsController.onCancelUdfps();
     }
 
     private void sendResultAndCleanUp(@DismissedReason int reason,
@@ -326,19 +373,17 @@ public class AuthController extends SystemUI implements CommandQueue.Callbacks,
         mFaceManager = faceManager;
         mUdfpsControllerFactory = udfpsControllerFactory;
 
-        mFpProps = mFingerprintManager != null ? mFingerprintManager.getSensorPropertiesInternal()
-                : null;
         mFaceProps = mFaceManager != null ? mFaceManager.getSensorPropertiesInternal() : null;
 
-        List<FingerprintSensorPropertiesInternal> udfpsProps = new ArrayList<>();
-        if (mFpProps != null) {
-            for (FingerprintSensorPropertiesInternal props : mFpProps) {
-                if (props.isAnyUdfpsType()) {
-                    udfpsProps.add(props);
-                }
-            }
+        int[] faceAuthLocation = context.getResources().getIntArray(
+                com.android.systemui.R.array.config_face_auth_props);
+        if (faceAuthLocation == null || faceAuthLocation.length < 2) {
+            mFaceAuthSensorLocation = null;
+        } else {
+            mFaceAuthSensorLocation = new PointF(
+                    (float) faceAuthLocation[0],
+                    (float) faceAuthLocation[1]);
         }
-        mUdfpsProps = !udfpsProps.isEmpty() ? udfpsProps : null;
 
         IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
@@ -352,9 +397,9 @@ public class AuthController extends SystemUI implements CommandQueue.Callbacks,
         mCommandQueue.addCallback(this);
         mWindowManager = (WindowManager) mContext.getSystemService(Context.WINDOW_SERVICE);
 
-        if (mFingerprintManager != null && mFingerprintManager.isHardwareDetected()
-                && mUdfpsProps != null) {
-            mUdfpsController = mUdfpsControllerFactory.get();
+        if (mFingerprintManager != null) {
+            mFingerprintManager.addAuthenticatorsRegisteredCallback(
+                    mFingerprintAuthenticatorsRegisteredCallback);
         }
 
         mTaskStackListener = new BiometricTaskStackListener();
@@ -397,10 +442,14 @@ public class AuthController extends SystemUI implements CommandQueue.Callbacks,
         showDialog(args, skipAnimation, null /* savedState */);
     }
 
+    /**
+     * Only called via BiometricService for the biometric prompt. Will not be called for
+     * authentication directly requested through FingerprintManager. For
+     * example, KeyguardUpdateMonitor has its own {@link FingerprintManager.AuthenticationCallback}.
+     */
     @Override
     public void onBiometricAuthenticated() {
         mCurrentDialog.onAuthenticationSucceeded();
-        onCancelAodInterrupt();
     }
 
     @Override
@@ -428,6 +477,11 @@ public class AuthController extends SystemUI implements CommandQueue.Callbacks,
         }
     }
 
+    /**
+     * Only called via BiometricService for the biometric prompt. Will not be called for
+     * authentication directly requested through FingerprintManager. For
+     * example, KeyguardUpdateMonitor has its own {@link FingerprintManager.AuthenticationCallback}.
+     */
     @Override
     public void onBiometricError(int modality, int error, int vendorCode) {
         if (DEBUG) {
@@ -455,7 +509,8 @@ public class AuthController extends SystemUI implements CommandQueue.Callbacks,
             if (DEBUG) Log.d(TAG, "onBiometricError, hard error: " + errorMessage);
             mCurrentDialog.onError(errorMessage);
         }
-        onCancelAodInterrupt();
+
+        onCancelUdfps();
     }
 
     @Override
@@ -475,7 +530,18 @@ public class AuthController extends SystemUI implements CommandQueue.Callbacks,
         mCurrentDialog = null;
     }
 
-   /**
+    /**
+     * Whether the passed userId has enrolled face auth.
+     */
+    public boolean isFaceAuthEnrolled(int userId) {
+        if (mFaceProps == null) {
+            return false;
+        }
+
+        return mFaceManager.hasEnrolledTemplates(userId);
+    }
+
+    /**
      * Whether the passed userId has enrolled UDFPS.
      */
     public boolean isUdfpsEnrolled(int userId) {

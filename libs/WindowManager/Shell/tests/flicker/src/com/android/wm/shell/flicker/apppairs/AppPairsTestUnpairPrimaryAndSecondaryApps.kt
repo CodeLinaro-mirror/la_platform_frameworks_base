@@ -61,6 +61,14 @@ class AppPairsTestUnpairPrimaryAndSecondaryApps(
             }
         }
 
+    @FlakyTest
+    @Test
+    override fun navBarLayerRotatesAndScales() = super.navBarLayerRotatesAndScales()
+
+    @FlakyTest
+    @Test
+    override fun statusBarLayerRotatesScales() = super.statusBarLayerRotatesScales()
+
     @Presubmit
     @Test
     fun appPairsDividerIsInvisible() = testSpec.appPairsDividerIsInvisible()
@@ -79,10 +87,10 @@ class AppPairsTestUnpairPrimaryAndSecondaryApps(
     fun appsStartingBounds() {
         testSpec.assertLayersStart {
             val dividerRegion = entry.getVisibleBounds(APP_PAIR_SPLIT_DIVIDER)
-            coversExactly(appPairsHelper.getPrimaryBounds(dividerRegion),
-                primaryApp.defaultWindowName)
-            coversExactly(appPairsHelper.getSecondaryBounds(dividerRegion),
-                secondaryApp.defaultWindowName)
+            visibleRegion(primaryApp.defaultWindowName)
+                .coversExactly(appPairsHelper.getPrimaryBounds(dividerRegion))
+            visibleRegion(secondaryApp.defaultWindowName)
+                .coversExactly(appPairsHelper.getSecondaryBounds(dividerRegion))
         }
     }
 
@@ -93,6 +101,12 @@ class AppPairsTestUnpairPrimaryAndSecondaryApps(
             notContains(primaryApp.defaultWindowName)
             notContains(secondaryApp.defaultWindowName)
         }
+    }
+
+    @FlakyTest
+    @Test
+    override fun navBarLayerIsAlwaysVisible() {
+        super.navBarLayerIsAlwaysVisible()
     }
 
     companion object {

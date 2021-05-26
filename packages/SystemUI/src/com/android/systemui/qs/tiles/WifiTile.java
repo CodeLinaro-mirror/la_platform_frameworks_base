@@ -30,6 +30,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Switch;
 
+import androidx.annotation.Nullable;
+
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.settingslib.wifi.AccessPoint;
@@ -37,6 +39,7 @@ import com.android.systemui.R;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.ActivityStarter;
+import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.qs.DetailAdapter;
 import com.android.systemui.plugins.qs.QSIconView;
 import com.android.systemui.plugins.qs.QSTile;
@@ -77,6 +80,7 @@ public class WifiTile extends QSTileImpl<SignalState> {
             QSHost host,
             @Background Looper backgroundLooper,
             @Main Handler mainHandler,
+            FalsingManager falsingManager,
             MetricsLogger metricsLogger,
             StatusBarStateController statusBarStateController,
             ActivityStarter activityStarter,
@@ -84,8 +88,8 @@ public class WifiTile extends QSTileImpl<SignalState> {
             NetworkController networkController,
             AccessPointController accessPointController
     ) {
-        super(host, backgroundLooper, mainHandler, metricsLogger, statusBarStateController,
-                activityStarter, qsLogger);
+        super(host, backgroundLooper, mainHandler, falsingManager, metricsLogger,
+                statusBarStateController, activityStarter, qsLogger);
         mController = networkController;
         mWifiController = accessPointController;
         mDetailAdapter = (WifiDetailAdapter) createDetailAdapter();
@@ -127,7 +131,7 @@ public class WifiTile extends QSTileImpl<SignalState> {
     }
 
     @Override
-    protected void handleClick() {
+    protected void handleClick(@Nullable View view) {
         // Secondary clicks are header clicks, just toggle.
         mState.copyTo(mStateBeforeClick);
         boolean wifiEnabled = mState.value;
@@ -146,7 +150,7 @@ public class WifiTile extends QSTileImpl<SignalState> {
     }
 
     @Override
-    protected void handleSecondaryClick() {
+    protected void handleSecondaryClick(@Nullable View view) {
         if (!mWifiController.canConfigWifi()) {
             mActivityStarter.postStartActivityDismissingKeyguard(
                     new Intent(Settings.ACTION_WIFI_SETTINGS), 0);
@@ -175,8 +179,10 @@ public class WifiTile extends QSTileImpl<SignalState> {
             }
         }
         boolean transientEnabling = arg == ARG_SHOW_TRANSIENT_ENABLING;
-        boolean wifiConnected = cb.enabled && (cb.wifiSignalIconId > 0) && (cb.ssid != null);
-        boolean wifiNotConnected = (cb.wifiSignalIconId > 0) && (cb.ssid == null);
+        boolean wifiConnected = cb.enabled && (cb.wifiSignalIconId > 0)
+                && (cb.ssid != null || cb.wifiSignalIconId != WifiIcons.QS_WIFI_NO_NETWORK);
+        boolean wifiNotConnected = (cb.ssid == null)
+                && (cb.wifiSignalIconId == WifiIcons.QS_WIFI_NO_NETWORK);
         boolean enabledChanging = state.value != cb.enabled;
         if (enabledChanging) {
             mDetailAdapter.setItemsVisible(cb.enabled);
@@ -208,7 +214,7 @@ public class WifiTile extends QSTileImpl<SignalState> {
             state.label = r.getString(R.string.quick_settings_wifi_label);
         } else if (wifiConnected) {
             state.icon = ResourceIcon.get(cb.wifiSignalIconId);
-            state.label = removeDoubleQuotes(cb.ssid);
+            state.label = cb.ssid != null ? removeDoubleQuotes(cb.ssid) : getTileLabel();
         } else if (wifiNotConnected) {
             state.icon = ResourceIcon.get(WifiIcons.QS_WIFI_NO_NETWORK);
             state.label = r.getString(R.string.quick_settings_wifi_label);

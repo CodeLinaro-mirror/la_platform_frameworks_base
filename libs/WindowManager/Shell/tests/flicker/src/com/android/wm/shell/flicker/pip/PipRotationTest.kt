@@ -27,15 +27,11 @@ import com.android.server.wm.flicker.dsl.FlickerBuilder
 import com.android.server.wm.flicker.endRotation
 import com.android.server.wm.flicker.helpers.WindowUtils
 import com.android.server.wm.flicker.helpers.setRotation
-import com.android.server.wm.flicker.startRotation
-import com.android.wm.shell.flicker.helpers.FixedAppHelper
-import com.android.server.wm.flicker.navBarWindowIsAlwaysVisible
-import com.android.server.wm.flicker.statusBarLayerIsAlwaysVisible
-import com.android.server.wm.flicker.navBarLayerIsAlwaysVisible
-import com.android.server.wm.flicker.statusBarWindowIsAlwaysVisible
-import com.android.server.wm.flicker.noUncoveredRegions
 import com.android.server.wm.flicker.navBarLayerRotatesAndScales
+import com.android.server.wm.flicker.noUncoveredRegions
+import com.android.server.wm.flicker.startRotation
 import com.android.server.wm.flicker.statusBarLayerRotatesScales
+import com.android.wm.shell.flicker.helpers.FixedAppHelper
 import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -75,54 +71,38 @@ class PipRotationTest(testSpec: FlickerTestParameter) : PipTransition(testSpec) 
             }
         }
 
-    @Presubmit
+    @FlakyTest(bugId = 185400889)
     @Test
-    fun navBarWindowIsAlwaysVisible() = testSpec.navBarWindowIsAlwaysVisible()
-
-    @Presubmit
-    @Test
-    fun statusBarWindowIsAlwaysVisible() = testSpec.statusBarWindowIsAlwaysVisible()
-
-    @Presubmit
-    @Test
-    fun noUncoveredRegions() = testSpec.noUncoveredRegions(testSpec.config.startRotation,
+    override fun noUncoveredRegions() = testSpec.noUncoveredRegions(testSpec.config.startRotation,
         testSpec.config.endRotation, allStates = false)
 
-    @Presubmit
+    @FlakyTest
     @Test
-    fun navBarLayerIsAlwaysVisible() = testSpec.navBarLayerIsAlwaysVisible()
-
-    @Presubmit
-    @Test
-    fun statusBarLayerIsAlwaysVisible() = testSpec.statusBarLayerIsAlwaysVisible()
-
-    @FlakyTest(bugId = 140855415)
-    @Test
-    fun navBarLayerRotatesAndScales() =
+    override fun navBarLayerRotatesAndScales() =
         testSpec.navBarLayerRotatesAndScales(testSpec.config.startRotation,
             testSpec.config.endRotation)
 
-    @FlakyTest(bugId = 140855415)
+    @Presubmit
     @Test
-    fun statusBarLayerRotatesScales() =
+    override fun statusBarLayerRotatesScales() =
         testSpec.statusBarLayerRotatesScales(testSpec.config.startRotation,
             testSpec.config.endRotation)
 
-    @FlakyTest(bugId = 140855415)
+    @FlakyTest(bugId = 185400889)
     @Test
     fun appLayerRotates_StartingBounds() {
         testSpec.assertLayersStart {
-            coversExactly(startingBounds, fixedApp.defaultWindowName)
-            coversAtMost(startingBounds, pipApp.defaultWindowName)
+            visibleRegion(fixedApp.defaultWindowName).coversExactly(startingBounds)
+            visibleRegion(pipApp.defaultWindowName).coversAtMost(startingBounds)
         }
     }
 
-    @FlakyTest(bugId = 140855415)
+    @FlakyTest(bugId = 185400889)
     @Test
     fun appLayerRotates_EndingBounds() {
         testSpec.assertLayersEnd {
-            coversExactly(endingBounds, fixedApp.defaultWindowName)
-            coversAtMost(endingBounds, pipApp.defaultWindowName)
+            visibleRegion(fixedApp.defaultWindowName).coversExactly(endingBounds)
+            visibleRegion(pipApp.defaultWindowName).coversAtMost(endingBounds)
         }
     }
 

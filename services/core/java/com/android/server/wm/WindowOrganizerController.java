@@ -18,9 +18,11 @@ package com.android.server.wm;
 
 import static android.Manifest.permission.READ_FRAME_BUFFER;
 import static android.window.WindowContainerTransaction.HierarchyOp.HIERARCHY_OP_TYPE_CHILDREN_TASKS_REPARENT;
+import static android.window.WindowContainerTransaction.HierarchyOp.HIERARCHY_OP_TYPE_LAUNCH_TASK;
 import static android.window.WindowContainerTransaction.HierarchyOp.HIERARCHY_OP_TYPE_REORDER;
 import static android.window.WindowContainerTransaction.HierarchyOp.HIERARCHY_OP_TYPE_REPARENT;
 import static android.window.WindowContainerTransaction.HierarchyOp.HIERARCHY_OP_TYPE_SET_ADJACENT_ROOTS;
+import static android.window.WindowContainerTransaction.HierarchyOp.HIERARCHY_OP_TYPE_SET_LAUNCH_ADJACENT_FLAG_ROOT;
 import static android.window.WindowContainerTransaction.HierarchyOp.HIERARCHY_OP_TYPE_SET_LAUNCH_ROOT;
 
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_WINDOW_ORGANIZER;
@@ -35,15 +37,16 @@ import android.annotation.Nullable;
 import android.app.WindowConfiguration;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
+import android.graphics.GraphicBuffer;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.os.Binder;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.RemoteException;
 import android.util.ArraySet;
 import android.util.Slog;
-import android.view.Surface;
 import android.view.SurfaceControl;
 import android.window.IDisplayAreaOrganizerController;
 import android.window.ITaskOrganizerController;
@@ -191,6 +194,15 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
                     if (type < 0) {
                         throw new IllegalArgumentException("Can't create transition with no type");
                     }
+                    if (mTransitionController.getTransitionPlayer() == null) {
+                        Slog.w(TAG, "Using shell transitions API for legacy transitions.");
+                        if (t == null) {
+                            throw new IllegalArgumentException("Can't use legacy transitions in"
+                                    + " compatibility mode with no WCT.");
+                        }
+                        applyTransaction(t, -1 /* syncId */, null);
+                        return null;
+                    }
                     transition = mTransitionController.createTransition(type);
                 }
                 transition.start();
@@ -246,6 +258,21 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
         ProtoLog.v(WM_DEBUG_WINDOW_ORGANIZER, "Apply window transaction, syncId=%d", syncId);
         mService.deferWindowLayout();
         try {
+            if (transition != null) {
+                // First check if we have a display rotation transition and if so, update it.
+                final DisplayContent dc = DisplayRotation.getDisplayFromTransition(transition);
+                if (dc != null && transition.mChanges.get(dc).mRotation != dc.getRotation()) {
+                    // Go through all tasks and collect them before the rotation
+                    // TODO(shell-transitions): move collect() to onConfigurationChange once
+                    //       wallpaper handling is synchronized.
+                    dc.forAllTasks(task -> {
+                        if (task.isVisible()) transition.collect(task);
+                    });
+                    dc.getInsetsStateController().addProvidersToTransition();
+                    dc.sendNewConfiguration();
+                    effects |= TRANSACT_EFFECTS_LIFECYCLE;
+                }
+            }
             ArraySet<WindowContainer> haveConfigChanges = new ArraySet<>();
             Iterator<Map.Entry<IBinder, WindowContainerTransaction.Change>> entries =
                     t.getChanges().entrySet().iterator();
@@ -294,6 +321,26 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
                             }
                             break;
                         }
+                        case HIERARCHY_OP_TYPE_SET_LAUNCH_ADJACENT_FLAG_ROOT: {
+                            final WindowContainer wc = WindowContainer.fromBinder(
+                                    hop.getContainer());
+                            final Task task = wc != null ? wc.asTask() : null;
+                            if (task == null) {
+                                throw new IllegalArgumentException("Cannot set "
+                                        + "non-task as launch root: " + wc);
+                            } else if (!task.mCreatedByOrganizer) {
+                                throw new UnsupportedOperationException("Cannot set "
+                                        + "non-organized task as adjacent flag root: " + wc);
+                            } else if (task.mAdjacentTask == null) {
+                                throw new UnsupportedOperationException("Cannot set "
+                                        + "non-adjacent task as adjacent flag root: " + wc);
+                            }
+
+                            final boolean clearRoot = hop.getToTop();
+                            task.getDisplayArea()
+                                    .setLaunchAdjacentFlagRootTask(clearRoot ? null : task);
+                            break;
+                        }
                         case HIERARCHY_OP_TYPE_CHILDREN_TASKS_REPARENT:
                             effects |= reparentChildrenTasksHierarchyOp(hop, transition, syncId);
                             break;
@@ -331,6 +378,15 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
                                 }
                             }
                             effects |= sanitizeAndApplyHierarchyOp(wc, hop);
+                            break;
+                        case HIERARCHY_OP_TYPE_LAUNCH_TASK:
+                            Bundle launchOpts = hop.getLaunchOptions();
+                            int taskId = launchOpts.getInt(
+                                    WindowContainerTransaction.HierarchyOp.LAUNCH_KEY_TASK_ID);
+                            launchOpts.remove(
+                                    WindowContainerTransaction.HierarchyOp.LAUNCH_KEY_TASK_ID);
+                            mService.startActivityFromRecents(taskId, launchOpts);
+                            break;
                     }
                 }
             }
@@ -456,7 +512,7 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
 
         Rect enterPipBounds = c.getEnterPipBounds();
         if (enterPipBounds != null) {
-            mService.mTaskSupervisor.updatePictureInPictureMode(tr, enterPipBounds, true);
+            tr.mDisplayContent.mPinnedTaskController.setEnterPipBounds(enterPipBounds);
         }
 
         return effects;
@@ -731,18 +787,21 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
             return false;
         }
 
+        GraphicBuffer graphicBuffer = GraphicBuffer.createFromHardwareBuffer(
+                buffer.getHardwareBuffer());
         SurfaceControl screenshot = mService.mWindowManager.mSurfaceControlFactory.apply(null)
                 .setName(wc.getName() + " - Organizer Screenshot")
-                .setBufferSize(bounds.width(), bounds.height())
                 .setFormat(PixelFormat.TRANSLUCENT)
                 .setParent(wc.getParentSurfaceControl())
+                .setSecure(buffer.containsSecureLayers())
                 .setCallsite("WindowOrganizerController.takeScreenshot")
+                .setBLASTLayer()
                 .build();
 
-        Surface surface = new Surface();
-        surface.copyFrom(screenshot);
-        surface.attachAndQueueBufferWithColorSpace(buffer.getHardwareBuffer(), null);
-        surface.release();
+        SurfaceControl.Transaction transaction = mService.mWindowManager.mTransactionFactory.get();
+        transaction.setBuffer(screenshot, graphicBuffer);
+        transaction.setColorSpace(screenshot, buffer.getColorSpace());
+        transaction.apply();
 
         outSurfaceControl.copyFrom(screenshot, "WindowOrganizerController.takeScreenshot");
         return true;

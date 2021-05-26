@@ -27,12 +27,10 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.util.AttributeSet;
-import android.util.Pair;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewStub;
 import android.widget.LinearLayout;
 
 import com.android.internal.logging.UiEventLogger;
@@ -72,8 +70,6 @@ public class QSPanel extends LinearLayout implements Tunable {
     private final H mHandler = new H();
     /** Whether or not the QS media player feature is enabled. */
     protected boolean mUsingMediaPlayer;
-    private int mVisualMarginStart;
-    private int mVisualMarginEnd;
 
     protected boolean mExpanded;
     protected boolean mListening;
@@ -88,15 +84,12 @@ public class QSPanel extends LinearLayout implements Tunable {
 
     @Nullable
     protected View mFooter;
-    @Nullable
-    protected View mDivider;
 
     @Nullable
     private ViewGroup mHeaderContainer;
     private PageIndicator mFooterPageIndicator;
     private int mContentMarginStart;
     private int mContentMarginEnd;
-    private int mVisualTilePadding;
     private boolean mUsingHorizontalLayout;
 
     private Record mDetailRecord;
@@ -111,9 +104,7 @@ public class QSPanel extends LinearLayout implements Tunable {
     protected QSTileLayout mTileLayout;
     private int mLastOrientation = -1;
     private int mMediaTotalBottomMargin;
-    private int mFooterMarginStartHorizontal;
     private Consumer<Boolean> mMediaVisibilityChangedListener;
-    protected boolean mSideLabels;
 
     public QSPanel(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -128,21 +119,7 @@ public class QSPanel extends LinearLayout implements Tunable {
 
     }
 
-    protected void inflateQSFooter(boolean newFooter) {
-        ViewStub stub = findViewById(R.id.qs_footer_stub);
-        if (stub != null) {
-            stub.setLayoutResource(
-                    newFooter ? R.layout.qs_footer_impl_two_lines : R.layout.qs_footer_impl);
-            stub.inflate();
-            mFooter = findViewById(R.id.qs_footer);
-        }
-    }
-
-    void initialize(boolean sideLabels) {
-        mSideLabels = sideLabels;
-
-        inflateQSFooter(sideLabels);
-
+    void initialize() {
         mRegularTileLayout = createRegularTileLayout();
         mTileLayout = mRegularTileLayout;
 
@@ -159,7 +136,7 @@ public class QSPanel extends LinearLayout implements Tunable {
 
             mHorizontalTileLayout = createHorizontalTileLayout();
             LayoutParams lp = new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1);
-            int marginSize = (int) mContext.getResources().getDimension(R.dimen.qqs_media_spacing);
+            int marginSize = (int) mContext.getResources().getDimension(R.dimen.qs_media_padding);
             lp.setMarginStart(0);
             lp.setMarginEnd(marginSize);
             lp.gravity = Gravity.CENTER_VERTICAL;
@@ -195,8 +172,7 @@ public class QSPanel extends LinearLayout implements Tunable {
     public QSTileLayout createRegularTileLayout() {
         if (mRegularTileLayout == null) {
             mRegularTileLayout = (QSTileLayout) LayoutInflater.from(mContext)
-                    .inflate(mSideLabels ? R.layout.qs_paged_tile_layout_side_labels
-                            : R.layout.qs_paged_tile_layout, this, false);
+                    .inflate(R.layout.qs_paged_tile_layout, this, false);
         }
         return mRegularTileLayout;
     }
@@ -311,11 +287,6 @@ public class QSPanel extends LinearLayout implements Tunable {
     }
 
     public void updateResources() {
-        int tileSize = getResources().getDimensionPixelSize(R.dimen.qs_quick_tile_size);
-        int tileBg = getResources().getDimensionPixelSize(R.dimen.qs_tile_background_size);
-        mFooterMarginStartHorizontal = getResources().getDimensionPixelSize(
-                R.dimen.qs_footer_horizontal_margin);
-        mVisualTilePadding = (int) ((tileSize - tileBg) / 2.0f);
         updatePadding();
 
         updatePageIndicator();
@@ -328,12 +299,6 @@ public class QSPanel extends LinearLayout implements Tunable {
     protected void updatePadding() {
         final Resources res = mContext.getResources();
         int padding = res.getDimensionPixelSize(R.dimen.qs_panel_padding_top);
-        if (mUsingHorizontalLayout) {
-            // When using the horizontal layout, our space is quite constrained. We therefore
-            // reduce some of the padding on the top, which makes the brightness bar overlapp,
-            // but since that has naturally quite a bit of built in padding, that's fine.
-            padding = (int) (padding * 0.6f);
-        }
         setPaddingRelative(getPaddingStart(),
                 padding,
                 getPaddingEnd(),
@@ -353,12 +318,13 @@ public class QSPanel extends LinearLayout implements Tunable {
         super.onConfigurationChanged(newConfig);
         mOnConfigurationChangedListeners.forEach(
                 listener -> listener.onConfigurationChange(newConfig));
+        switchSecurityFooter();
     }
 
     @Override
     protected void onFinishInflate() {
         super.onFinishInflate();
-        mDivider = findViewById(R.id.divider);
+        mFooter = findViewById(R.id.qs_footer);
     }
 
     private void updateHorizontalLinearLayoutMargins() {
@@ -390,26 +356,25 @@ public class QSPanel extends LinearLayout implements Tunable {
         switchToParent((View) newLayout, parent, index);
         index++;
 
-        if (mSecurityFooter != null) {
-            LinearLayout.LayoutParams layoutParams =
-                    (LayoutParams) mSecurityFooter.getLayoutParams();
-            if (mUsingHorizontalLayout && mHeaderContainer != null) {
-                // Adding the security view to the header, that enables us to avoid scrolling
-                layoutParams.width = 0;
-                layoutParams.weight = 1.6f;
-                switchToParent(mSecurityFooter, mHeaderContainer, 1 /* always in second place */);
-            } else {
-                layoutParams.width = LayoutParams.WRAP_CONTENT;
-                layoutParams.weight = 0;
-                switchToParent(mSecurityFooter, parent, index);
-                index++;
-            }
-            mSecurityFooter.setLayoutParams(layoutParams);
-        }
-
         if (mFooter != null) {
             // Then the footer with the settings
             switchToParent(mFooter, parent, index);
+            index++;
+        }
+
+        // The security footer is switched on orientation changes
+    }
+
+    private void switchSecurityFooter() {
+        if (mSecurityFooter != null) {
+            if (mContext.getResources().getConfiguration().orientation
+                    == Configuration.ORIENTATION_LANDSCAPE && mHeaderContainer != null
+                    && !mSecurityFooter.getParent().equals(mHeaderContainer)) {
+                // Adding the security view to the header, that enables us to avoid scrolling
+                switchToParent(mSecurityFooter, mHeaderContainer, 0);
+            } else {
+                switchToParent(mSecurityFooter, this, -1);
+            }
         }
     }
 
@@ -634,70 +599,13 @@ public class QSPanel extends LinearLayout implements Tunable {
         return mTileLayout;
     }
 
-    @Nullable
-    public View getDivider() {
-        return mDivider;
-    }
-
     /** */
     public void setContentMargins(int startMargin, int endMargin, ViewGroup mediaHostView) {
         // Only some views actually want this content padding, others want to go all the way
         // to the edge like the brightness slider
         mContentMarginStart = startMargin;
         mContentMarginEnd = endMargin;
-        updateTileLayoutMargins(mContentMarginStart - mVisualTilePadding,
-                mContentMarginEnd - mVisualTilePadding);
         updateMediaHostContentMargins(mediaHostView);
-        updateFooterMargin();
-        updateDividerMargin();
-    }
-
-    private void updateFooterMargin() {
-        if (mFooter != null) {
-            int footerMargin = 0;
-            int indicatorMargin = 0;
-            if (mUsingHorizontalLayout) {
-                footerMargin = mFooterMarginStartHorizontal;
-                indicatorMargin = footerMargin - mVisualMarginEnd;
-            }
-            updateMargins(mFooter, footerMargin, 0);
-            // The page indicator isn't centered anymore because of the visual positioning.
-            // Let's fix it by adding some margin
-            if (mFooterPageIndicator != null) {
-                updateMargins(mFooterPageIndicator, 0, indicatorMargin);
-            }
-        }
-    }
-
-    /**
-     * Update the margins of all tile Layouts.
-     *
-     * @param visualMarginStart the visual start margin of the tile, adjusted for local insets
-     *                          to the tile. This can be set on a tileLayout
-     * @param visualMarginEnd the visual end margin of the tile, adjusted for local insets
-     *                        to the tile. This can be set on a tileLayout
-     */
-    private void updateTileLayoutMargins(int visualMarginStart, int visualMarginEnd) {
-        mVisualMarginStart = visualMarginStart;
-        mVisualMarginEnd = visualMarginEnd;
-        updateTileLayoutMargins();
-    }
-
-    public Pair<Integer, Integer> getVisualSideMargins() {
-        return new Pair(mVisualMarginStart, mUsingHorizontalLayout ? 0 : mVisualMarginEnd);
-    }
-
-    private void updateTileLayoutMargins() {
-        int marginEnd = mVisualMarginEnd;
-        if (mUsingHorizontalLayout) {
-            marginEnd = 0;
-        }
-        updateMargins((View) mTileLayout, mVisualMarginStart, marginEnd);
-    }
-
-    private void updateDividerMargin() {
-        if (mDivider == null) return;
-        updateMargins(mDivider, mContentMarginStart, mContentMarginEnd);
     }
 
     /**
@@ -747,6 +655,17 @@ public class QSPanel extends LinearLayout implements Tunable {
 
     public void setSecurityFooter(View view) {
         mSecurityFooter = view;
+        switchSecurityFooter();
+    }
+
+    protected void setPageMargin(int pageMargin) {
+        if (mRegularTileLayout instanceof PagedTileLayout) {
+            ((PagedTileLayout) mRegularTileLayout).setPageMargin(pageMargin);
+        }
+        if (mHorizontalTileLayout != mRegularTileLayout
+                && mHorizontalTileLayout instanceof PagedTileLayout) {
+            ((PagedTileLayout) mHorizontalTileLayout).setPageMargin(pageMargin);
+        }
     }
 
     void setUsingHorizontalLayout(boolean horizontal, ViewGroup mediaHostView, boolean force,
@@ -772,23 +691,13 @@ public class QSPanel extends LinearLayout implements Tunable {
             newLayout.setListening(mListening, uiEventLogger);
             if (needsDynamicRowsAndColumns()) {
                 newLayout.setMinRows(horizontal ? 2 : 1);
-                // Let's use 3 columns to match the current layout
-                int columns;
-                if (mSideLabels) {
-                    columns = horizontal ? 2 : 4;
-                } else {
-                    columns = horizontal ? 3 : TileLayout.NO_MAX_COLUMNS;
-                }
-                newLayout.setMaxColumns(columns);
+                newLayout.setMaxColumns(horizontal ? 2 : 4);
             }
             updateMargins(mediaHostView);
         }
     }
 
     private void updateMargins(ViewGroup mediaHostView) {
-        updateTileLayoutMargins();
-        updateFooterMargin();
-        updateDividerMargin();
         updateMediaHostContentMargins(mediaHostView);
         updateHorizontalLinearLayoutMargins();
         updatePadding();

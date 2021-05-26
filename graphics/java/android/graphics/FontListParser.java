@@ -25,8 +25,6 @@ import android.graphics.fonts.FontVariationAxis;
 import android.os.Build;
 import android.os.LocaleList;
 import android.text.FontConfig;
-import android.text.TextUtils;
-import android.util.TypedXmlSerializer;
 import android.util.Xml;
 
 import org.xmlpull.v1.XmlPullParser;
@@ -58,6 +56,7 @@ public class FontListParser {
     // XML constants for Font.
     public static final String ATTR_INDEX = "index";
     public static final String ATTR_WEIGHT = "weight";
+    public static final String ATTR_POSTSCRIPT_NAME = "postScriptName";
     public static final String ATTR_STYLE = "style";
     public static final String ATTR_FALLBACK_FOR = "fallbackFor";
     public static final String STYLE_ITALIC = "italic";
@@ -75,7 +74,7 @@ public class FontListParser {
         parser.setInput(in, null);
         parser.nextTag();
         return readFamilies(parser, "/system/fonts/", new FontCustomizationParser.Result(), null,
-                0, 0);
+                0, 0, true);
     }
 
     /**
@@ -117,7 +116,7 @@ public class FontListParser {
             parser.setInput(is, null);
             parser.nextTag();
             return readFamilies(parser, systemFontDir, oemCustomization, updatableFontMap,
-                    lastModifiedDate, configVersion);
+                    lastModifiedDate, configVersion, false /* filter out the non-exising files */);
         }
     }
 
@@ -127,7 +126,8 @@ public class FontListParser {
             @NonNull FontCustomizationParser.Result customization,
             @Nullable Map<String, File> updatableFontMap,
             long lastModifiedDate,
-            int configVersion)
+            int configVersion,
+            boolean allowNonExistingFile)
             throws XmlPullParserException, IOException {
         List<FontConfig.FontFamily> families = new ArrayList<>();
         List<FontConfig.Alias> aliases = new ArrayList<>(customization.getAdditionalAliases());
@@ -140,7 +140,11 @@ public class FontListParser {
             if (parser.getEventType() != XmlPullParser.START_TAG) continue;
             String tag = parser.getName();
             if (tag.equals("family")) {
-                FontConfig.FontFamily family = readFamily(parser, fontDir, updatableFontMap);
+                FontConfig.FontFamily family = readFamily(parser, fontDir, updatableFontMap,
+                        allowNonExistingFile);
+                if (family == null) {
+                    continue;
+                }
                 String name = family.getName();
                 if (name == null || !oemNamedFamilies.containsKey(name)) {
                     // The OEM customization overrides system named family. Skip if OEM
@@ -166,9 +170,15 @@ public class FontListParser {
 
     /**
      * Read family tag in fonts.xml or oem_customization.xml
+     *
+     * @param parser An XML parser.
+     * @param fontDir a font directory name.
+     * @param updatableFontMap a updated font file map.
+     * @param allowNonExistingFile true to allow font file that doesn't exists
+     * @return a FontFamily instance. null if no font files are available in this FontFamily.
      */
-    public static FontConfig.FontFamily readFamily(XmlPullParser parser, String fontDir,
-            @Nullable Map<String, File> updatableFontMap)
+    public static @Nullable FontConfig.FontFamily readFamily(XmlPullParser parser, String fontDir,
+            @Nullable Map<String, File> updatableFontMap, boolean allowNonExistingFile)
             throws XmlPullParserException, IOException {
         final String name = parser.getAttributeValue(null, "name");
         final String lang = parser.getAttributeValue("", "lang");
@@ -178,7 +188,11 @@ public class FontListParser {
             if (parser.getEventType() != XmlPullParser.START_TAG) continue;
             final String tag = parser.getName();
             if (tag.equals(TAG_FONT)) {
-                fonts.add(readFont(parser, fontDir, updatableFontMap));
+                FontConfig.Font font = readFont(parser, fontDir, updatableFontMap,
+                        allowNonExistingFile);
+                if (font != null) {
+                    fonts.add(font);
+                }
             } else {
                 skip(parser);
             }
@@ -191,43 +205,21 @@ public class FontListParser {
                 intVariant = FontConfig.FontFamily.VARIANT_ELEGANT;
             }
         }
+        if (fonts.isEmpty()) {
+            return null;
+        }
         return new FontConfig.FontFamily(fonts, name, LocaleList.forLanguageTags(lang), intVariant);
-    }
-
-    /**
-     * Write a family tag representing {@code fontFamily}. The tag should be started by the caller.
-     */
-    public static void writeFamily(TypedXmlSerializer out, FontConfig.FontFamily fontFamily)
-            throws IOException {
-        if (!TextUtils.isEmpty(fontFamily.getName())) {
-            out.attribute(null, ATTR_NAME, fontFamily.getName());
-        }
-        if (!fontFamily.getLocaleList().isEmpty()) {
-            out.attribute(null, ATTR_LANG, fontFamily.getLocaleList().toLanguageTags());
-        }
-        switch (fontFamily.getVariant()) {
-            case FontConfig.FontFamily.VARIANT_COMPACT:
-                out.attribute(null, ATTR_VARIANT, VARIANT_COMPACT);
-                break;
-            case FontConfig.FontFamily.VARIANT_ELEGANT:
-                out.attribute(null, ATTR_VARIANT, VARIANT_ELEGANT);
-                break;
-        }
-        for (FontConfig.Font font : fontFamily.getFontList()) {
-            out.startTag(null, TAG_FONT);
-            writeFont(out, font);
-            out.endTag(null, TAG_FONT);
-        }
     }
 
     /** Matches leading and trailing XML whitespace. */
     private static final Pattern FILENAME_WHITESPACE_PATTERN =
             Pattern.compile("^[ \\n\\r\\t]+|[ \\n\\r\\t]+$");
 
-    private static FontConfig.Font readFont(
+    private static @Nullable FontConfig.Font readFont(
             @NonNull XmlPullParser parser,
             @NonNull String fontDir,
-            @Nullable Map<String, File> updatableFontMap)
+            @Nullable Map<String, File> updatableFontMap,
+            boolean allowNonExistingFile)
             throws XmlPullParserException, IOException {
 
         String indexStr = parser.getAttributeValue(null, ATTR_INDEX);
@@ -237,6 +229,7 @@ public class FontListParser {
         int weight = weightStr == null ? FontStyle.FONT_WEIGHT_NORMAL : Integer.parseInt(weightStr);
         boolean isItalic = STYLE_ITALIC.equals(parser.getAttributeValue(null, ATTR_STYLE));
         String fallbackFor = parser.getAttributeValue(null, ATTR_FALLBACK_FOR);
+        String postScriptName = parser.getAttributeValue(null, ATTR_POSTSCRIPT_NAME);
         StringBuilder filename = new StringBuilder();
         while (keepReading(parser)) {
             if (parser.getEventType() == XmlPullParser.TEXT) {
@@ -251,7 +244,14 @@ public class FontListParser {
             }
         }
         String sanitizedName = FILENAME_WHITESPACE_PATTERN.matcher(filename).replaceAll("");
-        String updatedName = findUpdatedFontFile(sanitizedName, updatableFontMap);
+
+        if (postScriptName == null) {
+            // If post script name was not provided, assume the file name is same to PostScript
+            // name.
+            postScriptName = sanitizedName.substring(0, sanitizedName.length() - 4);
+        }
+
+        String updatedName = findUpdatedFontFile(postScriptName, updatableFontMap);
         String filePath;
         String originalPath;
         if (updatedName != null) {
@@ -270,8 +270,15 @@ public class FontListParser {
                     axes.toArray(new FontVariationAxis[0]));
         }
 
-        return new FontConfig.Font(new File(filePath),
+        File file = new File(filePath);
+
+        if (!(allowNonExistingFile || file.isFile())) {
+            return null;
+        }
+
+        return new FontConfig.Font(file,
                 originalPath == null ? null : new File(originalPath),
+                postScriptName,
                 new FontStyle(
                         weight,
                         isItalic ? FontStyle.FONT_SLANT_ITALIC : FontStyle.FONT_SLANT_UPRIGHT
@@ -281,43 +288,15 @@ public class FontListParser {
                 fallbackFor);
     }
 
-    private static String findUpdatedFontFile(String name,
+    private static String findUpdatedFontFile(String psName,
             @Nullable Map<String, File> updatableFontMap) {
         if (updatableFontMap != null) {
-            File updatedFile = updatableFontMap.get(name);
+            File updatedFile = updatableFontMap.get(psName);
             if (updatedFile != null) {
                 return updatedFile.getAbsolutePath();
             }
         }
         return null;
-    }
-
-    private static void writeFont(TypedXmlSerializer out, FontConfig.Font font)
-            throws IOException {
-        if (font.getTtcIndex() != 0) {
-            out.attributeInt(null, ATTR_INDEX, font.getTtcIndex());
-        }
-        if (font.getStyle().getWeight() != FontStyle.FONT_WEIGHT_NORMAL) {
-            out.attributeInt(null, ATTR_WEIGHT, font.getStyle().getWeight());
-        }
-        if (font.getStyle().getSlant() == FontStyle.FONT_SLANT_ITALIC) {
-            out.attribute(null, ATTR_STYLE, STYLE_ITALIC);
-        } else {
-            out.attribute(null, ATTR_STYLE, STYLE_NORMAL);
-        }
-        if (!TextUtils.isEmpty(font.getFontFamilyName())) {
-            out.attribute(null, ATTR_FALLBACK_FOR, font.getFontFamilyName());
-        }
-        out.text(font.getFile().getName());
-        FontVariationAxis[] axes =
-                FontVariationAxis.fromFontVariationSettings(font.getFontVariationSettings());
-        if (axes != null) {
-            for (FontVariationAxis axis : axes) {
-                out.startTag(null, TAG_AXIS);
-                writeAxis(out, axis);
-                out.endTag(null, TAG_AXIS);
-            }
-        }
     }
 
     private static FontVariationAxis readAxis(XmlPullParser parser)
@@ -326,12 +305,6 @@ public class FontListParser {
         String styleValueStr = parser.getAttributeValue(null, ATTR_STYLEVALUE);
         skip(parser);  // axis tag is empty, ignore any contents and consume end tag
         return new FontVariationAxis(tagStr, Float.parseFloat(styleValueStr));
-    }
-
-    private static void writeAxis(TypedXmlSerializer out, FontVariationAxis axis)
-            throws IOException {
-        out.attribute(null, ATTR_TAG, axis.getTag());
-        out.attributeFloat(null, ATTR_STYLEVALUE, axis.getStyleValue());
     }
 
     /**

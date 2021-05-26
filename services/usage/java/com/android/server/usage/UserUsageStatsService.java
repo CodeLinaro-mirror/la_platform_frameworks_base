@@ -277,8 +277,11 @@ class UserUsageStatsService {
                     + eventToString(event.mEventType));
         }
 
-        checkAndGetTimeLocked();
-        convertToSystemTimeLocked(event);
+        if (event.mEventType != Event.USER_INTERACTION
+                && event.mEventType != Event.APP_COMPONENT_USED) {
+            checkAndGetTimeLocked();
+            convertToSystemTimeLocked(event);
+        }
 
         if (event.mTimeStamp >= mDailyExpiryDate.getTimeInMillis()) {
             // Need to rollover
@@ -1003,6 +1006,8 @@ class UserUsageStatsService {
                     formatElapsedTime(usageStats.mTotalTimeVisible, prettyDates));
             pw.printPair("lastTimeVisible",
                     formatDateTime(usageStats.mLastTimeVisible, prettyDates));
+            pw.printPair("lastTimeComponentUsed",
+                    formatDateTime(usageStats.mLastTimeComponentUsed, prettyDates));
             pw.printPair("totalTimeFS",
                     formatElapsedTime(usageStats.mTotalTimeForegroundServiceUsed, prettyDates));
             pw.printPair("lastTimeFS",

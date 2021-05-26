@@ -26,6 +26,7 @@ import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
+import android.annotation.TestApi;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.ActivityThread;
@@ -34,6 +35,7 @@ import android.app.IActivityManager;
 import android.app.PropertyInvalidatedCache;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledAfter;
+import android.content.AttributionSource;
 import android.content.Context;
 import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
@@ -49,6 +51,7 @@ import android.os.Message;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.SystemClock;
 import android.os.UserHandle;
 import android.util.ArrayMap;
 import android.util.ArraySet;
@@ -56,6 +59,7 @@ import android.util.DebugUtils;
 import android.util.Log;
 import android.util.Slog;
 
+import com.android.internal.R;
 import com.android.internal.annotations.Immutable;
 import com.android.internal.util.CollectionUtils;
 
@@ -76,11 +80,16 @@ public final class PermissionManager {
     private static final String LOG_TAG = PermissionManager.class.getName();
 
     /** @hide */
+    public static final String LOG_TAG_TRACE_GRANTS = "PermissionGrantTrace";
+
+    /** @hide */
     public static final String KILL_APP_REASON_PERMISSIONS_REVOKED =
             "permissions revoked";
     /** @hide */
     public static final String KILL_APP_REASON_GIDS_CHANGED =
             "permission grant or revoke changed gids";
+
+    private static final String SYSTEM_PKG = "android";
 
     /**
      * Refuse to install package if groups of permissions are bad
@@ -94,8 +103,24 @@ public final class PermissionManager {
     public static final long CANNOT_INSTALL_WITH_BAD_PERMISSION_GROUPS = 146211400;
 
     /**
+     * The time to wait in between refreshing the exempted indicator role packages
+     */
+    private static final long EXEMPTED_INDICATOR_ROLE_UPDATE_FREQUENCY_MS = 15000;
+
+    private static long sLastIndicatorUpdateTime = -1;
+
+    private static final int[] EXEMPTED_ROLES = {R.string.config_systemAmbientAudioIntelligence,
+        R.string.config_systemUiIntelligence, R.string.config_systemAudioIntelligence,
+        R.string.config_systemNotificationIntelligence, R.string.config_systemTextIntelligence,
+        R.string.config_systemVisualIntelligence};
+
+    private static final String[] INDICATOR_EXEMPTED_PACKAGES = new String[EXEMPTED_ROLES.length];
+
+    /**
      * Note: Changing this won't do anything on its own - you should also change the filtering in
      * {@link #shouldTraceGrant}.
+     *
+     * See log output for tag {@link #LOG_TAG_TRACE_GRANTS}
      *
      * @hide
      */
@@ -170,7 +195,7 @@ public final class PermissionManager {
      * @hide Pending API
      */
     @Nullable
-    public List<PermissionInfo> queryPermissionsByGroup(@NonNull String groupName,
+    public List<PermissionInfo> queryPermissionsByGroup(@Nullable String groupName,
             @PackageManager.PermissionInfoFlags int flags) {
         try {
             final ParceledListSlice<PermissionInfo> parceledList =
@@ -313,8 +338,10 @@ public final class PermissionManager {
     }
 
     /** @hide */
-    public static boolean shouldTraceGrant(String packageName, String permissionName, int userId) {
+    public static boolean shouldTraceGrant(
+            @NonNull String packageName, @NonNull String permissionName, int userId) {
         // To be modified when debugging
+        // template: if ("".equals(packageName) && "".equals(permissionName)) return true;
         return false;
     }
 
@@ -342,7 +369,8 @@ public final class PermissionManager {
             @NonNull String permissionName, @NonNull UserHandle user) {
         if (DEBUG_TRACE_GRANTS
                 && shouldTraceGrant(packageName, permissionName, user.getIdentifier())) {
-            Log.i(LOG_TAG, "App " + mContext.getPackageName() + " is granting " + packageName + " "
+            Log.i(LOG_TAG_TRACE_GRANTS, "App " + mContext.getPackageName() + " is granting "
+                    + packageName + " "
                     + permissionName + " for user " + user.getIdentifier(), new RuntimeException());
         }
         try {
@@ -846,6 +874,7 @@ public final class PermissionManager {
      *
      * @hide
      */
+    @TestApi
     @NonNull
     @RequiresPermission(Manifest.permission.GET_APP_OPS_STATS)
     public List<PermGroupUsage> getIndicatorAppOpUsageData() {
@@ -856,6 +885,51 @@ public final class PermissionManager {
         return mUsageHelper.getOpUsageData(new AudioManager().isMicrophoneMute());
     }
 
+    /**
+     * @param micMuted whether to consider the microphone muted when retrieving audio ops
+     * @return A list of permission groups currently or recently used by all apps by all users in
+     * the current profile group.
+     *
+     * @hide
+     */
+    @TestApi
+    @NonNull
+    @RequiresPermission(Manifest.permission.GET_APP_OPS_STATS)
+    public List<PermGroupUsage> getIndicatorAppOpUsageData(boolean micMuted) {
+        // Lazily initialize the usage helper
+        if (mUsageHelper == null) {
+            mUsageHelper = new PermissionUsageHelper(mContext);
+        }
+        return mUsageHelper.getOpUsageData(micMuted);
+    }
+
+    /**
+     * Determine if a package should be shown in indicators. Only a select few roles, and the
+     * system app itself, are hidden. These values are updated at most every 15 seconds.
+     * @hide
+     */
+    public static boolean shouldShowPackageForIndicatorCached(@NonNull Context context,
+            @NonNull String packageName) {
+        if (SYSTEM_PKG.equals(packageName)) {
+            return false;
+        }
+        long now = SystemClock.elapsedRealtime();
+        if (sLastIndicatorUpdateTime == -1
+                || (now - sLastIndicatorUpdateTime) > EXEMPTED_INDICATOR_ROLE_UPDATE_FREQUENCY_MS) {
+            sLastIndicatorUpdateTime = now;
+            for (int i = 0; i < EXEMPTED_ROLES.length; i++) {
+                INDICATOR_EXEMPTED_PACKAGES[i] = context.getString(EXEMPTED_ROLES[i]);
+            }
+        }
+        for (int i = 0; i < EXEMPTED_ROLES.length; i++) {
+            String exemptedPackage = INDICATOR_EXEMPTED_PACKAGES[i];
+            if (exemptedPackage != null && exemptedPackage.equals(packageName)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
     /**
      * Gets the list of packages that have permissions that specified
      * {@code requestDontAutoRevokePermissions=true} in their
@@ -1065,6 +1139,49 @@ public final class PermissionManager {
             @Nullable String callingFeatureId, int pid, int uid) {
         return mLegacyPermissionManager.checkDeviceIdentifierAccess(packageName, message,
                 callingFeatureId, pid, uid);
+    }
+
+    /**
+     * Registers an attribution source with the OS. An app can only register an attribution
+     * source for itself. Once an attribution source has been registered another app can
+     * check whether this registration exists and thus trust the payload in the source
+     * object. This is important for permission checking and specifically for app op blaming
+     * since a malicious app should not be able to force the OS to blame another app
+     * that doesn't participate in an attribution chain.
+     *
+     * @param source The attribution source to register.
+     *
+     * @see #isRegisteredAttributionSource(AttributionSource)
+     *
+     * @hide
+     */
+    @TestApi
+    public @NonNull AttributionSource registerAttributionSource(@NonNull AttributionSource source) {
+        try {
+            return mPermissionManager.registerAttributionSource(source);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+        return null;
+    }
+
+    /**
+     * Checks whether an attribution source is registered.
+     *
+     * @param source The attribution source to check.
+     * @return Whether this is a registered source.
+     *
+     * @see #registerAttributionSource(AttributionSource)
+     *
+     * @hide
+     */
+    public boolean isRegisteredAttributionSource(@NonNull AttributionSource source) {
+        try {
+            return mPermissionManager.isRegisteredAttributionSource(source);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+        return false;
     }
 
     /* @hide */

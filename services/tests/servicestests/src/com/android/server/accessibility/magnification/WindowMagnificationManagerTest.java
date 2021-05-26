@@ -313,6 +313,17 @@ public class WindowMagnificationManagerTest {
     }
 
     @Test
+    public void onAccessibilityActionPerformed_magnifierEnabled_notifyAction()
+            throws RemoteException {
+        mWindowMagnificationManager.setConnection(mMockConnection.getConnection());
+        mWindowMagnificationManager.enableWindowMagnification(TEST_DISPLAY, 3.0f, NaN, NaN);
+
+        mMockConnection.getConnectionCallback().onAccessibilityActionPerformed(TEST_DISPLAY);
+
+        verify(mMockCallback).onAccessibilityActionPerformed(eq(TEST_DISPLAY));
+    }
+
+    @Test
     public void binderDied_windowMagnifierIsEnabled_resetState() throws RemoteException {
         mWindowMagnificationManager.setConnection(mMockConnection.getConnection());
         mWindowMagnificationManager.enableWindowMagnification(TEST_DISPLAY, 3f, NaN, NaN);
@@ -390,6 +401,23 @@ public class WindowMagnificationManagerTest {
         mWindowMagnificationManager.onDisplayRemoved(TEST_DISPLAY);
 
         assertFalse(mWindowMagnificationManager.isWindowMagnifierEnabled(TEST_DISPLAY));
+    }
+
+    @Test
+    public void onWindowMagnificationActivationState_magnifierEnabled_notifyActivatedState() {
+        mWindowMagnificationManager.setConnection(mMockConnection.getConnection());
+        mWindowMagnificationManager.enableWindowMagnification(TEST_DISPLAY, 3.0f, NaN, NaN);
+
+        verify(mMockCallback).onWindowMagnificationActivationState(TEST_DISPLAY, true);
+    }
+
+    @Test
+    public void onWindowMagnificationActivationState_magnifierDisabled_notifyDeactivatedState() {
+        mWindowMagnificationManager.setConnection(mMockConnection.getConnection());
+        mWindowMagnificationManager.enableWindowMagnification(TEST_DISPLAY, 3.0f, NaN, NaN);
+        mWindowMagnificationManager.disableWindowMagnification(TEST_DISPLAY, true);
+
+        verify(mMockCallback).onWindowMagnificationActivationState(TEST_DISPLAY, false);
     }
 
     private MotionEvent generatePointersDownEvent(PointF[] pointersLocation) {

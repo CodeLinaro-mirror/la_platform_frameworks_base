@@ -16,10 +16,13 @@
 
 package android.bluetooth;
 
+import android.annotation.SuppressLint;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.UserHandle;
@@ -31,6 +34,7 @@ import android.util.Log;
  * @param <T> The Bluetooth profile interface for this connection.
  * @hide
  */
+@SuppressLint("AndroidFrameworkBluetoothPermission")
 public abstract class BluetoothProfileConnector<T> {
     private final int mProfileId;
     private BluetoothProfile.ServiceListener mServiceListener;
@@ -78,6 +82,7 @@ public abstract class BluetoothProfileConnector<T> {
         mServiceName = serviceName;
     }
 
+    @SuppressLint("AndroidFrameworkRequiresPermission")
     private boolean doBind() {
         synchronized (mConnection) {
             if (mService == null) {
@@ -120,6 +125,16 @@ public abstract class BluetoothProfileConnector<T> {
         mContext = context;
         mServiceListener = listener;
         IBluetoothManager mgr = BluetoothAdapter.getDefaultAdapter().getBluetoothManager();
+
+        // Preserve legacy compatibility where apps were depending on
+        // registerStateChangeCallback() performing a permissions check which
+        // has been relaxed in modern platform versions
+        if (context.getApplicationInfo().targetSdkVersion <= Build.VERSION_CODES.R
+                && context.checkSelfPermission(android.Manifest.permission.BLUETOOTH)
+                        != PackageManager.PERMISSION_GRANTED) {
+            throw new SecurityException("Need BLUETOOTH permission");
+        }
+
         if (mgr != null) {
             try {
                 mgr.registerStateChangeCallback(mBluetoothStateChangeCallback);

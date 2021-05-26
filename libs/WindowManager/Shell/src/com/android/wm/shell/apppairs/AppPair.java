@@ -88,10 +88,11 @@ class AppPair implements ShellTaskOrganizer.TaskListener, SplitLayout.LayoutChan
         ProtoLog.v(WM_SHELL_TASK_ORG, "pair task1=%d task2=%d in AppPair=%s",
                 task1.taskId, task2.taskId, this);
 
-        if (!task1.isResizeable || !task2.isResizeable) {
+        if (!task1.supportsMultiWindow || !task2.supportsMultiWindow) {
             ProtoLog.e(WM_SHELL_TASK_ORG,
-                    "Can't pair unresizeable tasks task1.isResizeable=%b task1.isResizeable=%b",
-                    task1.isResizeable, task2.isResizeable);
+                    "Can't pair tasks that doesn't support multi window, "
+                            + "task1.supportsMultiWindow=%b, task2.supportsMultiWindow=%b",
+                    task1.supportsMultiWindow, task2.supportsMultiWindow);
             return false;
         }
 

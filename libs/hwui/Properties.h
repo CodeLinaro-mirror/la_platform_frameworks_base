@@ -158,9 +158,29 @@ enum DebugLevel {
 #define PROPERTY_CAPTURE_SKP_FILENAME "debug.hwui.skp_filename"
 
 /**
+ * Controls whether HWUI will send timing hints to HintManager for
+ * better CPU scheduling. Accepted values are "true" and "false".
+ */
+#define PROPERTY_USE_HINT_MANAGER "debug.hwui.use_hint_manager"
+
+/**
+ * Percentage of frame time that's used for CPU work. The rest is
+ * reserved for GPU work. This is used with use_hint_manager to
+ * provide timing hints to HintManager. Accepted values are
+ * integer from 1-100.
+ */
+#define PROPERTY_TARGET_CPU_TIME_PERCENTAGE "debug.hwui.target_cpu_time_percent"
+
+/**
  * Property for whether this is running in the emulator.
  */
-#define PROPERTY_QEMU_KERNEL "ro.kernel.qemu"
+#define PROPERTY_IS_EMULATOR "ro.boot.qemu"
+
+/**
+ * Turns on the Skia GPU option "reduceOpsTaskSplitting" which improves GPU
+ * efficiency but may increase VRAM consumption. Default is "false".
+ */
+#define PROPERTY_REDUCE_OPS_TASK_SPLITTING "renderthread.skia.reduceopstasksplitting"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Misc
@@ -246,6 +266,9 @@ public:
     static int contextPriority;
 
     static float defaultSdrWhitePoint;
+
+    static bool useHintManager;
+    static int targetCpuTimePercentage;
 
 private:
     static ProfileType sProfileType;

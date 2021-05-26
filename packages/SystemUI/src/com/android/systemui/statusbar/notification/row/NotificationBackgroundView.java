@@ -29,9 +29,10 @@ import android.util.AttributeSet;
 import android.view.View;
 
 import com.android.internal.util.ArrayUtils;
-import com.android.systemui.Interpolators;
 import com.android.systemui.R;
-import com.android.systemui.statusbar.notification.ActivityLaunchAnimator;
+import com.android.systemui.animation.ActivityLaunchAnimator;
+import com.android.systemui.animation.Interpolators;
+import com.android.systemui.statusbar.notification.ExpandAnimationParameters;
 
 /**
  * A view that can be used for both the dimmed and normal background of an notification.
@@ -83,8 +84,7 @@ public class NotificationBackgroundView extends View {
             int bottom = mActualHeight;
             if (mBottomIsRounded
                     && mBottomAmountClips
-                    && !mExpandAnimationRunning
-                    && !mLastInSection) {
+                    && !mExpandAnimationRunning) {
                 bottom -= mClipBottomAmount;
             }
             int left = 0;
@@ -224,10 +224,9 @@ public class NotificationBackgroundView extends View {
     }
 
     /**
-     * Sets the current top and bottom roundness amounts for this background, between 0.0 (not
-     * rounded) and 1.0 (maximally rounded).
+     * Sets the current top and bottom radius for this background.
      */
-    public void setRoundness(float topRoundness, float bottomRoundness) {
+    public void setRadius(float topRoundness, float bottomRoundness) {
         if (topRoundness == mCornerRadii[0] && bottomRoundness == mCornerRadii[4]) {
             return;
         }
@@ -278,13 +277,14 @@ public class NotificationBackgroundView extends View {
         invalidate();
     }
 
-    public void setExpandAnimationParams(ActivityLaunchAnimator.ExpandAnimationParameters params) {
+    /** Set the current expand animation parameters. */
+    public void setExpandAnimationParams(ExpandAnimationParameters params) {
         mActualHeight = params.getHeight();
         mActualWidth = params.getWidth();
         float alphaProgress = Interpolators.ALPHA_IN.getInterpolation(
                 params.getProgress(
-                        ActivityLaunchAnimator.ANIMATION_DURATION_FADE_CONTENT /* delay */,
-                        ActivityLaunchAnimator.ANIMATION_DURATION_FADE_APP /* duration */));
+                        ActivityLaunchAnimator.ANIMATION_DELAY_FADE_IN_WINDOW /* delay */,
+                        ActivityLaunchAnimator.ANIMATION_DURATION_FADE_IN_WINDOW /* duration */));
         mBackground.setAlpha((int) (mDrawableAlpha * (1.0f - alphaProgress)));
         invalidate();
     }

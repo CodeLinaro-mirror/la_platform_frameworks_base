@@ -32,6 +32,7 @@ import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
 import android.content.pm.overlay.OverlayPaths;
+import android.content.pm.parsing.ParsingPackageRead;
 import android.content.pm.parsing.component.ParsedMainComponent;
 import android.os.BaseBundle;
 import android.os.Debug;
@@ -53,7 +54,6 @@ import org.xmlpull.v1.XmlPullParserException;
 import org.xmlpull.v1.XmlSerializer;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
 
@@ -81,6 +81,7 @@ public class PackageUserState {
     public int installReason;
     public @PackageManager.UninstallReason int uninstallReason;
     public String harmfulAppWarning;
+    public String splashScreenTheme;
 
     public ArraySet<String> disabledComponents;
     public ArraySet<String> enabledComponents;
@@ -130,6 +131,7 @@ public class PackageUserState {
         if (o.componentLabelIconOverrideMap != null) {
             this.componentLabelIconOverrideMap = new ArrayMap<>(o.componentLabelIconOverrideMap);
         }
+        splashScreenTheme = o.splashScreenTheme;
     }
 
     @Nullable
@@ -242,6 +244,7 @@ public class PackageUserState {
         return componentLabelIconOverrideMap.get(componentName);
     }
 
+
     /**
      * Test if this package is installed.
      */
@@ -308,6 +311,20 @@ public class PackageUserState {
                     + Debug.getCaller());
         }
         return result;
+    }
+
+    public boolean isPackageEnabled(@NonNull ParsingPackageRead pkg) {
+        switch (this.enabled) {
+            case COMPONENT_ENABLED_STATE_ENABLED:
+                return true;
+            case COMPONENT_ENABLED_STATE_DISABLED:
+            case COMPONENT_ENABLED_STATE_DISABLED_USER:
+            case COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED:
+                return false;
+            default:
+            case COMPONENT_ENABLED_STATE_DEFAULT:
+                return pkg.isEnabled();
+        }
     }
 
     public boolean isEnabled(ComponentInfo componentInfo, int flags) {
@@ -465,7 +482,11 @@ public class PackageUserState {
         }
         if (harmfulAppWarning == null && oldState.harmfulAppWarning != null
                 || (harmfulAppWarning != null
-                        && !harmfulAppWarning.equals(oldState.harmfulAppWarning))) {
+                && !harmfulAppWarning.equals(oldState.harmfulAppWarning))) {
+            return false;
+        }
+
+        if (!Objects.equals(splashScreenTheme, oldState.splashScreenTheme)) {
             return false;
         }
         return true;
@@ -491,6 +512,7 @@ public class PackageUserState {
         hashCode = 31 * hashCode + Objects.hashCode(disabledComponents);
         hashCode = 31 * hashCode + Objects.hashCode(enabledComponents);
         hashCode = 31 * hashCode + Objects.hashCode(harmfulAppWarning);
+        hashCode = 31 * hashCode + Objects.hashCode(splashScreenTheme);
         return hashCode;
     }
 

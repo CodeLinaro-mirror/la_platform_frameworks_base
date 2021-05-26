@@ -18,10 +18,14 @@ package com.android.server.pm.verify.domain;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.UserIdInt;
+import android.content.pm.Signature;
 import android.content.pm.verify.domain.DomainVerificationState;
+import android.os.UserHandle;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
+import android.util.PackageUtils;
 import android.util.SparseArray;
 import android.util.TypedXmlPullParser;
 import android.util.TypedXmlSerializer;
@@ -36,6 +40,7 @@ import org.xmlpull.v1.XmlPullParserException;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.UUID;
+import java.util.function.Function;
 
 public class DomainVerificationPersistence {
 
@@ -49,6 +54,7 @@ public class DomainVerificationPersistence {
     private static final String ATTR_PACKAGE_NAME = "packageName";
     private static final String ATTR_ID = "id";
     private static final String ATTR_HAS_AUTO_VERIFY_DOMAINS = "hasAutoVerifyDomains";
+    private static final String ATTR_SIGNATURE = "signature";
     private static final String TAG_USER_STATES = "user-states";
 
     public static final String TAG_USER_STATE = "user-state";
@@ -62,10 +68,19 @@ public class DomainVerificationPersistence {
     public static final String ATTR_NAME = "name";
     public static final String ATTR_STATE = "state";
 
+    /**
+     * @param pkgNameToSignature Converts package name to a string representation of its signature.
+     *                           Usually this is the SHA-256 hash from
+     *                           {@link PackageUtils#computeSignaturesSha256Digest(Signature[])},
+     *                           but can be an arbitrary string for testing purposes. Pass non-null
+     *                           to write out signatures, or null to ignore.
+     */
     public static void writeToXml(@NonNull TypedXmlSerializer xmlSerializer,
             @NonNull DomainVerificationStateMap<DomainVerificationPkgState> attached,
             @NonNull ArrayMap<String, DomainVerificationPkgState> pending,
-            @NonNull ArrayMap<String, DomainVerificationPkgState> restored) throws IOException {
+            @NonNull ArrayMap<String, DomainVerificationPkgState> restored,
+            @UserIdInt int userId, @Nullable Function<String, String> pkgNameToSignature)
+            throws IOException {
         try (SettingsXml.Serializer serializer = SettingsXml.serializer(xmlSerializer)) {
             try (SettingsXml.WriteSection ignored = serializer.startSection(
                     TAG_DOMAIN_VERIFICATIONS)) {
@@ -86,25 +101,27 @@ public class DomainVerificationPersistence {
                 }
 
                 try (SettingsXml.WriteSection activeSection = serializer.startSection(TAG_ACTIVE)) {
-                    writePackageStates(activeSection, active);
+                    writePackageStates(activeSection, active, userId, pkgNameToSignature);
                 }
 
                 try (SettingsXml.WriteSection restoredSection = serializer.startSection(
                         TAG_RESTORED)) {
-                    writePackageStates(restoredSection, restored.values());
+                    writePackageStates(restoredSection, restored.values(), userId,
+                            pkgNameToSignature);
                 }
             }
         }
     }
 
     private static void writePackageStates(@NonNull SettingsXml.WriteSection section,
-            @NonNull Collection<DomainVerificationPkgState> states) throws IOException {
+            @NonNull Collection<DomainVerificationPkgState> states, int userId,
+            @Nullable Function<String, String> pkgNameToSignature) throws IOException {
         if (states.isEmpty()) {
             return;
         }
 
         for (DomainVerificationPkgState state : states) {
-            writePkgStateToXml(section, state);
+            writePkgStateToXml(section, state, userId, pkgNameToSignature);
         }
     }
 
@@ -146,11 +163,12 @@ public class DomainVerificationPersistence {
      * been entered.
      */
     @Nullable
-    public static DomainVerificationPkgState createPkgStateFromXml(
+    private static DomainVerificationPkgState createPkgStateFromXml(
             @NonNull SettingsXml.ReadSection section) {
         String packageName = section.getString(ATTR_PACKAGE_NAME);
         String idString = section.getString(ATTR_ID);
         boolean hasAutoVerifyDomains = section.getBoolean(ATTR_HAS_AUTO_VERIFY_DOMAINS);
+        String signature = section.getString(ATTR_SIGNATURE);
         if (TextUtils.isEmpty(packageName) || TextUtils.isEmpty(idString)) {
             return null;
         }
@@ -172,7 +190,7 @@ public class DomainVerificationPersistence {
         }
 
         return new DomainVerificationPkgState(packageName, id, hasAutoVerifyDomains, stateMap,
-                userStates);
+                userStates, signature);
     }
 
     private static void readUserStates(@NonNull SettingsXml.ReadSection section,
@@ -196,20 +214,33 @@ public class DomainVerificationPersistence {
         }
     }
 
-    public static void writePkgStateToXml(@NonNull SettingsXml.WriteSection parentSection,
-            @NonNull DomainVerificationPkgState pkgState) throws IOException {
+    private static void writePkgStateToXml(@NonNull SettingsXml.WriteSection parentSection,
+            @NonNull DomainVerificationPkgState pkgState, @UserIdInt int userId,
+            @Nullable Function<String, String> pkgNameToSignature) throws IOException {
+        String packageName = pkgState.getPackageName();
+        String signature = pkgNameToSignature == null
+                ? null : pkgNameToSignature.apply(packageName);
+        if (signature == null) {
+            // If a package isn't available to get its signature, fallback to the previously stored
+            // result, which can occur if the package has been marked for restore but hasn't
+            // been installed on the new device yet.
+            signature = pkgState.getBackupSignatureHash();
+        }
+
         try (SettingsXml.WriteSection ignored =
                      parentSection.startSection(TAG_PACKAGE_STATE)
-                             .attribute(ATTR_PACKAGE_NAME, pkgState.getPackageName())
+                             .attribute(ATTR_PACKAGE_NAME, packageName)
                              .attribute(ATTR_ID, pkgState.getId().toString())
                              .attribute(ATTR_HAS_AUTO_VERIFY_DOMAINS,
-                                     pkgState.isHasAutoVerifyDomains())) {
+                                     pkgState.isHasAutoVerifyDomains())
+                             .attribute(ATTR_SIGNATURE, signature)) {
             writeStateMap(parentSection, pkgState.getStateMap());
-            writeUserStates(parentSection, pkgState.getUserStates());
+            writeUserStates(parentSection, userId, pkgState.getUserStates());
         }
     }
 
     private static void writeUserStates(@NonNull SettingsXml.WriteSection parentSection,
+            @UserIdInt int userId,
             @NonNull SparseArray<DomainVerificationInternalUserState> states) throws IOException {
         int size = states.size();
         if (size == 0) {
@@ -217,8 +248,15 @@ public class DomainVerificationPersistence {
         }
 
         try (SettingsXml.WriteSection section = parentSection.startSection(TAG_USER_STATES)) {
-            for (int index = 0; index < size; index++) {
-                writeUserStateToXml(section, states.valueAt(index));
+            if (userId == UserHandle.USER_ALL) {
+                for (int index = 0; index < size; index++) {
+                    writeUserStateToXml(section, states.valueAt(index));
+                }
+            } else {
+                DomainVerificationInternalUserState userState = states.get(userId);
+                if (userState != null) {
+                    writeUserStateToXml(section, userState);
+                }
             }
         }
     }
@@ -245,14 +283,14 @@ public class DomainVerificationPersistence {
      * entered.
      */
     @Nullable
-    public static DomainVerificationInternalUserState createUserStateFromXml(
+    private static DomainVerificationInternalUserState createUserStateFromXml(
             @NonNull SettingsXml.ReadSection section) {
         int userId = section.getInt(ATTR_USER_ID);
         if (userId == -1) {
             return null;
         }
 
-        boolean allowLinkHandling = section.getBoolean(ATTR_ALLOW_LINK_HANDLING, true);
+        boolean allowLinkHandling = section.getBoolean(ATTR_ALLOW_LINK_HANDLING, false);
         ArraySet<String> enabledHosts = new ArraySet<>();
 
         SettingsXml.ChildSection child = section.children();
@@ -274,7 +312,7 @@ public class DomainVerificationPersistence {
         }
     }
 
-    public static void writeUserStateToXml(@NonNull SettingsXml.WriteSection parentSection,
+    private static void writeUserStateToXml(@NonNull SettingsXml.WriteSection parentSection,
             @NonNull DomainVerificationInternalUserState userState) throws IOException {
         try (SettingsXml.WriteSection section =
                      parentSection.startSection(TAG_USER_STATE)

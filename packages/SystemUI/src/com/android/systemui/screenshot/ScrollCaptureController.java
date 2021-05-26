@@ -16,19 +16,28 @@
 
 package com.android.systemui.screenshot;
 
-import android.annotation.UiThread;
 import android.content.Context;
-import android.net.Uri;
+import android.graphics.Bitmap;
+import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.provider.Settings;
 import android.util.Log;
+import android.view.ScrollCaptureResponse;
 
+import androidx.concurrent.futures.CallbackToFutureAdapter;
+import androidx.concurrent.futures.CallbackToFutureAdapter.Completer;
+
+import com.android.internal.annotations.VisibleForTesting;
+import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.screenshot.ScrollCaptureClient.CaptureResult;
-import com.android.systemui.screenshot.ScrollCaptureClient.Connection;
 import com.android.systemui.screenshot.ScrollCaptureClient.Session;
 
-import java.time.ZonedDateTime;
-import java.util.UUID;
+import com.google.common.util.concurrent.ListenableFuture;
+
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+
+import javax.inject.Inject;
 
 /**
  * Interaction controller between the UI and ScrollCaptureClient.
@@ -47,44 +56,143 @@ public class ScrollCaptureController {
     // or if the desired bitmap size is reached.
     private boolean mFinishOnBoundary;
 
-    private Session mSession;
-
     public static final int MAX_HEIGHT = 12000;
 
     private final Context mContext;
-
-    private final Executor mUiExecutor;
     private final Executor mBgExecutor;
-    private final ImageExporter mImageExporter;
     private final ImageTileSet mImageTileSet;
+    private final ScrollCaptureClient mClient;
 
-    private ZonedDateTime mCaptureTime;
-    private UUID mRequestId;
-    private ScrollCaptureCallback mCaptureCallback;
+    private Completer<LongScreenshot> mCaptureCompleter;
 
-    public ScrollCaptureController(Context context, Executor uiExecutor, Executor bgExecutor,
-            ImageExporter exporter) {
+    private ListenableFuture<Session> mSessionFuture;
+    private Session mSession;
+    private ListenableFuture<CaptureResult> mTileFuture;
+    private ListenableFuture<Void> mEndFuture;
+
+    static class LongScreenshot {
+        private final ImageTileSet mImageTileSet;
+        private final Session mSession;
+
+        LongScreenshot(Session session, ImageTileSet imageTileSet) {
+            mSession = session;
+            mImageTileSet = imageTileSet;
+        }
+
+        /** Returns a bitmap containing the combinded result. */
+        public Bitmap toBitmap() {
+            return mImageTileSet.toBitmap();
+        }
+
+        public Bitmap toBitmap(Rect bounds) {
+            return mImageTileSet.toBitmap(bounds);
+        }
+
+        /** Releases image resources from the screenshot. */
+        public void release() {
+            Log.d(TAG, "LongScreenshot :: release()");
+            mImageTileSet.clear();
+            mSession.release();
+        }
+
+        public int getLeft() {
+            return mImageTileSet.getLeft();
+        }
+
+        public int getTop() {
+            return mImageTileSet.getTop();
+        }
+
+        public int getBottom() {
+            return mImageTileSet.getBottom();
+        }
+
+        public int getWidth() {
+            return mImageTileSet.getWidth();
+        }
+
+        public int getHeight() {
+            return mImageTileSet.getHeight();
+        }
+
+        /** @return the height of the visible area of the scrolling page, in pixels */
+        public int getPageHeight() {
+            return mSession.getPageHeight();
+        }
+
+        @Override
+        public String toString() {
+            return "LongScreenshot{w=" + mImageTileSet.getWidth()
+                    + ", h=" + mImageTileSet.getHeight() + "}";
+        }
+
+        public Drawable getDrawable() {
+            return mImageTileSet.getDrawable();
+        }
+    }
+
+    @Inject
+    ScrollCaptureController(Context context, @Background Executor bgExecutor,
+            ScrollCaptureClient client, ImageTileSet imageTileSet) {
         mContext = context;
-        mUiExecutor = uiExecutor;
         mBgExecutor = bgExecutor;
-        mImageExporter = exporter;
-        mImageTileSet = new ImageTileSet(context.getMainThreadHandler());
+        mClient = client;
+        mImageTileSet = imageTileSet;
+    }
+
+    @VisibleForTesting
+    float getTargetTopSizeRatio() {
+        return IDEAL_PORTION_ABOVE;
     }
 
     /**
-     * Run scroll capture!
+     * Run scroll capture. Performs a batch capture, collecting image tiles.
      *
-     * @param connection connection to the remote window to be used
-     * @param callback request callback to report back to the service
+     * @param response a scroll capture response from a previous request which is
+     *                 {@link ScrollCaptureResponse#isConnected() connected}.
+     * @return a future ImageTile set containing the result
      */
-    public void start(Connection connection, ScrollCaptureCallback callback) {
-        mCaptureTime = ZonedDateTime.now();
-        mRequestId = UUID.randomUUID();
-        mCaptureCallback = callback;
+    ListenableFuture<LongScreenshot> run(ScrollCaptureResponse response) {
+        Log.d(TAG, "run: " + response);
+        return CallbackToFutureAdapter.getFuture(completer -> {
+            Log.d(TAG, "getFuture(ImageTileSet) ");
+            mCaptureCompleter = completer;
+            mBgExecutor.execute(() -> {
+                Log.d(TAG, "bgExecutor.execute");
+                float maxPages = Settings.Secure.getFloat(mContext.getContentResolver(),
+                        SETTING_KEY_MAX_PAGES, MAX_PAGES_DEFAULT);
+                Log.d(TAG, "client start, maxPages=" + maxPages);
+                mSessionFuture = mClient.start(response, maxPages);
+                mSessionFuture.addListener(this::onStartComplete, mContext.getMainExecutor());
+            });
+            return "<batch scroll capture>";
+        });
+    }
 
-        float maxPages = Settings.Secure.getFloat(mContext.getContentResolver(),
-                SETTING_KEY_MAX_PAGES, MAX_PAGES_DEFAULT);
-        connection.start(this::startCapture, maxPages);
+    private void onStartComplete() {
+        try {
+            mSession = mSessionFuture.get();
+            Log.d(TAG, "got session " + mSession);
+            requestNextTile(0);
+        } catch (InterruptedException | ExecutionException e) {
+            // Failure to start, propagate to caller
+            Log.d(TAG, "session start failed!");
+            mCaptureCompleter.setException(e);
+        }
+    }
+
+    private void requestNextTile(int topPx) {
+        Log.d(TAG, "requestNextTile: " + topPx);
+        mTileFuture = mSession.requestTile(topPx);
+        mTileFuture.addListener(() -> {
+            try {
+                Log.d(TAG, "onCaptureResult");
+                onCaptureResult(mTileFuture.get());
+            } catch (InterruptedException | ExecutionException e) {
+                Log.e(TAG, "requestTile failed!", e);
+                mCaptureCompleter.setException(e);
+            }
+        }, mContext.getMainExecutor());
     }
 
     private void onCaptureResult(CaptureResult result) {
@@ -95,7 +203,7 @@ public class ScrollCaptureController {
                 && result.captured.height() < result.requested.height();
         boolean finish = false;
 
-        if (partialResult || emptyResult) {
+        if (emptyResult) {
             // Potentially reached a vertical boundary. Extend in the other direction.
             if (mFinishOnBoundary) {
                 Log.d(TAG, "Partial/empty: finished!");
@@ -109,12 +217,12 @@ public class ScrollCaptureController {
                 Log.d(TAG, "Partial/empty: cleared, switch direction to finish");
             }
         } else {
-            // Got the full requested result, but may have got enough bitmap data now
+            // Got a non-empty result, but may already have enough bitmap data now
             int expectedTiles = mImageTileSet.size() + 1;
             if (expectedTiles >= mSession.getMaxTiles()) {
                 Log.d(TAG, "Hit max tiles: finished");
-                // If we ever hit the max tiles, we've got enough bitmap data to finish (even if we
-                // weren't sure we'd finish on this pass).
+                // If we ever hit the max tiles, we've got enough bitmap data to finish
+                // (even if we weren't sure we'd finish on this pass).
                 finish = true;
             } else {
                 if (mScrollingUp && !mFinishOnBoundary) {
@@ -146,49 +254,34 @@ public class ScrollCaptureController {
         }
 
         if (finish) {
-            Session session = mSession;
-            mSession = null;
             Log.d(TAG, "Stop.");
-            mUiExecutor.execute(() -> afterCaptureComplete(session));
+            finishCapture();
             return;
         }
 
-        int nextTop = (mScrollingUp)
-                ? result.captured.top - mSession.getTileHeight() : result.captured.bottom;
-        Log.d(TAG, "requestTile: " + nextTop);
-        mSession.requestTile(nextTop, /* consumer */ this::onCaptureResult);
-    }
-
-    private void startCapture(Session session) {
-        mSession = session;
-        session.requestTile(0, this::onCaptureResult);
-    }
-
-    @UiThread
-    void afterCaptureComplete(Session session) {
-        Log.d(TAG, "afterCaptureComplete");
-
-        if (mImageTileSet.isEmpty()) {
-            mCaptureCallback.onError();
+        int nextTop;
+        if (emptyResult) {
+            // An empty result caused the direction the flip,
+            // so use the requested edges to determine the next top.
+            nextTop = (mScrollingUp)
+                    ? result.requested.top - mSession.getTileHeight()
+                    : result.requested.bottom;
         } else {
-            mCaptureCallback.onComplete(mImageTileSet, session.getPageHeight());
+            nextTop = (mScrollingUp)
+                    ? result.captured.top - mSession.getTileHeight()
+                    : result.captured.bottom;
         }
+        requestNextTile(nextTop);
     }
 
-    /**
-     * Callback for image capture completion or error.
-     */
-    public interface ScrollCaptureCallback {
-        void onComplete(ImageTileSet imageTileSet, int pageHeight);
-        void onError();
+    private void finishCapture() {
+        Log.d(TAG, "finishCapture()");
+        mEndFuture = mSession.end();
+        mEndFuture.addListener(() -> {
+            Log.d(TAG, "endCapture completed");
+            // Provide result to caller and complete the top-level future
+            // Caller is responsible for releasing this resource (ImageReader/HardwareBuffers)
+            mCaptureCompleter.set(new LongScreenshot(mSession, mImageTileSet));
+        }, mContext.getMainExecutor());
     }
-
-    /**
-     * Callback for image export completion or error.
-     */
-    public interface ExportCallback {
-        void onExportComplete(Uri outputUri);
-        void onError();
-    }
-
 }

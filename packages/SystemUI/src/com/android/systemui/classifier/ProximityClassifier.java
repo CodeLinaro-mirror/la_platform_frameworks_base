@@ -17,13 +17,16 @@
 package com.android.systemui.classifier;
 
 import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.BRIGHTLINE_FALSING_PROXIMITY_PERCENT_COVERED_THRESHOLD;
+import static com.android.systemui.classifier.Classifier.BRIGHTNESS_SLIDER;
+import static com.android.systemui.classifier.Classifier.QS_COLLAPSE;
+import static com.android.systemui.classifier.Classifier.QS_SWIPE;
 import static com.android.systemui.classifier.Classifier.QUICK_SETTINGS;
 
 import android.provider.DeviceConfig;
 import android.view.MotionEvent;
 
+import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.util.DeviceConfigProxy;
-import com.android.systemui.util.sensors.ProximitySensor;
 
 import java.util.Locale;
 
@@ -104,36 +107,40 @@ class ProximityClassifier extends FalsingClassifier {
 
     @Override
     public void onProximityEvent(
-            ProximitySensor.ThresholdSensorEvent proximityEvent) {
-        boolean near = proximityEvent.getBelow();
+            FalsingManager.ProximityEvent proximityEvent) {
+        boolean covered = proximityEvent.getCovered();
         long timestampNs = proximityEvent.getTimestampNs();
-        logDebug("Sensor is: " + near + " at time " + timestampNs);
-        update(near, timestampNs);
+        logDebug("Sensor is: " + covered + " at time " + timestampNs);
+        update(covered, timestampNs);
     }
 
     @Override
-    Result calculateFalsingResult(double historyPenalty, double historyConfidence) {
-        if (getInteractionType() == QUICK_SETTINGS) {
+    Result calculateFalsingResult(
+            @Classifier.InteractionType int interactionType,
+            double historyBelief, double historyConfidence) {
+        if (interactionType == QUICK_SETTINGS || interactionType == BRIGHTNESS_SLIDER
+                || interactionType == QS_COLLAPSE || interactionType == QS_SWIPE) {
             return Result.passed(0);
         }
-
-        logInfo("Percent of gesture in proximity: " + mPercentNear);
 
         if (mPercentNear > mPercentCoveredThreshold) {
             Result longSwipeResult = mDistanceClassifier.isLongSwipe();
             return longSwipeResult.isFalse()
-                    ? Result.falsed(0.5, getReason(longSwipeResult)) : Result.passed(0.5);
+                    ? falsed(
+                            0.5, getReason(longSwipeResult, mPercentNear, mPercentCoveredThreshold))
+                    : Result.passed(0.5);
         }
 
         return Result.passed(0.5);
     }
 
-    private String getReason(Result longSwipeResult) {
+    private static String getReason(Result longSwipeResult, float percentNear,
+            float percentCoveredThreshold) {
         return String.format(
                 (Locale) null,
                 "{percentInProximity=%f, threshold=%f, distanceClassifier=%s}",
-                mPercentNear,
-                mPercentCoveredThreshold,
+                percentNear,
+                percentCoveredThreshold,
                 longSwipeResult.getReason());
     }
 

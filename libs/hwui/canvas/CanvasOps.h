@@ -24,13 +24,15 @@
 #include <SkImage.h>
 #include <SkPicture.h>
 #include <SkRuntimeEffect.h>
-#include <hwui/Bitmap.h>
-#include <log/log.h>
-#include "CanvasProperty.h"
-#include "Points.h"
 
+#include <log/log.h>
+
+#include "hwui/Bitmap.h"
+#include "CanvasProperty.h"
 #include "CanvasOpTypes.h"
 #include "Layer.h"
+#include "Points.h"
+#include "RenderNode.h"
 
 #include <experimental/type_traits>
 #include <utility>
@@ -143,38 +145,12 @@ struct CanvasOp<CanvasOpType::DrawCircleProperty> {
     ASSERT_DRAWABLE()
 };
 
-template<>
-struct CanvasOp<CanvasOpType::DrawRippleProperty> {
-    sp<uirenderer::CanvasPropertyPrimitive> x;
-    sp<uirenderer::CanvasPropertyPrimitive> y;
-    sp<uirenderer::CanvasPropertyPrimitive> radius;
-    sp<uirenderer::CanvasPropertyPaint> paint;
-    sp<uirenderer::CanvasPropertyPrimitive> progress;
-    sk_sp<SkRuntimeEffect> effect;
+template <>
+struct CanvasOp<CanvasOpType::DrawRippleDrawable> {
+    skiapipeline::RippleDrawableParams params;
 
     void draw(SkCanvas* canvas) const {
-        SkRuntimeShaderBuilder runtimeEffectBuilder(effect);
-
-        SkRuntimeShaderBuilder::BuilderUniform center = runtimeEffectBuilder.uniform("in_origin");
-        if (center.fVar != nullptr) {
-            center = SkV2{x->value, y->value};
-        }
-
-        SkRuntimeShaderBuilder::BuilderUniform radiusU =
-                runtimeEffectBuilder.uniform("in_radius");
-        if (radiusU.fVar != nullptr) {
-            radiusU = radius->value;
-        }
-
-        SkRuntimeShaderBuilder::BuilderUniform progressU =
-                runtimeEffectBuilder.uniform("in_progress");
-        if (progressU.fVar != nullptr) {
-            progressU = progress->value;
-        }
-
-        SkPaint paintMod = paint->value;
-        paintMod.setShader(runtimeEffectBuilder.makeShader(nullptr, false));
-        canvas->drawCircle(x->value, y->value, radius->value, paintMod);
+        skiapipeline::AnimatedRippleDrawable::draw(canvas, params);
     }
     ASSERT_DRAWABLE()
 };
@@ -448,6 +424,11 @@ struct CanvasOp<CanvasOpType::DrawPicture> {
 template<>
 struct CanvasOp<CanvasOpType::DrawLayer> {
     sp<Layer> layer;
+};
+
+template<>
+struct CanvasOp<CanvasOpType::DrawRenderNode> {
+    sp<RenderNode> renderNode;
 };
 
 // cleanup our macros

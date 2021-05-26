@@ -81,6 +81,22 @@ public abstract class WindowManagerInternal {
         void logTrace(
                 String where, String callingParams, byte[] a11yDump, int callingUid,
                 StackTraceElement[] stackTrace);
+
+        /**
+         * Add an accessibility trace entry.
+         *
+         * @param where A string to identify this log entry, which can be used to filter/search
+         *        through the tracing file.
+         * @param callingParams The parameters for the method to be logged.
+         * @param a11yDump The proto byte array for a11y state when the entry is generated.
+         * @param callingUid The calling uid.
+         * @param callStack The call stack of the method to be logged.
+         * @param timeStamp The time when the method to be logged is called.
+         * @param processId The calling process Id.
+         * @param threadId The calling thread Id.
+         */
+        void logTrace(String where, String callingParams, byte[] a11yDump, int callingUid,
+                StackTraceElement[] callStack, long timeStamp, int processId, long threadId);
     }
 
     /**
@@ -113,7 +129,7 @@ public abstract class WindowManagerInternal {
          *
          * @param magnificationRegion the current magnification region
          */
-        public void onMagnificationRegionChanged(Region magnificationRegion);
+        void onMagnificationRegionChanged(Region magnificationRegion);
 
         /**
          * Called when an application requests a rectangle on the screen to allow
@@ -124,20 +140,27 @@ public abstract class WindowManagerInternal {
          * @param right The rectangle right.
          * @param bottom The rectangle bottom.
          */
-        public void onRectangleOnScreenRequested(int left, int top, int right, int bottom);
+        void onRectangleOnScreenRequested(int left, int top, int right, int bottom);
 
         /**
          * Notifies that the rotation changed.
          *
          * @param rotation The current rotation.
          */
-        public void onRotationChanged(int rotation);
+        void onRotationChanged(int rotation);
 
         /**
          * Notifies that the context of the user changed. For example, an application
          * was started.
          */
-        public void onUserContextChanged();
+        void onUserContextChanged();
+
+        /**
+         * Notifies that the IME window visibility changed.
+         * @param shown {@code true} means the IME window shows on the screen. Otherwise it's
+         *                           hidden.
+         */
+        void onImeWindowVisibilityChanged(boolean shown);
     }
 
     /**
@@ -221,7 +244,8 @@ public abstract class WindowManagerInternal {
                 DragState state, Display display, InputManagerService service,
                 InputChannel source) {
             state.register(display);
-            return service.transferTouchFocus(source, state.getInputChannel());
+            return service.transferTouchFocus(source, state.getInputChannel(),
+                    true /* isDragDrop */);
         }
 
         /**
@@ -450,24 +474,15 @@ public abstract class WindowManagerInternal {
     public abstract int getInputMethodWindowVisibleHeight(int displayId);
 
     /**
-     * Notifies WindowManagerService that the current IME window status is being changed.
+     * Notifies WindowManagerService that the expected back-button behavior might have changed.
      *
      * <p>Only {@link com.android.server.inputmethod.InputMethodManagerService} is the expected and
      * tested caller of this method.</p>
      *
-     * @param imeToken token to track the active input method. Corresponding IME windows can be
-     *                 identified by checking {@link android.view.WindowManager.LayoutParams#token}.
-     *                 Note that there is no guarantee that the corresponding window is already
-     *                 created
-     * @param imeWindowVisible whether the active IME thinks that its window should be visible or
-     *                         hidden, no matter how WindowManagerService will react / has reacted
-     *                         to corresponding API calls.  Note that this state is not guaranteed
-     *                         to be synchronized with state in WindowManagerService.
      * @param dismissImeOnBackKeyPressed {@code true} if the software keyboard is shown and the back
      *                                   key is expected to dismiss the software keyboard.
      */
-    public abstract void updateInputMethodWindowStatus(@NonNull IBinder imeToken,
-            boolean imeWindowVisible, boolean dismissImeOnBackKeyPressed);
+    public abstract void setDismissImeOnBackKeyPressed(boolean dismissImeOnBackKeyPressed);
 
     /**
      * Notifies WindowManagerService that the current IME window status is being changed.

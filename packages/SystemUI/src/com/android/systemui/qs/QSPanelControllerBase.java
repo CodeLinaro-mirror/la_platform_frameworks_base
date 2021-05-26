@@ -22,7 +22,6 @@ import static com.android.systemui.qs.dagger.QSFragmentModule.QS_USING_MEDIA_PLA
 import android.content.ComponentName;
 import android.content.res.Configuration;
 import android.metrics.LogMaker;
-import android.view.View;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.UiEventLogger;
@@ -67,6 +66,7 @@ public abstract class QSPanelControllerBase<T extends QSPanel> extends ViewContr
     private final DumpManager mDumpManager;
     private final FeatureFlags mFeatureFlags;
     protected final ArrayList<TileRecord> mRecords = new ArrayList<>();
+    private boolean mShouldUseSplitNotificationShade;
 
     private int mLastOrientation;
     private String mCachedSpecs = "";
@@ -74,13 +74,13 @@ public abstract class QSPanelControllerBase<T extends QSPanel> extends ViewContr
     private float mRevealExpansion;
 
     private final QSHost.Callback mQSHostCallback = this::setTiles;
-    protected boolean mShowLabels = true;
-    protected boolean mQSLabelFlag;
 
     private final QSPanel.OnConfigurationChangedListener mOnConfigurationChangedListener =
             new QSPanel.OnConfigurationChangedListener() {
                 @Override
                 public void onConfigurationChange(Configuration newConfig) {
+                    mShouldUseSplitNotificationShade =
+                            Utils.shouldUseSplitNotificationShade(mFeatureFlags, getResources());
                     if (newConfig.orientation != mLastOrientation) {
                         mLastOrientation = newConfig.orientation;
                         switchTileLayout(false);
@@ -118,12 +118,13 @@ public abstract class QSPanelControllerBase<T extends QSPanel> extends ViewContr
         mQSLogger = qsLogger;
         mDumpManager = dumpManager;
         mFeatureFlags = featureFlags;
-        mQSLabelFlag = featureFlags.isQSLabelsEnabled();
+        mShouldUseSplitNotificationShade =
+                Utils.shouldUseSplitNotificationShade(mFeatureFlags, getResources());
     }
 
     @Override
     protected void onInit() {
-        mView.initialize(mQSLabelFlag);
+        mView.initialize();
         mQSLogger.logAllTilesChangeListening(mView.isListening(), mView.getDumpableTag(), "");
     }
 
@@ -197,11 +198,10 @@ public abstract class QSPanelControllerBase<T extends QSPanel> extends ViewContr
     private void addTile(final QSTile tile, boolean collapsedView) {
         final TileRecord r = new TileRecord();
         r.tile = tile;
-        r.tileView = mHost.createTileView(tile, collapsedView);
+        r.tileView = mHost.createTileView(getContext(), tile, collapsedView);
         mView.addTile(r);
         mRecords.add(r);
         mCachedSpecs = getTilesSpecs();
-
     }
 
     /** */
@@ -209,7 +209,7 @@ public abstract class QSPanelControllerBase<T extends QSPanel> extends ViewContr
         final String spec = CustomTile.toSpec(tile);
         for (TileRecord record : mRecords) {
             if (record.tile.getTileSpec().equals(spec)) {
-                record.tile.click();
+                record.tile.click(null /* view */);
                 break;
             }
         }
@@ -223,6 +223,9 @@ public abstract class QSPanelControllerBase<T extends QSPanel> extends ViewContr
         return mHost.createTile(subPanel);
     }
 
+    boolean areThereTiles() {
+        return !mRecords.isEmpty();
+    }
 
     QSTileView getTileView(QSTile tile) {
         for (QSPanelControllerBase.TileRecord r : mRecords) {
@@ -290,13 +293,6 @@ public abstract class QSPanelControllerBase<T extends QSPanel> extends ViewContr
     boolean switchTileLayout(boolean force) {
         /** Whether or not the QuickQSPanel currently contains a media player. */
         boolean horizontal = shouldUseHorizontalLayout();
-        if (mView.getDivider() != null) {
-            if (!horizontal && mUsingMediaPlayer && mMediaHost.getVisible()) {
-                mView.getDivider().setVisibility(View.VISIBLE);
-            } else {
-                mView.getDivider().setVisibility(View.GONE);
-            }
-        }
         if (horizontal != mUsingHorizontalLayout || force) {
             mUsingHorizontalLayout = horizontal;
             for (QSPanelControllerBase.TileRecord record : mRecords) {
@@ -345,7 +341,7 @@ public abstract class QSPanelControllerBase<T extends QSPanel> extends ViewContr
     }
 
     boolean shouldUseHorizontalLayout() {
-        if (Utils.shouldUseSplitNotificationShade(mFeatureFlags, getResources()))  {
+        if (mShouldUseSplitNotificationShade)  {
             return false;
         }
         return mUsingMediaPlayer && mMediaHost.getVisible()

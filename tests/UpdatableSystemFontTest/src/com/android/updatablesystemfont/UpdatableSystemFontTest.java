@@ -16,193 +16,329 @@
 
 package com.android.updatablesystemfont;
 
+import static android.os.ParcelFileDescriptor.MODE_READ_ONLY;
+
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth.assertWithMessage;
 
+import static org.junit.Assume.assumeTrue;
+
+import static java.util.concurrent.TimeUnit.SECONDS;
+
+import android.app.UiAutomation;
+import android.content.Context;
+import android.graphics.fonts.FontFamilyUpdateRequest;
+import android.graphics.fonts.FontFileUpdateRequest;
+import android.graphics.fonts.FontManager;
+import android.os.ParcelFileDescriptor;
 import android.platform.test.annotations.RootPermissionTest;
+import android.security.FileIntegrityManager;
+import android.text.FontConfig;
+import android.util.Log;
+import android.util.Pair;
 
-import com.android.fsverity.AddFsVerityCertRule;
-import com.android.tradefed.device.DeviceNotAvailableException;
-import com.android.tradefed.log.LogUtil.CLog;
-import com.android.tradefed.testtype.DeviceJUnit4ClassRunner;
-import com.android.tradefed.testtype.junit4.BaseHostJUnit4Test;
-import com.android.tradefed.util.CommandResult;
-import com.android.tradefed.util.CommandStatus;
+import androidx.annotation.Nullable;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
+
+import com.android.compatibility.common.util.StreamUtil;
+import com.android.compatibility.common.util.SystemUtil;
 
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import java.util.concurrent.TimeUnit;
-import java.util.function.Supplier;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 /**
- * Tests if fonts can be updated by 'cmd font'.
+ * Tests if fonts can be updated by {@link FontManager} API.
  */
 @RootPermissionTest
-@RunWith(DeviceJUnit4ClassRunner.class)
-public class UpdatableSystemFontTest extends BaseHostJUnit4Test {
+@RunWith(AndroidJUnit4.class)
+public class UpdatableSystemFontTest {
 
+    private static final String TAG = "UpdatableSystemFontTest";
+    private static final String SYSTEM_FONTS_DIR = "/system/fonts/";
+    private static final String DATA_FONTS_DIR = "/data/fonts/files/";
     private static final String CERT_PATH = "/data/local/tmp/UpdatableSystemFontTestCert.der";
+    private static final String NOTO_COLOR_EMOJI_POSTSCRIPT_NAME = "NotoColorEmoji";
 
-    private static final Pattern PATTERN_FONT = Pattern.compile("path = ([^, \n]*)");
-    private static final String NOTO_COLOR_EMOJI_TTF = "NotoColorEmoji.ttf";
-    private static final String TEST_NOTO_COLOR_EMOJI_V1_TTF =
-            "/data/local/tmp/UpdatableSystemFontTestNotoColorEmojiV1.ttf";
-    private static final String TEST_NOTO_COLOR_EMOJI_V1_TTF_FSV_SIG =
-            "/data/local/tmp/UpdatableSystemFontTestNotoColorEmojiV1.ttf.fsv_sig";
-    private static final String TEST_NOTO_COLOR_EMOJI_V2_TTF =
-            "/data/local/tmp/UpdatableSystemFontTestNotoColorEmojiV2.ttf";
-    private static final String TEST_NOTO_COLOR_EMOJI_V2_TTF_FSV_SIG =
-            "/data/local/tmp/UpdatableSystemFontTestNotoColorEmojiV2.ttf.fsv_sig";
     private static final String ORIGINAL_NOTO_COLOR_EMOJI_TTF =
             "/data/local/tmp/NotoColorEmoji.ttf";
     private static final String ORIGINAL_NOTO_COLOR_EMOJI_TTF_FSV_SIG =
             "/data/local/tmp/UpdatableSystemFontTestNotoColorEmoji.ttf.fsv_sig";
+    // A font with revision == 0.
+    private static final String TEST_NOTO_COLOR_EMOJI_V0_TTF =
+            "/data/local/tmp/UpdatableSystemFontTestNotoColorEmojiV0.ttf";
+    private static final String TEST_NOTO_COLOR_EMOJI_V0_TTF_FSV_SIG =
+            "/data/local/tmp/UpdatableSystemFontTestNotoColorEmojiV0.ttf.fsv_sig";
+    // A font with revision == original + 1
+    private static final String TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF =
+            "/data/local/tmp/UpdatableSystemFontTestNotoColorEmojiVPlus1.ttf";
+    private static final String TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF_FSV_SIG =
+            "/data/local/tmp/UpdatableSystemFontTestNotoColorEmojiVPlus1.ttf.fsv_sig";
+    // A font with revision == original + 2
+    private static final String TEST_NOTO_COLOR_EMOJI_VPLUS2_TTF =
+            "/data/local/tmp/UpdatableSystemFontTestNotoColorEmojiVPlus2.ttf";
+    private static final String TEST_NOTO_COLOR_EMOJI_VPLUS2_TTF_FSV_SIG =
+            "/data/local/tmp/UpdatableSystemFontTestNotoColorEmojiVPlus2.ttf.fsv_sig";
 
-    @Rule
-    public final AddFsVerityCertRule mAddFsverityCertRule =
-            new AddFsVerityCertRule(this, CERT_PATH);
+    private static final String EMOJI_RENDERING_TEST_APP_ID = "com.android.emojirenderingtestapp";
+    private static final String EMOJI_RENDERING_TEST_ACTIVITY =
+            EMOJI_RENDERING_TEST_APP_ID + "/.EmojiRenderingTestActivity";
+    private static final long ACTIVITY_TIMEOUT_MILLIS = SECONDS.toMillis(10);
+
+    private String mKeyId;
+    private FontManager mFontManager;
 
     @Before
     public void setUp() throws Exception {
-        expectRemoteCommandToSucceed("cmd font clear");
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        // Run tests only if updatable system font is enabled.
+        FileIntegrityManager fim = context.getSystemService(FileIntegrityManager.class);
+        assumeTrue(fim != null);
+        assumeTrue(fim.isApkVeritySupported());
+        mKeyId = insertCert(CERT_PATH);
+        mFontManager = context.getSystemService(FontManager.class);
+        expectCommandToSucceed("cmd font clear");
     }
 
     @After
     public void tearDown() throws Exception {
-        expectRemoteCommandToSucceed("cmd font clear");
+        // Ignore errors because this may fail if updatable system font is not enabled.
+        runShellCommand("cmd font clear", null);
+        if (mKeyId != null) {
+            expectCommandToSucceed("mini-keyctl unlink " + mKeyId + " .fs-verity");
+        }
     }
 
     @Test
     public void updateFont() throws Exception {
-        expectRemoteCommandToSucceed(String.format("cmd font update %s %s",
-                TEST_NOTO_COLOR_EMOJI_V1_TTF, TEST_NOTO_COLOR_EMOJI_V1_TTF_FSV_SIG));
-        String fontPath = getFontPath(NOTO_COLOR_EMOJI_TTF);
-        assertThat(fontPath).startsWith("/data/fonts/files/");
+        assertThat(updateFontFile(
+                TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF, TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF_FSV_SIG))
+                .isEqualTo(FontManager.RESULT_SUCCESS);
+        String fontPath = getFontPath(NOTO_COLOR_EMOJI_POSTSCRIPT_NAME);
+        assertThat(fontPath).startsWith(DATA_FONTS_DIR);
+        // The updated font should be readable and unmodifiable.
+        expectCommandToSucceed("dd status=none if=" + fontPath + " of=/dev/null");
+        expectCommandToFail("dd status=none if=" + CERT_PATH + " of=" + fontPath);
     }
 
     @Test
     public void updateFont_twice() throws Exception {
-        expectRemoteCommandToSucceed(String.format("cmd font update %s %s",
-                TEST_NOTO_COLOR_EMOJI_V1_TTF, TEST_NOTO_COLOR_EMOJI_V1_TTF_FSV_SIG));
-        String fontPath = getFontPath(NOTO_COLOR_EMOJI_TTF);
-        expectRemoteCommandToSucceed(String.format("cmd font update %s %s",
-                TEST_NOTO_COLOR_EMOJI_V2_TTF, TEST_NOTO_COLOR_EMOJI_V2_TTF_FSV_SIG));
-        String fontPath2 = getFontPath(NOTO_COLOR_EMOJI_TTF);
-        assertThat(fontPath2).startsWith("/data/fonts/files/");
+        assertThat(updateFontFile(
+                TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF, TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF_FSV_SIG))
+                .isEqualTo(FontManager.RESULT_SUCCESS);
+        String fontPath = getFontPath(NOTO_COLOR_EMOJI_POSTSCRIPT_NAME);
+        assertThat(updateFontFile(
+                TEST_NOTO_COLOR_EMOJI_VPLUS2_TTF, TEST_NOTO_COLOR_EMOJI_VPLUS2_TTF_FSV_SIG))
+                .isEqualTo(FontManager.RESULT_SUCCESS);
+        String fontPath2 = getFontPath(NOTO_COLOR_EMOJI_POSTSCRIPT_NAME);
+        assertThat(fontPath2).startsWith(DATA_FONTS_DIR);
         assertThat(fontPath2).isNotEqualTo(fontPath);
+        // The new file should be readable.
+        expectCommandToSucceed("dd status=none if=" + fontPath2 + " of=/dev/null");
+        // The old file should be still readable.
+        expectCommandToSucceed("dd status=none if=" + fontPath + " of=/dev/null");
     }
 
     @Test
-    public void updatedFont_dataFileIsImmutableAndReadable() throws Exception {
-        expectRemoteCommandToSucceed(String.format("cmd font update %s %s",
-                TEST_NOTO_COLOR_EMOJI_V1_TTF, TEST_NOTO_COLOR_EMOJI_V1_TTF_FSV_SIG));
-        String fontPath = getFontPath(NOTO_COLOR_EMOJI_TTF);
-        assertThat(fontPath).startsWith("/data");
-
-        expectRemoteCommandToFail("echo -n '' >> " + fontPath);
-        expectRemoteCommandToSucceed("cat " + fontPath + " > /dev/null");
+    public void updateFont_allowSameVersion() throws Exception {
+        // Update original font to the same version
+        assertThat(updateFontFile(
+                ORIGINAL_NOTO_COLOR_EMOJI_TTF, ORIGINAL_NOTO_COLOR_EMOJI_TTF_FSV_SIG))
+                .isEqualTo(FontManager.RESULT_SUCCESS);
+        String fontPath = getFontPath(NOTO_COLOR_EMOJI_POSTSCRIPT_NAME);
+        assertThat(updateFontFile(
+                TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF, TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF_FSV_SIG))
+                .isEqualTo(FontManager.RESULT_SUCCESS);
+        String fontPath2 = getFontPath(NOTO_COLOR_EMOJI_POSTSCRIPT_NAME);
+        // Update updated font to the same version
+        assertThat(updateFontFile(
+                TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF, TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF_FSV_SIG))
+                .isEqualTo(FontManager.RESULT_SUCCESS);
+        String fontPath3 = getFontPath(NOTO_COLOR_EMOJI_POSTSCRIPT_NAME);
+        assertThat(fontPath).startsWith(DATA_FONTS_DIR);
+        assertThat(fontPath2).isNotEqualTo(fontPath);
+        assertThat(fontPath2).startsWith(DATA_FONTS_DIR);
+        assertThat(fontPath3).startsWith(DATA_FONTS_DIR);
+        assertThat(fontPath3).isNotEqualTo(fontPath);
     }
 
     @Test
     public void updateFont_invalidCert() throws Exception {
-        expectRemoteCommandToFail(String.format("cmd font update %s %s",
-                TEST_NOTO_COLOR_EMOJI_V1_TTF, TEST_NOTO_COLOR_EMOJI_V2_TTF_FSV_SIG));
+        assertThat(updateFontFile(
+                TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF, TEST_NOTO_COLOR_EMOJI_VPLUS2_TTF_FSV_SIG))
+                .isEqualTo(FontManager.RESULT_ERROR_VERIFICATION_FAILURE);
     }
 
     @Test
     public void updateFont_downgradeFromSystem() throws Exception {
-        expectRemoteCommandToFail(String.format("cmd font update %s %s",
-                ORIGINAL_NOTO_COLOR_EMOJI_TTF, ORIGINAL_NOTO_COLOR_EMOJI_TTF_FSV_SIG));
+        assertThat(updateFontFile(
+                TEST_NOTO_COLOR_EMOJI_V0_TTF, TEST_NOTO_COLOR_EMOJI_V0_TTF_FSV_SIG))
+                .isEqualTo(FontManager.RESULT_ERROR_DOWNGRADING);
     }
 
     @Test
     public void updateFont_downgradeFromData() throws Exception {
-        expectRemoteCommandToSucceed(String.format("cmd font update %s %s",
-                TEST_NOTO_COLOR_EMOJI_V2_TTF, TEST_NOTO_COLOR_EMOJI_V2_TTF_FSV_SIG));
-        expectRemoteCommandToFail(String.format("cmd font update %s %s",
-                TEST_NOTO_COLOR_EMOJI_V1_TTF, TEST_NOTO_COLOR_EMOJI_V1_TTF_FSV_SIG));
+        assertThat(updateFontFile(
+                TEST_NOTO_COLOR_EMOJI_VPLUS2_TTF, TEST_NOTO_COLOR_EMOJI_VPLUS2_TTF_FSV_SIG))
+                .isEqualTo(FontManager.RESULT_SUCCESS);
+        assertThat(updateFontFile(
+                TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF, TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF_FSV_SIG))
+                .isEqualTo(FontManager.RESULT_ERROR_DOWNGRADING);
+    }
+
+    @Test
+    public void launchApp() throws Exception {
+        String fontPath = getFontPath(NOTO_COLOR_EMOJI_POSTSCRIPT_NAME);
+        assertThat(fontPath).startsWith(SYSTEM_FONTS_DIR);
+        startActivity(EMOJI_RENDERING_TEST_APP_ID, EMOJI_RENDERING_TEST_ACTIVITY);
+        SystemUtil.eventually(
+                () -> assertThat(isFileOpenedBy(fontPath, EMOJI_RENDERING_TEST_APP_ID)).isTrue(),
+                ACTIVITY_TIMEOUT_MILLIS);
+    }
+
+    @Test
+    public void launchApp_afterUpdateFont() throws Exception {
+        String originalFontPath = getFontPath(NOTO_COLOR_EMOJI_POSTSCRIPT_NAME);
+        assertThat(originalFontPath).startsWith(SYSTEM_FONTS_DIR);
+        assertThat(updateFontFile(
+                TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF, TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF_FSV_SIG))
+                .isEqualTo(FontManager.RESULT_SUCCESS);
+        String updatedFontPath = getFontPath(NOTO_COLOR_EMOJI_POSTSCRIPT_NAME);
+        assertThat(updatedFontPath).startsWith(DATA_FONTS_DIR);
+        startActivity(EMOJI_RENDERING_TEST_APP_ID, EMOJI_RENDERING_TEST_ACTIVITY);
+        // The original font should NOT be opened by the app.
+        SystemUtil.eventually(() -> {
+            assertThat(isFileOpenedBy(updatedFontPath, EMOJI_RENDERING_TEST_APP_ID)).isTrue();
+            assertThat(isFileOpenedBy(originalFontPath, EMOJI_RENDERING_TEST_APP_ID)).isFalse();
+        }, ACTIVITY_TIMEOUT_MILLIS);
     }
 
     @Test
     public void reboot() throws Exception {
-        expectRemoteCommandToSucceed(String.format("cmd font update %s %s",
-                TEST_NOTO_COLOR_EMOJI_V1_TTF, TEST_NOTO_COLOR_EMOJI_V1_TTF_FSV_SIG));
-        String fontPath = getFontPath(NOTO_COLOR_EMOJI_TTF);
-        assertThat(fontPath).startsWith("/data/fonts/files/");
+        expectCommandToSucceed(String.format("cmd font update %s %s",
+                TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF, TEST_NOTO_COLOR_EMOJI_VPLUS1_TTF_FSV_SIG));
+        String fontPath = getFontPath(NOTO_COLOR_EMOJI_POSTSCRIPT_NAME);
+        assertThat(fontPath).startsWith(DATA_FONTS_DIR);
 
-        expectRemoteCommandToSucceed("stop");
-        expectRemoteCommandToSucceed("start");
-        waitUntilFontCommandIsReady();
-        String fontPathAfterReboot = getFontPath(NOTO_COLOR_EMOJI_TTF);
+        // Emulate reboot by 'cmd font restart'.
+        expectCommandToSucceed("cmd font restart");
+        String fontPathAfterReboot = getFontPath(NOTO_COLOR_EMOJI_POSTSCRIPT_NAME);
         assertThat(fontPathAfterReboot).isEqualTo(fontPath);
     }
 
-    private String getFontPath(String fontFileName) throws Exception {
-        // TODO: add a dedicated command for testing.
-        String lines = expectRemoteCommandToSucceed("cmd font dump");
-        for (String line : lines.split("\n")) {
-            Matcher m = PATTERN_FONT.matcher(line);
-            if (m.find() && m.group(1).endsWith(fontFileName)) {
-                return m.group(1);
-            }
+    private static String insertCert(String certPath) throws Exception {
+        Pair<String, String> result;
+        try (InputStream is = new FileInputStream(certPath)) {
+            result = runShellCommand("mini-keyctl padd asymmetric fsv_test .fs-verity", is);
         }
-        CLog.e("Font not found: " + fontFileName);
-        return null;
+        // Assert that there are no errors.
+        assertThat(result.second).isEmpty();
+        String keyId = result.first.trim();
+        assertThat(keyId).matches("^\\d+$");
+        return keyId;
     }
 
-    private String expectRemoteCommandToSucceed(String cmd) throws Exception {
-        CommandResult result = getDevice().executeShellV2Command(cmd);
-        assertWithMessage("`" + cmd + "` failed: " + result.getStderr())
-                .that(result.getStatus())
-                .isEqualTo(CommandStatus.SUCCESS);
-        return result.getStdout();
+    private int updateFontFile(String fontPath, String signaturePath) throws IOException {
+        byte[] signature = Files.readAllBytes(Paths.get(signaturePath));
+        try (ParcelFileDescriptor fd =
+                ParcelFileDescriptor.open(new File(fontPath), MODE_READ_ONLY)) {
+            return SystemUtil.runWithShellPermissionIdentity(() -> {
+                FontConfig fontConfig = mFontManager.getFontConfig();
+                return mFontManager.updateFontFamily(
+                        new FontFamilyUpdateRequest.Builder()
+                                .addFontFileUpdateRequest(new FontFileUpdateRequest(fd, signature))
+                                .build(),
+                        fontConfig.getConfigVersion());
+            });
+        }
     }
 
-    private void expectRemoteCommandToFail(String cmd) throws Exception {
-        CommandResult result = getDevice().executeShellV2Command(cmd);
-        assertWithMessage("Unexpected success from `" + cmd + "`: " + result.getStderr())
-                .that(result.getStatus())
-                .isNotEqualTo(CommandStatus.SUCCESS);
-    }
-
-    private void waitUntilFontCommandIsReady() {
-        waitUntil(TimeUnit.SECONDS.toMillis(30), () -> {
-            try {
-                return getDevice().executeShellV2Command("cmd font status").getStatus()
-                        == CommandStatus.SUCCESS;
-            } catch (DeviceNotAvailableException e) {
-                return false;
+    private String getFontPath(String psName) {
+        return SystemUtil.runWithShellPermissionIdentity(() -> {
+            FontConfig fontConfig = mFontManager.getFontConfig();
+            for (FontConfig.FontFamily family : fontConfig.getFontFamilies()) {
+                for (FontConfig.Font font : family.getFontList()) {
+                    if (psName.equals(font.getPostScriptName())) {
+                        return font.getFile().getAbsolutePath();
+                    }
+                }
             }
+            throw new AssertionError("Font not found: " + psName);
         });
     }
 
-    private void waitUntilSystemServerIsGone() {
-        waitUntil(TimeUnit.SECONDS.toMillis(30), () -> {
-            try {
-                return getDevice().executeShellV2Command("pid system_server").getStatus()
-                        == CommandStatus.FAILED;
-            } catch (DeviceNotAvailableException e) {
-                return false;
-            }
-        });
+    private static void startActivity(String appId, String activityId) throws Exception {
+        expectCommandToSucceed("am force-stop " + appId);
+        expectCommandToSucceed("am start-activity -n " + activityId);
     }
 
-    private void waitUntil(long timeoutMillis, Supplier<Boolean> func) {
-        long untilMillis = System.currentTimeMillis() + timeoutMillis;
-        do {
-            if (func.get()) return;
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                throw new AssertionError("Interrupted", e);
+    private static String expectCommandToSucceed(String cmd) throws IOException {
+        Pair<String, String> result = runShellCommand(cmd, null);
+        // UiAutomation.runShellCommand() does not return exit code.
+        // Assume that the command fails if stderr is not empty.
+        assertThat(result.second.trim()).isEmpty();
+        return result.first;
+    }
+
+    private static void expectCommandToFail(String cmd) throws IOException {
+        Pair<String, String> result = runShellCommand(cmd, null);
+        // UiAutomation.runShellCommand() does not return exit code.
+        // Assume that the command fails if stderr is not empty.
+        assertThat(result.second.trim()).isNotEmpty();
+    }
+
+    /** Runs a command and returns (stdout, stderr). */
+    private static Pair<String, String> runShellCommand(String cmd, @Nullable InputStream input)
+            throws IOException  {
+        Log.i(TAG, "runShellCommand: " + cmd);
+        UiAutomation automation = InstrumentationRegistry.getInstrumentation().getUiAutomation();
+        ParcelFileDescriptor[] rwe = automation.executeShellCommandRwe(cmd);
+        // executeShellCommandRwe returns [stdout, stdin, stderr].
+        try (ParcelFileDescriptor outFd = rwe[0];
+             ParcelFileDescriptor inFd = rwe[1];
+             ParcelFileDescriptor errFd = rwe[2]) {
+            if (input != null) {
+                try (OutputStream os = new FileOutputStream(inFd.getFileDescriptor())) {
+                    StreamUtil.copyStreams(input, os);
+                }
             }
-        } while (System.currentTimeMillis() < untilMillis);
-        throw new AssertionError("Timed out");
+            // We have to close stdin before reading stdout and stderr.
+            // It's safe to close ParcelFileDescriptor multiple times.
+            inFd.close();
+            String stdout;
+            try (InputStream is = new FileInputStream(outFd.getFileDescriptor())) {
+                stdout = StreamUtil.readInputStream(is);
+            }
+            Log.i(TAG, "stdout =  " + stdout);
+            String stderr;
+            try (InputStream is = new FileInputStream(errFd.getFileDescriptor())) {
+                stderr = StreamUtil.readInputStream(is);
+            }
+            Log.i(TAG, "stderr =  " + stderr);
+            return new Pair<>(stdout, stderr);
+        }
+    }
+
+    private static boolean isFileOpenedBy(String path, String appId) throws Exception {
+        String pid = pidOf(appId);
+        if (pid.isEmpty()) {
+            return false;
+        }
+        String cmd = String.format("lsof -t -p %s %s", pid, path);
+        return !expectCommandToSucceed(cmd).trim().isEmpty();
+    }
+
+    private static String pidOf(String appId) throws Exception {
+        return expectCommandToSucceed("pidof " + appId).trim();
     }
 }

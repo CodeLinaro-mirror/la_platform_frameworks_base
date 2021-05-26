@@ -602,30 +602,6 @@ class ActivityStarter {
     }
 
     /**
-     * Starts an activity based on the provided {@link ActivityRecord} and environment parameters.
-     * Note that this method is called internally as well as part of {@link #executeRequest}.
-     */
-    void startResolvedActivity(final ActivityRecord r, ActivityRecord sourceRecord,
-            IVoiceInteractionSession voiceSession, IVoiceInteractor voiceInteractor,
-            int startFlags, boolean doResume, ActivityOptions options, Task inTask,
-            NeededUriGrants intentGrants) {
-        try {
-            final LaunchingState launchingState = mSupervisor.getActivityMetricsLogger()
-                    .notifyActivityLaunching(r.intent, r.resultTo);
-            mLastStartReason = "startResolvedActivity";
-            mLastStartActivityTimeMs = System.currentTimeMillis();
-            mLastStartActivityRecord = r;
-            mLastStartActivityResult = startActivityUnchecked(r, sourceRecord, voiceSession,
-                    voiceInteractor, startFlags, doResume, options, inTask,
-                    false /* restrictedBgActivity */, intentGrants);
-            mSupervisor.getActivityMetricsLogger().notifyActivityLaunched(launchingState,
-                    mLastStartActivityResult, mLastStartActivityRecord, options);
-        } finally {
-            onExecutionComplete();
-        }
-    }
-
-    /**
      * Resolve necessary information according the request parameters provided earlier, and execute
      * the request which begin the journey of starting an activity.
      * @return The starter result.
@@ -707,11 +683,13 @@ class ActivityStarter {
                 // used here because it may be cleared in setTargetRootTaskIfNeeded.
                 final ActivityOptions originalOptions = mRequest.activityOptions != null
                         ? mRequest.activityOptions.getOriginalOptions() : null;
+                // If the new record is the one that started, a new activity has created.
+                final boolean newActivityCreated = mStartActivity == mLastStartActivityRecord;
                 // Notify ActivityMetricsLogger that the activity has launched.
                 // ActivityMetricsLogger will then wait for the windows to be drawn and populate
                 // WaitResult.
                 mSupervisor.getActivityMetricsLogger().notifyActivityLaunched(launchingState, res,
-                        mLastStartActivityRecord, originalOptions);
+                        newActivityCreated, mLastStartActivityRecord, originalOptions);
                 if (mRequest.waitResult != null) {
                     mRequest.waitResult.result = res;
                     res = waitResultIfNeeded(mRequest.waitResult, mLastStartActivityRecord,
@@ -1275,7 +1253,11 @@ class ActivityStarter {
                 || callingUidProcState == ActivityManager.PROCESS_STATE_BOUND_TOP;
         final boolean isCallingUidPersistentSystemProcess =
                 callingUidProcState <= ActivityManager.PROCESS_STATE_PERSISTENT_UI;
-        if ((appSwitchAllowed && callingUidHasAnyVisibleWindow)
+
+        // Normal apps with visible app window will be allowed to start activity if app switching
+        // is allowed, or apps like live wallpaper with non app visible window will be allowed.
+        if (((appSwitchAllowed || mService.mActiveUids.hasNonAppVisibleWindow(callingUid))
+                && callingUidHasAnyVisibleWindow)
                 || isCallingUidPersistentSystemProcess) {
             if (DEBUG_ACTIVITY_STARTS) {
                 Slog.d(TAG, "Activity start allowed: callingUidHasAnyVisibleWindow = " + callingUid
@@ -1429,6 +1411,7 @@ class ActivityStarter {
                 + "; allowBackgroundActivityStart: " + allowBackgroundActivityStart
                 + "; intent: " + intent
                 + "; callerApp: " + callerApp
+                + "; inVisibleTask: " + (callerApp != null && callerApp.hasActivityInVisibleTask())
                 + "]");
         // log aborted activity start to TRON
         if (mService.isActivityStartsLoggingEnabled()) {
@@ -1768,9 +1751,17 @@ class ActivityStarter {
         mRootWindowContainer.startPowerModeLaunchIfNeeded(
                 false /* forceSend */, mStartActivity);
 
+        final boolean startFromSamePackage;
+        if (sourceRecord != null && sourceRecord.mActivityComponent != null) {
+            startFromSamePackage = mStartActivity.mActivityComponent
+                    .getPackageName().equals(sourceRecord.mActivityComponent.getPackageName());
+        } else {
+            startFromSamePackage = false;
+        }
+
         mTargetRootTask.startActivityLocked(mStartActivity,
                 topRootTask != null ? topRootTask.getTopNonFinishingActivity() : null, newTask,
-                mKeepCurTransition, mOptions);
+                mKeepCurTransition, mOptions, startFromSamePackage);
         if (mDoResume) {
             final ActivityRecord topTaskActivity =
                     mStartActivity.getTask().topRunningActivityLocked();
@@ -1815,7 +1806,8 @@ class ActivityStarter {
     }
 
     private Task computeTargetTask() {
-        if (mInTask == null && !mAddingToTask && (mLaunchFlags & FLAG_ACTIVITY_NEW_TASK) != 0) {
+        if (mStartActivity.resultTo == null && mInTask == null && !mAddingToTask
+                && (mLaunchFlags & FLAG_ACTIVITY_NEW_TASK) != 0) {
             // A new task should be created instead of using existing one.
             return null;
         } else if (mSourceRecord != null) {
@@ -2515,9 +2507,7 @@ class ActivityStarter {
         // If bring to front is requested, and no result is requested and we have not been given
         // an explicit task to launch in to, and we can find a task that was started with this
         // same component, then instead of launching bring that one to the front.
-        putIntoExistingTask &= !isLaunchModeOneOf(LAUNCH_SINGLE_INSTANCE, LAUNCH_SINGLE_TASK)
-                ? (mInTask == null && mStartActivity.resultTo == null)
-                : (mInTask == null);
+        putIntoExistingTask &= mInTask == null && mStartActivity.resultTo == null;
         ActivityRecord intentActivity = null;
         if (putIntoExistingTask) {
             if (LAUNCH_SINGLE_INSTANCE == mLaunchMode) {
@@ -2625,6 +2615,17 @@ class ActivityStarter {
                 mOptions = null;
             }
         }
+
+        if (mPreferredWindowingMode != WINDOWING_MODE_UNDEFINED
+                && intentTask.getWindowingMode() != mPreferredWindowingMode) {
+            intentTask.setWindowingMode(mPreferredWindowingMode);
+        }
+
+        // Update the target's launch cookie to those specified in the options if set
+        if (mStartActivity.mLaunchCookie != null) {
+            intentActivity.mLaunchCookie = mStartActivity.mLaunchCookie;
+        }
+
         // Need to update mTargetRootTask because if task was moved out of it, the original root
         // task may be destroyed.
         mTargetRootTask = intentActivity.getRootTask();
@@ -2707,7 +2708,22 @@ class ActivityStarter {
                     launchFlags |= Intent.FLAG_ACTIVITY_NEW_DOCUMENT;
                     break;
                 case ActivityInfo.DOCUMENT_LAUNCH_NEVER:
-                    launchFlags &= ~FLAG_ACTIVITY_MULTIPLE_TASK;
+                    if (mLaunchMode == LAUNCH_SINGLE_INSTANCE_PER_TASK) {
+                        // Remove MULTIPLE_TASK flag along with NEW_DOCUMENT only if NEW_DOCUMENT
+                        // is set, otherwise we still want to keep the MULTIPLE_TASK flag (if
+                        // any) for singleInstancePerTask that the multiple tasks can be created,
+                        // or a singleInstancePerTask activity is basically the same as a
+                        // singleTask activity when documentLaunchMode set to never.
+                        if ((launchFlags & Intent.FLAG_ACTIVITY_NEW_DOCUMENT) != 0) {
+                            launchFlags &= ~(Intent.FLAG_ACTIVITY_NEW_DOCUMENT
+                                    | FLAG_ACTIVITY_MULTIPLE_TASK);
+                        }
+                    } else {
+                        // TODO(b/184903976): Should FLAG_ACTIVITY_MULTIPLE_TASK always be
+                        // removed for document-never activity?
+                        launchFlags &=
+                                ~(Intent.FLAG_ACTIVITY_NEW_DOCUMENT | FLAG_ACTIVITY_MULTIPLE_TASK);
+                    }
                     break;
             }
         }
@@ -2723,8 +2739,8 @@ class ActivityStarter {
 
         final boolean onTop =
                 (aOptions == null || !aOptions.getAvoidMoveToFront()) && !mLaunchTaskBehind;
-        return mRootWindowContainer.getLaunchRootTask(r, aOptions, task, onTop, mLaunchParams,
-                mRequest.realCallingPid, mRequest.realCallingUid);
+        return mRootWindowContainer.getLaunchRootTask(r, aOptions, task, mSourceRootTask, onTop,
+                mLaunchParams, launchFlags, mRequest.realCallingPid, mRequest.realCallingUid);
     }
 
     private boolean isLaunchModeOneOf(int mode1, int mode2) {

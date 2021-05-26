@@ -18,6 +18,7 @@ package android.media;
 
 import static android.Manifest.permission.BIND_IMS_SERVICE;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
+import static android.media.permission.PermissionUtil.myIdentity;
 
 import android.annotation.CallbackExecutor;
 import android.annotation.IntDef;
@@ -34,6 +35,7 @@ import android.content.res.AssetFileDescriptor;
 import android.graphics.SurfaceTexture;
 import android.media.SubtitleController.Anchor;
 import android.media.SubtitleTrack.RenderingWidget;
+import android.media.permission.Identity;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -44,6 +46,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.os.Parcel;
+import android.os.ParcelFileDescriptor;
 import android.os.Parcelable;
 import android.os.PersistableBundle;
 import android.os.PowerManager;
@@ -53,6 +56,7 @@ import android.provider.Settings;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
+import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.Log;
 import android.util.Pair;
@@ -94,11 +98,8 @@ import java.util.UUID;
 import java.util.Vector;
 import java.util.concurrent.Executor;
 
-
 /**
- * MediaPlayer class can be used to control playback
- * of audio/video files and streams. An example on how to use the methods in
- * this class can be found in {@link android.widget.VideoView}.
+ * MediaPlayer class can be used to control playback of audio/video files and streams.
  *
  * <p>MediaPlayer is not thread-safe. Creation of and all access to player instances
  * should be on the same thread. If registering <a href="#Callbacks">callbacks</a>,
@@ -684,11 +685,14 @@ public class MediaPlayer extends PlayerBase
         mTimeProvider = new TimeProvider(this);
         mOpenSubtitleSources = new Vector<InputStream>();
 
+        Identity identity = myIdentity(null);
+        // set the package name to empty if it was null
+        identity.packageName = TextUtils.emptyIfNull(identity.packageName);
+
         /* Native setup requires a weak reference to our object.
          * It's easier to create it here than in C++.
          */
-        native_setup(new WeakReference<MediaPlayer>(this),
-                getCurrentOpPackageName());
+        native_setup(new WeakReference<MediaPlayer>(this), identity);
 
         baseRegisterPlayer(sessionId);
     }
@@ -1264,11 +1268,11 @@ public class MediaPlayer extends PlayerBase
      */
     public void setDataSource(FileDescriptor fd, long offset, long length)
             throws IOException, IllegalArgumentException, IllegalStateException {
-        FileDescriptor modernFd = FileUtils.convertToModernFd(fd);
+        ParcelFileDescriptor modernFd = FileUtils.convertToModernFd(fd);
         if (modernFd == null) {
             _setDataSource(fd, offset, length);
         } else {
-            _setDataSource(modernFd, offset, length);
+            _setDataSource(modernFd.getFileDescriptor(), offset, length);
         }
     }
 
@@ -2471,7 +2475,7 @@ public class MediaPlayer extends PlayerBase
     private native final int native_setMetadataFilter(Parcel request);
 
     private static native final void native_init();
-    private native void native_setup(Object mediaplayerThis, @NonNull String opPackageName);
+    private native void native_setup(Object mediaplayerThis, @NonNull Identity identity);
     private native final void native_finalize();
 
     /**

@@ -241,6 +241,7 @@ private:
     Result getFilterMq();
     int copyData(int8_t* buffer, int size);
     void checkIsMediaFilter(DemuxFilterType type);
+    void checkIsPassthroughFilter(DemuxFilterSettings configure);
     void handleAvShareMemory();
     void closeAvSharedMemory();
 
@@ -264,12 +265,13 @@ private:
      */
     sp<::android::hardware::tv::tuner::V1_1::IFilter> mFilter_1_1;
 
-    AidlMQ* mFilterMQ;
-    EventFlag* mFilterMQEventFlag;
+    AidlMQ* mFilterMQ = NULL;
+    EventFlag* mFilterMQEventFlag = NULL;
 
     native_handle_t* mAvSharedHandle;
     uint64_t mAvSharedMemSize;
     bool mIsMediaFilter;
+    bool mIsPassthroughFilter;
 };
 }  // namespace android
 

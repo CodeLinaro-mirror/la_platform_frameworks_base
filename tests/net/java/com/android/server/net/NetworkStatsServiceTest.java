@@ -45,6 +45,7 @@ import static android.net.NetworkTemplate.MATCH_MOBILE_WILDCARD;
 import static android.net.NetworkTemplate.NETWORK_TYPE_ALL;
 import static android.net.NetworkTemplate.OEM_MANAGED_NO;
 import static android.net.NetworkTemplate.OEM_MANAGED_YES;
+import static android.net.NetworkTemplate.SUBSCRIBER_ID_MATCH_RULE_EXACT;
 import static android.net.NetworkTemplate.buildTemplateMobileAll;
 import static android.net.NetworkTemplate.buildTemplateMobileWithRatType;
 import static android.net.NetworkTemplate.buildTemplateWifi;
@@ -67,6 +68,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -88,6 +90,7 @@ import android.net.NetworkStateSnapshot;
 import android.net.NetworkStats;
 import android.net.NetworkStatsHistory;
 import android.net.NetworkTemplate;
+import android.net.TelephonyNetworkSpecifier;
 import android.net.UnderlyingNetworkInfo;
 import android.net.netstats.provider.INetworkStatsProviderCallback;
 import android.os.ConditionVariable;
@@ -164,9 +167,9 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
 
     private long mElapsedRealtime;
 
-    private BroadcastInterceptingContext mServiceContext;
     private File mStatsDir;
-
+    private MockContext mServiceContext;
+    private @Mock TelephonyManager mTelephonyManager;
     private @Mock INetworkManagementService mNetManager;
     private @Mock NetworkStatsFactory mStatsFactory;
     private @Mock NetworkStatsSettings mSettings;
@@ -182,19 +185,32 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
     private ContentObserver mContentObserver;
     private Handler mHandler;
 
+    private class MockContext extends BroadcastInterceptingContext {
+        private final Context mBaseContext;
+
+        MockContext(Context base) {
+            super(base);
+            mBaseContext = base;
+        }
+
+        @Override
+        public Object getSystemService(String name) {
+            if (Context.TELEPHONY_SERVICE.equals(name)) return mTelephonyManager;
+            return mBaseContext.getSystemService(name);
+        }
+    }
+
     private final Clock mClock = new SimpleClock(ZoneOffset.UTC) {
         @Override
         public long millis() {
             return currentTimeMillis();
         }
     };
-
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
         final Context context = InstrumentationRegistry.getContext();
-
-        mServiceContext = new BroadcastInterceptingContext(context);
+        mServiceContext = new MockContext(context);
         mStatsDir = context.getFilesDir();
         if (mStatsDir.exists()) {
             IoUtils.deleteContents(mStatsDir);
@@ -216,7 +232,6 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
         expectDefaultSettings();
         expectNetworkStatsUidDetail(buildEmptyStats());
         expectSystemReady();
-
         mService.systemReady();
         // Verify that system ready fetches realtime stats
         verify(mStatsFactory).readNetworkStatsDetail(UID_ALL, INTERFACES_ALL, TAG_ALL);
@@ -226,6 +241,9 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
         waitForIdle();
         verify(mNetworkStatsSubscriptionsMonitor).start();
         reset(mNetworkStatsSubscriptionsMonitor);
+
+        doReturn(TelephonyManager.CARRIER_PRIVILEGE_STATUS_HAS_ACCESS).when(mTelephonyManager)
+                .checkCarrierPrivilegesForPackageAnyPhone(anyString());
 
         mSession = mService.openSession();
         assertNotNull("openSession() failed", mSession);
@@ -652,24 +670,28 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
     public void testMobileStatsOemManaged() throws Exception {
         final NetworkTemplate templateOemPaid = new NetworkTemplate(MATCH_MOBILE_WILDCARD,
                 /*subscriberId=*/null, /*matchSubscriberIds=*/null, /*networkId=*/null,
-                METERED_ALL, ROAMING_ALL, DEFAULT_NETWORK_ALL, NETWORK_TYPE_ALL, OEM_PAID);
+                METERED_ALL, ROAMING_ALL, DEFAULT_NETWORK_ALL, NETWORK_TYPE_ALL, OEM_PAID,
+                SUBSCRIBER_ID_MATCH_RULE_EXACT);
 
         final NetworkTemplate templateOemPrivate = new NetworkTemplate(MATCH_MOBILE_WILDCARD,
                 /*subscriberId=*/null, /*matchSubscriberIds=*/null, /*networkId=*/null,
-                METERED_ALL, ROAMING_ALL, DEFAULT_NETWORK_ALL, NETWORK_TYPE_ALL, OEM_PRIVATE);
+                METERED_ALL, ROAMING_ALL, DEFAULT_NETWORK_ALL, NETWORK_TYPE_ALL, OEM_PRIVATE,
+                SUBSCRIBER_ID_MATCH_RULE_EXACT);
 
         final NetworkTemplate templateOemAll = new NetworkTemplate(MATCH_MOBILE_WILDCARD,
                 /*subscriberId=*/null, /*matchSubscriberIds=*/null, /*networkId=*/null,
                 METERED_ALL, ROAMING_ALL, DEFAULT_NETWORK_ALL, NETWORK_TYPE_ALL,
-                OEM_PAID | OEM_PRIVATE);
+                OEM_PAID | OEM_PRIVATE, SUBSCRIBER_ID_MATCH_RULE_EXACT);
 
         final NetworkTemplate templateOemYes = new NetworkTemplate(MATCH_MOBILE_WILDCARD,
                 /*subscriberId=*/null, /*matchSubscriberIds=*/null, /*networkId=*/null,
-                METERED_ALL, ROAMING_ALL, DEFAULT_NETWORK_ALL, NETWORK_TYPE_ALL, OEM_MANAGED_YES);
+                METERED_ALL, ROAMING_ALL, DEFAULT_NETWORK_ALL, NETWORK_TYPE_ALL, OEM_MANAGED_YES,
+                SUBSCRIBER_ID_MATCH_RULE_EXACT);
 
         final NetworkTemplate templateOemNone = new NetworkTemplate(MATCH_MOBILE_WILDCARD,
                 /*subscriberId=*/null, /*matchSubscriberIds=*/null, /*networkId=*/null,
-                METERED_ALL, ROAMING_ALL, DEFAULT_NETWORK_ALL, NETWORK_TYPE_ALL, OEM_MANAGED_NO);
+                METERED_ALL, ROAMING_ALL, DEFAULT_NETWORK_ALL, NETWORK_TYPE_ALL, OEM_MANAGED_NO,
+                SUBSCRIBER_ID_MATCH_RULE_EXACT);
 
         // OEM_PAID network comes online.
         NetworkStateSnapshot[] states = new NetworkStateSnapshot[]{
@@ -872,7 +894,7 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
         final LinkProperties stackedProp = new LinkProperties();
         stackedProp.setInterfaceName(stackedIface);
         final NetworkStateSnapshot wifiState = buildWifiState();
-        wifiState.linkProperties.addStackedLink(stackedProp);
+        wifiState.getLinkProperties().addStackedLink(stackedProp);
         NetworkStateSnapshot[] states = new NetworkStateSnapshot[] {wifiState};
 
         expectNetworkStatsSummary(buildEmptyStats());
@@ -1280,6 +1302,77 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
     }
 
     @Test
+    public void testDualVilteProviderStats() throws Exception {
+        // Pretend that network comes online.
+        expectDefaultSettings();
+        final int subId1 = 1;
+        final int subId2 = 2;
+        final NetworkStateSnapshot[] states = new NetworkStateSnapshot[]{
+                buildImsState(IMSI_1, subId1, TEST_IFACE),
+                buildImsState(IMSI_2, subId2, TEST_IFACE2)};
+        expectNetworkStatsSummary(buildEmptyStats());
+        expectNetworkStatsUidDetail(buildEmptyStats());
+
+        // Register custom provider and retrieve callback.
+        final TestableNetworkStatsProviderBinder provider =
+                new TestableNetworkStatsProviderBinder();
+        final INetworkStatsProviderCallback cb =
+                mService.registerNetworkStatsProvider("TEST", provider);
+        assertNotNull(cb);
+
+        mService.forceUpdateIfaces(NETWORKS_MOBILE, states, getActiveIface(states),
+                new UnderlyingNetworkInfo[0]);
+
+        // Verifies that one requestStatsUpdate will be called during iface update.
+        provider.expectOnRequestStatsUpdate(0 /* unused */);
+
+        // Create some initial traffic and report to the service.
+        incrementCurrentTime(HOUR_IN_MILLIS);
+        final String vtIface1 = NetworkStats.IFACE_VT + subId1;
+        final String vtIface2 = NetworkStats.IFACE_VT + subId2;
+        final NetworkStats expectedStats = new NetworkStats(0L, 1)
+                .addEntry(new NetworkStats.Entry(vtIface1, UID_RED, SET_DEFAULT,
+                        TAG_NONE, METERED_YES, ROAMING_NO, DEFAULT_NETWORK_YES,
+                        128L, 2L, 128L, 2L, 1L))
+                .addEntry(new NetworkStats.Entry(vtIface2, UID_RED, SET_DEFAULT,
+                        TAG_NONE, METERED_YES, ROAMING_NO, DEFAULT_NETWORK_YES,
+                        64L, 1L, 64L, 1L, 1L));
+        cb.notifyStatsUpdated(0 /* unused */, expectedStats, expectedStats);
+
+        // Make another empty mutable stats object. This is necessary since the new NetworkStats
+        // object will be used to compare with the old one in NetworkStatsRecoder, two of them
+        // cannot be the same object.
+        expectNetworkStatsUidDetail(buildEmptyStats());
+
+        forcePollAndWaitForIdle();
+
+        // Verifies that one requestStatsUpdate and setAlert will be called during polling.
+        provider.expectOnRequestStatsUpdate(0 /* unused */);
+        provider.expectOnSetAlert(MB_IN_BYTES);
+
+        // Verifies that service recorded history, does not verify uid tag part.
+        assertUidTotal(sTemplateImsi1, UID_RED, 128L, 2L, 128L, 2L, 1);
+
+        // Verifies that onStatsUpdated updates the stats accordingly.
+        NetworkStats stats = mSession.getSummaryForAllUid(
+                sTemplateImsi1, Long.MIN_VALUE, Long.MAX_VALUE, true);
+        assertEquals(1, stats.size());
+        assertValues(stats, IFACE_ALL, UID_RED, SET_DEFAULT, TAG_NONE, METERED_YES, ROAMING_NO,
+                DEFAULT_NETWORK_YES, 128L, 2L, 128L, 2L, 1L);
+
+        stats = mSession.getSummaryForAllUid(
+                sTemplateImsi2, Long.MIN_VALUE, Long.MAX_VALUE, true);
+        assertEquals(1, stats.size());
+        assertValues(stats, IFACE_ALL, UID_RED, SET_DEFAULT, TAG_NONE, METERED_YES, ROAMING_NO,
+                DEFAULT_NETWORK_YES, 64L, 1L, 64L, 1L, 1L);
+
+        // Verifies that unregister the callback will remove the provider from service.
+        cb.unregister();
+        forcePollAndWaitForIdle();
+        provider.assertNoCallback();
+    }
+
+    @Test
     public void testStatsProviderSetAlert() throws Exception {
         // Pretend that network comes online.
         expectDefaultSettings();
@@ -1492,10 +1585,10 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
     }
 
     private String getActiveIface(NetworkStateSnapshot... states) throws Exception {
-        if (states == null || states.length == 0 || states[0].linkProperties == null) {
+        if (states == null || states.length == 0 || states[0].getLinkProperties() == null) {
             return null;
         }
-        return states[0].linkProperties.getInterfaceName();
+        return states[0].getLinkProperties().getInterfaceName();
     }
 
     private void expectNetworkStatsSummary(NetworkStats summary) throws Exception {
@@ -1614,6 +1707,20 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
         capabilities.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
         return new NetworkStateSnapshot(MOBILE_NETWORK, capabilities, prop, subscriberId,
                 TYPE_MOBILE);
+    }
+
+    private static NetworkStateSnapshot buildImsState(
+            String subscriberId, int subId, String ifaceName) {
+        final LinkProperties prop = new LinkProperties();
+        prop.setInterfaceName(ifaceName);
+        final NetworkCapabilities capabilities = new NetworkCapabilities();
+        capabilities.setCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED, true);
+        capabilities.setCapability(NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING, true);
+        capabilities.setCapability(NetworkCapabilities.NET_CAPABILITY_IMS, true);
+        capabilities.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
+        capabilities.setNetworkSpecifier(new TelephonyNetworkSpecifier(subId));
+        return new NetworkStateSnapshot(
+                MOBILE_NETWORK, capabilities, prop, subscriberId, TYPE_MOBILE);
     }
 
     private long getElapsedRealtime() {

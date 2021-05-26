@@ -24,13 +24,14 @@
 #include <nativehelper/JNIHelp.h>
 
 #include <android/binder_manager.h>
+#include <android/binder_stability.h>
 #include <android/hidl/manager/1.2/IServiceManager.h>
 #include <binder/IServiceManager.h>
 #include <hidl/HidlTransportSupport.h>
 #include <incremental_service.h>
 
+#include <memtrackproxy/MemtrackProxy.h>
 #include <schedulerservice/SchedulingPolicyService.h>
-#include <sensorservice/SensorService.h>
 #include <sensorservicehidl/SensorManager.h>
 #include <stats/StatsAidl.h>
 #include <stats/StatsHal.h>
@@ -39,12 +40,10 @@
 #include <bionic/reserved_signals.h>
 
 #include <android-base/properties.h>
-#include <cutils/properties.h>
 #include <utils/Log.h>
 #include <utils/misc.h>
 #include <utils/AndroidThreads.h>
 
-using android::base::GetIntProperty;
 using namespace std::chrono_literals;
 
 namespace {
@@ -58,7 +57,7 @@ static void startStatsAidlService() {
     const std::string instance = std::string() + IStats::descriptor + "/default";
     const binder_exception_t err =
             AServiceManager_addService(statsService->asBinder().get(), instance.c_str());
-    LOG_ALWAYS_FATAL_IF(err != EX_NONE, "Cannot register %s: %d", instance.c_str(), err);
+    LOG_ALWAYS_FATAL_IF(err != EX_NONE, "Cannot register AIDL %s: %d", instance.c_str(), err);
 }
 
 static void startStatsHidlService() {
@@ -67,20 +66,31 @@ static void startStatsHidlService() {
 
     android::sp<IStats> statsHal = new StatsHal();
     const android::status_t err = statsHal->registerAsService();
-    LOG_ALWAYS_FATAL_IF(err != android::OK, "Cannot register %s: %d", IStats::descriptor, err);
+    LOG_ALWAYS_FATAL_IF(err != android::OK, "Cannot register HIDL %s: %d", IStats::descriptor, err);
 }
 
 } // namespace
 
 namespace android {
 
-static void android_server_SystemServer_startSensorService(JNIEnv* /* env */, jobject /* clazz */) {
-    char propBuf[PROPERTY_VALUE_MAX];
-    property_get("system_init.startsensorservice", propBuf, "1");
-    if (strcmp(propBuf, "1") == 0) {
-        SensorService::publish(false /* allowIsolated */,
-                               IServiceManager::DUMP_FLAG_PRIORITY_CRITICAL);
-    }
+static void android_server_SystemServer_startIStatsService(JNIEnv* /* env */, jobject /* clazz */) {
+    startStatsHidlService();
+    startStatsAidlService();
+}
+
+static void android_server_SystemServer_startMemtrackProxyService(JNIEnv* env,
+                                                                  jobject /* clazz */) {
+    using aidl::android::hardware::memtrack::MemtrackProxy;
+
+    const char* memtrackProxyService = "memtrack.proxy";
+
+    std::shared_ptr<MemtrackProxy> memtrack_proxy = ndk::SharedRefBase::make<MemtrackProxy>();
+    auto binder = memtrack_proxy->asBinder();
+
+    AIBinder_forceDowngradeToLocalStability(binder.get());
+
+    const binder_exception_t err = AServiceManager_addService(binder.get(), memtrackProxyService);
+    LOG_ALWAYS_FATAL_IF(err != EX_NONE, "Cannot register %s: %d", memtrackProxyService, err);
 }
 
 static void android_server_SystemServer_startHidlServices(JNIEnv* env, jobject /* clazz */) {
@@ -112,9 +122,6 @@ static void android_server_SystemServer_startHidlServices(JNIEnv* env, jobject /
     } else {
         ALOGW("%s is deprecated. Skipping registration.", ISchedulingPolicyService::descriptor);
     }
-
-    startStatsAidlService();
-    startStatsHidlService();
 }
 
 static void android_server_SystemServer_initZygoteChildHeapProfiling(JNIEnv* /* env */,
@@ -123,16 +130,9 @@ static void android_server_SystemServer_initZygoteChildHeapProfiling(JNIEnv* /* 
 }
 
 static void android_server_SystemServer_fdtrackAbort(JNIEnv*, jobject) {
-    raise(BIONIC_SIGNAL_FDTRACK);
-
-    // Wait for a bit to allow fdtrack to dump backtraces to logcat.
-    std::this_thread::sleep_for(5s);
-
-    // Abort on a different thread to avoid ART dumping runtime stacks.
-    std::thread([]() {
-        LOG_ALWAYS_FATAL("b/140703823: aborting due to fd leak: check logs for fd "
-                         "backtraces");
-    }).join();
+    sigval val;
+    val.sival_int = 1;
+    sigqueue(getpid(), BIONIC_SIGNAL_FDTRACK, val);
 }
 
 static jlong android_server_SystemServer_startIncrementalService(JNIEnv* env, jclass klass,
@@ -150,7 +150,9 @@ static void android_server_SystemServer_setIncrementalServiceSystemReady(JNIEnv*
  */
 static const JNINativeMethod gMethods[] = {
         /* name, signature, funcPtr */
-        {"startSensorService", "()V", (void*)android_server_SystemServer_startSensorService},
+        {"startIStatsService", "()V", (void*)android_server_SystemServer_startIStatsService},
+        {"startMemtrackProxyService", "()V",
+         (void*)android_server_SystemServer_startMemtrackProxyService},
         {"startHidlServices", "()V", (void*)android_server_SystemServer_startHidlServices},
         {"initZygoteChildHeapProfiling", "()V",
          (void*)android_server_SystemServer_initZygoteChildHeapProfiling},

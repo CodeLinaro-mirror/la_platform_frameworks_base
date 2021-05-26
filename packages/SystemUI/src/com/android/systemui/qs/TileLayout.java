@@ -25,6 +25,7 @@ public class TileLayout extends ViewGroup implements QSTileLayout {
 
     protected int mColumns;
     protected int mCellWidth;
+    protected int mCellHeightResId = R.dimen.qs_tile_height;
     protected int mCellHeight;
     protected int mMaxCellHeight;
     protected int mCellMarginHorizontal;
@@ -118,8 +119,9 @@ public class TileLayout extends ViewGroup implements QSTileLayout {
         final Resources res = mContext.getResources();
         mResourceColumns = Math.max(1, res.getInteger(R.integer.quick_settings_num_columns));
         updateColumns();
-        mMaxCellHeight = mContext.getResources().getDimensionPixelSize(R.dimen.qs_tile_height);
+        mMaxCellHeight = mContext.getResources().getDimensionPixelSize(mCellHeightResId);
         mCellMarginHorizontal = res.getDimensionPixelSize(R.dimen.qs_tile_margin_horizontal);
+        mSidePadding = useSidePadding() ? mCellMarginHorizontal / 2 : 0;
         mCellMarginVertical= res.getDimensionPixelSize(R.dimen.qs_tile_margin_vertical);
         mCellMarginTop = res.getDimensionPixelSize(R.dimen.qs_tile_margin_top);
         mMaxAllowedRows = Math.max(1, getResources().getInteger(R.integer.quick_settings_max_rows));
@@ -129,6 +131,10 @@ public class TileLayout extends ViewGroup implements QSTileLayout {
             return true;
         }
         return false;
+    }
+
+    protected boolean useSidePadding() {
+        return true;
     }
 
     private boolean updateColumns() {
@@ -149,8 +155,9 @@ public class TileLayout extends ViewGroup implements QSTileLayout {
         if (heightMode == MeasureSpec.UNSPECIFIED) {
             mRows = (numTiles + mColumns - 1) / mColumns;
         }
+        final int gaps = mColumns - 1;
         mCellWidth =
-                (availableWidth - (mCellMarginHorizontal * mColumns)) / mColumns;
+                (availableWidth - (mCellMarginHorizontal * gaps) - mSidePadding * 2) / mColumns;
 
         // Measure each QS tile.
         View previousView = this;
@@ -235,13 +242,13 @@ public class TileLayout extends ViewGroup implements QSTileLayout {
         layoutTileRecords(mRecords.size());
     }
 
-    private int getRowTop(int row) {
+    protected int getRowTop(int row) {
         return row * (mCellHeight + mCellMarginVertical) + mCellMarginTop;
     }
 
     protected int getColumnStart(int column) {
-        return getPaddingStart() + mCellMarginHorizontal / 2 +
-                column *  (mCellWidth + mCellMarginHorizontal);
+        return getPaddingStart() + mSidePadding
+                + column *  (mCellWidth + mCellMarginHorizontal);
     }
 
     @Override

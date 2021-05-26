@@ -116,10 +116,8 @@ final class InputManagerCallback implements InputManagerService.WindowManagerCal
     /** Notifies that the input device configuration has changed. */
     @Override
     public void notifyConfigurationChanged() {
-        // TODO(multi-display): Notify proper displays that are associated with this input device.
-
         synchronized (mService.mGlobalLock) {
-            mService.getDefaultDisplayContentLocked().sendNewConfiguration();
+            mService.mRoot.forAllDisplays(DisplayContent::sendNewConfiguration);
         }
 
         synchronized (mInputDevicesReadyMonitor) {
@@ -227,6 +225,12 @@ final class InputManagerCallback implements InputManagerService.WindowManagerCal
     public void notifyFocusChanged(IBinder oldToken, IBinder newToken) {
         mService.mH.sendMessage(PooledLambda.obtainMessage(
                 mService::reportFocusChanged, oldToken, newToken));
+    }
+
+    @Override
+    public void notifyDropWindow(IBinder token, float x, float y) {
+        mService.mH.sendMessage(PooledLambda.obtainMessage(
+                mService.mDragDropController::reportDropWindow, token, x, y));
     }
 
     /** Waits until the built-in input devices have been configured. */

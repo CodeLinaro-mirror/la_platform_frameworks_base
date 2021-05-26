@@ -44,8 +44,8 @@ import com.android.internal.logging.UiEvent;
 import com.android.internal.logging.UiEventLogger;
 import com.android.internal.logging.UiEventLoggerImpl;
 import com.android.systemui.Dependency;
-import com.android.systemui.Interpolators;
 import com.android.systemui.R;
+import com.android.systemui.animation.Interpolators;
 import com.android.systemui.navigationbar.buttons.KeyButtonDrawable;
 import com.android.systemui.shared.system.ActivityManagerWrapper;
 import com.android.systemui.shared.system.TaskStackChangeListener;
@@ -66,10 +66,10 @@ public class RotationButtonController {
     private static final int NUM_ACCEPTED_ROTATION_SUGGESTIONS_FOR_INTRODUCTION = 3;
 
     private final Context mContext;
-    private final RotationButton mRotationButton;
     private final Handler mMainThreadHandler = new Handler(Looper.getMainLooper());
     private final UiEventLogger mUiEventLogger = new UiEventLoggerImpl();
     private final ViewRippler mViewRippler = new ViewRippler();
+    private RotationButton mRotationButton;
 
     private int mLastRotationSuggestion;
     private boolean mPendingRotationSuggestion;
@@ -125,20 +125,21 @@ public class RotationButtonController {
     }
 
     RotationButtonController(Context context, @ColorInt int lightIconColor,
-            @ColorInt int darkIconColor, RotationButton rotationButton,
-            Consumer<Boolean> visibilityChangedCallback) {
+            @ColorInt int darkIconColor) {
         mContext = context;
         mLightIconColor = lightIconColor;
         mDarkIconColor = darkIconColor;
-        mRotationButton = rotationButton;
-        mRotationButton.setRotationButtonController(this);
 
         mIsNavigationBarShowing = true;
         mRotationLockController = Dependency.get(RotationLockController.class);
         mAccessibilityManagerWrapper = Dependency.get(AccessibilityManagerWrapper.class);
-
-        // Register the task stack listener
         mTaskStackListener = new TaskStackListenerImpl();
+    }
+
+    void setRotationButton(RotationButton rotationButton,
+            Consumer<Boolean> visibilityChangedCallback) {
+        mRotationButton = rotationButton;
+        mRotationButton.setRotationButtonController(this);
         mRotationButton.setOnClickListener(this::onRotateSuggestionClick);
         mRotationButton.setOnHoverListener(this::onRotateSuggestionHover);
         mRotationButton.setVisibilityChangedCallback(visibilityChangedCallback);

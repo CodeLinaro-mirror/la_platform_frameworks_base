@@ -65,7 +65,7 @@ public class SystemSensorManager extends SensorManager {
     private static final int CAPPED_SAMPLING_RATE_LEVEL = SensorDirectChannel.RATE_NORMAL;
 
     private static final String HIGH_SAMPLING_RATE_SENSORS_PERMISSION =
-                                        "android.permisison.HIGH_SAMPLING_RATE_SENSORS";
+                                        "android.permission.HIGH_SAMPLING_RATE_SENSORS";
     /**
      * For apps targeting S and above, a SecurityException is thrown when they do not have
      * HIGH_SAMPLING_RATE_SENSORS permission, run in debug mode, and request sampling rates that
@@ -571,11 +571,10 @@ public class SystemSensorManager extends SensorManager {
         }
 
         int sensorHandle = (sensor == null) ? -1 : sensor.getHandle();
-        if (Compatibility.isChangeEnabled(CHANGE_ID_SAMPLING_RATE_SENSORS_PERMISSION)
-                && rate > CAPPED_SAMPLING_RATE_LEVEL
+        if (rate > CAPPED_SAMPLING_RATE_LEVEL
                 && mIsPackageDebuggable
-                && !mHasHighSamplingRateSensorsPermission) {
-            Compatibility.reportChange(CHANGE_ID_SAMPLING_RATE_SENSORS_PERMISSION);
+                && !mHasHighSamplingRateSensorsPermission
+                && Compatibility.isChangeEnabled(CHANGE_ID_SAMPLING_RATE_SENSORS_PERMISSION)) {
             throw new SecurityException("To use the sampling rate level " + rate
                     + ", app needs to declare the normal permission"
                     + " HIGH_SAMPLING_RATE_SENSORS.");
@@ -783,11 +782,10 @@ public class SystemSensorManager extends SensorManager {
                 Sensor sensor, int rateUs, int maxBatchReportLatencyUs) {
             if (mNativeSensorEventQueue == 0) throw new NullPointerException();
             if (sensor == null) throw new NullPointerException();
-            if (Compatibility.isChangeEnabled(CHANGE_ID_SAMPLING_RATE_SENSORS_PERMISSION)
-                    && rateUs < CAPPED_SAMPLING_PERIOD_US
+            if (rateUs < CAPPED_SAMPLING_PERIOD_US
                     && mManager.mIsPackageDebuggable
-                    && !mManager.mHasHighSamplingRateSensorsPermission) {
-                Compatibility.reportChange(CHANGE_ID_SAMPLING_RATE_SENSORS_PERMISSION);
+                    && !mManager.mHasHighSamplingRateSensorsPermission
+                    && Compatibility.isChangeEnabled(CHANGE_ID_SAMPLING_RATE_SENSORS_PERMISSION)) {
                 throw new SecurityException("To use the sampling rate of " + rateUs
                         + " microseconds, app needs to declare the normal permission"
                         + " HIGH_SAMPLING_RATE_SENSORS.");

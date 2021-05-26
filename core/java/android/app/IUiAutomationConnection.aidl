@@ -20,9 +20,12 @@ import android.accessibilityservice.IAccessibilityServiceClient;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.view.InputEvent;
+import android.view.SurfaceControl;
 import android.view.WindowContentFrameStats;
 import android.view.WindowAnimationFrameStats;
 import android.os.ParcelFileDescriptor;
+
+import java.util.List;
 
 /**
  * This interface contains privileged operations a shell program can perform
@@ -40,6 +43,7 @@ interface IUiAutomationConnection {
     void syncInputTransactions(boolean waitForAnimations);
     boolean setRotation(int rotation);
     Bitmap takeScreenshot(in Rect crop);
+    Bitmap takeSurfaceControlScreenshot(in SurfaceControl surfaceControl);
     boolean clearWindowContentFrameStats(int windowId);
     WindowContentFrameStats getWindowContentFrameStats(int windowId);
     void clearWindowAnimationFrameStats();
@@ -54,4 +58,5 @@ interface IUiAutomationConnection {
     oneway void shutdown();
     void executeShellCommandWithStderr(String command, in ParcelFileDescriptor sink,
                 in ParcelFileDescriptor source, in ParcelFileDescriptor stderrSink);
+    List<String> getAdoptedShellPermissions();
 }

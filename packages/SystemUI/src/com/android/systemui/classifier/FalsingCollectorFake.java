@@ -147,10 +147,18 @@ public class FalsingCollectorFake implements FalsingCollector {
     }
 
     @Override
+    public void onMotionEventComplete() {
+    }
+
+    @Override
     public void avoidGesture() {
     }
 
     @Override
     public void cleanup() {
+    }
+
+    @Override
+    public void updateFalseConfidence(FalsingClassifier.Result result) {
     }
 }

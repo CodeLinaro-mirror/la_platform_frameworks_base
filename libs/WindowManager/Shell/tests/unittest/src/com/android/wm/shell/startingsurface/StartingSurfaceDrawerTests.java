@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package unittest.src.com.android.wm.shell.startingsurface;
+package com.android.wm.shell.startingsurface;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doNothing;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
@@ -33,11 +33,12 @@ import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.graphics.Rect;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.testing.TestableContext;
-import android.view.Choreographer;
+import android.view.SurfaceControl;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
@@ -49,7 +50,7 @@ import androidx.test.platform.app.InstrumentationRegistry;
 
 import com.android.wm.shell.common.HandlerExecutor;
 import com.android.wm.shell.common.ShellExecutor;
-import com.android.wm.shell.startingsurface.StartingSurfaceDrawer;
+import com.android.wm.shell.common.TransactionPool;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -68,7 +69,7 @@ public class StartingSurfaceDrawerTests {
     @Mock
     private WindowManager mMockWindowManager;
     @Mock
-    private static Choreographer sFakeChoreographer;
+    private TransactionPool mTransactionPool;
 
     TestStartingSurfaceDrawer mStartingSurfaceDrawer;
 
@@ -76,26 +77,22 @@ public class StartingSurfaceDrawerTests {
         int mAddWindowForTask = 0;
         int mViewThemeResId;
 
-        TestStartingSurfaceDrawer(Context context, ShellExecutor executor) {
-            super(context, executor);
+        TestStartingSurfaceDrawer(Context context, ShellExecutor splashScreenExecutor,
+                TransactionPool pool) {
+            super(context, splashScreenExecutor, pool);
         }
 
         @Override
-        protected void initChoreographer() {
-            mChoreographer = sFakeChoreographer;
-        }
-
-        @Override
-        protected boolean postAddWindow(int taskId, IBinder appToken,
+        protected void postAddWindow(int taskId, IBinder appToken,
                 View view, WindowManager wm, WindowManager.LayoutParams params) {
             // listen for addView
             mAddWindowForTask = taskId;
             mViewThemeResId = view.getContext().getThemeResId();
-            return true;
         }
 
         @Override
-        protected void removeWindowSynced(int taskId) {
+        protected void removeWindowSynced(int taskId, SurfaceControl leash, Rect frame,
+                boolean playRevealAnimation) {
             // listen for removeView
             if (mAddWindowForTask == taskId) {
                 mAddWindowForTask = 0;
@@ -115,15 +112,18 @@ public class StartingSurfaceDrawerTests {
         spyOn(context);
         spyOn(realWindowManager);
         try {
-            doReturn(context).when(context).createPackageContext(anyString(), anyInt());
+            doReturn(context).when(context)
+                    .createPackageContextAsUser(anyString(), anyInt(), any());
         } catch (PackageManager.NameNotFoundException e) {
             //
         }
         doReturn(metrics).when(mMockWindowManager).getMaximumWindowMetrics();
         doNothing().when(mMockWindowManager).addView(any(), any());
 
-        mStartingSurfaceDrawer = spy(new TestStartingSurfaceDrawer(context,
-                new HandlerExecutor(new Handler(Looper.getMainLooper()))));
+        final HandlerExecutor testExecutor =
+                new HandlerExecutor(new Handler(Looper.getMainLooper()));
+        mStartingSurfaceDrawer = spy(new TestStartingSurfaceDrawer(context, testExecutor,
+                mTransactionPool));
     }
 
     @Test
@@ -132,14 +132,14 @@ public class StartingSurfaceDrawerTests {
         final Handler mainLoop = new Handler(Looper.getMainLooper());
         final StartingWindowInfo windowInfo =
                 createWindowInfo(taskId, android.R.style.Theme);
-        mStartingSurfaceDrawer.addSplashScreenStartingWindow(windowInfo, mBinder);
+        mStartingSurfaceDrawer.addSplashScreenStartingWindow(windowInfo, mBinder, false);
         waitHandlerIdle(mainLoop);
         verify(mStartingSurfaceDrawer).postAddWindow(eq(taskId), eq(mBinder), any(), any(), any());
         assertEquals(mStartingSurfaceDrawer.mAddWindowForTask, taskId);
 
-        mStartingSurfaceDrawer.removeStartingWindow(windowInfo.taskInfo.taskId);
+        mStartingSurfaceDrawer.removeStartingWindow(windowInfo.taskInfo.taskId, null, null, false);
         waitHandlerIdle(mainLoop);
-        verify(mStartingSurfaceDrawer).removeWindowSynced(eq(taskId));
+        verify(mStartingSurfaceDrawer).removeWindowSynced(eq(taskId), any(), any(), eq(false));
         assertEquals(mStartingSurfaceDrawer.mAddWindowForTask, 0);
     }
 
@@ -149,7 +149,7 @@ public class StartingSurfaceDrawerTests {
         final Handler mainLoop = new Handler(Looper.getMainLooper());
         final StartingWindowInfo windowInfo =
                 createWindowInfo(taskId, 0);
-        mStartingSurfaceDrawer.addSplashScreenStartingWindow(windowInfo, mBinder);
+        mStartingSurfaceDrawer.addSplashScreenStartingWindow(windowInfo, mBinder, false);
         waitHandlerIdle(mainLoop);
         verify(mStartingSurfaceDrawer).postAddWindow(eq(taskId), eq(mBinder), any(), any(), any());
         assertNotEquals(mStartingSurfaceDrawer.mViewThemeResId, 0);

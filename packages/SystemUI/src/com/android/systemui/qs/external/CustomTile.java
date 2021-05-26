@@ -40,10 +40,12 @@ import android.text.TextUtils;
 import android.text.format.DateUtils;
 import android.util.Log;
 import android.view.IWindowManager;
+import android.view.View;
 import android.view.WindowManagerGlobal;
 import android.widget.Switch;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
@@ -51,6 +53,7 @@ import com.android.systemui.Dependency;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.ActivityStarter;
+import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.qs.QSTile.State;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.qs.QSHost;
@@ -95,6 +98,7 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
             QSHost host,
             Looper backgroundLooper,
             Handler mainHandler,
+            FalsingManager falsingManager,
             MetricsLogger metricsLogger,
             StatusBarStateController statusBarStateController,
             ActivityStarter activityStarter,
@@ -102,8 +106,8 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
             String action,
             Context userContext
     ) {
-        super(host, backgroundLooper, mainHandler, metricsLogger, statusBarStateController,
-                activityStarter, qsLogger);
+        super(host, backgroundLooper, mainHandler, falsingManager, metricsLogger,
+                statusBarStateController, activityStarter, qsLogger);
         mWindowManager = WindowManagerGlobal.getWindowManagerService();
         mComponent = ComponentName.unflattenFromString(action);
         mTile = new Tile();
@@ -309,7 +313,7 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
     }
 
     @Override
-    protected void handleClick() {
+    protected void handleClick(@Nullable View view) {
         if (mTile.getState() == Tile.STATE_UNAVAILABLE) {
             return;
         }
@@ -450,6 +454,7 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
         final Lazy<QSHost> mQSHostLazy;
         final Looper mBackgroundLooper;
         final Handler mMainHandler;
+        private final FalsingManager mFalsingManager;
         final MetricsLogger mMetricsLogger;
         final StatusBarStateController mStatusBarStateController;
         final ActivityStarter mActivityStarter;
@@ -463,6 +468,7 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
                 Lazy<QSHost> hostLazy,
                 @Background Looper backgroundLooper,
                 @Main Handler mainHandler,
+                FalsingManager falsingManager,
                 MetricsLogger metricsLogger,
                 StatusBarStateController statusBarStateController,
                 ActivityStarter activityStarter,
@@ -471,6 +477,7 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
             mQSHostLazy = hostLazy;
             mBackgroundLooper = backgroundLooper;
             mMainHandler = mainHandler;
+            mFalsingManager = falsingManager;
             mMetricsLogger = metricsLogger;
             mStatusBarStateController = statusBarStateController;
             mActivityStarter = activityStarter;
@@ -496,6 +503,7 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
                     mQSHostLazy.get(),
                     mBackgroundLooper,
                     mMainHandler,
+                    mFalsingManager,
                     mMetricsLogger,
                     mStatusBarStateController,
                     mActivityStarter,

@@ -34,16 +34,23 @@ import android.os.ShellCommand;
 import android.text.FontConfig;
 import android.util.IndentingPrintWriter;
 import android.util.Slog;
+import android.util.TypedXmlPullParser;
+import android.util.Xml;
 
 import com.android.internal.util.DumpUtils;
+
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintWriter;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -93,8 +100,20 @@ public class FontManagerShellCommand extends ShellCommand {
         w.println("update [font file path] [signature file path]");
         w.println("    Update installed font files with new font file.");
         w.println();
+        w.println("update-family [family definition XML path]");
+        w.println("    Update font families with the new definitions.");
+        w.println();
         w.println("clear");
         w.println("    Remove all installed font files and reset to the initial state.");
+        w.println();
+        w.println("restart");
+        w.println("    Restart FontManagerService emulating device reboot.");
+        w.println("    WARNING: this is not a safe operation. Other processes may misbehave if");
+        w.println("    they are using fonts updated by FontManagerService.");
+        w.println("    This command exists merely for testing.");
+        w.println();
+        w.println("status");
+        w.println("    Prints status of current system font configuration.");
     }
 
     /* package */ void dumpAll(@NonNull IndentingPrintWriter w) {
@@ -317,44 +336,116 @@ public class FontManagerShellCommand extends ShellCommand {
                     "Signature file argument is required.");
         }
 
-        // TODO: close fontFd and sigFd.
-        ParcelFileDescriptor fontFd = shell.openFileForSystem(fontPath, "r");
-        if (fontFd == null) {
-            throw new SystemFontException(
-                    FontManager.RESULT_ERROR_FAILED_TO_OPEN_FONT_FILE,
-                    "Failed to open font file");
-        }
-
-        ParcelFileDescriptor sigFd = shell.openFileForSystem(signaturePath, "r");
-        if (sigFd == null) {
-            throw new SystemFontException(
-                    FontManager.RESULT_ERROR_FAILED_TO_OPEN_SIGNATURE_FILE,
-                    "Failed to open signature file");
-        }
-
-        try (FileInputStream sigFis = new FileInputStream(sigFd.getFileDescriptor())) {
-            int len = sigFis.available();
-            if (len > MAX_SIGNATURE_FILE_SIZE_BYTES) {
+        try (ParcelFileDescriptor fontFd = shell.openFileForSystem(fontPath, "r");
+             ParcelFileDescriptor sigFd = shell.openFileForSystem(signaturePath, "r")) {
+            if (fontFd == null) {
                 throw new SystemFontException(
-                        FontManager.RESULT_ERROR_SIGNATURE_TOO_LARGE,
-                        "Signature file is too large");
+                        FontManager.RESULT_ERROR_FAILED_TO_OPEN_FONT_FILE,
+                        "Failed to open font file");
             }
-            byte[] signature = new byte[len];
-            if (sigFis.read(signature, 0, len) != len) {
+
+            if (sigFd == null) {
+                throw new SystemFontException(
+                        FontManager.RESULT_ERROR_FAILED_TO_OPEN_SIGNATURE_FILE,
+                        "Failed to open signature file");
+            }
+
+            byte[] signature;
+            try (FileInputStream sigFis = new FileInputStream(sigFd.getFileDescriptor())) {
+                int len = sigFis.available();
+                if (len > MAX_SIGNATURE_FILE_SIZE_BYTES) {
+                    throw new SystemFontException(
+                            FontManager.RESULT_ERROR_SIGNATURE_TOO_LARGE,
+                            "Signature file is too large");
+                }
+                signature = new byte[len];
+                if (sigFis.read(signature, 0, len) != len) {
+                    throw new SystemFontException(
+                            FontManager.RESULT_ERROR_INVALID_SIGNATURE_FILE,
+                            "Invalid read length");
+                }
+            } catch (IOException e) {
                 throw new SystemFontException(
                         FontManager.RESULT_ERROR_INVALID_SIGNATURE_FILE,
-                        "Invalid read length");
+                        "Failed to read signature file.", e);
             }
             mService.update(
                     -1, Collections.singletonList(new FontUpdateRequest(fontFd, signature)));
         } catch (IOException e) {
-            throw new SystemFontException(
-                    FontManager.RESULT_ERROR_INVALID_SIGNATURE_FILE,
-                    "Failed to read signature file.", e);
+            // We should reach here only when close() threw IOException.
+            // shell.openFileForSystem() and FontManagerService.update() don't throw IOException.
+            Slog.w(TAG, "Error while closing files", e);
         }
 
         shell.getOutPrintWriter().println("Success");  // TODO: Output more details.
         return 0;
+    }
+
+    private int updateFamily(ShellCommand shell) throws SystemFontException {
+        String xmlPath = shell.getNextArg();
+        if (xmlPath == null) {
+            throw new SystemFontException(
+                    FontManager.RESULT_ERROR_INVALID_SHELL_ARGUMENT,
+                    "XML file path argument is required.");
+        }
+
+        List<FontUpdateRequest> requests;
+        try (ParcelFileDescriptor xmlFd = shell.openFileForSystem(xmlPath, "r")) {
+            requests = parseFontFamilyUpdateXml(new FileInputStream(xmlFd.getFileDescriptor()));
+        } catch (IOException e) {
+            throw new SystemFontException(
+                    FontManager.RESULT_ERROR_FAILED_TO_OPEN_XML_FILE,
+                    "Failed to open XML file.", e);
+        }
+        mService.update(-1, requests);
+        shell.getOutPrintWriter().println("Success");
+        return 0;
+    }
+
+    /**
+     * Parses XML representing {@link android.graphics.fonts.FontFamilyUpdateRequest}.
+     *
+     * <p>The format is like:
+     * <pre>{@code
+     *   <fontFamilyUpdateRequest>
+     *       <family name="family-name">
+     *           <font name="postScriptName"/>
+     *       </family>
+     *   </fontFamilyUpdateRequest>
+     * }</pre>
+     */
+    private static List<FontUpdateRequest> parseFontFamilyUpdateXml(InputStream inputStream)
+            throws SystemFontException {
+        try {
+            TypedXmlPullParser parser = Xml.resolvePullParser(inputStream);
+            List<FontUpdateRequest> requests = new ArrayList<>();
+            int type;
+            while ((type = parser.next()) != XmlPullParser.END_DOCUMENT) {
+                if (type != XmlPullParser.START_TAG) {
+                    continue;
+                }
+                final int depth = parser.getDepth();
+                final String tag = parser.getName();
+                if (depth == 1) {
+                    if (!"fontFamilyUpdateRequest".equals(tag)) {
+                        throw new SystemFontException(FontManager.RESULT_ERROR_INVALID_XML,
+                                "Expected <fontFamilyUpdateRequest> but got: " + tag);
+                    }
+                } else if (depth == 2) {
+                    // TODO: Support including FontFileUpdateRequest
+                    if ("family".equals(tag)) {
+                        requests.add(new FontUpdateRequest(
+                                FontUpdateRequest.Family.readFromXml(parser)));
+                    } else {
+                        throw new SystemFontException(FontManager.RESULT_ERROR_INVALID_XML,
+                                "Expected <family> but got: " + tag);
+                    }
+                }
+            }
+            return requests;
+        } catch (IOException | XmlPullParserException e) {
+            throw new SystemFontException(0, "Failed to parse xml", e);
+        }
     }
 
     private int clear(ShellCommand shell) throws SystemFontException {
@@ -363,7 +454,13 @@ public class FontManagerShellCommand extends ShellCommand {
         return 0;
     }
 
-    private int status(ShellCommand shell) throws SystemFontException {
+    private int restart(ShellCommand shell) {
+        mService.restart();
+        shell.getOutPrintWriter().println("Success");
+        return 0;
+    }
+
+    private int status(ShellCommand shell) {
         final IndentingPrintWriter writer =
                 new IndentingPrintWriter(shell.getOutPrintWriter(), "  ");
         FontConfig config = mService.getSystemFontConfig();
@@ -389,8 +486,12 @@ public class FontManagerShellCommand extends ShellCommand {
                     return dump(shell);
                 case "update":
                     return update(shell);
+                case "update-family":
+                    return updateFamily(shell);
                 case "clear":
                     return clear(shell);
+                case "restart":
+                    return restart(shell);
                 case "status":
                     return status(shell);
                 default:

@@ -31,8 +31,7 @@ import com.android.server.wm.flicker.layerBecomesVisible
 import com.android.server.wm.flicker.noUncoveredRegions
 import com.android.server.wm.flicker.startRotation
 import com.android.server.wm.flicker.statusBarLayerIsAlwaysVisible
-import com.android.server.wm.flicker.visibleLayersShownMoreThanOneConsecutiveEntry
-import com.android.server.wm.flicker.visibleWindowsShownMoreThanOneConsecutiveEntry
+import com.android.server.wm.traces.parser.windowmanager.WindowManagerStateHelper
 import com.android.wm.shell.flicker.appPairsDividerBecomesVisible
 import com.android.wm.shell.flicker.helpers.SplitScreenHelper
 import org.junit.FixMethodOrder
@@ -61,14 +60,12 @@ class OpenAppToLegacySplitScreen(
             }
         }
 
-    @FlakyTest(bugId = 178447631)
-    @Test
-    fun visibleWindowsShownMoreThanOneConsecutiveEntry() =
-        testSpec.visibleWindowsShownMoreThanOneConsecutiveEntry(
-            listOf(LAUNCHER_PACKAGE_NAME, splitScreenApp.defaultWindowName)
-        )
+    override val ignoredWindows: List<String>
+        get() = listOf(LAUNCHER_PACKAGE_NAME, splitScreenApp.defaultWindowName,
+            WindowManagerStateHelper.SPLASH_SCREEN_NAME,
+            WindowManagerStateHelper.SNAPSHOT_WINDOW_NAME)
 
-    @Presubmit
+    @FlakyTest
     @Test
     fun appWindowBecomesVisible() = testSpec.appWindowBecomesVisible(splitScreenApp.getPackage())
 
@@ -84,16 +81,9 @@ class OpenAppToLegacySplitScreen(
     @Test
     fun appPairsDividerBecomesVisible() = testSpec.appPairsDividerBecomesVisible()
 
-    @Presubmit
+    @FlakyTest
     @Test
     fun layerBecomesVisible() = testSpec.layerBecomesVisible(splitScreenApp.getPackage())
-
-    @FlakyTest(bugId = 178447631)
-    @Test
-    fun visibleLayersShownMoreThanOneConsecutiveEntry() =
-        testSpec.visibleLayersShownMoreThanOneConsecutiveEntry(
-            listOf(LAUNCHER_PACKAGE_NAME, splitScreenApp.defaultWindowName)
-        )
 
     @FlakyTest(bugId = 151179149)
     @Test

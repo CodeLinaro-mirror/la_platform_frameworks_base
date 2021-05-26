@@ -24,6 +24,8 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.Log;
 
+import com.android.internal.util.Preconditions;
+
 import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -35,22 +37,23 @@ import java.util.Objects;
  * @param <ValueType> The type of result object for successful calls.
  */
 public final class AppSearchResult<ValueType> implements Parcelable {
+    private static final String TAG = "AppSearchResult";
+
     /**
      * Result codes from {@link AppSearchSession} methods.
-     *
      * @hide
      */
-    @IntDef(
-            value = {
-                RESULT_OK,
-                RESULT_UNKNOWN_ERROR,
-                RESULT_INTERNAL_ERROR,
-                RESULT_INVALID_ARGUMENT,
-                RESULT_IO_ERROR,
-                RESULT_OUT_OF_SPACE,
-                RESULT_NOT_FOUND,
-                RESULT_INVALID_SCHEMA,
-            })
+    @IntDef(value = {
+            RESULT_OK,
+            RESULT_UNKNOWN_ERROR,
+            RESULT_INTERNAL_ERROR,
+            RESULT_INVALID_ARGUMENT,
+            RESULT_IO_ERROR,
+            RESULT_OUT_OF_SPACE,
+            RESULT_NOT_FOUND,
+            RESULT_INVALID_SCHEMA,
+            RESULT_SECURITY_ERROR,
+    })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ResultCode {}
 
@@ -89,6 +92,9 @@ public final class AppSearchResult<ValueType> implements Parcelable {
 
     /** The caller supplied a schema which is invalid or incompatible with the previous schema. */
     public static final int RESULT_INVALID_SCHEMA = 7;
+
+    /** The caller requested an operation it does not have privileges for. */
+    public static final int RESULT_SECURITY_ERROR = 8;
 
     private final @ResultCode int mResultCode;
     @Nullable private final ValueType mResultValue;
@@ -148,8 +154,8 @@ public final class AppSearchResult<ValueType> implements Parcelable {
      *
      * <p>If {@link #isSuccess} is {@code true}, the error message is always {@code null}. The error
      * message may be {@code null} even if {@link #isSuccess} is {@code false}. See the
-     * documentation of the particular {@link AppSearchSession} call producing this {@link
-     * AppSearchResult} for what is returned by {@link #getErrorMessage}.
+     * documentation of the particular {@link AppSearchSession} call producing this
+     * {@link AppSearchResult} for what is returned by {@link #getErrorMessage}.
      */
     @Nullable
     public String getErrorMessage() {
@@ -208,8 +214,6 @@ public final class AppSearchResult<ValueType> implements Parcelable {
 
     /**
      * Creates a new successful {@link AppSearchResult}.
-     *
-     * @hide
      */
     @NonNull
     public static <ValueType> AppSearchResult<ValueType> newSuccessfulResult(
@@ -219,8 +223,6 @@ public final class AppSearchResult<ValueType> implements Parcelable {
 
     /**
      * Creates a new failed {@link AppSearchResult}.
-     *
-     * @hide
      */
     @NonNull
     public static <ValueType> AppSearchResult<ValueType> newFailedResult(
@@ -228,18 +230,40 @@ public final class AppSearchResult<ValueType> implements Parcelable {
         return new AppSearchResult<>(resultCode, /*resultValue=*/ null, errorMessage);
     }
 
+    /**
+     * Creates a new failed {@link AppSearchResult} by a AppSearchResult in another type.
+     *
+     * @hide
+     */
+    @NonNull
+    public static <ValueType> AppSearchResult<ValueType> newFailedResult(
+            @NonNull AppSearchResult<?> otherFailedResult) {
+        Preconditions.checkState(!otherFailedResult.isSuccess(),
+                "Cannot convert a success result to a failed result");
+        return AppSearchResult.newFailedResult(
+                otherFailedResult.getResultCode(), otherFailedResult.getErrorMessage());
+    }
+
     /** @hide */
     @NonNull
     public static <ValueType> AppSearchResult<ValueType> throwableToFailedResult(
             @NonNull Throwable t) {
-        Log.d("AppSearchResult", "Converting throwable to failed result.", t);
+        // Log for traceability. NOT_FOUND is logged at VERBOSE because this error can occur during
+        // the regular operation of the system (b/183550974). Everything else is logged at DEBUG.
+        if (t instanceof AppSearchException
+                && ((AppSearchException) t).getResultCode() == RESULT_NOT_FOUND) {
+            Log.v(TAG, "Converting throwable to failed result: " + t);
+        } else {
+            Log.d(TAG, "Converting throwable to failed result.", t);
+        }
 
         if (t instanceof AppSearchException) {
             return ((AppSearchException) t).toAppSearchResult();
         }
 
+        String exceptionClass = t.getClass().getSimpleName();
         @AppSearchResult.ResultCode int resultCode;
-        if (t instanceof IllegalStateException) {
+        if (t instanceof IllegalStateException || t instanceof NullPointerException) {
             resultCode = AppSearchResult.RESULT_INTERNAL_ERROR;
         } else if (t instanceof IllegalArgumentException) {
             resultCode = AppSearchResult.RESULT_INVALID_ARGUMENT;
@@ -248,6 +272,6 @@ public final class AppSearchResult<ValueType> implements Parcelable {
         } else {
             resultCode = AppSearchResult.RESULT_UNKNOWN_ERROR;
         }
-        return AppSearchResult.newFailedResult(resultCode, t.getMessage());
+        return AppSearchResult.newFailedResult(resultCode, exceptionClass + ": " + t.getMessage());
     }
 }

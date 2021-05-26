@@ -52,7 +52,8 @@ java_library {
     libs: [
         "unsupportedappusage",
         "framework-wifi-util-lib",
-        "framework-connectivity"
+        "framework-connectivity",
+        "modules-utils-build_system",
     ],
     static_libs: [
         // All the classes in netd_aidl_interface must be jarjar so they do not conflict with the
@@ -60,6 +61,7 @@ java_library {
         "netd_aidl_interface-V3-java",
         "netlink-client",
         "networkstack-client",
+        "modules-utils-build_system",
     ],
     apex_available: [
         "com.android.wifi",
@@ -80,6 +82,18 @@ filegroup {
     ],
     visibility: [
         "//frameworks/base/packages/Tethering",
-        "//packages/modules/Connectivity/Tethering"
+        "//packages/modules/Connectivity/Tethering",
+    ],
+}
+
+filegroup {
+    name: "services-connectivity-shared-srcs",
+    srcs: [
+        // TODO: move to networkstack-client
+        "java/android/net/IpMemoryStore.java",
+        "java/android/net/NetworkMonitorManager.java",
+        // TODO: move to libs/net
+        "java/android/net/util/KeepalivePacketDataUtil.java",
+        "java/android/net/util/NetworkConstants.java",
     ],
 }

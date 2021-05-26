@@ -21,6 +21,7 @@ import static android.os.BatteryStatsManager.NUM_WIFI_STATES;
 import static android.os.BatteryStatsManager.NUM_WIFI_SUPPL_STATES;
 
 import android.annotation.IntDef;
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.job.JobParameters;
@@ -986,6 +987,42 @@ public abstract class BatteryStats implements Parcelable {
         public abstract void getDeferredJobsLineLocked(StringBuilder sb, int which);
 
         /**
+         * Returns the battery consumption (in microcoulombs) of bluetooth for this uid,
+         * derived from on device power measurement data.
+         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+         *
+         * {@hide}
+         */
+        public abstract long getBluetoothMeasuredBatteryConsumptionUC();
+
+        /**
+         * Returns the battery consumption (in microcoulombs) of the uid's cpu usage, derived from
+         * on device power measurement data.
+         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+         *
+         * {@hide}
+         */
+        public abstract long getCpuMeasuredBatteryConsumptionUC();
+
+        /**
+         * Returns the battery consumption (in microcoulombs) of the uid's GNSS usage, derived from
+         * on device power measurement data.
+         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+         *
+         * {@hide}
+         */
+        public abstract long getGnssMeasuredBatteryConsumptionUC();
+
+        /**
+         * Returns the battery consumption (in microcoulombs) of the uid's radio usage, derived from
+         * on device power measurement data.
+         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+         *
+         * {@hide}
+         */
+        public abstract long getMobileRadioMeasuredBatteryConsumptionUC();
+
+        /**
          * Returns the battery consumption (in microcoulombs) of the screen while on and uid active,
          * derived from on device power measurement data.
          * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
@@ -993,6 +1030,15 @@ public abstract class BatteryStats implements Parcelable {
          * {@hide}
          */
         public abstract long getScreenOnMeasuredBatteryConsumptionUC();
+
+        /**
+         * Returns the battery consumption (in microcoulombs) of wifi for this uid,
+         * derived from on device power measurement data.
+         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+         *
+         * {@hide}
+         */
+        public abstract long getWifiMeasuredBatteryConsumptionUC();
 
         /**
          * Returns the battery consumption (in microcoulombs) used by this uid for each
@@ -2496,11 +2542,47 @@ public abstract class BatteryStats implements Parcelable {
     };
 
     /**
-     * Returned value if power data is unavailable
+     * Returned value if power data is unavailable.
      *
      * {@hide}
      */
-    public static final long POWER_DATA_UNAVAILABLE = -1;
+    public static final long POWER_DATA_UNAVAILABLE = -1L;
+
+    /**
+     * Returns the battery consumption (in microcoulombs) of bluetooth, derived from on
+     * device power measurement data.
+     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+     *
+     * {@hide}
+     */
+    public abstract long getBluetoothMeasuredBatteryConsumptionUC();
+
+    /**
+     * Returns the battery consumption (in microcoulombs) of the cpu, derived from on device power
+     * measurement data.
+     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+     *
+     * {@hide}
+     */
+    public abstract long getCpuMeasuredBatteryConsumptionUC();
+
+    /**
+     * Returns the battery consumption (in microcoulombs) of the GNSS, derived from on device power
+     * measurement data.
+     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+     *
+     * {@hide}
+     */
+    public abstract long getGnssMeasuredBatteryConsumptionUC();
+
+    /**
+     * Returns the battery consumption (in microcoulombs) of the radio, derived from on device power
+     * measurement data.
+     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+     *
+     * {@hide}
+     */
+    public abstract long getMobileRadioMeasuredBatteryConsumptionUC();
 
     /**
      * Returns the battery consumption (in microcoulombs) of the screen while on, derived from on
@@ -2521,6 +2603,15 @@ public abstract class BatteryStats implements Parcelable {
     public abstract long getScreenDozeMeasuredBatteryConsumptionUC();
 
     /**
+     * Returns the battery consumption (in microcoulombs) of wifi, derived from on
+     * device power measurement data.
+     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+     *
+     * {@hide}
+     */
+    public abstract long getWifiMeasuredBatteryConsumptionUC();
+
+    /**
      * Returns the battery consumption (in microcoulombs) that each
      * {@link android.hardware.power.stats.EnergyConsumer.ordinal} of (custom) energy consumer
      * type {@link android.hardware.power.stats.EnergyConsumerType#OTHER}) consumed.
@@ -2531,6 +2622,15 @@ public abstract class BatteryStats implements Parcelable {
      * {@hide}
      */
     public abstract @Nullable long[] getCustomConsumerMeasuredBatteryConsumptionUC();
+
+    /**
+     * Returns the names of all {@link android.hardware.power.stats.EnergyConsumer}'s
+     * of (custom) energy consumer type
+     * {@link android.hardware.power.stats.EnergyConsumerType#OTHER}).
+     *
+     * {@hide}
+     */
+    public abstract @NonNull String[] getCustomEnergyConsumerNames();
 
     public static final BitDescription[] HISTORY_STATE_DESCRIPTIONS = new BitDescription[] {
         new BitDescription(HistoryItem.STATE_CPU_RUNNING_FLAG, "running", "r"),
@@ -3132,6 +3232,11 @@ public abstract class BatteryStats implements Parcelable {
      * @return The maximum learned battery capacity in uAh.
      */
     public abstract int getMaxLearnedBatteryCapacity() ;
+
+    /**
+     * @return The latest learned battery capacity in uAh.
+     */
+    public abstract int getLearnedBatteryCapacity();
 
     /**
      * Return the array of discharge step durations.
@@ -3825,7 +3930,9 @@ public abstract class BatteryStats implements Parcelable {
                 getStartClockTime(),
                 whichBatteryScreenOffRealtime / 1000, whichBatteryScreenOffUptime / 1000,
                 getEstimatedBatteryCapacity(),
-                getMinLearnedBatteryCapacity(), getMaxLearnedBatteryCapacity(),
+                getLearnedBatteryCapacity(),
+                getMinLearnedBatteryCapacity(),
+                getMaxLearnedBatteryCapacity(),
                 screenDozeTime / 1000);
 
 
@@ -4588,22 +4695,31 @@ public abstract class BatteryStats implements Parcelable {
             pw.println(sb.toString());
         }
 
+        final int lastLearnedBatteryCapacity = getLearnedBatteryCapacity();
+        if (lastLearnedBatteryCapacity > 0) {
+            sb.setLength(0);
+            sb.append(prefix);
+            sb.append("  Last learned battery capacity: ");
+            sb.append(BatteryStatsHelper.makemAh(lastLearnedBatteryCapacity / 1000));
+            sb.append(" mAh");
+            pw.println(sb.toString());
+        }
         final int minLearnedBatteryCapacity = getMinLearnedBatteryCapacity();
         if (minLearnedBatteryCapacity > 0) {
             sb.setLength(0);
             sb.append(prefix);
-                sb.append("  Min learned battery capacity: ");
-                sb.append(BatteryStatsHelper.makemAh(minLearnedBatteryCapacity / 1000));
-                sb.append(" mAh");
+            sb.append("  Min learned battery capacity: ");
+            sb.append(BatteryStatsHelper.makemAh(minLearnedBatteryCapacity / 1000));
+            sb.append(" mAh");
             pw.println(sb.toString());
         }
         final int maxLearnedBatteryCapacity = getMaxLearnedBatteryCapacity();
         if (maxLearnedBatteryCapacity > 0) {
             sb.setLength(0);
             sb.append(prefix);
-                sb.append("  Max learned battery capacity: ");
-                sb.append(BatteryStatsHelper.makemAh(maxLearnedBatteryCapacity / 1000));
-                sb.append(" mAh");
+            sb.append("  Max learned battery capacity: ");
+            sb.append(BatteryStatsHelper.makemAh(maxLearnedBatteryCapacity / 1000));
+            sb.append(" mAh");
             pw.println(sb.toString());
         }
 
@@ -5976,7 +6092,7 @@ public abstract class BatteryStats implements Parcelable {
                     pw.print(":");
                     for (int it=0; it<types.size(); it++) {
                         pw.print(" ");
-                        pw.print(JobParameters.getReasonCodeDescription(types.keyAt(it)));
+                        pw.print(JobParameters.getInternalReasonCodeDescription(types.keyAt(it)));
                         pw.print("(");
                         pw.print(types.valueAt(it));
                         pw.print("x)");

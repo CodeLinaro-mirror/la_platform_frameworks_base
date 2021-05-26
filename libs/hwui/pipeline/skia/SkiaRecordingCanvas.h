@@ -15,10 +15,12 @@
  */
 #pragma once
 
+#include "HolePunch.h"
 #include "RecordingCanvas.h"
 #include "ReorderBarrierDrawables.h"
 #include "SkiaCanvas.h"
 #include "SkiaDisplayList.h"
+#include "pipeline/skia/AnimatedDrawables.h"
 
 namespace android {
 namespace uirenderer {
@@ -42,6 +44,8 @@ public:
                                 uirenderer::RenderNode* renderNode = nullptr) override {
         initDisplayList(renderNode, width, height);
     }
+
+    virtual void punchHole(const SkRRect& rect) override;
 
     virtual void finishRecording(uirenderer::RenderNode* destination) override;
     std::unique_ptr<SkiaDisplayList> finishRecording();
@@ -67,12 +71,7 @@ public:
                             uirenderer::CanvasPropertyPrimitive* y,
                             uirenderer::CanvasPropertyPrimitive* radius,
                             uirenderer::CanvasPropertyPaint* paint) override;
-    virtual void drawRipple(uirenderer::CanvasPropertyPrimitive* x,
-                            uirenderer::CanvasPropertyPrimitive* y,
-                            uirenderer::CanvasPropertyPrimitive* radius,
-                            uirenderer::CanvasPropertyPaint* paint,
-                            uirenderer::CanvasPropertyPrimitive* progress,
-                            const SkRuntimeShaderBuilder& effectBuilder) override;
+    virtual void drawRipple(const RippleDrawableParams& params) override;
 
     virtual void drawVectorDrawable(VectorDrawableRoot* vectorDrawable) override;
 

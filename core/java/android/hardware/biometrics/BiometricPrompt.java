@@ -16,6 +16,7 @@
 
 package android.hardware.biometrics;
 
+import static android.Manifest.permission.TEST_BIOMETRIC;
 import static android.Manifest.permission.USE_BIOMETRIC;
 import static android.Manifest.permission.USE_BIOMETRIC_INTERNAL;
 import static android.hardware.biometrics.BiometricManager.Authenticators;
@@ -25,6 +26,7 @@ import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
+import android.annotation.TestApi;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.hardware.face.FaceManager;
@@ -41,10 +43,12 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.R;
+import com.android.internal.util.FrameworkStatsLog;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.security.Signature;
+import java.util.List;
 import java.util.concurrent.Executor;
 
 import javax.crypto.Cipher;
@@ -339,6 +343,46 @@ public class BiometricPrompt implements BiometricAuthenticator, BiometricConstan
         }
 
         /**
+         * If non-empty, requests authentication to be performed only if the sensor is contained
+         * within the list. Note that the actual sensor presented to the user/test will meet all
+         * constraints specified within this builder. For example, on a device with the below
+         * configuration:
+         *
+         * SensorId: 1, Strength: BIOMETRIC_STRONG
+         * SensorId: 2, Strength: BIOMETRIC_WEAK
+         *
+         * If authentication is invoked with setAllowedAuthenticators(BIOMETRIC_STRONG) and
+         * setAllowedSensorIds(2), then no sensor will be eligible for authentication.
+         *
+         * @see {@link BiometricManager#getSensorProperties()}
+         *
+         * @param sensorIds Sensor IDs to constrain this authentication to.
+         * @return This builder
+         * @hide
+         */
+        @TestApi
+        @NonNull
+        @RequiresPermission(anyOf = {TEST_BIOMETRIC, USE_BIOMETRIC_INTERNAL})
+        public Builder setAllowedSensorIds(@NonNull List<Integer> sensorIds) {
+            mPromptInfo.setAllowedSensorIds(sensorIds);
+            return this;
+        }
+
+        /**
+         * @param allow If true, allows authentication when the calling package is not in the
+         *              foreground. This is set to false by default.
+         * @return This builder
+         * @hide
+         */
+        @TestApi
+        @NonNull
+        @RequiresPermission(anyOf = {TEST_BIOMETRIC, USE_BIOMETRIC_INTERNAL})
+        public Builder setAllowBackgroundAuthentication(boolean allow) {
+            mPromptInfo.setAllowBackgroundAuthentication(allow);
+            return this;
+        }
+
+        /**
          * If set check the Device Policy Manager for disabled biometrics.
          *
          * @param checkDevicePolicyManager
@@ -364,21 +408,6 @@ public class BiometricPrompt implements BiometricAuthenticator, BiometricConstan
         }
 
         /**
-         * If set, authenticate using the biometric sensor with the given ID.
-         *
-         * @param sensorId The ID of a biometric sensor, or -1 to allow any sensor (default).
-         * @return This builder.
-         *
-         * @hide
-         */
-        @RequiresPermission(USE_BIOMETRIC_INTERNAL)
-        @NonNull
-        public Builder setSensorId(int sensorId) {
-            mPromptInfo.setSensorId(sensorId);
-            return this;
-        }
-
-        /**
          * Creates a {@link BiometricPrompt}.
          *
          * @return An instance of {@link BiometricPrompt}.
@@ -394,7 +423,7 @@ public class BiometricPrompt implements BiometricAuthenticator, BiometricConstan
             final boolean deviceCredentialAllowed = mPromptInfo.isDeviceCredentialAllowed();
             final @Authenticators.Types int authenticators = mPromptInfo.getAuthenticators();
             final boolean willShowDeviceCredentialButton = deviceCredentialAllowed
-                    || (authenticators & Authenticators.DEVICE_CREDENTIAL) != 0;
+                    || isCredentialAllowed(authenticators);
 
             if (TextUtils.isEmpty(title) && !useDefaultTitle) {
                 throw new IllegalArgumentException("Title must be set and non-empty");
@@ -593,6 +622,25 @@ public class BiometricPrompt implements BiometricAuthenticator, BiometricConstan
     @Nullable
     public int getAllowedAuthenticators() {
         return mPromptInfo.getAuthenticators();
+    }
+
+    /**
+     * @return The values set by {@link Builder#setAllowedSensorIds(List)}
+     * @hide
+     */
+    @TestApi
+    @NonNull
+    public List<Integer> getAllowedSensorIds() {
+        return mPromptInfo.getAllowedSensorIds();
+    }
+
+    /**
+     * @return The value set by {@link Builder#setAllowBackgroundAuthentication(boolean)}
+     * @hide
+     */
+    @TestApi
+    public boolean isAllowBackgroundAuthentication() {
+        return mPromptInfo.isAllowBackgroundAuthentication();
     }
 
     /**
@@ -869,6 +917,14 @@ public class BiometricPrompt implements BiometricAuthenticator, BiometricConstan
             @NonNull CancellationSignal cancel,
             @NonNull @CallbackExecutor Executor executor,
             @NonNull AuthenticationCallback callback) {
+
+        FrameworkStatsLog.write(FrameworkStatsLog.AUTH_PROMPT_AUTHENTICATE_INVOKED,
+                true /* isCrypto */,
+                mPromptInfo.isConfirmationRequested(),
+                mPromptInfo.isDeviceCredentialAllowed(),
+                mPromptInfo.getAuthenticators() != Authenticators.EMPTY_SET,
+                mPromptInfo.getAuthenticators());
+
         if (crypto == null) {
             throw new IllegalArgumentException("Must supply a crypto object");
         }
@@ -926,6 +982,14 @@ public class BiometricPrompt implements BiometricAuthenticator, BiometricConstan
     public void authenticate(@NonNull CancellationSignal cancel,
             @NonNull @CallbackExecutor Executor executor,
             @NonNull AuthenticationCallback callback) {
+
+        FrameworkStatsLog.write(FrameworkStatsLog.AUTH_PROMPT_AUTHENTICATE_INVOKED,
+                false /* isCrypto */,
+                mPromptInfo.isConfirmationRequested(),
+                mPromptInfo.isDeviceCredentialAllowed(),
+                mPromptInfo.getAuthenticators() != Authenticators.EMPTY_SET,
+                mPromptInfo.getAuthenticators());
+
         if (cancel == null) {
             throw new IllegalArgumentException("Must supply a cancellation signal");
         }
@@ -1010,5 +1074,9 @@ public class BiometricPrompt implements BiometricAuthenticator, BiometricConstan
                     BiometricPrompt.BIOMETRIC_ERROR_HW_UNAVAILABLE,
                     mContext.getString(R.string.biometric_error_hw_unavailable)));
         }
+    }
+
+    private static boolean isCredentialAllowed(@Authenticators.Types int allowedAuthenticators) {
+        return (allowedAuthenticators & Authenticators.DEVICE_CREDENTIAL) != 0;
     }
 }

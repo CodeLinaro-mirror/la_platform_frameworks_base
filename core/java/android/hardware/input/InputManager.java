@@ -37,7 +37,7 @@ import android.hardware.lights.LightsManager;
 import android.hardware.lights.LightsRequest;
 import android.os.BlockUntrustedTouchesMode;
 import android.os.Build;
-import android.os.CombinedVibrationEffect;
+import android.os.CombinedVibration;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.IVibratorStateListener;
@@ -1285,7 +1285,7 @@ public final class InputManager {
      * @param inputPort The port of the input device.
      * @param displayPort The physical port of the associated display.
      * <p>
-     * Requires {@link android.Manifest.permissions.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY_BY_PORT}.
+     * Requires {@link android.Manifest.permissions.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY}.
      * </p>
      * @hide
      */
@@ -1302,7 +1302,7 @@ public final class InputManager {
      * static association for the cleared input port will be restored.
      * @param inputPort The port of the input device to be cleared.
      * <p>
-     * Requires {@link android.Manifest.permissions.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY_BY_PORT}.
+     * Requires {@link android.Manifest.permissions.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY}.
      * </p>
      * @hide
      */
@@ -1311,6 +1311,41 @@ public final class InputManager {
             mIm.removePortAssociation(inputPort);
         } catch (RemoteException ex) {
             throw ex.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Add a runtime association between the input device name and display, by unique id. Input
+     * device names are expected to be unique.
+     * @param inputDeviceName The name of the input device.
+     * @param displayUniqueId The unique id of the associated display.
+     * <p>
+     * Requires {@link android.Manifest.permissions.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY}.
+     * </p>
+     * @hide
+     */
+    public void addUniqueIdAssociation(@NonNull String inputDeviceName,
+            @NonNull String displayUniqueId) {
+        try {
+            mIm.addUniqueIdAssociation(inputDeviceName, displayUniqueId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Removes a runtime association between the input device and display.
+     * @param inputDeviceName The name of the input device.
+     * <p>
+     * Requires {@link android.Manifest.permissions.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY}.
+     * </p>
+     * @hide
+     */
+    public void removeUniqueIdAssociation(@NonNull String inputDeviceName) {
+        try {
+            mIm.removeUniqueIdAssociation(inputDeviceName);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
         }
     }
 
@@ -1462,7 +1497,7 @@ public final class InputManager {
     /*
      * Perform combined vibration effect
      */
-    void vibrate(int deviceId, CombinedVibrationEffect effect, IBinder token) {
+    void vibrate(int deviceId, CombinedVibration effect, IBinder token) {
         try {
             mIm.vibrateCombined(deviceId, effect, token);
         } catch (RemoteException ex) {
@@ -1528,12 +1563,12 @@ public final class InputManager {
     }
 
     /**
-     * Gets a battery object associated with an input device, assuming it has one.
+     * Gets a battery state object associated with an input device, assuming it has one.
      * @return The battery, never null.
      * @hide
      */
-    public InputDeviceBattery getInputDeviceBattery(int deviceId, boolean hasBattery) {
-        return new InputDeviceBattery(this, deviceId, hasBattery);
+    public InputDeviceBatteryState getInputDeviceBatteryState(int deviceId, boolean hasBattery) {
+        return new InputDeviceBatteryState(this, deviceId, hasBattery);
     }
 
     /**

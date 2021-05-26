@@ -493,7 +493,8 @@ public abstract class PackageSettingBase extends SettingBase {
             ArrayMap<String, PackageUserState.SuspendParams> suspendParams, boolean instantApp,
             boolean virtualPreload, String lastDisableAppCaller,
             ArraySet<String> enabledComponents, ArraySet<String> disabledComponents,
-            int installReason, int uninstallReason, String harmfulAppWarning) {
+            int installReason, int uninstallReason, String harmfulAppWarning,
+            String splashScreenTheme) {
         PackageUserState state = modifyUserState(userId);
         state.ceDataInode = ceDataInode;
         state.enabled = enabled;
@@ -512,6 +513,7 @@ public abstract class PackageSettingBase extends SettingBase {
         state.instantApp = instantApp;
         state.virtualPreload = virtualPreload;
         state.harmfulAppWarning = harmfulAppWarning;
+        state.splashScreenTheme = splashScreenTheme;
         onChanged();
     }
 
@@ -522,7 +524,8 @@ public abstract class PackageSettingBase extends SettingBase {
                 otherState.instantApp,
                 otherState.virtualPreload, otherState.lastDisableAppCaller,
                 otherState.enabledComponents, otherState.disabledComponents,
-                otherState.installReason, otherState.uninstallReason, otherState.harmfulAppWarning);
+                otherState.installReason, otherState.uninstallReason, otherState.harmfulAppWarning,
+                otherState.splashScreenTheme);
     }
 
     ArraySet<String> getEnabledComponents(int userId) {
@@ -723,10 +726,23 @@ public abstract class PackageSettingBase extends SettingBase {
     }
 
     /**
-     * @return True if package is startable, false otherwise.
+     * @param userId    the specified user to modify the theme for
+     * @param themeName the theme name to persist
+     * @see android.window.SplashScreen#setSplashScreenTheme(int)
      */
-    public boolean isPackageStartable() {
-        return getIncrementalStates().isStartable();
+    public void setSplashScreenTheme(@UserIdInt int userId, @Nullable String themeName) {
+        modifyUserState(userId).splashScreenTheme = themeName;
+    }
+
+    /**
+     * @param userId the specified user to get the theme setting from
+     * @return the theme name previously persisted for the user or null
+     * if no splashscreen theme is persisted.
+     * @see android.window.SplashScreen#setSplashScreenTheme(int)
+     */
+    @Nullable
+    public String getSplashScreenTheme(@UserIdInt int userId) {
+        return readUserState(userId).splashScreenTheme;
     }
 
     /**
@@ -745,8 +761,8 @@ public abstract class PackageSettingBase extends SettingBase {
 
     /**
      * Called to indicate that the package installation has been committed. This will create a
-     * new startable state and a new loading state with default values. By default, the package is
-     * startable after commit. For a package installed on Incremental, the loading state is true.
+     * new loading state with default values.
+     * For a package installed on Incremental, the loading state is true.
      * For non-Incremental packages, the loading state is false.
      */
     public void setStatesOnCommit() {
@@ -754,15 +770,7 @@ public abstract class PackageSettingBase extends SettingBase {
     }
 
     /**
-     * Called to indicate that the running app has crashed or ANR'd. This might change the startable
-     * state of the package, depending on whether the package is fully loaded.
-     */
-    public void setStatesOnCrashOrAnr() {
-        incrementalStates.onCrashOrAnr();
-    }
-
-    /**
-     * Called to set the callback to listen for startable state changes.
+     * Called to set the callback to listen for loading state changes.
      */
     public void setIncrementalStatesCallback(IncrementalStates.Callback callback) {
         incrementalStates.setCallback(callback);
@@ -774,13 +782,6 @@ public abstract class PackageSettingBase extends SettingBase {
      */
     public void setLoadingProgress(float progress) {
         incrementalStates.setProgress(progress);
-    }
-
-    /**
-     * @see IncrementalStates#onStorageHealthStatusChanged(int)
-     */
-    public void setStorageHealthStatus(int status) {
-        incrementalStates.onStorageHealthStatusChanged(status);
     }
 
     public long getFirstInstallTime() {

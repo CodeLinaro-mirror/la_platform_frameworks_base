@@ -184,6 +184,17 @@ static constexpr int PROCESS_PRIORITY_MIN = 19;
 /** The numeric value for the normal priority a process should have. */
 static constexpr int PROCESS_PRIORITY_DEFAULT = 0;
 
+/** Exponential back off parameters for storage dir check. */
+static constexpr unsigned int STORAGE_DIR_CHECK_RETRY_MULTIPLIER = 2;
+static constexpr unsigned int STORAGE_DIR_CHECK_INIT_INTERVAL_US = 50;
+static constexpr unsigned int STORAGE_DIR_CHECK_MAX_INTERVAL_US = 1000;
+/**
+ * Lower bound time we allow storage dir check to sleep.
+ * If it exceeds 2s, PROC_START_TIMEOUT_MSG will kill the starting app anyway,
+ * so it's fine to assume max retries is 5 mins.
+ */
+static constexpr int STORAGE_DIR_CHECK_TIMEOUT_US = 1000 * 1000 * 60 * 5;
+
 /**
  * A helper class containing accounting information for USAPs.
  */
@@ -327,6 +338,7 @@ enum RuntimeFlags : uint32_t {
     GWP_ASAN_LEVEL_LOTTERY = 1 << 21,
     GWP_ASAN_LEVEL_ALWAYS = 2 << 21,
     NATIVE_HEAP_ZERO_INIT = 1 << 23,
+    PROFILEABLE = 1 << 24,
 };
 
 enum UnsolicitedZygoteMessageTypes : uint32_t {
@@ -814,7 +826,7 @@ static void MountEmulatedStorage(uid_t uid, jint mount_mode,
   PrepareDir(user_source, 0710, user_id ? AID_ROOT : AID_SHELL,
              multiuser_get_uid(user_id, AID_EVERYBODY), fail_fn);
 
-  bool isAppDataIsolationEnabled = GetBoolProperty(kVoldAppDataIsolation, false);
+  bool isAppDataIsolationEnabled = GetBoolProperty(kVoldAppDataIsolation, true);
 
   if (mount_mode == MOUNT_EXTERNAL_PASS_THROUGH) {
       const std::string pass_through_source = StringPrintf("/mnt/pass_through/%d", user_id);
@@ -1013,21 +1025,6 @@ static void ClearUsapTable() {
   }
 
   gUsapPoolCount = 0;
-}
-
-NO_PAC_FUNC
-static void PAuthKeyChange(JNIEnv* env) {
-#ifdef __aarch64__
-  unsigned long int hwcaps = getauxval(AT_HWCAP);
-  if (hwcaps & HWCAP_PACA) {
-    const unsigned long key_mask = PR_PAC_APIAKEY | PR_PAC_APIBKEY |
-                                   PR_PAC_APDAKEY | PR_PAC_APDBKEY | PR_PAC_APGAKEY;
-    if (prctl(PR_PAC_RESET_KEYS, key_mask, 0, 0, 0) != 0) {
-      ALOGE("Failed to change the PAC keys: %s", strerror(errno));
-      RuntimeAbort(env, __LINE__, "PAC key change failed.");
-    }
-  }
-#endif
 }
 
 // Create an app data directory over tmpfs overlayed CE / DE storage, and bind mount it
@@ -1458,6 +1455,31 @@ static void isolateJitProfile(JNIEnv* env, jobjectArray pkg_data_info_list,
   }
 }
 
+static void WaitUntilDirReady(const std::string& target, fail_fn_t fail_fn) {
+  unsigned int sleepIntervalUs = STORAGE_DIR_CHECK_INIT_INTERVAL_US;
+
+  // This is just an approximate value as it doesn't need to be very accurate.
+  unsigned int sleepTotalUs = 0;
+
+  const char* dir_path = target.c_str();
+  while (sleepTotalUs < STORAGE_DIR_CHECK_TIMEOUT_US) {
+    if (access(dir_path, F_OK) == 0) {
+      return;
+    }
+    // Failed, so we add exponential backoff and retry
+    usleep(sleepIntervalUs);
+    sleepTotalUs += sleepIntervalUs;
+    sleepIntervalUs = std::min<unsigned int>(
+        sleepIntervalUs * STORAGE_DIR_CHECK_RETRY_MULTIPLIER,
+        STORAGE_DIR_CHECK_MAX_INTERVAL_US);
+  }
+  // Last chance and get the latest errno if it fails.
+  if (access(dir_path, F_OK) == 0) {
+    return;
+  }
+  fail_fn(CREATE_ERROR("Error dir is not ready %s: %s", dir_path, strerror(errno)));
+}
+
 static void BindMountStorageToLowerFs(const userid_t user_id, const uid_t uid,
     const char* dir_name, const char* package, fail_fn_t fail_fn) {
     bool hasSdcardFs = IsSdcardfsUsed();
@@ -1468,6 +1490,10 @@ static void BindMountStorageToLowerFs(const userid_t user_id, const uid_t uid,
         source = StringPrintf("/mnt/pass_through/%d/emulated/%d/%s/%s", user_id, user_id, dir_name,
                               package);
     }
+
+  // Directory might be not ready, as prepareStorageDirs() is running asynchronously in ProcessList,
+  // so wait until dir is created.
+  WaitUntilDirReady(source, fail_fn);
   std::string target = StringPrintf("/storage/emulated/%d/%s/%s", user_id, dir_name, package);
 
   // As the parent is mounted as tmpfs, we need to create the target dir here.
@@ -1980,7 +2006,6 @@ void zygote::ZygoteFailure(JNIEnv* env,
 }
 
 // Utility routine to fork a process from the zygote.
-NO_PAC_FUNC
 pid_t zygote::ForkCommon(JNIEnv* env, bool is_system_server,
                          const std::vector<int>& fds_to_close,
                          const std::vector<int>& fds_to_ignore,
@@ -2035,7 +2060,6 @@ pid_t zygote::ForkCommon(JNIEnv* env, bool is_system_server,
     }
 
     // The child process.
-    PAuthKeyChange(env);
     PreApplicationInit();
 
     // Clean up any descriptors which must be closed immediately
@@ -2067,7 +2091,6 @@ static void com_android_internal_os_Zygote_nativePreApplicationInit(JNIEnv*, jcl
   PreApplicationInit();
 }
 
-NO_PAC_FUNC
 static jint com_android_internal_os_Zygote_nativeForkAndSpecialize(
         JNIEnv* env, jclass, jint uid, jint gid, jintArray gids, jint runtime_flags,
         jobjectArray rlimits, jint mount_external, jstring se_info, jstring nice_name,
@@ -2117,7 +2140,6 @@ static jint com_android_internal_os_Zygote_nativeForkAndSpecialize(
     return pid;
 }
 
-NO_PAC_FUNC
 static jint com_android_internal_os_Zygote_nativeForkSystemServer(
         JNIEnv* env, jclass, uid_t uid, gid_t gid, jintArray gids,
         jint runtime_flags, jobjectArray rlimits, jlong permitted_capabilities,
@@ -2189,7 +2211,6 @@ static jint com_android_internal_os_Zygote_nativeForkSystemServer(
  * @param is_priority_fork  Controls the nice level assigned to the newly created process
  * @return child pid in the parent, 0 in the child
  */
-NO_PAC_FUNC
 static jint com_android_internal_os_Zygote_nativeForkApp(JNIEnv* env,
                                                          jclass,
                                                          jint read_pipe_fd,
@@ -2204,7 +2225,6 @@ static jint com_android_internal_os_Zygote_nativeForkApp(JNIEnv* env,
                             args_known == JNI_TRUE, is_priority_fork == JNI_TRUE, true);
 }
 
-NO_PAC_FUNC
 int zygote::forkApp(JNIEnv* env,
                     int read_pipe_fd,
                     int write_pipe_fd,

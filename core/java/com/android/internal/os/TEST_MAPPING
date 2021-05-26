@@ -1,10 +1,24 @@
 {
   "presubmit": [
     {
-      "file_patterns": ["Battery[^/]*\\.java"],
+      "file_patterns": [
+        "Battery[^/]*\\.java",
+        "Kernel[^/]*\\.java",
+        "[^/]*Power[^/]*\\.java"
+      ],
       "name": "FrameworksCoreTests",
       "options": [
         { "include-filter": "com.android.internal.os.BatteryStatsTests" },
+        { "exclude-annotation": "com.android.internal.os.SkipPresubmit" }
+      ]
+    },
+    {
+      "file_patterns": [
+        "BinderDeathDispatcher\\.java"
+      ],
+      "name": "FrameworksCoreTests",
+      "options": [
+        { "include-filter": "com.android.internal.os.BinderDeathDispatcherTest" },
         { "exclude-annotation": "com.android.internal.os.SkipPresubmit" }
       ]
     },

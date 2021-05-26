@@ -19,31 +19,34 @@ package android.view.translation;
 import static android.view.translation.TranslationManager.STATUS_SYNC_CALL_FAIL;
 import static android.view.translation.TranslationManager.SYNC_CALLS_TIMEOUT_MS;
 
+import android.annotation.CallbackExecutor;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SuppressLint;
-import android.annotation.WorkerThread;
 import android.content.Context;
+import android.os.Binder;
 import android.os.Bundle;
+import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.ICancellationSignal;
 import android.os.RemoteException;
 import android.service.translation.ITranslationCallback;
 import android.util.Log;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.os.IResultReceiver;
-import com.android.internal.util.SyncResultReceiver;
 
 import java.io.PrintWriter;
 import java.lang.ref.WeakReference;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
- * The {@link Translator} for translation, defined by a source and a dest {@link TranslationSpec}.
+ * The {@link Translator} for translation, defined by a {@link TranslationContext}.
  */
 @SuppressLint("NotCloseable")
 public class Translator {
@@ -61,10 +64,7 @@ public class Translator {
     private final Context mContext;
 
     @NonNull
-    private final TranslationSpec mSourceSpec;
-
-    @NonNull
-    private final TranslationSpec mDestSpec;
+    private final TranslationContext mTranslationContext;
 
     @NonNull
     private final TranslationManager mManager;
@@ -101,9 +101,17 @@ public class Translator {
     public static final String EXTRA_SESSION_ID = "sessionId";
 
     static class ServiceBinderReceiver extends IResultReceiver.Stub {
+        // TODO: refactor how translator is instantiated after removing deprecated createTranslator.
         private final WeakReference<Translator> mTranslator;
         private final CountDownLatch mLatch = new CountDownLatch(1);
         private int mSessionId;
+
+        private Consumer<Translator> mCallback;
+
+        ServiceBinderReceiver(Translator translator, Consumer<Translator> callback) {
+            mTranslator = new WeakReference<>(translator);
+            mCallback = callback;
+        }
 
         ServiceBinderReceiver(Translator translator) {
             mTranslator = new WeakReference<>(translator);
@@ -126,6 +134,9 @@ public class Translator {
         public void send(int resultCode, Bundle resultData) {
             if (resultCode == STATUS_SYNC_CALL_FAIL) {
                 mLatch.countDown();
+                if (mCallback != null) {
+                    mCallback.accept(null);
+                }
                 return;
             }
             mSessionId = resultData.getInt(EXTRA_SESSION_ID);
@@ -146,6 +157,9 @@ public class Translator {
             }
             translator.setServiceBinder(binder);
             mLatch.countDown();
+            if (mCallback != null) {
+                mCallback.accept(translator);
+            }
         }
 
         // TODO(b/176464808): maybe make SyncResultReceiver.TimeoutException constructor public
@@ -163,13 +177,37 @@ public class Translator {
      * @hide
      */
     public Translator(@NonNull Context context,
-            @NonNull TranslationSpec sourceSpec,
-            @NonNull TranslationSpec destSpec, int sessionId,
+            @NonNull TranslationContext translationContext, int sessionId,
+            @NonNull TranslationManager translationManager, @NonNull Handler handler,
+            @Nullable ITranslationManager systemServerBinder,
+            @NonNull Consumer<Translator> callback) {
+        mContext = context;
+        mTranslationContext = translationContext;
+        mId = sessionId;
+        mManager = translationManager;
+        mHandler = handler;
+        mSystemServerBinder = systemServerBinder;
+        mServiceBinderReceiver = new ServiceBinderReceiver(this, callback);
+
+        try {
+            mSystemServerBinder.onSessionCreated(mTranslationContext, mId,
+                    mServiceBinderReceiver, mContext.getUserId());
+        } catch (RemoteException e) {
+            Log.w(TAG, "RemoteException calling startSession(): " + e);
+        }
+    }
+
+    /**
+     * Create the Translator.
+     *
+     * @hide
+     */
+    public Translator(@NonNull Context context,
+            @NonNull TranslationContext translationContext, int sessionId,
             @NonNull TranslationManager translationManager, @NonNull Handler handler,
             @Nullable ITranslationManager systemServerBinder) {
         mContext = context;
-        mSourceSpec = sourceSpec;
-        mDestSpec = destSpec;
+        mTranslationContext = translationContext;
         mId = sessionId;
         mManager = translationManager;
         mHandler = handler;
@@ -182,7 +220,7 @@ public class Translator {
      */
     void start() {
         try {
-            mSystemServerBinder.onSessionCreated(mSourceSpec, mDestSpec, mId,
+            mSystemServerBinder.onSessionCreated(mTranslationContext, mId,
                     mServiceBinderReceiver, mContext.getUserId());
         } catch (RemoteException e) {
             Log.w(TAG, "RemoteException calling startSession(): " + e);
@@ -216,32 +254,40 @@ public class Translator {
     }
 
     /** @hide */
+    public TranslationContext getTranslationContext() {
+        return mTranslationContext;
+    }
+
+    /** @hide */
     public int getTranslatorId() {
         return mId;
     }
 
     /** @hide */
     public void dump(@NonNull String prefix, @NonNull PrintWriter pw) {
-        pw.print(prefix); pw.print("sourceSpec: "); pw.println(mSourceSpec);
-        pw.print(prefix); pw.print("destSpec: "); pw.println(mDestSpec);
+        pw.print(prefix); pw.print("translationContext: "); pw.println(mTranslationContext);
     }
 
     /**
      * Requests a translation for the provided {@link TranslationRequest} using the Translator's
      * source spec and destination spec.
      *
-     * <p><strong>NOTE: </strong>Call on a worker thread.
-     *
      * @param request {@link TranslationRequest} request to be translate.
      *
-     * @return {@link TranslationRequest} containing translated request,
-     *         or null if translation could not be done.
-     * @throws IllegalStateException if this TextClassification session was destroyed when calls
+     * @throws IllegalStateException if this Translator session was destroyed when called.
+     *
+     * @removed use {@link #translate(TranslationRequest, CancellationSignal,
+     *             Executor, Consumer)} instead.
      */
+    @Deprecated
     @Nullable
-    @WorkerThread
-    public TranslationResponse translate(@NonNull TranslationRequest request) {
+    public void translate(@NonNull TranslationRequest request,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull Consumer<TranslationResponse> callback) {
         Objects.requireNonNull(request, "Translation request cannot be null");
+        Objects.requireNonNull(executor, "Executor cannot be null");
+        Objects.requireNonNull(callback, "Callback cannot be null");
+
         if (isDestroyed()) {
             // TODO(b/176464808): Disallow multiple Translator now, it will throw
             //  IllegalStateException. Need to discuss if we can allow multiple Translators.
@@ -249,21 +295,58 @@ public class Translator {
                     "This translator has been destroyed");
         }
 
-        TranslationResponse response = null;
+        final ITranslationCallback responseCallback =
+                new TranslationResponseCallbackImpl(callback, executor);
         try {
-            final SyncResultReceiver receiver = new SyncResultReceiver(SYNC_CALLS_TIMEOUT_MS);
-            mDirectServiceBinder.onTranslationRequest(request, mId, null, receiver);
-
-            response = receiver.getParcelableResult();
+            mDirectServiceBinder.onTranslationRequest(request, mId,
+                    CancellationSignal.createTransport(), responseCallback);
         } catch (RemoteException e) {
             Log.w(TAG, "RemoteException calling requestTranslate(): " + e);
-        }  catch (SyncResultReceiver.TimeoutException e) {
-            Log.e(TAG, "Timed out calling requestTranslate: " + e);
         }
-        if (sDEBUG) {
-            Log.v(TAG, "Receive translation response: " + response);
+    }
+
+    /**
+     * Requests a translation for the provided {@link TranslationRequest} using the Translator's
+     * source spec and destination spec.
+     *
+     * @param request {@link TranslationRequest} request to be translate.
+     * @param cancellationSignal signal to cancel the operation in progress.
+     * @param executor Executor to run callback operations
+     * @param callback {@link Consumer} to receive the translation response. Multiple responses may
+     *                 be received if {@link TranslationRequest#FLAG_PARTIAL_RESPONSES} is set.
+     *
+     * @throws IllegalStateException if this Translator session was destroyed when called.
+     */
+    @Nullable
+    public void translate(@NonNull TranslationRequest request,
+            @Nullable CancellationSignal cancellationSignal,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull Consumer<TranslationResponse> callback) {
+        Objects.requireNonNull(request, "Translation request cannot be null");
+        Objects.requireNonNull(executor, "Executor cannot be null");
+        Objects.requireNonNull(callback, "Callback cannot be null");
+
+        if (isDestroyed()) {
+            // TODO(b/176464808): Disallow multiple Translator now, it will throw
+            //  IllegalStateException. Need to discuss if we can allow multiple Translators.
+            throw new IllegalStateException(
+                    "This translator has been destroyed");
         }
-        return response;
+
+        ICancellationSignal transport = null;
+        if (cancellationSignal != null) {
+            transport = CancellationSignal.createTransport();
+            cancellationSignal.setRemote(transport);
+        }
+        final ITranslationCallback responseCallback =
+                new TranslationResponseCallbackImpl(callback, executor);
+
+        try {
+            mDirectServiceBinder.onTranslationRequest(request, mId, transport,
+                    responseCallback);
+        } catch (RemoteException e) {
+            Log.w(TAG, "RemoteException calling requestTranslate(): " + e);
+        }
     }
 
     /**
@@ -299,15 +382,17 @@ public class Translator {
     // TODO: add methods for UI-toolkit case.
     /** @hide */
     public void requestUiTranslate(@NonNull TranslationRequest request,
-            @NonNull Consumer<TranslationResponse> responseCallback) {
+            @NonNull Executor executor,
+            @NonNull Consumer<TranslationResponse> callback) {
         if (mDirectServiceBinder == null) {
             Log.wtf(TAG, "Translator created without proper initialization.");
             return;
         }
-        final ITranslationCallback callback =
-                new TranslationResponseCallbackImpl(responseCallback);
+        final ITranslationCallback translationCallback =
+                new TranslationResponseCallbackImpl(callback, executor);
         try {
-            mDirectServiceBinder.onTranslationRequest(request, mId, callback, null);
+            mDirectServiceBinder.onTranslationRequest(request, mId,
+                    CancellationSignal.createTransport(), translationCallback);
         } catch (RemoteException e) {
             Log.w(TAG, "RemoteException calling flushRequest");
         }
@@ -315,26 +400,27 @@ public class Translator {
 
     private static class TranslationResponseCallbackImpl extends ITranslationCallback.Stub {
 
-        private final WeakReference<Consumer<TranslationResponse>> mResponseCallback;
+        private final WeakReference<Consumer<TranslationResponse>> mCallback;
+        private final WeakReference<Executor> mExecutor;
 
-        TranslationResponseCallbackImpl(Consumer<TranslationResponse> responseCallback) {
-            mResponseCallback = new WeakReference<>(responseCallback);
+        TranslationResponseCallbackImpl(Consumer<TranslationResponse> callback, Executor executor) {
+            mCallback = new WeakReference<>(callback);
+            mExecutor = new WeakReference<>(executor);
         }
 
         @Override
-        public void onTranslationComplete(TranslationResponse response) throws RemoteException {
-            provideTranslationResponse(response);
-        }
-
-        @Override
-        public void onError() throws RemoteException {
-            provideTranslationResponse(null);
-        }
-
-        private void provideTranslationResponse(TranslationResponse response) {
-            final Consumer<TranslationResponse> responseCallback = mResponseCallback.get();
-            if (responseCallback != null) {
-                responseCallback.accept(response);
+        public void onTranslationResponse(TranslationResponse response) throws RemoteException {
+            final Consumer<TranslationResponse> callback = mCallback.get();
+            final Runnable runnable =
+                    () -> callback.accept(response);
+            if (callback != null) {
+                final Executor executor = mExecutor.get();
+                final long token = Binder.clearCallingIdentity();
+                try {
+                    executor.execute(runnable);
+                } finally {
+                    restoreCallingIdentity(token);
+                }
             }
         }
     }

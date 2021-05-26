@@ -15,19 +15,20 @@
  */
 package com.android.systemui.navigationbar.gestural;
 
+import static com.android.systemui.classifier.Classifier.BACK_GESTURE;
+
 import android.app.ActivityManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.Region;
-import android.hardware.display.DisplayManager;
-import android.hardware.display.DisplayManager.DisplayListener;
 import android.hardware.input.InputManager;
 import android.os.Looper;
 import android.os.RemoteException;
@@ -40,6 +41,7 @@ import android.util.TypedValue;
 import android.view.Choreographer;
 import android.view.Display;
 import android.view.ISystemGestureExclusionListener;
+import android.view.IWindowManager;
 import android.view.InputDevice;
 import android.view.InputEvent;
 import android.view.InputMonitor;
@@ -49,17 +51,19 @@ import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.ViewConfiguration;
 import android.view.WindowManager;
-import android.view.WindowManagerGlobal;
+import android.view.WindowMetrics;
 
 import com.android.internal.config.sysui.SystemUiDeviceConfigFlags;
 import com.android.internal.policy.GestureNavigationSettingsObserver;
-import com.android.systemui.Dependency;
 import com.android.systemui.R;
 import com.android.systemui.SystemUIFactory;
 import com.android.systemui.broadcast.BroadcastDispatcher;
+import com.android.systemui.dagger.SysUISingleton;
+import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.NavigationBarView;
 import com.android.systemui.navigationbar.NavigationModeController;
+import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.NavigationEdgeBackPlugin;
 import com.android.systemui.plugins.PluginListener;
 import com.android.systemui.recents.OverviewProxyService;
@@ -83,11 +87,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 
+import javax.inject.Inject;
+
 /**
  * Utility class to handle edge swipes for back gesture
  */
-public class EdgeBackGestureHandler extends CurrentUserTracker implements DisplayListener,
-        PluginListener<NavigationEdgeBackPlugin>, ProtoTraceable<SystemUiTraceProto> {
+@SysUISingleton
+public class EdgeBackGestureHandler extends CurrentUserTracker
+        implements PluginListener<NavigationEdgeBackPlugin>, ProtoTraceable<SystemUiTraceProto> {
 
     private static final String TAG = "EdgeBackGestureHandler";
     private static final int MAX_LONG_PRESS_TIMEOUT = SystemProperties.getInt(
@@ -123,7 +130,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker implements Displa
                 @Override
                 public void onQuickSwitchToNewTask(@Surface.Rotation int rotation) {
                     mStartingQuickstepRotation = rotation;
-                    updateDisabledForQuickstep();
+                    updateDisabledForQuickstep(mContext.getResources().getConfiguration());
                 }
             };
 
@@ -162,9 +169,15 @@ public class EdgeBackGestureHandler extends CurrentUserTracker implements Displa
     private final Context mContext;
     private final OverviewProxyService mOverviewProxyService;
     private final SysUiState mSysUiState;
-    private final Runnable mStateChangeCallback;
+    private Runnable mStateChangeCallback;
 
     private final PluginManager mPluginManager;
+    private final ProtoTracer mProtoTracer;
+    private final NavigationModeController mNavigationModeController;
+    private final ViewConfiguration mViewConfiguration;
+    private final WindowManager mWindowManager;
+    private final IWindowManager mWindowManagerService;
+    private final FalsingManager mFalsingManager;
     // Activities which should not trigger Back gesture.
     private final List<ComponentName> mGestureBlockingActivities = new ArrayList<>();
 
@@ -235,6 +248,9 @@ public class EdgeBackGestureHandler extends CurrentUserTracker implements Displa
             new NavigationEdgeBackPlugin.BackCallback() {
                 @Override
                 public void triggerBack() {
+                    // Notify FalsingManager that an intentional gesture has occurred.
+                    // TODO(b/186519446): use a different method than isFalseTouch
+                    mFalsingManager.isFalseTouch(BACK_GESTURE);
                     boolean sendDown = sendEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK);
                     boolean sendUp = sendEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK);
                     if (DEBUG_MISSING_GESTURE) {
@@ -265,16 +281,26 @@ public class EdgeBackGestureHandler extends CurrentUserTracker implements Displa
         }
     };
 
+    @Inject
     public EdgeBackGestureHandler(Context context, OverviewProxyService overviewProxyService,
-            SysUiState sysUiState, PluginManager pluginManager, Runnable stateChangeCallback) {
-        super(Dependency.get(BroadcastDispatcher.class));
+            SysUiState sysUiState, PluginManager pluginManager, @Main Executor executor,
+            BroadcastDispatcher broadcastDispatcher, ProtoTracer protoTracer,
+            NavigationModeController navigationModeController, ViewConfiguration viewConfiguration,
+            WindowManager windowManager, IWindowManager windowManagerService,
+            FalsingManager falsingManager) {
+        super(broadcastDispatcher);
         mContext = context;
         mDisplayId = context.getDisplayId();
-        mMainExecutor = context.getMainExecutor();
+        mMainExecutor = executor;
         mOverviewProxyService = overviewProxyService;
         mSysUiState = sysUiState;
         mPluginManager = pluginManager;
-        mStateChangeCallback = stateChangeCallback;
+        mProtoTracer = protoTracer;
+        mNavigationModeController = navigationModeController;
+        mViewConfiguration = viewConfiguration;
+        mWindowManager = windowManager;
+        mWindowManagerService = windowManagerService;
+        mFalsingManager = falsingManager;
         ComponentName recentsComponentName = ComponentName.unflattenFromString(
                 context.getString(com.android.internal.R.string.config_recentsComponentName));
         if (recentsComponentName != null) {
@@ -307,9 +333,12 @@ public class EdgeBackGestureHandler extends CurrentUserTracker implements Displa
         updateCurrentUserResources();
     }
 
+    public void setStateChangeCallback(Runnable callback) {
+        mStateChangeCallback = callback;
+    }
+
     public void updateCurrentUserResources() {
-        Resources res = Dependency.get(NavigationModeController.class).getCurrentUserContext()
-                .getResources();
+        Resources res = mNavigationModeController.getCurrentUserContext().getResources();
         mEdgeWidthLeft = mGestureNavigationSettingsObserver.getLeftSensitivity(res);
         mEdgeWidthRight = mGestureNavigationSettingsObserver.getRightSensitivity(res);
         mIsBackGestureAllowed =
@@ -334,7 +363,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker implements Displa
         // TODO(b/130352502) Tune this value and extract into a constant
         final float backGestureSlop = DeviceConfig.getFloat(DeviceConfig.NAMESPACE_SYSTEMUI,
                         SystemUiDeviceConfigFlags.BACK_GESTURE_SLOP_MULTIPLIER, 0.75f);
-        mTouchSlop = ViewConfiguration.get(mContext).getScaledTouchSlop() * backGestureSlop;
+        mTouchSlop = mViewConfiguration.getScaledTouchSlop() * backGestureSlop;
     }
 
     private void onNavigationSettingsChanged() {
@@ -356,7 +385,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker implements Displa
      */
     public void onNavBarAttached() {
         mIsAttached = true;
-        Dependency.get(ProtoTracer.class).add(this);
+        mProtoTracer.add(this);
         mOverviewProxyService.addCallback(mQuickSwitchListener);
         mSysUiState.addCallback(mSysUiStateCallback);
         updateIsEnabled();
@@ -368,7 +397,7 @@ public class EdgeBackGestureHandler extends CurrentUserTracker implements Displa
      */
     public void onNavBarDetached() {
         mIsAttached = false;
-        Dependency.get(ProtoTracer.class).remove(this);
+        mProtoTracer.remove(this);
         mOverviewProxyService.removeCallback(mQuickSwitchListener);
         mSysUiState.removeCallback(mSysUiStateCallback);
         updateIsEnabled();
@@ -414,15 +443,16 @@ public class EdgeBackGestureHandler extends CurrentUserTracker implements Displa
 
         if (!mIsEnabled) {
             mGestureNavigationSettingsObserver.unregister();
-            mContext.getSystemService(DisplayManager.class).unregisterDisplayListener(this);
+            if (DEBUG_MISSING_GESTURE) {
+                Log.d(DEBUG_MISSING_GESTURE_TAG, "Unregister display listener");
+            }
             mPluginManager.removePluginListener(this);
             TaskStackChangeListeners.getInstance().unregisterTaskStackListener(mTaskStackListener);
             DeviceConfig.removeOnPropertiesChangedListener(mOnPropertiesChangedListener);
 
             try {
-                WindowManagerGlobal.getWindowManagerService()
-                        .unregisterSystemGestureExclusionListener(
-                                mGestureExclusionListener, mDisplayId);
+                mWindowManagerService.unregisterSystemGestureExclusionListener(
+                        mGestureExclusionListener, mDisplayId);
             } catch (RemoteException | IllegalArgumentException e) {
                 Log.e(TAG, "Failed to unregister window manager callbacks", e);
             }
@@ -430,17 +460,16 @@ public class EdgeBackGestureHandler extends CurrentUserTracker implements Displa
         } else {
             mGestureNavigationSettingsObserver.register();
             updateDisplaySize();
-            mContext.getSystemService(DisplayManager.class).registerDisplayListener(this,
-                    mContext.getMainThreadHandler());
+            if (DEBUG_MISSING_GESTURE) {
+                Log.d(DEBUG_MISSING_GESTURE_TAG, "Register display listener");
+            }
             TaskStackChangeListeners.getInstance().registerTaskStackListener(mTaskStackListener);
             DeviceConfig.addOnPropertiesChangedListener(DeviceConfig.NAMESPACE_SYSTEMUI,
-                    runnable -> (mContext.getMainThreadHandler()).post(runnable),
-                    mOnPropertiesChangedListener);
+                    mMainExecutor::execute, mOnPropertiesChangedListener);
 
             try {
-                WindowManagerGlobal.getWindowManagerService()
-                        .registerSystemGestureExclusionListener(
-                                mGestureExclusionListener, mDisplayId);
+                mWindowManagerService.registerSystemGestureExclusionListener(
+                        mGestureExclusionListener, mDisplayId);
             } catch (RemoteException | IllegalArgumentException e) {
                 Log.e(TAG, "Failed to register window manager callbacks", e);
             }
@@ -796,34 +825,33 @@ public class EdgeBackGestureHandler extends CurrentUserTracker implements Displa
             }
         }
 
-        Dependency.get(ProtoTracer.class).scheduleFrameUpdate();
+        mProtoTracer.scheduleFrameUpdate();
     }
 
-    private void updateDisabledForQuickstep() {
-        int rotation = mContext.getResources().getConfiguration().windowConfiguration.getRotation();
+    private void updateDisabledForQuickstep(Configuration newConfig) {
+        int rotation = newConfig.windowConfiguration.getRotation();
         mDisabledForQuickstep = mStartingQuickstepRotation > -1 &&
                 mStartingQuickstepRotation != rotation;
     }
 
-    @Override
-    public void onDisplayAdded(int displayId) { }
-
-    @Override
-    public void onDisplayRemoved(int displayId) { }
-
-    @Override
-    public void onDisplayChanged(int displayId) {
+    public void onConfigurationChanged(Configuration newConfig) {
         if (mStartingQuickstepRotation > -1) {
-            updateDisabledForQuickstep();
+            updateDisabledForQuickstep(newConfig);
         }
 
-        if (displayId == mDisplayId) {
-            updateDisplaySize();
+        if (DEBUG_MISSING_GESTURE) {
+            Log.d(DEBUG_MISSING_GESTURE_TAG, "Config changed: config=" + newConfig);
         }
+        updateDisplaySize();
     }
 
     private void updateDisplaySize() {
-        mContext.getDisplay().getRealSize(mDisplaySize);
+        WindowMetrics metrics = mWindowManager.getMaximumWindowMetrics();
+        Rect bounds = metrics.getBounds();
+        mDisplaySize.set(bounds.width(), bounds.height());
+        if (DEBUG_MISSING_GESTURE) {
+            Log.d(DEBUG_MISSING_GESTURE_TAG, "Update display size: mDisplaySize=" + mDisplaySize);
+        }
         if (mEdgeBackPlugin != null) {
             mEdgeBackPlugin.setDisplaySize(mDisplaySize);
         }

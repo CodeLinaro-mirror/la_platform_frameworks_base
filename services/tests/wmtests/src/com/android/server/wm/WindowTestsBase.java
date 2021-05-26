@@ -36,6 +36,7 @@ import static android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
 import static android.view.WindowManager.LayoutParams.LAST_APPLICATION_WINDOW;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_MEDIA_OVERLAY;
+import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_STARTING;
 import static android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION;
 import static android.view.WindowManager.LayoutParams.TYPE_DOCK_DIVIDER;
 import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD;
@@ -50,14 +51,18 @@ import static androidx.test.platform.app.InstrumentationRegistry.getInstrumentat
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doNothing;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.spyOn;
+import static com.android.server.wm.StartingSurfaceController.DEBUG_ENABLE_SHELL_DRAWER;
 import static com.android.server.wm.WindowContainer.POSITION_BOTTOM;
 import static com.android.server.wm.WindowStateAnimator.HAS_DRAWN;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
 
 import android.annotation.IntDef;
+import android.annotation.NonNull;
 import android.app.ActivityManager;
 import android.app.ActivityOptions;
 import android.app.IApplicationThread;
@@ -67,6 +72,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
+import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -74,6 +80,7 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.service.voice.IVoiceInteractionSession;
+import android.util.SparseArray;
 import android.view.Display;
 import android.view.DisplayInfo;
 import android.view.IDisplayWindowInsetsController;
@@ -85,12 +92,15 @@ import android.view.SurfaceControl.Transaction;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.WindowManager.DisplayImePolicy;
-import android.window.ITaskOrganizer;
+import android.window.ITransitionPlayer;
 import android.window.StartingWindowInfo;
+import android.window.TransitionInfo;
+import android.window.TransitionRequestInfo;
 
 import com.android.internal.policy.AttributeCache;
 import com.android.internal.util.ArrayUtils;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.runner.Description;
@@ -100,6 +110,7 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.util.HashMap;
 
 /** Common base class for window manager unit test classes. */
 class WindowTestsBase extends SystemServiceTestsBase {
@@ -144,6 +155,22 @@ class WindowTestsBase extends SystemServiceTestsBase {
      */
     Transaction mTransaction;
 
+    /**
+     * Whether device-specific global overrides have already been checked in
+     * {@link WindowTestsBase#setUpBase()}.
+     */
+    private static boolean sGlobalOverridesChecked;
+    /**
+     * Whether device-specific overrides have already been checked in
+     * {@link WindowTestsBase#setUpBase()} when the default display is used.
+     */
+    private static boolean sOverridesCheckedDefaultDisplay;
+    /**
+     * Whether device-specific overrides have already been checked in
+     * {@link WindowTestsBase#setUpBase()} when a {@link TestDisplayContent} is used.
+     */
+    private static boolean sOverridesCheckedTestDisplay;
+
     @BeforeClass
     public static void setUpOnceBase() {
         AttributeCache.init(getInstrumentation().getTargetContext());
@@ -180,7 +207,45 @@ class WindowTestsBase extends SystemServiceTestsBase {
         // Ensure letterbox aspect ratio is not overridden on any device target.
         // {@link com.android.internal.R.dimen.config_fixedOrientationLetterboxAspectRatio}, is set
         // on some device form factors.
-        mAtm.mWindowManager.setFixedOrientationLetterboxAspectRatio(0);
+        mAtm.mWindowManager.mLetterboxConfiguration.setFixedOrientationLetterboxAspectRatio(0);
+        // Ensure letterbox position multiplier is not overridden on any device target.
+        // {@link com.android.internal.R.dimen.config_letterboxHorizontalPositionMultiplier},
+        // may be set on some device form factors.
+        mAtm.mWindowManager.mLetterboxConfiguration.setLetterboxHorizontalPositionMultiplier(0.5f);
+
+        checkDeviceSpecificOverridesNotApplied();
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        // Revert back to device overrides.
+        mAtm.mWindowManager.mLetterboxConfiguration.setFixedOrientationLetterboxAspectRatio(
+                mContext.getResources().getFloat(
+                        com.android.internal.R.dimen.config_fixedOrientationLetterboxAspectRatio));
+        mAtm.mWindowManager.mLetterboxConfiguration.setLetterboxHorizontalPositionMultiplier(
+                mContext.getResources().getFloat(
+                    com.android.internal.R.dimen.config_letterboxHorizontalPositionMultiplier));
+    }
+
+    /**
+     * Check that device-specific overrides are not applied. Only need to check once during entire
+     * test run for each case: global overrides, default display, and test display.
+     */
+    private void checkDeviceSpecificOverridesNotApplied() {
+        // Check global overrides
+        if (!sGlobalOverridesChecked) {
+            assertEquals(0, mWm.mLetterboxConfiguration.getFixedOrientationLetterboxAspectRatio(),
+                    0 /* delta */);
+            sGlobalOverridesChecked = true;
+        }
+        // Check display-specific overrides
+        if (!sOverridesCheckedDefaultDisplay && mDisplayContent == mDefaultDisplay) {
+            assertFalse(mDisplayContent.getIgnoreOrientationRequest());
+            sOverridesCheckedDefaultDisplay = true;
+        } else if (!sOverridesCheckedTestDisplay && mDisplayContent instanceof TestDisplayContent) {
+            assertFalse(mDisplayContent.getIgnoreOrientationRequest());
+            sOverridesCheckedTestDisplay = true;
+        }
     }
 
     private void createTestDisplay(UseTestDisplay annotation) {
@@ -420,35 +485,55 @@ class WindowTestsBase extends SystemServiceTestsBase {
         return newTaskDisplayArea;
     }
 
-    /** Creates a {@link Task} and adds it to the specified {@link DisplayContent}. */
-    Task createTaskStackOnDisplay(DisplayContent dc) {
-        return createTaskStackOnDisplay(WINDOWING_MODE_FULLSCREEN, ACTIVITY_TYPE_STANDARD, dc);
+    /**
+     *  Creates a {@link Task} with a simple {@link ActivityRecord} and adds to the given
+     *  {@link TaskDisplayArea}.
+     */
+    Task createTaskWithActivity(TaskDisplayArea taskDisplayArea,
+            int windowingMode, int activityType, boolean onTop, boolean twoLevelTask) {
+        return createTask(taskDisplayArea, windowingMode, activityType,
+                onTop, true /* createActivity */, twoLevelTask);
     }
 
-    Task createTaskStackOnDisplay(int windowingMode, int activityType, DisplayContent dc) {
-        return new TaskBuilder(dc.mAtmService.mTaskSupervisor)
-                .setDisplay(dc)
+    /** Creates a {@link Task} and adds to the given {@link DisplayContent}. */
+    Task createTask(DisplayContent dc) {
+        return createTask(dc.getDefaultTaskDisplayArea(),
+                WINDOWING_MODE_FULLSCREEN, ACTIVITY_TYPE_STANDARD);
+    }
+
+    Task createTask(DisplayContent dc, int windowingMode, int activityType) {
+        return createTask(dc.getDefaultTaskDisplayArea(), windowingMode, activityType);
+    }
+
+    Task createTask(TaskDisplayArea taskDisplayArea, int windowingMode, int activityType) {
+        return createTask(taskDisplayArea, windowingMode, activityType,
+                true /* onTop */, false /* createActivity */, false /* twoLevelTask */);
+    }
+
+    /** Creates a {@link Task} and adds to the given {@link TaskDisplayArea}. */
+    Task createTask(TaskDisplayArea taskDisplayArea, int windowingMode, int activityType,
+            boolean onTop, boolean createActivity, boolean twoLevelTask) {
+        final TaskBuilder builder = new TaskBuilder(mSupervisor)
+                .setTaskDisplayArea(taskDisplayArea)
                 .setWindowingMode(windowingMode)
                 .setActivityType(activityType)
-                .setIntent(new Intent())
-                .build();
+                .setOnTop(onTop)
+                .setCreateActivity(createActivity);
+        if (twoLevelTask) {
+            return builder
+                    .setCreateParentTask(true)
+                    .build()
+                    .getRootTask();
+        } else {
+            return builder.build();
+        }
     }
 
-    Task createTaskStackOnTaskDisplayArea(int windowingMode, int activityType,
-            TaskDisplayArea tda) {
-        return new TaskBuilder(tda.mDisplayContent.mAtmService.mTaskSupervisor)
-                .setTaskDisplayArea(tda)
-                .setWindowingMode(windowingMode)
-                .setActivityType(activityType)
-                .setIntent(new Intent())
-                .build();
-    }
-
-    /** Creates a {@link Task} and adds it to the specified {@link Task}. */
-    Task createTaskInStack(Task stack, int userId) {
-        final Task task = new TaskBuilder(stack.mTaskSupervisor)
+    /** Creates a {@link Task} and adds to the given root {@link Task}. */
+    Task createTaskInRootTask(Task rootTask, int userId) {
+        final Task task = new TaskBuilder(rootTask.mTaskSupervisor)
                 .setUserId(userId)
-                .setParentTask(stack)
+                .setParentTask(rootTask)
                 .build();
         return task;
     }
@@ -476,7 +561,7 @@ class WindowTestsBase extends SystemServiceTestsBase {
      */
     ActivityRecord createActivityRecord(DisplayContent dc, int windowingMode,
             int activityType) {
-        final Task task = createTaskStackOnDisplay(windowingMode, activityType, dc);
+        final Task task = createTask(dc, windowingMode, activityType);
         return createActivityRecord(dc, task);
     }
 
@@ -508,7 +593,7 @@ class WindowTestsBase extends SystemServiceTestsBase {
      */
     ActivityRecord createActivityRecordWithParentTask(DisplayContent dc, int windowingMode,
             int activityType) {
-        final Task task = createTaskStackOnDisplay(windowingMode, activityType, dc);
+        final Task task = createTask(dc, windowingMode, activityType);
         return createActivityRecordWithParentTask(task);
     }
 
@@ -709,6 +794,7 @@ class WindowTestsBase extends SystemServiceTestsBase {
         private int mLaunchMode;
         private int mResizeMode = RESIZE_MODE_RESIZEABLE;
         private float mMaxAspectRatio;
+        private float mMinAspectRatio;
         private boolean mSupportsSizeChanges;
         private int mScreenOrientation = SCREEN_ORIENTATION_UNSPECIFIED;
         private boolean mLaunchTaskBehind = false;
@@ -718,6 +804,7 @@ class WindowTestsBase extends SystemServiceTestsBase {
         private WindowProcessController mWpc;
         private Bundle mIntentExtras;
         private boolean mOnTop = false;
+        private ActivityInfo.WindowLayout mWindowLayout;
 
         ActivityBuilder(ActivityTaskManagerService service) {
             mService = service;
@@ -788,6 +875,11 @@ class WindowTestsBase extends SystemServiceTestsBase {
             return this;
         }
 
+        ActivityBuilder setMinAspectRatio(float minAspectRatio) {
+            mMinAspectRatio = minAspectRatio;
+            return this;
+        }
+
         ActivityBuilder setSupportsSizeChanges(boolean supportsSizeChanges) {
             mSupportsSizeChanges = supportsSizeChanges;
             return this;
@@ -833,6 +925,11 @@ class WindowTestsBase extends SystemServiceTestsBase {
             return this;
         }
 
+        ActivityBuilder setWindowLayout(ActivityInfo.WindowLayout windowLayout) {
+            mWindowLayout = windowLayout;
+            return this;
+        }
+
         ActivityRecord build() {
             SystemServicesTestRule.checkHoldsLock(mService.mGlobalLock);
             try {
@@ -848,16 +945,6 @@ class WindowTestsBase extends SystemServiceTestsBase {
                 final int id = sCurrentActivityId++;
                 mComponent = ComponentName.createRelative(DEFAULT_COMPONENT_PACKAGE_NAME,
                         DEFAULT_COMPONENT_CLASS_NAME + id);
-            }
-
-            if (mCreateTask) {
-                mTask = new TaskBuilder(mService.mTaskSupervisor)
-                        .setComponent(mComponent)
-                        .setParentTask(mParentTask).build();
-            } else if (mTask == null && mParentTask != null && DisplayContent.alwaysCreateRootTask(
-                    mParentTask.getWindowingMode(), mParentTask.getActivityType())) {
-                // The stack can be the task root.
-                mTask = mParentTask;
             }
 
             Intent intent = new Intent();
@@ -879,11 +966,26 @@ class WindowTestsBase extends SystemServiceTestsBase {
             aInfo.flags |= mActivityFlags;
             aInfo.launchMode = mLaunchMode;
             aInfo.resizeMode = mResizeMode;
-            aInfo.maxAspectRatio = mMaxAspectRatio;
+            aInfo.setMaxAspectRatio(mMaxAspectRatio);
+            aInfo.setMinAspectRatio(mMinAspectRatio);
             aInfo.supportsSizeChanges = mSupportsSizeChanges;
             aInfo.screenOrientation = mScreenOrientation;
             aInfo.configChanges |= mConfigChanges;
             aInfo.taskAffinity = mAffinity;
+            aInfo.windowLayout = mWindowLayout;
+
+            if (mCreateTask) {
+                mTask = new TaskBuilder(mService.mTaskSupervisor)
+                        .setComponent(mComponent)
+                        // Apply the root activity info and intent
+                        .setActivityInfo(aInfo)
+                        .setIntent(intent)
+                        .setParentTask(mParentTask).build();
+            } else if (mTask == null && mParentTask != null && DisplayContent.alwaysCreateRootTask(
+                    mParentTask.getWindowingMode(), mParentTask.getActivityType())) {
+                // The parent task can be the task root.
+                mTask = mParentTask;
+            }
 
             ActivityOptions options = null;
             if (mLaunchTaskBehind) {
@@ -905,9 +1007,9 @@ class WindowTestsBase extends SystemServiceTestsBase {
                 doReturn(true).when(activity).fillsParent();
                 mTask.addChild(activity);
                 if (mOnTop) {
-                    // Move the task to front after activity added.
-                    // Or {@link TaskDisplayArea#mPreferredTopFocusableStack} could be other stacks
-                    // (e.g. home stack).
+                    // Move the task to front after activity is added.
+                    // Or {@link TaskDisplayArea#mPreferredTopFocusableRootTask} could be other
+                    // root tasks (e.g. home root task).
                     mTask.moveToFront("createActivity");
                 }
                 // Make visible by default...
@@ -1102,7 +1204,7 @@ class WindowTestsBase extends SystemServiceTestsBase {
                 spyOn(rootTask);
             }
             doNothing().when(rootTask).startActivityLocked(
-                    any(), any(), anyBoolean(), anyBoolean(), any());
+                    any(), any(), anyBoolean(), anyBoolean(), any(), anyBoolean());
 
             // Create child task with activity.
             if (mCreateActivity) {
@@ -1111,8 +1213,8 @@ class WindowTestsBase extends SystemServiceTestsBase {
                         .build();
                 if (mOnTop) {
                     // We move the task to front again in order to regain focus after activity
-                    // added to the stack. Or {@link TaskDisplayArea#mPreferredTopFocusableStack}
-                    // could be other stacks (e.g. home stack).
+                    // is added. Or {@link TaskDisplayArea#mPreferredTopFocusableRootTask} could be
+                    // other root tasks (e.g. home root task).
                     task.moveToFront("createActivityTask");
                 } else {
                     task.moveToBack("createActivityTask", null);
@@ -1123,7 +1225,74 @@ class WindowTestsBase extends SystemServiceTestsBase {
         }
     }
 
-    static class TestSplitOrganizer extends ITaskOrganizer.Stub {
+    static class TestStartingWindowOrganizer extends WindowOrganizerTests.StubOrganizer {
+        private final ActivityTaskManagerService mAtm;
+        private final WindowManagerService mWMService;
+        private final WindowState.PowerManagerWrapper mPowerManagerWrapper;
+
+        private Runnable mRunnableWhenAddingSplashScreen;
+        private final SparseArray<IBinder> mTaskAppMap = new SparseArray<>();
+        private final HashMap<IBinder, WindowState> mAppWindowMap = new HashMap<>();
+
+        TestStartingWindowOrganizer(ActivityTaskManagerService service,
+                WindowState.PowerManagerWrapper powerManagerWrapper) {
+            mAtm = service;
+            mWMService = mAtm.mWindowManager;
+            mPowerManagerWrapper = powerManagerWrapper;
+            if (DEBUG_ENABLE_SHELL_DRAWER) {
+                mAtm.mTaskOrganizerController.setDeferTaskOrgCallbacksConsumer(Runnable::run);
+                mAtm.mTaskOrganizerController.registerTaskOrganizer(this);
+            }
+        }
+
+        void setRunnableWhenAddingSplashScreen(Runnable r) {
+            if (DEBUG_ENABLE_SHELL_DRAWER) {
+                mRunnableWhenAddingSplashScreen = r;
+            } else {
+                ((TestWindowManagerPolicy) mWMService.mPolicy).setRunnableWhenAddingSplashScreen(r);
+            }
+        }
+
+        @Override
+        public void addStartingWindow(StartingWindowInfo info, IBinder appToken) {
+            synchronized (mWMService.mGlobalLock) {
+                final ActivityRecord activity = mWMService.mRoot.getActivityRecord(
+                        appToken);
+                IWindow iWindow = mock(IWindow.class);
+                doReturn(mock(IBinder.class)).when(iWindow).asBinder();
+                final WindowState window = WindowTestsBase.createWindow(null,
+                        TYPE_APPLICATION_STARTING, activity,
+                        "Starting window", 0 /* ownerId */, 0 /* userId*/,
+                        false /* internalWindows */, mWMService, mock(Session.class),
+                        iWindow,
+                        mPowerManagerWrapper);
+                activity.mStartingWindow = window;
+                mAppWindowMap.put(appToken, window);
+                mTaskAppMap.put(info.taskInfo.taskId, appToken);
+            }
+            if (mRunnableWhenAddingSplashScreen != null) {
+                mRunnableWhenAddingSplashScreen.run();
+                mRunnableWhenAddingSplashScreen = null;
+            }
+        }
+        @Override
+        public void removeStartingWindow(int taskId, SurfaceControl leash, Rect frame,
+                boolean playRevealAnimation) {
+            synchronized (mWMService.mGlobalLock) {
+                final IBinder appToken = mTaskAppMap.get(taskId);
+                if (appToken != null) {
+                    mTaskAppMap.remove(taskId);
+                    final ActivityRecord activity = mWMService.mRoot.getActivityRecord(
+                            appToken);
+                    WindowState win = mAppWindowMap.remove(appToken);
+                    activity.removeChild(win);
+                    activity.mStartingWindow = null;
+                }
+            }
+        }
+    }
+
+    static class TestSplitOrganizer extends WindowOrganizerTests.StubOrganizer {
         final ActivityTaskManagerService mService;
         Task mPrimary;
         Task mSecondary;
@@ -1157,21 +1326,7 @@ class WindowTestsBase extends SystemServiceTestsBase {
         public void setMoveToSecondaryOnEnter(boolean move) {
             mMoveToSecondaryOnEnter = move;
         }
-        @Override
-        public void addStartingWindow(StartingWindowInfo info, IBinder appToken) {
-        }
-        @Override
-        public void removeStartingWindow(int taskId) {
-        }
-        @Override
-        public void copySplashScreenView(int taskId) {
-        }
-        @Override
-        public void onTaskAppeared(ActivityManager.RunningTaskInfo info, SurfaceControl leash) {
-        }
-        @Override
-        public void onTaskVanished(ActivityManager.RunningTaskInfo info) {
-        }
+
         @Override
         public void onTaskInfoChanged(ActivityManager.RunningTaskInfo info) {
             if (mInSplit) {
@@ -1197,9 +1352,6 @@ class WindowTestsBase extends SystemServiceTestsBase {
                     rootTask.reparent(mSecondary, POSITION_BOTTOM);
                 }
             });
-        }
-        @Override
-        public void onBackPressedOnTaskRoot(ActivityManager.RunningTaskInfo taskInfo) {
         }
     }
 
@@ -1262,6 +1414,51 @@ class WindowTestsBase extends SystemServiceTestsBase {
             super.updateResizingWindowIfNeeded();
 
             mHasSurface = hadSurface;
+        }
+    }
+
+    class TestTransitionPlayer extends ITransitionPlayer.Stub {
+        final TransitionController mController;
+        final WindowOrganizerController mOrganizer;
+        Transition mLastTransit = null;
+        TransitionRequestInfo mLastRequest = null;
+        TransitionInfo mLastReady = null;
+
+        TestTransitionPlayer(@NonNull TransitionController controller,
+                @NonNull WindowOrganizerController organizer) {
+            mController = controller;
+            mOrganizer = organizer;
+        }
+
+        void clear() {
+            mLastTransit = null;
+            mLastReady = null;
+            mLastRequest = null;
+        }
+
+        @Override
+        public void onTransitionReady(IBinder transitToken, TransitionInfo transitionInfo,
+                SurfaceControl.Transaction transaction, SurfaceControl.Transaction finishT)
+                throws RemoteException {
+            mLastTransit = Transition.fromBinder(transitToken);
+            mLastReady = transitionInfo;
+        }
+
+        @Override
+        public void requestStartTransition(IBinder transitToken,
+                TransitionRequestInfo request) throws RemoteException {
+            mLastTransit = Transition.fromBinder(transitToken);
+            mLastRequest = request;
+        }
+
+        public void start() {
+            mOrganizer.startTransition(mLastRequest.getType(), mLastTransit, null);
+            mLastTransit.onTransactionReady(mLastTransit.getSyncId(),
+                    mock(SurfaceControl.Transaction.class));
+        }
+
+        public void finish() {
+            mController.finishTransition(mLastTransit);
         }
     }
 }

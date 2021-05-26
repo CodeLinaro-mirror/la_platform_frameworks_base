@@ -171,7 +171,8 @@ class RecentsAnimation implements RecentsAnimationCallbacks, OnRootTaskOrderChan
         final boolean hasExistingActivity = targetActivity != null;
         if (hasExistingActivity) {
             mRestoreTargetBehindRootTask = getRootTaskAbove(targetRootTask);
-            if (mRestoreTargetBehindRootTask == null) {
+            if (mRestoreTargetBehindRootTask == null
+                    && targetRootTask.getTopMostTask() == targetActivity.getTask()) {
                 notifyAnimationCancelBeforeStart(recentsAnimationRunner);
                 ProtoLog.d(WM_DEBUG_RECENTS_ANIMATIONS,
                         "No root task above target root task=%s", targetRootTask);
@@ -254,7 +255,7 @@ class RecentsAnimation implements RecentsAnimationCallbacks, OnRootTaskOrderChan
                 options.setSourceInfo(ActivityOptions.SourceInfo.TYPE_RECENTS_ANIMATION, eventTime);
             }
             mTaskSupervisor.getActivityMetricsLogger().notifyActivityLaunched(launchingState,
-                    START_TASK_TO_FRONT, targetActivity, options);
+                    START_TASK_TO_FRONT, !hasExistingActivity, targetActivity, options);
 
             // Register for root task order changes
             mDefaultTaskDisplayArea.registerRootTaskOrderChangedListener(this);

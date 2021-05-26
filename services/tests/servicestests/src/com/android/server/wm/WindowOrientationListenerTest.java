@@ -51,14 +51,11 @@ public class WindowOrientationListenerTest {
     private InputSensorInfo mMockInputSensorInfo;
     @Mock
     private SensorManager mMockSensorManager;
-    @Mock
-    private WindowManagerService mMockWindowManagerService;
 
     private TestableRotationResolver mFakeRotationResolverInternal;
     private com.android.server.wm.WindowOrientationListener mWindowOrientationListener;
     private int mFinalizedRotation;
     private boolean mRotationResolverEnabled;
-    private boolean mCanUseRotationResolver;
     private SensorEvent mFakeSensorEvent;
     private Sensor mFakeSensor;
 
@@ -66,12 +63,11 @@ public class WindowOrientationListenerTest {
     public void setUp() {
         MockitoAnnotations.initMocks(this);
         mRotationResolverEnabled = true;
-        mCanUseRotationResolver = true;
 
         mFakeRotationResolverInternal = new TestableRotationResolver();
         doReturn(mMockSensorManager).when(mMockContext).getSystemService(Context.SENSOR_SERVICE);
         mWindowOrientationListener = new TestableWindowOrientationListener(mMockContext,
-                mMockHandler, mMockWindowManagerService);
+                mMockHandler);
         mWindowOrientationListener.mRotationResolverService = mFakeRotationResolverInternal;
 
         mFakeSensor = new Sensor(mMockInputSensorInfo);
@@ -86,16 +82,6 @@ public class WindowOrientationListenerTest {
         mWindowOrientationListener.mOrientationJudge.onSensorChanged(mFakeSensorEvent);
 
         assertThat(mFinalizedRotation).isEqualTo(Surface.ROTATION_90);
-    }
-
-    @Test
-    public void testOnSensorChanged_cannotUseRotationResolver_useSensorResult() {
-        mCanUseRotationResolver = false;
-
-        mWindowOrientationListener.mOrientationJudge.onSensorChanged(mFakeSensorEvent);
-
-        assertThat(mFinalizedRotation).isEqualTo(Surface.ROTATION_90);
-
     }
 
     @Test
@@ -118,8 +104,8 @@ public class WindowOrientationListenerTest {
 
         @Override
         public void resolveRotation(@NonNull RotationResolverCallbackInternal callback,
-                @Surface.Rotation int proposedRotation, @Surface.Rotation int currentRotation,
-                @DurationMillisLong long timeoutMillis,
+                String packageName, @Surface.Rotation int proposedRotation,
+                @Surface.Rotation int currentRotation, @DurationMillisLong long timeoutMillis,
                 @NonNull CancellationSignal cancellationSignal) {
             callback.onSuccess(mResult);
         }
@@ -127,20 +113,14 @@ public class WindowOrientationListenerTest {
 
     final class TestableWindowOrientationListener extends WindowOrientationListener {
 
-        TestableWindowOrientationListener(Context context, Handler handler,
-                WindowManagerService service) {
-            super(context, handler, service);
+        TestableWindowOrientationListener(Context context, Handler handler) {
+            super(context, handler);
             this.mOrientationJudge = new OrientationSensorJudge();
         }
 
         @Override
         public void onProposedRotationChanged(int rotation) {
             mFinalizedRotation = rotation;
-        }
-
-        @Override
-        public boolean canUseRotationResolver() {
-            return mCanUseRotationResolver;
         }
 
         @Override

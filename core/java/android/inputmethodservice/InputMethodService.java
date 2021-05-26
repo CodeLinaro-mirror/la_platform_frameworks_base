@@ -70,7 +70,6 @@ import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledSince;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
-import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
@@ -132,7 +131,6 @@ import android.widget.TextView;
 import android.window.WindowMetricsHelper;
 
 import com.android.internal.annotations.GuardedBy;
-import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.inputmethod.IInputContentUriToken;
 import com.android.internal.inputmethod.IInputMethodPrivilegedOperations;
 import com.android.internal.inputmethod.InputMethodPrivilegedOperations;
@@ -515,8 +513,7 @@ public class InputMethodService extends AbstractInputMethodService {
     private boolean mIsAutomotive;
     private Handler mHandler;
     private boolean mImeSurfaceScheduledForRemoval;
-    private Configuration mLastKnownConfig;
-    private int mHandledConfigChanges;
+    private ImsConfigurationTracker mConfigTracker = new ImsConfigurationTracker();
 
     /**
      * An opaque {@link Binder} token of window requesting {@link InputMethodImpl#showSoftInput}
@@ -598,7 +595,7 @@ public class InputMethodService extends AbstractInputMethodService {
                 return;
             }
             Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "IMS.initializeInternal");
-            mHandledConfigChanges = configChanges;
+            mConfigTracker.onInitialize(configChanges);
             mPrivOps.set(privilegedOperations);
             InputMethodPrivilegedOperationsRegistry.put(token, mPrivOps);
             updateInputMethodDisplay(displayId);
@@ -668,6 +665,7 @@ public class InputMethodService extends AbstractInputMethodService {
             reportFullscreenMode();
             initialize();
             onBindInput();
+            mConfigTracker.onBindInput(getResources());
             Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
         }
 
@@ -720,7 +718,7 @@ public class InputMethodService extends AbstractInputMethodService {
         public final void dispatchStartInputWithToken(@Nullable InputConnection inputConnection,
                 @NonNull EditorInfo editorInfo, boolean restarting,
                 @NonNull IBinder startInputToken) {
-            mPrivOps.reportStartInput(startInputToken);
+            mPrivOps.reportStartInputAsync(startInputToken);
 
             if (restarting) {
                 restartInput(inputConnection, editorInfo);
@@ -821,14 +819,10 @@ public class InputMethodService extends AbstractInputMethodService {
             if (dispatchOnShowInputRequested(flags, false)) {
                 showWindow(true);
                 applyVisibilityInInsetsConsumerIfNecessary(true /* setVisible */);
-            } else {
-                // If user uses hard keyboard, IME button should always be shown.
-                setImeWindowStatus(mapToImeWindowStatus(), mBackDisposition);
             }
+            setImeWindowStatus(mapToImeWindowStatus(), mBackDisposition);
+
             final boolean isVisible = isInputViewShown();
-            if (isVisible && getResources() != null) {
-                mLastKnownConfig = new Configuration(getResources().getConfiguration());
-            }
             final boolean visibilityChanged = isVisible != wasVisible;
             if (resultReceiver != null) {
                 resultReceiver.send(visibilityChanged
@@ -946,7 +940,7 @@ public class InputMethodService extends AbstractInputMethodService {
     }
 
     private void setImeWindowStatus(int visibilityFlags, int backDisposition) {
-        mPrivOps.setImeWindowStatus(visibilityFlags, backDisposition);
+        mPrivOps.setImeWindowStatusAsync(visibilityFlags, backDisposition);
     }
 
     /** Set region of the keyboard to be avoided from back gesture */
@@ -1048,8 +1042,14 @@ public class InputMethodService extends AbstractInputMethodService {
         }
         
         /**
-         * 
+         * Handles a request to toggle the IME visibility.
+         *
+         * @deprecated Starting in {@link Build.VERSION_CODES#S} the system no longer invokes this
+         * method, instead it explicitly shows or hides the IME. An {@code InputMethodService}
+         * wishing to toggle its own visibility should instead invoke {@link
+         * InputMethodService#requestShowSelf} or {@link InputMethodService#requestHideSelf}
          */
+        @Deprecated
         public void toggleSoftInput(int showFlags, int hideFlags) {
             InputMethodService.this.onToggleSoftInput(showFlags, hideFlags);
         }
@@ -1442,24 +1442,7 @@ public class InputMethodService extends AbstractInputMethodService {
      */
     @Override public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        if (shouldImeRestartForConfig(newConfig)) {
-            resetStateForNewConfiguration();
-        }
-    }
-
-    /**
-     * @return {@code true} if {@link InputMethodService} needs to restart to handle
-     * .{@link #onConfigurationChanged(Configuration)}
-     */
-    @VisibleForTesting
-    boolean shouldImeRestartForConfig(@NonNull Configuration newConfig) {
-        if (mLastKnownConfig == null) {
-            return true;
-        }
-        // If the new config is the same as the config this Service is already running with,
-        // then don't bother calling resetStateForNewConfiguration.
-        int unhandledDiff = (mLastKnownConfig.diffPublicOnly(newConfig) & ~mHandledConfigChanges);
-        return unhandledDiff != 0;
+        mConfigTracker.onConfigurationChanged(newConfig, this::resetStateForNewConfiguration);
     }
 
     private void resetStateForNewConfiguration() {
@@ -1650,7 +1633,7 @@ public class InputMethodService extends AbstractInputMethodService {
     }
 
     private void reportFullscreenMode() {
-        mPrivOps.reportFullscreenMode(mIsFullscreen);
+        mPrivOps.reportFullscreenModeAsync(mIsFullscreen);
     }
 
     /**
@@ -1964,12 +1947,12 @@ public class InputMethodService extends AbstractInputMethodService {
 
     public void showStatusIcon(@DrawableRes int iconResId) {
         mStatusIcon = iconResId;
-        mPrivOps.updateStatusIcon(getPackageName(), iconResId);
+        mPrivOps.updateStatusIconAsync(getPackageName(), iconResId);
     }
 
     public void hideStatusIcon() {
         mStatusIcon = 0;
-        mPrivOps.updateStatusIcon(null, 0);
+        mPrivOps.updateStatusIconAsync(null, 0);
     }
 
     /**
@@ -2329,7 +2312,7 @@ public class InputMethodService extends AbstractInputMethodService {
         if (setVisible) {
             cancelImeSurfaceRemoval();
         }
-        mPrivOps.applyImeVisibility(setVisible
+        mPrivOps.applyImeVisibilityAsync(setVisible
                 ? mCurShowInputToken : mCurHideInputToken, setVisible);
     }
 
@@ -3210,16 +3193,6 @@ public class InputMethodService extends AbstractInputMethodService {
         }
     }
 
-    @VisibleForTesting
-    void setLastKnownConfig(@NonNull Configuration config) {
-        mLastKnownConfig = config;
-    }
-
-    @VisibleForTesting
-    void setHandledConfigChanges(int configChanges) {
-        mHandledConfigChanges = configChanges;
-    }
-
     void startExtractingText(boolean inputChanged) {
         final ExtractEditText eet = mExtractEditText;
         if (eet != null && getCurrentInputStarted()
@@ -3346,7 +3319,7 @@ public class InputMethodService extends AbstractInputMethodService {
             if (mNotifyUserActionSent) {
                 return;
             }
-            mPrivOps.notifyUserAction();
+            mPrivOps.notifyUserActionAsync();
             mNotifyUserActionSent = true;
         }
     }

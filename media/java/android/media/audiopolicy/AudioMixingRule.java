@@ -140,7 +140,7 @@ public class AudioMixingRule {
             final int match_rule = mRule & ~RULE_EXCLUSION_MASK;
             switch (match_rule) {
                 case RULE_MATCH_ATTRIBUTE_USAGE:
-                    dest.writeInt(mAttr.getUsage());
+                    dest.writeInt(mAttr.getSystemUsage());
                     break;
                 case RULE_MATCH_ATTRIBUTE_CAPTURE_PRESET:
                     dest.writeInt(mAttr.getCapturePreset());
@@ -165,7 +165,7 @@ public class AudioMixingRule {
         for (AudioMixMatchCriterion criterion : mCriteria) {
             if ((criterion.mRule & RULE_MATCH_ATTRIBUTE_USAGE) != 0
                     && criterion.mAttr != null
-                    && criterion.mAttr.getUsage() == usage) {
+                    && criterion.mAttr.getSystemUsage() == usage) {
                 return true;
             }
         }
@@ -182,7 +182,7 @@ public class AudioMixingRule {
         for (AudioMixMatchCriterion criterion : mCriteria) {
             if (criterion.mRule == RULE_MATCH_ATTRIBUTE_USAGE
                     && criterion.mAttr != null
-                    && criterion.mAttr.getUsage() == usage) {
+                    && criterion.mAttr.getSystemUsage() == usage) {
                 return true;
             }
         }
@@ -291,8 +291,17 @@ public class AudioMixingRule {
         final int match_rule = rule & ~RULE_EXCLUSION_MASK;
         switch (match_rule) {
             case RULE_MATCH_ATTRIBUTE_USAGE:
-            case RULE_MATCH_UID:
             case RULE_MATCH_USERID:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static boolean isRecorderRule(int rule) {
+        final int match_rule = rule & ~RULE_EXCLUSION_MASK;
+        switch (match_rule) {
+            case RULE_MATCH_ATTRIBUTE_CAPTURE_PRESET:
                 return true;
             default:
                 return false;
@@ -460,6 +469,23 @@ public class AudioMixingRule {
         }
 
         /**
+         * Set target mix type of the mixing rule.
+         *
+         * <p>Note: If the mix type was not specified, it will be decided automatically by mixing
+         * rule. For {@link #RULE_MATCH_UID}, the default type is {@link AudioMix#MIX_TYPE_PLAYERS}.
+         *
+         * @param mixType {@link AudioMix#MIX_TYPE_PLAYERS} or {@link AudioMix#MIX_TYPE_RECORDERS}
+         * @return the same Builder instance.
+         *
+         * @hide
+         */
+        public @NonNull Builder setTargetMixType(int mixType) {
+            mTargetMixType = mixType;
+            Log.i("AudioMixingRule", "Builder setTargetMixType " + mixType);
+            return this;
+        }
+
+        /**
          * Add or exclude a rule for the selection of which streams are mixed together.
          * Does error checking on the parameters.
          * @param rule
@@ -515,11 +541,15 @@ public class AudioMixingRule {
             if (mTargetMixType == AudioMix.MIX_TYPE_INVALID) {
                 if (isPlayerRule(rule)) {
                     mTargetMixType = AudioMix.MIX_TYPE_PLAYERS;
-                } else {
+                } else if (isRecorderRule(rule)) {
                     mTargetMixType = AudioMix.MIX_TYPE_RECORDERS;
+                } else {
+                    // For rules which are not player or recorder specific (e.g. RULE_MATCH_UID),
+                    // the default mix type is MIX_TYPE_PLAYERS.
+                    mTargetMixType = AudioMix.MIX_TYPE_PLAYERS;
                 }
-            } else if (((mTargetMixType == AudioMix.MIX_TYPE_PLAYERS) && !isPlayerRule(rule))
-                    || ((mTargetMixType == AudioMix.MIX_TYPE_RECORDERS) && isPlayerRule(rule)))
+            } else if ((isPlayerRule(rule) && (mTargetMixType != AudioMix.MIX_TYPE_PLAYERS))
+                    || (isRecorderRule(rule)) && (mTargetMixType != AudioMix.MIX_TYPE_RECORDERS))
             {
                 throw new IllegalArgumentException("Incompatible rule for mix");
             }
@@ -535,7 +565,7 @@ public class AudioMixingRule {
                     switch (match_rule) {
                         case RULE_MATCH_ATTRIBUTE_USAGE:
                             // "usage"-based rule
-                            if (criterion.mAttr.getUsage() == attrToMatch.getUsage()) {
+                            if (criterion.mAttr.getSystemUsage() == attrToMatch.getSystemUsage()) {
                                 if (criterion.mRule == rule) {
                                     // rule already exists, we're done
                                     return this;
@@ -616,8 +646,13 @@ public class AudioMixingRule {
             switch (match_rule) {
                 case RULE_MATCH_ATTRIBUTE_USAGE:
                     int usage = in.readInt();
-                    attr = new AudioAttributes.Builder()
-                            .setUsage(usage).build();
+                    if (AudioAttributes.isSystemUsage(usage)) {
+                        attr = new AudioAttributes.Builder()
+                                .setSystemUsage(usage).build();
+                    } else {
+                        attr = new AudioAttributes.Builder()
+                                .setUsage(usage).build();
+                    }
                     break;
                 case RULE_MATCH_ATTRIBUTE_CAPTURE_PRESET:
                     int preset = in.readInt();

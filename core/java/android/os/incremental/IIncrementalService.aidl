@@ -53,6 +53,11 @@ interface IIncrementalService {
                          in PerUidReadTimeouts[] perUidReadTimeouts);
 
     /**
+     * PM/system is done with this storage, ok to increase timeouts.
+     */
+    void onInstallationComplete(int storageId);
+
+    /**
      * Bind-mounts a path under a storage to a full path. Can be permanent or temporary.
      */
     const int BIND_TEMPORARY = 0;
@@ -158,19 +163,53 @@ interface IIncrementalService {
     boolean unregisterLoadingProgressListener(int storageId);
 
     /**
-     * Register storage health status listener.
-     */
-    boolean registerStorageHealthListener(int storageId, in StorageHealthCheckParams params, in IStorageHealthListener listener);
-
-    /**
-     * Register storage health status listener.
-     */
-    void unregisterStorageHealthListener(int storageId);
-
-    /**
      * Metrics key for the duration in milliseconds between now and the oldest pending read. The value is a long.
      */
     const @utf8InCpp String METRICS_MILLIS_SINCE_OLDEST_PENDING_READ = "millisSinceOldestPendingRead";
+    /**
+     * Metrics key for whether read logs are enabled. The value is a boolean.
+     */
+    const @utf8InCpp String METRICS_READ_LOGS_ENABLED = "readLogsEnabled";
+    /**
+     * Metrics key for the storage health status. The value is an int.
+     */
+    const @utf8InCpp String METRICS_STORAGE_HEALTH_STATUS_CODE = "storageHealthStatusCode";
+    /**
+     * Metrics key for the data loader status. The value is an int.
+     */
+    const @utf8InCpp String METRICS_DATA_LOADER_STATUS_CODE = "dataLoaderStatusCode";
+    /**
+     * Metrics key for duration since last data loader binding attempt. The value is a long.
+     */
+    const @utf8InCpp String METRICS_MILLIS_SINCE_LAST_DATA_LOADER_BIND = "millisSinceLastDataLoaderBind";
+    /**
+     * Metrics key for delay in milliseconds to retry data loader binding. The value is a long.
+     */
+    const @utf8InCpp String METRICS_DATA_LOADER_BIND_DELAY_MILLIS = "dataLoaderBindDelayMillis";
+    /**
+     * Metrics key for total count of delayed reads caused by pending reads. The value is an int.
+     */
+    const @utf8InCpp String METRICS_TOTAL_DELAYED_READS = "totalDelayedReads";
+    /**
+     * Metrics key for total count of delayed reads caused by pending reads. The value is an int.
+     */
+    const @utf8InCpp String METRICS_TOTAL_DELAYED_READS_MILLIS = "totalDelayedReadsMillis";
+    /**
+     * Metrics key for total count of failed reads. The value is an int.
+     */
+    const @utf8InCpp String METRICS_TOTAL_FAILED_READS = "totalFailedReads";
+    /**
+     * Metrics key for the uid of the last read error. The value is an int.
+     */
+    const @utf8InCpp String METRICS_LAST_READ_ERROR_UID = "lastReadErrorUid";
+    /**
+     * Metrics key for duration in milliseconds since the last read error. The value is a long.
+     */
+    const @utf8InCpp String METRICS_MILLIS_SINCE_LAST_READ_ERROR = "millisSinceLastReadError";
+    /**
+     * Metrics key for the error number of the last read error. The value is an int.
+     */
+    const @utf8InCpp String METRICS_LAST_READ_ERROR_NUMBER = "lastReadErrorNo";
     /**
      * Return a bundle containing the requested metrics keys and their values.
      */

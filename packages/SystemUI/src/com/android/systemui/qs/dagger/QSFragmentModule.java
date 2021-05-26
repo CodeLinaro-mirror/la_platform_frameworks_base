@@ -34,6 +34,7 @@ import com.android.systemui.qs.QSPanel;
 import com.android.systemui.qs.QuickQSPanel;
 import com.android.systemui.qs.QuickStatusBarHeader;
 import com.android.systemui.qs.customize.QSCustomizer;
+import com.android.systemui.statusbar.phone.MultiUserSwitch;
 
 import javax.inject.Named;
 
@@ -49,11 +50,33 @@ public interface QSFragmentModule {
     String QS_SECURITY_FOOTER_VIEW = "qs_security_footer";
     String QS_USING_MEDIA_PLAYER = "qs_using_media_player";
 
+    /**
+     * Provide a context themed using the QS theme
+     */
+    @Provides
+    @QSThemedContext
+    static Context provideThemedContext(@RootView View view) {
+        return view.getContext();
+    }
+
+    /** */
+    @Provides
+    @QSThemedContext
+    static LayoutInflater provideThemedLayoutInflater(@QSThemedContext Context context) {
+        return LayoutInflater.from(context);
+    }
+
     /** */
     @Provides
     @RootView
     static View provideRootView(QSFragment qsFragment) {
         return qsFragment.getView();
+    }
+
+    /** */
+    @Provides
+    static MultiUserSwitch providesMultiUserSWitch(QSFooterView qsFooterView) {
+        return qsFooterView.findViewById(R.id.multi_user_switch);
     }
 
     /** */
@@ -109,8 +132,11 @@ public interface QSFragmentModule {
     @Provides
     @QSScope
     @Named(QS_SECURITY_FOOTER_VIEW)
-    static View providesQSSecurityFooterView(LayoutInflater layoutInflater, QSPanel qsPanel) {
-        return layoutInflater.inflate(R.layout.quick_settings_footer, qsPanel, false);
+    static View providesQSSecurityFooterView(
+            @QSThemedContext LayoutInflater layoutInflater,
+            QSPanel qsPanel
+    ) {
+        return layoutInflater.inflate(R.layout.quick_settings_security_footer, qsPanel, false);
     }
 
     /** */

@@ -37,6 +37,7 @@ import androidx.test.filters.SmallTest;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.classifier.FalsingManagerFake;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.qs.QSTileHost;
@@ -101,6 +102,7 @@ public class CastTileTest extends SysuiTestCase {
                 mHost,
                 mTestableLooper.getLooper(),
                 new Handler(mTestableLooper.getLooper()),
+                new FalsingManagerFake(),
                 mMetricsLogger,
                 mStatusBarStateController,
                 mActivityStarter,
@@ -238,7 +240,7 @@ public class CastTileTest extends SysuiTestCase {
         when(mController.getCastDevices()).thenReturn(devices);
 
         enableWifiAndProcessMessages();
-        mCastTile.handleClick();
+        mCastTile.handleClick(null /* view */);
         mTestableLooper.processAllMessages();
 
         verify(mActivityStarter, times(1)).postQSRunnableDismissingKeyguard(any());
@@ -254,7 +256,7 @@ public class CastTileTest extends SysuiTestCase {
         when(mController.getCastDevices()).thenReturn(devices);
 
         enableWifiAndProcessMessages();
-        mCastTile.handleClick();
+        mCastTile.handleClick(null /* view */);
         mTestableLooper.processAllMessages();
 
         verify(mController, times(1)).stopCasting(same(device));

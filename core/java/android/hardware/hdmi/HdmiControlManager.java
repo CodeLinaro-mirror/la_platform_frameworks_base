@@ -461,6 +461,7 @@ public final class HdmiControlManager {
      * @see HdmiControlManager#CEC_SETTING_NAME_VOLUME_CONTROL_MODE
      * @hide
      */
+    @SystemApi
     public static final int VOLUME_CONTROL_ENABLED = 1;
     /**
      * HDMI CEC disabled.
@@ -468,6 +469,7 @@ public final class HdmiControlManager {
      * @see HdmiControlManager#CEC_SETTING_NAME_VOLUME_CONTROL_MODE
      * @hide
      */
+    @SystemApi
     public static final int VOLUME_CONTROL_DISABLED = 0;
     /**
      * @see HdmiControlManager#CEC_SETTING_NAME_VOLUME_CONTROL_MODE
@@ -486,12 +488,14 @@ public final class HdmiControlManager {
      *
      * @hide
      */
+    @SystemApi
     public static final int TV_WAKE_ON_ONE_TOUCH_PLAY_ENABLED = 1;
     /**
      * TV Wake on One Touch Play disabled.
      *
      * @hide
      */
+    @SystemApi
     public static final int TV_WAKE_ON_ONE_TOUCH_PLAY_DISABLED = 0;
     /**
      * @hide
@@ -509,12 +513,14 @@ public final class HdmiControlManager {
      *
      * @hide
      */
+    @SystemApi
     public static final int TV_SEND_STANDBY_ON_SLEEP_ENABLED = 1;
     /**
      * Not sending &lt;Standby&gt; on sleep.
      *
      * @hide
      */
+    @SystemApi
     public static final int TV_SEND_STANDBY_ON_SLEEP_DISABLED = 0;
     /**
      * @hide
@@ -709,7 +715,7 @@ public final class HdmiControlManager {
      * @hide
      */
     @SystemApi
-    public static final String CEC_SETTING_NAME_POWER_CONTROL_MODE = "send_standby_on_sleep";
+    public static final String CEC_SETTING_NAME_POWER_CONTROL_MODE = "power_control_mode";
     /**
      * Name of a setting deciding on power state action when losing Active Source.
      *
@@ -759,6 +765,7 @@ public final class HdmiControlManager {
      * @hide
      * @see android.hardware.hdmi.HdmiControlManager#setHdmiCecVolumeControlEnabled(int)
      */
+    @SystemApi
     public static final String CEC_SETTING_NAME_VOLUME_CONTROL_MODE =
             "volume_control_enabled";
     /**
@@ -767,6 +774,7 @@ public final class HdmiControlManager {
      *
      * @hide
      */
+    @SystemApi
     public static final String CEC_SETTING_NAME_TV_WAKE_ON_ONE_TOUCH_PLAY =
             "tv_wake_on_one_touch_play";
     /**
@@ -775,6 +783,7 @@ public final class HdmiControlManager {
      *
      * @hide
      */
+    @SystemApi
     public static final String CEC_SETTING_NAME_TV_SEND_STANDBY_ON_SLEEP =
             "tv_send_standby_on_sleep";
     /**
@@ -1000,7 +1009,6 @@ public final class HdmiControlManager {
      *
      * @return {@link HdmiAudioSystemClient} instance. {@code null} on failure.
      *
-     * TODO(b/110094868): unhide for Q
      * @hide
      */
     @Nullable
@@ -1259,6 +1267,7 @@ public final class HdmiControlManager {
      * @see HdmiControlManager#CEC_SETTING_NAME_VOLUME_CONTROL_MODE
      * @hide
      */
+    @SystemApi
     @RequiresPermission(android.Manifest.permission.HDMI_CEC)
     public void setHdmiCecVolumeControlEnabled(
             @VolumeControl int hdmiCecVolumeControlEnabled) {
@@ -1274,6 +1283,7 @@ public final class HdmiControlManager {
      * Returns whether volume changes via HDMI CEC are enabled.
      * @hide
      */
+    @SystemApi
     @RequiresPermission(android.Manifest.permission.HDMI_CEC)
     @VolumeControl
     public int getHdmiCecVolumeControlEnabled() {
@@ -2155,6 +2165,7 @@ public final class HdmiControlManager {
      *
      * @hide
      */
+    @SystemApi
     @RequiresPermission(android.Manifest.permission.HDMI_CEC)
     public void setTvWakeOnOneTouchPlay(@NonNull @TvWakeOnOneTouchPlay int value) {
         if (mService == null) {
@@ -2176,6 +2187,7 @@ public final class HdmiControlManager {
      *
      * @hide
      */
+    @SystemApi
     @NonNull
     @TvWakeOnOneTouchPlay
     @RequiresPermission(android.Manifest.permission.HDMI_CEC)
@@ -2199,6 +2211,7 @@ public final class HdmiControlManager {
      *
      * @hide
      */
+    @SystemApi
     @RequiresPermission(android.Manifest.permission.HDMI_CEC)
     public void setTvSendStandbyOnSleep(@NonNull @TvSendStandbyOnSleep int value) {
         if (mService == null) {
@@ -2220,6 +2233,7 @@ public final class HdmiControlManager {
      *
      * @hide
      */
+    @SystemApi
     @NonNull
     @TvSendStandbyOnSleep
     @RequiresPermission(android.Manifest.permission.HDMI_CEC)

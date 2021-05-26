@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
@@ -73,7 +74,8 @@ import java.util.concurrent.Executor;
 public class VcnManager {
     @NonNull private static final String TAG = VcnManager.class.getSimpleName();
 
-    private static final Map<VcnNetworkPolicyListener, VcnUnderlyingNetworkPolicyListenerBinder>
+    private static final Map<
+                    VcnNetworkPolicyChangeListener, VcnUnderlyingNetworkPolicyListenerBinder>
             REGISTERED_POLICY_LISTENERS = new ConcurrentHashMap<>();
 
     @NonNull private final Context mContext;
@@ -93,13 +95,13 @@ public class VcnManager {
     }
 
     /**
-     * Get all currently registered VcnNetworkPolicyListeners for testing purposes.
+     * Get all currently registered VcnNetworkPolicyChangeListeners for testing purposes.
      *
      * @hide
      */
     @VisibleForTesting(visibility = Visibility.PRIVATE)
     @NonNull
-    public static Map<VcnNetworkPolicyListener, VcnUnderlyingNetworkPolicyListenerBinder>
+    public static Map<VcnNetworkPolicyChangeListener, VcnUnderlyingNetworkPolicyListenerBinder>
             getAllPolicyListeners() {
         return Collections.unmodifiableMap(REGISTERED_POLICY_LISTENERS);
     }
@@ -153,7 +155,7 @@ public class VcnManager {
         requireNonNull(subscriptionGroup, "subscriptionGroup was null");
 
         try {
-            mService.clearVcnConfig(subscriptionGroup);
+            mService.clearVcnConfig(subscriptionGroup, mContext.getOpPackageName());
         } catch (ServiceSpecificException e) {
             throw new IOException(e);
         } catch (RemoteException e) {
@@ -161,15 +163,32 @@ public class VcnManager {
         }
     }
 
+    /**
+     * Retrieves the list of Subscription Groups for which a VCN Configuration has been set.
+     *
+     * <p>The returned list will include only subscription groups for which the carrier app is
+     * privileged, and which have an associated {@link VcnConfig}.
+     *
+     * @throws SecurityException if the caller is not running as the primary user
+     */
+    @NonNull
+    public List<ParcelUuid> getConfiguredSubscriptionGroups() {
+        try {
+            return mService.getConfiguredSubscriptionGroups(mContext.getOpPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
     // TODO(b/180537630): remove all VcnUnderlyingNetworkPolicyListener refs once Telephony is using
-    // the new VcnNetworkPolicyListener API
+    // the new VcnNetworkPolicyChangeListener API
     /**
      * VcnUnderlyingNetworkPolicyListener is the interface through which internal system components
      * can register to receive updates for VCN-underlying Network policies from the System Server.
      *
      * @hide
      */
-    public interface VcnUnderlyingNetworkPolicyListener extends VcnNetworkPolicyListener {}
+    public interface VcnUnderlyingNetworkPolicyListener extends VcnNetworkPolicyChangeListener {}
 
     /**
      * Add a listener for VCN-underlying network policy updates.
@@ -185,7 +204,7 @@ public class VcnManager {
     @RequiresPermission(android.Manifest.permission.NETWORK_FACTORY)
     public void addVcnUnderlyingNetworkPolicyListener(
             @NonNull Executor executor, @NonNull VcnUnderlyingNetworkPolicyListener listener) {
-        addVcnNetworkPolicyListener(executor, listener);
+        addVcnNetworkPolicyChangeListener(executor, listener);
     }
 
     /**
@@ -198,7 +217,7 @@ public class VcnManager {
      */
     public void removeVcnUnderlyingNetworkPolicyListener(
             @NonNull VcnUnderlyingNetworkPolicyListener listener) {
-        removeVcnNetworkPolicyListener(listener);
+        removeVcnNetworkPolicyChangeListener(listener);
     }
 
     /**
@@ -233,20 +252,20 @@ public class VcnManager {
     }
 
     /**
-     * VcnNetworkPolicyListener is the interface through which internal system components (e.g.
-     * Network Factories) can register to receive updates for VCN-underlying Network policies from
-     * the System Server.
+     * VcnNetworkPolicyChangeListener is the interface through which internal system components
+     * (e.g. Network Factories) can register to receive updates for VCN-underlying Network policies
+     * from the System Server.
      *
      * <p>Any Network Factory that brings up Networks capable of being VCN-underlying Networks
-     * should register a VcnNetworkPolicyListener. VcnManager will then use this listener to notify
-     * the registrant when VCN Network policies change. Upon receiving this signal, the listener
-     * must check {@link VcnManager} for the current Network policy result for each of its Networks
-     * via {@link #applyVcnNetworkPolicy(NetworkCapabilities, LinkProperties)}.
+     * should register a VcnNetworkPolicyChangeListener. VcnManager will then use this listener to
+     * notify the registrant when VCN Network policies change. Upon receiving this signal, the
+     * listener must check {@link VcnManager} for the current Network policy result for each of its
+     * Networks via {@link #applyVcnNetworkPolicy(NetworkCapabilities, LinkProperties)}.
      *
      * @hide
      */
     @SystemApi
-    public interface VcnNetworkPolicyListener {
+    public interface VcnNetworkPolicyChangeListener {
         /**
          * Notifies the implementation that the VCN's underlying Network policy has changed.
          *
@@ -260,20 +279,21 @@ public class VcnManager {
     /**
      * Add a listener for VCN-underlying Network policy updates.
      *
-     * <p>A {@link VcnNetworkPolicyListener} is eligible to begin receiving callbacks once it is
-     * registered. No callbacks are guaranteed upon registration.
+     * <p>A {@link VcnNetworkPolicyChangeListener} is eligible to begin receiving callbacks once it
+     * is registered. No callbacks are guaranteed upon registration.
      *
      * @param executor the Executor that will be used for invoking all calls to the specified
      *     Listener
-     * @param listener the VcnNetworkPolicyListener to be added
+     * @param listener the VcnNetworkPolicyChangeListener to be added
      * @throws SecurityException if the caller does not have permission NETWORK_FACTORY
-     * @throws IllegalStateException if the specified VcnNetworkPolicyListener is already registered
+     * @throws IllegalStateException if the specified VcnNetworkPolicyChangeListener is already
+     *     registered
      * @hide
      */
     @SystemApi
     @RequiresPermission(android.Manifest.permission.NETWORK_FACTORY)
-    public void addVcnNetworkPolicyListener(
-            @NonNull Executor executor, @NonNull VcnNetworkPolicyListener listener) {
+    public void addVcnNetworkPolicyChangeListener(
+            @NonNull Executor executor, @NonNull VcnNetworkPolicyChangeListener listener) {
         requireNonNull(executor, "executor must not be null");
         requireNonNull(listener, "listener must not be null");
 
@@ -292,15 +312,18 @@ public class VcnManager {
     }
 
     /**
-     * Remove the specified VcnNetworkPolicyListener from VcnManager.
+     * Remove the specified VcnNetworkPolicyChangeListener from VcnManager.
      *
      * <p>If the specified listener is not currently registered, this is a no-op.
      *
-     * @param listener the VcnNetworkPolicyListener that will be removed
+     * @param listener the VcnNetworkPolicyChangeListener that will be removed
+     * @throws SecurityException if the caller does not have permission NETWORK_FACTORY
      * @hide
      */
     @SystemApi
-    public void removeVcnNetworkPolicyListener(@NonNull VcnNetworkPolicyListener listener) {
+    @RequiresPermission(android.Manifest.permission.NETWORK_FACTORY)
+    public void removeVcnNetworkPolicyChangeListener(
+            @NonNull VcnNetworkPolicyChangeListener listener) {
         requireNonNull(listener, "listener must not be null");
 
         VcnUnderlyingNetworkPolicyListenerBinder binder =
@@ -320,8 +343,9 @@ public class VcnManager {
      * Applies the network policy for a {@link android.net.Network} with the given parameters.
      *
      * <p>Prior to a new NetworkAgent being registered, or upon notification that Carrier VCN policy
-     * may have changed via {@link VcnNetworkPolicyListener#onPolicyChanged()}, a Network Provider
-     * MUST poll for the updated Network policy based on that Network's capabilities and properties.
+     * may have changed via {@link VcnNetworkPolicyChangeListener#onPolicyChanged()}, a Network
+     * Provider MUST poll for the updated Network policy based on that Network's capabilities and
+     * properties.
      *
      * @param networkCapabilities the NetworkCapabilities to be used in determining the Network
      *     policy result for this Network.
@@ -431,26 +455,25 @@ public class VcnManager {
          * Invoked when status of the VCN for this callback's subscription group changes.
          *
          * @param statusCode the code for the status change encountered by this {@link
-         *     VcnStatusCallback}'s subscription group.
+         *     VcnStatusCallback}'s subscription group. This value will be one of VCN_STATUS_CODE_*.
          */
-        public abstract void onVcnStatusChanged(@VcnStatusCode int statusCode);
+        public abstract void onStatusChanged(@VcnStatusCode int statusCode);
 
         /**
          * Invoked when a VCN Gateway Connection corresponding to this callback's subscription group
          * encounters an error.
          *
-         * @param networkCapabilities an array of NetworkCapabilities.NET_CAPABILITY_* capabilities
-         *     for the Gateway Connection that encountered the error, for identification purposes.
-         *     These will be a sorted list with no duplicates and will match {@link
-         *     VcnGatewayConnectionConfig#getRequiredUnderlyingCapabilities()} for one of the {@link
-         *     VcnGatewayConnectionConfig}s set in the {@link VcnConfig} for this subscription
-         *     group.
-         * @param errorCode the code to indicate the error that occurred
+         * @param gatewayConnectionName the String GatewayConnection name for the GatewayConnection
+         *     encountering an error. This will match the name for exactly one {@link
+         *     VcnGatewayConnectionConfig} for the {@link VcnConfig} configured for this callback's
+         *     subscription group
+         * @param errorCode the code to indicate the error that occurred. This value will be one of
+         *     VCN_ERROR_CODE_*.
          * @param detail Throwable to provide additional information about the error, or {@code
          *     null} if none
          */
         public abstract void onGatewayConnectionError(
-                @NonNull int[] networkCapabilities,
+                @NonNull String gatewayConnectionName,
                 @VcnErrorCode int errorCode,
                 @Nullable Throwable detail);
     }
@@ -470,7 +493,7 @@ public class VcnManager {
      * and there is a VCN active for its specified subscription group (this may happen after the
      * callback is registered).
      *
-     * <p>{@link VcnStatusCallback#onVcnStatusChanged(int)} will be invoked on registration with the
+     * <p>{@link VcnStatusCallback#onStatusChanged(int)} will be invoked on registration with the
      * current status for the specified subscription group's VCN. If the registrant is not
      * privileged for this subscription group, {@link #VCN_STATUS_CODE_NOT_CONFIGURED} will be
      * returned.
@@ -532,17 +555,18 @@ public class VcnManager {
     }
 
     /**
-     * Binder wrapper for added VcnNetworkPolicyListeners to receive signals from System Server.
+     * Binder wrapper for added VcnNetworkPolicyChangeListeners to receive signals from System
+     * Server.
      *
      * @hide
      */
     private static class VcnUnderlyingNetworkPolicyListenerBinder
             extends IVcnUnderlyingNetworkPolicyListener.Stub {
         @NonNull private final Executor mExecutor;
-        @NonNull private final VcnNetworkPolicyListener mListener;
+        @NonNull private final VcnNetworkPolicyChangeListener mListener;
 
         private VcnUnderlyingNetworkPolicyListenerBinder(
-                Executor executor, VcnNetworkPolicyListener listener) {
+                Executor executor, VcnNetworkPolicyChangeListener listener) {
             mExecutor = executor;
             mListener = listener;
         }
@@ -573,13 +597,13 @@ public class VcnManager {
         @Override
         public void onVcnStatusChanged(@VcnStatusCode int statusCode) {
             Binder.withCleanCallingIdentity(
-                    () -> mExecutor.execute(() -> mCallback.onVcnStatusChanged(statusCode)));
+                    () -> mExecutor.execute(() -> mCallback.onStatusChanged(statusCode)));
         }
 
         // TODO(b/180521637): use ServiceSpecificException for safer Exception 'parceling'
         @Override
         public void onGatewayConnectionError(
-                @NonNull int[] networkCapabilities,
+                @NonNull String gatewayConnectionName,
                 @VcnErrorCode int errorCode,
                 @Nullable String exceptionClass,
                 @Nullable String exceptionMessage) {
@@ -590,7 +614,7 @@ public class VcnManager {
                             mExecutor.execute(
                                     () ->
                                             mCallback.onGatewayConnectionError(
-                                                    networkCapabilities, errorCode, cause)));
+                                                    gatewayConnectionName, errorCode, cause)));
         }
 
         private static Throwable createThrowableByClassName(

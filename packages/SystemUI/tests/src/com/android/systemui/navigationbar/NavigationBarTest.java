@@ -23,6 +23,7 @@ import static android.inputmethodservice.InputMethodService.IME_VISIBLE;
 import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.DisplayAdjustments.DEFAULT_DISPLAY_ADJUSTMENTS;
 
+import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.HOME_BUTTON_LONG_PRESS_DURATION_MS;
 import static com.android.systemui.navigationbar.NavigationBar.NavBarActionEvent.NAVBAR_ASSIST_LONGPRESS;
 
 import static org.junit.Assert.assertEquals;
@@ -31,6 +32,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -44,12 +46,16 @@ import android.content.IntentFilter;
 import android.hardware.display.DisplayManagerGlobal;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.os.UserHandle;
+import android.provider.DeviceConfig;
+import android.provider.Settings;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.testing.TestableLooper.RunWithLooper;
 import android.view.Display;
 import android.view.DisplayInfo;
+import android.view.MotionEvent;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
 import android.view.accessibility.AccessibilityManager;
@@ -61,10 +67,12 @@ import com.android.internal.logging.UiEventLogger;
 import com.android.systemui.Dependency;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.SysuiTestableContext;
+import com.android.systemui.accessibility.AccessibilityButtonModeObserver;
 import com.android.systemui.accessibility.SystemActions;
 import com.android.systemui.assist.AssistManager;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.model.SysUiState;
+import com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.recents.OverviewProxyService;
 import com.android.systemui.recents.Recents;
@@ -79,6 +87,7 @@ import com.android.systemui.utils.leaks.LeakCheckedTest;
 import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
 import com.android.wm.shell.pip.Pip;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -101,6 +110,7 @@ public class NavigationBarTest extends SysuiTestCase {
     private OverviewProxyService mOverviewProxyService;
     private CommandQueue mCommandQueue;
     private SysUiState mMockSysUiState;
+    @Mock
     private Handler mHandler;
     @Mock
     private BroadcastDispatcher mBroadcastDispatcher;
@@ -123,11 +133,17 @@ public class NavigationBarTest extends SysuiTestCase {
         mDependency.injectMockDependency(StatusBarStateController.class);
         mDependency.injectMockDependency(NavigationBarController.class);
         mOverviewProxyService = mDependency.injectMockDependency(OverviewProxyService.class);
+        mDependency.injectMockDependency(EdgeBackGestureHandler.class);
         TestableLooper.get(this).runWithLooper(() -> {
-            mHandler = new Handler();
             mNavigationBar = createNavBar(mContext);
             mExternalDisplayNavigationBar = createNavBar(mSysuiTestableContextExternal);
         });
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        DeviceConfig.resetToDefaults(
+                Settings.RESET_MODE_PACKAGE_DEFAULTS, DeviceConfig.NAMESPACE_SYSTEMUI);
     }
 
     private void setupSysuiDependency() {
@@ -160,6 +176,32 @@ public class NavigationBarTest extends SysuiTestCase {
         mNavigationBar.onHomeLongClick(mNavigationBar.getView());
 
         verify(mUiEventLogger, times(1)).log(NAVBAR_ASSIST_LONGPRESS);
+    }
+
+    @Test
+    public void testHomeLongPressWithCustomDuration() throws Exception {
+        DeviceConfig.setProperties(
+                new DeviceConfig.Properties.Builder(DeviceConfig.NAMESPACE_SYSTEMUI)
+                    .setLong(HOME_BUTTON_LONG_PRESS_DURATION_MS, 100)
+                    .build());
+        mNavigationBar.onViewAttachedToWindow(mNavigationBar.createView(null));
+
+        mNavigationBar.onHomeTouch(mNavigationBar.getView(), MotionEvent.obtain(
+                /*downTime=*/SystemClock.uptimeMillis(),
+                /*eventTime=*/SystemClock.uptimeMillis(),
+                /*action=*/MotionEvent.ACTION_DOWN,
+                0, 0, 0
+        ));
+        verify(mHandler, times(1)).postDelayed(any(), eq(100L));
+
+        mNavigationBar.onHomeTouch(mNavigationBar.getView(), MotionEvent.obtain(
+                /*downTime=*/SystemClock.uptimeMillis(),
+                /*eventTime=*/SystemClock.uptimeMillis(),
+                /*action=*/MotionEvent.ACTION_UP,
+                0, 0, 0
+        ));
+
+        verify(mHandler, times(1)).removeCallbacks(any());
     }
 
     @Test
@@ -220,6 +262,7 @@ public class NavigationBarTest extends SysuiTestCase {
                 new MetricsLogger(),
                 mOverviewProxyService,
                 mock(NavigationModeController.class),
+                mock(AccessibilityButtonModeObserver.class),
                 mock(StatusBarStateController.class),
                 mMockSysUiState,
                 mBroadcastDispatcher,

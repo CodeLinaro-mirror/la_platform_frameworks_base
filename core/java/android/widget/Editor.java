@@ -259,6 +259,20 @@ public class Editor {
     // Used to highlight a word when it is corrected by the IME
     private CorrectionHighlighter mCorrectionHighlighter;
 
+    /**
+     * {@code true} when {@link TextView#setText(CharSequence, TextView.BufferType, boolean, int)}
+     * is being executed and {@link InputMethodManager#restartInput(View)} is scheduled to be
+     * called.
+     *
+     * <p>This is also used to avoid an unnecessary invocation of
+     * {@link InputMethodManager#updateSelection(View, int, int, int, int)} when
+     * {@link InputMethodManager#restartInput(View)} is scheduled to be called already
+     * See bug 186582769 for details.</p>
+     *
+     * <p>TODO(186582769): Come up with better way.</p>
+     */
+    private boolean mHasPendingRestartInputForSetText = false;
+
     InputContentType mInputContentType;
     InputMethodState mInputMethodState;
 
@@ -988,6 +1002,12 @@ public class Editor {
 
         if (mTextView.isTextEditable() && mTextView.isSuggestionsEnabled()
                 && !(mTextView.isInExtractedMode())) {
+            final InputMethodManager imm = getInputMethodManager();
+            if (imm != null && imm.isInputMethodSuppressingSpellChecker()) {
+                // Do not close mSpellChecker here as it may be reused when the current IME has been
+                // changed.
+                return;
+            }
             if (mSpellChecker == null && createSpellChecker) {
                 mSpellChecker = new SpellChecker(mTextView);
             }
@@ -1819,6 +1839,29 @@ public class Editor {
         }
     }
 
+    /**
+     * Called from {@link TextView#setText(CharSequence, TextView.BufferType, boolean, int)} to
+     * schedule {@link InputMethodManager#restartInput(View)}.
+     */
+    void scheduleRestartInputForSetText() {
+        mHasPendingRestartInputForSetText = true;
+    }
+
+    /**
+     * Called from {@link TextView#setText(CharSequence, TextView.BufferType, boolean, int)} to
+     * actually call {@link InputMethodManager#restartInput(View)} if it's scheduled.  Does nothing
+     * otherwise.
+     */
+    void maybeFireScheduledRestartInputForSetText() {
+        if (mHasPendingRestartInputForSetText) {
+            final InputMethodManager imm = getInputMethodManager();
+            if (imm != null) {
+                imm.restartInput(mTextView);
+            }
+            mHasPendingRestartInputForSetText = false;
+        }
+    }
+
     static final int EXTRACT_NOTHING = -2;
     static final int EXTRACT_UNKNOWN = -1;
 
@@ -1952,7 +1995,8 @@ public class Editor {
     }
 
     private void sendUpdateSelection() {
-        if (null != mInputMethodState && mInputMethodState.mBatchEditNesting <= 0) {
+        if (null != mInputMethodState && mInputMethodState.mBatchEditNesting <= 0
+                && !mHasPendingRestartInputForSetText) {
             final InputMethodManager imm = getInputMethodManager();
             if (null != imm) {
                 final int selectionStart = mTextView.getSelectionStart();
@@ -2888,8 +2932,8 @@ public class Editor {
             final int originalLength = mTextView.getText().length();
             Selection.setSelection((Spannable) mTextView.getText(), offset);
             final ClipData clip = event.getClipData();
-            final ContentInfo payload =
-                    new ContentInfo.Builder(clip, SOURCE_DRAG_AND_DROP)
+            final ContentInfo payload = new ContentInfo.Builder(clip, SOURCE_DRAG_AND_DROP)
+                    .setDragAndDropPermissions(permissions)
                     .build();
             mTextView.performReceiveContent(payload);
             if (dragDropIntoItself) {
@@ -2898,9 +2942,6 @@ public class Editor {
         } finally {
             mTextView.endBatchEdit();
             mUndoInputFilter.freezeLastEdit();
-            if (permissions != null) {
-                permissions.release();
-            }
         }
     }
 
@@ -3790,7 +3831,7 @@ public class Editor {
         }
 
         public SuggestionsPopupWindow() {
-            mCursorWasVisibleBeforeSuggestions = mCursorVisible;
+            mCursorWasVisibleBeforeSuggestions = mTextView.isCursorVisibleFromAttr();
         }
 
         @Override
@@ -3957,7 +3998,7 @@ public class Editor {
             }
 
             if (updateSuggestions()) {
-                mCursorWasVisibleBeforeSuggestions = mCursorVisible;
+                mCursorWasVisibleBeforeSuggestions = mTextView.isCursorVisibleFromAttr();
                 mTextView.setCursorVisible(false);
                 mIsShowingUp = true;
                 super.show();
@@ -6632,7 +6673,9 @@ public class Editor {
                     }
 
                     updateSelection(event);
-                    if (mTextView.hasSelection() && mEndHandle != null) {
+                    if (mTextView.hasSelection() && mEndHandle != null &&
+                        isDragAcceleratorActive()
+                    ) {
                         mEndHandle.updateMagnifier(event);
                     }
                     break;
@@ -6641,13 +6684,13 @@ public class Editor {
                     if (TextView.DEBUG_CURSOR) {
                         logCursor("SelectionModifierCursorController: onTouchEvent", "ACTION_UP");
                     }
+                    if (mEndHandle != null) {
+                        mEndHandle.dismissMagnifier();
+                    }
                     if (!isDragAcceleratorActive()) {
                         break;
                     }
                     updateSelection(event);
-                    if (mEndHandle != null) {
-                        mEndHandle.dismissMagnifier();
-                    }
 
                     // No longer dragging to select text, let the parent intercept events.
                     mTextView.getParent().requestDisallowInterceptTouchEvent(false);

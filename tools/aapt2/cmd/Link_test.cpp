@@ -24,7 +24,9 @@
 
 using testing::Eq;
 using testing::HasSubstr;
+using testing::IsNull;
 using testing::Ne;
+using testing::NotNull;
 
 namespace aapt {
 
@@ -47,6 +49,8 @@ TEST_F(LinkTest, RemoveRawXmlStrings) {
   // Load the binary xml tree
   android::ResXMLTree tree;
   std::unique_ptr<LoadedApk> apk = LoadedApk::LoadApkFromPath(out_apk, &diag);
+  ASSERT_THAT(apk, Ne(nullptr));
+
   std::unique_ptr<io::IData> data = OpenFileAsData(apk.get(), "res/xml/test.xml");
   ASSERT_THAT(data, Ne(nullptr));
   AssertLoadXml(apk.get(), data.get(), &tree);
@@ -73,6 +77,8 @@ TEST_F(LinkTest, KeepRawXmlStrings) {
   // Load the binary xml tree
   android::ResXMLTree tree;
   std::unique_ptr<LoadedApk> apk = LoadedApk::LoadApkFromPath(out_apk, &diag);
+  ASSERT_THAT(apk, Ne(nullptr));
+
   std::unique_ptr<io::IData> data = OpenFileAsData(apk.get(), "res/xml/test.xml");
   ASSERT_THAT(data, Ne(nullptr));
   AssertLoadXml(apk.get(), data.get(), &tree);
@@ -208,6 +214,8 @@ TEST_F(LinkTest, OverlayStyles) {
   ASSERT_TRUE(Link(link_args, compiled_files_dir, &diag));
 
   std::unique_ptr<LoadedApk> apk = LoadedApk::LoadApkFromPath(out_apk, &diag);
+  ASSERT_THAT(apk, Ne(nullptr));
+
   const Style* actual_style = test::GetValue<Style>(
       apk->GetResourceTable(), std::string(kDefaultPackageName) + ":style/MyStyle");
   ASSERT_NE(actual_style, nullptr);
@@ -250,6 +258,8 @@ TEST_F(LinkTest, OverrideStylesInsteadOfOverlaying) {
   ASSERT_TRUE(Link(link_args, compiled_files_dir, &diag));
 
   std::unique_ptr<LoadedApk> apk = LoadedApk::LoadApkFromPath(out_apk, &diag);
+  ASSERT_THAT(apk, Ne(nullptr));
+
   const Style* actual_style = test::GetValue<Style>(
       apk->GetResourceTable(), std::string(kDefaultPackageName) + ":style/MyStyle");
   ASSERT_NE(actual_style, nullptr);
@@ -390,6 +400,242 @@ TEST_F(LinkTest, SharedLibraryAttributeRJava) {
   std::string client_r_contents;
   ASSERT_TRUE(android::base::ReadFileToString(client_r_java, &client_r_contents));
   EXPECT_THAT(client_r_contents, HasSubstr(" com.example.lib.R.attr.foo, 0x7f010000"));
+}
+
+TEST_F(LinkTest, StagedAndroidApi) {
+  StdErrDiagnostics diag;
+  const std::string android_values =
+      R"(<resources>
+          <public type="attr" name="finalized_res" id="0x01010001"/>
+
+          <!-- S staged attributes (support staged resources in the same type id) -->
+          <staging-public-group type="attr" first-id="0x01010050">
+            <public name="staged_s_res" />
+          </staging-public-group>
+
+          <!-- SV2 staged attributes (support staged resources in a separate type id) -->
+          <staging-public-group type="attr" first-id="0x01ff0049">
+            <public name="staged_s2_res" />
+          </staging-public-group>
+
+          <!-- T staged attributes (support staged resources in multiple separate type ids) -->
+          <staging-public-group type="attr" first-id="0x01fe0063">
+            <public name="staged_t_res" />
+          </staging-public-group>
+
+          <staging-public-group type="string" first-id="0x01fd0072">
+            <public name="staged_t_string" />
+          </staging-public-group>
+
+          <attr name="finalized_res" />
+          <attr name="staged_s_res" />
+          <attr name="staged_s2_res" />
+          <attr name="staged_t_res" />
+          <string name="staged_t_string">Hello</string>
+         </resources>)";
+
+  const std::string app_values =
+      R"(<resources xmlns:android="http://schemas.android.com/apk/res/android">
+           <attr name="bar" />
+           <declare-styleable name="ClientStyleable">
+             <attr name="android:finalized_res" />
+             <attr name="android:staged_s_res" />
+             <attr name="bar" />
+           </declare-styleable>
+         </resources>)";
+
+  const std::string android_res = GetTestPath("android-res");
+  ASSERT_TRUE(
+      CompileFile(GetTestPath("res/values/values.xml"), android_values, android_res, &diag));
+
+  const std::string android_apk = GetTestPath("android.apk");
+  const std::string android_java = GetTestPath("android_java");
+  // clang-format off
+  auto android_manifest = ManifestBuilder(this)
+      .SetPackageName("android")
+      .Build();
+
+  auto android_link_args = LinkCommandBuilder(this)
+      .SetManifestFile(android_manifest)
+      .AddParameter("--private-symbols", "com.android.internal")
+      .AddParameter("--java", android_java)
+      .AddCompiledResDir(android_res, &diag)
+      .Build(android_apk);
+  // clang-format on
+  ASSERT_TRUE(Link(android_link_args, &diag));
+
+  const std::string android_r_java = android_java + "/android/R.java";
+  std::string android_r_contents;
+  ASSERT_TRUE(android::base::ReadFileToString(android_r_java, &android_r_contents));
+  EXPECT_THAT(android_r_contents, HasSubstr("public static final int finalized_res=0x01010001;"));
+  EXPECT_THAT(
+      android_r_contents,
+      HasSubstr("public static final int staged_s_res; static { staged_s_res=0x01010050; }"));
+  EXPECT_THAT(
+      android_r_contents,
+      HasSubstr("public static final int staged_s2_res; static { staged_s2_res=0x01ff0049; }"));
+  EXPECT_THAT(
+      android_r_contents,
+      HasSubstr("public static final int staged_t_res; static { staged_t_res=0x01fe0063; }"));
+  EXPECT_THAT(
+      android_r_contents,
+      HasSubstr("public static final int staged_t_string; static { staged_t_string=0x01fd0072; }"));
+
+  // Build an app that uses the framework attribute in a declare-styleable
+  const std::string client_res = GetTestPath("app-res");
+  ASSERT_TRUE(CompileFile(GetTestPath("res/values/values.xml"), app_values, client_res, &diag));
+
+  const std::string app_apk = GetTestPath("app.apk");
+  const std::string app_java = GetTestPath("app_java");
+  // clang-format off
+  auto app_manifest = ManifestBuilder(this)
+      .SetPackageName("com.example.app")
+      .Build();
+
+  auto app_link_args = LinkCommandBuilder(this)
+      .SetManifestFile(app_manifest)
+      .AddParameter("--java", app_java)
+      .AddParameter("-I", android_apk)
+      .AddCompiledResDir(client_res, &diag)
+      .Build(app_apk);
+  // clang-format on
+  ASSERT_TRUE(Link(app_link_args, &diag));
+
+  const std::string client_r_java = app_java + "/com/example/app/R.java";
+  std::string client_r_contents;
+  ASSERT_TRUE(android::base::ReadFileToString(client_r_java, &client_r_contents));
+  EXPECT_THAT(client_r_contents, HasSubstr(" 0x01010001, android.R.attr.staged_s_res, 0x7f010000"));
+
+  // Test that the resource ids of staged and non-staged resource can be retrieved
+  android::AssetManager2 am;
+  auto android_asset = android::ApkAssets::Load(android_apk);
+  ASSERT_THAT(android_asset, NotNull());
+  ASSERT_TRUE(am.SetApkAssets({android_asset.get()}));
+
+  auto result = am.GetResourceId("android:attr/finalized_res");
+  ASSERT_TRUE(result.has_value());
+  EXPECT_THAT(*result, Eq(0x01010001));
+
+  result = am.GetResourceId("android:attr/staged_s_res");
+  ASSERT_TRUE(result.has_value());
+  EXPECT_THAT(*result, Eq(0x01010050));
+
+  result = am.GetResourceId("android:attr/staged_s2_res");
+  ASSERT_TRUE(result.has_value());
+  EXPECT_THAT(*result, Eq(0x01ff0049));
+
+  result = am.GetResourceId("android:attr/staged_t_res");
+  ASSERT_TRUE(result.has_value());
+  EXPECT_THAT(*result, Eq(0x01fe0063));
+
+  result = am.GetResourceId("android:string/staged_t_string");
+  ASSERT_TRUE(result.has_value());
+  EXPECT_THAT(*result, Eq(0x01fd0072));
+}
+
+TEST_F(LinkTest, MacroSubstitution) {
+  StdErrDiagnostics diag;
+  const std::string values =
+      R"(<resources xmlns:an="http://schemas.android.com/apk/res/android">
+           <macro name="is_enabled">true</macro>
+           <macro name="deep_is_enabled">@macro/is_enabled</macro>
+           <macro name="attr_ref">?is_enabled_attr</macro>
+           <macro name="raw_string">Hello World!</macro>
+           <macro name="android_ref">@an:color/primary_text_dark</macro>
+
+           <attr name="is_enabled_attr" />
+           <public type="attr" name="is_enabled_attr" id="0x7f010000"/>
+
+           <string name="is_enabled_str">@macro/is_enabled</string>
+           <bool name="is_enabled_bool">@macro/deep_is_enabled</bool>
+
+           <array name="my_array">
+             <item>@macro/is_enabled</item>
+           </array>
+
+           <style name="MyStyle">
+              <item name="android:background">@macro/attr_ref</item>
+              <item name="android:fontFamily">@macro/raw_string</item>
+           </style>
+         </resources>)";
+
+  const std::string xml_values =
+      R"(<SomeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+                     android:background="@macro/android_ref"
+                     android:fontFamily="@macro/raw_string">
+         </SomeLayout>)";
+
+  // Build a library with a public attribute
+  const std::string lib_res = GetTestPath("test-res");
+  ASSERT_TRUE(CompileFile(GetTestPath("res/values/values.xml"), values, lib_res, &diag));
+  ASSERT_TRUE(CompileFile(GetTestPath("res/layout/layout.xml"), xml_values, lib_res, &diag));
+
+  const std::string lib_apk = GetTestPath("test.apk");
+  // clang-format off
+  auto lib_link_args = LinkCommandBuilder(this)
+      .SetManifestFile(ManifestBuilder(this).SetPackageName("com.test").Build())
+      .AddCompiledResDir(lib_res, &diag)
+      .AddFlag("--no-auto-version")
+      .Build(lib_apk);
+  // clang-format on
+  ASSERT_TRUE(Link(lib_link_args, &diag));
+
+  auto apk = LoadedApk::LoadApkFromPath(lib_apk, &diag);
+  ASSERT_THAT(apk, NotNull());
+
+  // Test that the type flags determines the value type
+  auto actual_bool =
+      test::GetValue<BinaryPrimitive>(apk->GetResourceTable(), "com.test:bool/is_enabled_bool");
+  ASSERT_THAT(actual_bool, NotNull());
+  EXPECT_EQ(android::Res_value::TYPE_INT_BOOLEAN, actual_bool->value.dataType);
+  EXPECT_EQ(0xffffffffu, actual_bool->value.data);
+
+  auto actual_str =
+      test::GetValue<String>(apk->GetResourceTable(), "com.test:string/is_enabled_str");
+  ASSERT_THAT(actual_str, NotNull());
+  EXPECT_EQ(*actual_str->value, "true");
+
+  // Test nested data structures
+  auto actual_array = test::GetValue<Array>(apk->GetResourceTable(), "com.test:array/my_array");
+  ASSERT_THAT(actual_array, NotNull());
+  EXPECT_THAT(actual_array->elements.size(), Eq(1));
+
+  auto array_el_ref = ValueCast<BinaryPrimitive>(actual_array->elements[0].get());
+  ASSERT_THAT(array_el_ref, NotNull());
+  EXPECT_THAT(array_el_ref->value.dataType, Eq(android::Res_value::TYPE_INT_BOOLEAN));
+  EXPECT_THAT(array_el_ref->value.data, Eq(0xffffffffu));
+
+  auto actual_style = test::GetValue<Style>(apk->GetResourceTable(), "com.test:style/MyStyle");
+  ASSERT_THAT(actual_style, NotNull());
+  EXPECT_THAT(actual_style->entries.size(), Eq(2));
+
+  {
+    auto style_el = ValueCast<Reference>(actual_style->entries[0].value.get());
+    ASSERT_THAT(style_el, NotNull());
+    EXPECT_THAT(style_el->reference_type, Eq(Reference::Type::kAttribute));
+    EXPECT_THAT(style_el->id, Eq(0x7f010000));
+  }
+
+  {
+    auto style_el = ValueCast<String>(actual_style->entries[1].value.get());
+    ASSERT_THAT(style_el, NotNull());
+    EXPECT_THAT(*style_el->value, Eq("Hello World!"));
+  }
+
+  // Test substitution in compiled xml files
+  auto xml = apk->LoadXml("res/layout/layout.xml", &diag);
+  ASSERT_THAT(xml, NotNull());
+
+  auto& xml_attrs = xml->root->attributes;
+  ASSERT_THAT(xml_attrs.size(), Eq(2));
+
+  auto attr_value = ValueCast<Reference>(xml_attrs[0].compiled_value.get());
+  ASSERT_THAT(attr_value, NotNull());
+  EXPECT_THAT(attr_value->reference_type, Eq(Reference::Type::kResource));
+  EXPECT_THAT(attr_value->id, Eq(0x01060001));
+
+  EXPECT_THAT(xml_attrs[1].compiled_value.get(), IsNull());
+  EXPECT_THAT(xml_attrs[1].value, Eq("Hello World!"));
 }
 
 }  // namespace aapt

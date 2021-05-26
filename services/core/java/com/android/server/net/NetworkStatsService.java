@@ -65,6 +65,7 @@ import static android.provider.Settings.Global.NETSTATS_UID_TAG_BUCKET_DURATION;
 import static android.provider.Settings.Global.NETSTATS_UID_TAG_DELETE_AGE;
 import static android.provider.Settings.Global.NETSTATS_UID_TAG_PERSIST_BYTES;
 import static android.provider.Settings.Global.NETSTATS_UID_TAG_ROTATE_AGE;
+import static android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID;
 import static android.text.format.DateUtils.DAY_IN_MILLIS;
 import static android.text.format.DateUtils.HOUR_IN_MILLIS;
 import static android.text.format.DateUtils.MINUTE_IN_MILLIS;
@@ -92,16 +93,17 @@ import android.net.DataUsageRequest;
 import android.net.INetworkManagementEventObserver;
 import android.net.INetworkStatsService;
 import android.net.INetworkStatsSession;
-import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkIdentity;
+import android.net.NetworkSpecifier;
 import android.net.NetworkStack;
 import android.net.NetworkStateSnapshot;
 import android.net.NetworkStats;
 import android.net.NetworkStats.NonMonotonicObserver;
 import android.net.NetworkStatsHistory;
 import android.net.NetworkTemplate;
+import android.net.TelephonyNetworkSpecifier;
 import android.net.TrafficStats;
 import android.net.UnderlyingNetworkInfo;
 import android.net.Uri;
@@ -131,6 +133,7 @@ import android.service.NetworkInterfaceProto;
 import android.service.NetworkStatsServiceDumpProto;
 import android.telephony.PhoneStateListener;
 import android.telephony.SubscriptionPlan;
+import android.text.TextUtils;
 import android.text.format.DateUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
@@ -1292,9 +1295,9 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         final ArraySet<String> mobileIfaces = new ArraySet<>();
         for (NetworkStateSnapshot snapshot : snapshots) {
             final int displayTransport =
-                    getDisplayTransport(snapshot.networkCapabilities.getTransportTypes());
+                    getDisplayTransport(snapshot.getNetworkCapabilities().getTransportTypes());
             final boolean isMobile = (NetworkCapabilities.TRANSPORT_CELLULAR == displayTransport);
-            final boolean isDefault = ArrayUtils.contains(mDefaultNetworks, snapshot.network);
+            final boolean isDefault = ArrayUtils.contains(mDefaultNetworks, snapshot.getNetwork());
             final int subType = combineSubtypeEnabled ? SUBTYPE_COMBINED
                     : getSubTypeForStateSnapshot(snapshot);
             final NetworkIdentity ident = NetworkIdentity.buildNetworkIdentity(mContext, snapshot,
@@ -1302,7 +1305,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
 
             // Traffic occurring on the base interface is always counted for
             // both total usage and UID details.
-            final String baseIface = snapshot.linkProperties.getInterfaceName();
+            final String baseIface = snapshot.getLinkProperties().getInterfaceName();
             if (baseIface != null) {
                 findOrCreateNetworkIdentitySet(mActiveIfaces, baseIface).add(ident);
                 findOrCreateNetworkIdentitySet(mActiveUidIfaces, baseIface).add(ident);
@@ -1312,7 +1315,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
                 // If IMS is metered, then the IMS network usage has already included VT usage.
                 // VT is considered always metered in framework's layer. If VT is not metered
                 // per carrier's policy, modem will report 0 usage for VT calls.
-                if (snapshot.networkCapabilities.hasCapability(
+                if (snapshot.getNetworkCapabilities().hasCapability(
                         NetworkCapabilities.NET_CAPABILITY_IMS) && !ident.getMetered()) {
 
                     // Copy the identify from IMS one but mark it as metered.
@@ -1320,8 +1323,9 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
                             ident.getSubType(), ident.getSubscriberId(), ident.getNetworkId(),
                             ident.getRoaming(), true /* metered */,
                             true /* onDefaultNetwork */, ident.getOemManaged());
-                    findOrCreateNetworkIdentitySet(mActiveIfaces, IFACE_VT).add(vtIdent);
-                    findOrCreateNetworkIdentitySet(mActiveUidIfaces, IFACE_VT).add(vtIdent);
+                    final String ifaceVt = IFACE_VT + getSubIdForMobile(snapshot);
+                    findOrCreateNetworkIdentitySet(mActiveIfaces, ifaceVt).add(vtIdent);
+                    findOrCreateNetworkIdentitySet(mActiveUidIfaces, ifaceVt).add(vtIdent);
                 }
 
                 if (isMobile) {
@@ -1358,22 +1362,37 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
             // (or non eBPF offloaded) TX they would appear on both, however egress interface
             // accounting is explicitly bypassed for traffic from the clat uid.
             //
-            final List<LinkProperties> stackedLinks = snapshot.linkProperties.getStackedLinks();
-            for (LinkProperties stackedLink : stackedLinks) {
-                final String stackedIface = stackedLink.getInterfaceName();
-                if (stackedIface != null) {
-                    findOrCreateNetworkIdentitySet(mActiveIfaces, stackedIface).add(ident);
-                    findOrCreateNetworkIdentitySet(mActiveUidIfaces, stackedIface).add(ident);
+            // TODO: This code might be combined to above code.
+            for (String iface : snapshot.getLinkProperties().getAllInterfaceNames()) {
+                // baseIface has been handled, so ignore it.
+                if (TextUtils.equals(baseIface, iface)) continue;
+                if (iface != null) {
+                    findOrCreateNetworkIdentitySet(mActiveIfaces, iface).add(ident);
+                    findOrCreateNetworkIdentitySet(mActiveUidIfaces, iface).add(ident);
                     if (isMobile) {
-                        mobileIfaces.add(stackedIface);
+                        mobileIfaces.add(iface);
                     }
 
-                    mStatsFactory.noteStackedIface(stackedIface, baseIface);
+                    mStatsFactory.noteStackedIface(iface, baseIface);
                 }
             }
         }
 
         mMobileIfaces = mobileIfaces.toArray(new String[mobileIfaces.size()]);
+    }
+
+    private static int getSubIdForMobile(@NonNull NetworkStateSnapshot state) {
+        if (!state.getNetworkCapabilities().hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+            throw new IllegalArgumentException("Mobile state need capability TRANSPORT_CELLULAR");
+        }
+
+        final NetworkSpecifier spec = state.getNetworkCapabilities().getNetworkSpecifier();
+        if (spec instanceof TelephonyNetworkSpecifier) {
+             return ((TelephonyNetworkSpecifier) spec).getSubscriptionId();
+        } else {
+            Slog.wtf(TAG, "getSubIdForState invalid NetworkSpecifier");
+            return INVALID_SUBSCRIPTION_ID;
+        }
     }
 
     /**
@@ -1382,11 +1401,11 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
      * transport types do not actually fill this value.
      */
     private int getSubTypeForStateSnapshot(@NonNull NetworkStateSnapshot state) {
-        if (!state.networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+        if (!state.getNetworkCapabilities().hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
             return 0;
         }
 
-        return mNetworkStatsSubscriptionsMonitor.getRatTypeForSubscriberId(state.subscriberId);
+        return mNetworkStatsSubscriptionsMonitor.getRatTypeForSubscriberId(state.getSubscriberId());
     }
 
     private static <K> NetworkIdentitySet findOrCreateNetworkIdentitySet(
@@ -1673,9 +1692,14 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         }
 
         @Override
-        public void setStatsProviderLimitAsync(@NonNull String iface, long quota) {
-            if (LOGV) Slog.v(TAG, "setStatsProviderLimitAsync(" + iface + "," + quota + ")");
-            invokeForAllStatsProviderCallbacks((cb) -> cb.mProvider.onSetLimit(iface, quota));
+        public void setStatsProviderWarningAndLimitAsync(
+                @NonNull String iface, long warning, long limit) {
+            if (LOGV) {
+                Slog.v(TAG, "setStatsProviderWarningAndLimitAsync("
+                        + iface + "," + warning + "," + limit + ")");
+            }
+            invokeForAllStatsProviderCallbacks((cb) -> cb.mProvider.onSetWarningAndLimit(iface,
+                    warning, limit));
         }
     }
 
@@ -2070,10 +2094,10 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         }
 
         @Override
-        public void notifyLimitReached() {
-            Log.d(TAG, mTag + ": onLimitReached");
+        public void notifyWarningOrLimitReached() {
+            Log.d(TAG, mTag + ": notifyWarningOrLimitReached");
             LocalServices.getService(NetworkPolicyManagerInternal.class)
-                    .onStatsProviderLimitReached(mTag);
+                    .onStatsProviderWarningOrLimitReached(mTag);
         }
 
         @Override

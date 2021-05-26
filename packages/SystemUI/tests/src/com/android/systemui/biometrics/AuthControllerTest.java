@@ -34,7 +34,6 @@ import static org.mockito.Mockito.when;
 
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
-import android.app.IActivityTaskManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -43,6 +42,7 @@ import android.content.res.Configuration;
 import android.hardware.biometrics.BiometricAuthenticator;
 import android.hardware.biometrics.BiometricConstants;
 import android.hardware.biometrics.BiometricPrompt;
+import android.hardware.biometrics.ComponentInfoInternal;
 import android.hardware.biometrics.IBiometricSysuiReceiver;
 import android.hardware.biometrics.PromptInfo;
 import android.hardware.biometrics.SensorProperties;
@@ -50,7 +50,9 @@ import android.hardware.face.FaceManager;
 import android.hardware.fingerprint.FingerprintManager;
 import android.hardware.fingerprint.FingerprintSensorProperties;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
+import android.hardware.fingerprint.IFingerprintAuthenticatorsRegisteredCallback;
 import android.os.Bundle;
+import android.os.RemoteException;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableContext;
@@ -66,6 +68,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.AdditionalMatchers;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -100,12 +103,13 @@ public class AuthControllerTest extends SysuiTestCase {
     private FaceManager mFaceManager;
     @Mock
     private UdfpsController mUdfpsController;
+    @Captor
+    ArgumentCaptor<IFingerprintAuthenticatorsRegisteredCallback> mAuthenticatorsRegisteredCaptor;
 
     private TestableAuthController mAuthController;
 
-
     @Before
-    public void setup() {
+    public void setup() throws RemoteException {
         MockitoAnnotations.initMocks(this);
 
         TestableContext context = spy(mContext);
@@ -123,10 +127,20 @@ public class AuthControllerTest extends SysuiTestCase {
         when(mDialog2.isAllowDeviceCredentials()).thenReturn(false);
 
         when(mFingerprintManager.isHardwareDetected()).thenReturn(true);
+
+        final List<ComponentInfoInternal> componentInfo = new ArrayList<>();
+        componentInfo.add(new ComponentInfoInternal("faceSensor" /* componentId */,
+                "vendor/model/revision" /* hardwareVersion */, "1.01" /* firmwareVersion */,
+                "00000001" /* serialNumber */, "" /* softwareVersion */));
+        componentInfo.add(new ComponentInfoInternal("matchingAlgorithm" /* componentId */,
+                "" /* hardwareVersion */, "" /* firmwareVersion */, "" /* serialNumber */,
+                "vendor/version/revision" /* softwareVersion */));
+
         FingerprintSensorPropertiesInternal prop = new FingerprintSensorPropertiesInternal(
                 1 /* sensorId */,
                 SensorProperties.STRENGTH_STRONG,
                 1 /* maxEnrollmentsPerUser */,
+                componentInfo,
                 FingerprintSensorProperties.TYPE_UDFPS_OPTICAL,
                 true /* resetLockoutRequireHardwareAuthToken */);
         List<FingerprintSensorPropertiesInternal> props = new ArrayList<>();
@@ -138,6 +152,9 @@ public class AuthControllerTest extends SysuiTestCase {
                 () -> mUdfpsController);
 
         mAuthController.start();
+        verify(mFingerprintManager).addAuthenticatorsRegisteredCallback(
+                mAuthenticatorsRegisteredCaptor.capture());
+        mAuthenticatorsRegisteredCaptor.getValue().onAllAuthenticatorsRegistered(props);
     }
 
     // Callback tests
@@ -497,20 +514,6 @@ public class AuthControllerTest extends SysuiTestCase {
         final float majorMinor = 5f;
         mAuthController.onAodInterrupt(pos, pos, majorMinor, majorMinor);
         verify(mUdfpsController).onAodInterrupt(eq(pos), eq(pos), eq(majorMinor), eq(majorMinor));
-    }
-
-    @Test
-    public void testOnBiometricAuthenticated_OnCancelAodInterrupt() {
-        showDialog(new int[] {1} /* sensorIds */, false /* credentialAllowed */);
-        mAuthController.onBiometricAuthenticated();
-        verify(mUdfpsController).onCancelAodInterrupt();
-    }
-
-    @Test
-    public void testOnBiometricError_OnCancelAodInterrupt() {
-        showDialog(new int[] {1} /* sensorIds */, false /* credentialAllowed */);
-        mAuthController.onBiometricError(0, 0, 0);
-        verify(mUdfpsController).onCancelAodInterrupt();
     }
 
     // Helpers

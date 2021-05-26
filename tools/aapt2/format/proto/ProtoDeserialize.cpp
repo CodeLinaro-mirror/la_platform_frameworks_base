@@ -425,15 +425,9 @@ static bool DeserializePackageFromPb(const pb::Package& pb_package, const ResStr
                                      io::IFileCollection* files,
                                      const std::vector<std::shared_ptr<Overlayable>>& overlayables,
                                      ResourceTable* out_table, std::string* out_error) {
-  Maybe<uint8_t> id;
-  if (pb_package.has_package_id()) {
-    id = static_cast<uint8_t>(pb_package.package_id().id());
-  }
-
   std::map<ResourceId, ResourceNameRef> id_index;
 
-  ResourceTablePackage* pkg =
-      out_table->CreatePackageAllowingDuplicateNames(pb_package.package_name(), id);
+  ResourceTablePackage* pkg = out_table->FindOrCreatePackage(pb_package.package_name());
   for (const pb::Type& pb_type : pb_package.type()) {
     const ResourceType* res_type = ParseResourceType(pb_type.name());
     if (res_type == nullptr) {
@@ -444,17 +438,15 @@ static bool DeserializePackageFromPb(const pb::Package& pb_package, const ResStr
     }
 
     ResourceTableType* type = pkg->FindOrCreateType(*res_type);
-    if (pb_type.has_type_id()) {
-      type->id = static_cast<uint8_t>(pb_type.type_id().id());
-    }
 
     for (const pb::Entry& pb_entry : pb_type.entry()) {
-      ResourceEntry* entry;
-      if (pb_entry.has_entry_id()) {
-        auto entry_id = static_cast<uint16_t>(pb_entry.entry_id().id());
-        entry = type->FindOrCreateEntry(pb_entry.name(), entry_id);
-      } else {
-        entry = type->FindOrCreateEntry(pb_entry.name());
+      ResourceEntry* entry = type->CreateEntry(pb_entry.name());
+      const ResourceId resource_id(
+          pb_package.has_package_id() ? static_cast<uint8_t>(pb_package.package_id().id()) : 0u,
+          pb_type.has_type_id() ? static_cast<uint8_t>(pb_type.type_id().id()) : 0u,
+          pb_entry.has_entry_id() ? static_cast<uint16_t>(pb_entry.entry_id().id()) : 0u);
+      if (resource_id.id != 0u) {
+        entry->id = resource_id;
       }
 
       // Deserialize the symbol status (public/private with source and comments).
@@ -464,6 +456,7 @@ static bool DeserializePackageFromPb(const pb::Package& pb_package, const ResStr
           DeserializeSourceFromPb(pb_visibility.source(), src_pool, &entry->visibility.source);
         }
         entry->visibility.comment = pb_visibility.comment();
+        entry->visibility.staged_api = pb_visibility.staged_api();
 
         const Visibility::Level level = DeserializeVisibilityFromPb(pb_visibility.level());
         entry->visibility.level = level;
@@ -663,6 +656,38 @@ static bool DeserializeReferenceFromPb(const pb::Reference& pb_ref, Reference* o
     }
     out_ref->name = name_ref.ToResourceName();
   }
+  if (pb_ref.type_flags() != 0) {
+    out_ref->type_flags = pb_ref.type_flags();
+  }
+  out_ref->allow_raw = pb_ref.allow_raw();
+  return true;
+}
+
+static bool DeserializeMacroFromPb(const pb::MacroBody& pb_ref, Macro* out_ref,
+                                   std::string* out_error) {
+  out_ref->raw_value = pb_ref.raw_string();
+
+  if (pb_ref.has_style_string()) {
+    out_ref->style_string.str = pb_ref.style_string().str();
+    for (const auto& span : pb_ref.style_string().spans()) {
+      out_ref->style_string.spans.emplace_back(Span{
+          .name = span.name(), .first_char = span.start_index(), .last_char = span.end_index()});
+    }
+  }
+
+  for (const auto& untranslatable_section : pb_ref.untranslatable_sections()) {
+    out_ref->untranslatable_sections.emplace_back(
+        UntranslatableSection{.start = static_cast<size_t>(untranslatable_section.start_index()),
+                              .end = static_cast<size_t>(untranslatable_section.end_index())});
+  }
+
+  for (const auto& namespace_decls : pb_ref.namespace_stack()) {
+    out_ref->alias_namespaces.emplace_back(
+        Macro::Namespace{.alias = namespace_decls.prefix(),
+                         .package_name = namespace_decls.package_name(),
+                         .is_private = namespace_decls.is_private()});
+  }
+
   return true;
 }
 
@@ -806,6 +831,15 @@ std::unique_ptr<Value> DeserializeValueFromPb(const pb::Value& pb_value,
           DeserializeItemMetaDataFromPb(pb_entry, src_pool, plural->values[plural_idx].get());
         }
         value = std::move(plural);
+      } break;
+
+      case pb::CompoundValue::kMacro: {
+        const pb::MacroBody& pb_macro = pb_compound_value.macro();
+        auto macro = std::make_unique<Macro>();
+        if (!DeserializeMacroFromPb(pb_macro, macro.get(), out_error)) {
+          return {};
+        }
+        value = std::move(macro);
       } break;
 
       default:

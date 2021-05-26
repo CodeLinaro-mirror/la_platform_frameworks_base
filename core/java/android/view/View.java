@@ -17,6 +17,7 @@
 package android.view;
 
 import static android.content.res.Resources.ID_NULL;
+import static android.view.ContentInfo.SOURCE_DRAG_AND_DROP;
 import static android.view.accessibility.AccessibilityEvent.CONTENT_CHANGE_TYPE_UNDEFINED;
 import static android.view.displayhash.DisplayHashResultCallback.DISPLAY_HASH_ERROR_INVALID_BOUNDS;
 import static android.view.displayhash.DisplayHashResultCallback.DISPLAY_HASH_ERROR_MISSING_WINDOW;
@@ -106,6 +107,7 @@ import android.util.AttributeSet;
 import android.util.FloatProperty;
 import android.util.LayoutDirection;
 import android.util.Log;
+import android.util.LongSparseArray;
 import android.util.LongSparseLongArray;
 import android.util.Pair;
 import android.util.Pools.SynchronizedPool;
@@ -150,6 +152,9 @@ import android.view.inputmethod.InputConnection;
 import android.view.inspector.InspectableProperty;
 import android.view.inspector.InspectableProperty.EnumEntry;
 import android.view.inspector.InspectableProperty.FlagEntry;
+import android.view.translation.TranslationCapability;
+import android.view.translation.TranslationSpec.DataFormat;
+import android.view.translation.ViewTranslationCallback;
 import android.view.translation.ViewTranslationRequest;
 import android.view.translation.ViewTranslationResponse;
 import android.widget.Checkable;
@@ -1489,7 +1494,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     public static final int SCROLL_CAPTURE_HINT_AUTO = 0;
 
     /**
-     * Explicitly exclcude this view as a potential scroll capture target. The system will not
+     * Explicitly exclude this view as a potential scroll capture target. The system will not
      * consider it. Mutually exclusive with {@link #SCROLL_CAPTURE_HINT_INCLUDE}, which this flag
      * takes precedence over.
      *
@@ -3998,6 +4003,16 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
 
     /**
      * @hide
+     *
+     * NOTE: This flag may only be used in subtreeSystemUiVisibility. It is masked
+     * out of the public fields to keep the undefined bits out of the developer's way.
+     *
+     * Flag to disable the ongoing call chip.
+     */
+    public static final int STATUS_BAR_DISABLE_ONGOING_CALL_CHIP = 0x04000000;
+
+    /**
+     * @hide
      */
     public static final int PUBLIC_STATUS_BAR_VISIBILITY_MASK = 0x00003FF7;
 
@@ -4222,7 +4237,10 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
                     name = "STATUS_BAR_DISABLE_RECENT"),
             @ViewDebug.FlagToString(mask = STATUS_BAR_DISABLE_SEARCH,
                     equals = STATUS_BAR_DISABLE_SEARCH,
-                    name = "STATUS_BAR_DISABLE_SEARCH")
+                    name = "STATUS_BAR_DISABLE_SEARCH"),
+            @ViewDebug.FlagToString(mask = STATUS_BAR_DISABLE_ONGOING_CALL_CHIP,
+                    equals = STATUS_BAR_DISABLE_ONGOING_CALL_CHIP,
+                    name = "STATUS_BAR_DISABLE_ONGOING_CALL_CHIP")
     }, formatToHexString = true)
     @SystemUiVisibility
     int mSystemUiVisibility;
@@ -4251,6 +4269,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
             STATUS_BAR_DISABLE_CLOCK,
             STATUS_BAR_DISABLE_RECENT,
             STATUS_BAR_DISABLE_SEARCH,
+            STATUS_BAR_DISABLE_ONGOING_CALL_CHIP,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface SystemUiVisibility {}
@@ -5250,7 +5269,14 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     int mUnbufferedInputSource = InputDevice.SOURCE_CLASS_NONE;
 
     @Nullable
-    private String[] mOnReceiveContentMimeTypes;
+    private String[] mReceiveContentMimeTypes;
+
+    @Nullable
+    private ViewTranslationCallback mViewTranslationCallback;
+
+    @Nullable
+
+    private ViewTranslationResponse mViewTranslationResponse;
 
     /**
      * Simple constructor to use when creating a view from code.
@@ -8839,7 +8865,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
                 structure.setAutofillValue(getAutofillValue());
             }
             structure.setImportantForAutofill(getImportantForAutofill());
-            structure.setOnReceiveContentMimeTypes(getOnReceiveContentMimeTypes());
+            structure.setReceiveContentMimeTypes(getReceiveContentMimeTypes());
         }
 
         int ignoredParentLeft = 0;
@@ -9058,7 +9084,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
             Preconditions.checkArgument(Arrays.stream(mimeTypes).noneMatch(t -> t.startsWith("*")),
                     "A MIME type set here must not start with *: " + Arrays.toString(mimeTypes));
         }
-        mOnReceiveContentMimeTypes = ArrayUtils.isEmpty(mimeTypes) ? null : mimeTypes;
+        mReceiveContentMimeTypes = ArrayUtils.isEmpty(mimeTypes) ? null : mimeTypes;
         getListenerInfo().mOnReceiveContentListener = listener;
     }
 
@@ -9126,8 +9152,8 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      */
     @SuppressLint("NullableCollection")
     @Nullable
-    public String[] getOnReceiveContentMimeTypes() {
-        return mOnReceiveContentMimeTypes;
+    public String[] getReceiveContentMimeTypes() {
+        return mReceiveContentMimeTypes;
     }
 
     /**
@@ -9277,6 +9303,11 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * parentView.addView(reusableView);
      * </pre>
      *
+     * <p>NOTE: If this view is a descendant of an {@link android.widget.AdapterView}, the system
+     * may reset its autofill id when this view is recycled. If the autofill ids need to be stable,
+     * they should be set again in
+     * {@link android.widget.Adapter#getView(int, android.view.View, android.view.ViewGroup)}.
+     *
      * @param id an autofill ID that is unique in the {@link android.app.Activity} hosting the view,
      * or {@code null} to reset it. Usually it's an id previously allocated to another view (and
      * obtained through {@link #getAutofillId()}), or a new value obtained through
@@ -9310,6 +9341,30 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
             mAutofillViewId = NO_ID;
             mPrivateFlags3 &= ~PFLAG3_AUTOFILLID_EXPLICITLY_SET;
         }
+    }
+
+    /**
+     * Forces a reset of the autofill ids of the subtree rooted at this view. Like calling
+     * {@link #setAutofillId(AutofillId) setAutofillId(null)} for each view, but works even if the
+     * views are attached to a window.
+     *
+     * <p>This is useful if the views are being recycled, since an autofill id should uniquely
+     * identify a particular piece of content.
+     *
+     * @hide
+     */
+    public void resetSubtreeAutofillIds() {
+        if (mAutofillViewId == NO_ID) {
+            return;
+        }
+        if (Log.isLoggable(CONTENT_CAPTURE_LOG_TAG, Log.VERBOSE)) {
+            Log.v(CONTENT_CAPTURE_LOG_TAG, "resetAutofillId() for " + mAutofillViewId);
+        } else if (Log.isLoggable(AUTOFILL_LOG_TAG, Log.VERBOSE)) {
+            Log.v(AUTOFILL_LOG_TAG, "resetAutofillId() for " + mAutofillViewId);
+        }
+        mAutofillId = null;
+        mAutofillViewId = NO_ID;
+        mPrivateFlags3 &= ~PFLAG3_AUTOFILLID_EXPLICITLY_SET;
     }
 
     /**
@@ -19774,6 +19829,11 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
             return;
         }
 
+        if (mAttachInfo == null) {
+            // View is not attached.
+            return;
+        }
+
         final int h = dr.getIntrinsicHeight();
         final int w = dr.getIntrinsicWidth();
         final Rect rect = mAttachInfo.mTmpInvalRect;
@@ -23493,6 +23553,11 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
             mStateListAnimator.setState(state);
         }
 
+        if (!isAggregatedVisible()) {
+            // If we're not visible, skip any animated changes
+            jumpDrawablesToCurrentState();
+        }
+
         if (changed) {
             invalidate();
         }
@@ -25963,6 +26028,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      *
      * @attr ref android.R.styleable#View_minWidth
      */
+    @RemotableViewMethod
     public void setMinimumWidth(int minWidth) {
         mMinWidth = minWidth;
         requestLayout();
@@ -26072,7 +26138,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     }
 
     /**
-     * This is used by the RootView to perform an optimization when
+     * This is used by the ViewRoot to perform an optimization when
      * the view hierarchy contains one or several SurfaceView.
      * SurfaceView is always considered transparent, but its children are not,
      * therefore all View objects remove themselves from the global transparent
@@ -26084,10 +26150,8 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * point is opaque, regardless of the transparent region; returns false
      * if it is possible for underlying windows to be seen behind the view.
      *
-     * {@hide}
      */
-    @UnsupportedAppUsage
-    public boolean gatherTransparentRegion(Region region) {
+    public boolean gatherTransparentRegion(@Nullable Region region) {
         final AttachInfo attachInfo = mAttachInfo;
         if (region != null && attachInfo != null) {
             final int pflags = mPrivateFlags;
@@ -26135,9 +26199,9 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * <p>The sound effect will only be played if sound effects are enabled by the user, and
      * {@link #isSoundEffectsEnabled()} is true.
      *
-     * @param soundConstant One of the constants defined in {@link SoundEffectConstants}
+     * @param soundConstant One of the constants defined in {@link SoundEffectConstants}.
      */
-    public void playSoundEffect(int soundConstant) {
+    public void playSoundEffect(@SoundEffectConstants.SoundEffect int soundConstant) {
         if (mAttachInfo == null || mAttachInfo.mRootCallbacks == null || !isSoundEffectsEnabled()) {
             return;
         }
@@ -26747,6 +26811,21 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * {@link android.view.DragEvent#getAction()} returns one of the action type constants defined
      * in DragEvent. The method uses these to determine what is happening in the drag and drop
      * operation.
+     * </p>
+     * <p>
+     * The default implementation returns false, except if an {@link OnReceiveContentListener}
+     * is {@link #setOnReceiveContentListener set} for this view. If an
+     * {@link OnReceiveContentListener} is set, the default implementation...
+     * <ul>
+     * <li>returns true for an
+     * {@link android.view.DragEvent#ACTION_DRAG_STARTED ACTION_DRAG_STARTED} event
+     * <li>calls {@link #performReceiveContent} for an
+     * {@link android.view.DragEvent#ACTION_DROP ACTION_DROP} event
+     * <li>returns true for an {@link android.view.DragEvent#ACTION_DROP ACTION_DROP} event, if
+     * the listener consumed some or all of the content
+     * </ul>
+     * </p>
+     *
      * @param event The {@link android.view.DragEvent} sent by the system.
      * The {@link android.view.DragEvent#getAction()} method returns an action type constant defined
      * in DragEvent, indicating the type of drag event represented by this object.
@@ -26766,6 +26845,26 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * </p>
      */
     public boolean onDragEvent(DragEvent event) {
+        if (mListenerInfo == null || mListenerInfo.mOnReceiveContentListener == null) {
+            return false;
+        }
+        // Accept drag events by default if there's an OnReceiveContentListener set.
+        if (event.getAction() == DragEvent.ACTION_DRAG_STARTED) {
+            return true;
+        }
+        if (event.getAction() == DragEvent.ACTION_DROP) {
+            final DragAndDropPermissions permissions = DragAndDropPermissions.obtain(event);
+            if (permissions != null) {
+                permissions.takeTransient();
+            }
+            final ContentInfo payload =
+                    new ContentInfo.Builder(event.getClipData(), SOURCE_DRAG_AND_DROP)
+                            .setDragAndDropPermissions(permissions)
+                            .build();
+            ContentInfo remainingPayload = performReceiveContent(payload);
+            // Return true unless none of the payload was consumed.
+            return remainingPayload != payload;
+        }
         return false;
     }
 
@@ -29500,6 +29599,10 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
             return mScrollCaptureInternal;
         }
 
+        ViewRoot getViewRoot() {
+            return mViewRootImpl;
+        }
+
         public void dump(String prefix, PrintWriter writer) {
             String innerPrefix = prefix + "  ";
             writer.println(prefix + "AttachInfo:");
@@ -30062,6 +30165,10 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      */
     public void setScrollCaptureHint(@ScrollCaptureHint int hint) {
         mPrivateFlags4 &= ~PFLAG4_SCROLL_CAPTURE_HINT_MASK;
+        // Since include/exclude are mutually exclusive, exclude takes precedence.
+        if ((hint & SCROLL_CAPTURE_HINT_EXCLUDE) != 0) {
+            hint &= ~SCROLL_CAPTURE_HINT_INCLUDE;
+        }
         mPrivateFlags4 |= ((hint << PFLAG4_SCROLL_CAPTURE_HINT_SHIFT)
                 & PFLAG4_SCROLL_CAPTURE_HINT_MASK);
     }
@@ -30684,71 +30791,189 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     }
 
     /**
-     * Returns a {@link ViewTranslationRequest} to the {@link onStartUiTranslation} which represents
-     * the content to be translated.
+     * Collects a {@link ViewTranslationRequest} which represents the content to be translated in
+     * the view.
      *
-     * <p>The default implementation does nothing and return null.</p>
+     * <p>The default implementation does nothing.</p>
      *
+     * @param supportedFormats the supported translation formats. For now, the only possible value
+     * is the {@link android.view.translation.TranslationSpec#DATA_FORMAT_TEXT}.
+     * @param requestsCollector a {@link ViewTranslationRequest} collector that can be used to
+     * collect the information to be translated in the view. The {@code requestsCollector} only
+     * accepts one request; an IllegalStateException is thrown if more than one
+     * {@link ViewTranslationRequest} is submitted to it. The {@link AutofillId} must be set on the
+     * {@link ViewTranslationRequest}.
+     */
+    public void onCreateViewTranslationRequest(@NonNull @DataFormat int[] supportedFormats,
+            @NonNull Consumer<ViewTranslationRequest> requestsCollector) {
+    }
+
+    /**
+     * Collects {@link ViewTranslationRequest}s which represents the content to be translated
+     * for the virtual views in the host view. This is called if this view returned a virtual
+     * view structure from {@link #onProvideContentCaptureStructure} and the system determined that
+     * those virtual views were relevant for translation.
+     *
+     * <p>The default implementation does nothing.</p>
+     *
+     * @param virtualIds the virtual view ids which represents the virtual views in the host
+     * view.
+     * @param supportedFormats the supported translation formats. For now, the only possible value
+     * is the {@link android.view.translation.TranslationSpec#DATA_FORMAT_TEXT}.
+     * @param requestsCollector a {@link ViewTranslationRequest} collector that can be called
+     * multiple times to collect the information to be translated in the host view. One
+     * {@link ViewTranslationRequest} per virtual child. The {@link ViewTranslationRequest} must
+     * contains the {@link AutofillId} corresponding to the virtualChildIds. Do not keep this
+     * Consumer after the method returns.
+     */
+    @SuppressLint("NullableCollection")
+    public void onCreateVirtualViewTranslationRequests(@NonNull long[] virtualIds,
+            @NonNull @DataFormat int[] supportedFormats,
+            @NonNull Consumer<ViewTranslationRequest> requestsCollector) {
+        // no-op
+    }
+
+    /**
      * @hide
-     *
-     * @return the {@link ViewTranslationRequest} which contains the information to be translated.
      */
     @Nullable
-    //TODO(b/178046780): initial version for demo. Will mark public when the design is reviewed.
-    public ViewTranslationRequest onCreateTranslationRequest() {
-        return null;
+    public ViewTranslationCallback getViewTranslationCallback() {
+        return mViewTranslationCallback;
     }
 
     /**
-     * Called when the user wants to show the original text instead of the translated text.
+     * Sets a {@link ViewTranslationCallback} that is used to display/hide the translated
+     * information. Developers can provide the customized implementation for show/hide translated
+     * information.
      *
-     * @hide
-     *
-     * <p> The default implementation does nothing.
+     * @param callback a {@link ViewTranslationCallback} that is used to control how to display the
+     * translated information
      */
-    //TODO(b/178046780): initial version for demo. Will mark public when the design is reviewed.
-    public void onPauseUiTranslation() {
-        // no-op
+    public void setViewTranslationCallback(@NonNull ViewTranslationCallback callback) {
+        mViewTranslationCallback = callback;
     }
 
     /**
-     * User can switch back to show the original text, this method called when the user wants to
-     * re-show the translated text again.
+     * Clear the {@link ViewTranslationCallback} from this view.
+     */
+    public void clearViewTranslationCallback() {
+        mViewTranslationCallback = null;
+    }
+
+    /**
+     * Returns the {@link ViewTranslationResponse} associated with this view. The response will be
+     * set when the translation is done then {@link #onViewTranslationResponse} is called. The
+     * {@link ViewTranslationCallback} can use to get {@link ViewTranslationResponse} to display the
+     * translated information.
      *
-     * @hide
+     * @return a {@link ViewTranslationResponse} that contains the translated information associated
+     * with this view or {@code null} if this View doesn't have the translation.
+     */
+    @Nullable
+    public ViewTranslationResponse getViewTranslationResponse() {
+        return mViewTranslationResponse;
+    }
+
+    /**
+     * Called when the content from {@link View#onCreateViewTranslationRequest} had been translated
+     * by the TranslationService.
+     *
+     * <p> The default implementation will set the ViewTranslationResponse that can be get from
+     * {@link View#getViewTranslationResponse}. </p>
+     *
+     * @param response a {@link ViewTranslationResponse} that contains the translated information
+     * which can be shown in the view.
+     */
+    public void onViewTranslationResponse(@NonNull ViewTranslationResponse response) {
+        mViewTranslationResponse = response;
+    }
+
+    /**
+     * Called when the content from {@link View#onCreateVirtualViewTranslationRequests} had been
+     * translated by the TranslationService.
      *
      * <p> The default implementation does nothing.</p>
+     *
+     * @param response a {@link ViewTranslationResponse} SparseArray for the request that send by
+     * {@link View#onCreateVirtualViewTranslationRequests} that contains the translated information
+     * which can be shown in the view. The key of SparseArray is the virtual child ids.
      */
-    //TODO(b/178046780): initial version for demo. Will mark public when the design is reviewed.
-    public void onRestoreUiTranslation() {
+    public void onVirtualViewTranslationResponses(
+            @NonNull LongSparseArray<ViewTranslationResponse> response) {
         // no-op
     }
 
     /**
-     * Called when the user finish the Ui translation and no longer to show the translated text.
+     * Dispatch to collect the {@link ViewTranslationRequest}s for translation purpose by traversing
+     * the hierarchy when the app requests ui translation. Typically, this method should only be
+     * overridden by subclasses that provide a view hierarchy (such as {@link ViewGroup}). Other
+     * classes should override {@link View#onCreateViewTranslationRequest} for normal view or
+     * override {@link View#onVirtualViewTranslationResponses} for view contains virtual children.
+     * When requested to start the ui translation, the system will call this method to traverse the
+     * view hierarchy to collect {@link ViewTranslationRequest}s and create a
+     * {@link android.view.translation.Translator} to translate the requests. All the
+     * {@link ViewTranslationRequest}s must be added when the traversal is done.
      *
-     * @hide
+     * <p> The default implementation calls {@link View#onCreateViewTranslationRequest} for normal
+     * view or calls {@link View#onVirtualViewTranslationResponses} for view contains virtual
+     * children to build {@link ViewTranslationRequest} if the view should be translated.
+     * The view is marked as having {@link #setHasTransientState(boolean) transient state} so that
+     * recycling of views doesn't prevent the system from attaching the response to it.</p>
      *
-     * <p> The default implementation does nothing.</p>
+     * @param viewIds a map for the view's {@link AutofillId} and its virtual child ids or
+     * {@code null} if the view doesn't have virtual child that should be translated. The virtual
+     * child ids are the same virtual ids provided by ContentCapture.
+     * @param supportedFormats the supported translation formats. For now, the only possible value
+     * is the {@link android.view.translation.TranslationSpec#DATA_FORMAT_TEXT}.
+     * @param capability a {@link TranslationCapability} that holds translation capability.
+     * information, e.g. source spec, target spec.
+     * @param requests fill in with {@link ViewTranslationRequest}s for translation purpose.
      */
-    //TODO(b/178046780): initial version for demo. Will mark public when the design is reviewed.
-    public void onFinishUiTranslation() {
-        // no-op
+    public void dispatchRequestTranslation(@NonNull Map<AutofillId, long[]> viewIds,
+            @NonNull @DataFormat int[] supportedFormats,
+            @NonNull TranslationCapability capability,
+            @NonNull List<ViewTranslationRequest> requests) {
+        AutofillId autofillId = getAutofillId();
+        if (viewIds.containsKey(autofillId)) {
+            if (viewIds.get(autofillId) == null) {
+                // TODO: avoiding the allocation per view
+                onCreateViewTranslationRequest(supportedFormats,
+                        new ViewTranslationRequestConsumer(requests));
+            } else {
+                onCreateVirtualViewTranslationRequests(viewIds.get(autofillId), supportedFormats,
+                        request -> {
+                            requests.add(request);
+                        });
+            }
+        }
     }
 
-    /**
-     * Called when the request from {@link onStartUiTranslation} is completed by the translation
-     * service so that the translation result can be shown.
-     *
-     * @hide
-     *
-     * <p> The default implementation does nothing.</p>
-     *
-     * @param response the translated information which can be shown in the view.
-     */
-    //TODO(b/178046780): initial version for demo. Will mark public when the design is reviewed.
-    public void onTranslationComplete(@NonNull ViewTranslationResponse response) {
-        // no-op
+    private class ViewTranslationRequestConsumer implements Consumer<ViewTranslationRequest> {
+        private final List<ViewTranslationRequest> mRequests;
+        private boolean mCalled;
+
+        ViewTranslationRequestConsumer(List<ViewTranslationRequest> requests) {
+            mRequests = requests;
+        }
+
+        @Override
+        public void accept(ViewTranslationRequest request) {
+            if (mCalled) {
+                throw new IllegalStateException("The translation Consumer is not reusable.");
+            }
+            mCalled = true;
+            if (request != null && request.getKeys().size() > 0) {
+                mRequests.add(request);
+                if (Log.isLoggable(CONTENT_CAPTURE_LOG_TAG, Log.VERBOSE)) {
+                    Log.v(CONTENT_CAPTURE_LOG_TAG, "Calling setHasTransientState(true) for "
+                            + getAutofillId());
+                }
+                // TODO: Add a default ViewTranslationCallback for View that resets this in
+                // onClearTranslation(). Also update the javadoc for this method to mention
+                // that.
+                setHasTransientState(true);
+            }
+        }
     }
 
     /**
@@ -30765,7 +30990,6 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * @param executor The executor that the callback should be invoked on.
      * @param callback The callback to handle the results of generating the display hash
      */
-    @Nullable
     public void generateDisplayHash(@NonNull String hashAlgorithm,
             @Nullable Rect bounds, @NonNull Executor executor,
             @NonNull DisplayHashResultCallback callback) {
@@ -30816,5 +31040,21 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
             Log.e(VIEW_LOG_TAG, "Failed to call generateDisplayHash");
             callback.onDisplayHashError(DISPLAY_HASH_ERROR_UNKNOWN);
         }
+    }
+
+    /**
+     * @return The {@link android.view.ViewRoot} interface for this View. This will only
+     * return a non-null value when called between {@link #onAttachedToWindow} and
+     * {@link #onDetachedFromWindow}.
+     *
+     * The ViewRoot itself is not a View, it is just the interface to the windowing-system
+     * object that contains the entire view hierarchy. For the root View of a given hierarchy
+     * see {@link #getRootView}.
+     */
+    public @Nullable ViewRoot getViewRoot() {
+        if (mAttachInfo != null) {
+            return mAttachInfo.getViewRoot();
+        }
+        return null;
     }
 }

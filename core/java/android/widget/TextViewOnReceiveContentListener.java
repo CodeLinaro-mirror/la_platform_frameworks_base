@@ -19,7 +19,6 @@ package android.widget;
 import static android.content.ContentResolver.SCHEME_CONTENT;
 import static android.view.ContentInfo.FLAG_CONVERT_TO_PLAIN_TEXT;
 import static android.view.ContentInfo.SOURCE_AUTOFILL;
-import static android.view.ContentInfo.SOURCE_DRAG_AND_DROP;
 import static android.view.ContentInfo.SOURCE_INPUT_METHOD;
 
 import android.annotation.NonNull;
@@ -80,10 +79,6 @@ public final class TextViewOnReceiveContentListener implements OnReceiveContentL
         }
         if (source == SOURCE_AUTOFILL) {
             onReceiveForAutofill((TextView) view, payload);
-            return null;
-        }
-        if (source == SOURCE_DRAG_AND_DROP) {
-            onReceiveForDragAndDrop((TextView) view, payload);
             return null;
         }
 
@@ -147,13 +142,6 @@ public final class TextViewOnReceiveContentListener implements OnReceiveContentL
         Selection.setSelection(editable, editable.length());
     }
 
-    private static void onReceiveForDragAndDrop(@NonNull TextView view,
-            @NonNull ContentInfo payload) {
-        final CharSequence text = coerceToText(payload.getClip(), view.getContext(),
-                payload.getFlags());
-        replaceSelection((Editable) view.getText(), text);
-    }
-
     private static @NonNull CharSequence coerceToText(@NonNull ClipData clip,
             @NonNull Context context, @Flags int flags) {
         SpannableStringBuilder ssb = new SpannableStringBuilder();
@@ -194,7 +182,7 @@ public final class TextViewOnReceiveContentListener implements OnReceiveContentL
      * non-text content.
      */
     private static boolean isUsageOfImeCommitContentEnabled(@NonNull View view) {
-        if (view.getOnReceiveContentMimeTypes() != null) {
+        if (view.getReceiveContentMimeTypes() != null) {
             if (Log.isLoggable(LOG_TAG, Log.VERBOSE)) {
                 Log.v(LOG_TAG, "Fallback to commitContent disabled (custom callback is set)");
             }

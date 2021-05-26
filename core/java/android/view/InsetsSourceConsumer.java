@@ -33,6 +33,7 @@ import static com.android.internal.annotations.VisibleForTesting.Visibility.PACK
 
 import android.annotation.IntDef;
 import android.annotation.Nullable;
+import android.graphics.Insets;
 import android.graphics.Rect;
 import android.util.Log;
 import android.util.imetracing.ImeTracing;
@@ -45,6 +46,7 @@ import com.android.internal.annotations.VisibleForTesting;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.Objects;
 import java.util.function.Supplier;
 
 /**
@@ -81,6 +83,11 @@ public class InsetsSourceConsumer {
     private final Supplier<Transaction> mTransactionSupplier;
     private @Nullable InsetsSourceControl mSourceControl;
     private boolean mHasWindowFocus;
+
+    /**
+     * Whether the view has focus returned by {@link #onWindowFocusGained(boolean)}.
+     */
+    private boolean mHasViewFocusWhenWindowFocusGain;
     private Rect mPendingFrame;
     private Rect mPendingVisibleFrame;
 
@@ -114,7 +121,11 @@ public class InsetsSourceConsumer {
             ImeTracing.getInstance().triggerClientDump("InsetsSourceConsumer#setControl",
                     mController.getHost().getInputMethodManager(), null /* icProto */);
         }
-        if (mSourceControl == control) {
+        if (Objects.equals(mSourceControl, control)) {
+            if (mSourceControl != null && mSourceControl != control) {
+                mSourceControl.release(SurfaceControl::release);
+                mSourceControl = control;
+            }
             return;
         }
         SurfaceControl oldLeash = mSourceControl != null ? mSourceControl.getLeash() : null;
@@ -173,7 +184,9 @@ public class InsetsSourceConsumer {
                 if (oldLeash == null || newLeash == null || !oldLeash.isSameSurface(newLeash)) {
                     applyHiddenToControl();
                 }
-                if (!requestedVisible && !mIsAnimationPending) {
+
+                // Remove the surface that owned by last control when it lost.
+                if (!requestedVisible && !mIsAnimationPending && lastControl == null) {
                     removeSurface();
                 }
             }
@@ -223,8 +236,9 @@ public class InsetsSourceConsumer {
     /**
      * Called when current window gains focus
      */
-    public void onWindowFocusGained() {
+    public void onWindowFocusGained(boolean hasViewFocus) {
         mHasWindowFocus = true;
+        mHasViewFocusWhenWindowFocusGain = hasViewFocus;
     }
 
     /**
@@ -234,8 +248,8 @@ public class InsetsSourceConsumer {
         mHasWindowFocus = false;
     }
 
-    boolean hasWindowFocus() {
-        return mHasWindowFocus;
+    boolean hasViewFocusWhenWindowFocusGain() {
+        return mHasViewFocusWhenWindowFocusGain;
     }
 
     boolean applyLocalVisibilityOverride() {
@@ -356,7 +370,16 @@ public class InsetsSourceConsumer {
     protected void setRequestedVisible(boolean requestedVisible) {
         if (mRequestedVisible != requestedVisible) {
             mRequestedVisible = requestedVisible;
-            mIsAnimationPending = false;
+
+            // We need an animation later if the leash of a real control (which has an insets hint)
+            // is not ready. The !mIsAnimationPending check is in case that the requested visibility
+            // is changed twice before playing the animation -- we don't need an animation in this
+            // case.
+            mIsAnimationPending = !mIsAnimationPending
+                    && mSourceControl != null
+                    && mSourceControl.getLeash() == null
+                    && !Insets.NONE.equals(mSourceControl.getInsetsHint());
+
             mController.onRequestedVisibilityChanged(this);
             if (DEBUG) Log.d(TAG, "setRequestedVisible: " + requestedVisible);
         }

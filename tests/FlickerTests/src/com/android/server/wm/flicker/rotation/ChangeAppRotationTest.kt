@@ -16,7 +16,7 @@
 
 package com.android.server.wm.flicker.rotation
 
-import android.platform.test.annotations.Presubmit
+import androidx.test.filters.FlakyTest
 import androidx.test.filters.RequiresDevice
 import com.android.server.wm.flicker.FlickerParametersRunnerFactory
 import com.android.server.wm.flicker.FlickerTestParameter
@@ -51,7 +51,19 @@ class ChangeAppRotationTest(
             }
         }
 
-    @Presubmit
+    @FlakyTest(bugId = 151179149)
+    @Test
+    override fun focusDoesNotChange() {
+        super.focusDoesNotChange()
+    }
+
+    @FlakyTest
+    @Test
+    override fun noUncoveredRegions() {
+        super.noUncoveredRegions()
+    }
+
+    @FlakyTest
     @Test
     fun screenshotLayerBecomesInvisible() {
         testSpec.assertLayers {

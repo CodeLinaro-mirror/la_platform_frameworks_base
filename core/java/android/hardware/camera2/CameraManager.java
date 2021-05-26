@@ -28,6 +28,7 @@ import android.hardware.CameraStatus;
 import android.hardware.ICameraService;
 import android.hardware.ICameraServiceListener;
 import android.hardware.camera2.impl.CameraDeviceImpl;
+import android.hardware.camera2.impl.CameraInjectionSessionImpl;
 import android.hardware.camera2.impl.CameraMetadataNative;
 import android.hardware.camera2.params.ExtensionSessionConfiguration;
 import android.hardware.camera2.params.SessionConfiguration;
@@ -379,17 +380,36 @@ public final class CameraManager {
      * <p>For a logical multi-camera, query the map between physical camera id and
      * the physical camera's multi-resolution stream configuration. This map is in turn
      * combined to form the logical camera's multi-resolution stream configuration map.</p>
+     *
+     * <p>For an ultra high resolution camera, directly use
+     * android.scaler.physicalCameraMultiResolutionStreamConfigurations as the camera device's
+     * multi-resolution stream configuration map.</p>
      */
     private Map<String, StreamConfiguration[]> getPhysicalCameraMultiResolutionConfigs(
-            CameraMetadataNative info, ICameraService cameraService)
+            String cameraId, CameraMetadataNative info, ICameraService cameraService)
             throws CameraAccessException {
         HashMap<String, StreamConfiguration[]> multiResolutionStreamConfigurations =
                 new HashMap<String, StreamConfiguration[]>();
 
+        Boolean multiResolutionStreamSupported = info.get(
+                CameraCharacteristics.SCALER_MULTI_RESOLUTION_STREAM_SUPPORTED);
+        if (multiResolutionStreamSupported == null || !multiResolutionStreamSupported) {
+            return multiResolutionStreamConfigurations;
+        }
+
         // Query the characteristics of all physical sub-cameras, and combine the multi-resolution
-        // stream configurations. Note that framework derived formats such as HEIC and DEPTH_JPEG
-        // aren't supported as multi-resolution input or output formats.
+        // stream configurations. Alternatively, for ultra-high resolution camera, direclty use
+        // its multi-resolution stream configurations. Note that framework derived formats such as
+        // HEIC and DEPTH_JPEG aren't supported as multi-resolution input or output formats.
         Set<String> physicalCameraIds = info.getPhysicalCameraIds();
+        if (physicalCameraIds.size() == 0 && info.isUltraHighResolutionSensor()) {
+            StreamConfiguration[] configs = info.get(CameraCharacteristics.
+                    SCALER_PHYSICAL_CAMERA_MULTI_RESOLUTION_STREAM_CONFIGURATIONS);
+            if (configs != null) {
+                multiResolutionStreamConfigurations.put(cameraId, configs);
+            }
+            return multiResolutionStreamConfigurations;
+        }
         try {
             for (String physicalCameraId : physicalCameraIds) {
                 CameraMetadataNative physicalCameraInfo =
@@ -401,9 +421,6 @@ public final class CameraManager {
                     multiResolutionStreamConfigurations.put(physicalCameraId, configs);
                 }
             }
-
-            // TODO: If this is an ultra high resolution sensor camera, combine the multi-resolution
-            // stream combination from "info" as well.
         } catch (RemoteException e) {
             ServiceSpecificException sse = new ServiceSpecificException(
                     ICameraService.ERROR_DISCONNECTED,
@@ -468,7 +485,7 @@ public final class CameraManager {
                 info.setDisplaySize(displaySize);
 
                 Map<String, StreamConfiguration[]> multiResolutionSizeMap =
-                        getPhysicalCameraMultiResolutionConfigs(info, cameraService);
+                        getPhysicalCameraMultiResolutionConfigs(cameraId, info, cameraService);
                 if (multiResolutionSizeMap.size() > 0) {
                     info.setMultiResolutionStreamConfigurationMap(multiResolutionSizeMap);
                 }
@@ -507,6 +524,18 @@ public final class CameraManager {
         return new CameraExtensionCharacteristics(mContext, cameraId, chars);
     }
 
+    private Map<String, CameraCharacteristics> getPhysicalIdToCharsMap(
+            CameraCharacteristics chars) throws CameraAccessException {
+        HashMap<String, CameraCharacteristics> physicalIdsToChars =
+                new HashMap<String, CameraCharacteristics>();
+        Set<String> physicalCameraIds = chars.getPhysicalCameraIds();
+        for (String physicalCameraId : physicalCameraIds) {
+            CameraCharacteristics physicalChars = getCameraCharacteristics(physicalCameraId);
+            physicalIdsToChars.put(physicalCameraId, physicalChars);
+        }
+        return physicalIdsToChars;
+    }
+
     /**
      * Helper for opening a connection to a camera with the given ID.
      *
@@ -535,17 +564,18 @@ public final class CameraManager {
             throws CameraAccessException {
         CameraCharacteristics characteristics = getCameraCharacteristics(cameraId);
         CameraDevice device = null;
-
+        Map<String, CameraCharacteristics> physicalIdsToChars =
+                getPhysicalIdToCharsMap(characteristics);
         synchronized (mLock) {
 
             ICameraDeviceUser cameraUser = null;
-
             android.hardware.camera2.impl.CameraDeviceImpl deviceImpl =
                     new android.hardware.camera2.impl.CameraDeviceImpl(
                         cameraId,
                         callback,
                         executor,
                         characteristics,
+                        physicalIdsToChars,
                         mContext.getApplicationInfo().targetSdkVersion,
                         mContext);
 
@@ -1090,6 +1120,67 @@ public final class CameraManager {
     }
 
     /**
+     * Inject the external camera to replace the internal camera session.
+     *
+     * <p>If injecting the external camera device fails, then the injection callback's
+     * {@link CameraInjectionSession.InjectionStatusCallback#onInjectionError
+     * onInjectionError} method will be called.</p>
+     *
+     * @param packageName   It scopes the injection to a particular app.
+     * @param internalCamId The id of one of the physical or logical cameras on the phone.
+     * @param externalCamId The id of one of the remote cameras that are provided by the dynamic
+     *                      camera HAL.
+     * @param executor      The executor which will be used when invoking the callback.
+     * @param callback      The callback which is invoked once the external camera is injected.
+     *
+     * @throws CameraAccessException    If the camera device has been disconnected.
+     *                                  {@link CameraAccessException#CAMERA_DISCONNECTED} will be
+     *                                  thrown if camera service is not available.
+     * @throws SecurityException        If the specific application that can cast to external
+     *                                  devices does not have permission to inject the external
+     *                                  camera.
+     * @throws IllegalArgumentException If cameraId doesn't match any currently or previously
+     *                                  available camera device or some camera functions might not
+     *                                  work properly or the injection camera runs into a fatal
+     *                                  error.
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.CAMERA_INJECT_EXTERNAL_CAMERA)
+    public void injectCamera(@NonNull String packageName, @NonNull String internalCamId,
+            @NonNull String externalCamId, @NonNull @CallbackExecutor Executor executor,
+            @NonNull CameraInjectionSession.InjectionStatusCallback callback)
+            throws CameraAccessException, SecurityException,
+            IllegalArgumentException {
+        if (CameraManagerGlobal.sCameraServiceDisabled) {
+            throw new IllegalArgumentException("No cameras available on device");
+        }
+        ICameraService cameraService = CameraManagerGlobal.get().getCameraService();
+        if (cameraService == null) {
+            throw new CameraAccessException(CameraAccessException.CAMERA_DISCONNECTED,
+                    "Camera service is currently unavailable");
+        }
+        synchronized (mLock) {
+            try {
+                CameraInjectionSessionImpl injectionSessionImpl =
+                        new CameraInjectionSessionImpl(callback, executor);
+                ICameraInjectionCallback cameraInjectionCallback =
+                        injectionSessionImpl.getCallback();
+                ICameraInjectionSession injectionSession = cameraService.injectCamera(packageName,
+                        internalCamId, externalCamId, cameraInjectionCallback);
+                injectionSessionImpl.setRemoteInjectionSession(injectionSession);
+            } catch (ServiceSpecificException e) {
+                throwAsPublicException(e);
+            } catch (RemoteException e) {
+                // Camera service died - act as if it's a CAMERA_DISCONNECTED case
+                ServiceSpecificException sse = new ServiceSpecificException(
+                        ICameraService.ERROR_DISCONNECTED,
+                        "Camera service is currently unavailable");
+                throwAsPublicException(sse);
+            }
+        }
+    }
+
+    /**
      * A per-process global camera manager instance, to retain a connection to the camera service,
      * and to distribute camera availability notices to API-registered callbacks
      */
@@ -1369,6 +1460,8 @@ public final class CameraManager {
                     // devices going offline (in real world scenarios, these permissions aren't
                     // changeable). Future calls to getCameraIdList() will reflect the changes in
                     // the camera id list after getCameraIdListNoLazy() is called.
+                    // We need to remove the torch ids which may have been associated with the
+                    // devices removed as well. This is the same situation.
                     cameraStatuses = mCameraService.addListener(testListener);
                     mCameraService.removeListener(testListener);
                     for (CameraStatus c : cameraStatuses) {
@@ -1387,6 +1480,7 @@ public final class CameraManager {
                     }
                     for (String id : deviceIdsToRemove) {
                         onStatusChangedLocked(ICameraServiceListener.STATUS_NOT_PRESENT, id);
+                        mTorchStatus.remove(id);
                     }
                 } catch (ServiceSpecificException e) {
                     // Unexpected failure
@@ -1487,7 +1581,11 @@ public final class CameraManager {
         */
         public boolean cameraIdHasConcurrentStreamsLocked(String cameraId) {
             if (!mDeviceStatus.containsKey(cameraId)) {
-                Log.e(TAG, "cameraIdHasConcurrentStreamsLocked called on non existing camera id");
+                // physical camera ids aren't advertised in concurrent camera id combinations.
+                if (DEBUG) {
+                    Log.v(TAG, " physical camera id " + cameraId + " is hidden." +
+                            " Available logical camera ids : " + mDeviceStatus.toString());
+                }
                 return false;
             }
             for (Set<String> comb : mConcurrentCameraIdCombinations) {
@@ -2030,7 +2128,9 @@ public final class CameraManager {
                 // Tell listeners that the cameras and torch modes are unavailable and schedule a
                 // reconnection to camera service. When camera service is reconnected, the camera
                 // and torch statuses will be updated.
-                for (int i = 0; i < mDeviceStatus.size(); i++) {
+                // Iterate from the end to the beginning befcause onStatusChangedLocked removes
+                // entries from the ArrayMap.
+                for (int i = mDeviceStatus.size() - 1; i >= 0; i--) {
                     String cameraId = mDeviceStatus.keyAt(i);
                     onStatusChangedLocked(ICameraServiceListener.STATUS_NOT_PRESENT, cameraId);
                 }

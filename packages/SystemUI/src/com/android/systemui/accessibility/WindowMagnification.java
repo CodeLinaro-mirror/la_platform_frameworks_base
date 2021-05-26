@@ -16,6 +16,8 @@
 
 package com.android.systemui.accessibility;
 
+import static android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_MAGNIFICATION_OVERLAY;
+
 import android.annotation.MainThread;
 import android.annotation.Nullable;
 import android.content.Context;
@@ -82,9 +84,8 @@ public class WindowMagnification extends SystemUI implements WindowMagnifierCall
 
         @Override
         protected WindowMagnificationAnimationController createInstance(Display display) {
-            final Context context = (display.getDisplayId() == Display.DEFAULT_DISPLAY)
-                    ? mContext
-                    : mContext.createDisplayContext(display);
+            final Context windowContext = mContext.createWindowContext(display,
+                    TYPE_ACCESSIBILITY_MAGNIFICATION_OVERLAY, /* options */ null);
             final WindowMagnificationController controller = new WindowMagnificationController(
                     mContext,
                     mHandler, new SfVsyncFrameCallbackProvider(), null,
@@ -92,7 +93,7 @@ public class WindowMagnification extends SystemUI implements WindowMagnifierCall
             final int navBarMode = mNavigationModeController.addListener(
                     controller::onNavigationModeChanged);
             controller.onNavigationModeChanged(navBarMode);
-            return new WindowMagnificationAnimationController(context, controller);
+            return new WindowMagnificationAnimationController(windowContext, controller);
         }
     }
 
@@ -190,6 +191,13 @@ public class WindowMagnification extends SystemUI implements WindowMagnifierCall
     public void onPerformScaleAction(int displayId, float scale) {
         if (mWindowMagnificationConnectionImpl != null) {
             mWindowMagnificationConnectionImpl.onPerformScaleAction(displayId, scale);
+        }
+    }
+
+    @Override
+    public void onAccessibilityActionPerformed(int displayId) {
+        if (mWindowMagnificationConnectionImpl != null) {
+            mWindowMagnificationConnectionImpl.onAccessibilityActionPerformed(displayId);
         }
     }
 

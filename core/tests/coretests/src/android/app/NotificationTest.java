@@ -16,8 +16,6 @@
 
 package android.app;
 
-import static com.android.internal.util.ContrastColorUtil.satisfiesTextContrast;
-
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotSame;
@@ -30,6 +28,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.LocusId;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.graphics.drawable.Icon;
 import android.media.session.MediaSession;
 import android.os.Build;
@@ -62,7 +61,7 @@ public class NotificationTest {
     public void testColorizedByPermission() {
         Notification n = new Notification.Builder(mContext, "test")
                 .setFlag(Notification.FLAG_CAN_COLORIZE, true)
-                .setColorized(true)
+                .setColorized(true).setColor(Color.WHITE)
                 .build();
         assertTrue(n.isColorized());
 
@@ -73,7 +72,7 @@ public class NotificationTest {
 
         n = new Notification.Builder(mContext, "test")
                 .setFlag(Notification.FLAG_CAN_COLORIZE, false)
-                .setColorized(true)
+                .setColorized(true).setColor(Color.WHITE)
                 .build();
         assertFalse(n.isColorized());
     }
@@ -82,7 +81,7 @@ public class NotificationTest {
     public void testColorizedByForeground() {
         Notification n = new Notification.Builder(mContext, "test")
                 .setFlag(Notification.FLAG_FOREGROUND_SERVICE, true)
-                .setColorized(true)
+                .setColorized(true).setColor(Color.WHITE)
                 .build();
         assertTrue(n.isColorized());
 
@@ -93,26 +92,9 @@ public class NotificationTest {
 
         n = new Notification.Builder(mContext, "test")
                 .setFlag(Notification.FLAG_FOREGROUND_SERVICE, false)
-                .setColorized(true)
+                .setColorized(true).setColor(Color.WHITE)
                 .build();
         assertFalse(n.isColorized());
-    }
-
-    @Test
-    public void testColorSatisfiedWhenBgDarkTextDarker() {
-        Notification.Builder builder = getMediaNotification();
-        Notification n = builder.build();
-
-        assertTrue(n.isColorized());
-
-        // An initial guess where the foreground color is actually darker than an already dark bg
-        int backgroundColor = 0xff585868;
-        int initialForegroundColor = 0xff505868;
-        builder.setColorPalette(backgroundColor, initialForegroundColor);
-        int primaryTextColor = builder.getPrimaryTextColor(builder.mParams);
-        assertTrue(satisfiesTextContrast(primaryTextColor, backgroundColor));
-        int secondaryTextColor = builder.getSecondaryTextColor(builder.mParams);
-        assertTrue(satisfiesTextContrast(secondaryTextColor, backgroundColor));
     }
 
     @Test

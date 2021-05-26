@@ -21,7 +21,9 @@ import android.hardware.biometrics.IInvalidationCallback;
 import android.hardware.biometrics.ITestSession;
 import android.hardware.biometrics.ITestSessionCallback;
 import android.hardware.fingerprint.IFingerprintClientActiveCallback;
+import android.hardware.fingerprint.IFingerprintAuthenticatorsRegisteredCallback;
 import android.hardware.fingerprint.IFingerprintServiceReceiver;
+import android.hardware.fingerprint.IFingerprintStateListener;
 import android.hardware.fingerprint.IUdfpsOverlayController;
 import android.hardware.fingerprint.Fingerprint;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
@@ -62,7 +64,8 @@ interface IFingerprintService {
     // by BiometricService. To start authentication after the clients are ready, use
     // startPreparedClient().
     void prepareForAuthentication(int sensorId, IBinder token, long operationId, int userId,
-            IBiometricSensorReceiver sensorReceiver, String opPackageName, int cookie);
+            IBiometricSensorReceiver sensorReceiver, String opPackageName, int cookie,
+            boolean allowBackgroundAuthentication);
 
     // Starts authentication with the previously prepared client.
     void startPreparedClient(int sensorId, int cookie);
@@ -142,8 +145,14 @@ interface IFingerprintService {
     // Removes a callback set by addClientActiveCallback
     void removeClientActiveCallback(IFingerprintClientActiveCallback callback);
 
-    // Give FingerprintService its ID. See AuthService.java
-    void initializeConfiguration(int sensorId, int strength);
+    // Registers all HIDL and AIDL sensors. Only HIDL sensor properties need to be provided, because
+    // AIDL sensor properties are retrieved directly from the available HALs. If no HIDL HALs exist,
+    // hidlSensors must be non-null and empty. See AuthService.java
+    void registerAuthenticators(in List<FingerprintSensorPropertiesInternal> hidlSensors);
+
+    // Adds a callback which gets called when the service registers all of the fingerprint
+    // authenticators. The callback is automatically removed after it's invoked.
+    void addAuthenticatorsRegisteredCallback(IFingerprintAuthenticatorsRegisteredCallback callback);
 
     // Notifies about a finger touching the sensor area.
     void onPointerDown(int sensorId, int x, int y, float minor, float major);
@@ -153,4 +162,7 @@ interface IFingerprintService {
 
     // Sets the controller for managing the UDFPS overlay.
     void setUdfpsOverlayController(in IUdfpsOverlayController controller);
+
+    // Registers FingerprintStateListener in list stored by FingerprintService.
+    void registerFingerprintStateListener(IFingerprintStateListener listener);
 }

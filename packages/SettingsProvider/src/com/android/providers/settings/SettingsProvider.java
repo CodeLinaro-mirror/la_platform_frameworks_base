@@ -16,11 +16,11 @@
 
 package com.android.providers.settings;
 
-import static android.os.Process.INVALID_UID;
 import static android.os.Process.ROOT_UID;
 import static android.os.Process.SHELL_UID;
 import static android.os.Process.SYSTEM_UID;
 import static android.provider.Settings.Secure.ACCESSIBILITY_SHORTCUT_TARGET_MAGNIFICATION_CONTROLLER;
+import static android.provider.Settings.Secure.NOTIFICATION_BUBBLES;
 import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_2BUTTON_OVERLAY;
 import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_GESTURAL;
 import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_GESTURAL_OVERLAY;
@@ -363,6 +363,11 @@ public class SettingsProvider extends ContentProvider {
             mHandlerThread.start();
             mHandler = new Handler(mHandlerThread.getLooper());
             mSettingsRegistry = new SettingsRegistry();
+        }
+        SettingsState.cacheSystemPackageNamesAndSystemSignature(getContext());
+        synchronized (mLock) {
+            mSettingsRegistry.migrateAllLegacySettingsIfNeededLocked();
+            mSettingsRegistry.syncSsaidTableOnStartLocked();
         }
         mHandler.post(() -> {
             registerBroadcastReceivers();
@@ -1937,8 +1942,14 @@ public class SettingsProvider extends ContentProvider {
         if (UserHandle.getAppId(Binder.getCallingUid()) < Process.FIRST_APPLICATION_UID) {
             return;
         }
-        checkReadableAnnotation(settingsType, settingName);
         ApplicationInfo ai = getCallingApplicationInfoOrThrow();
+        if (ai.isSystemApp() || ai.isSignedWithPlatformKey()) {
+            return;
+        }
+        if ((ai.flags & ApplicationInfo.FLAG_TEST_ONLY) == 0) {
+            // Skip checking readable annotations for test_only apps
+            checkReadableAnnotation(settingsType, settingName);
+        }
         if (!ai.isInstantApp()) {
             return;
         }
@@ -1980,9 +1991,9 @@ public class SettingsProvider extends ContentProvider {
 
         if (allFields.contains(settingName) && !readableFields.contains(settingName)) {
             throw new SecurityException(
-                    "Settings key: <" + settingName + "> is not readable. From S+, new public "
-                            + "settings keys need to be annotated with @Readable unless they are "
-                            + "annotated with @hide.");
+                    "Settings key: <" + settingName + "> is not readable. From S+, settings keys "
+                            + "annotated with @hide are restricted to system_server and system "
+                            + "apps only, unless they are annotated with @Readable.");
         }
     }
 
@@ -2493,8 +2504,6 @@ public class SettingsProvider extends ContentProvider {
             mHandler = new MyHandler(getContext().getMainLooper());
             mGenerationRegistry = new GenerationRegistry(mLock);
             mBackupManager = new BackupManager(getContext());
-            migrateAllLegacySettingsIfNeeded();
-            syncSsaidTableOnStart();
         }
 
         private void generateUserKeyLocked(int userId) {
@@ -2581,38 +2590,36 @@ public class SettingsProvider extends ContentProvider {
             return getSettingLocked(SETTINGS_TYPE_SSAID, userId, uid);
         }
 
-        public void syncSsaidTableOnStart() {
-            synchronized (mLock) {
-                // Verify that each user's packages and ssaid's are in sync.
-                for (UserInfo user : mUserManager.getAliveUsers()) {
-                    // Get all uids for the user's packages.
-                    final List<PackageInfo> packages;
-                    try {
-                        packages = mPackageManager.getInstalledPackages(
+        private void syncSsaidTableOnStartLocked() {
+            // Verify that each user's packages and ssaid's are in sync.
+            for (UserInfo user : mUserManager.getAliveUsers()) {
+                // Get all uids for the user's packages.
+                final List<PackageInfo> packages;
+                try {
+                    packages = mPackageManager.getInstalledPackages(
                             PackageManager.MATCH_UNINSTALLED_PACKAGES,
                             user.id).getList();
-                    } catch (RemoteException e) {
-                        throw new IllegalStateException("Package manager not available");
-                    }
-                    final Set<String> appUids = new HashSet<>();
-                    for (PackageInfo info : packages) {
-                        appUids.add(Integer.toString(info.applicationInfo.uid));
-                    }
+                } catch (RemoteException e) {
+                    throw new IllegalStateException("Package manager not available");
+                }
+                final Set<String> appUids = new HashSet<>();
+                for (PackageInfo info : packages) {
+                    appUids.add(Integer.toString(info.applicationInfo.uid));
+                }
 
-                    // Get all uids currently stored in the user's ssaid table.
-                    final Set<String> ssaidUids = new HashSet<>(
-                            getSettingsNamesLocked(SETTINGS_TYPE_SSAID, user.id));
-                    ssaidUids.remove(SSAID_USER_KEY);
+                // Get all uids currently stored in the user's ssaid table.
+                final Set<String> ssaidUids = new HashSet<>(
+                        getSettingsNamesLocked(SETTINGS_TYPE_SSAID, user.id));
+                ssaidUids.remove(SSAID_USER_KEY);
 
-                    // Perform a set difference for the appUids and ssaidUids.
-                    ssaidUids.removeAll(appUids);
+                // Perform a set difference for the appUids and ssaidUids.
+                ssaidUids.removeAll(appUids);
 
-                    // If there are ssaidUids left over they need to be removed from the table.
-                    final SettingsState ssaidSettings = getSettingsLocked(SETTINGS_TYPE_SSAID,
-                            user.id);
-                    for (String uid : ssaidUids) {
-                        ssaidSettings.deleteSettingLocked(uid);
-                    }
+                // If there are ssaidUids left over they need to be removed from the table.
+                final SettingsState ssaidSettings = getSettingsLocked(SETTINGS_TYPE_SSAID,
+                        user.id);
+                for (String uid : ssaidUids) {
+                    ssaidSettings.deleteSettingLocked(uid);
                 }
             }
         }
@@ -2905,7 +2912,7 @@ public class SettingsProvider extends ContentProvider {
                         boolean someSettingChanged = false;
                         Setting setting = settingsState.getSettingLocked(name);
                         if (!SettingsState.isSystemPackage(getContext(),
-                                setting.getPackageName(), INVALID_UID, userId)) {
+                                setting.getPackageName())) {
                             if (prefix != null && !setting.getName().startsWith(prefix)) {
                                 continue;
                             }
@@ -2925,7 +2932,7 @@ public class SettingsProvider extends ContentProvider {
                         boolean someSettingChanged = false;
                         Setting setting = settingsState.getSettingLocked(name);
                         if (!SettingsState.isSystemPackage(getContext(),
-                                setting.getPackageName(), INVALID_UID, userId)) {
+                                setting.getPackageName())) {
                             if (prefix != null && !setting.getName().startsWith(prefix)) {
                                 continue;
                             }
@@ -3003,40 +3010,38 @@ public class SettingsProvider extends ContentProvider {
             return mSettingsStates.get(key);
         }
 
-        private void migrateAllLegacySettingsIfNeeded() {
-            synchronized (mLock) {
-                final int key = makeKey(SETTINGS_TYPE_GLOBAL, UserHandle.USER_SYSTEM);
-                File globalFile = getSettingsFile(key);
-                if (SettingsState.stateFileExists(globalFile)) {
-                    return;
-                }
+        private void migrateAllLegacySettingsIfNeededLocked() {
+            final int key = makeKey(SETTINGS_TYPE_GLOBAL, UserHandle.USER_SYSTEM);
+            File globalFile = getSettingsFile(key);
+            if (SettingsState.stateFileExists(globalFile)) {
+                return;
+            }
 
-                mSettingsCreationBuildId = Build.ID;
+            mSettingsCreationBuildId = Build.ID;
 
-                final long identity = Binder.clearCallingIdentity();
-                try {
-                    List<UserInfo> users = mUserManager.getAliveUsers();
+            final long identity = Binder.clearCallingIdentity();
+            try {
+                List<UserInfo> users = mUserManager.getAliveUsers();
 
-                    final int userCount = users.size();
-                    for (int i = 0; i < userCount; i++) {
-                        final int userId = users.get(i).id;
+                final int userCount = users.size();
+                for (int i = 0; i < userCount; i++) {
+                    final int userId = users.get(i).id;
 
-                        DatabaseHelper dbHelper = new DatabaseHelper(getContext(), userId);
-                        SQLiteDatabase database = dbHelper.getWritableDatabase();
-                        migrateLegacySettingsForUserLocked(dbHelper, database, userId);
+                    DatabaseHelper dbHelper = new DatabaseHelper(getContext(), userId);
+                    SQLiteDatabase database = dbHelper.getWritableDatabase();
+                    migrateLegacySettingsForUserLocked(dbHelper, database, userId);
 
-                        // Upgrade to the latest version.
-                        UpgradeController upgrader = new UpgradeController(userId);
-                        upgrader.upgradeIfNeededLocked();
+                    // Upgrade to the latest version.
+                    UpgradeController upgrader = new UpgradeController(userId);
+                    upgrader.upgradeIfNeededLocked();
 
-                        // Drop from memory if not a running user.
-                        if (!mUserManager.isUserRunning(new UserHandle(userId))) {
-                            removeUserStateLocked(userId, false);
-                        }
+                    // Drop from memory if not a running user.
+                    if (!mUserManager.isUserRunning(new UserHandle(userId))) {
+                        removeUserStateLocked(userId, false);
                     }
-                } finally {
-                    Binder.restoreCallingIdentity(identity);
                 }
+            } finally {
+                Binder.restoreCallingIdentity(identity);
             }
         }
 
@@ -3396,7 +3401,7 @@ public class SettingsProvider extends ContentProvider {
         }
 
         private final class UpgradeController {
-            private static final int SETTINGS_VERSION = 198;
+            private static final int SETTINGS_VERSION = 202;
 
             private final int mUserId;
 
@@ -4641,11 +4646,8 @@ public class SettingsProvider extends ContentProvider {
                     // Version 184: Reset the default for Global Settings: NOTIFICATION_BUBBLES
                     // This is originally set in version 182, however, the default value changed
                     // so this step is to ensure the value is updated to the correct default.
-                    getGlobalSettingsLocked().insertSettingOverrideableByRestoreLocked(
-                            Global.NOTIFICATION_BUBBLES, getContext().getResources().getBoolean(
-                                    R.bool.def_notification_bubbles) ? "1" : "0", null /* tag */,
-                            true /* makeDefault */, SettingsState.SYSTEM_PACKAGE_NAME);
 
+                    // Removed. Bubbles moved to secure settings. See version 197.
                     currentVersion = 185;
                 }
 
@@ -4890,8 +4892,87 @@ public class SettingsProvider extends ContentProvider {
                                 defEnableNonResizableMultiWindow ? "1" : "0", null, true,
                                 SettingsState.SYSTEM_PACKAGE_NAME);
                     }
-
                     currentVersion = 198;
+                }
+
+                if (currentVersion == 198) {
+                    // Version 198: Set the default value for accessibility button. If the user
+                    // uses accessibility button in the navigation bar to trigger their
+                    // accessibility features (check if ACCESSIBILITY_BUTTON_TARGETS has value)
+                    // then leave accessibility button mode in the navigation bar, otherwise, set it
+                    // to the floating menu.
+                    final SettingsState secureSettings = getSecureSettingsLocked(userId);
+                    final Setting accessibilityButtonMode = secureSettings.getSettingLocked(
+                            Secure.ACCESSIBILITY_BUTTON_MODE);
+                    if (accessibilityButtonMode.isNull()) {
+                        if (isAccessibilityButtonInNavigationBarOn(secureSettings)) {
+                            secureSettings.insertSettingLocked(Secure.ACCESSIBILITY_BUTTON_MODE,
+                                    String.valueOf(
+                                            Secure.ACCESSIBILITY_BUTTON_MODE_NAVIGATION_BAR),
+                                    /*tag= */ null, /* makeDefault= */ false,
+                                    SettingsState.SYSTEM_PACKAGE_NAME);
+                        } else {
+                            final int defAccessibilityButtonMode =
+                                    getContext().getResources().getInteger(
+                                            R.integer.def_accessibility_button_mode);
+                            secureSettings.insertSettingLocked(Secure.ACCESSIBILITY_BUTTON_MODE,
+                                    String.valueOf(defAccessibilityButtonMode), /* tag= */
+                                    null, /* makeDefault= */ true,
+                                    SettingsState.SYSTEM_PACKAGE_NAME);
+                        }
+                    }
+
+                    currentVersion = 199;
+                }
+
+                if (currentVersion == 199) {
+                    // Version 199: Bubbles moved to secure settings. Use the global value for
+                    // the newly inserted secure setting; we'll delete the global value in the
+                    // next version step.
+                    // If this is a new profile, check if a secure setting exists for the
+                    // owner of the profile and use that value for the work profile.
+                    int owningId = resolveOwningUserIdForSecureSettingLocked(userId,
+                            NOTIFICATION_BUBBLES);
+                    Setting previous = getGlobalSettingsLocked()
+                            .getSettingLocked("notification_bubbles");
+                    Setting secureBubbles = getSecureSettingsLocked(owningId)
+                            .getSettingLocked(NOTIFICATION_BUBBLES);
+                    String oldValue = "1";
+                    if (!previous.isNull()) {
+                        oldValue = previous.getValue();
+                    } else if (!secureBubbles.isNull()) {
+                        oldValue = secureBubbles.getValue();
+                    }
+                    if (secureBubbles.isNull()) {
+                        boolean isDefault = oldValue.equals("1");
+                        getSecureSettingsLocked(userId).insertSettingLocked(
+                                Secure.NOTIFICATION_BUBBLES, oldValue, null /* tag */,
+                                isDefault, SettingsState.SYSTEM_PACKAGE_NAME);
+                    }
+                    currentVersion = 200;
+                }
+
+                if (currentVersion == 200) {
+                    // Version 200: delete the global bubble setting which was moved to secure in
+                    // version 199.
+                    getGlobalSettingsLocked().deleteSettingLocked("notification_bubbles");
+                    currentVersion = 201;
+                }
+
+                if (currentVersion == 201) {
+                    // Version 201: Set the default value for Secure Settings:
+                    final SettingsState secureSettings = getSecureSettingsLocked(userId);
+                    final Setting oneHandedModeActivated = secureSettings.getSettingLocked(
+                            Secure.ONE_HANDED_MODE_ACTIVATED);
+                    if (oneHandedModeActivated.isNull()) {
+                        final boolean defOneHandedModeActivated = getContext().getResources()
+                                .getBoolean(R.bool.def_one_handed_mode_activated);
+                        secureSettings.insertSettingLocked(
+                                Secure.ONE_HANDED_MODE_ACTIVATED,
+                                defOneHandedModeActivated ? "1" : "0", null, true,
+                                SettingsState.SYSTEM_PACKAGE_NAME);
+                    }
+                    currentVersion = 202;
                 }
 
                 // vXXX: Add new settings above this point.
@@ -5000,19 +5081,9 @@ public class SettingsProvider extends ContentProvider {
                 // In the upgrade case we pretend the call is made from the app
                 // that made the last change to the setting to properly determine
                 // whether the call has been made by a system component.
-                int callingUid = -1;
                 try {
-                    callingUid = mPackageManager.getPackageUid(setting.getPackageName(), 0, userId);
-                } catch (RemoteException e) {
-                    /* ignore - handled below */
-                }
-                if (callingUid < 0) {
-                    Slog.e(LOG_TAG, "Unknown package: " + setting.getPackageName());
-                    continue;
-                }
-                try {
-                    final boolean systemSet = SettingsState.isSystemPackage(getContext(),
-                            setting.getPackageName(), callingUid, userId);
+                    final boolean systemSet = SettingsState.isSystemPackage(
+                            getContext(), setting.getPackageName());
                     if (systemSet) {
                         settings.insertSettingOverrideableByRestoreLocked(name, setting.getValue(),
                                 setting.getTag(), true, setting.getPackageName());
@@ -5071,6 +5142,16 @@ public class SettingsProvider extends ContentProvider {
                 items.add(str);
             }
             return items;
+        }
+
+        private boolean isAccessibilityButtonInNavigationBarOn(SettingsState secureSettings) {
+            final boolean hasValueInA11yBtnTargets = !TextUtils.isEmpty(
+                    secureSettings.getSettingLocked(
+                            Secure.ACCESSIBILITY_BUTTON_TARGETS).getValue());
+            final int navigationMode = getContext().getResources().getInteger(
+                    com.android.internal.R.integer.config_navBarInteractionMode);
+
+            return hasValueInA11yBtnTargets && (navigationMode != NAV_BAR_MODE_GESTURAL);
         }
     }
 }

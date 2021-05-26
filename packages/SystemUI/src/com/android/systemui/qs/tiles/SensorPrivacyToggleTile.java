@@ -21,14 +21,19 @@ import android.hardware.SensorPrivacyManager.Sensors.Sensor;
 import android.os.Handler;
 import android.os.Looper;
 import android.service.quicksettings.Tile;
+import android.view.View;
 import android.widget.Switch;
 
 import androidx.annotation.DrawableRes;
+import androidx.annotation.Nullable;
 
 import com.android.internal.logging.MetricsLogger;
+import com.android.systemui.R;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.ActivityStarter;
+import com.android.systemui.plugins.FalsingManager;
+import com.android.systemui.plugins.qs.DetailAdapter;
 import com.android.systemui.plugins.qs.QSTile;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.qs.QSHost;
@@ -44,7 +49,7 @@ public abstract class SensorPrivacyToggleTile extends QSTileImpl<QSTile.BooleanS
         IndividualSensorPrivacyController.Callback {
 
     private final KeyguardStateController mKeyguard;
-    private IndividualSensorPrivacyController mSensorPrivacyController;
+    protected IndividualSensorPrivacyController mSensorPrivacyController;
 
     /**
      * @return Id of the sensor that will be toggled
@@ -54,19 +59,20 @@ public abstract class SensorPrivacyToggleTile extends QSTileImpl<QSTile.BooleanS
     /**
      * @return icon for the QS tile
      */
-    public abstract @DrawableRes int getIconRes();
+    public abstract @DrawableRes int getIconRes(boolean isBlocked);
 
     protected SensorPrivacyToggleTile(QSHost host,
             @Background Looper backgroundLooper,
             @Main Handler mainHandler,
+            FalsingManager falsingManager,
             MetricsLogger metricsLogger,
             StatusBarStateController statusBarStateController,
             ActivityStarter activityStarter,
             QSLogger qsLogger,
             IndividualSensorPrivacyController sensorPrivacyController,
             KeyguardStateController keyguardStateController) {
-        super(host, backgroundLooper, mainHandler, metricsLogger, statusBarStateController,
-                activityStarter, qsLogger);
+        super(host, backgroundLooper, mainHandler, falsingManager, metricsLogger,
+                statusBarStateController, activityStarter, qsLogger);
         mSensorPrivacyController = sensorPrivacyController;
         mKeyguard = keyguardStateController;
         mSensorPrivacyController.observe(getLifecycle(), this);
@@ -78,7 +84,7 @@ public abstract class SensorPrivacyToggleTile extends QSTileImpl<QSTile.BooleanS
     }
 
     @Override
-    protected void handleClick() {
+    protected void handleClick(@Nullable View view) {
         if (mKeyguard.isMethodSecure() && mKeyguard.isShowing()) {
             mActivityStarter.postQSRunnableDismissingKeyguard(() -> {
                 mSensorPrivacyController.setSensorBlocked(getSensorId(),
@@ -95,10 +101,15 @@ public abstract class SensorPrivacyToggleTile extends QSTileImpl<QSTile.BooleanS
         boolean isBlocked = arg == null ? mSensorPrivacyController.isSensorBlocked(getSensorId())
                 : (boolean) arg;
 
-        state.icon = ResourceIcon.get(getIconRes());
-        state.state = isBlocked ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE;
-        state.value = isBlocked;
+        state.icon = ResourceIcon.get(getIconRes(isBlocked));
+        state.state = isBlocked ? Tile.STATE_INACTIVE : Tile.STATE_ACTIVE;
+        state.value = !isBlocked;
         state.label = getTileLabel();
+        if (isBlocked) {
+            state.secondaryLabel = mContext.getString(R.string.quick_settings_camera_mic_blocked);
+        } else {
+            state.secondaryLabel = mContext.getString(R.string.quick_settings_camera_mic_available);
+        }
         state.handlesLongClick = false;
         state.contentDescription = state.label;
         state.expandedAccessibilityClassName = Switch.class.getName();
@@ -112,6 +123,11 @@ public abstract class SensorPrivacyToggleTile extends QSTileImpl<QSTile.BooleanS
     @Override
     public Intent getLongClickIntent() {
         return null;
+    }
+
+    @Override
+    public DetailAdapter getDetailAdapter() {
+        return super.getDetailAdapter();
     }
 
     @Override

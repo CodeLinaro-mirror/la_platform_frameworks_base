@@ -18,6 +18,7 @@ package com.android.server.timedetector;
 
 import android.annotation.IntDef;
 import android.annotation.NonNull;
+import android.annotation.UserIdInt;
 import android.app.time.ExternalTimeSuggestion;
 import android.app.timedetector.GnssTimeSuggestion;
 import android.app.timedetector.ManualTimeSuggestion;
@@ -26,10 +27,13 @@ import android.app.timedetector.TelephonyTimeSuggestion;
 import android.os.TimestampedValue;
 import android.util.IndentingPrintWriter;
 
+import com.android.internal.util.Preconditions;
 import com.android.server.timezonedetector.Dumpable;
 
+import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
 /**
  * The interface for the class that implements the time detection algorithm used by the
@@ -43,9 +47,9 @@ import java.lang.annotation.RetentionPolicy;
  */
 public interface TimeDetectorStrategy extends Dumpable {
 
-    @IntDef({ ORIGIN_TELEPHONY, ORIGIN_MANUAL, ORIGIN_NETWORK, ORIGIN_GNSS,
-        ORIGIN_EXTERNAL })
+    @IntDef({ ORIGIN_TELEPHONY, ORIGIN_MANUAL, ORIGIN_NETWORK, ORIGIN_GNSS, ORIGIN_EXTERNAL })
     @Retention(RetentionPolicy.SOURCE)
+    @Target({ ElementType.TYPE_USE, ElementType.TYPE_PARAMETER })
     @interface Origin {}
 
     /** Used when a time value originated from a telephony signal. */
@@ -88,11 +92,8 @@ public interface TimeDetectorStrategy extends Dumpable {
     /** Processes the suggested time from external sources. */
     void suggestExternalTime(@NonNull ExternalTimeSuggestion timeSuggestion);
 
-    /**
-     * Handles the auto-time configuration changing For example, when the auto-time setting is
-     * toggled on or off.
-     */
-    void handleAutoTimeConfigChanged();
+    /** Returns the configuration that controls time detector behaviour for specified user. */
+    ConfigurationInternal getConfigurationInternal(@UserIdInt int userId);
 
     // Utility methods below are to be moved to a better home when one becomes more obvious.
 
@@ -128,9 +129,11 @@ public interface TimeDetectorStrategy extends Dumpable {
 
     /**
      * Converts a human readable config string to one of the {@code ORIGIN_} constants.
-     * Throws an {@link IllegalArgumentException} if the value is unrecognized.
+     * Throws an {@link IllegalArgumentException} if the value is unrecognized or {@code null}.
      */
     static @Origin int stringToOrigin(String originString) {
+        Preconditions.checkArgument(originString != null);
+
         switch (originString) {
             case "manual":
                 return ORIGIN_MANUAL;

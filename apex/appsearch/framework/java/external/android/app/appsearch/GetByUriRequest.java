@@ -17,6 +17,7 @@
 package android.app.appsearch;
 
 import android.annotation.NonNull;
+import android.compat.annotation.UnsupportedAppUsage;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 
@@ -28,33 +29,33 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
- * Encapsulates a request to retrieve documents by namespace and URIs from the {@link
- * AppSearchSession} database.
- *
- * @see AppSearchSession#getByUri
+ * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+ * @hide
  */
+@Deprecated
 public final class GetByUriRequest {
     /**
-     * Schema type to be used in {@link android.app.appsearch.GetByUriRequest.Builder#addProjection}
-     * to apply property paths to all results, excepting any types that have had their own, specific
-     * property paths set.
+     * Schema type to be used in {@link GetByUriRequest.Builder#addProjection} to apply property
+     * paths to all results, excepting any types that have had their own, specific property paths
+     * set.
      */
     public static final String PROJECTION_SCHEMA_TYPE_WILDCARD = "*";
 
     private final String mNamespace;
-    private final Set<String> mUris;
+    private final Set<String> mIds;
     private final Map<String, List<String>> mTypePropertyPathsMap;
 
     GetByUriRequest(
             @NonNull String namespace,
-            @NonNull Set<String> uris,
+            @NonNull Set<String> ids,
             @NonNull Map<String, List<String>> typePropertyPathsMap) {
-        mNamespace = Preconditions.checkNotNull(namespace);
-        mUris = Preconditions.checkNotNull(uris);
-        mTypePropertyPathsMap = Preconditions.checkNotNull(typePropertyPathsMap);
+        mNamespace = Objects.requireNonNull(namespace);
+        mIds = Objects.requireNonNull(ids);
+        mTypePropertyPathsMap = Objects.requireNonNull(typePropertyPathsMap);
     }
 
     /** Returns the namespace attached to the request. */
@@ -63,10 +64,10 @@ public final class GetByUriRequest {
         return mNamespace;
     }
 
-    /** Returns the set of URIs attached to the request. */
+    /** Returns the set of document IDs attached to the request. */
     @NonNull
     public Set<String> getUris() {
-        return Collections.unmodifiableSet(mUris);
+        return Collections.unmodifiableSet(mIds);
     }
 
     /**
@@ -80,8 +81,8 @@ public final class GetByUriRequest {
     @NonNull
     public Map<String, List<String>> getProjections() {
         Map<String, List<String>> copy = new ArrayMap<>();
-        for (String key : mTypePropertyPathsMap.keySet()) {
-            copy.put(key, new ArrayList<>(mTypePropertyPathsMap.get(key)));
+        for (Map.Entry<String, List<String>> entry : mTypePropertyPathsMap.entrySet()) {
+            copy.put(entry.getKey(), new ArrayList<>(entry.getValue()));
         }
         return copy;
     }
@@ -102,81 +103,81 @@ public final class GetByUriRequest {
     }
 
     /**
+     * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+     * @hide
+     */
+    @Deprecated
+    @NonNull
+    public GetByDocumentIdRequest toGetByDocumentIdRequest() {
+        GetByDocumentIdRequest.Builder builder =
+                new GetByDocumentIdRequest.Builder(mNamespace).addIds(mIds);
+        for (Map.Entry<String, List<String>> projection : mTypePropertyPathsMap.entrySet()) {
+            builder.addProjection(projection.getKey(), projection.getValue());
+        }
+        return builder.build();
+    }
+
+    /**
      * Builder for {@link GetByUriRequest} objects.
      *
      * <p>Once {@link #build} is called, the instance can no longer be used.
      */
     public static final class Builder {
-        private String mNamespace = GenericDocument.DEFAULT_NAMESPACE;
-        private final Set<String> mUris = new ArraySet<>();
+        private final String mNamespace;
+        private final Set<String> mIds = new ArraySet<>();
         private final Map<String, List<String>> mProjectionTypePropertyPaths = new ArrayMap<>();
         private boolean mBuilt = false;
 
         /**
-         * Sets the namespace to retrieve documents for.
-         *
-         * <p>If this is not called, the namespace defaults to {@link
-         * GenericDocument#DEFAULT_NAMESPACE}.
+         * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+         * @hide
+         */
+        @Deprecated
+        @UnsupportedAppUsage
+        public Builder(@NonNull String namespace) {
+            mNamespace = Objects.requireNonNull(namespace);
+        }
+
+        /**
+         * Adds one or more document IDs to the request.
          *
          * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
-        public Builder setNamespace(@NonNull String namespace) {
+        public Builder addUris(@NonNull String... ids) {
+            Objects.requireNonNull(ids);
+            return addUris(Arrays.asList(ids));
+        }
+
+        /**
+         * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+         * @hide
+         */
+        @Deprecated
+        @UnsupportedAppUsage
+        @NonNull
+        public Builder addUris(@NonNull Collection<String> ids) {
             Preconditions.checkState(!mBuilt, "Builder has already been used");
-            Preconditions.checkNotNull(namespace);
-            mNamespace = namespace;
+            Objects.requireNonNull(ids);
+            mIds.addAll(ids);
             return this;
         }
 
         /**
-         * Adds one or more URIs to the request.
-         *
-         * @throws IllegalStateException if the builder has already been used.
+         * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+         * @hide
          */
-        @NonNull
-        public Builder addUris(@NonNull String... uris) {
-            Preconditions.checkNotNull(uris);
-            return addUris(Arrays.asList(uris));
-        }
-
-        /**
-         * Adds a collection of URIs to the request.
-         *
-         * @throws IllegalStateException if the builder has already been used.
-         */
-        @NonNull
-        public Builder addUris(@NonNull Collection<String> uris) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
-            Preconditions.checkNotNull(uris);
-            mUris.addAll(uris);
-            return this;
-        }
-
-        /**
-         * Adds property paths for the specified type to be used for projection. If property paths
-         * are added for a type, then only the properties referred to will be retrieved for results
-         * of that type. If a property path that is specified isn't present in a result, it will be
-         * ignored for that result. Property paths cannot be null.
-         *
-         * <p>If no property paths are added for a particular type, then all properties of results
-         * of that type will be retrieved.
-         *
-         * <p>If property path is added for the {@link
-         * GetByUriRequest#PROJECTION_SCHEMA_TYPE_WILDCARD}, then those property paths will apply to
-         * all results, excepting any types that have their own, specific property paths set.
-         *
-         * @throws IllegalStateException if the builder has already been used.
-         * @see SearchSpec.Builder#addProjection
-         */
+        @Deprecated
+        @UnsupportedAppUsage
         @NonNull
         public Builder addProjection(
                 @NonNull String schemaType, @NonNull Collection<String> propertyPaths) {
             Preconditions.checkState(!mBuilt, "Builder has already been used");
-            Preconditions.checkNotNull(schemaType);
-            Preconditions.checkNotNull(propertyPaths);
+            Objects.requireNonNull(schemaType);
+            Objects.requireNonNull(propertyPaths);
             List<String> propertyPathsList = new ArrayList<>(propertyPaths.size());
             for (String propertyPath : propertyPaths) {
-                Preconditions.checkNotNull(propertyPath);
+                Objects.requireNonNull(propertyPath);
                 propertyPathsList.add(propertyPath);
             }
             mProjectionTypePropertyPaths.put(schemaType, propertyPathsList);
@@ -184,15 +185,16 @@ public final class GetByUriRequest {
         }
 
         /**
-         * Builds a new {@link GetByUriRequest}.
-         *
-         * @throws IllegalStateException if the builder has already been used.
+         * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+         * @hide
          */
+        @Deprecated
+        @UnsupportedAppUsage
         @NonNull
         public GetByUriRequest build() {
             Preconditions.checkState(!mBuilt, "Builder has already been used");
             mBuilt = true;
-            return new GetByUriRequest(mNamespace, mUris, mProjectionTypePropertyPaths);
+            return new GetByUriRequest(mNamespace, mIds, mProjectionTypePropertyPaths);
         }
     }
 }

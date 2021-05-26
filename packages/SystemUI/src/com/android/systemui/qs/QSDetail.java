@@ -23,6 +23,7 @@ import android.annotation.Nullable;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.graphics.drawable.Animatable;
 import android.util.AttributeSet;
 import android.util.SparseArray;
@@ -139,12 +140,22 @@ public class QSDetail extends LinearLayout {
     }
 
     private void updateDetailText() {
-        mDetailDoneButton.setText(R.string.quick_settings_done);
-        mDetailSettingsButton.setText(R.string.quick_settings_more_settings);
+        int resId = mDetailAdapter != null ? mDetailAdapter.getDoneText() : Resources.ID_NULL;
+        mDetailDoneButton.setText(
+                (resId != Resources.ID_NULL) ? resId : R.string.quick_settings_done);
+        resId = mDetailAdapter != null ? mDetailAdapter.getSettingsText() : Resources.ID_NULL;
+        mDetailSettingsButton.setText(
+                (resId != Resources.ID_NULL) ? resId : R.string.quick_settings_more_settings);
     }
 
     public void updateResources() {
         updateDetailText();
+        MarginLayoutParams lp = (MarginLayoutParams) getLayoutParams();
+        lp.topMargin = mContext.getResources().getDimensionPixelSize(
+                com.android.internal.R.dimen.quick_qs_offset_height);
+        lp.bottomMargin = mContext.getResources().getDimensionPixelSize(
+                R.dimen.qs_container_bottom_padding);
+        setLayoutParams(lp);
     }
 
     public boolean isClosingDetail() {
@@ -205,6 +216,7 @@ public class QSDetail extends LinearLayout {
             mDetailAdapter = adapter;
             listener = mHideGridContentWhenDone;
             setVisibility(View.VISIBLE);
+            updateDetailText();
         } else {
             if (wasShowingDetail) {
                 Dependency.get(MetricsLogger.class).hidden(mDetailAdapter.getMetricsCategory());
@@ -219,16 +231,7 @@ public class QSDetail extends LinearLayout {
             mQsPanelCallback.onScanStateChanged(false);
         }
         sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
-
-        if (mShouldAnimate) {
-            animateDetailVisibleDiff(x, y, visibleDiff, listener);
-        } else {
-            if (showingDetail) {
-                showImmediately();
-            } else {
-                hideImmediately();
-            }
-        }
+        animateDetailVisibleDiff(x, y, visibleDiff, listener);
     }
 
     protected void animateDetailVisibleDiff(int x, int y, boolean visibleDiff, AnimatorListener listener) {
@@ -236,25 +239,14 @@ public class QSDetail extends LinearLayout {
             mAnimatingOpen = mDetailAdapter != null;
             if (mFullyExpanded || mDetailAdapter != null) {
                 setAlpha(1);
-                mClipper.animateCircularClip(x, y, mDetailAdapter != null, listener);
+                mClipper.updateCircularClip(mShouldAnimate, x, y, mDetailAdapter != null, listener);
             } else {
                 animate().alpha(0)
-                        .setDuration(FADE_DURATION)
+                        .setDuration(mShouldAnimate ? FADE_DURATION : 0)
                         .setListener(listener)
                         .start();
             }
         }
-    }
-
-    void showImmediately() {
-        setVisibility(VISIBLE);
-        mClipper.cancelAnimator();
-        mClipper.showBackground();
-    }
-
-    public void hideImmediately() {
-        mClipper.cancelAnimator();
-        setVisibility(View.GONE);
     }
 
     protected void setupDetailFooter(DetailAdapter adapter) {

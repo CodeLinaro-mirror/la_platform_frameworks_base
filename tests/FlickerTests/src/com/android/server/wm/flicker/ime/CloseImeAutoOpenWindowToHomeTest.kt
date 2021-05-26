@@ -19,6 +19,7 @@ package com.android.server.wm.flicker.ime
 import android.app.Instrumentation
 import android.platform.test.annotations.Presubmit
 import android.view.Surface
+import android.view.WindowManagerPolicyConstants
 import androidx.test.filters.FlakyTest
 import androidx.test.filters.RequiresDevice
 import androidx.test.platform.app.InstrumentationRegistry
@@ -28,20 +29,15 @@ import com.android.server.wm.flicker.FlickerTestParameter
 import com.android.server.wm.flicker.FlickerTestParameterFactory
 import com.android.server.wm.flicker.dsl.FlickerBuilder
 import com.android.server.wm.flicker.helpers.ImeAppAutoFocusHelper
-import com.android.server.wm.flicker.helpers.setRotation
-import com.android.server.wm.flicker.helpers.wakeUpAndGoToHomeScreen
-import com.android.server.wm.flicker.visibleWindowsShownMoreThanOneConsecutiveEntry
-import com.android.server.wm.flicker.visibleLayersShownMoreThanOneConsecutiveEntry
 import com.android.server.wm.flicker.navBarLayerIsAlwaysVisible
 import com.android.server.wm.flicker.navBarLayerRotatesAndScales
 import com.android.server.wm.flicker.navBarWindowIsAlwaysVisible
 import com.android.server.wm.flicker.noUncoveredRegions
-import com.android.server.wm.flicker.repetitions
 import com.android.server.wm.flicker.startRotation
 import com.android.server.wm.flicker.statusBarLayerIsAlwaysVisible
 import com.android.server.wm.flicker.statusBarLayerRotatesScales
 import com.android.server.wm.flicker.statusBarWindowIsAlwaysVisible
-import org.junit.Assume
+import com.android.server.wm.traces.parser.windowmanager.WindowManagerStateHelper
 import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -63,22 +59,15 @@ class CloseImeAutoOpenWindowToHomeTest(private val testSpec: FlickerTestParamete
     @FlickerBuilderProvider
     fun buildFlicker(): FlickerBuilder {
         return FlickerBuilder(instrumentation).apply {
-            withTestName { testSpec.name }
-            repeat { testSpec.config.repetitions }
             setup {
-                test {
-                    device.wakeUpAndGoToHomeScreen()
-                }
                 eachRun {
                     testApp.launchViaIntent(wmHelper)
                     testApp.openIME(device, wmHelper)
-                    this.setRotation(testSpec.config.startRotation)
                 }
             }
             teardown {
-                test {
-                    testApp.exit()
-                    this.setRotation(Surface.ROTATION_0)
+                eachRun {
+                    testApp.exit(wmHelper)
                 }
             }
             transitions {
@@ -99,55 +88,44 @@ class CloseImeAutoOpenWindowToHomeTest(private val testSpec: FlickerTestParamete
 
     @Presubmit
     @Test
-    fun visibleWindowsShownMoreThanOneConsecutiveEntry() =
-        testSpec.visibleWindowsShownMoreThanOneConsecutiveEntry(listOf(IME_WINDOW_TITLE))
+    fun visibleWindowsShownMoreThanOneConsecutiveEntry() {
+        testSpec.assertWm {
+            this.visibleWindowsShownMoreThanOneConsecutiveEntry(listOf(IME_WINDOW_TITLE,
+                WindowManagerStateHelper.SPLASH_SCREEN_NAME,
+                WindowManagerStateHelper.SNAPSHOT_WINDOW_NAME))
+        }
+    }
 
-    @Presubmit
+    @FlakyTest
     @Test
     fun imeWindowBecomesInvisible() = testSpec.imeWindowBecomesInvisible()
 
-    @Presubmit
+    @FlakyTest
     @Test
     fun imeAppWindowBecomesInvisible() = testSpec.imeAppWindowBecomesInvisible(testApp)
 
-    @Presubmit
+    @FlakyTest
     @Test
     fun noUncoveredRegions() = testSpec.noUncoveredRegions(testSpec.config.startRotation,
         Surface.ROTATION_0)
 
-    @Presubmit
+    @FlakyTest
     @Test
     fun imeLayerBecomesInvisible() = testSpec.imeLayerBecomesInvisible()
 
-    @Presubmit
+    @FlakyTest
     @Test
     fun imeAppLayerBecomesInvisible() = testSpec.imeAppLayerBecomesInvisible(testApp)
 
-    @Presubmit
+    @FlakyTest
     @Test
     fun navBarLayerRotatesAndScales() {
-        Assume.assumeFalse(testSpec.isRotated)
         testSpec.navBarLayerRotatesAndScales(testSpec.config.startRotation, Surface.ROTATION_0)
     }
 
     @FlakyTest
-    @Test
-    fun navBarLayerRotatesAndScales_Flaky() {
-        Assume.assumeTrue(testSpec.isRotated)
-        testSpec.navBarLayerRotatesAndScales(testSpec.config.startRotation, Surface.ROTATION_0)
-    }
-
-    @Presubmit
     @Test
     fun statusBarLayerRotatesScales() {
-        Assume.assumeFalse(testSpec.isRotated)
-        testSpec.statusBarLayerRotatesScales(testSpec.config.startRotation, Surface.ROTATION_0)
-    }
-
-    @FlakyTest
-    @Test
-    fun statusBarLayerRotatesScales_Flaky() {
-        Assume.assumeTrue(testSpec.isRotated)
         testSpec.statusBarLayerRotatesScales(testSpec.config.startRotation, Surface.ROTATION_0)
     }
 
@@ -155,22 +133,17 @@ class CloseImeAutoOpenWindowToHomeTest(private val testSpec: FlickerTestParamete
     @Test
     fun navBarLayerIsAlwaysVisible() = testSpec.navBarLayerIsAlwaysVisible()
 
-    @Presubmit
+    @FlakyTest
     @Test
     fun statusBarLayerIsAlwaysVisible() = testSpec.statusBarLayerIsAlwaysVisible()
 
-    @Presubmit
-    @Test
-    fun visibleLayersShownMoreThanOneConsecutiveEntry() {
-        Assume.assumeFalse(testSpec.isRotated)
-        testSpec.visibleLayersShownMoreThanOneConsecutiveEntry(listOf(IME_WINDOW_TITLE))
-    }
-
     @FlakyTest
     @Test
-    fun visibleLayersShownMoreThanOneConsecutiveEntry_Flaky() {
-        Assume.assumeTrue(testSpec.isRotated)
-        testSpec.visibleLayersShownMoreThanOneConsecutiveEntry(listOf(IME_WINDOW_TITLE))
+    fun visibleLayersShownMoreThanOneConsecutiveEntry() {
+        testSpec.assertLayers {
+            this.visibleLayersShownMoreThanOneConsecutiveEntry(
+                listOf(IME_WINDOW_TITLE, WindowManagerStateHelper.SPLASH_SCREEN_NAME))
+        }
     }
 
     companion object {
@@ -178,7 +151,10 @@ class CloseImeAutoOpenWindowToHomeTest(private val testSpec: FlickerTestParamete
         @JvmStatic
         fun getParams(): Collection<FlickerTestParameter> {
             return FlickerTestParameterFactory.getInstance()
-                .getConfigNonRotationTests(repetitions = 5)
+                .getConfigNonRotationTests(repetitions = 1,
+                    supportedNavigationModes = listOf(
+                        WindowManagerPolicyConstants.NAV_BAR_MODE_3BUTTON_OVERLAY)
+                )
         }
     }
 }

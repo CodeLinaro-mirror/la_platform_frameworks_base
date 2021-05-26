@@ -24,11 +24,17 @@ import android.view.MotionEvent;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.KeyguardUpdateMonitorCallback;
 import com.android.systemui.dagger.SysUISingleton;
+import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.StatusBarState;
+import com.android.systemui.statusbar.policy.KeyguardStateController;
+import com.android.systemui.util.concurrency.DelayableExecutor;
 import com.android.systemui.util.sensors.ProximitySensor;
 import com.android.systemui.util.sensors.ThresholdSensor;
+import com.android.systemui.util.time.SystemClock;
+
+import java.util.Collections;
 
 import javax.inject.Inject;
 
@@ -38,12 +44,17 @@ class FalsingCollectorImpl implements FalsingCollector {
     private static final boolean DEBUG = false;
     private static final String TAG = "FalsingManager";
     private static final String PROXIMITY_SENSOR_TAG = "FalsingManager";
+    private static final long GESTURE_PROCESSING_DELAY_MS = 100;
 
     private final FalsingDataProvider mFalsingDataProvider;
     private final FalsingManager mFalsingManager;
     private final KeyguardUpdateMonitor mKeyguardUpdateMonitor;
+    private final HistoryTracker mHistoryTracker;
     private final ProximitySensor mProximitySensor;
     private final StatusBarStateController mStatusBarStateController;
+    private final KeyguardStateController mKeyguardStateController;
+    private final DelayableExecutor mMainExecutor;
+    private final SystemClock mSystemClock;
 
     private int mState;
     private boolean mShowingAod;
@@ -80,13 +91,19 @@ class FalsingCollectorImpl implements FalsingCollector {
 
     @Inject
     FalsingCollectorImpl(FalsingDataProvider falsingDataProvider, FalsingManager falsingManager,
-            KeyguardUpdateMonitor keyguardUpdateMonitor,
-            ProximitySensor proximitySensor, StatusBarStateController statusBarStateController) {
+            KeyguardUpdateMonitor keyguardUpdateMonitor, HistoryTracker historyTracker,
+            ProximitySensor proximitySensor, StatusBarStateController statusBarStateController,
+            KeyguardStateController keyguardStateController,
+            @Main DelayableExecutor mainExecutor, SystemClock systemClock) {
         mFalsingDataProvider = falsingDataProvider;
         mFalsingManager = falsingManager;
         mKeyguardUpdateMonitor = keyguardUpdateMonitor;
+        mHistoryTracker = historyTracker;
         mProximitySensor = proximitySensor;
         mStatusBarStateController = statusBarStateController;
+        mKeyguardStateController = keyguardStateController;
+        mMainExecutor = mainExecutor;
+        mSystemClock = systemClock;
 
 
         mProximitySensor.setTag(PROXIMITY_SENSOR_TAG);
@@ -116,7 +133,6 @@ class FalsingCollectorImpl implements FalsingCollector {
 
     @Override
     public void onNotificationStartDraggingDown() {
-        updateInteractionType(Classifier.NOTIFICATION_DRAG_DOWN);
     }
 
     @Override
@@ -129,7 +145,6 @@ class FalsingCollectorImpl implements FalsingCollector {
 
     @Override
     public void onQsDown() {
-        updateInteractionType(Classifier.QUICK_SETTINGS);
     }
 
     @Override
@@ -148,7 +163,6 @@ class FalsingCollectorImpl implements FalsingCollector {
 
     @Override
     public void onTrackingStarted(boolean secure) {
-        updateInteractionType(secure ? Classifier.BOUNCER_UNLOCK : Classifier.UNLOCK);
     }
 
     @Override
@@ -165,8 +179,6 @@ class FalsingCollectorImpl implements FalsingCollector {
 
     @Override
     public void onAffordanceSwipingStarted(boolean rightCorner) {
-        updateInteractionType(
-                rightCorner ? Classifier.RIGHT_AFFORDANCE : Classifier.LEFT_AFFORDANCE);
     }
 
     @Override
@@ -175,7 +187,6 @@ class FalsingCollectorImpl implements FalsingCollector {
 
     @Override
     public void onStartExpandingFromPulse() {
-        updateInteractionType(Classifier.PULSE_EXPAND);
     }
 
     @Override
@@ -226,7 +237,6 @@ class FalsingCollectorImpl implements FalsingCollector {
 
     @Override
     public void onNotificationStartDismissing() {
-        updateInteractionType(Classifier.NOTIFICATION_DISMISS);
     }
 
     @Override
@@ -247,6 +257,10 @@ class FalsingCollectorImpl implements FalsingCollector {
 
     @Override
     public void onTouchEvent(MotionEvent ev) {
+        if (!mKeyguardStateController.isShowing() || mStatusBarStateController.isDozing()) {
+            avoidGesture();
+            return;
+        }
         // We delay processing down events to see if another component wants to process them.
         // If #avoidGesture is called after a MotionEvent.ACTION_DOWN, all following motion events
         // will be ignored by the collector until another MotionEvent.ACTION_DOWN is passed in.
@@ -267,9 +281,25 @@ class FalsingCollectorImpl implements FalsingCollector {
     }
 
     @Override
+    public void onMotionEventComplete() {
+        // We must delay processing the completion because of the way Android handles click events.
+        // It generally delays executing them immediately, instead choosing to give the UI a chance
+        // to respond to touch events before acknowledging the click. As such, we must also delay,
+        // giving click handlers a chance to analyze it.
+        // You might think we could do something clever to remove this delay - adding non-committed
+        // results that can later be changed - but this won't help. Calling the code
+        // below can eventually end up in a "Falsing Event" being fired. If we remove the delay
+        // here, we would still have to add the delay to the event, but we'd also have to make all
+        // the intervening code more complicated in the process. This is the simplest insertion
+        // point for the delay.
+        mMainExecutor.executeDelayed(
+                mFalsingDataProvider::onMotionEventComplete, GESTURE_PROCESSING_DELAY_MS);
+    }
+
+    @Override
     public void avoidGesture() {
+        mAvoidGesture = true;
         if (mPendingDownEvent != null) {
-            mAvoidGesture = true;
             mPendingDownEvent.recycle();
             mPendingDownEvent = null;
         }
@@ -282,9 +312,9 @@ class FalsingCollectorImpl implements FalsingCollector {
         mStatusBarStateController.removeCallback(mStatusBarStateListener);
     }
 
-    private void updateInteractionType(@Classifier.InteractionType int type) {
-        logDebug("InteractionType: " + type);
-        mFalsingDataProvider.setInteractionType(type);
+    @Override
+    public void updateFalseConfidence(FalsingClassifier.Result result) {
+        mHistoryTracker.addResults(Collections.singleton(result), mSystemClock.uptimeMillis());
     }
 
     private boolean shouldSessionBeActive() {
@@ -331,7 +361,7 @@ class FalsingCollectorImpl implements FalsingCollector {
     private void onProximityEvent(ThresholdSensor.ThresholdSensorEvent proximityEvent) {
         // TODO: some of these classifiers might allow us to abort early, meaning we don't have to
         // make these calls.
-        mFalsingManager.onProximityEvent(proximityEvent);
+        mFalsingManager.onProximityEvent(new ProximityEventImpl(proximityEvent));
     }
 
 
@@ -342,6 +372,23 @@ class FalsingCollectorImpl implements FalsingCollector {
     static void logDebug(String msg, Throwable throwable) {
         if (DEBUG) {
             Log.d(TAG, msg, throwable);
+        }
+    }
+
+    private static class ProximityEventImpl implements FalsingManager.ProximityEvent {
+        private ThresholdSensor.ThresholdSensorEvent mThresholdSensorEvent;
+
+        ProximityEventImpl(ThresholdSensor.ThresholdSensorEvent thresholdSensorEvent) {
+            mThresholdSensorEvent = thresholdSensorEvent;
+        }
+        @Override
+        public boolean getCovered() {
+            return mThresholdSensorEvent.getBelow();
+        }
+
+        @Override
+        public long getTimestampNs() {
+            return mThresholdSensorEvent.getTimestampNs();
         }
     }
 }

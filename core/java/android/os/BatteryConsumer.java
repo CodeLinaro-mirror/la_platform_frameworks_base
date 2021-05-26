@@ -27,7 +27,7 @@ import java.lang.annotation.RetentionPolicy;
  *
  * @hide
  */
-public abstract class BatteryConsumer {
+public class BatteryConsumer {
 
     /**
      * Power usage component, describing the particular part of the system
@@ -36,7 +36,7 @@ public abstract class BatteryConsumer {
      * @hide
      */
     @IntDef(prefix = {"POWER_COMPONENT_"}, value = {
-            POWER_COMPONENT_USAGE,
+            POWER_COMPONENT_SCREEN,
             POWER_COMPONENT_CPU,
             POWER_COMPONENT_BLUETOOTH,
             POWER_COMPONENT_CAMERA,
@@ -49,14 +49,16 @@ public abstract class BatteryConsumer {
             POWER_COMPONENT_GNSS,
             POWER_COMPONENT_WIFI,
             POWER_COMPONENT_WAKELOCK,
-            POWER_COMPONENT_SCREEN,
+            POWER_COMPONENT_MEMORY,
+            POWER_COMPONENT_PHONE,
+            POWER_COMPONENT_IDLE,
             POWER_COMPONENT_REATTRIBUTED_TO_OTHER_CONSUMERS,
     })
     @Retention(RetentionPolicy.SOURCE)
     public static @interface PowerComponent {
     }
 
-    public static final int POWER_COMPONENT_USAGE = 0;
+    public static final int POWER_COMPONENT_SCREEN = 0;
     public static final int POWER_COMPONENT_CPU = 1;
     public static final int POWER_COMPONENT_BLUETOOTH = 2;
     public static final int POWER_COMPONENT_CAMERA = 3;
@@ -69,62 +71,45 @@ public abstract class BatteryConsumer {
     public static final int POWER_COMPONENT_GNSS = 10;
     public static final int POWER_COMPONENT_WIFI = 11;
     public static final int POWER_COMPONENT_WAKELOCK = 12;
-    public static final int POWER_COMPONENT_SCREEN = 13;
+    public static final int POWER_COMPONENT_MEMORY = 13;
+    public static final int POWER_COMPONENT_PHONE = 14;
+    public static final int POWER_COMPONENT_AMBIENT_DISPLAY = 15;
+    public static final int POWER_COMPONENT_IDLE = 16;
     // Power that is re-attributed to other battery consumers. For example, for System Server
     // this represents the power attributed to apps requesting system services.
     // The value should be negative or zero.
-    public static final int POWER_COMPONENT_REATTRIBUTED_TO_OTHER_CONSUMERS = 14;
+    public static final int POWER_COMPONENT_REATTRIBUTED_TO_OTHER_CONSUMERS = 17;
 
-    public static final int POWER_COMPONENT_COUNT = 15;
+    public static final int POWER_COMPONENT_COUNT = 18;
 
     public static final int FIRST_CUSTOM_POWER_COMPONENT_ID = 1000;
     public static final int LAST_CUSTOM_POWER_COMPONENT_ID = 9999;
 
     /**
-     * Time usage component, describing the particular part of the system
-     * that was used for the corresponding amount of time.
+     * Identifiers of models used for power estimation.
      *
      * @hide
      */
-    @IntDef(prefix = {"TIME_COMPONENT_"}, value = {
-            TIME_COMPONENT_USAGE,
-            TIME_COMPONENT_CPU,
-            TIME_COMPONENT_CPU_FOREGROUND,
-            TIME_COMPONENT_BLUETOOTH,
-            TIME_COMPONENT_CAMERA,
-            TIME_COMPONENT_FLASHLIGHT,
-            TIME_COMPONENT_MOBILE_RADIO,
-            TIME_COMPONENT_SENSORS,
-            TIME_COMPONENT_GNSS,
-            TIME_COMPONENT_WIFI,
-            TIME_COMPONENT_WAKELOCK,
-            TIME_COMPONENT_SCREEN,
+    @IntDef(prefix = {"POWER_MODEL_"}, value = {
+            POWER_MODEL_POWER_PROFILE,
+            POWER_MODEL_MEASURED_ENERGY,
     })
     @Retention(RetentionPolicy.SOURCE)
-    public static @interface TimeComponent {
+    public @interface PowerModel {
     }
 
-    public static final int TIME_COMPONENT_USAGE = 0;
-    public static final int TIME_COMPONENT_CPU = 1;
-    public static final int TIME_COMPONENT_CPU_FOREGROUND = 2;
-    public static final int TIME_COMPONENT_BLUETOOTH = 3;
-    public static final int TIME_COMPONENT_CAMERA = 4;
-    public static final int TIME_COMPONENT_AUDIO = 5;
-    public static final int TIME_COMPONENT_VIDEO = 6;
-    public static final int TIME_COMPONENT_FLASHLIGHT = 7;
-    public static final int TIME_COMPONENT_MOBILE_RADIO = 8;
-    public static final int TIME_COMPONENT_SENSORS = 9;
-    public static final int TIME_COMPONENT_GNSS = 10;
-    public static final int TIME_COMPONENT_WIFI = 11;
-    public static final int TIME_COMPONENT_WAKELOCK = 12;
-    public static final int TIME_COMPONENT_SCREEN = 13;
+    /**
+     * Power model that is based on average consumption rates that hardware components
+     * consume in various states.
+     */
+    public static final int POWER_MODEL_POWER_PROFILE = 0;
 
-    public static final int TIME_COMPONENT_COUNT = 14;
+    /**
+     * Power model that is based on energy consumption measured by on-device power monitors.
+     */
+    public static final int POWER_MODEL_MEASURED_ENERGY = 1;
 
-    public static final int FIRST_CUSTOM_TIME_COMPONENT_ID = 1000;
-    public static final int LAST_CUSTOM_TIME_COMPONENT_ID = 9999;
-
-    private final PowerComponents mPowerComponents;
+    protected final PowerComponents mPowerComponents;
 
     protected BatteryConsumer(@NonNull PowerComponents powerComponents) {
         mPowerComponents = powerComponents;
@@ -134,7 +119,7 @@ public abstract class BatteryConsumer {
      * Total power consumed by this consumer, in mAh.
      */
     public double getConsumedPower() {
-        return mPowerComponents.getTotalConsumedPower();
+        return mPowerComponents.getConsumedPower();
     }
 
     /**
@@ -149,6 +134,16 @@ public abstract class BatteryConsumer {
     }
 
     /**
+     * Returns the ID of the model that was used for power estimation.
+     *
+     * @param componentId The ID of the power component, e.g.
+     *                    {@link BatteryConsumer#POWER_COMPONENT_CPU}.
+     */
+    public @PowerModel int getPowerModel(@BatteryConsumer.PowerComponent int componentId) {
+        return mPowerComponents.getPowerModel(componentId);
+    }
+
+    /**
      * Returns the amount of drain attributed to the specified custom drain type.
      *
      * @param componentId The ID of the custom power component.
@@ -158,15 +153,32 @@ public abstract class BatteryConsumer {
         return mPowerComponents.getConsumedPowerForCustomComponent(componentId);
     }
 
+    public int getCustomPowerComponentCount() {
+        return mPowerComponents.getCustomPowerComponentCount();
+    }
+
+    void setCustomPowerComponentNames(String[] customPowerComponentNames) {
+        mPowerComponents.setCustomPowerComponentNames(customPowerComponentNames);
+    }
+
+    /**
+     * Returns the name of the specified power component.
+     *
+     * @param componentId The ID of the custom power component.
+     */
+    public String getCustomPowerComponentName(int componentId) {
+        return mPowerComponents.getCustomPowerComponentName(componentId);
+    }
+
     /**
      * Returns the amount of time since BatteryStats reset used by the specified component, e.g.
      * CPU, WiFi etc.
      *
-     * @param componentId The ID of the time component, e.g.
-     *                    {@link UidBatteryConsumer#TIME_COMPONENT_CPU}.
+     * @param componentId The ID of the power component, e.g.
+     *                    {@link UidBatteryConsumer#POWER_COMPONENT_CPU}.
      * @return Amount of time in milliseconds.
      */
-    public long getUsageDurationMillis(@TimeComponent int componentId) {
+    public long getUsageDurationMillis(@PowerComponent int componentId) {
         return mPowerComponents.getUsageDurationMillis(componentId);
     }
 
@@ -188,9 +200,22 @@ public abstract class BatteryConsumer {
     protected abstract static class BaseBuilder<T extends BaseBuilder<?>> {
         final PowerComponents.Builder mPowerComponentsBuilder;
 
-        public BaseBuilder(int customPowerComponentCount, int customTimeComponentCount) {
-            mPowerComponentsBuilder = new PowerComponents.Builder(customPowerComponentCount,
-                    customTimeComponentCount);
+        public BaseBuilder(@NonNull String[] customPowerComponentNames,
+                boolean includePowerModels) {
+            mPowerComponentsBuilder = new PowerComponents.Builder(customPowerComponentNames,
+                    includePowerModels);
+        }
+
+        /**
+         * Sets the amount of drain attributed to the specified drain type, e.g. CPU, WiFi etc.
+         *
+         * @param componentId    The ID of the power component, e.g.
+         *                       {@link BatteryConsumer#POWER_COMPONENT_CPU}.
+         * @param componentPower Amount of consumed power in mAh.
+         */
+        @NonNull
+        public T setConsumedPower(@PowerComponent int componentId, double componentPower) {
+            return setConsumedPower(componentId, componentPower, POWER_MODEL_POWER_PROFILE);
         }
 
         /**
@@ -202,8 +227,9 @@ public abstract class BatteryConsumer {
          */
         @SuppressWarnings("unchecked")
         @NonNull
-        public T setConsumedPower(@PowerComponent int componentId, double componentPower) {
-            mPowerComponentsBuilder.setConsumedPower(componentId, componentPower);
+        public T setConsumedPower(@PowerComponent int componentId, double componentPower,
+                @PowerModel int powerModel) {
+            mPowerComponentsBuilder.setConsumedPower(componentId, componentPower, powerModel);
             return (T) this;
         }
 
@@ -223,13 +249,13 @@ public abstract class BatteryConsumer {
         /**
          * Sets the amount of time used by the specified component, e.g. CPU, WiFi etc.
          *
-         * @param componentId              The ID of the time component, e.g.
-         *                                 {@link UidBatteryConsumer#TIME_COMPONENT_CPU}.
+         * @param componentId              The ID of the power component, e.g.
+         *                                 {@link UidBatteryConsumer#POWER_COMPONENT_CPU}.
          * @param componentUsageTimeMillis Amount of time in microseconds.
          */
         @SuppressWarnings("unchecked")
         @NonNull
-        public T setUsageDurationMillis(@UidBatteryConsumer.TimeComponent int componentId,
+        public T setUsageDurationMillis(@UidBatteryConsumer.PowerComponent int componentId,
                 long componentUsageTimeMillis) {
             mPowerComponentsBuilder.setUsageDurationMillis(componentId, componentUsageTimeMillis);
             return (T) this;

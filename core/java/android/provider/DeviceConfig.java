@@ -108,6 +108,13 @@ public final class DeviceConfig {
     public static final String NAMESPACE_APP_HIBERNATION = "app_hibernation";
 
     /**
+     * Namespace for all AppSearch related features.
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_APPSEARCH = "appsearch";
+
+    /**
      * Namespace for app standby configurations.
      *
      * @hide
@@ -250,6 +257,14 @@ public final class DeviceConfig {
     public static final String NAMESPACE_JOB_SCHEDULER = "jobscheduler";
 
     /**
+     * Namespace for all media related features.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_MEDIA = "media";
+
+    /**
      * Namespace for all media native related features.
      *
      * @hide
@@ -358,6 +373,38 @@ public final class DeviceConfig {
     public static final String NAMESPACE_SETTINGS_STATS = "settings_stats";
 
     /**
+     * Namespace for all statsd java features that can be applied immediately.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_STATSD_JAVA = "statsd_java";
+
+    /**
+     * Namespace for all statsd java features that are applied on boot.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_STATSD_JAVA_BOOT = "statsd_java_boot";
+
+    /**
+     * Namespace for all statsd native features that can be applied immediately.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_STATSD_NATIVE = "statsd_native";
+
+    /**
+     * Namespace for all statsd native features that are applied on boot.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_STATSD_NATIVE_BOOT = "statsd_native_boot";
+
+    /**
      * Namespace for storage-related features.
      *
      * @deprecated Replace storage namespace with storage_native_boot.
@@ -456,7 +503,8 @@ public final class DeviceConfig {
      */
     @NonNull
     private static final List<String> PUBLIC_NAMESPACES =
-            Arrays.asList(NAMESPACE_TEXTCLASSIFIER, NAMESPACE_RUNTIME);
+            Arrays.asList(NAMESPACE_TEXTCLASSIFIER, NAMESPACE_RUNTIME, NAMESPACE_STATSD_JAVA,
+                    NAMESPACE_STATSD_JAVA_BOOT);
     /**
      * Privacy related properties definitions.
      *
@@ -503,38 +551,6 @@ public final class DeviceConfig {
      */
     public static final String NAMESPACE_CONNECTIVITY_THERMAL_POWER_MANAGER =
             "connectivity_thermal_power_manager";
-
-    /**
-     * Namespace for all statsd java features that can be applied immediately.
-     *
-     * @hide
-     */
-    @SystemApi
-    public static final String NAMESPACE_STATSD_JAVA = "statsd_java";
-
-    /**
-     * Namespace for all statsd java features that are applied on boot.
-     *
-     * @hide
-     */
-    @SystemApi
-    public static final String NAMESPACE_STATSD_JAVA_BOOT = "statsd_java_boot";
-
-    /**
-     * Namespace for all statsd native features that can be applied immediately.
-     *
-     * @hide
-     */
-    @SystemApi
-    public static final String NAMESPACE_STATSD_NATIVE = "statsd_native";
-
-    /**
-     * Namespace for all statsd native features that are applied on boot.
-     *
-     * @hide
-     */
-    @SystemApi
-    public static final String NAMESPACE_STATSD_NATIVE_BOOT = "statsd_native_boot";
 
     /**
      * Namespace for configuration related features.
@@ -646,7 +662,7 @@ public final class DeviceConfig {
      * @param name      The name of the property to look up.
      * @param defaultValue The value to return if the property does not exist or has no non-null
      *                     value.
-     * @return the corresponding value, or defaultValue if none exists.
+     * @return the correspondfing value, or defaultValue if none exists.
      * @hide
      */
     @SystemApi
@@ -784,10 +800,24 @@ public final class DeviceConfig {
     }
 
     /**
-     * Reset properties to their default values.
+     * Reset properties to their default values by removing the underlying values.
      * <p>
      * The method accepts an optional namespace parameter. If provided, only properties set within
      * that namespace will be reset. Otherwise, all properties will be reset.
+     * <p>
+     * Note: This method should only be used by {@link com.android.server.RescueParty}. It was
+     * designed to be used in the event of boot or crash loops caused by flag changes. It does not
+     * revert flag values to defaults - instead it removes the property entirely which causes the
+     * consumer of the flag to use hardcoded defaults upon retrieval.
+     * <p>
+     * To clear values for a namespace without removing the underlying properties, construct a
+     * {@link Properties} object with the caller's namespace and either an empty flag map, or some
+     * snapshot of flag values. Then use {@link #setProperties(Properties)} to remove all flags
+     * under the namespace, or set them to the values in the snapshot.
+     * <p>
+     * To revert values for testing, one should mock DeviceConfig using
+     * {@link com.android.server.testables.TestableDeviceConfig} where possible. Otherwise, fallback
+     * to using {@link #setProperties(Properties)} as outlined above.
      *
      * @param resetMode The reset mode to use.
      * @param namespace Optionally, the specific namespace which resets will be limited to.

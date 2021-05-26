@@ -43,8 +43,9 @@ public:
     ~RealVoldService() = default;
     binder::Status mountIncFs(
             const std::string& backingPath, const std::string& targetDir, int32_t flags,
+            const std::string& sysfsName,
             os::incremental::IncrementalFileSystemControlParcel* _aidl_return) const final {
-        return mInterface->mountIncFs(backingPath, targetDir, flags, _aidl_return);
+        return mInterface->mountIncFs(backingPath, targetDir, flags, sysfsName, _aidl_return);
     }
     binder::Status unmountIncFs(const std::string& dir) const final {
         return mInterface->unmountIncFs(dir);
@@ -55,8 +56,8 @@ public:
     }
     binder::Status setIncFsMountOptions(
             const ::android::os::incremental::IncrementalFileSystemControlParcel& control,
-            bool enableReadLogs) const final {
-        return mInterface->setIncFsMountOptions(control, enableReadLogs);
+            bool enableReadLogs, bool enableReadTimeouts) const final {
+        return mInterface->setIncFsMountOptions(control, enableReadLogs, enableReadTimeouts);
     }
 
 private:
@@ -134,6 +135,10 @@ private:
     } mLooper;
 };
 
+std::string IncFsWrapper::toString(FileId fileId) {
+    return incfs::toString(fileId);
+}
+
 class RealIncFs final : public IncFsWrapper {
 public:
     RealIncFs() = default;
@@ -173,9 +178,16 @@ public:
     FileId getFileId(const Control& control, std::string_view path) const final {
         return incfs::getFileId(control, path);
     }
-    std::string toString(FileId fileId) const final { return incfs::toString(fileId); }
     std::pair<IncFsBlockIndex, IncFsBlockIndex> countFilledBlocks(
             const Control& control, std::string_view path) const final {
+        if (incfs::features() & Features::v2) {
+            const auto counts = incfs::getBlockCount(control, path);
+            if (!counts) {
+                return {-errno, -errno};
+            }
+            return {counts->filledDataBlocks + counts->filledHashBlocks,
+                    counts->totalDataBlocks + counts->totalHashBlocks};
+        }
         const auto fileId = incfs::getFileId(control, path);
         const auto fd = incfs::openForSpecialOps(control, fileId);
         int res = fd.get();
@@ -197,6 +209,16 @@ public:
         }
         return {filledBlockCount, totalBlocksCount};
     }
+    incfs::LoadingState isFileFullyLoaded(const Control& control,
+                                          std::string_view path) const final {
+        return incfs::isFullyLoaded(control, path);
+    }
+    incfs::LoadingState isFileFullyLoaded(const Control& control, FileId id) const final {
+        return incfs::isFullyLoaded(control, id);
+    }
+    incfs::LoadingState isEverythingFullyLoaded(const Control& control) const final {
+        return incfs::isEverythingFullyLoaded(control);
+    }
     ErrorCode link(const Control& control, std::string_view from, std::string_view to) const final {
         return incfs::link(control, from, to);
     }
@@ -209,31 +231,48 @@ public:
     ErrorCode writeBlocks(std::span<const incfs::DataBlock> blocks) const final {
         return incfs::writeBlocks({blocks.data(), size_t(blocks.size())});
     }
-    WaitResult waitForPendingReads(const Control& control, std::chrono::milliseconds timeout,
-                                   std::vector<incfs::ReadInfo>* pendingReadsBuffer) const final {
+    ErrorCode reserveSpace(const Control& control, FileId id, IncFsSize size) const final {
+        return incfs::reserveSpace(control, id, size);
+    }
+    WaitResult waitForPendingReads(
+            const Control& control, std::chrono::milliseconds timeout,
+            std::vector<incfs::ReadInfoWithUid>* pendingReadsBuffer) const final {
         return incfs::waitForPendingReads(control, timeout, pendingReadsBuffer);
     }
     ErrorCode setUidReadTimeouts(const Control& control,
                                  const std::vector<android::os::incremental::PerUidReadTimeouts>&
                                          perUidReadTimeouts) const final {
-        std::vector<incfs::UidReadTimeouts> timeouts;
-        timeouts.resize(perUidReadTimeouts.size());
+        std::vector<incfs::UidReadTimeouts> timeouts(perUidReadTimeouts.size());
         for (int i = 0, size = perUidReadTimeouts.size(); i < size; ++i) {
-            auto&& timeout = timeouts[i];
+            auto& timeout = timeouts[i];
             const auto& perUidTimeout = perUidReadTimeouts[i];
             timeout.uid = perUidTimeout.uid;
             timeout.minTimeUs = perUidTimeout.minTimeUs;
             timeout.minPendingTimeUs = perUidTimeout.minPendingTimeUs;
             timeout.maxPendingTimeUs = perUidTimeout.maxPendingTimeUs;
         }
-
         return incfs::setUidReadTimeouts(control, timeouts);
+    }
+    ErrorCode forEachFile(const Control& control, FileCallback cb) const final {
+        return incfs::forEachFile(control,
+                                  [&](auto& control, FileId id) { return cb(control, id); });
+    }
+    ErrorCode forEachIncompleteFile(const Control& control, FileCallback cb) const final {
+        return incfs::forEachIncompleteFile(control, [&](auto& control, FileId id) {
+            return cb(control, id);
+        });
+    }
+    std::optional<Metrics> getMetrics(std::string_view sysfsName) const final {
+        return incfs::getMetrics(sysfsName);
+    }
+    std::optional<LastReadError> getLastReadError(const Control& control) const final {
+        return incfs::getLastReadError(control);
     }
 };
 
 static JNIEnv* getOrAttachJniEnv(JavaVM* jvm);
 
-class RealTimedQueueWrapper : public TimedQueueWrapper {
+class RealTimedQueueWrapper final : public TimedQueueWrapper {
 public:
     RealTimedQueueWrapper(JavaVM* jvm) {
         mThread = std::thread([this, jvm]() {
@@ -246,11 +285,11 @@ public:
         CHECK(!mThread.joinable()) << "call stop first";
     }
 
-    void addJob(MountId id, Milliseconds after, Job what) final {
+    void addJob(MountId id, Milliseconds timeout, Job what) final {
         const auto now = Clock::now();
         {
             std::unique_lock lock(mMutex);
-            mJobs.insert(TimedJob{id, now + after, std::move(what)});
+            mJobs.insert(TimedJob{id, now + timeout, std::move(what)});
         }
         mCondition.notify_all();
     }
@@ -271,29 +310,28 @@ public:
 private:
     void runTimers() {
         static constexpr TimePoint kInfinityTs{Clock::duration::max()};
-        TimePoint nextJobTs = kInfinityTs;
         std::unique_lock lock(mMutex);
         for (;;) {
-            mCondition.wait_until(lock, nextJobTs, [this, nextJobTs]() {
+            const TimePoint nextJobTs = mJobs.empty() ? kInfinityTs : mJobs.begin()->when;
+            mCondition.wait_until(lock, nextJobTs, [this, oldNextJobTs = nextJobTs]() {
                 const auto now = Clock::now();
-                const auto firstJobTs = !mJobs.empty() ? mJobs.begin()->when : kInfinityTs;
-                return !mRunning || firstJobTs <= now || firstJobTs < nextJobTs;
+                const auto newFirstJobTs = !mJobs.empty() ? mJobs.begin()->when : kInfinityTs;
+                return newFirstJobTs <= now || newFirstJobTs < oldNextJobTs || !mRunning;
             });
             if (!mRunning) {
                 return;
             }
 
             const auto now = Clock::now();
-            auto it = mJobs.begin();
-            // Always acquire begin(). We can't use it after unlock as mTimedJobs can change.
-            for (; it != mJobs.end() && it->when <= now; it = mJobs.begin()) {
+            // Always re-acquire begin(). We can't use it after unlock as mTimedJobs can change.
+            for (auto it = mJobs.begin(); it != mJobs.end() && it->when <= now;
+                 it = mJobs.begin()) {
                 auto jobNode = mJobs.extract(it);
 
                 lock.unlock();
                 jobNode.value().what();
                 lock.lock();
             }
-            nextJobTs = it != mJobs.end() ? it->when : kInfinityTs;
         }
     }
 
@@ -306,7 +344,7 @@ private:
         }
     };
     bool mRunning = true;
-    std::set<TimedJob> mJobs;
+    std::multiset<TimedJob> mJobs;
     std::condition_variable mCondition;
     std::mutex mMutex;
     std::thread mThread;
@@ -327,6 +365,14 @@ public:
             }
         }
     }
+};
+
+class RealClockWrapper final : public ClockWrapper {
+public:
+    RealClockWrapper() = default;
+    ~RealClockWrapper() = default;
+
+    TimePoint now() const final { return Clock::now(); }
 };
 
 RealServiceManager::RealServiceManager(sp<IServiceManager> serviceManager, JNIEnv* env)
@@ -386,6 +432,10 @@ std::unique_ptr<TimedQueueWrapper> RealServiceManager::getProgressUpdateJobQueue
 
 std::unique_ptr<FsWrapper> RealServiceManager::getFs() {
     return std::make_unique<RealFsWrapper>();
+}
+
+std::unique_ptr<ClockWrapper> RealServiceManager::getClock() {
+    return std::make_unique<RealClockWrapper>();
 }
 
 static JavaVM* getJavaVm(JNIEnv* env) {

@@ -24,6 +24,7 @@ import android.app.KeyguardManager;
 import android.content.Context;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.service.vr.IVrManager;
 import android.service.vr.IVrStateCallbacks;
@@ -56,7 +57,6 @@ import com.android.systemui.statusbar.NotificationViewHierarchyManager;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.notification.AboveShelfObserver;
-import com.android.systemui.statusbar.notification.ActivityLaunchAnimator;
 import com.android.systemui.statusbar.notification.DynamicPrivacyController;
 import com.android.systemui.statusbar.notification.NotificationEntryListener;
 import com.android.systemui.statusbar.notification.NotificationEntryManager;
@@ -116,7 +116,7 @@ public class StatusBarNotificationPresenter implements NotificationPresenter,
 
     private final AccessibilityManager mAccessibilityManager;
     private final KeyguardManager mKeyguardManager;
-    private final ActivityLaunchAnimator mActivityLaunchAnimator;
+    private final NotificationShadeWindowController mNotificationShadeWindowController;
     private final IStatusBarService mBarService;
     private final DynamicPrivacyController mDynamicPrivacyController;
     private boolean mReinflateNotificationsOnUserSwitched;
@@ -132,7 +132,7 @@ public class StatusBarNotificationPresenter implements NotificationPresenter,
             NotificationStackScrollLayoutController stackScrollerController,
             DozeScrimController dozeScrimController,
             ScrimController scrimController,
-            ActivityLaunchAnimator activityLaunchAnimator,
+            NotificationShadeWindowController notificationShadeWindowController,
             DynamicPrivacyController dynamicPrivacyController,
             KeyguardStateController keyguardStateController,
             KeyguardIndicationController keyguardIndicationController,
@@ -151,7 +151,7 @@ public class StatusBarNotificationPresenter implements NotificationPresenter,
         mShadeController = shadeController;
         mCommandQueue = commandQueue;
         mAboveShelfObserver = new AboveShelfObserver(stackScrollerController.getView());
-        mActivityLaunchAnimator = activityLaunchAnimator;
+        mNotificationShadeWindowController = notificationShadeWindowController;
         mAboveShelfObserver.setListener(statusBarWindow.findViewById(
                 R.id.notification_container_parent));
         mAccessibilityManager = context.getSystemService(AccessibilityManager.class);
@@ -187,7 +187,7 @@ public class StatusBarNotificationPresenter implements NotificationPresenter,
                         boolean removedByUser,
                         int reason) {
                     StatusBarNotificationPresenter.this.onNotificationRemoved(
-                            entry.getKey(), entry.getSbn());
+                            entry.getKey(), entry.getSbn(), reason);
                     if (removedByUser) {
                         maybeEndAmbientPulse();
                     }
@@ -271,8 +271,7 @@ public class StatusBarNotificationPresenter implements NotificationPresenter,
     @Override
     public boolean isCollapsing() {
         return mNotificationPanel.isCollapsing()
-                || mActivityLaunchAnimator.isAnimationPending()
-                || mActivityLaunchAnimator.isAnimationRunning();
+                || mNotificationShadeWindowController.isLaunchingActivity();
     }
 
     private void maybeEndAmbientPulse() {
@@ -301,13 +300,14 @@ public class StatusBarNotificationPresenter implements NotificationPresenter,
         mNotificationPanel.updateNotificationViews(reason);
     }
 
-    public void onNotificationRemoved(String key, StatusBarNotification old) {
+    private void onNotificationRemoved(String key, StatusBarNotification old, int reason) {
         if (SPEW) Log.d(TAG, "removeNotification key=" + key + " old=" + old);
 
         if (old != null) {
             if (CLOSE_PANEL_WHEN_EMPTIED && !hasActiveNotifications()
                     && !mNotificationPanel.isTracking() && !mNotificationPanel.isQsExpanded()) {
-                if (mStatusBarStateController.getState() == StatusBarState.SHADE) {
+                if (mStatusBarStateController.getState() == StatusBarState.SHADE
+                        && reason != NotificationListenerService.REASON_CLICK) {
                     mCommandQueue.animateCollapsePanels();
                 } else if (mStatusBarStateController.getState() == StatusBarState.SHADE_LOCKED
                         && !isCollapsing()) {
@@ -364,7 +364,6 @@ public class StatusBarNotificationPresenter implements NotificationPresenter,
                 MetricsEvent.ACTION_LS_NOTE,
                 0 /* lengthDp - N/A */, 0 /* velocityDp - N/A */);
         mLockscreenGestureLogger.log(LockscreenUiEvent.LOCKSCREEN_NOTIFICATION_FALSE_TOUCH);
-        mNotificationPanel.showTransientIndication(R.string.notification_tap_again);
         ActivatableNotificationView previousView = mNotificationPanel.getActivatedChild();
         if (previousView != null) {
             previousView.makeInactive(true /* animate */);

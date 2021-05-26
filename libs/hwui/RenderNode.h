@@ -35,10 +35,12 @@
 #include "DisplayList.h"
 #include "Matrix.h"
 #include "RenderProperties.h"
+#include "pipeline/skia/HolePunch.h"
 #include "pipeline/skia/SkiaDisplayList.h"
 #include "pipeline/skia/SkiaLayer.h"
 
 #include <vector>
+#include <pipeline/skia/StretchMask.h>
 
 class SkBitmap;
 class SkPaint;
@@ -125,6 +127,8 @@ public:
             }
         }
     }
+
+    StretchMask& getStretchMask() { return mStretchMask; }
 
     VirtualLightRefBase* getUserContext() const { return mUserContext.get(); }
 
@@ -284,6 +288,9 @@ private:
 
     UsageHint mUsageHint = UsageHint::Unknown;
 
+    bool mHasHolePunches;
+    StretchMask mStretchMask;
+
     // METHODS & FIELDS ONLY USED BY THE SKIA RENDERER
 public:
     /**
@@ -293,6 +300,8 @@ public:
     std::unique_ptr<skiapipeline::SkiaDisplayList> detachAvailableList() {
         return std::move(mAvailableDisplayList);
     }
+
+    bool hasHolePunches() { return mHasHolePunches; }
 
     /**
      * Attach unused displayList to this node for potential future reuse.

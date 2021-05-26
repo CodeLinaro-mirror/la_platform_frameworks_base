@@ -39,6 +39,7 @@ import android.util.PathParser;
 import android.view.LayoutInflater;
 
 import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 
 import com.android.internal.graphics.ColorUtils;
 import com.android.launcher3.icons.BitmapInfo;
@@ -118,19 +119,21 @@ public class BubbleViewInfoTask extends AsyncTask<Void, Void, BubbleViewInfoTask
     /**
      * Info necessary to render a bubble.
      */
-    static class BubbleViewInfo {
+    @VisibleForTesting
+    public static class BubbleViewInfo {
         BadgedImageView imageView;
         BubbleExpandedView expandedView;
         ShortcutInfo shortcutInfo;
         String appName;
         Bitmap bubbleBitmap;
-        Drawable badgeDrawable;
+        Bitmap badgeBitmap;
         int dotColor;
         Path dotPath;
         Bubble.FlyoutMessage flyoutMessage;
 
+        @VisibleForTesting
         @Nullable
-        static BubbleViewInfo populate(Context c, BubbleController controller,
+        public static BubbleViewInfo populate(Context c, BubbleController controller,
                 BubbleStackView stackView, BubbleIconFactory iconFactory, Bubble b,
                 boolean skipInflation) {
             BubbleViewInfo info = new BubbleViewInfo();
@@ -152,7 +155,8 @@ public class BubbleViewInfoTask extends AsyncTask<Void, Void, BubbleViewInfoTask
             }
 
             // App name & app icon
-            PackageManager pm = c.getPackageManager();
+            PackageManager pm = BubbleController.getPackageManagerForUser(c,
+                    b.getUser().getIdentifier());
             ApplicationInfo appInfo;
             Drawable badgedIcon;
             Drawable appIcon;
@@ -184,7 +188,7 @@ public class BubbleViewInfoTask extends AsyncTask<Void, Void, BubbleViewInfoTask
 
             BitmapInfo badgeBitmapInfo = iconFactory.getBadgeBitmap(badgedIcon,
                     b.isImportantConversation());
-            info.badgeDrawable = badgedIcon;
+            info.badgeBitmap = badgeBitmapInfo.icon;
             info.bubbleBitmap = iconFactory.createBadgedIconBitmap(bubbleDrawable,
                     null /* user */,
                     true /* shrinkNonAdaptiveIcons */).icon;
@@ -217,10 +221,16 @@ public class BubbleViewInfoTask extends AsyncTask<Void, Void, BubbleViewInfoTask
     static Drawable loadSenderAvatar(@NonNull final Context context, @Nullable final Icon icon) {
         Objects.requireNonNull(context);
         if (icon == null) return null;
-        if (icon.getType() == Icon.TYPE_URI || icon.getType() == Icon.TYPE_URI_ADAPTIVE_BITMAP) {
-            context.grantUriPermission(context.getPackageName(),
-                    icon.getUri(), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            if (icon.getType() == Icon.TYPE_URI
+                    || icon.getType() == Icon.TYPE_URI_ADAPTIVE_BITMAP) {
+                context.grantUriPermission(context.getPackageName(),
+                        icon.getUri(), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            }
+            return icon.loadDrawable(context);
+        } catch (Exception e) {
+            Log.w(TAG, "loadSenderAvatar failed: " + e.getMessage());
+            return null;
         }
-        return icon.loadDrawable(context);
     }
 }

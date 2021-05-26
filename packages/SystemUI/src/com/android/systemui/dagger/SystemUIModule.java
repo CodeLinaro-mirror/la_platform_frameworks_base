@@ -22,9 +22,11 @@ import android.content.Context;
 import androidx.annotation.Nullable;
 
 import com.android.internal.statusbar.IStatusBarService;
+import com.android.keyguard.clock.ClockModule;
 import com.android.keyguard.dagger.KeyguardBouncerComponent;
 import com.android.systemui.BootCompleteCache;
 import com.android.systemui.BootCompleteCacheImpl;
+import com.android.systemui.SystemUIFactory;
 import com.android.systemui.appops.dagger.AppOpsModule;
 import com.android.systemui.assist.AssistModule;
 import com.android.systemui.classifier.FalsingModule;
@@ -36,6 +38,7 @@ import com.android.systemui.dump.DumpManager;
 import com.android.systemui.fragments.FragmentService;
 import com.android.systemui.log.dagger.LogModule;
 import com.android.systemui.model.SysUiState;
+import com.android.systemui.plugins.BcSmartspaceDataPlugin;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.power.dagger.PowerModule;
 import com.android.systemui.recents.Recents;
@@ -72,6 +75,7 @@ import com.android.systemui.util.settings.SettingsUtilModule;
 import com.android.systemui.util.time.SystemClock;
 import com.android.systemui.util.time.SystemClockImpl;
 import com.android.systemui.volume.dagger.VolumeModule;
+import com.android.systemui.wallet.dagger.WalletModule;
 import com.android.systemui.wmshell.BubblesManager;
 import com.android.wm.shell.bubbles.Bubbles;
 
@@ -90,6 +94,7 @@ import dagger.Provides;
 @Module(includes = {
             AppOpsModule.class,
             AssistModule.class,
+            ClockModule.class,
             ControlsModule.class,
             DemoModeModule.class,
             FalsingModule.class,
@@ -107,7 +112,8 @@ import dagger.Provides;
             TunerModule.class,
             UserModule.class,
             UtilModule.class,
-            VolumeModule.class
+            VolumeModule.class,
+            WalletModule.class
         },
         subcomponents = {
             StatusBarComponent.class,
@@ -146,6 +152,9 @@ public abstract class SystemUIModule {
     abstract HeadsUpManager optionalHeadsUpManager();
 
     @BindsOptionalOf
+    abstract BcSmartspaceDataPlugin optionalBcSmartspaceDataPlugin();
+
+    @BindsOptionalOf
     abstract Recents optionalRecents();
 
     @BindsOptionalOf
@@ -154,6 +163,11 @@ public abstract class SystemUIModule {
     @SysUISingleton
     @Binds
     abstract SystemClock bindSystemClock(SystemClockImpl systemClock);
+
+    @Provides
+    static SystemUIFactory getSystemUIFactory() {
+        return SystemUIFactory.getInstance();
+    }
 
     // TODO: This should provided by the WM component
     /** Provides Optional of BubbleManager */

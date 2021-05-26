@@ -10,6 +10,7 @@ import androidx.test.filters.SmallTest
 import com.android.internal.logging.MetricsLogger
 import com.android.internal.logging.UiEventLogger
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.classifier.FalsingManagerFake
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.qs.QSHost
@@ -73,6 +74,7 @@ class AlarmTileTest : SysuiTestCase() {
             qsHost,
             testableLooper.looper,
             Handler(testableLooper.looper),
+            FalsingManagerFake(),
             metricsLogger,
             statusBarStateController,
             activityStarter,
@@ -120,10 +122,11 @@ class AlarmTileTest : SysuiTestCase() {
     @Test
     fun testActivityStartedWhenNullNextAlarm() {
         callbackCaptor.value.onNextAlarmChanged(null)
-        tile.click()
+        tile.click(null /* view */)
 
         testableLooper.processAllMessages()
-        verify(activityStarter).postStartActivityDismissingKeyguard(tile.defaultIntent, 0)
+        verify(activityStarter).postStartActivityDismissingKeyguard(tile.defaultIntent, 0,
+                null /* animationController */)
     }
 
     @Test
@@ -139,9 +142,10 @@ class AlarmTileTest : SysuiTestCase() {
     fun testActivityStartedWhenNextAlarm() {
         val alarmInfo = AlarmManager.AlarmClockInfo(1L, pendingIntent)
         callbackCaptor.value.onNextAlarmChanged(alarmInfo)
-        tile.click()
+        tile.click(null /* view */)
 
         testableLooper.processAllMessages()
-        verify(activityStarter).postStartActivityDismissingKeyguard(pendingIntent)
+        verify(activityStarter).postStartActivityDismissingKeyguard(pendingIntent,
+                null /* animationController */)
     }
 }

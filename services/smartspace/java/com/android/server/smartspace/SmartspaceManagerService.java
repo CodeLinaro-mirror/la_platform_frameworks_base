@@ -19,6 +19,7 @@ package com.android.server.smartspace;
 import static android.Manifest.permission.MANAGE_SMARTSPACE;
 import static android.app.ActivityManagerInternal.ALLOW_NON_FULL;
 import static android.content.Context.SMARTSPACE_SERVICE;
+import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -155,17 +156,19 @@ public class SmartspaceManagerService extends
                 @NonNull final Consumer<SmartspacePerUserService> c) {
             ActivityManagerInternal am = LocalServices.getService(ActivityManagerInternal.class);
             final int userId = am.handleIncomingUser(Binder.getCallingPid(), Binder.getCallingUid(),
-                    sessionId.getUserId(), false, ALLOW_NON_FULL, null, null);
+                    sessionId.getUserHandle().getIdentifier(), false, ALLOW_NON_FULL, null, null);
 
             if (DEBUG) {
                 Slog.d(TAG, "runForUserLocked:" + func + " from pid=" + Binder.getCallingPid()
                         + ", uid=" + Binder.getCallingUid());
             }
-            if (!(mServiceNameResolver.isTemporary(userId)
+            Context ctx = getContext();
+            if (!(ctx.checkCallingPermission(MANAGE_SMARTSPACE) == PERMISSION_GRANTED
+                    || mServiceNameResolver.isTemporary(userId)
                     || mActivityTaskManagerInternal.isCallerRecents(Binder.getCallingUid()))) {
 
-                String msg = "Permission Denial: " + func + " from pid=" + Binder.getCallingPid()
-                        + ", uid=" + Binder.getCallingUid();
+                String msg = "Permission Denial: Cannot call " + func + " from pid="
+                        + Binder.getCallingPid() + ", uid=" + Binder.getCallingUid();
                 Slog.w(TAG, msg);
                 throw new SecurityException(msg);
             }

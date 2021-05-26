@@ -17,10 +17,12 @@
 package android.content.pm;
 
 import android.annotation.IntDef;
+import android.annotation.SuppressLint;
 import android.annotation.TestApi;
 import android.app.compat.CompatChanges;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.Disabled;
+import android.compat.annotation.Overridable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -254,7 +256,7 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
      * @See {@link android.R.attr#maxAspectRatio}.
      * @hide
      */
-    public float maxAspectRatio;
+    private float mMaxAspectRatio;
 
     /**
      * Value indicating the minimum aspect ratio the activity supports.
@@ -263,7 +265,7 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
      * @See {@link android.R.attr#minAspectRatio}.
      * @hide
      */
-    public float minAspectRatio;
+    private float mMinAspectRatio;
 
     /**
      * Indicates that the activity works well with size changes like display changing size.
@@ -549,9 +551,18 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
     public static final int FLAG_INHERIT_SHOW_WHEN_LOCKED = 0x1;
 
     /**
+     * Bit in {@link #privateFlags} indicating whether a home sound effect should be played if the
+     * home app moves to front after the activity with this flag set.
+     * Set from the {@link android.R.attr#playHomeTransitionSound} attribute.
+     * @hide
+     */
+    public static final int PRIVATE_FLAG_HOME_TRANSITION_SOUND = 0x2;
+
+    /**
      * Options that have been set in the activity declaration in the manifest.
      * These include:
-     * {@link #FLAG_INHERIT_SHOW_WHEN_LOCKED}.
+     * {@link #FLAG_INHERIT_SHOW_WHEN_LOCKED},
+     * {@link #PRIVATE_FLAG_HOME_TRANSITION_SOUND}.
      * @hide
      */
     public int privateFlags;
@@ -886,11 +897,13 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
     };
 
     /**
-     * This change id forces the packages it is applied to to be resizable. We only allow resizing
-     * in fullscreen windowing mode, but not forcing the app into resizable multi-windowing mode.
+     * This change id forces the packages it is applied to be resizable. It won't change whether
+     * the app can be put into multi-windowing mode, but allow the app to resize when the window
+     * container resizes, such as display size change.
      * @hide
      */
     @ChangeId
+    @Overridable
     @Disabled
     @TestApi
     public static final long FORCE_RESIZE_APP = 174042936L; // buganizer id
@@ -900,6 +913,7 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
      * @hide
      */
     @ChangeId
+    @Overridable
     @Disabled
     @TestApi
     public static final long FORCE_NON_RESIZE_APP = 181136395L; // buganizer id
@@ -946,6 +960,80 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface SizeChangesSupportMode {}
+
+    /**
+     * This change id forces the packages it is applied to never have Display API sandboxing
+     * applied for a letterbox or SCM activity. The Display APIs will continue to provide
+     * DisplayArea bounds.
+     * @hide
+     */
+    @ChangeId
+    @Overridable
+    @Disabled
+    @TestApi
+    public static final long NEVER_SANDBOX_DISPLAY_APIS = 184838306L; // buganizer id
+
+    /**
+     * This change id forces the packages it is applied to always have Display API sandboxing
+     * applied, regardless of windowing mode. The Display APIs will always provide the app bounds.
+     * @hide
+     */
+    @ChangeId
+    @Overridable
+    @Disabled
+    @TestApi
+    public static final long ALWAYS_SANDBOX_DISPLAY_APIS = 185004937L; // buganizer id
+
+    /**
+     * This change id is the gatekeeper for all treatments that force a given min aspect ratio.
+     * Enabling this change will allow the following min aspect ratio treatments to be applied:
+     * OVERRIDE_MIN_ASPECT_RATIO_MEDIUM
+     * OVERRIDE_MIN_ASPECT_RATIO_LARGE
+     *
+     * If OVERRIDE_MIN_ASPECT_RATIO is applied, the min aspect ratio given in the app's
+     * manifest will be overridden to the largest enabled aspect ratio treatment unless the app's
+     * manifest value is higher.
+     * @hide
+     */
+    @ChangeId
+    @Overridable
+    @Disabled
+    @TestApi
+    public static final long OVERRIDE_MIN_ASPECT_RATIO = 174042980L; // buganizer id
+
+    /**
+     * This change id sets the activity's min aspect ratio to a medium value as defined by
+     * OVERRIDE_MIN_ASPECT_RATIO_MEDIUM_VALUE.
+     *
+     * This treatment only takes effect if OVERRIDE_MIN_ASPECT_RATIO is also enabled.
+     * @hide
+     */
+    @ChangeId
+    @Overridable
+    @Disabled
+    @TestApi
+    public static final long OVERRIDE_MIN_ASPECT_RATIO_MEDIUM = 180326845L; // buganizer id
+
+    /** @hide Medium override aspect ratio, currently 3:2.  */
+    @TestApi
+    public static final float OVERRIDE_MIN_ASPECT_RATIO_MEDIUM_VALUE = 3 / 2f;
+
+    /**
+     * This change id sets the activity's min aspect ratio to a large value as defined by
+     * OVERRIDE_MIN_ASPECT_RATIO_LARGE_VALUE.
+     *
+     * This treatment only takes effect if OVERRIDE_MIN_ASPECT_RATIO is also enabled.
+     * @hide
+     */
+    @ChangeId
+    @Overridable
+    @Disabled
+    @TestApi
+    public static final long OVERRIDE_MIN_ASPECT_RATIO_LARGE = 180326787L; // buganizer id
+
+    /** @hide Large override aspect ratio, currently 16:9 */
+    @TestApi
+    public static final float OVERRIDE_MIN_ASPECT_RATIO_LARGE_VALUE = 16 / 9f;
 
     /**
      * Convert Java change bits to native.
@@ -1086,6 +1174,13 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
      */
     public WindowLayout windowLayout;
 
+    /**
+     * Attribution tags for finer grained calls if a {@link
+     * android.content.Context#sendBroadcast(Intent, String)} is used with a permission.
+     */
+    @SuppressLint("MissingNullability")
+    public String[] attributionTags;
+
     public ActivityInfo() {
     }
 
@@ -1111,9 +1206,10 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
         requestedVrComponent = orig.requestedVrComponent;
         rotationAnimation = orig.rotationAnimation;
         colorMode = orig.colorMode;
-        maxAspectRatio = orig.maxAspectRatio;
-        minAspectRatio = orig.minAspectRatio;
+        mMaxAspectRatio = orig.mMaxAspectRatio;
+        mMinAspectRatio = orig.mMinAspectRatio;
         supportsSizeChanges = orig.supportsSizeChanges;
+        attributionTags = orig.attributionTags;
     }
 
     /**
@@ -1141,7 +1237,7 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
      * @hide
      */
     public boolean hasFixedAspectRatio() {
-        return maxAspectRatio != 0 || minAspectRatio != 0;
+        return getMaxAspectRatio() != 0 || getMinAspectRatio() != 0;
     }
 
     /**
@@ -1253,6 +1349,78 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
         return SIZE_CHANGES_UNSUPPORTED_METADATA;
     }
 
+    /**
+     * Returns if the activity should never be sandboxed to the activity window bounds.
+     * @hide
+     */
+    public boolean neverSandboxDisplayApis() {
+        return CompatChanges.isChangeEnabled(NEVER_SANDBOX_DISPLAY_APIS,
+                applicationInfo.packageName,
+                UserHandle.getUserHandleForUid(applicationInfo.uid));
+    }
+
+    /**
+     * Returns if the activity should always be sandboxed to the activity window bounds.
+     * @hide
+     */
+    public boolean alwaysSandboxDisplayApis() {
+        return CompatChanges.isChangeEnabled(ALWAYS_SANDBOX_DISPLAY_APIS,
+                applicationInfo.packageName,
+                UserHandle.getUserHandleForUid(applicationInfo.uid));
+    }
+
+    /** @hide */
+    public void setMaxAspectRatio(float maxAspectRatio) {
+        this.mMaxAspectRatio = maxAspectRatio;
+    }
+
+    /** @hide */
+    public float getMaxAspectRatio() {
+        return mMaxAspectRatio;
+    }
+
+    /** @hide */
+    public void setMinAspectRatio(float minAspectRatio) {
+        this.mMinAspectRatio = minAspectRatio;
+    }
+
+    /**
+     * Returns the min aspect ratio of this activity.
+     *
+     * This takes into account the minimum aspect ratio as defined in the app's manifest and
+     * possible overrides as per OVERRIDE_MIN_ASPECT_RATIO.
+     *
+     * In the rare cases where the manifest minimum aspect ratio is required, use
+     * {@code getManifestMinAspectRatio}.
+     * @hide
+     */
+    public float getMinAspectRatio() {
+        if (applicationInfo == null || !CompatChanges.isChangeEnabled(OVERRIDE_MIN_ASPECT_RATIO,
+                applicationInfo.packageName,
+                UserHandle.getUserHandleForUid(applicationInfo.uid))) {
+            return mMinAspectRatio;
+        }
+
+        if (CompatChanges.isChangeEnabled(OVERRIDE_MIN_ASPECT_RATIO_LARGE,
+                applicationInfo.packageName,
+                UserHandle.getUserHandleForUid(applicationInfo.uid))) {
+            return Math.max(OVERRIDE_MIN_ASPECT_RATIO_LARGE_VALUE, mMinAspectRatio);
+        }
+
+        if (CompatChanges.isChangeEnabled(OVERRIDE_MIN_ASPECT_RATIO_MEDIUM,
+                applicationInfo.packageName,
+                UserHandle.getUserHandleForUid(applicationInfo.uid))) {
+            return Math.max(OVERRIDE_MIN_ASPECT_RATIO_MEDIUM_VALUE, mMinAspectRatio);
+        }
+
+        return mMinAspectRatio;
+    }
+
+    /** @hide */
+    public float getManifestMinAspectRatio() {
+        return mMinAspectRatio;
+    }
+
     /** @hide */
     @UnsupportedAppUsage
     public static boolean isResizeableMode(int mode) {
@@ -1352,14 +1520,26 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
         if (requestedVrComponent != null) {
             pw.println(prefix + "requestedVrComponent=" + requestedVrComponent);
         }
-        if (maxAspectRatio != 0) {
-            pw.println(prefix + "maxAspectRatio=" + maxAspectRatio);
+        if (getMaxAspectRatio() != 0) {
+            pw.println(prefix + "maxAspectRatio=" + getMaxAspectRatio());
         }
-        if (minAspectRatio != 0) {
-            pw.println(prefix + "minAspectRatio=" + minAspectRatio);
+        if (getMinAspectRatio() != 0) {
+            pw.println(prefix + "minAspectRatio=" + getMinAspectRatio());
+            if (getManifestMinAspectRatio() !=  getMinAspectRatio()) {
+                pw.println(prefix + "getManifestMinAspectRatio=" + getManifestMinAspectRatio());
+            }
         }
         if (supportsSizeChanges) {
             pw.println(prefix + "supportsSizeChanges=true");
+        }
+        if (attributionTags != null && attributionTags.length > 0) {
+            StringBuilder tags = new StringBuilder();
+            tags.append(attributionTags[0]);
+            for (int i = 1; i < attributionTags.length; i++) {
+                tags.append(", ");
+                tags.append(attributionTags[i]);
+            }
+            pw.println(prefix + "attributionTags=[" + tags + "]");
         }
         super.dumpBack(pw, prefix, dumpFlags);
     }
@@ -1403,9 +1583,10 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
         dest.writeString8(requestedVrComponent);
         dest.writeInt(rotationAnimation);
         dest.writeInt(colorMode);
-        dest.writeFloat(maxAspectRatio);
-        dest.writeFloat(minAspectRatio);
+        dest.writeFloat(mMaxAspectRatio);
+        dest.writeFloat(mMinAspectRatio);
         dest.writeBoolean(supportsSizeChanges);
+        dest.writeString8Array(attributionTags);
     }
 
     /**
@@ -1522,9 +1703,10 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
         requestedVrComponent = source.readString8();
         rotationAnimation = source.readInt();
         colorMode = source.readInt();
-        maxAspectRatio = source.readFloat();
-        minAspectRatio = source.readFloat();
+        mMaxAspectRatio = source.readFloat();
+        mMinAspectRatio = source.readFloat();
         supportsSizeChanges = source.readBoolean();
+        attributionTags = source.createString8Array();
     }
 
     /**

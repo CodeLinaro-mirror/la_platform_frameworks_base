@@ -17,6 +17,7 @@
 package com.android.server.biometrics.sensors.face.hidl;
 
 import android.annotation.NonNull;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.res.Resources;
 import android.hardware.biometrics.BiometricAuthenticator;
@@ -27,6 +28,8 @@ import android.hardware.biometrics.face.V1_0.IBiometricsFace;
 import android.hardware.face.FaceManager;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.os.VibrationEffect;
+import android.provider.Settings;
 import android.util.Slog;
 
 import com.android.internal.R;
@@ -47,7 +50,8 @@ class FaceAuthenticationClient extends AuthenticationClient<IBiometricsFace> {
 
     private static final String TAG = "FaceAuthenticationClient";
 
-
+    @NonNull private final ContentResolver mContentResolver;
+    private final boolean mCustomHaptics;
     private final UsageStats mUsageStats;
 
     private final int[] mBiometricPromptIgnoreList;
@@ -62,11 +66,11 @@ class FaceAuthenticationClient extends AuthenticationClient<IBiometricsFace> {
             @NonNull ClientMonitorCallbackConverter listener, int targetUserId, long operationId,
             boolean restricted, String owner, int cookie, boolean requireConfirmation, int sensorId,
             boolean isStrongBiometric, int statsClient, @NonNull LockoutTracker lockoutTracker,
-            @NonNull UsageStats usageStats, boolean isKeyguard) {
+            @NonNull UsageStats usageStats, boolean allowBackgroundAuthentication) {
         super(context, lazyDaemon, token, listener, targetUserId, operationId, restricted,
                 owner, cookie, requireConfirmation, sensorId, isStrongBiometric,
                 BiometricsProtoEnums.MODALITY_FACE, statsClient, null /* taskStackListener */,
-                lockoutTracker, isKeyguard);
+                lockoutTracker, allowBackgroundAuthentication);
         mUsageStats = usageStats;
 
         final Resources resources = getContext().getResources();
@@ -78,6 +82,10 @@ class FaceAuthenticationClient extends AuthenticationClient<IBiometricsFace> {
                 R.array.config_face_acquire_keyguard_ignorelist);
         mKeyguardIgnoreListVendor = resources.getIntArray(
                 R.array.config_face_acquire_vendor_keyguard_ignorelist);
+
+        mContentResolver = context.getContentResolver();
+        mCustomHaptics = Settings.Global.getInt(mContentResolver,
+                "face_custom_success_error", 0) == 1;
     }
 
     @Override
@@ -187,5 +195,25 @@ class FaceAuthenticationClient extends AuthenticationClient<IBiometricsFace> {
 
         final boolean shouldSend = shouldSend(acquireInfo, vendorCode);
         onAcquiredInternal(acquireInfo, vendorCode, shouldSend);
+    }
+
+    @Override
+    protected @NonNull VibrationEffect getSuccessVibrationEffect() {
+        if (!mCustomHaptics) {
+            return super.getSuccessVibrationEffect();
+        }
+
+        return getVibration(Settings.Global.getString(mContentResolver,
+                "face_success_type"), super.getSuccessVibrationEffect());
+    }
+
+    @Override
+    protected @NonNull VibrationEffect getErrorVibrationEffect() {
+        if (!mCustomHaptics) {
+            return super.getErrorVibrationEffect();
+        }
+
+        return getVibration(Settings.Global.getString(mContentResolver,
+                "face_error_type"), super.getErrorVibrationEffect());
     }
 }

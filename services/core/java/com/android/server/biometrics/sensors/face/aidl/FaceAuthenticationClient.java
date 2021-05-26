@@ -19,6 +19,7 @@ package com.android.server.biometrics.sensors.face.aidl;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.NotificationManager;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.res.Resources;
 import android.hardware.biometrics.BiometricAuthenticator;
@@ -32,6 +33,8 @@ import android.hardware.face.FaceAuthenticationFrame;
 import android.hardware.face.FaceManager;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.os.VibrationEffect;
+import android.provider.Settings;
 import android.util.Slog;
 
 import com.android.internal.R;
@@ -57,6 +60,9 @@ class FaceAuthenticationClient extends AuthenticationClient<ISession> implements
     @Nullable private final NotificationManager mNotificationManager;
     @Nullable private ICancellationSignal mCancellationSignal;
 
+    @NonNull private final ContentResolver mContentResolver;
+    private final boolean mCustomHaptics;
+
     private final int[] mBiometricPromptIgnoreList;
     private final int[] mBiometricPromptIgnoreListVendor;
     private final int[] mKeyguardIgnoreList;
@@ -69,11 +75,11 @@ class FaceAuthenticationClient extends AuthenticationClient<ISession> implements
             @NonNull ClientMonitorCallbackConverter listener, int targetUserId, long operationId,
             boolean restricted, String owner, int cookie, boolean requireConfirmation, int sensorId,
             boolean isStrongBiometric, int statsClient, @NonNull UsageStats usageStats,
-            @NonNull LockoutCache lockoutCache, boolean isKeyguard) {
+            @NonNull LockoutCache lockoutCache, boolean allowBackgroundAuthentication) {
         super(context, lazyDaemon, token, listener, targetUserId, operationId, restricted,
                 owner, cookie, requireConfirmation, sensorId, isStrongBiometric,
                 BiometricsProtoEnums.MODALITY_FACE, statsClient, null /* taskStackListener */,
-                lockoutCache, isKeyguard);
+                lockoutCache, allowBackgroundAuthentication);
         mUsageStats = usageStats;
         mLockoutCache = lockoutCache;
         mNotificationManager = context.getSystemService(NotificationManager.class);
@@ -87,12 +93,16 @@ class FaceAuthenticationClient extends AuthenticationClient<ISession> implements
                 R.array.config_face_acquire_keyguard_ignorelist);
         mKeyguardIgnoreListVendor = resources.getIntArray(
                 R.array.config_face_acquire_vendor_keyguard_ignorelist);
+
+        mContentResolver = context.getContentResolver();
+        mCustomHaptics = Settings.Global.getInt(mContentResolver,
+                "face_custom_success_error", 0) == 1;
     }
 
     @Override
     protected void startHalOperation() {
         try {
-            mCancellationSignal = getFreshDaemon().authenticate(mSequentialId, mOperationId);
+            mCancellationSignal = getFreshDaemon().authenticate(mOperationId);
         } catch (RemoteException e) {
             Slog.e(TAG, "Remote exception when requesting auth", e);
             onError(BiometricFaceConstants.FACE_ERROR_HW_UNAVAILABLE, 0 /* vendorCode */);
@@ -242,5 +252,25 @@ class FaceAuthenticationClient extends AuthenticationClient<ISession> implements
         } catch (RemoteException e) {
             Slog.e(TAG, "Remote exception", e);
         }
+    }
+
+    @Override
+    protected @NonNull VibrationEffect getSuccessVibrationEffect() {
+        if (!mCustomHaptics) {
+            return super.getSuccessVibrationEffect();
+        }
+
+        return getVibration(Settings.Global.getString(mContentResolver,
+                "face_success_type"), super.getSuccessVibrationEffect());
+    }
+
+    @Override
+    protected @NonNull VibrationEffect getErrorVibrationEffect() {
+        if (!mCustomHaptics) {
+            return super.getErrorVibrationEffect();
+        }
+
+        return getVibration(Settings.Global.getString(mContentResolver,
+                "face_error_type"), super.getErrorVibrationEffect());
     }
 }

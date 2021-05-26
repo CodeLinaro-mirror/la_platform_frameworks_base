@@ -83,6 +83,7 @@ import android.util.ArraySet;
 import android.util.Log;
 import android.util.MemoryIntArray;
 import android.view.Display;
+import android.view.Window;
 import android.view.WindowManager.LayoutParams;
 
 import com.android.internal.annotations.GuardedBy;
@@ -433,6 +434,20 @@ public final class Settings {
             "android.settings.REQUEST_SCHEDULE_EXACT_ALARM";
 
     /**
+     * Activity Action: Show settings to allow configuration of
+     * {@link Manifest.permission#MANAGE_MEDIA} permission
+     *
+     * Input: Optionally, the Intent's data URI can specify the application package name to
+     * directly invoke the management GUI specific to the package name. For example
+     * "package:com.my.app".
+     * <p>
+     * Output: Nothing.
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_REQUEST_MANAGE_MEDIA =
+            "android.settings.REQUEST_MANAGE_MEDIA";
+
+    /**
      * Activity Action: Show settings to allow configuration of cross-profile access for apps
      *
      * Input: Optionally, the Intent's data URI can specify the application package name to
@@ -456,11 +471,10 @@ public final class Settings {
      * to be shown, with the "package" scheme. That is "package:com.my.app".
      * <p>
      * Output: Nothing.
-     * @hide
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_APP_OPEN_BY_DEFAULT_SETTINGS =
-            "com.android.settings.APP_OPEN_BY_DEFAULT_SETTINGS";
+            "android.settings.APP_OPEN_BY_DEFAULT_SETTINGS";
 
     /**
      * Activity Action: Show trusted credentials settings, opening to the user tab,
@@ -1054,8 +1068,8 @@ public final class Settings {
      * Output: Nothing.
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
-    public static final String ACTION_MANAGE_ALL_SUBSCRIPTIONS_SETTINGS =
-            "android.settings.MANAGE_ALL_SUBSCRIPTIONS_SETTINGS";
+    public static final String ACTION_MANAGE_ALL_SIM_PROFILES_SETTINGS =
+            "android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS";
 
     /**
      * Activity Action: Show screen for controlling which apps can draw on top of other apps.
@@ -2646,7 +2660,6 @@ public final class Settings {
     private static final class ContentProviderHolder {
         private final Object mLock = new Object();
 
-        @GuardedBy("mLock")
         private final Uri mUri;
         @GuardedBy("mLock")
         @UnsupportedAppUsage
@@ -2740,7 +2753,7 @@ public final class Settings {
                     arg.putBoolean(CALL_METHOD_OVERRIDEABLE_BY_RESTORE_KEY, true);
                 }
                 IContentProvider cp = mProviderHolder.getProvider(cr);
-                cp.call(cr.getPackageName(), cr.getAttributionTag(),
+                cp.call(cr.getAttributionSource(),
                         mProviderHolder.mUri.getAuthority(), mCallSetCommand, name, arg);
             } catch (RemoteException e) {
                 Log.w(TAG, "Can't set key " + name + " in " + mUri, e);
@@ -2760,7 +2773,7 @@ public final class Settings {
                 args.putString(CALL_METHOD_PREFIX_KEY, prefix);
                 args.putSerializable(CALL_METHOD_FLAGS_KEY, keyValues);
                 IContentProvider cp = mProviderHolder.getProvider(cr);
-                Bundle bundle = cp.call(cr.getPackageName(), cr.getAttributionTag(),
+                Bundle bundle = cp.call(cr.getAttributionSource(),
                         mProviderHolder.mUri.getAuthority(),
                         mCallSetAllCommand, null, args);
                 return bundle.getBoolean(KEY_CONFIG_SET_RETURN);
@@ -2777,13 +2790,12 @@ public final class Settings {
             // Settings.Global and is not annotated as @Readable.
             // Notice that a key string that is not defined in any of the Settings.* classes will
             // still be regarded as readable.
-            // TODO(b/175024829): provide a register method.
-            if (!Settings.isInSystemServer() && !isSystemOrPrivilegedApp()
+            if (!isCallerExemptFromReadableRestriction()
                     && mAllFields.contains(name) && !mReadableFields.contains(name)) {
                 throw new SecurityException(
-                        "Settings key: <" + name + "> is not readable. From S+, new public "
-                        + "settings keys need to be annotated with @Readable unless they are "
-                        + "annotated with @hide.");
+                        "Settings key: <" + name + "> is not readable. From S+, settings keys "
+                                + "annotated with @hide are restricted to system_server and system "
+                                + "apps only, unless they are annotated with @Readable.");
             }
             final boolean isSelf = (userHandle == UserHandle.myUserId());
             int currentGeneration = -1;
@@ -2848,14 +2860,14 @@ public final class Settings {
                     if (Settings.isInSystemServer() && Binder.getCallingUid() != Process.myUid()) {
                         final long token = Binder.clearCallingIdentity();
                         try {
-                            b = cp.call(cr.getPackageName(), cr.getAttributionTag(),
+                            b = cp.call(cr.getAttributionSource(),
                                     mProviderHolder.mUri.getAuthority(), mCallGetCommand, name,
                                     args);
                         } finally {
                             Binder.restoreCallingIdentity(token);
                         }
                     } else {
-                        b = cp.call(cr.getPackageName(), cr.getAttributionTag(),
+                        b = cp.call(cr.getAttributionSource(),
                                 mProviderHolder.mUri.getAuthority(), mCallGetCommand, name, args);
                     }
                     if (b != null) {
@@ -2925,13 +2937,13 @@ public final class Settings {
                 if (Settings.isInSystemServer() && Binder.getCallingUid() != Process.myUid()) {
                     final long token = Binder.clearCallingIdentity();
                     try {
-                        c = cp.query(cr.getPackageName(), cr.getAttributionTag(), mUri,
+                        c = cp.query(cr.getAttributionSource(), mUri,
                                 SELECT_VALUE_PROJECTION, queryArgs, null);
                     } finally {
                         Binder.restoreCallingIdentity(token);
                     }
                 } else {
-                    c = cp.query(cr.getPackageName(), cr.getAttributionTag(), mUri,
+                    c = cp.query(cr.getAttributionSource(), mUri,
                             SELECT_VALUE_PROJECTION, queryArgs, null);
                 }
                 if (c == null) {
@@ -2959,7 +2971,10 @@ public final class Settings {
             }
         }
 
-        private static boolean isSystemOrPrivilegedApp() {
+        private static boolean isCallerExemptFromReadableRestriction() {
+            if (Settings.isInSystemServer()) {
+                return true;
+            }
             if (UserHandle.getAppId(Binder.getCallingUid()) < Process.FIRST_APPLICATION_UID) {
                 return true;
             }
@@ -2968,7 +2983,9 @@ public final class Settings {
                 return false;
             }
             final ApplicationInfo applicationInfo = application.getApplicationInfo();
-            return applicationInfo.isSystemApp() || applicationInfo.isPrivilegedApp()
+            final boolean isTestOnly =
+                    (applicationInfo.flags & ApplicationInfo.FLAG_TEST_ONLY) != 0;
+            return isTestOnly || applicationInfo.isSystemApp() || applicationInfo.isPrivilegedApp()
                     || applicationInfo.isSignedWithPlatformKey();
         }
 
@@ -3037,7 +3054,7 @@ public final class Settings {
                 }
 
                 // Fetch all flags for the namespace at once for caching purposes
-                Bundle b = cp.call(cr.getPackageName(), cr.getAttributionTag(),
+                Bundle b = cp.call(cr.getAttributionSource(),
                         mProviderHolder.mUri.getAuthority(), mCallListCommand, null, args);
                 if (b == null) {
                     // Invalid response, return an empty map
@@ -4126,7 +4143,6 @@ public final class Settings {
          * unset or a match is not made, only the standard color modes will be restored.
          * @hide
          */
-        @Readable
         public static final String DISPLAY_COLOR_MODE_VENDOR_HINT =
                 "display_color_mode_vendor_hint";
 
@@ -4642,19 +4658,20 @@ public final class Settings {
         public static final String AUTO_TIME_ZONE = Global.AUTO_TIME_ZONE;
 
         /**
-         * Display times as 12 or 24 hours
-         *   12
-         *   24
+         * Display the user's times, e.g. in the status bar, as 12 or 24 hours.
+         * <ul>
+         *    <li>24 = 24 hour</li>
+         *    <li>12 = 12 hour</li>
+         *    <li>[unset] = use the device locale's default</li>
+         * </ul>
          */
         @Readable
         public static final String TIME_12_24 = "time_12_24";
 
         /**
-         * Date format string
-         *   mm/dd/yyyy
-         *   dd/mm/yyyy
-         *   yyyy/mm/dd
+         * @deprecated No longer used. Use {@link #TIME_12_24} instead.
          */
+        @Deprecated
         @Readable
         public static final String DATE_FORMAT = "date_format";
 
@@ -5864,7 +5881,7 @@ public final class Settings {
                 }
                 arg.putInt(CALL_METHOD_RESET_MODE_KEY, mode);
                 IContentProvider cp = sProviderHolder.getProvider(resolver);
-                cp.call(resolver.getPackageName(), resolver.getAttributionTag(),
+                cp.call(resolver.getAttributionSource(),
                         sProviderHolder.mUri.getAuthority(), CALL_METHOD_RESET_SECURE, null, arg);
             } catch (RemoteException e) {
                 Log.w(TAG, "Can't reset do defaults for " + CONTENT_URI, e);
@@ -6163,7 +6180,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String CAMERA_AUTOROTATE = "camera_autorotate";
 
         /**
@@ -6277,6 +6293,20 @@ public final class Settings {
         @Readable
         public static final String SELECTED_INPUT_METHOD_SUBTYPE =
                 "selected_input_method_subtype";
+
+        /**
+         * The {@link android.view.inputmethod.InputMethodInfo.InputMethodInfo#getId() ID} of the
+         * default voice input method.
+         * <p>
+         * This stores the last known default voice IME. If the related system config value changes,
+         * this is reset by InputMethodManagerService.
+         * <p>
+         * This IME is not necessarily in the enabled IME list. That state is still stored in
+         * {@link #ENABLED_INPUT_METHODS}.
+         *
+         * @hide
+         */
+        public static final String DEFAULT_VOICE_INPUT_METHOD = "default_voice_input_method";
 
         /**
          * Setting to record the history of input method subtype, holding the pair of ID of IME
@@ -6576,7 +6606,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String ALWAYS_ON_VPN_APP = "always_on_vpn_app";
 
         /**
@@ -6719,12 +6748,10 @@ public final class Settings {
         /**
          * The current location time zone detection enabled state for the user.
          *
-         * See {@link
-         * android.app.timezonedetector.TimeZoneDetector#getCapabilities} for access. See {@link
-         * android.app.timezonedetector.TimeZoneDetector#updateConfiguration} to update.
+         * See {@link android.app.time.TimeManager#getTimeZoneCapabilitiesAndConfig} for access.
+         * See {@link android.app.time.TimeManager#updateTimeZoneConfiguration} to update.
          * @hide
          */
-        @Readable
         public static final String LOCATION_TIME_ZONE_DETECTION_ENABLED =
                 "location_time_zone_detection_enabled";
 
@@ -7038,6 +7065,15 @@ public final class Settings {
         @Readable
         public static final String ENABLED_ACCESSIBILITY_SERVICES =
             "enabled_accessibility_services";
+
+        /**
+         * List of the notified non-accessibility category accessibility services.
+         *
+         * @hide
+         */
+        @Readable
+        public static final String NOTIFIED_NON_ACCESSIBILITY_CATEGORY_SERVICES =
+                "notified_non_accessibility_category_services";
 
         /**
          * List of the accessibility services to which the user has granted
@@ -7515,7 +7551,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String REDUCE_BRIGHT_COLORS_ACTIVATED =
                 "reduce_bright_colors_activated";
 
@@ -7525,7 +7560,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String REDUCE_BRIGHT_COLORS_LEVEL =
                 "reduce_bright_colors_level";
 
@@ -7534,7 +7568,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String REDUCE_BRIGHT_COLORS_PERSIST_ACROSS_REBOOTS =
                 "reduce_bright_colors_persist_across_reboots";
 
@@ -8245,7 +8278,6 @@ public final class Settings {
          * @see #MATCH_CONTENT_FRAMERATE_ALWAYS
          * @hide
          */
-        @Readable
         public static final String MATCH_CONTENT_FRAME_RATE =
                 "match_content_frame_rate";
 
@@ -8369,6 +8401,13 @@ public final class Settings {
         public static final String DOZE_WAKE_DISPLAY_GESTURE = "doze_wake_display_gesture";
 
         /**
+         * Gesture that wakes up the display on quick pickup, toggling between
+         * {@link Display.STATE_OFF} and {@link Display.STATE_DOZE}.
+         * @hide
+         */
+        public static final String DOZE_QUICK_PICKUP_GESTURE = "doze_quick_pickup_gesture";
+
+        /**
          * Whether the device should suppress the current doze configuration and disable dozing.
          * @hide
          */
@@ -8471,38 +8510,51 @@ public final class Settings {
          * For user preference if swipe bottom to expand notification gesture enabled.
          * @hide
          */
-        @Readable
         public static final String SWIPE_BOTTOM_TO_NOTIFICATION_ENABLED =
                 "swipe_bottom_to_notification_enabled";
+
+        /**
+         * Controls whether One-Handed mode is currently activated.
+         * @hide
+         */
+        public static final String ONE_HANDED_MODE_ACTIVATED = "one_handed_mode_activated";
 
         /**
          * For user preference if One-Handed Mode enabled.
          * @hide
          */
-        @Readable
         public static final String ONE_HANDED_MODE_ENABLED = "one_handed_mode_enabled";
 
         /**
          * For user preference if One-Handed Mode timeout.
          * @hide
          */
-        @Readable
         public static final String ONE_HANDED_MODE_TIMEOUT = "one_handed_mode_timeout";
 
         /**
          * For user taps app to exit One-Handed Mode.
          * @hide
          */
-        @Readable
         public static final String TAPS_APP_TO_EXIT = "taps_app_to_exit";
 
         /**
          * Internal use, one handed mode tutorial showed times.
          * @hide
          */
-        @Readable
         public static final String ONE_HANDED_TUTORIAL_SHOW_COUNT =
                 "one_handed_tutorial_show_count";
+
+        /**
+         * Indicates whether ui translation is enabled.
+         * <p>
+         * Type: int (0 for false, 1 for true)
+         *
+         * @hide
+         */
+        @SystemApi
+        @Readable
+        @SuppressLint("NoSettingsProvider")
+        public static final String UI_TRANSLATION_ENABLED = "ui_translation_enabled";
 
         /**
          * The current night mode that has been selected by the user.  Owned
@@ -8526,7 +8578,6 @@ public final class Settings {
          * The last computed night mode bool the last time the phone was on
          * @hide
          */
-        @Readable
         public static final String UI_NIGHT_MODE_LAST_COMPUTED = "ui_night_mode_last_computed";
 
         /**
@@ -8945,7 +8996,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String EMERGENCY_GESTURE_ENABLED = "emergency_gesture_enabled";
 
         /**
@@ -8953,7 +9003,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String EMERGENCY_GESTURE_SOUND_ENABLED =
                 "emergency_gesture_sound_enabled";
 
@@ -9093,6 +9142,20 @@ public final class Settings {
                 "biometric_debug_enabled";
 
         /**
+         * Whether or not biometric is allowed on Keyguard.
+         * @hide
+         */
+        @Readable
+        public static final String BIOMETRIC_KEYGUARD_ENABLED = "biometric_keyguard_enabled";
+
+        /**
+         * Whether or not biometric is allowed for apps (through BiometricPrompt).
+         * @hide
+         */
+        @Readable
+        public static final String BIOMETRIC_APP_ENABLED = "biometric_app_enabled";
+
+        /**
          * Whether the assist gesture should be enabled.
          *
          * @hide
@@ -9136,6 +9199,22 @@ public final class Settings {
         @SystemApi
         @Readable
         public static final String ASSIST_GESTURE_SETUP_COMPLETE = "assist_gesture_setup_complete";
+
+        /**
+         * Whether the assistant can be triggered by a touch gesture.
+         *
+         * @hide
+         */
+        public static final String ASSIST_TOUCH_GESTURE_ENABLED =
+                "assist_touch_gesture_enabled";
+
+        /**
+         * Whether the assistant can be triggered by long-pressing the home button
+         *
+         * @hide
+         */
+        public static final String ASSIST_LONG_PRESS_HOME_ENABLED =
+                "assist_long_press_home_enabled";
 
         /**
          * Control whether Trust Agents are in active unlock or extend unlock mode.
@@ -9355,9 +9434,12 @@ public final class Settings {
          * 0 indicates disabled and 1 indicates enabled. A non existent value should be treated as
          * enabled.
          *
+         * @deprecated Controls are migrated to Quick Settings, rendering this unnecessary and will
+         *             be removed in a future release.
          * @hide
          */
         @Readable
+        @Deprecated
         public static final String CONTROLS_ENABLED = "controls_enabled";
 
         /**
@@ -9423,6 +9505,18 @@ public final class Settings {
         @Readable
         public static final String BUBBLE_IMPORTANT_CONVERSATIONS
                 = "bubble_important_conversations";
+
+        /**
+         * When enabled, notifications able to bubble will display an affordance allowing the user
+         * to bubble them.
+         * The value is boolean (1 to enable or 0 to disable).
+         *
+         * @hide
+         */
+        @TestApi
+        @SuppressLint("NoSettingsProvider")
+        @Readable
+        public static final String NOTIFICATION_BUBBLES = "notification_bubbles";
 
         /**
          * Whether notifications are dismissed by a right-to-left swipe (instead of a left-to-right
@@ -9686,7 +9780,6 @@ public final class Settings {
          * @see Settings.Secure#MEDIA_CONTROLS_RESUME
          * @hide
          */
-        @Readable
         public static final String MEDIA_CONTROLS_RESUME_BLOCKED = "qs_media_resumption_blocked";
 
         /**
@@ -9701,6 +9794,12 @@ public final class Settings {
         @Readable
         public static final String ACCESSIBILITY_MAGNIFICATION_MODE =
                 "accessibility_magnification_mode";
+
+        /**
+         * Magnification mode value that is a default value for the magnification logging feature.
+         * @hide
+         */
+        public static final int ACCESSIBILITY_MAGNIFICATION_MODE_NONE = 0x0;
 
         /**
          * Magnification mode value that magnifies whole display.
@@ -9744,7 +9843,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String ACCESSIBILITY_SHOW_WINDOW_MAGNIFICATION_PROMPT =
                 "accessibility_show_window_magnification_prompt";
 
@@ -9761,7 +9859,6 @@ public final class Settings {
          * @see #ACCESSIBILITY_BUTTON_MODE_FLOATING_MENU
          * @hide
          */
-        @Readable
         public static final String ACCESSIBILITY_BUTTON_MODE =
                 "accessibility_button_mode";
 
@@ -9790,7 +9887,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String ACCESSIBILITY_FLOATING_MENU_SIZE =
                 "accessibility_floating_menu_size";
 
@@ -9803,7 +9899,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String ACCESSIBILITY_FLOATING_MENU_ICON_TYPE =
                 "accessibility_floating_menu_icon_type";
 
@@ -9812,7 +9907,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String ACCESSIBILITY_FLOATING_MENU_FADE_ENABLED =
                 "accessibility_floating_menu_fade_enabled";
 
@@ -9822,7 +9916,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String ACCESSIBILITY_FLOATING_MENU_OPACITY =
                 "accessibility_floating_menu_opacity";
 
@@ -9831,7 +9924,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String ADAPTIVE_CONNECTIVITY_ENABLED = "adaptive_connectivity_enabled";
 
         /**
@@ -9855,7 +9947,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String ASSIST_HANDLES_LEARNING_TIME_ELAPSED_MILLIS =
                 "reminder_exp_learning_time_elapsed";
 
@@ -9864,9 +9955,24 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String ASSIST_HANDLES_LEARNING_EVENT_COUNT =
                 "reminder_exp_learning_event_count";
+
+        /**
+         * Whether to show clipboard access notifications.
+         *
+         * @hide
+         */
+        public static final String CLIPBOARD_SHOW_ACCESS_NOTIFICATIONS =
+                "clipboard_show_access_notifications";
+
+        /**
+         * If nonzero, nas has not been updated to reflect new changes.
+         * @hide
+         */
+        @Readable
+        public static final String NAS_SETTINGS_UPDATED = "nas_settings_updated";
+
 
         /**
          * These entries are considered common between the personal and the managed profile,
@@ -9883,6 +9989,7 @@ public final class Settings {
             CLONE_TO_MANAGED_PROFILE.add(LOCATION_CHANGER);
             CLONE_TO_MANAGED_PROFILE.add(LOCATION_MODE);
             CLONE_TO_MANAGED_PROFILE.add(SHOW_IME_WITH_HARD_KEYBOARD);
+            CLONE_TO_MANAGED_PROFILE.add(NOTIFICATION_BUBBLES);
         }
 
         /** @hide */
@@ -9976,7 +10083,9 @@ public final class Settings {
          * Whether the notification bubbles are globally enabled
          * The value is boolean (1 or 0).
          * @hide
+         * @deprecated moved to secure settings.
          */
+        @Deprecated
         @TestApi
         @Readable
         public static final String NOTIFICATION_BUBBLES = "notification_bubbles";
@@ -10142,15 +10251,16 @@ public final class Settings {
         public static final int WIFI_SLEEP_POLICY_NEVER = 2;
 
         /**
-         * Value to specify if the user prefers the date, time and time zone
-         * to be automatically fetched from the network (NITZ). 1=yes, 0=no
+         * Value to specify if the device's UTC system clock should be set automatically, e.g. using
+         * telephony signals like NITZ, or other sources like GNSS or NTP. 1=yes, 0=no (manual)
          */
         @Readable
         public static final String AUTO_TIME = "auto_time";
 
         /**
-         * Value to specify if the user prefers the time zone
-         * to be automatically fetched from the network (NITZ). 1=yes, 0=no
+         * Value to specify if the device's time zone system property should be set automatically,
+         * e.g. using telephony signals like MCC and NITZ, or other mechanisms like the location.
+         * 1=yes, 0=no (manual).
          */
         @Readable
         public static final String AUTO_TIME_ZONE = "auto_time_zone";
@@ -10565,7 +10675,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String DEVELOPMENT_WM_DISPLAY_SETTINGS_PATH =
                 "wm_display_settings_path";
 
@@ -10745,7 +10854,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String HDMI_CONTROL_SEND_STANDBY_ON_SLEEP =
                 "hdmi_control_send_standby_on_sleep";
 
@@ -13102,7 +13210,7 @@ public final class Settings {
          * @see #ENABLE_RESTRICTED_BUCKET
          * @hide
          */
-        public static final int DEFAULT_ENABLE_RESTRICTED_BUCKET = 0;
+        public static final int DEFAULT_ENABLE_RESTRICTED_BUCKET = 1;
 
         /**
          * Whether or not app auto restriction is enabled. When it is enabled, settings app will
@@ -13261,23 +13369,40 @@ public final class Settings {
                 "adb_allowed_connection_time";
 
         /**
-         * Scaling factor for normal window animations. Setting to 0 will
-         * disable window animations.
+         * Scaling factor for normal window animations.
+         *
+         * The value is a float. Setting to 0.0f will disable window animations.
          */
         @Readable
         public static final String WINDOW_ANIMATION_SCALE = "window_animation_scale";
 
         /**
-         * Scaling factor for activity transition animations. Setting to 0 will
-         * disable window animations.
+         * Setting to disable cross-window blurs. This includes window blur behind, (see
+         *  {@link LayoutParams#setBlurBehindRadius}) and window background blur (see
+         *  {@link Window#setBackgroundBlurRadius}).
+         *
+         * The value is a boolean (1 or 0).
+         * @hide
+         */
+        @TestApi
+        @Readable
+        @SuppressLint("NoSettingsProvider")
+        public static final String DISABLE_WINDOW_BLURS = "disable_window_blurs";
+
+        /**
+         * Scaling factor for activity transition animations.
+         *
+         * The value is a float. Setting to 0.0f will disable window animations.
          */
         @Readable
         public static final String TRANSITION_ANIMATION_SCALE = "transition_animation_scale";
 
         /**
          * Scaling factor for Animator-based animations. This affects both the
-         * start delay and duration of all such animations. Setting to 0 will
-         * cause animations to end immediately. The default value is 1.
+         * start delay and duration of all such animations.
+         *
+         * The value is a float. Setting to 0.0f will cause animations to end immediately.
+         * The default value is 1.0f.
          */
         @Readable
         public static final String ANIMATOR_DURATION_SCALE = "animator_duration_scale";
@@ -13772,6 +13897,12 @@ public final class Settings {
         public static final int ENCODED_SURROUND_OUTPUT_MANUAL = 3;
 
         /**
+         * The maximum value for surround sound output mode in Android S.
+         * @hide
+         */
+        public static final int ENCODED_SURROUND_SC_MAX = ENCODED_SURROUND_OUTPUT_MANUAL;
+
+        /**
          * Set to ENCODED_SURROUND_OUTPUT_AUTO,
          * ENCODED_SURROUND_OUTPUT_NEVER,
          * ENCODED_SURROUND_OUTPUT_ALWAYS or
@@ -14021,6 +14152,40 @@ public final class Settings {
         /** @hide */
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final int ZEN_MODE_ALARMS = 3;
+
+        /**
+         * A comma-separated list of HDR formats that have been disabled by the user.
+         * <p>
+         * If present, these formats will not be reported to apps, even if the display supports
+         * them. This list is treated as empty if the ARE_USER_DISABLED_HDR_FORMATS_ALLOWED setting
+         * is '1'.
+         * </p>
+         * @hide
+         */
+        @TestApi
+        @Readable
+        @SuppressLint("NoSettingsProvider")
+        public static final String USER_DISABLED_HDR_FORMATS = "user_disabled_hdr_formats";
+
+        /**
+         * Whether or not user-disabled HDR formats are allowed.
+         * <p>
+         * The value is boolean (1 or 0). The value '1' means the user preference for disabling a
+         * format is ignored, and the disabled formats are still reported to apps (if supported
+         * by the display). The value '0' means the user-disabled formats are not reported to
+         * apps, even if the display supports them.
+         * </p><p>
+         * The list of formats disabled by the user are contained in the
+         * USER_DISABLED_HDR_FORMATS setting. This list is treated as empty when the value of
+         * this setting is '1'.
+         * </p>
+         * @hide
+         */
+        @TestApi
+        @Readable
+        @SuppressLint("NoSettingsProvider")
+        public static final String ARE_USER_DISABLED_HDR_FORMATS_ALLOWED =
+                "are_user_disabled_hdr_formats_allowed";
 
         /** @hide */ public static String zenModeToString(int mode) {
             if (mode == ZEN_MODE_IMPORTANT_INTERRUPTIONS) return "ZEN_MODE_IMPORTANT_INTERRUPTIONS";
@@ -14423,7 +14588,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String EUICC_SWITCH_SLOT_TIMEOUT_MILLIS =
                 "euicc_switch_slot_timeout_millis";
 
@@ -14433,7 +14597,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String ENABLE_MULTI_SLOT_TIMEOUT_MILLIS =
                 "enable_multi_slot_timeout_millis";
 
@@ -14557,7 +14720,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String FORCE_NON_DEBUGGABLE_FINAL_BUILD_FOR_COMPAT =
                 "force_non_debuggable_final_build_for_compat";
 
@@ -14617,6 +14779,15 @@ public final class Settings {
         public static final String POWER_BUTTON_VERY_LONG_PRESS =
                 "power_button_very_long_press";
 
+        /**
+         * Overrides internal R.integer.config_keyChordPowerVolumeUp.
+         * Allowable values detailed in frameworks/base/core/res/res/values/config.xml.
+         * Used by PhoneWindowManager.
+         * @hide
+         */
+        @Readable
+        public static final String KEY_CHORD_POWER_VOLUME_UP =
+                "key_chord_power_volume_up";
 
         /**
          * Keyguard should be on the left hand side of the screen, for wide screen layouts.
@@ -14637,7 +14808,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String ONE_HANDED_KEYGUARD_SIDE = "one_handed_keyguard_side";
 
         /**
@@ -14678,7 +14848,7 @@ public final class Settings {
             MOVED_TO_SECURE.add(Global.ZEN_SETTINGS_SUGGESTION_VIEWED);
             MOVED_TO_SECURE.add(Global.CHARGING_SOUNDS_ENABLED);
             MOVED_TO_SECURE.add(Global.CHARGING_VIBRATION_ENABLED);
-
+            MOVED_TO_SECURE.add(Global.NOTIFICATION_BUBBLES);
         }
 
         /** @hide */
@@ -14850,7 +15020,7 @@ public final class Settings {
                 }
                 arg.putInt(CALL_METHOD_RESET_MODE_KEY, mode);
                 IContentProvider cp = sProviderHolder.getProvider(resolver);
-                cp.call(resolver.getPackageName(), resolver.getAttributionTag(),
+                cp.call(resolver.getAttributionSource(),
                         sProviderHolder.mUri.getAuthority(), CALL_METHOD_RESET_GLOBAL, null, arg);
             } catch (RemoteException e) {
                 Log.w(TAG, "Can't reset do defaults for " + CONTENT_URI, e);
@@ -15320,7 +15490,6 @@ public final class Settings {
          * The value 1 - enable, 0 - disable
          * @hide
          */
-        @Readable
         public static final String NOTIFICATION_FEEDBACK_ENABLED = "notification_feedback_enabled";
 
         /**
@@ -15563,7 +15732,6 @@ public final class Settings {
          *
          * @hide
          */
-        @Readable
         public static final String GNSS_SATELLITE_BLOCKLIST = "gnss_satellite_blocklist";
 
         /**
@@ -15768,7 +15936,6 @@ public final class Settings {
          * 1: Enabled
          * @hide
          */
-        @Readable
         public static final String SHOW_PEOPLE_SPACE = "show_people_space";
 
         /**
@@ -15779,7 +15946,6 @@ public final class Settings {
          * 2: All conversations
          * @hide
          */
-        @Readable
         public static final String PEOPLE_SPACE_CONVERSATION_TYPE =
                 "people_space_conversation_type";
 
@@ -15790,53 +15956,7 @@ public final class Settings {
          * 1: Enabled
          * @hide
          */
-        @Readable
         public static final String SHOW_NEW_NOTIF_DISMISS = "show_new_notif_dismiss";
-
-        /**
-         * Whether to enforce the new notification rules (aka rules that are only applied to
-         * notifications from apps targeting S) on all notifications.
-         * - Collapsed custom view notifications will get the new 76dp height instead of 106dp.
-         * - Custom view notifications will be partially decorated.
-         * - Large icons will be given an aspect ratio of up to 16:9.
-         *
-         * Values are:
-         * 0: Disabled (Only apps targeting S will receive the new rules)
-         * 1: Enabled (All apps will receive the new rules)
-         * @hide
-         */
-        @Readable
-        public static final String BACKPORT_S_NOTIF_RULES = "backport_s_notif_rules";
-
-        /**
-         * The decoration to put on fully custom views that target S.
-         *
-         * <p>Values are:
-         * <br>0: DECORATION_NONE: no decorations.
-         * <br>1: DECORATION_MINIMAL: most minimal template; just the icon and the expander.
-         * <br>2: DECORATION_PARTIAL: basic template without the top line.
-         * <br>3: DECORATION_FULL_COMPATIBLE: basic template with the top line; 40dp of height.
-         * <br>4: DECORATION_FULL_CONSTRAINED: basic template with the top line;  28dp of height.
-         * <p>See {@link android.app.Notification.DevFlags} for more details.
-         * @hide
-         */
-        @Readable
-        public static final String FULLY_CUSTOM_VIEW_NOTIF_DECORATION =
-                "fully_custom_view_notif_decoration";
-
-        /**
-         * The decoration to put on decorated custom views that target S.
-         *
-         * <p>Values are:
-         * <br>2: DECORATION_PARTIAL: basic template without the top line.
-         * <br>3: DECORATION_FULL_COMPATIBLE: basic template with the top line; 40dp of height.
-         * <br>4: DECORATION_FULL_CONSTRAINED: basic template with the top line;  28dp of height.
-         * <p>See {@link android.app.Notification.DevFlags} for more details.
-         * @hide
-         */
-        @Readable
-        public static final String DECORATED_CUSTOM_VIEW_NOTIF_DECORATION =
-                "decorated_custom_view_notif_decoration";
 
         /**
          * Block untrusted touches mode.
@@ -15890,7 +16010,6 @@ public final class Settings {
          * 1: enabled
          * @hide
          */
-        @Readable
         public static final String RESTRICTED_NETWORKING_MODE = "restricted_networking_mode";
     }
 
@@ -16040,7 +16159,7 @@ public final class Settings {
                     arg.putString(Settings.CALL_METHOD_PREFIX_KEY, createPrefix(namespace));
                 }
                 IContentProvider cp = sProviderHolder.getProvider(resolver);
-                cp.call(resolver.getPackageName(), resolver.getAttributionTag(),
+                cp.call(resolver.getAttributionSource(),
                         sProviderHolder.mUri.getAuthority(), CALL_METHOD_RESET_CONFIG, null, arg);
             } catch (RemoteException e) {
                 Log.w(TAG, "Can't reset to defaults for " + DeviceConfig.CONTENT_URI, e);
@@ -16069,7 +16188,7 @@ public final class Settings {
                 arg.putInt(CALL_METHOD_USER_KEY, userHandle);
                 arg.putParcelable(CALL_METHOD_MONITOR_CALLBACK_KEY, callback);
                 IContentProvider cp = sProviderHolder.getProvider(resolver);
-                cp.call(resolver.getPackageName(), resolver.getAttributionTag(),
+                cp.call(resolver.getAttributionSource(),
                         sProviderHolder.mUri.getAuthority(),
                         CALL_METHOD_REGISTER_MONITOR_CALLBACK_CONFIG, null, arg);
             } catch (RemoteException e) {

@@ -32,6 +32,7 @@ import static android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS;
 import static android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
 import static android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
 import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_FORCE_DRAW_BAR_BACKGROUNDS;
+import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_NO_MOVE_ANIMATION;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -74,11 +75,12 @@ import android.util.Log;
 import android.util.Pair;
 import android.util.SparseArray;
 import android.util.TypedValue;
+import android.view.ViewRoot;
 import android.view.ContextThemeWrapper;
 import android.view.CrossWindowBlurListeners;
 import android.view.Gravity;
 import android.view.IRotationWatcher.Stub;
-import android.view.IScrollCaptureCallbacks;
+import android.view.IScrollCaptureResponseListener;
 import android.view.IWindowManager;
 import android.view.InputDevice;
 import android.view.InputEvent;
@@ -2508,6 +2510,7 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
             if (mDecor.mForceWindowDrawsBarBackgrounds) {
                 params.privateFlags |= PRIVATE_FLAG_FORCE_DRAW_BAR_BACKGROUNDS;
             }
+            params.privateFlags |= PRIVATE_FLAG_NO_MOVE_ANIMATION;
         }
         if (a.getBoolean(R.styleable.Window_windowLightStatusBar, false)) {
             decor.setSystemUiVisibility(
@@ -3940,12 +3943,12 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
     /**
      * System request to begin scroll capture.
      *
-     * @param callbacks to receive responses
+     * @param listener to receive the response
      * @hide
      */
     @Override
-    public void requestScrollCapture(IScrollCaptureCallbacks callbacks) {
-        getViewRootImpl().dispatchScrollCaptureRequest(callbacks);
+    public void requestScrollCapture(IScrollCaptureResponseListener listener) {
+        getViewRootImpl().dispatchScrollCaptureRequest(listener);
     }
 
     /**
@@ -3978,5 +3981,10 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
     @Nullable
     public View getNavigationBarBackgroundView() {
         return mDecor != null ? mDecor.getNavigationBarBackgroundView() : null;
+    }
+
+    @Override
+    public ViewRoot getViewRoot() {
+        return getViewRootImplOrNull();
     }
 }

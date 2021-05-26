@@ -20,6 +20,7 @@ import android.annotation.CallSuper;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.ConfigurationInfo;
 import android.content.pm.FeatureGroupInfo;
 import android.content.pm.FeatureInfo;
@@ -34,6 +35,7 @@ import android.content.pm.parsing.component.ParsedPermissionGroup;
 import android.content.pm.parsing.component.ParsedProcess;
 import android.content.pm.parsing.component.ParsedProvider;
 import android.content.pm.parsing.component.ParsedService;
+import android.content.pm.parsing.component.ParsedUsesPermission;
 import android.os.Bundle;
 import android.util.SparseArray;
 import android.util.SparseIntArray;
@@ -89,7 +91,7 @@ public interface ParsingPackage extends ParsingPackageRead {
 
     ParsingPackage addReqFeature(FeatureInfo reqFeature);
 
-    ParsingPackage addRequestedPermission(String permission);
+    ParsingPackage addUsesPermission(ParsedUsesPermission parsedUsesPermission);
 
     ParsingPackage addService(ParsedService parsedService);
 
@@ -198,6 +200,8 @@ public interface ParsingPackage extends ParsingPackageRead {
 
     ParsingPackage setProfileableByShell(boolean profileableByShell);
 
+    ParsingPackage setProfileable(boolean profileable);
+
     ParsingPackage setRequestLegacyExternalStorage(boolean requestLegacyExternalStorage);
 
     ParsingPackage setAllowNativeHeapPointerTagging(boolean allowNativeHeapPointerTagging);
@@ -250,11 +254,15 @@ public interface ParsingPackage extends ParsingPackageRead {
 
     ParsingPackage setEnabled(boolean enabled);
 
-    ParsingPackage setGwpAsanMode(int gwpAsanMode);
+    ParsingPackage setGwpAsanMode(@ApplicationInfo.GwpAsanMode int gwpAsanMode);
 
-    ParsingPackage setMemtagMode(int memtagMode);
+    ParsingPackage setMemtagMode(@ApplicationInfo.MemtagMode int memtagMode);
 
-    ParsingPackage setNativeHeapZeroInit(@Nullable Boolean nativeHeapZeroInit);
+    ParsingPackage setNativeHeapZeroInitialized(
+            @ApplicationInfo.NativeHeapZeroInitialized int nativeHeapZeroInitialized);
+
+    ParsingPackage setRequestRawExternalStorageAccess(
+            @Nullable Boolean requestRawExternalStorageAccess);
 
     ParsingPackage setCrossProfile(boolean crossProfile);
 

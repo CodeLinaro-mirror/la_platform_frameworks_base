@@ -31,6 +31,7 @@ import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dagger.qualifiers.UiBackground;
 import com.android.systemui.keyguard.WakefulnessLifecycle;
+import com.android.systemui.people.widget.PeopleSpaceWidgetManager;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.settings.UserContextProvider;
 import com.android.systemui.statusbar.FeatureFlags;
@@ -68,9 +69,9 @@ import com.android.systemui.statusbar.notification.logging.NotificationPanelLogg
 import com.android.systemui.statusbar.notification.row.ChannelEditorDialogController;
 import com.android.systemui.statusbar.notification.row.NotificationGutsManager;
 import com.android.systemui.statusbar.notification.row.OnUserInteractionCallback;
-import com.android.systemui.statusbar.notification.row.PriorityOnboardingDialogController;
 import com.android.systemui.statusbar.notification.stack.NotificationSectionsManager;
 import com.android.systemui.statusbar.notification.stack.StackScrollAlgorithm;
+import com.android.systemui.statusbar.phone.ShadeController;
 import com.android.systemui.statusbar.phone.StatusBar;
 import com.android.systemui.statusbar.policy.HeadsUpManager;
 import com.android.systemui.util.leak.LeakDetector;
@@ -133,15 +134,17 @@ public interface NotificationsModule {
             AccessibilityManager accessibilityManager,
             HighPriorityProvider highPriorityProvider,
             INotificationManager notificationManager,
+            NotificationEntryManager notificationEntryManager,
+            PeopleSpaceWidgetManager peopleSpaceWidgetManager,
             LauncherApps launcherApps,
             ShortcutManager shortcutManager,
             ChannelEditorDialogController channelEditorDialogController,
             UserContextProvider contextTracker,
-            Provider<PriorityOnboardingDialogController.Builder> builderProvider,
             AssistantFeedbackController assistantFeedbackController,
             Optional<BubblesManager> bubblesManagerOptional,
             UiEventLogger uiEventLogger,
-            OnUserInteractionCallback onUserInteractionCallback) {
+            OnUserInteractionCallback onUserInteractionCallback,
+            ShadeController shadeController) {
         return new NotificationGutsManager(
                 context,
                 statusBarLazy,
@@ -150,15 +153,17 @@ public interface NotificationsModule {
                 accessibilityManager,
                 highPriorityProvider,
                 notificationManager,
+                notificationEntryManager,
+                peopleSpaceWidgetManager,
                 launcherApps,
                 shortcutManager,
                 channelEditorDialogController,
                 contextTracker,
-                builderProvider,
                 assistantFeedbackController,
                 bubblesManagerOptional,
                 uiEventLogger,
-                onUserInteractionCallback);
+                onUserInteractionCallback,
+                shadeController);
     }
 
     /** Provides an instance of {@link VisualStabilityManager} */

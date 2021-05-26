@@ -16,34 +16,30 @@
 
 package com.android.systemui.people;
 
-import android.app.people.ConversationChannel;
-import android.app.people.IPeopleManager;
-import android.app.people.PeopleSpaceTile;
 import android.content.ContentProvider;
 import android.content.ContentValues;
-import android.content.Context;
-import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
-import android.os.ServiceManager;
 import android.os.UserHandle;
 import android.util.Log;
 import android.widget.RemoteViews;
 
+import com.android.systemui.people.widget.PeopleSpaceWidgetManager;
 import com.android.systemui.shared.system.PeopleProviderUtils;
+
+import javax.inject.Inject;
 
 /** API that returns a People Tile preview. */
 public class PeopleProvider extends ContentProvider {
-
-    LauncherApps mLauncherApps;
-    IPeopleManager mPeopleManager;
-
     private static final String TAG = "PeopleProvider";
     private static final boolean DEBUG = PeopleSpaceUtils.DEBUG;
     private static final String EMPTY_STRING = "";
+
+    @Inject
+    PeopleSpaceWidgetManager mPeopleSpaceWidgetManager;
 
     @Override
     public Bundle call(String method, String arg, Bundle extras) {
@@ -55,18 +51,6 @@ public class PeopleProvider extends ContentProvider {
         if (!PeopleProviderUtils.GET_PEOPLE_TILE_PREVIEW_METHOD.equals(method)) {
             Log.w(TAG, "Invalid method");
             throw new IllegalArgumentException("Invalid method");
-        }
-
-        // If services are not set as mocks in tests, fetch them now.
-        mPeopleManager = mPeopleManager != null ? mPeopleManager
-                : IPeopleManager.Stub.asInterface(
-                        ServiceManager.getService(Context.PEOPLE_SERVICE));
-        mLauncherApps = mLauncherApps != null ? mLauncherApps
-                : getContext().getSystemService(LauncherApps.class);
-
-        if (mPeopleManager == null || mLauncherApps == null) {
-            Log.w(TAG, "Null system managers");
-            return null;
         }
 
         if (extras == null) {
@@ -94,23 +78,16 @@ public class PeopleProvider extends ContentProvider {
             throw new IllegalArgumentException("Null user handle");
         }
 
-        ConversationChannel channel;
-        try {
-            channel = mPeopleManager.getConversation(
-                    packageName, userHandle.getIdentifier(), shortcutId);
-        } catch (Exception e) {
-            Log.w(TAG, "Exception getting tiles: " + e);
+        if (mPeopleSpaceWidgetManager == null) {
+            Log.e(TAG, "Could not initialize people widget manager");
             return null;
         }
-        PeopleSpaceTile tile = PeopleSpaceUtils.getTile(channel, mLauncherApps);
-
-        if (tile == null) {
-            if (DEBUG) Log.i(TAG, "No tile was returned");
+        RemoteViews view =
+                mPeopleSpaceWidgetManager.getPreview(shortcutId, userHandle, packageName, extras);
+        if (view == null) {
+            if (DEBUG) Log.d(TAG, "No preview available for shortcutId: " + shortcutId);
             return null;
         }
-
-        if (DEBUG) Log.i(TAG, "Returning tile preview for shortcutId: " + shortcutId);
-        RemoteViews view = PeopleSpaceUtils.createRemoteViews(getContext(), tile, 0);
         final Bundle bundle = new Bundle();
         bundle.putParcelable(PeopleProviderUtils.RESPONSE_KEY_REMOTE_VIEWS, view);
         return bundle;
@@ -118,8 +95,8 @@ public class PeopleProvider extends ContentProvider {
 
     private boolean doesCallerHavePermission() {
         return getContext().checkPermission(
-                    PeopleProviderUtils.GET_PEOPLE_TILE_PREVIEW_PERMISSION,
-                    Binder.getCallingPid(), Binder.getCallingUid())
+                PeopleProviderUtils.GET_PEOPLE_TILE_PREVIEW_PERMISSION,
+                Binder.getCallingPid(), Binder.getCallingUid())
                 == PackageManager.PERMISSION_GRANTED;
     }
 

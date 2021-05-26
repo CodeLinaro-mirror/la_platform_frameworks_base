@@ -59,12 +59,6 @@ import java.util.Objects;
  * constraint on the JobInfo object that you are creating. Otherwise, the builder would throw an
  * exception when building. From Android version {@link Build.VERSION_CODES#Q} and onwards, it is
  * valid to schedule jobs with no constraints.
- * <p> In Android version {@link Build.VERSION_CODES#LOLLIPOP}, jobs had a maximum execution time
- * of one minute. Starting with Android version {@link Build.VERSION_CODES#M} and ending with
- * Android version {@link Build.VERSION_CODES#R}, jobs had a maximum execution time of 10 minutes.
- * Starting from Android version {@link Build.VERSION_CODES#S}, jobs will still be stopped after
- * 10 minutes if the system is busy or needs the resources, but if not, jobs may continue running
- * longer than 10 minutes.
  */
 public class JobInfo implements Parcelable {
     private static String TAG = "JobInfo";
@@ -1027,6 +1021,41 @@ public class JobInfo implements Parcelable {
             mJobId = jobId;
         }
 
+        /**
+         * Creates a new Builder of JobInfo from an existing instance.
+         * @hide
+         */
+        public Builder(@NonNull JobInfo job) {
+            mJobId = job.getId();
+            mJobService = job.getService();
+            mExtras = job.getExtras();
+            mTransientExtras = job.getTransientExtras();
+            mClipData = job.getClipData();
+            mClipGrantFlags = job.getClipGrantFlags();
+            mPriority = job.getPriority();
+            mFlags = job.getFlags();
+            mConstraintFlags = job.getConstraintFlags();
+            mNetworkRequest = job.getRequiredNetwork();
+            mNetworkDownloadBytes = job.getEstimatedNetworkDownloadBytes();
+            mNetworkUploadBytes = job.getEstimatedNetworkUploadBytes();
+            mTriggerContentUris = job.getTriggerContentUris() != null
+                    ? new ArrayList<>(Arrays.asList(job.getTriggerContentUris())) : null;
+            mTriggerContentUpdateDelay = job.getTriggerContentUpdateDelay();
+            mTriggerContentMaxDelay = job.getTriggerContentMaxDelay();
+            mIsPersisted = job.isPersisted();
+            mMinLatencyMillis = job.getMinLatencyMillis();
+            mMaxExecutionDelayMillis = job.getMaxExecutionDelayMillis();
+            mIsPeriodic = job.isPeriodic();
+            mHasEarlyConstraint = job.hasEarlyConstraint();
+            mHasLateConstraint = job.hasLateConstraint();
+            mIntervalMillis = job.getIntervalMillis();
+            mFlexMillis = job.getFlexMillis();
+            mInitialBackoffMillis = job.getInitialBackoffMillis();
+            // mBackoffPolicySet isn't set but it's fine since this is copying from an already valid
+            // job.
+            mBackoffPolicy = job.getBackoffPolicy();
+        }
+
         /** @hide */
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public Builder setPriority(int priority) {
@@ -1404,7 +1433,10 @@ public class JobInfo implements Parcelable {
         }
 
         /**
-         * Specify that this job should be delayed by the provided amount of time.
+         * Specify that this job should be delayed by the provided amount of time. The job may not
+         * run the instant the delay has elapsed. JobScheduler will start the job at an
+         * indeterminate time after the delay has elapsed.
+         * <p>
          * Because it doesn't make sense setting this property on a periodic job, doing so will
          * throw an {@link java.lang.IllegalArgumentException} when
          * {@link android.app.job.JobInfo.Builder#build()} is called.
@@ -1420,9 +1452,11 @@ public class JobInfo implements Parcelable {
 
         /**
          * Set deadline which is the maximum scheduling latency. The job will be run by this
-         * deadline even if other requirements are not met. Because it doesn't make sense setting
-         * this property on a periodic job, doing so will throw an
-         * {@link java.lang.IllegalArgumentException} when
+         * deadline even if other requirements (including a delay set through
+         * {@link #setMinimumLatency(long)}) are not met.
+         * <p>
+         * Because it doesn't make sense setting this property on a periodic job, doing so will
+         * throw an {@link java.lang.IllegalArgumentException} when
          * {@link android.app.job.JobInfo.Builder#build()} is called.
          * @see JobInfo#getMaxExecutionDelayMillis()
          */
@@ -1436,6 +1470,7 @@ public class JobInfo implements Parcelable {
          * Set up the back-off/retry policy.
          * This defaults to some respectable values: {30 seconds, Exponential}. We cap back-off at
          * 5hrs.
+         * <p>
          * Note that trying to set a backoff criteria for a job with
          * {@link #setRequiresDeviceIdle(boolean)} will throw an exception when you call build().
          * This is because back-off typically does not make sense for these types of jobs. See
@@ -1468,7 +1503,7 @@ public class JobInfo implements Parcelable {
          * <ol>
          *     <li>Run as soon as possible</li>
          *     <li>Be less restricted during Doze and battery saver</li>
-         *     <li>Have network access</li>
+         *     <li>Bypass Doze, app standby, and battery saver network restrictions</li>
          *     <li>Be less likely to be killed than regular jobs</li>
          *     <li>Be subject to background location throttling</li>
          * </ol>
@@ -1484,12 +1519,17 @@ public class JobInfo implements Parcelable {
          * available quota (and the job will not be successfully scheduled).
          *
          * <p>
+         * Expedited job quota will replenish over time and as the user interacts with the app,
+         * so you should not have to worry about running out of quota because of processing from
+         * frequent user engagement.
+         *
+         * <p>
          * Expedited jobs may only set network, storage-not-low, and persistence constraints.
          * No other constraints are allowed.
          *
          * <p>
          * Assuming all constraints remain satisfied (including ideal system load conditions),
-         * expedited jobs are guaranteed to have a minimum allowed runtime of 1 minute. If your
+         * expedited jobs will have a maximum execution time of at least 1 minute. If your
          * app has remaining expedited job quota, then the expedited job <i>may</i> potentially run
          * longer until remaining quota is used up. Just like with regular jobs, quota is not
          * consumed while the app is on top and visible to the user.
@@ -1663,7 +1703,7 @@ public class JobInfo implements Parcelable {
                 throw new IllegalArgumentException("An expedited job cannot be periodic");
             }
             if ((constraintFlags & ~CONSTRAINT_FLAG_STORAGE_NOT_LOW) != 0
-                    || (flags & ~FLAG_EXPEDITED) != 0) {
+                    || (flags & ~(FLAG_EXPEDITED | FLAG_EXEMPT_FROM_APP_STANDBY)) != 0) {
                 throw new IllegalArgumentException(
                         "An expedited job can only have network and storage-not-low constraints");
             }

@@ -57,6 +57,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.DeadSystemException;
+import android.os.Environment;
 import android.os.FileUtils;
 import android.os.Handler;
 import android.os.IBinder;
@@ -67,6 +68,7 @@ import android.os.StrictMode;
 import android.os.SystemProperties;
 import android.text.TextUtils;
 import android.util.ArrayMap;
+import android.util.ArraySet;
 import android.util.Log;
 import android.util.Pair;
 import android.view.Display;
@@ -120,6 +122,8 @@ public class WallpaperManager {
     /** {@hide} */
     private static final String VALUE_CMF_COLOR =
             android.os.SystemProperties.get("ro.boot.hardware.color");
+    /** {@hide} */
+    private static final String WALLPAPER_CMF_PATH = "/wallpaper/image/";
 
     /**
      * Activity Action: Show settings for choosing wallpaper. Do not use directly to construct
@@ -184,6 +188,30 @@ public class WallpaperManager {
      * and y arguments are the location of the drop.
      */
     public static final String COMMAND_DROP = "android.home.drop";
+
+    /**
+     * Command for {@link #sendWallpaperCommand}: reported by System UI when the device is waking
+     * up. The x and y arguments are a location (possibly very roughly) corresponding to the action
+     * that caused the device to wake up. For example, if the power button was pressed, this will be
+     * the location on the screen nearest the power button.
+     *
+     * If the location is unknown or not applicable, x and y will be -1.
+     *
+     * @hide
+     */
+    public static final String COMMAND_WAKING_UP = "android.wallpaper.wakingup";
+
+    /**
+     * Command for {@link #sendWallpaperCommand}: reported by System UI when the device is going to
+     * sleep. The x and y arguments are a location (possibly very roughly) corresponding to the
+     * action that caused the device to go to sleep. For example, if the power button was pressed,
+     * this will be the location on the screen nearest the power button.
+     *
+     * If the location is unknown or not applicable, x and y will be -1.
+     *
+     * @hide
+     */
+    public static final String COMMAND_GOING_TO_SLEEP = "android.wallpaper.goingtosleep";
 
     /**
      * Command for {@link #sendWallpaperCommand}: reported when the wallpaper that was already
@@ -315,8 +343,20 @@ public class WallpaperManager {
         private int mCachedWallpaperUserId;
         private Bitmap mDefaultWallpaper;
         private Handler mMainLooperHandler;
-        private ArrayMap<LocalWallpaperColorConsumer, ILocalWallpaperColorConsumer>
-                mLocalColorCallbacks = new ArrayMap<>();
+        private ArrayMap<RectF, ArraySet<LocalWallpaperColorConsumer>> mLocalColorAreas =
+                new ArrayMap<>();
+        private ILocalWallpaperColorConsumer mLocalColorCallback =
+                new ILocalWallpaperColorConsumer.Stub() {
+                    @Override
+                    public void onColorsChanged(RectF area, WallpaperColors colors) {
+                        ArraySet<LocalWallpaperColorConsumer> callbacks =
+                                mLocalColorAreas.get(area);
+                        if (callbacks == null) return;
+                        for (LocalWallpaperColorConsumer callback: callbacks) {
+                            callback.onColorsChanged(area, colors);
+                        }
+                    }
+                };
 
         Globals(IWallpaperManager service, Looper looper) {
             mService = service;
@@ -358,37 +398,46 @@ public class WallpaperManager {
             }
         }
 
-        private ILocalWallpaperColorConsumer wrap(LocalWallpaperColorConsumer callback) {
-            ILocalWallpaperColorConsumer callback2 = new ILocalWallpaperColorConsumer.Stub() {
-                @Override
-                public void onColorsChanged(RectF area, WallpaperColors colors) {
-                    callback.onColorsChanged(area, colors);
-                }
-            };
-            mLocalColorCallbacks.put(callback, callback2);
-            return callback2;
-        }
-
         public void addOnColorsChangedListener(@NonNull LocalWallpaperColorConsumer callback,
                 @NonNull List<RectF> regions, int which, int userId, int displayId) {
+            for (RectF area: regions) {
+                ArraySet<LocalWallpaperColorConsumer> callbacks = mLocalColorAreas.get(area);
+                if (callbacks == null) {
+                    callbacks = new ArraySet<>();
+                    mLocalColorAreas.put(area, callbacks);
+                }
+                callbacks.add(callback);
+            }
             try {
-                mService.addOnLocalColorsChangedListener(wrap(callback) , regions, which,
+                mService.addOnLocalColorsChangedListener(mLocalColorCallback , regions, which,
                                                          userId, displayId);
             } catch (RemoteException e) {
                 // Can't get colors, connection lost.
+                Log.e(TAG, "Can't register for local color updates", e);
             }
         }
 
         public void removeOnColorsChangedListener(
                 @NonNull LocalWallpaperColorConsumer callback, int which, int userId,
                 int displayId) {
-            ILocalWallpaperColorConsumer callback2 = mLocalColorCallbacks.remove(callback);
-            if (callback2 == null) return;
+            final ArrayList<RectF> removeAreas = new ArrayList<>();
+            for (RectF area : mLocalColorAreas.keySet()) {
+                ArraySet<LocalWallpaperColorConsumer> callbacks = mLocalColorAreas.get(area);
+                if (callbacks == null) continue;
+                callbacks.remove(callback);
+                if (callbacks.size() == 0) {
+                    mLocalColorAreas.remove(area);
+                    removeAreas.add(area);
+                }
+            }
             try {
-                mService.removeOnLocalColorsChangedListener(
-                        callback2, which, userId, displayId);
+                if (removeAreas.size() > 0) {
+                    mService.removeOnLocalColorsChangedListener(
+                            mLocalColorCallback, removeAreas, which, userId, displayId);
+                }
             } catch (RemoteException e) {
                 // Can't get colors, connection lost.
+                Log.e(TAG, "Can't unregister for local color updates", e);
             }
         }
 
@@ -1937,14 +1986,20 @@ public class WallpaperManager {
     }
 
     /**
-     * Set the current zoom out level of the wallpaper
+     * Set the current zoom out level of the wallpaper.
+     *
+     * @param windowToken window requesting wallpaper zoom. Zoom level will only be applier while
+     *                    such window is visible.
      * @param zoom from 0 to 1 (inclusive) where 1 means fully zoomed out, 0 means fully zoomed in
      *
      * @hide
      */
-    public void setWallpaperZoomOut(IBinder windowToken, float zoom) {
+    public void setWallpaperZoomOut(@NonNull IBinder windowToken, float zoom) {
         if (zoom < 0 || zoom > 1f) {
-            throw new IllegalArgumentException("zoom must be between 0 and one: " + zoom);
+            throw new IllegalArgumentException("zoom must be between 0 and 1: " + zoom);
+        }
+        if (windowToken == null) {
+            throw new IllegalArgumentException("windowToken must not be null");
         }
         try {
             WindowManagerGlobal.getWindowSession().setWallpaperZoomOut(windowToken, zoom);
@@ -2066,22 +2121,17 @@ public class WallpaperManager {
             return null;
         } else {
             whichProp = PROP_WALLPAPER;
-            final int defaultColorResId = context.getResources().getIdentifier(
-                    "default_wallpaper_" + VALUE_CMF_COLOR, "drawable", "android");
-            defaultResId =
-                    defaultColorResId == 0 ? com.android.internal.R.drawable.default_wallpaper
-                            : defaultColorResId;
+            defaultResId = com.android.internal.R.drawable.default_wallpaper;
         }
         final String path = SystemProperties.get(whichProp);
-        if (!TextUtils.isEmpty(path)) {
-            final File file = new File(path);
-            if (file.exists()) {
-                try {
-                    return new FileInputStream(file);
-                } catch (IOException e) {
-                    // Ignored, fall back to platform default below
-                }
-            }
+        final InputStream wallpaperInputStream = getWallpaperInputStream(path);
+        if (wallpaperInputStream != null) {
+            return wallpaperInputStream;
+        }
+        final String cmfPath = getCmfWallpaperPath();
+        final InputStream cmfWallpaperInputStream = getWallpaperInputStream(cmfPath);
+        if (cmfWallpaperInputStream != null) {
+            return cmfWallpaperInputStream;
         }
         try {
             return context.getResources().openRawResource(defaultResId);
@@ -2089,6 +2139,25 @@ public class WallpaperManager {
             // no default defined for this device; this is not a failure
         }
         return null;
+    }
+
+    private static InputStream getWallpaperInputStream(String path) {
+        if (!TextUtils.isEmpty(path)) {
+            final File file = new File(path);
+            if (file.exists()) {
+                try {
+                    return new FileInputStream(file);
+                } catch (IOException e) {
+                    // Ignored, fall back to platform default
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String getCmfWallpaperPath() {
+        return Environment.getProductDirectory() + WALLPAPER_CMF_PATH + "default_wallpaper_"
+                + VALUE_CMF_COLOR;
     }
 
     /**

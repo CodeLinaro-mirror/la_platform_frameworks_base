@@ -26,6 +26,7 @@ import android.app.ApplicationExitInfo;
 import android.app.ApplicationExitInfo.Reason;
 import android.app.ApplicationExitInfo.SubReason;
 import android.app.IApplicationThread;
+import android.app.RemoteServiceException;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.ProcessInfo;
 import android.content.pm.VersionedPackage;
@@ -105,6 +106,12 @@ class ProcessRecord implements WindowProcessListener {
      */
     @CompositeRWLock({"mService", "mProcLock"})
     int mPid;
+
+    /**
+     * The process ID which will be set when we're killing this process.
+     */
+    @GuardedBy("mService")
+    private int mDyingPid;
 
     /**
      * The gids this process was launched with.
@@ -479,7 +486,7 @@ class ProcessRecord implements WindowProcessListener {
                 if (procInfo != null && procInfo.deniedPermissions == null
                         && procInfo.gwpAsanMode == ApplicationInfo.GWP_ASAN_DEFAULT
                         && procInfo.memtagMode == ApplicationInfo.MEMTAG_DEFAULT
-                        && procInfo.nativeHeapZeroInit == null) {
+                        && procInfo.nativeHeapZeroInitialized == ApplicationInfo.ZEROINIT_DEFAULT) {
                     // If this process hasn't asked for permissions to be denied, or for a
                     // non-default GwpAsan mode, or any other non-default setting, then we don't
                     // care about it.
@@ -569,6 +576,16 @@ class ProcessRecord implements WindowProcessListener {
         mThread = null;
         mWindowProcessController.setThread(null);
         mProfile.onProcessInactive(tracker);
+    }
+
+    @GuardedBy("mService")
+    int getDyingPid() {
+        return mDyingPid;
+    }
+
+    @GuardedBy("mService")
+    void setDyingPid(int dyingPid) {
+        mDyingPid = dyingPid;
     }
 
     @GuardedBy("mService")
@@ -730,6 +747,11 @@ class ProcessRecord implements WindowProcessListener {
     @GuardedBy("mService")
     void setDeathRecipient(IBinder.DeathRecipient deathRecipient) {
         mDeathRecipient = deathRecipient;
+    }
+
+    @GuardedBy("mService")
+    IBinder.DeathRecipient getDeathRecipient() {
+        return mDeathRecipient;
     }
 
     @GuardedBy({"mService", "mProcLock"})
@@ -896,11 +918,14 @@ class ProcessRecord implements WindowProcessListener {
     }
 
     @GuardedBy({"mService", "mProcLock"})
-    boolean onCleanupApplicationRecordLSP(ProcessStatsService processStats, boolean allowRestart) {
+    boolean onCleanupApplicationRecordLSP(ProcessStatsService processStats, boolean allowRestart,
+            boolean unlinkDeath) {
         mErrorState.onCleanupApplicationRecordLSP();
 
         resetPackageList(processStats);
-        unlinkDeathRecipient();
+        if (unlinkDeath) {
+            unlinkDeathRecipient();
+        }
         makeInactive(processStats);
         setWaitingToKill(null);
 
@@ -925,6 +950,21 @@ class ProcessRecord implements WindowProcessListener {
 
     @GuardedBy("mService")
     void scheduleCrashLocked(String message) {
+        scheduleCrashLocked(message, RemoteServiceException.TYPE_ID);
+    }
+
+    /**
+     * Let an app process throw an exception on a binder thread, which typically crashes the
+     * process, unless it has an unhandled exception handler.
+     *
+     * See {@link ActivityThread#throwRemoteServiceException}.
+     *
+     * @param message exception message
+     * @param exceptionTypeId ID defined in {@link android.app.RemoteServiceException} or one
+     *                        of its subclasses.
+     */
+    @GuardedBy("mService")
+    void scheduleCrashLocked(String message, int exceptionTypeId) {
         // Checking killedbyAm should keep it from showing the crash dialog if the process
         // was already dead for a good / normal reason.
         if (!mKilledByAm) {
@@ -935,7 +975,7 @@ class ProcessRecord implements WindowProcessListener {
                 }
                 final long ident = Binder.clearCallingIdentity();
                 try {
-                    mThread.scheduleCrash(message);
+                    mThread.scheduleCrash(message, exceptionTypeId);
                 } catch (RemoteException e) {
                     // If it's already dead our work is done. If it's wedged just kill it.
                     // We won't get the crash dialog or the error reporting.

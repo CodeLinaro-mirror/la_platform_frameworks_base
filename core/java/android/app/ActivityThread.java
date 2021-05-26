@@ -39,7 +39,6 @@ import android.annotation.Nullable;
 import android.app.assist.AssistContent;
 import android.app.assist.AssistStructure;
 import android.app.backup.BackupAgent;
-import android.app.backup.BackupManager;
 import android.app.servertransaction.ActivityLifecycleItem;
 import android.app.servertransaction.ActivityLifecycleItem.LifecycleState;
 import android.app.servertransaction.ActivityRelaunchItem;
@@ -53,6 +52,7 @@ import android.app.servertransaction.ResumeActivityItem;
 import android.app.servertransaction.TransactionExecutor;
 import android.app.servertransaction.TransactionExecutorHelper;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.content.AttributionSource;
 import android.content.AutofillOptions;
 import android.content.BroadcastReceiver;
 import android.content.ComponentCallbacks2;
@@ -158,7 +158,6 @@ import android.util.Pair;
 import android.util.PrintWriterPrinter;
 import android.util.Slog;
 import android.util.SparseArray;
-import android.util.SparseIntArray;
 import android.util.SuperNotCalledException;
 import android.util.UtilConfig;
 import android.util.proto.ProtoOutputStream;
@@ -180,6 +179,7 @@ import android.view.contentcapture.IContentCaptureManager;
 import android.view.contentcapture.IContentCaptureOptionsCallback;
 import android.view.translation.TranslationSpec;
 import android.webkit.WebView;
+import android.window.SizeConfigurationBuckets;
 import android.window.SplashScreen;
 import android.window.SplashScreenView;
 
@@ -236,12 +236,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
-final class RemoteServiceException extends AndroidRuntimeException {
-    public RemoteServiceException(String msg) {
-        super(msg);
-    }
-}
-
 /**
  * This manages the execution of the main thread in an
  * application process, scheduling and executing activities,
@@ -292,7 +286,6 @@ public final class ActivityThread extends ClientTransactionHandler
     /** Use background GC policy and default JIT threshold. */
     private static final int VM_PROCESS_STATE_JANK_IMPERCEPTIBLE = 1;
 
-    private static final int REMOVE_SPLASH_SCREEN_VIEW_TIMEOUT = 5000;
     /**
      * Denotes an invalid sequence number corresponding to a process state change.
      */
@@ -601,8 +594,13 @@ public final class ActivityThread extends ClientTransactionHandler
          */
         FixedRotationAdjustments mPendingFixedRotationAdjustments;
 
+        /** Whether this activiy was launched from a bubble. */
+        boolean mLaunchedFromBubble;
+
         @LifecycleState
         private int mLifecycleState = PRE_ON_CREATE;
+
+        private SizeConfigurationBuckets mSizeConfigurations;
 
         @VisibleForTesting
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
@@ -618,7 +616,7 @@ public final class ActivityThread extends ClientTransactionHandler
                 List<ReferrerIntent> pendingNewIntents, ActivityOptions activityOptions,
                 boolean isForward, ProfilerInfo profilerInfo, ClientTransactionHandler client,
                 IBinder assistToken, FixedRotationAdjustments fixedRotationAdjustments,
-                IBinder shareableActivityToken) {
+                IBinder shareableActivityToken, boolean launchedFromBubble) {
             this.token = token;
             this.assistToken = assistToken;
             this.shareableActivityToken = shareableActivityToken;
@@ -639,6 +637,7 @@ public final class ActivityThread extends ClientTransactionHandler
                     compatInfo);
             mActivityOptions = activityOptions;
             mPendingFixedRotationAdjustments = fixedRotationAdjustments;
+            mLaunchedFromBubble = launchedFromBubble;
             init();
         }
 
@@ -1273,8 +1272,9 @@ public final class ActivityThread extends ClientTransactionHandler
             sendMessage(H.DISPATCH_PACKAGE_BROADCAST, packages, cmd);
         }
 
-        public void scheduleCrash(String msg) {
-            sendMessage(H.SCHEDULE_CRASH, msg);
+        @Override
+        public void scheduleCrash(String msg, int typeId) {
+            sendMessage(H.SCHEDULE_CRASH, msg, typeId);
         }
 
         public void dumpActivity(ParcelFileDescriptor pfd, IBinder activitytoken,
@@ -1587,9 +1587,17 @@ public final class ActivityThread extends ClientTransactionHandler
 
         @Override
         public void dumpGfxInfo(ParcelFileDescriptor pfd, String[] args) {
-            nDumpGraphicsInfo(pfd.getFileDescriptor());
-            WindowManagerGlobal.getInstance().dumpGfxInfo(pfd.getFileDescriptor(), args);
-            IoUtils.closeQuietly(pfd);
+            DumpComponentInfo data = new DumpComponentInfo();
+            try {
+                data.fd = pfd.dup();
+                data.token = null;
+                data.args = args;
+                sendMessage(H.DUMP_GFXINFO, data, 0, 0, true /*async*/);
+            } catch (IOException e) {
+                Slog.w(TAG, "dumpGfxInfo failed", e);
+            } finally {
+                IoUtils.closeQuietly(pfd);
+            }
         }
 
         @Override
@@ -1835,12 +1843,12 @@ public final class ActivityThread extends ClientTransactionHandler
 
         @Override
         public void updateUiTranslationState(IBinder activityToken, int state,
-                TranslationSpec sourceSpec, TranslationSpec destSpec, List<AutofillId> viewIds) {
+                TranslationSpec sourceSpec, TranslationSpec targetSpec, List<AutofillId> viewIds) {
             SomeArgs args = SomeArgs.obtain();
             args.arg1 = activityToken;
             args.arg2 = state;
             args.arg3 = sourceSpec;
-            args.arg4 = destSpec;
+            args.arg4 = targetSpec;
             args.arg5 = viewIds;
             sendMessage(H.UPDATE_UI_TRANSLATION_STATE, args);
         }
@@ -1888,6 +1896,17 @@ public final class ActivityThread extends ClientTransactionHandler
                     cancellation.cancel();
                 }
             }
+        }
+    }
+
+    private void throwRemoteServiceException(String message, int typeId) {
+        // Use a switch to ensure all the type IDs are unique.
+        switch (typeId) {
+            case ForegroundServiceDidNotStartInTimeException.TYPE_ID: // 1
+                throw new ForegroundServiceDidNotStartInTimeException(message);
+            case RemoteServiceException.TYPE_ID: // 0
+            default:
+                throw new RemoteServiceException(message);
         }
     }
 
@@ -1950,11 +1969,10 @@ public final class ActivityThread extends ClientTransactionHandler
         public static final int ATTACH_STARTUP_AGENTS = 162;
         public static final int UPDATE_UI_TRANSLATION_STATE = 163;
         public static final int SET_CONTENT_CAPTURE_OPTIONS_CALLBACK = 164;
+        public static final int DUMP_GFXINFO = 165;
 
         public static final int INSTRUMENT_WITHOUT_RESTART = 170;
         public static final int FINISH_INSTRUMENTATION_WITHOUT_RESTART = 171;
-
-        public static final int REMOVE_SPLASH_SCREEN_VIEW = 172;
 
         String codeToString(int code) {
             if (DEBUG_MESSAGES) {
@@ -2001,11 +2019,10 @@ public final class ActivityThread extends ClientTransactionHandler
                     case UPDATE_UI_TRANSLATION_STATE: return "UPDATE_UI_TRANSLATION_STATE";
                     case SET_CONTENT_CAPTURE_OPTIONS_CALLBACK:
                         return "SET_CONTENT_CAPTURE_OPTIONS_CALLBACK";
+                    case DUMP_GFXINFO: return "DUMP GFXINFO";
                     case INSTRUMENT_WITHOUT_RESTART: return "INSTRUMENT_WITHOUT_RESTART";
                     case FINISH_INSTRUMENTATION_WITHOUT_RESTART:
                         return "FINISH_INSTRUMENTATION_WITHOUT_RESTART";
-                    case REMOVE_SPLASH_SCREEN_VIEW:
-                        return "REMOVE_SPLASH_SCREEN_VIEW";
                 }
             }
             return Integer.toString(code);
@@ -2076,6 +2093,9 @@ public final class ActivityThread extends ClientTransactionHandler
                 case DUMP_SERVICE:
                     handleDumpService((DumpComponentInfo)msg.obj);
                     break;
+                case DUMP_GFXINFO:
+                    handleDumpGfxInfo((DumpComponentInfo) msg.obj);
+                    break;
                 case LOW_MEMORY:
                     Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "lowMemory");
                     handleLowMemory();
@@ -2108,7 +2128,8 @@ public final class ActivityThread extends ClientTransactionHandler
                     Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
                     break;
                 case SCHEDULE_CRASH:
-                    throw new RemoteServiceException((String)msg.obj);
+                    throwRemoteServiceException((String) msg.obj, msg.arg1);
+                    break;
                 case DUMP_HEAP:
                     handleDumpHeap((DumpHeapData) msg.obj);
                     break;
@@ -2202,9 +2223,6 @@ public final class ActivityThread extends ClientTransactionHandler
                 case FINISH_INSTRUMENTATION_WITHOUT_RESTART:
                     handleFinishInstrumentationWithoutRestart();
                     break;
-                case REMOVE_SPLASH_SCREEN_VIEW:
-                    handleRemoveSplashScreenView((ActivityClientRecord) msg.obj);
-                    break;
             }
             Object obj = msg.obj;
             if (obj instanceof SomeArgs) {
@@ -2281,6 +2299,12 @@ public final class ActivityThread extends ClientTransactionHandler
                 ? am.getApplication().getOpPackageName() : null;
     }
 
+    public static AttributionSource currentAttributionSource() {
+        ActivityThread am = currentActivityThread();
+        return (am != null && am.getApplication() != null)
+                ? am.getApplication().getAttributionSource() : null;
+    }
+
     @UnsupportedAppUsage
     public static String currentPackageName() {
         ActivityThread am = currentActivityThread();
@@ -2334,7 +2358,7 @@ public final class ActivityThread extends ClientTransactionHandler
     }
 
     @UnsupportedAppUsage
-    final Handler getHandler() {
+    public Handler getHandler() {
         return mH;
     }
 
@@ -3548,6 +3572,7 @@ public final class ActivityThread extends ClientTransactionHandler
                     activity.mPendingOptions = r.mActivityOptions;
                     r.mActivityOptions = null;
                 }
+                activity.mLaunchedFromBubble = r.mLaunchedFromBubble;
                 activity.mCalled = false;
                 if (r.isPersistable()) {
                     mInstrumentation.callActivityOnCreate(activity, r.state, r.persistentState);
@@ -3764,23 +3789,8 @@ public final class ActivityThread extends ClientTransactionHandler
         if (configurations == null) {
             return;
         }
-        SparseIntArray horizontal = new SparseIntArray();
-        SparseIntArray vertical = new SparseIntArray();
-        SparseIntArray smallest = new SparseIntArray();
-        for (int i = configurations.length - 1; i >= 0; i--) {
-            Configuration config = configurations[i];
-            if (config.screenHeightDp != Configuration.SCREEN_HEIGHT_DP_UNDEFINED) {
-                vertical.put(config.screenHeightDp, 0);
-            }
-            if (config.screenWidthDp != Configuration.SCREEN_WIDTH_DP_UNDEFINED) {
-                horizontal.put(config.screenWidthDp, 0);
-            }
-            if (config.smallestScreenWidthDp != Configuration.SMALLEST_SCREEN_WIDTH_DP_UNDEFINED) {
-                smallest.put(config.smallestScreenWidthDp, 0);
-            }
-        }
-        ActivityClient.getInstance().reportSizeConfigurations(r.token, horizontal.copyKeys(),
-                vertical.copyKeys(), smallest.copyKeys());
+        r.mSizeConfigurations = new SizeConfigurationBuckets(configurations);
+        ActivityClient.getInstance().reportSizeConfigurations(r.token, r.mSizeConfigurations);
     }
 
     private void deliverNewIntents(ActivityClientRecord r, List<ReferrerIntent> intents) {
@@ -3996,6 +4006,12 @@ public final class ActivityThread extends ClientTransactionHandler
         }
     }
 
+    @Override
+    public void handlePictureInPictureStateChanged(@NonNull ActivityClientRecord r,
+            PictureInPictureUiState pipState) {
+        r.activity.onPictureInPictureUiStateChanged(pipState);
+    }
+
     /**
      * Register a splash screen manager to this process.
      */
@@ -4033,6 +4049,7 @@ public final class ActivityThread extends ClientTransactionHandler
         view.cacheRootWindow(r.window);
         view.makeSystemUIColorsTransparent();
         r.activity.mSplashScreenView = view;
+        view.attachHostActivity(r.activity);
         view.requestLayout();
         // Ensure splash screen view is shown before remove the splash screen window.
         final ViewRootImpl impl = decorView.getViewRootImpl();
@@ -4075,24 +4092,12 @@ public final class ActivityThread extends ClientTransactionHandler
     @Override
     public void handOverSplashScreenView(@NonNull ActivityClientRecord r) {
         if (r.activity.mSplashScreenView != null) {
-            Message msg = mH.obtainMessage(H.REMOVE_SPLASH_SCREEN_VIEW, r);
-            mH.sendMessageDelayed(msg, REMOVE_SPLASH_SCREEN_VIEW_TIMEOUT);
             synchronized (this) {
                 if (mSplashScreenGlobal != null) {
                     mSplashScreenGlobal.dispatchOnExitAnimation(r.token,
                             r.activity.mSplashScreenView);
                 }
             }
-        }
-    }
-
-    /**
-     * Force remove splash screen view.
-     */
-    private void handleRemoveSplashScreenView(@NonNull ActivityClientRecord r) {
-        if (r.activity.mSplashScreenView != null) {
-            r.activity.mSplashScreenView.remove();
-            r.activity.mSplashScreenView = null;
         }
     }
 
@@ -4189,13 +4194,13 @@ public final class ActivityThread extends ClientTransactionHandler
     }
 
     private void updateUiTranslationState(IBinder activityToken, int state,
-            TranslationSpec sourceSpec, TranslationSpec destSpec, List<AutofillId> viewIds) {
+            TranslationSpec sourceSpec, TranslationSpec targetSpec, List<AutofillId> viewIds) {
         final ActivityClientRecord r = mActivities.get(activityToken);
         if (r == null) {
             Log.w(TAG, "updateUiTranslationState(): no activity for " + activityToken);
             return;
         }
-        r.activity.updateUiTranslationState(state, sourceSpec, destSpec, viewIds);
+        r.activity.updateUiTranslationState(state, sourceSpec, targetSpec, viewIds);
     }
 
     private static final ThreadLocal<Intent> sCurrentBroadcastIntent = new ThreadLocal<Intent>();
@@ -4360,17 +4365,10 @@ public final class ActivityThread extends ClientTransactionHandler
 
     private String getBackupAgentName(CreateBackupAgentData data) {
         String agentName = data.appInfo.backupAgentName;
-        if (!UserHandle.isCore(data.appInfo.uid)
-                && data.operationType == BackupManager.OperationType.MIGRATION) {
-            // If this is a migration, use the default backup agent regardless of the app's
-            // preferences.
+        // full backup operation but no app-supplied agent?  use the default implementation
+        if (agentName == null && (data.backupMode == ApplicationThreadConstants.BACKUP_MODE_FULL
+                || data.backupMode == ApplicationThreadConstants.BACKUP_MODE_RESTORE_FULL)) {
             agentName = DEFAULT_FULL_BACKUP_AGENT;
-        } else {
-            // full backup operation but no app-supplied agent?  use the default implementation
-            if (agentName == null && (data.backupMode == ApplicationThreadConstants.BACKUP_MODE_FULL
-                    || data.backupMode == ApplicationThreadConstants.BACKUP_MODE_RESTORE_FULL)) {
-                agentName = DEFAULT_FULL_BACKUP_AGENT;
-            }
         }
         return agentName;
     }
@@ -4417,11 +4415,21 @@ public final class ActivityThread extends ClientTransactionHandler
         try {
             if (localLOGV) Slog.v(TAG, "Creating service " + data.info.name);
 
-            ContextImpl context = ContextImpl.createAppContext(this, packageInfo);
             Application app = packageInfo.makeApplication(false, mInstrumentation);
-            java.lang.ClassLoader cl = packageInfo.getClassLoader();
+
+            final java.lang.ClassLoader cl;
+            if (data.info.splitName != null) {
+                cl = packageInfo.getSplitClassLoader(data.info.splitName);
+            } else {
+                cl = packageInfo.getClassLoader();
+            }
             service = packageInfo.getAppFactory()
                     .instantiateService(cl, data.info.name, data.intent);
+            ContextImpl context = ContextImpl.getImpl(service
+                    .createServiceBaseContext(this, packageInfo));
+            if (data.info.splitName != null) {
+                context = (ContextImpl) context.createContextForSplit(data.info.splitName);
+            }
             // Service resources must be initialized with the same loaders as the application
             // context.
             context.getResources().addLoaders(
@@ -4506,6 +4514,17 @@ public final class ActivityThread extends ClientTransactionHandler
                             + " with " + data.intent + ": " + e.toString(), e);
                 }
             }
+        }
+    }
+
+    private void handleDumpGfxInfo(DumpComponentInfo info) {
+        try {
+            nDumpGraphicsInfo(info.fd.getFileDescriptor());
+            WindowManagerGlobal.getInstance().dumpGfxInfo(info.fd.getFileDescriptor(), info.args);
+        } catch (Exception e) {
+            Log.w(TAG, "Caught exception from dumpGfxInfo()", e);
+        } finally {
+            IoUtils.closeQuietly(info.fd);
         }
     }
 
@@ -4835,6 +4854,10 @@ public final class ActivityThread extends ClientTransactionHandler
         }
 
         if (r.isTopResumedActivity == onTop) {
+            if (!Build.IS_DEBUGGABLE) {
+                Slog.w(TAG, "Activity top position already set to onTop=" + onTop);
+                return;
+            }
             throw new IllegalStateException("Activity top position already set to onTop=" + onTop);
         }
 
@@ -5590,7 +5613,7 @@ public final class ActivityThread extends ClientTransactionHandler
     }
 
     /** Performs the activity relaunch locally vs. requesting from system-server. */
-    private void handleRelaunchActivityLocally(IBinder token) {
+    public void handleRelaunchActivityLocally(IBinder token) {
         final ActivityClientRecord r = mActivities.get(token);
         if (r == null) {
             Log.w(TAG, "Activity to relaunch no longer exists");
@@ -5773,13 +5796,19 @@ public final class ActivityThread extends ClientTransactionHandler
             // onConfigurationChanged.
             // TODO(b/173090263): Use diff instead after the improvement of AssetManager and
             // ResourcesImpl constructions.
-            final int diff = activity.mCurrentConfig.diffPublicOnly(newConfig);
+            int diff = activity.mCurrentConfig.diffPublicOnly(newConfig);
+            final ActivityClientRecord cr = getActivityClient(activityToken);
+            diff = SizeConfigurationBuckets.filterDiff(diff, activity.mCurrentConfig, newConfig,
+                    cr != null ? cr.mSizeConfigurations : null);
 
-            if (diff == 0 && !shouldUpdateWindowMetricsBounds(activity.mCurrentConfig, newConfig)
-                    && !movedToDifferentDisplay && mResourcesManager.isSameResourcesOverrideConfig(
-                            activityToken, amOverrideConfig)) {
-                // Nothing significant, don't proceed with updating and reporting.
-                return null;
+            if (diff == 0) {
+                if (!shouldUpdateWindowMetricsBounds(activity.mCurrentConfig, newConfig)
+                        && !movedToDifferentDisplay
+                        && mResourcesManager.isSameResourcesOverrideConfig(
+                                activityToken, amOverrideConfig)) {
+                    // Nothing significant, don't proceed with updating and reporting.
+                    return null;
+                }
             } else if ((~activity.mActivityInfo.getRealConfigChanged() & diff) == 0) {
                 // If this activity doesn't handle any of the config changes, then don't bother
                 // calling onConfigurationChanged. Otherwise, report to the activity for the
@@ -5948,20 +5977,6 @@ public final class ActivityThread extends ClientTransactionHandler
             // Update all affected Resources objects to use new ResourcesImpl
             mResourcesManager.applyNewResourceDirsLocked(ai, oldResDirs);
         }
-
-        ApplicationPackageManager.configurationChanged();
-
-        // Trigger a regular Configuration change event, only with a different assetsSeq number
-        // so that we actually call through to all components.
-        // TODO(adamlesinski): Change this to make use of ActivityManager's upcoming ability to
-        // store configurations per-process.
-        final Configuration config = mConfigurationController.getConfiguration();
-        Configuration newConfig = new Configuration();
-        newConfig.assetsSeq = (config != null ? config.assetsSeq : 0) + 1;
-        mConfigurationController.handleConfigurationChanged(newConfig, null /* compat */);
-
-        // Preserve windows to avoid black flickers when overlays change.
-        relaunchAllActivities(true /* preserveWindows */, "handleApplicationInfoChanged");
     }
 
     /**
@@ -6529,7 +6544,7 @@ public final class ActivityThread extends ClientTransactionHandler
 
         // Allow binder tracing, and application-generated systrace messages if we're profileable.
         boolean isAppDebuggable = (data.appInfo.flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
-        boolean isAppProfileable = isAppDebuggable || data.appInfo.isProfileableByShell();
+        boolean isAppProfileable = isAppDebuggable || data.appInfo.isProfileable();
         Trace.setAppTracingAllowed(isAppProfileable);
         if ((isAppProfileable || Build.IS_DEBUGGABLE) && data.enableBinderTracking) {
             Binder.enableTracing();

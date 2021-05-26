@@ -34,7 +34,7 @@ import android.widget.TextView;
 
 import androidx.annotation.VisibleForTesting;
 
-import com.android.keyguard.CarrierTextController;
+import com.android.keyguard.CarrierTextManager;
 import com.android.settingslib.AccessibilityContentDescriptions;
 import com.android.settingslib.mobile.TelephonyIcons;
 import com.android.systemui.R;
@@ -43,6 +43,7 @@ import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.statusbar.policy.NetworkController;
 import com.android.systemui.statusbar.policy.NetworkController.MobileDataIndicators;
+import com.android.systemui.util.CarrierConfigTracker;
 
 import java.util.function.Consumer;
 
@@ -59,7 +60,7 @@ public class QSCarrierGroupController {
     private final ActivityStarter mActivityStarter;
     private final Handler mBgHandler;
     private final NetworkController mNetworkController;
-    private final CarrierTextController mCarrierTextController;
+    private final CarrierTextManager mCarrierTextManager;
     private final TextView mNoSimTextView;
     private final H mMainHandler;
     private final Callback mCallback;
@@ -71,6 +72,7 @@ public class QSCarrierGroupController {
     private int[] mLastSignalLevel = new int[SIM_SLOTS];
     private String[] mLastSignalLevelDescription = new String[SIM_SLOTS];
     private final boolean mProviderModel;
+    private final CarrierConfigTracker mCarrierConfigTracker;
 
     private final NetworkController.SignalCallback mSignalCallback =
             new NetworkController.SignalCallback() {
@@ -112,6 +114,10 @@ public class QSCarrierGroupController {
                         Log.e(TAG, "Invalid SIM slot index for subscription: " + subId);
                         return;
                     }
+
+                    boolean displayCallStrengthIcon =
+                            mCarrierConfigTracker.getCallStrengthConfig(subId);
+
                     if (statusIcon.icon == R.drawable.ic_qs_no_calling_sms) {
                         if (statusIcon.visible) {
                             mInfos[slotIndex] = new CellSignalState(true,
@@ -119,9 +125,14 @@ public class QSCarrierGroupController {
                         } else {
                             // Whenever the no Calling & SMS state is cleared, switched to the last
                             // known call strength icon.
-                            mInfos[slotIndex] = new CellSignalState(
-                                    true, mLastSignalLevel[slotIndex],
-                                    mLastSignalLevelDescription[slotIndex], "", false);
+                            if (displayCallStrengthIcon) {
+                                mInfos[slotIndex] = new CellSignalState(
+                                        true, mLastSignalLevel[slotIndex],
+                                        mLastSignalLevelDescription[slotIndex], "", false);
+                            } else {
+                                mInfos[slotIndex] = new CellSignalState(
+                                        true, R.drawable.ic_qs_sim_card, "", "", false);
+                            }
                         }
                         mMainHandler.obtainMessage(H.MSG_UPDATE_STATE).sendToTarget();
                     } else {
@@ -131,8 +142,13 @@ public class QSCarrierGroupController {
                         // shown.
                         if (mInfos[slotIndex].mobileSignalIconId
                                 != R.drawable.ic_qs_no_calling_sms) {
-                            mInfos[slotIndex] = new CellSignalState(true, statusIcon.icon,
-                                    statusIcon.contentDescription, "", false);
+                            if (displayCallStrengthIcon) {
+                                mInfos[slotIndex] = new CellSignalState(true, statusIcon.icon,
+                                        statusIcon.contentDescription, "", false);
+                            } else {
+                                mInfos[slotIndex] = new CellSignalState(
+                                        true, R.drawable.ic_qs_sim_card, "", "", false);
+                            }
                             mMainHandler.obtainMessage(H.MSG_UPDATE_STATE).sendToTarget();
                         }
                     }
@@ -149,7 +165,7 @@ public class QSCarrierGroupController {
                 }
             };
 
-    private static class Callback implements CarrierTextController.CarrierTextCallback {
+    private static class Callback implements CarrierTextManager.CarrierTextCallback {
         private H mHandler;
 
         Callback(H handler) {
@@ -157,7 +173,7 @@ public class QSCarrierGroupController {
         }
 
         @Override
-        public void updateCarrierInfo(CarrierTextController.CarrierTextCallbackInfo info) {
+        public void updateCarrierInfo(CarrierTextManager.CarrierTextCallbackInfo info) {
             mHandler.obtainMessage(H.MSG_UPDATE_CARRIER_INFO, info).sendToTarget();
         }
     }
@@ -165,7 +181,8 @@ public class QSCarrierGroupController {
     private QSCarrierGroupController(QSCarrierGroup view, ActivityStarter activityStarter,
             @Background Handler bgHandler, @Main Looper mainLooper,
             NetworkController networkController,
-            CarrierTextController.Builder carrierTextControllerBuilder, Context context) {
+            CarrierTextManager.Builder carrierTextManagerBuilder, Context context,
+            CarrierConfigTracker carrierConfigTracker) {
         if (FeatureFlagUtils.isEnabled(context, FeatureFlagUtils.SETTINGS_PROVIDER_MODEL)) {
             mProviderModel = true;
         } else {
@@ -174,11 +191,11 @@ public class QSCarrierGroupController {
         mActivityStarter = activityStarter;
         mBgHandler = bgHandler;
         mNetworkController = networkController;
-        mCarrierTextController = carrierTextControllerBuilder
+        mCarrierTextManager = carrierTextManagerBuilder
                 .setShowAirplaneMode(false)
                 .setShowMissingSim(false)
                 .build();
-
+        mCarrierConfigTracker = carrierConfigTracker;
         View.OnClickListener onClickListener = v -> {
             if (!v.isVisibleToUser()) {
                 return;
@@ -191,7 +208,6 @@ public class QSCarrierGroupController {
         mNoSimTextView.setOnClickListener(onClickListener);
         mMainHandler = new H(mainLooper, this::handleUpdateCarrierInfo, this::handleUpdateState);
         mCallback = new Callback(mMainHandler);
-
 
         mCarrierGroups[0] = view.getCarrier1View();
         mCarrierGroups[1] = view.getCarrier2View();
@@ -229,6 +245,17 @@ public class QSCarrierGroupController {
         return SubscriptionManager.getSlotIndex(subscriptionId);
     }
 
+    private boolean isSingleCarrier() {
+        int carrierCount = 0;
+        for (int i = 0; i < SIM_SLOTS; i++) {
+
+            if (mInfos[i].visible) {
+                carrierCount++;
+            }
+        }
+        return carrierCount == 1;
+    }
+
     public void setListening(boolean listening) {
         if (listening == mListening) {
             return;
@@ -243,10 +270,10 @@ public class QSCarrierGroupController {
             if (mNetworkController.hasVoiceCallingFeature()) {
                 mNetworkController.addCallback(mSignalCallback);
             }
-            mCarrierTextController.setListening(mCallback);
+            mCarrierTextManager.setListening(mCallback);
         } else {
             mNetworkController.removeCallback(mSignalCallback);
-            mCarrierTextController.setListening(null);
+            mCarrierTextManager.setListening(null);
         }
     }
 
@@ -256,6 +283,15 @@ public class QSCarrierGroupController {
         if (!mMainHandler.getLooper().isCurrentThread()) {
             mMainHandler.obtainMessage(H.MSG_UPDATE_STATE).sendToTarget();
             return;
+        }
+
+        if (isSingleCarrier()) {
+            for (int i = 0; i < SIM_SLOTS; i++) {
+                if (mInfos[i].visible
+                        && mInfos[i].mobileSignalIconId == R.drawable.ic_qs_sim_card) {
+                    mInfos[i] = new CellSignalState(true, R.drawable.ic_blank, "", "", false);
+                }
+            }
         }
 
         for (int i = 0; i < SIM_SLOTS; i++) {
@@ -273,7 +309,7 @@ public class QSCarrierGroupController {
     }
 
     @MainThread
-    private void handleUpdateCarrierInfo(CarrierTextController.CarrierTextCallbackInfo info) {
+    private void handleUpdateCarrierInfo(CarrierTextManager.CarrierTextCallbackInfo info) {
         if (!mMainHandler.getLooper().isCurrentThread()) {
             mMainHandler.obtainMessage(H.MSG_UPDATE_CARRIER_INFO, info).sendToTarget();
             return;
@@ -327,13 +363,13 @@ public class QSCarrierGroupController {
     }
 
     private static class H extends Handler {
-        private Consumer<CarrierTextController.CarrierTextCallbackInfo> mUpdateCarrierInfo;
+        private Consumer<CarrierTextManager.CarrierTextCallbackInfo> mUpdateCarrierInfo;
         private Runnable mUpdateState;
         static final int MSG_UPDATE_CARRIER_INFO = 0;
         static final int MSG_UPDATE_STATE = 1;
 
         H(Looper looper,
-                Consumer<CarrierTextController.CarrierTextCallbackInfo> updateCarrierInfo,
+                Consumer<CarrierTextManager.CarrierTextCallbackInfo> updateCarrierInfo,
                 Runnable updateState) {
             super(looper);
             mUpdateCarrierInfo = updateCarrierInfo;
@@ -345,7 +381,7 @@ public class QSCarrierGroupController {
             switch (msg.what) {
                 case MSG_UPDATE_CARRIER_INFO:
                     mUpdateCarrierInfo.accept(
-                            (CarrierTextController.CarrierTextCallbackInfo) msg.obj);
+                            (CarrierTextManager.CarrierTextCallbackInfo) msg.obj);
                     break;
                 case MSG_UPDATE_STATE:
                     mUpdateState.run();
@@ -362,19 +398,22 @@ public class QSCarrierGroupController {
         private final Handler mHandler;
         private final Looper mLooper;
         private final NetworkController mNetworkController;
-        private final CarrierTextController.Builder mCarrierTextControllerBuilder;
+        private final CarrierTextManager.Builder mCarrierTextControllerBuilder;
         private final Context mContext;
+        private final CarrierConfigTracker mCarrierConfigTracker;
 
         @Inject
         public Builder(ActivityStarter activityStarter, @Background Handler handler,
                 @Main Looper looper, NetworkController networkController,
-                CarrierTextController.Builder carrierTextControllerBuilder, Context context) {
+                CarrierTextManager.Builder carrierTextControllerBuilder, Context context,
+                CarrierConfigTracker carrierConfigTracker) {
             mActivityStarter = activityStarter;
             mHandler = handler;
             mLooper = looper;
             mNetworkController = networkController;
             mCarrierTextControllerBuilder = carrierTextControllerBuilder;
             mContext = context;
+            mCarrierConfigTracker = carrierConfigTracker;
         }
 
         public Builder setQSCarrierGroup(QSCarrierGroup view) {
@@ -384,7 +423,8 @@ public class QSCarrierGroupController {
 
         public QSCarrierGroupController build() {
             return new QSCarrierGroupController(mView, mActivityStarter, mHandler, mLooper,
-                    mNetworkController, mCarrierTextControllerBuilder, mContext);
+                    mNetworkController, mCarrierTextControllerBuilder, mContext,
+                    mCarrierConfigTracker);
         }
     }
 }

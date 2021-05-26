@@ -16,8 +16,6 @@
 
 package com.android.server.wm;
 
-import static android.view.WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER;
-
 import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_SCREENSHOT;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
@@ -37,6 +35,7 @@ import android.os.Handler;
 import android.util.ArraySet;
 import android.util.Pair;
 import android.util.Slog;
+import android.view.Display;
 import android.view.InsetsState;
 import android.view.SurfaceControl;
 import android.view.ThreadedRenderer;
@@ -291,7 +290,7 @@ class TaskSnapshotController {
         builder.setContentInsets(contentInsets);
 
         final boolean isWindowTranslucent = mainWindow.getAttrs().format != PixelFormat.OPAQUE;
-        final boolean isShowWallpaper = (mainWindow.getAttrs().flags & FLAG_SHOW_WALLPAPER) != 0;
+        final boolean isShowWallpaper = mainWindow.hasWallpaper();
 
         if (pixelFormat == PixelFormat.UNKNOWN) {
             pixelFormat = mPersister.use16BitFormat() && activity.fillsParent()
@@ -487,7 +486,7 @@ class TaskSnapshotController {
         return builder.build();
     }
 
-    private boolean shouldDisableSnapshots() {
+    boolean shouldDisableSnapshots() {
         return mIsRunningOnWear || mIsRunningOnTv || mIsRunningOnIoT;
     }
 
@@ -624,7 +623,7 @@ class TaskSnapshotController {
     /**
      * Called when screen is being turned off.
      */
-    void screenTurningOff(ScreenOffListener listener) {
+    void screenTurningOff(int displayId, ScreenOffListener listener) {
         if (shouldDisableSnapshots()) {
             listener.onScreenOff();
             return;
@@ -634,25 +633,37 @@ class TaskSnapshotController {
         mHandler.post(() -> {
             try {
                 synchronized (mService.mGlobalLock) {
-                    mTmpTasks.clear();
-                    mService.mRoot.forAllTasks(task -> {
-                        // Since RecentsAnimation will handle task snapshot while switching apps
-                        // with the best capture timing (e.g. IME window capture), No need
-                        // additional task capture while task is controlled by RecentsAnimation.
-                        if (task.isVisible() && !task.isAnimatingByRecents()) {
-                            mTmpTasks.add(task);
-                        }
-                    });
-                    // Allow taking snapshot of home when turning screen off to reduce the delay of
-                    // waking from secure lock to home.
-                    final boolean allowSnapshotHome =
-                            mService.mPolicy.isKeyguardSecure(mService.mCurrentUserId);
-                    snapshotTasks(mTmpTasks, allowSnapshotHome);
+                    snapshotForSleeping(displayId);
                 }
             } finally {
                 listener.onScreenOff();
             }
         });
+    }
+
+    /** Called when the device is going to sleep (e.g. screen off, AOD without screen off). */
+    void snapshotForSleeping(int displayId) {
+        if (shouldDisableSnapshots()) {
+            return;
+        }
+        final DisplayContent displayContent = mService.mRoot.getDisplayContent(displayId);
+        if (displayContent == null) {
+            return;
+        }
+        mTmpTasks.clear();
+        displayContent.forAllTasks(task -> {
+            // Since RecentsAnimation will handle task snapshot while switching apps with the best
+            // capture timing (e.g. IME window capture), No need additional task capture while task
+            // is controlled by RecentsAnimation.
+            if (task.isVisible() && !task.isAnimatingByRecents()) {
+                mTmpTasks.add(task);
+            }
+        });
+        // Allow taking snapshot of home when turning screen off to reduce the delay of waking from
+        // secure lock to home.
+        final boolean allowSnapshotHome = displayId == Display.DEFAULT_DISPLAY
+                && mService.mPolicy.isKeyguardSecure(mService.mCurrentUserId);
+        snapshotTasks(mTmpTasks, allowSnapshotHome);
     }
 
     /**

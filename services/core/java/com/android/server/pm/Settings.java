@@ -117,6 +117,7 @@ import com.android.server.pm.verify.domain.DomainVerificationLegacySettings;
 import com.android.server.pm.verify.domain.DomainVerificationManagerInternal;
 import com.android.server.pm.verify.domain.DomainVerificationPersistence;
 import com.android.server.utils.Snappable;
+import com.android.server.utils.SnapshotCache;
 import com.android.server.utils.TimingsTraceAndSlog;
 import com.android.server.utils.Watchable;
 import com.android.server.utils.WatchableImpl;
@@ -165,11 +166,6 @@ public final class Settings implements Watchable, Snappable {
     private static final String TAG = "PackageSettings";
 
     /**
-     * Cached snapshot
-     */
-    private volatile Settings mSnapshot = null;
-
-    /**
      * Watchable machinery
      */
     private final WatchableImpl mWatchable = new WatchableImpl();
@@ -212,7 +208,6 @@ public final class Settings implements Watchable, Snappable {
      * @param what The {@link Watchable} that generated the event.
      */
     public void dispatchChange(@Nullable Watchable what) {
-        mSnapshot = null;
         mWatchable.dispatchChange(what);
     }
     /**
@@ -345,6 +340,7 @@ public final class Settings implements Watchable, Snappable {
     private static final String ATTR_INSTANT_APP = "instant-app";
     private static final String ATTR_VIRTUAL_PRELOAD = "virtual-preload";
     private static final String ATTR_HARMFUL_APP_WARNING = "harmful-app-warning";
+    private static final String ATTR_SPLASH_SCREEN_THEME = "splash-screen-theme";
 
     private static final String ATTR_PACKAGE_NAME = "packageName";
     private static final String ATTR_FINGERPRINT = "fingerprint";
@@ -353,7 +349,7 @@ public final class Settings implements Watchable, Snappable {
     private static final String ATTR_DATABASE_VERSION = "databaseVersion";
     private static final String ATTR_VALUE = "value";
 
-    private final Object mLock;
+    private final PackageManagerTracedLock mLock;
 
     private final RuntimePermissionPersistence mRuntimePermissionsPersistence;
 
@@ -523,9 +519,22 @@ public final class Settings implements Watchable, Snappable {
             }
         };
 
+    private final SnapshotCache<Settings> mSnapshot;
+
+    // Create a snapshot cache
+    private SnapshotCache<Settings> makeCache() {
+        return new SnapshotCache<Settings>(this, this) {
+            @Override
+            public Settings createSnapshot() {
+                Settings s = new Settings(mSource);
+                s.mWatchable.seal();
+                return s;
+            }};
+    }
+
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     public Settings(Map<String, PackageSetting> pkgSettings) {
-        mLock = new Object();
+        mLock = new PackageManagerTracedLock();
         mPackages.putAll(pkgSettings);
         mAppIds = new WatchedArrayList<>();
         mOtherAppIds = new WatchedSparseArray<>();
@@ -557,12 +566,14 @@ public final class Settings implements Watchable, Snappable {
         mDefaultBrowserApp.registerObserver(mObserver);
 
         Watchable.verifyWatchedAttributes(this, mObserver);
+
+        mSnapshot = makeCache();
     }
 
     Settings(File dataDir, RuntimePermissionsPersistence runtimePermissionsPersistence,
             LegacyPermissionDataProvider permissionDataProvider,
             @NonNull DomainVerificationManagerInternal domainVerificationManager,
-            @NonNull Object lock)  {
+            @NonNull PackageManagerTracedLock lock)  {
         mLock = lock;
         mAppIds = new WatchedArrayList<>();
         mOtherAppIds = new WatchedSparseArray<>();
@@ -608,6 +619,8 @@ public final class Settings implements Watchable, Snappable {
         mDefaultBrowserApp.registerObserver(mObserver);
 
         Watchable.verifyWatchedAttributes(this, mObserver);
+
+        mSnapshot = makeCache();
     }
 
     /**
@@ -661,22 +674,15 @@ public final class Settings implements Watchable, Snappable {
         mPermissions = r.mPermissions;
         mPermissionDataProvider = r.mPermissionDataProvider;
 
-        // Do not register any Watchables
+        // Do not register any Watchables and do not create a snapshot cache.
+        mSnapshot = null;
     }
 
     /**
-     * Return a snapshot.  If the cached snapshot is null, build a new one.  The logic in
-     * the function ensures that this function returns a valid snapshot even if a race
-     * condition causes the cached snapshot to be cleared asynchronously to this method.
+     * Return a snapshot.
      */
     public Settings snapshot() {
-        Settings s = mSnapshot;
-        if (s == null) {
-            s = new Settings(this);
-            s.mWatchable.seal();
-            mSnapshot = s;
-        }
-        return s;
+        return mSnapshot.snapshot();
     }
 
     private void invalidatePackageCache() {
@@ -934,7 +940,9 @@ public final class Settings implements Watchable, Snappable {
                                 null /*disabledComponents*/,
                                 PackageManager.INSTALL_REASON_UNKNOWN,
                                 PackageManager.UNINSTALL_REASON_UNKNOWN,
-                                null /*harmfulAppWarning*/);
+                                null, /*harmfulAppWarning*/
+                                null /*splashscreenTheme*/
+                        );
                     }
                 }
             }
@@ -1229,7 +1237,7 @@ public final class Settings implements Watchable, Snappable {
                 size++;
             }
             if (mAppIds.get(index) != null) {
-                PackageManagerService.reportSettingsProblem(Log.ERROR,
+                PackageManagerService.reportSettingsProblem(Log.WARN,
                         "Adding duplicate app id: " + appId
                         + " name=" + name);
                 return false;
@@ -1237,7 +1245,7 @@ public final class Settings implements Watchable, Snappable {
             mAppIds.set(index, obj);
         } else {
             if (mOtherAppIds.get(appId) != null) {
-                PackageManagerService.reportSettingsProblem(Log.ERROR,
+                PackageManagerService.reportSettingsProblem(Log.WARN,
                         "Adding duplicate shared id: " + appId
                                 + " name=" + name);
                 return false;
@@ -1573,7 +1581,8 @@ public final class Settings implements Watchable, Snappable {
                                 null /*disabledComponents*/,
                                 PackageManager.INSTALL_REASON_UNKNOWN,
                                 PackageManager.UNINSTALL_REASON_UNKNOWN,
-                                null /*harmfulAppWarning*/);
+                                null /*harmfulAppWarning*/,
+                                null /* splashScreenTheme*/);
                     }
                     return;
                 }
@@ -1661,6 +1670,8 @@ public final class Settings implements Watchable, Snappable {
                             PackageManager.INSTALL_REASON_UNKNOWN);
                     final int uninstallReason = parser.getAttributeInt(null, ATTR_UNINSTALL_REASON,
                             PackageManager.UNINSTALL_REASON_UNKNOWN);
+                    final String splashScreenTheme = parser.getAttributeValue(null,
+                            ATTR_SPLASH_SCREEN_THEME);
 
                     ArraySet<String> enabledComponents = null;
                     ArraySet<String> disabledComponents = null;
@@ -1733,7 +1744,8 @@ public final class Settings implements Watchable, Snappable {
                     ps.setUserState(userId, ceDataInode, enabled, installed, stopped, notLaunched,
                             hidden, distractionFlags, suspended, suspendParamsMap,
                             instantApp, virtualPreload, enabledCaller, enabledComponents,
-                            disabledComponents, installReason, uninstallReason, harmfulAppWarning);
+                            disabledComponents, installReason, uninstallReason, harmfulAppWarning,
+                            splashScreenTheme);
 
                     mDomainVerificationManager.setLegacyUserState(name, userId, verifState);
                 } else if (tagName.equals("preferred-activities")) {
@@ -1989,6 +2001,10 @@ public final class Settings implements Watchable, Snappable {
                 if (ustate.harmfulAppWarning != null) {
                     serializer.attribute(null, ATTR_HARMFUL_APP_WARNING,
                             ustate.harmfulAppWarning);
+                }
+                if (ustate.splashScreenTheme != null) {
+                    serializer.attribute(null, ATTR_SPLASH_SCREEN_THEME,
+                            ustate.splashScreenTheme);
                 }
                 if (ustate.suspended) {
                     for (int i = 0; i < ustate.suspendParams.size(); i++) {
@@ -2323,7 +2339,8 @@ public final class Settings implements Watchable, Snappable {
                 }
             }
 
-            mDomainVerificationManager.writeSettings(serializer);
+            mDomainVerificationManager.writeSettings(serializer, false /* includeSignatures */,
+                    UserHandle.USER_ALL);
 
             mKeySetManagerService.writeKeySetManagerServiceLPr(serializer);
 
@@ -2543,6 +2560,9 @@ public final class Settings implements Watchable, Snappable {
                 // gids       - supplementary gids this app launches with
                 // profileableFromShellFlag  - 0 or 1 if the package is profileable from shell.
                 // longVersionCode - integer version of the package.
+                // profileable - 0 or 1 if the package is profileable by the platform.
+                // packageInstaller - the package that installed this app, or @system, @product or
+                //                    @null.
                 //
                 // NOTE: We prefer not to expose all ApplicationInfo flags for now.
                 //
@@ -2573,6 +2593,19 @@ public final class Settings implements Watchable, Snappable {
                 sb.append(pkg.pkg.isProfileableByShell() ? "1" : "0");
                 sb.append(" ");
                 sb.append(pkg.pkg.getLongVersionCode());
+                sb.append(" ");
+                sb.append(pkg.pkg.isProfileable() ? "1" : "0");
+                sb.append(" ");
+                if (pkg.isSystem()) {
+                    sb.append("@system");
+                } else if (pkg.isProduct()) {
+                    sb.append("@product");
+                } else if (pkg.installSource.installerPackageName != null
+                           && !pkg.installSource.installerPackageName.isEmpty()) {
+                    sb.append(pkg.installSource.installerPackageName);
+                } else {
+                    sb.append("@null");
+                }
                 sb.append("\n");
                 writer.append(sb);
             }
@@ -2692,9 +2725,6 @@ public final class Settings implements Watchable, Snappable {
         }
         if (pkg.forceQueryableOverride) {
             serializer.attributeBoolean(null, "forceQueryable", true);
-        }
-        if (pkg.isPackageStartable()) {
-            serializer.attributeBoolean(null, "isStartable", true);
         }
         if (pkg.isPackageLoading()) {
             serializer.attributeBoolean(null, "isLoading", true);
@@ -2900,13 +2930,7 @@ public final class Settings implements Watchable, Snappable {
             }
 
             str.close();
-
-        } catch (XmlPullParserException e) {
-            mReadMessages.append("Error reading: " + e.toString());
-            PackageManagerService.reportSettingsProblem(Log.ERROR, "Error reading settings: " + e);
-            Slog.wtf(PackageManagerService.TAG, "Error reading package manager settings", e);
-
-        } catch (java.io.IOException e) {
+        } catch (IOException | XmlPullParserException e) {
             mReadMessages.append("Error reading: " + e.toString());
             PackageManagerService.reportSettingsProblem(Log.ERROR, "Error reading settings: " + e);
             Slog.wtf(PackageManagerService.TAG, "Error reading package manager settings", e);
@@ -3002,8 +3026,9 @@ public final class Settings implements Watchable, Snappable {
                         = ps.pkg.getPreferredActivityFilters();
                 for (int i=0; i<intents.size(); i++) {
                     Pair<String, ParsedIntentInfo> pair = intents.get(i);
-                    applyDefaultPreferredActivityLPw(pmInternal, pair.second, new ComponentName(
-                            ps.name, pair.first), userId);
+                    applyDefaultPreferredActivityLPw(pmInternal,
+                            new WatchedIntentFilter(pair.second),
+                            new ComponentName(ps.name, pair.first), userId);
                 }
             }
         }
@@ -3073,7 +3098,7 @@ public final class Settings implements Watchable, Snappable {
     }
 
     static void removeFilters(@NonNull PreferredIntentResolver pir,
-            @NonNull IntentFilter filter, @NonNull List<PreferredActivity> existing) {
+            @NonNull WatchedIntentFilter filter, @NonNull List<PreferredActivity> existing) {
         if (PackageManagerService.DEBUG_PREFERRED) {
             Slog.i(TAG, existing.size() + " preferred matches for:");
             filter.dump(new LogPrinter(Log.INFO, TAG), "  ");
@@ -3088,8 +3113,8 @@ public final class Settings implements Watchable, Snappable {
         }
     }
 
-    private void applyDefaultPreferredActivityLPw(
-            PackageManagerInternal pmInternal, IntentFilter tmpPa, ComponentName cn, int userId) {
+    private void applyDefaultPreferredActivityLPw(PackageManagerInternal pmInternal,
+            WatchedIntentFilter tmpPa, ComponentName cn, int userId) {
         // The initial preferences only specify the target activity
         // component and intent-filter, not the set of matches.  So we
         // now need to query for the matches to build the correct
@@ -3260,7 +3285,7 @@ public final class Settings implements Watchable, Snappable {
             haveNonSys = null;
         }
         if (haveAct && haveNonSys == null) {
-            IntentFilter filter = new IntentFilter();
+            WatchedIntentFilter filter = new WatchedIntentFilter();
             if (intent.getAction() != null) {
                 filter.addAction(intent.getAction());
             }
@@ -3454,7 +3479,6 @@ public final class Settings implements Watchable, Snappable {
         PackageSetting packageSetting = null;
         long versionCode = 0;
         boolean installedForceQueryable = false;
-        boolean isStartable = false;
         boolean isLoading = false;
         float loadingProgress = 0;
         UUID domainSetId;
@@ -3474,7 +3498,6 @@ public final class Settings implements Watchable, Snappable {
             cpuAbiOverrideString = parser.getAttributeValue(null, "cpuAbiOverride");
             updateAvailable = parser.getAttributeBoolean(null, "updateAvailable", false);
             installedForceQueryable = parser.getAttributeBoolean(null, "forceQueryable", false);
-            isStartable = parser.getAttributeBoolean(null, "isStartable", false);
             isLoading = parser.getAttributeBoolean(null, "isLoading", false);
             loadingProgress = parser.getAttributeFloat(null, "loadingProgress", 0);
 
@@ -3633,8 +3656,7 @@ public final class Settings implements Watchable, Snappable {
             packageSetting.secondaryCpuAbiString = secondaryCpuAbiString;
             packageSetting.updateAvailable = updateAvailable;
             packageSetting.forceQueryableOverride = installedForceQueryable;
-            packageSetting.incrementalStates = new IncrementalStates(isStartable, isLoading,
-                    loadingProgress);
+            packageSetting.incrementalStates = new IncrementalStates(isLoading, loadingProgress);
             // Handle legacy string here for single-user mode
             final String enabledStr = parser.getAttributeValue(null, ATTR_ENABLED);
             if (enabledStr != null) {

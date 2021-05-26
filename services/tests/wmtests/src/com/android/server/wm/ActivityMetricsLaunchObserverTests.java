@@ -32,12 +32,14 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 
 import android.app.ActivityOptions;
 import android.app.ActivityOptions.SourceInfo;
 import android.app.WaitResult;
 import android.content.Intent;
+import android.os.IBinder;
 import android.os.SystemClock;
 import android.platform.test.annotations.Presubmit;
 import android.util.ArrayMap;
@@ -75,6 +77,7 @@ public class ActivityMetricsLaunchObserverTests extends WindowTestsBase {
     private ActivityRecord mTopActivity;
     private ActivityOptions mActivityOptions;
     private boolean mLaunchTopByTrampoline;
+    private boolean mNewActivityCreated = true;
 
     @Before
     public void setUpAMLO() {
@@ -185,6 +188,7 @@ public class ActivityMetricsLaunchObserverTests extends WindowTestsBase {
                 .isEqualTo(WaitResult.LAUNCH_STATE_WARM);
 
         mTopActivity.app = app;
+        mNewActivityCreated = false;
         assertWithMessage("Hot launch").that(launchTemplate.applyAsInt(false /* doRelaunch */))
                 .isEqualTo(WaitResult.LAUNCH_STATE_HOT);
 
@@ -192,6 +196,7 @@ public class ActivityMetricsLaunchObserverTests extends WindowTestsBase {
                 .isEqualTo(WaitResult.LAUNCH_STATE_RELAUNCH);
 
         mTopActivity.app = null;
+        mNewActivityCreated = true;
         doReturn(null).when(mAtm).getProcessController(app.mName, app.mUid);
         assertWithMessage("Cold launch").that(launchTemplate.applyAsInt(false /* doRelaunch */))
                 .isEqualTo(WaitResult.LAUNCH_STATE_COLD);
@@ -250,6 +255,19 @@ public class ActivityMetricsLaunchObserverTests extends WindowTestsBase {
     }
 
     @Test
+    public void testOnActivityLaunchWhileSleeping() {
+        notifyActivityLaunching(mTopActivity.intent);
+        notifyActivityLaunched(START_SUCCESS, mTopActivity);
+        doReturn(true).when(mTopActivity.mDisplayContent).isSleeping();
+        mTopActivity.setState(Task.ActivityState.RESUMED, "test");
+        mTopActivity.setVisibility(false);
+        waitHandlerIdle(mAtm.mH);
+        // Not cancel immediately because in one of real cases, the keyguard may be going away or
+        // occluded later, then the activity can be drawn.
+        verify(mLaunchObserver, never()).onActivityLaunchCancelled(eqProto(mTopActivity));
+    }
+
+    @Test
     public void testOnReportFullyDrawn() {
         mActivityOptions = ActivityOptions.makeBasic();
         mActivityOptions.setSourceInfo(SourceInfo.TYPE_LAUNCHER, SystemClock.uptimeMillis() - 10);
@@ -298,8 +316,8 @@ public class ActivityMetricsLaunchObserverTests extends WindowTestsBase {
     }
 
     private void notifyActivityLaunched(int resultCode, ActivityRecord activity) {
-        mActivityMetricsLogger.notifyActivityLaunched(mLaunchingState, resultCode, activity,
-                mActivityOptions);
+        mActivityMetricsLogger.notifyActivityLaunched(mLaunchingState, resultCode,
+                mNewActivityCreated, activity, mActivityOptions);
     }
 
     private void notifyTransitionStarting(ActivityRecord activity) {
@@ -399,6 +417,26 @@ public class ActivityMetricsLaunchObserverTests extends WindowTestsBase {
 
         // The first transition should still be valid.
         transitToDrawnAndVerifyOnLaunchFinished(mTopActivity);
+    }
+
+    @Test
+    public void testConsecutiveLaunchNewTask() {
+        final IBinder launchCookie = mock(IBinder.class);
+        mTrampolineActivity.noDisplay = true;
+        mTrampolineActivity.mLaunchCookie = launchCookie;
+        onActivityLaunched(mTrampolineActivity);
+        final ActivityRecord activityOnNewTask = new ActivityBuilder(mAtm)
+                .setCreateTask(true)
+                .build();
+        mActivityMetricsLogger.notifyActivityLaunching(activityOnNewTask.intent,
+                mTrampolineActivity /* caller */);
+        notifyActivityLaunched(START_SUCCESS, activityOnNewTask);
+
+        transitToDrawnAndVerifyOnLaunchFinished(activityOnNewTask);
+        assertWithMessage("Trampoline's cookie must be transferred").that(
+                mTrampolineActivity.mLaunchCookie).isNull();
+        assertWithMessage("The last launch task has the transferred cookie").that(
+                activityOnNewTask.mLaunchCookie).isEqualTo(launchCookie);
     }
 
     @Test

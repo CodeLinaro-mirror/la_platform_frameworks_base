@@ -104,9 +104,10 @@ public class Bubble implements BubbleViewProvider {
     }
 
     private FlyoutMessage mFlyoutMessage;
-    private Drawable mBadgeDrawable;
-    // Bitmap with no badge, no dot
+    // The developer provided image for the bubble
     private Bitmap mBubbleBitmap;
+    // The app badge for the bubble
+    private Bitmap mBadgeBitmap;
     private int mDotColor;
     private Path mDotPath;
     private int mFlags;
@@ -165,7 +166,8 @@ public class Bubble implements BubbleViewProvider {
      * Create a bubble with limited information based on given {@link ShortcutInfo}.
      * Note: Currently this is only being used when the bubble is persisted to disk.
      */
-    Bubble(@NonNull final String key, @NonNull final ShortcutInfo shortcutInfo,
+    @VisibleForTesting(visibility = PRIVATE)
+    public Bubble(@NonNull final String key, @NonNull final ShortcutInfo shortcutInfo,
             final int desiredHeight, final int desiredHeightResId, @Nullable final String title,
             int taskId, @Nullable final String locus, Executor mainExecutor) {
         Objects.requireNonNull(key);
@@ -188,7 +190,7 @@ public class Bubble implements BubbleViewProvider {
     }
 
     @VisibleForTesting(visibility = PRIVATE)
-    Bubble(@NonNull final BubbleEntry entry,
+    public Bubble(@NonNull final BubbleEntry entry,
             @Nullable final Bubbles.SuppressionChangedListener listener,
             final Bubbles.PendingIntentCanceledListener intentCancelListener,
             Executor mainExecutor) {
@@ -241,8 +243,8 @@ public class Bubble implements BubbleViewProvider {
     }
 
     @Override
-    public Drawable getAppBadge() {
-        return mBadgeDrawable;
+    public Bitmap getAppBadge() {
+        return mBadgeBitmap;
     }
 
     @Override
@@ -397,7 +399,7 @@ public class Bubble implements BubbleViewProvider {
         mAppName = info.appName;
         mFlyoutMessage = info.flyoutMessage;
 
-        mBadgeDrawable = info.badgeDrawable;
+        mBadgeBitmap = info.badgeBitmap;
         mBubbleBitmap = info.bubbleBitmap;
 
         mDotColor = info.dotColor;
@@ -571,7 +573,7 @@ public class Bubble implements BubbleViewProvider {
      * hide the bubble when in the same content).
      */
     boolean isSuppressable() {
-        return (mFlags & Notification.BubbleMetadata.FLAG_SHOULD_SUPPRESS_BUBBLE) != 0;
+        return (mFlags & Notification.BubbleMetadata.FLAG_SUPPRESSABLE_BUBBLE) != 0;
     }
 
     /**
@@ -718,7 +720,8 @@ public class Bubble implements BubbleViewProvider {
 
     private int getUid(final Context context) {
         if (mAppUid != -1) return mAppUid;
-        final PackageManager pm = context.getPackageManager();
+        final PackageManager pm = BubbleController.getPackageManagerForUser(context,
+                mUser.getIdentifier());
         if (pm == null) return -1;
         try {
             final ApplicationInfo info = pm.getApplicationInfo(mShortcutInfo.getPackage(), 0);

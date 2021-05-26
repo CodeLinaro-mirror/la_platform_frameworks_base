@@ -16,16 +16,16 @@
 
 package com.android.systemui.people.widget;
 
-import android.annotation.NonNull;
-import android.app.people.ConversationChannel;
-import android.app.people.PeopleManager;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
 import android.content.Context;
+import android.os.Bundle;
 import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.systemui.people.PeopleSpaceUtils;
+
+import javax.inject.Inject;
 
 /** People Space Widget Provider class. */
 public class PeopleSpaceWidgetProvider extends AppWidgetProvider {
@@ -37,25 +37,11 @@ public class PeopleSpaceWidgetProvider extends AppWidgetProvider {
     public static final String EXTRA_USER_HANDLE = "extra_user_handle";
     public static final String EXTRA_NOTIFICATION_KEY = "extra_notification_key";
 
-    public PeopleSpaceWidgetManager peopleSpaceWidgetManager;
+    public PeopleSpaceWidgetManager mPeopleSpaceWidgetManager;
 
-    /** Listener for the shortcut data changes. */
-    public class TileConversationListener implements PeopleManager.ConversationListener {
-
-        @Override
-        public void onConversationUpdate(@NonNull ConversationChannel conversation) {
-            if (DEBUG) {
-                Log.d(TAG,
-                        "Received updated conversation: "
-                                + conversation.getShortcutInfo().getLabel());
-            }
-            if (peopleSpaceWidgetManager == null) {
-                // This shouldn't happen since onUpdate is called at reboot.
-                Log.e(TAG, "Skipping conversation update: WidgetManager uninitialized");
-                return;
-            }
-            peopleSpaceWidgetManager.updateWidgetsWithConversationChanged(conversation);
-        }
+    @Inject
+    PeopleSpaceWidgetProvider(PeopleSpaceWidgetManager peopleSpaceWidgetManager) {
+        mPeopleSpaceWidgetManager = peopleSpaceWidgetManager;
     }
 
     /** Called when widget updates. */
@@ -64,32 +50,32 @@ public class PeopleSpaceWidgetProvider extends AppWidgetProvider {
         super.onUpdate(context, appWidgetManager, appWidgetIds);
 
         if (DEBUG) Log.d(TAG, "onUpdate called");
-        ensurePeopleSpaceWidgetManagerInitialized(context);
-        peopleSpaceWidgetManager.updateWidgets(appWidgetIds);
-        for (int appWidgetId : appWidgetIds) {
-            PeopleSpaceWidgetProvider.TileConversationListener
-                    newListener = new PeopleSpaceWidgetProvider.TileConversationListener();
-            peopleSpaceWidgetManager.registerConversationListenerIfNeeded(appWidgetId,
-                    newListener);
-        }
-        return;
+        ensurePeopleSpaceWidgetManagerInitialized();
+        mPeopleSpaceWidgetManager.updateWidgets(appWidgetIds);
     }
 
-    private void ensurePeopleSpaceWidgetManagerInitialized(Context context) {
-        if (peopleSpaceWidgetManager == null) {
-            peopleSpaceWidgetManager = new PeopleSpaceWidgetManager(context);
-        }
+    /** Called when widget updates. */
+    @Override
+    public void onAppWidgetOptionsChanged(Context context, AppWidgetManager appWidgetManager,
+            int appWidgetId, Bundle newOptions) {
+        super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions);
+        ensurePeopleSpaceWidgetManagerInitialized();
+        mPeopleSpaceWidgetManager.onAppWidgetOptionsChanged(appWidgetId, newOptions);
     }
 
     @Override
     public void onDeleted(Context context, int[] appWidgetIds) {
         super.onDeleted(context, appWidgetIds);
-        ensurePeopleSpaceWidgetManagerInitialized(context);
-        peopleSpaceWidgetManager.deleteWidgets(appWidgetIds);
+        ensurePeopleSpaceWidgetManagerInitialized();
+        mPeopleSpaceWidgetManager.deleteWidgets(appWidgetIds);
+    }
+
+    private void ensurePeopleSpaceWidgetManagerInitialized() {
+        mPeopleSpaceWidgetManager.init();
     }
 
     @VisibleForTesting
     public void setPeopleSpaceWidgetManager(PeopleSpaceWidgetManager manager) {
-        peopleSpaceWidgetManager = manager;
+        mPeopleSpaceWidgetManager = manager;
     }
 }

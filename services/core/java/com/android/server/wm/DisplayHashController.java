@@ -16,8 +16,12 @@
 
 package com.android.server.wm;
 
-import static android.service.displayhash.DisplayHasherService.EXTRA_VERIFIED_DISPLAY_HASH;
-import static android.service.displayhash.DisplayHasherService.SERVICE_META_DATA_KEY_AVAILABLE_ALGORITHMS;
+import static android.service.displayhash.DisplayHashingService.EXTRA_VERIFIED_DISPLAY_HASH;
+import static android.service.displayhash.DisplayHashingService.SERVICE_META_DATA;
+import static android.view.displayhash.DisplayHashResultCallback.DISPLAY_HASH_ERROR_INVALID_HASH_ALGORITHM;
+import static android.view.displayhash.DisplayHashResultCallback.DISPLAY_HASH_ERROR_TOO_MANY_REQUESTS;
+import static android.view.displayhash.DisplayHashResultCallback.DISPLAY_HASH_ERROR_UNKNOWN;
+import static android.view.displayhash.DisplayHashResultCallback.EXTRA_DISPLAY_HASH_ERROR_CODE;
 
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
@@ -33,6 +37,8 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.content.res.Resources;
+import android.content.res.TypedArray;
+import android.content.res.XmlResourceParser;
 import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.graphics.RectF;
@@ -45,23 +51,35 @@ import android.os.Message;
 import android.os.RemoteCallback;
 import android.os.RemoteException;
 import android.os.UserHandle;
-import android.service.displayhash.DisplayHasherService;
-import android.service.displayhash.IDisplayHasherService;
+import android.service.displayhash.DisplayHashParams;
+import android.service.displayhash.DisplayHashingService;
+import android.service.displayhash.IDisplayHashingService;
+import android.util.AttributeSet;
+import android.util.Size;
 import android.util.Slog;
+import android.util.Xml;
 import android.view.MagnificationSpec;
+import android.view.SurfaceControl;
 import android.view.displayhash.DisplayHash;
 import android.view.displayhash.VerifiedDisplayHash;
 
+import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
 /**
- * Handles requests into {@link android.service.displayhash.DisplayHasherService}
+ * Handles requests into {@link DisplayHashingService}
  *
  * Do not hold the {@link WindowManagerService#mGlobalLock} when calling methods since they are
  * blocking calls into another service.
@@ -73,17 +91,20 @@ public class DisplayHashController {
     private final Object mServiceConnectionLock = new Object();
 
     @GuardedBy("mServiceConnectionLock")
-    private DisplayHasherServiceConnection mServiceConnection;
+    private DisplayHashingServiceConnection mServiceConnection;
 
     private final Context mContext;
 
     /**
-     * Lock used for the cached {@link #mHashAlgorithms} array
+     * Lock used for the cached {@link #mDisplayHashAlgorithms} map
      */
-    private final Object mHashAlgorithmsLock = new Object();
+    private final Object mDisplayHashAlgorithmsLock = new Object();
 
-    @GuardedBy("mHashingAlgorithmsLock")
-    private String[] mHashAlgorithms;
+    /**
+     * The cached map of display hash algorithms to the {@link DisplayHashParams}
+     */
+    @GuardedBy("mDisplayHashAlgorithmsLock")
+    private Map<String, DisplayHashParams> mDisplayHashAlgorithms;
 
     private final Handler mHandler;
 
@@ -93,8 +114,43 @@ public class DisplayHashController {
     private final Matrix mTmpMatrix = new Matrix();
     private final RectF mTmpRectF = new RectF();
 
+    /**
+     * Lock used when retrieving xml metadata. Lock when retrieving the xml data the first time
+     * since it will be cached after that. Check if {@link #mParsedXml} is set to determine if the
+     * metadata needs to retrieved.
+     */
+    private final Object mParseXmlLock = new Object();
+
+    /**
+     * Flag whether the xml metadata has been retrieved and parsed. Once this is set to true,
+     * there's no need to request metadata again.
+     */
+    @GuardedBy("mParseXmlLock")
+    private boolean mParsedXml;
+
+    /**
+     * Specified duration between requests to generate a display hash in milliseconds. Requests
+     * faster than this delay will be throttled.
+     */
+    private int mDurationBetweenRequestMillis = 0;
+
+    /**
+     * The last time an app requested to generate a display hash in System time.
+     */
+    private long mLastRequestTimeMs;
+
+    /**
+     * The last uid that requested to generate a hash.
+     */
+    private int mLastRequestUid;
+
+    /**
+     * Only used for testing. Throttling should always be enabled unless running tests
+     */
+    private boolean mDisplayHashThrottlingEnabled = true;
+
     private interface Command {
-        void run(IDisplayHasherService service) throws RemoteException;
+        void run(IDisplayHashingService service) throws RemoteException;
     }
 
     DisplayHashController(Context context) {
@@ -104,34 +160,8 @@ public class DisplayHashController {
     }
 
     String[] getSupportedHashAlgorithms() {
-        // We have a separate lock for the hashing algorithm array since it doesn't need to make
-        // the request through the service connection. Instead, we have a lock to ensure we can
-        // properly cache the hashing algorithms array so we don't need to call into the
-        // ExtServices process for each request.
-        synchronized (mHashAlgorithmsLock) {
-            // Already have cached values
-            if (mHashAlgorithms != null) {
-                return mHashAlgorithms;
-            }
-
-            final ServiceInfo serviceInfo = getServiceInfo();
-            if (serviceInfo == null) return null;
-
-            final PackageManager pm = mContext.getPackageManager();
-            final Resources res;
-            try {
-                res = pm.getResourcesForApplication(serviceInfo.applicationInfo);
-            } catch (PackageManager.NameNotFoundException e) {
-                Slog.e(TAG, "Error getting application resources for " + serviceInfo, e);
-                return null;
-            }
-
-            final int resourceId = serviceInfo.metaData.getInt(
-                    SERVICE_META_DATA_KEY_AVAILABLE_ALGORITHMS);
-            mHashAlgorithms = res.getStringArray(resourceId);
-
-            return mHashAlgorithms;
-        }
+        Map<String, DisplayHashParams> displayHashAlgorithms = getDisplayHashAlgorithms();
+        return displayHashAlgorithms.keySet().toArray(new String[0]);
     }
 
     @Nullable
@@ -148,11 +178,106 @@ public class DisplayHashController {
         return results.getParcelable(EXTRA_VERIFIED_DISPLAY_HASH);
     }
 
-    void generateDisplayHash(HardwareBuffer buffer, Rect bounds,
+    void setDisplayHashThrottlingEnabled(boolean enable) {
+        mDisplayHashThrottlingEnabled = enable;
+    }
+
+    private void generateDisplayHash(HardwareBuffer buffer, Rect bounds,
             String hashAlgorithm, RemoteCallback callback) {
         connectAndRun(
                 service -> service.generateDisplayHash(mSalt, buffer, bounds, hashAlgorithm,
                         callback));
+    }
+
+    private boolean allowedToGenerateHash(int uid) {
+        if (!mDisplayHashThrottlingEnabled) {
+            // Always allow to generate the hash. This is used to allow tests to run without
+            // waiting on the designated threshold.
+            return true;
+        }
+
+        long currentTime = System.currentTimeMillis();
+        if (mLastRequestUid != uid) {
+            mLastRequestUid = uid;
+            mLastRequestTimeMs = currentTime;
+            return true;
+        }
+
+        int mDurationBetweenRequestsMs = getDurationBetweenRequestMillis();
+        if (currentTime - mLastRequestTimeMs < mDurationBetweenRequestsMs) {
+            return false;
+        }
+
+        mLastRequestTimeMs = currentTime;
+        return true;
+    }
+
+    void generateDisplayHash(SurfaceControl.LayerCaptureArgs.Builder args,
+            Rect boundsInWindow, String hashAlgorithm, int uid, RemoteCallback callback) {
+        if (!allowedToGenerateHash(uid)) {
+            sendDisplayHashError(callback, DISPLAY_HASH_ERROR_TOO_MANY_REQUESTS);
+            return;
+        }
+
+        final Map<String, DisplayHashParams> displayHashAlgorithmsMap = getDisplayHashAlgorithms();
+        DisplayHashParams displayHashParams = displayHashAlgorithmsMap.get(hashAlgorithm);
+        if (displayHashParams == null) {
+            Slog.w(TAG, "Failed to generateDisplayHash. Invalid hashAlgorithm");
+            sendDisplayHashError(callback, DISPLAY_HASH_ERROR_INVALID_HASH_ALGORITHM);
+            return;
+        }
+
+        Size size = displayHashParams.getBufferSize();
+        if (size != null && (size.getWidth() > 0 || size.getHeight() > 0)) {
+            args.setFrameScale((float) size.getWidth() / boundsInWindow.width(),
+                    (float) size.getHeight() / boundsInWindow.height());
+        }
+
+        args.setGrayscale(displayHashParams.isGrayscaleBuffer());
+
+        SurfaceControl.ScreenshotHardwareBuffer screenshotHardwareBuffer =
+                SurfaceControl.captureLayers(args.build());
+        if (screenshotHardwareBuffer == null
+                || screenshotHardwareBuffer.getHardwareBuffer() == null) {
+            Slog.w(TAG, "Failed to generate DisplayHash. Couldn't capture content");
+            sendDisplayHashError(callback, DISPLAY_HASH_ERROR_UNKNOWN);
+            return;
+        }
+
+        generateDisplayHash(screenshotHardwareBuffer.getHardwareBuffer(), boundsInWindow,
+                hashAlgorithm, callback);
+    }
+
+    private Map<String, DisplayHashParams> getDisplayHashAlgorithms() {
+        // We have a separate lock for the hashing params to ensure we can properly cache the
+        // hashing params so we don't need to call into the ExtServices process for each request.
+        synchronized (mDisplayHashAlgorithmsLock) {
+            if (mDisplayHashAlgorithms != null) {
+                return mDisplayHashAlgorithms;
+            }
+
+            final SyncCommand syncCommand = new SyncCommand();
+            Bundle results = syncCommand.run((service, remoteCallback) -> {
+                try {
+                    service.getDisplayHashAlgorithms(remoteCallback);
+                } catch (RemoteException e) {
+                    Slog.e(TAG, "Failed to invoke getDisplayHashAlgorithms command", e);
+                }
+            });
+
+            mDisplayHashAlgorithms = new HashMap<>(results.size());
+            for (String key : results.keySet()) {
+                mDisplayHashAlgorithms.put(key, results.getParcelable(key));
+            }
+
+            return mDisplayHashAlgorithms;
+        }
+    }
+
+    void sendDisplayHashError(RemoteCallback callback, int errorCode) {
+        Bundle bundle = new Bundle();
+        bundle.putInt(EXTRA_DISPLAY_HASH_ERROR_CODE, errorCode);
+        callback.sendResult(bundle);
     }
 
     /**
@@ -231,6 +356,64 @@ public class DisplayHashController {
         }
     }
 
+    private int getDurationBetweenRequestMillis() {
+        if (!parseXmlProperties()) {
+            return 0;
+        }
+        return mDurationBetweenRequestMillis;
+    }
+
+    private boolean parseXmlProperties() {
+        // We have a separate lock for the xml parsing since it doesn't need to make the
+        // request through the service connection. Instead, we have a lock to ensure we can
+        // properly cache the xml metadata so we don't need to call into the  ExtServices
+        // process for each request.
+        synchronized (mParseXmlLock) {
+            if (mParsedXml) {
+                return true;
+            }
+
+            final ServiceInfo serviceInfo = getServiceInfo();
+            if (serviceInfo == null) return false;
+
+            final PackageManager pm = mContext.getPackageManager();
+
+            XmlResourceParser parser;
+            parser = serviceInfo.loadXmlMetaData(pm, SERVICE_META_DATA);
+            if (parser == null) {
+                return false;
+            }
+
+            Resources res;
+            try {
+                res = pm.getResourcesForApplication(serviceInfo.applicationInfo);
+            } catch (PackageManager.NameNotFoundException e) {
+                return false;
+            }
+
+            AttributeSet attrs = Xml.asAttributeSet(parser);
+
+            int type;
+            while (true) {
+                try {
+                    if (!((type = parser.next()) != XmlPullParser.END_DOCUMENT
+                            && type != XmlPullParser.START_TAG)) {
+                        break;
+                    }
+                } catch (XmlPullParserException | IOException e) {
+                    return false;
+                }
+            }
+
+            TypedArray sa = res.obtainAttributes(attrs, R.styleable.DisplayHashingService);
+            mDurationBetweenRequestMillis = sa.getInt(
+                    R.styleable.DisplayHashingService_durationBetweenRequestsMillis, 0);
+            sa.recycle();
+            mParsedXml = true;
+            return true;
+        }
+    }
+
     /**
      * Run a command, starting the service connection if necessary.
      */
@@ -241,7 +424,7 @@ public class DisplayHashController {
                 if (DEBUG) Slog.v(TAG, "creating connection");
 
                 // Create the connection
-                mServiceConnection = new DisplayHasherServiceConnection();
+                mServiceConnection = new DisplayHashingServiceConnection();
 
                 final ComponentName component = getServiceComponentName();
                 if (DEBUG) Slog.v(TAG, "binding to: " + component);
@@ -272,7 +455,7 @@ public class DisplayHashController {
             return null;
         }
 
-        final Intent intent = new Intent(DisplayHasherService.SERVICE_INTERFACE);
+        final Intent intent = new Intent(DisplayHashingService.SERVICE_INTERFACE);
         intent.setPackage(packageName);
         final ResolveInfo resolveInfo = mContext.getPackageManager().resolveService(intent,
                 PackageManager.GET_SERVICES | PackageManager.GET_META_DATA);
@@ -289,10 +472,10 @@ public class DisplayHashController {
         if (serviceInfo == null) return null;
 
         final ComponentName name = new ComponentName(serviceInfo.packageName, serviceInfo.name);
-        if (!Manifest.permission.BIND_DISPLAY_HASHER_SERVICE
+        if (!Manifest.permission.BIND_DISPLAY_HASHING_SERVICE
                 .equals(serviceInfo.permission)) {
             Slog.w(TAG, name.flattenToShortString() + " requires permission "
-                    + Manifest.permission.BIND_DISPLAY_HASHER_SERVICE);
+                    + Manifest.permission.BIND_DISPLAY_HASHING_SERVICE);
             return null;
         }
 
@@ -305,7 +488,7 @@ public class DisplayHashController {
         private Bundle mResult;
         private final CountDownLatch mCountDownLatch = new CountDownLatch(1);
 
-        public Bundle run(BiConsumer<IDisplayHasherService, RemoteCallback> func) {
+        public Bundle run(BiConsumer<IDisplayHashingService, RemoteCallback> func) {
             connectAndRun(service -> {
                 RemoteCallback callback = new RemoteCallback(result -> {
                     mResult = result;
@@ -324,9 +507,9 @@ public class DisplayHashController {
         }
     }
 
-    private class DisplayHasherServiceConnection implements ServiceConnection {
+    private class DisplayHashingServiceConnection implements ServiceConnection {
         @GuardedBy("mServiceConnectionLock")
-        private IDisplayHasherService mRemoteService;
+        private IDisplayHashingService mRemoteService;
 
         @GuardedBy("mServiceConnectionLock")
         private ArrayList<Command> mQueuedCommands;
@@ -335,7 +518,7 @@ public class DisplayHashController {
         public void onServiceConnected(ComponentName name, IBinder service) {
             if (DEBUG) Slog.v(TAG, "onServiceConnected(): " + name);
             synchronized (mServiceConnectionLock) {
-                mRemoteService = IDisplayHasherService.Stub.asInterface(service);
+                mRemoteService = IDisplayHashingService.Stub.asInterface(service);
                 if (mQueuedCommands != null) {
                     final int size = mQueuedCommands.size();
                     if (DEBUG) Slog.d(TAG, "running " + size + " queued commands");

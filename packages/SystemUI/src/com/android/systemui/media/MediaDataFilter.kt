@@ -16,21 +16,35 @@
 
 package com.android.systemui.media
 
+import android.app.smartspace.SmartspaceAction
+import android.app.smartspace.SmartspaceTarget
+import android.os.SystemProperties
 import android.util.Log
 import com.android.internal.annotations.VisibleForTesting
 import com.android.systemui.broadcast.BroadcastDispatcher
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.settings.CurrentUserTracker
 import com.android.systemui.statusbar.NotificationLockscreenUserManager
+import com.android.systemui.util.time.SystemClock
 import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 private const val TAG = "MediaDataFilter"
 private const val DEBUG = true
 
 /**
+ * Maximum age of a media control to re-activate on smartspace signal. If there is no media control
+ * available within this time window, smartspace recommendations will be shown instead.
+ */
+@VisibleForTesting
+internal val SMARTSPACE_MAX_AGE = SystemProperties
+        .getLong("debug.sysui.smartspace_max_age", TimeUnit.HOURS.toMillis(3))
+
+/**
  * Filters data updates from [MediaDataCombineLatest] based on the current user ID, and handles user
- * switches (removing entries for the previous user, adding back entries for the current user)
+ * switches (removing entries for the previous user, adding back entries for the current user). Also
+ * filters out smartspace updates in favor of local recent media, when avaialble.
  *
  * This is added at the end of the pipeline since we may still need to handle callbacks from
  * background users (e.g. timeouts).
@@ -39,7 +53,8 @@ class MediaDataFilter @Inject constructor(
     private val broadcastDispatcher: BroadcastDispatcher,
     private val mediaResumeListener: MediaResumeListener,
     private val lockscreenUserManager: NotificationLockscreenUserManager,
-    @Main private val executor: Executor
+    @Main private val executor: Executor,
+    private val systemClock: SystemClock
 ) : MediaDataManager.Listener {
     private val userTracker: CurrentUserTracker
     private val _listeners: MutableSet<MediaDataManager.Listener> = mutableSetOf()
@@ -50,6 +65,8 @@ class MediaDataFilter @Inject constructor(
     private val allEntries: LinkedHashMap<String, MediaData> = LinkedHashMap()
     // The filtered userEntries, which will be a subset of all userEntries in MediaDataManager
     private val userEntries: LinkedHashMap<String, MediaData> = LinkedHashMap()
+    private var hasSmartspace: Boolean = false
+    private var reactivatedKey: String? = null
 
     init {
         userTracker = object : CurrentUserTracker(broadcastDispatcher) {
@@ -82,6 +99,41 @@ class MediaDataFilter @Inject constructor(
         }
     }
 
+    override fun onSmartspaceMediaDataLoaded(key: String, data: SmartspaceTarget) {
+        hasSmartspace = true
+
+        // Before forwarding the smartspace target, first check if we have recently inactive media
+        val now = systemClock.elapsedRealtime()
+        val sorted = userEntries.toSortedMap(compareBy {
+            userEntries.get(it)?.lastActive ?: -1
+        })
+        if (sorted.size > 0) {
+            val lastActiveKey = sorted.lastKey() // most recently active
+            val timeSinceActive = sorted.get(lastActiveKey)?.let {
+                now - it.lastActive
+            } ?: Long.MAX_VALUE
+            if (timeSinceActive < SMARTSPACE_MAX_AGE) {
+                // Notify listeners to consider this media active
+                Log.d(TAG, "reactivating $lastActiveKey instead of smartspace")
+                reactivatedKey = lastActiveKey
+                val mediaData = sorted.get(lastActiveKey)!!.copy(active = true)
+                listeners.forEach {
+                    it.onMediaDataLoaded(lastActiveKey, lastActiveKey, mediaData)
+                }
+                return
+            }
+        }
+
+        // If no recent media, continue with smartspace update
+        if (isMediaRecommendationEmpty(data)) {
+            Log.d(TAG, "Empty media recommendations. Skip showing the card")
+            return
+        }
+
+        // Proceed only if the Smartspace recommendation is not empty.
+        listeners.forEach { it.onSmartspaceMediaDataLoaded(key, data) }
+    }
+
     override fun onMediaDataRemoved(key: String) {
         allEntries.remove(key)
         userEntries.remove(key)?.let {
@@ -90,6 +142,26 @@ class MediaDataFilter @Inject constructor(
                 it.onMediaDataRemoved(key)
             }
         }
+    }
+
+    override fun onSmartspaceMediaDataRemoved(key: String) {
+        hasSmartspace = false
+
+        // First check if we had reactivated media instead of forwarding smartspace
+        reactivatedKey?.let {
+            val lastActiveKey = it
+            reactivatedKey = null
+            Log.d(TAG, "expiring reactivated key $lastActiveKey")
+            // Notify listeners to update with actual active value
+            userEntries.get(lastActiveKey)?.let { mediaData ->
+                listeners.forEach {
+                    it.onMediaDataLoaded(lastActiveKey, lastActiveKey, mediaData)
+                }
+            }
+            return
+        }
+
+        listeners.forEach { it.onSmartspaceMediaDataRemoved(key) }
     }
 
     @VisibleForTesting
@@ -125,19 +197,23 @@ class MediaDataFilter @Inject constructor(
         if (DEBUG) Log.d(TAG, "Media carousel swiped away")
         val mediaKeys = userEntries.keys.toSet()
         mediaKeys.forEach {
-            mediaDataManager.setTimedOut(it, timedOut = true)
+            // Force updates to listeners, needed for re-activated card
+            mediaDataManager.setTimedOut(it, timedOut = true, forceUpdate = true)
+        }
+        if (hasSmartspace) {
+            mediaDataManager.dismissSmartspaceRecommendation(0L /* delay */)
         }
     }
 
     /**
      * Are there any media notifications active?
      */
-    fun hasActiveMedia() = userEntries.any { it.value.active }
+    fun hasActiveMedia() = userEntries.any { it.value.active } || hasSmartspace
 
     /**
      * Are there any media entries we should display?
      */
-    fun hasAnyMedia() = userEntries.isNotEmpty()
+    fun hasAnyMedia() = userEntries.isNotEmpty() || hasSmartspace
 
     /**
      * Add a listener for filtered [MediaData] changes
@@ -148,4 +224,10 @@ class MediaDataFilter @Inject constructor(
      * Remove a listener that was registered with addListener
      */
     fun removeListener(listener: MediaDataManager.Listener) = _listeners.remove(listener)
+
+    /** Check if the Smartspace sends an empty update. */
+    private fun isMediaRecommendationEmpty(data: SmartspaceTarget): Boolean {
+        val mediaRecommendationList: List<SmartspaceAction> = data.getIconGrid()
+        return mediaRecommendationList == null || mediaRecommendationList.isEmpty()
+    }
 }

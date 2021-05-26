@@ -80,22 +80,39 @@ public class CpuPowerCalculator extends PowerCalculator {
     @Override
     public void calculate(BatteryUsageStats.Builder builder, BatteryStats batteryStats,
             long rawRealtimeUs, long rawUptimeUs, BatteryUsageStatsQuery query) {
+        double totalPowerMah = 0;
+
         Result result = new Result();
         final SparseArray<UidBatteryConsumer.Builder> uidBatteryConsumerBuilders =
                 builder.getUidBatteryConsumerBuilders();
         for (int i = uidBatteryConsumerBuilders.size() - 1; i >= 0; i--) {
             final UidBatteryConsumer.Builder app = uidBatteryConsumerBuilders.valueAt(i);
-            calculateApp(app, app.getBatteryStatsUid(), result);
+            calculateApp(app, app.getBatteryStatsUid(), query, result);
+            totalPowerMah += result.powerMah;
         }
+
+        final long consumptionUC = batteryStats.getCpuMeasuredBatteryConsumptionUC();
+        final int powerModel = getPowerModel(consumptionUC, query);
+
+        builder.getAggregateBatteryConsumerBuilder(
+                BatteryUsageStats.AGGREGATE_BATTERY_CONSUMER_SCOPE_ALL_APPS)
+                .setConsumedPower(BatteryConsumer.POWER_COMPONENT_CPU, totalPowerMah);
+        builder.getAggregateBatteryConsumerBuilder(
+                BatteryUsageStats.AGGREGATE_BATTERY_CONSUMER_SCOPE_DEVICE)
+                .setConsumedPower(BatteryConsumer.POWER_COMPONENT_CPU,
+                        powerModel == BatteryConsumer.POWER_MODEL_MEASURED_ENERGY
+                                ? uCtoMah(consumptionUC) : totalPowerMah, powerModel);
     }
 
-    private void calculateApp(UidBatteryConsumer.Builder app, BatteryStats.Uid u, Result result) {
-        calculatePowerAndDuration(u, BatteryStats.STATS_SINCE_CHARGED, result);
+    private void calculateApp(UidBatteryConsumer.Builder app, BatteryStats.Uid u,
+            BatteryUsageStatsQuery query, Result result) {
+        final long consumptionUC = u.getCpuMeasuredBatteryConsumptionUC();
+        final int powerModel = getPowerModel(consumptionUC, query);
+        calculatePowerAndDuration(u, powerModel, consumptionUC, BatteryStats.STATS_SINCE_CHARGED,
+                result);
 
-        app.setConsumedPower(BatteryConsumer.POWER_COMPONENT_CPU, result.powerMah)
-                .setUsageDurationMillis(BatteryConsumer.TIME_COMPONENT_CPU, result.durationMs)
-                .setUsageDurationMillis(BatteryConsumer.TIME_COMPONENT_CPU_FOREGROUND,
-                        result.durationFgMs)
+        app.setConsumedPower(BatteryConsumer.POWER_COMPONENT_CPU, result.powerMah, powerModel)
+                .setUsageDurationMillis(BatteryConsumer.POWER_COMPONENT_CPU, result.durationMs)
                 .setPackageWithHighestDrain(result.packageWithHighestDrain);
     }
 
@@ -112,7 +129,9 @@ public class CpuPowerCalculator extends PowerCalculator {
     }
 
     private void calculateApp(BatterySipper app, BatteryStats.Uid u, int statsType, Result result) {
-        calculatePowerAndDuration(u, statsType, result);
+        final long consumptionUC = u.getCpuMeasuredBatteryConsumptionUC();
+        final int powerModel = getPowerModel(consumptionUC);
+        calculatePowerAndDuration(u, powerModel, consumptionUC, statsType, result);
 
         app.cpuPowerMah = result.powerMah;
         app.cpuTimeMs = result.durationMs;
@@ -120,46 +139,20 @@ public class CpuPowerCalculator extends PowerCalculator {
         app.packageWithHighestDrain = result.packageWithHighestDrain;
     }
 
-    private void calculatePowerAndDuration(BatteryStats.Uid u, int statsType, Result result) {
+    private void calculatePowerAndDuration(BatteryStats.Uid u,
+            @BatteryConsumer.PowerModel int powerModel, long consumptionUC, int statsType,
+            Result result) {
         long durationMs = (u.getUserCpuTimeUs(statsType) + u.getSystemCpuTimeUs(statsType)) / 1000;
 
-        // Constant battery drain when CPU is active
-        double powerMah = calculateActiveCpuPowerMah(u.getCpuActiveTime());
-
-        // Additional per-cluster battery drain
-        long[] cpuClusterTimes = u.getCpuClusterTimes();
-        if (cpuClusterTimes != null) {
-            if (cpuClusterTimes.length == mNumCpuClusters) {
-                for (int cluster = 0; cluster < mNumCpuClusters; cluster++) {
-                    double power = calculatePerCpuClusterPowerMah(cluster,
-                            cpuClusterTimes[cluster]);
-                    powerMah += power;
-                    if (DEBUG) {
-                        Log.d(TAG, "UID " + u.getUid() + ": CPU cluster #" + cluster
-                                + " clusterTimeMs=" + cpuClusterTimes[cluster]
-                                + " power=" + formatCharge(power));
-                    }
-                }
-            } else {
-                Log.w(TAG, "UID " + u.getUid() + " CPU cluster # mismatch: Power Profile # "
-                        + mNumCpuClusters + " actual # " + cpuClusterTimes.length);
-            }
-        }
-
-        // Additional per-frequency battery drain
-        for (int cluster = 0; cluster < mNumCpuClusters; cluster++) {
-            final int speedsForCluster = mPerCpuFreqPowerEstimators[cluster].length;
-            for (int speed = 0; speed < speedsForCluster; speed++) {
-                final long timeUs = u.getTimeAtCpuSpeed(cluster, speed, statsType);
-                final double power = calculatePerCpuFreqPowerMah(cluster, speed,
-                        timeUs / 1000);
-                if (DEBUG) {
-                    Log.d(TAG, "UID " + u.getUid() + ": CPU cluster #" + cluster + " step #"
-                            + speed + " timeUs=" + timeUs + " power="
-                            + formatCharge(power));
-                }
-                powerMah += power;
-            }
+        final double powerMah;
+        switch(powerModel) {
+            case BatteryConsumer.POWER_MODEL_MEASURED_ENERGY:
+                powerMah = uCtoMah(consumptionUC);
+                break;
+            case BatteryConsumer.POWER_MODEL_POWER_PROFILE:
+            default:
+                powerMah = calculateUidModeledPowerMah(u, statsType);
+                break;
         }
 
         if (DEBUG && (durationMs != 0 || powerMah != 0)) {
@@ -206,6 +199,48 @@ public class CpuPowerCalculator extends PowerCalculator {
         result.durationFgMs = durationFgMs;
         result.powerMah = powerMah;
         result.packageWithHighestDrain = packageWithHighestDrain;
+    }
+
+    private double calculateUidModeledPowerMah(BatteryStats.Uid u, int statsType) {
+        // Constant battery drain when CPU is active
+        double powerMah = calculateActiveCpuPowerMah(u.getCpuActiveTime());
+
+        // Additional per-cluster battery drain
+        long[] cpuClusterTimes = u.getCpuClusterTimes();
+        if (cpuClusterTimes != null) {
+            if (cpuClusterTimes.length == mNumCpuClusters) {
+                for (int cluster = 0; cluster < mNumCpuClusters; cluster++) {
+                    double power = calculatePerCpuClusterPowerMah(cluster,
+                            cpuClusterTimes[cluster]);
+                    powerMah += power;
+                    if (DEBUG) {
+                        Log.d(TAG, "UID " + u.getUid() + ": CPU cluster #" + cluster
+                                + " clusterTimeMs=" + cpuClusterTimes[cluster]
+                                + " power=" + formatCharge(power));
+                    }
+                }
+            } else {
+                Log.w(TAG, "UID " + u.getUid() + " CPU cluster # mismatch: Power Profile # "
+                        + mNumCpuClusters + " actual # " + cpuClusterTimes.length);
+            }
+        }
+
+        // Additional per-frequency battery drain
+        for (int cluster = 0; cluster < mNumCpuClusters; cluster++) {
+            final int speedsForCluster = mPerCpuFreqPowerEstimators[cluster].length;
+            for (int speed = 0; speed < speedsForCluster; speed++) {
+                final long timeUs = u.getTimeAtCpuSpeed(cluster, speed, statsType);
+                final double power = calculatePerCpuFreqPowerMah(cluster, speed,
+                        timeUs / 1000);
+                if (DEBUG) {
+                    Log.d(TAG, "UID " + u.getUid() + ": CPU cluster #" + cluster + " step #"
+                            + speed + " timeUs=" + timeUs + " power="
+                            + formatCharge(power));
+                }
+                powerMah += power;
+            }
+        }
+        return powerMah;
     }
 
     /**

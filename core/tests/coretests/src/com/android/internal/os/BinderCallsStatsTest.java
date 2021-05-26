@@ -923,6 +923,26 @@ public class BinderCallsStatsTest {
         }
     }
 
+    @Test
+    public void testLatencyCollectionEnabled() {
+        TestBinderCallsStats bcs = new TestBinderCallsStats();
+        bcs.setCollectLatencyData(true);
+
+        Binder binder = new Binder();
+        CallSession callSession = bcs.callStarted(binder, 1, WORKSOURCE_UID);
+        bcs.time += 10;
+        bcs.elapsedTime += 20;
+        bcs.callEnded(callSession, REQUEST_SIZE, REPLY_SIZE, WORKSOURCE_UID);
+
+        assertEquals(1, bcs.getLatencyObserver().getLatencyHistograms().size());
+    }
+
+    @Test
+    public void testLatencyCollectionEnabledByDefault() {
+        TestBinderCallsStats bcs = new TestBinderCallsStats();
+        assertEquals(true, bcs.getCollectLatencyData());
+    }
+
     private static class TestHandler extends Handler {
         ArrayList<Runnable> mRunnables = new ArrayList<>();
 
@@ -962,6 +982,11 @@ public class BinderCallsStatsTest {
 
                 public Handler getHandler() {
                     return mHandler;
+                }
+
+                @Override
+                public BinderLatencyObserver getLatencyObserver(int processSource) {
+                    return new BinderLatencyObserverTest.TestBinderLatencyObserver(processSource);
                 }
             });
             setSamplingInterval(1);

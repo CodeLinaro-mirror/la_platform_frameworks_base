@@ -29,7 +29,10 @@ import android.service.quicksettings.Tile;
 import android.text.Html;
 import android.text.TextUtils;
 import android.util.Log;
+import android.view.View;
 import android.widget.Switch;
+
+import androidx.annotation.Nullable;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
@@ -40,9 +43,9 @@ import com.android.systemui.R;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.ActivityStarter;
+import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.qs.QSIconView;
 import com.android.systemui.plugins.qs.QSTile;
-import com.android.systemui.plugins.qs.QSTile.Icon;
 import com.android.systemui.plugins.qs.QSTile.SignalState;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.qs.AlphaControlledSignalTileView;
@@ -80,14 +83,15 @@ public class InternetTile extends QSTileImpl<SignalState> {
             QSHost host,
             @Background Looper backgroundLooper,
             @Main Handler mainHandler,
+            FalsingManager falsingManager,
             MetricsLogger metricsLogger,
             StatusBarStateController statusBarStateController,
             ActivityStarter activityStarter,
             QSLogger qsLogger,
             NetworkController networkController
     ) {
-        super(host, backgroundLooper, mainHandler, metricsLogger, statusBarStateController,
-                activityStarter, qsLogger);
+        super(host, backgroundLooper, mainHandler, falsingManager, metricsLogger,
+                statusBarStateController, activityStarter, qsLogger);
         mController = networkController;
         mDataController = mController.getMobileDataController();
         mController.observe(getLifecycle(), mSignalCallback);
@@ -95,7 +99,9 @@ public class InternetTile extends QSTileImpl<SignalState> {
 
     @Override
     public SignalState newTileState() {
-        return new SignalState();
+        SignalState s = new SignalState();
+        s.forceExpandIcon = true;
+        return s;
     }
 
     @Override
@@ -109,7 +115,7 @@ public class InternetTile extends QSTileImpl<SignalState> {
     }
 
     @Override
-    protected void handleClick() {
+    protected void handleClick(@Nullable View view) {
         mActivityStarter.postStartActivityDismissingKeyguard(INTERNET_PANEL, 0);
     }
 
@@ -415,7 +421,6 @@ public class InternetTile extends QSTileImpl<SignalState> {
                 }
             } else {
                 state.icon = ResourceIcon.get(cb.mWifiSignalIconId);
-                state.label = r.getString(R.string.quick_settings_airplane_safe_label);
             }
         } else if (cb.mNoDefaultNetwork && cb.mNoNetworksAvailable) {
             state.icon = ResourceIcon.get(R.drawable.ic_qs_no_internet_unavailable);
@@ -479,9 +484,6 @@ public class InternetTile extends QSTileImpl<SignalState> {
             state.icon = ResourceIcon.get(R.drawable.ic_qs_no_internet_available);
             state.secondaryLabel = r.getString(R.string.quick_settings_networks_available);
         } else {
-            if (cb.mAirplaneModeEnabled) {
-                state.label = r.getString(R.string.quick_settings_airplane_safe_label);
-            }
             state.icon = new SignalIcon(cb.mMobileSignalIconId);
             state.secondaryLabel = appendMobileDataType(cb.mDataSubscriptionName,
                     getMobileDataContentName(cb));

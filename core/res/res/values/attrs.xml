@@ -1125,6 +1125,24 @@
              to framework controls (via colorControlActivated). -->
         <attr name="colorAccent" format="color" />
 
+        <!-- Light accent color used on Material NEXT buttons. @hide -->
+        <attr name="colorAccentPrimary" format="color" />
+
+        <!-- Secondary accent color used on Material NEXT buttons. @hide -->
+        <attr name="colorAccentSecondary" format="color" />
+
+        <!-- Tertiary accent color used on Material NEXT buttons. @hide -->
+        <attr name="colorAccentTertiary" format="color" />
+
+        <!-- Darker accent color used on Material NEXT buttons. @hide -->
+        <attr name="colorAccentPrimaryVariant" format="color" />
+
+        <!-- Secondary darker accent color used on Material NEXT buttons. @hide -->
+        <attr name="colorAccentSecondaryVariant" format="color" />
+
+        <!-- Tertiary darker accent color used on Material NEXT buttons. @hide -->
+        <attr name="colorAccentTertiaryVariant" format="color" />
+
         <!-- The color applied to framework controls in their normal state. -->
         <attr name="colorControlNormal" format="color" />
 
@@ -1146,14 +1164,20 @@
         <!-- The color applied to the edge effect on scrolling containers. -->
         <attr name="colorEdgeEffect" format="color" />
 
-        <!-- The type of the edge effect. The default is glow. -->
-        <attr name="edgeEffectType">
-            <!-- Use a colored glow at the edge. -->
-            <enum name="glow" value="0" />
+        <!-- The color applied to surfaces on top of colorBackground. @hide -->
+        <attr name="colorSurface" format="color" />
 
-            <!-- Stretch the content. -->
-            <enum name="stretch" value="1" />
-        </attr>
+        <!-- Alternative color applied to surfaces on top of colorBackground. @hide -->
+        <attr name="colorSurfaceHighlight" format="color" />
+
+        <!-- Alternative color applied to surfaces on top of colorBackground. @hide -->
+        <attr name="colorSurfaceVariant" format="color" />
+
+        <!-- Alternative color applied to surfaces on top of colorBackground. @hide -->
+        <attr name="colorSurfaceHeader" format="color" />
+
+        <!-- Color applied to effects. -->
+        <attr name="effectColor" format="color" />
 
         <!-- =================== -->
         <!-- Lighting properties -->
@@ -2194,6 +2218,7 @@
              Note that even if no splashscreen content is set on the theme, the system may still
              show a splash screen using the other attributes on the theme, like the
              {@link android.R.attr#windowBackground}.
+             {@deprecated Use windowSplashscreenAnimatedIcon instead.}
              -->
         <attr name="windowSplashscreenContent" format="reference" />
 
@@ -2279,6 +2304,10 @@
         <!-- Place an drawable image in the bottom of the starting window, it can be used to
              represent the branding of the application. -->
         <attr name="windowSplashScreenBrandingImage" format="reference"/>
+        <!-- Set a background behind the splash screen icon. This is useful if there is not enough
+             contrast between the window background and the icon. Note the shape would also be
+             masking like an icon. -->
+        <attr name="windowSplashScreenIconBackgroundColor" format="color"/>
     </declare-styleable>
 
     <!-- The set of attributes that describe a AlertDialog's theme. -->
@@ -3564,6 +3593,17 @@
         <attr name="__removed2" format="boolean" />
         <!-- Specifies whether the IME supports showing inline suggestions. -->
         <attr name="supportsInlineSuggestions" format="boolean" />
+        <!-- Specifies whether the IME suppresses system spell checker.
+             The default value is false. If an IME sets this attribute to true,
+             the system spell checker will be disabled while the IME has an
+             active input session. -->
+        <attr name="suppressesSpellChecker" format="boolean" />
+        <!-- Specifies whether the IME wants to be shown in the Input Method picker. Defaults to
+             true. Set this to false if the IME is intended to be accessed programmatically.
+             <p>
+             Note: This functions as a hint to the system, which may choose to ignore this
+             preference in certain situations or in future releases.-->
+        <attr name="showInInputMethodPicker" format="boolean" />
         <!-- Specify one or more configuration changes that the IME will handle itself. If not
              specified, the IME will be restarted if any of these configuration changes happen in
               the system.  Otherwise, the IME will remain running and its
@@ -6065,6 +6105,8 @@
         <attr name="color" />
         <!-- Alpha multiplier applied to the base color. -->
         <attr name="alpha" />
+        <!-- Perceptual luminance applied to the base color. From 0 to 100. -->
+        <attr name="lStar" format="float" />
     </declare-styleable>
 
     <!-- Drawable used to render according to the animation scale. Esp. when it is 0 due to battery
@@ -6496,13 +6538,8 @@
         <!-- The radius of the ripple when fully expanded. By default, the
              radius is computed based on the size of the ripple's container. -->
         <attr name="radius" />
-        <!-- The style of the ripple drawable is solid by default -->
-        <attr name="rippleStyle">
-            <!-- Solid is the default style -->
-            <enum name="solid" value="0" />
-            <!-- Patterned style-->
-            <enum name="patterned" value="1" />
-        </attr>
+        <!-- Secondary color of the ripple effect. -->
+        <attr name="effectColor" />
     </declare-styleable>
 
     <declare-styleable name="ScaleDrawable">
@@ -8173,7 +8210,7 @@
             <flag name="hide_from_picker" value="0x2" />
               <!-- The widget provides a default configuration. The host may decide not to launch
                    the provided configuration activity. -->
-           <flag name="configuration_optional" value="0x3" />
+           <flag name="configuration_optional" value="0x4" />
         </attr>
         <!-- A resource identifier for a string containing a short description of the widget. -->
         <attr name="description" />
@@ -9211,7 +9248,6 @@
     <!-- Used as a filter array on the theme to pull out only the EdgeEffect-relevant bits. -->
     <declare-styleable name="EdgeEffect">
         <attr name="colorEdgeEffect" />
-        <attr name="edgeEffectType" />
     </declare-styleable>
 
     <!-- Use <code>tv-input</code> as the root tag of the XML resource that describes a
@@ -9530,4 +9566,13 @@
 
     <attr name="iconfactoryIconSize" format="dimension"/>
     <attr name="iconfactoryBadgeSize" format="dimension"/>
+    <!-- Perceptual luminance of a color, in accessibility friendly color space. From 0 to 100. -->
+    <attr name="lStar" format="float"/>
+
+    <declare-styleable name="DisplayHashingService">
+        <!-- The interval required between display hash requests. Requests made faster than this
+             delay will be throttled."
+             @hide @SystemApi -->
+        <attr name="durationBetweenRequestsMillis" format="integer" />
+    </declare-styleable>
 </resources>

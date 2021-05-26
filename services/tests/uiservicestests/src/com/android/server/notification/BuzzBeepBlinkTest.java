@@ -61,8 +61,10 @@ import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Handler;
+import android.os.Process;
 import android.os.RemoteException;
 import android.os.UserHandle;
+import android.os.VibrationAttributes;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
@@ -81,10 +83,12 @@ import com.android.internal.logging.InstanceIdSequenceFake;
 import com.android.internal.util.IntPair;
 import com.android.server.UiServiceTestCase;
 import com.android.server.lights.LogicalLight;
+import com.android.server.pm.PackageManagerService;
 
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatcher;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -412,12 +416,16 @@ public class BuzzBeepBlinkTest extends UiServiceTestCase {
     }
 
     private void verifyVibrate() {
+        ArgumentCaptor<AudioAttributes> captor = ArgumentCaptor.forClass(AudioAttributes.class);
         verify(mVibrator, times(1)).vibrate(anyInt(), anyString(), argThat(mVibrateOnceMatcher),
-                anyString(), any(AudioAttributes.class));
+                anyString(), captor.capture());
+        assertEquals(0, (captor.getValue().getAllFlags()
+                & AudioAttributes.FLAG_BYPASS_INTERRUPTION_POLICY));
     }
 
     private void verifyVibrate(int times) {
-        verify(mVibrator, times(times)).vibrate(anyInt(), anyString(), any(), anyString(),
+        verify(mVibrator, times(times)).vibrate(eq(Process.SYSTEM_UID),
+                eq(PackageManagerService.PLATFORM_PACKAGE_NAME), any(), anyString(),
                 any(AudioAttributes.class));
     }
 
@@ -437,11 +445,14 @@ public class BuzzBeepBlinkTest extends UiServiceTestCase {
     }
 
     private void verifyStopVibrate() {
-        verify(mVibrator, times(1)).cancel();
+        int alarmClassUsageFilter =
+                VibrationAttributes.USAGE_CLASS_ALARM | ~VibrationAttributes.USAGE_CLASS_MASK;
+        verify(mVibrator, times(1)).cancel(eq(alarmClassUsageFilter));
     }
 
-    private void verifyNeverStopVibrate() throws RemoteException {
+    private void verifyNeverStopVibrate() {
         verify(mVibrator, never()).cancel();
+        verify(mVibrator, never()).cancel(anyInt());
     }
 
     private void verifyNeverLights() {
@@ -1681,8 +1692,8 @@ public class BuzzBeepBlinkTest extends UiServiceTestCase {
 
         @Override
         public boolean matches(VibrationEffect actual) {
-            if (actual instanceof VibrationEffect.Waveform &&
-                    ((VibrationEffect.Waveform) actual).getRepeatIndex() == mRepeatIndex) {
+            if (actual instanceof VibrationEffect.Composed
+                    && ((VibrationEffect.Composed) actual).getRepeatIndex() == mRepeatIndex) {
                 return true;
             }
             // All non-waveform effects are essentially one shots.

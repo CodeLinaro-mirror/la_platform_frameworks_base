@@ -31,6 +31,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageParser;
+import android.content.pm.PackageParser.SigningDetails;
 import android.content.pm.Signature;
 import android.content.pm.UserInfo;
 import android.content.pm.parsing.ParsingPackage;
@@ -139,6 +140,10 @@ public class AppsFilterTest {
     private static ParsingPackage pkgWithReceiver(String packageName, IntentFilter... filters) {
         ParsedActivity receiver = createActivity(packageName, filters);
         return pkg(packageName).addReceiver(receiver);
+    }
+
+    private static ParsingPackage pkgWithSharedLibrary(String packageName, String libName) {
+        return pkg(packageName).addLibraryName(libName);
     }
 
     private static ParsedActivity createActivity(String packageName, IntentFilter[] filters) {
@@ -413,6 +418,118 @@ public class AppsFilterTest {
     }
 
     @Test
+    public void testNoUsesLibrary_Filters() throws Exception {
+        final AppsFilter appsFilter = new AppsFilter(mStateProvider, mFeatureConfigMock,
+                new String[]{}, /* systemAppsQueryable */ false, /* overlayProvider */ null,
+                mMockExecutor);
+
+        simulateAddBasicAndroid(appsFilter);
+        appsFilter.onSystemReady();
+
+        final Signature mockSignature = Mockito.mock(Signature.class);
+        final SigningDetails mockSigningDetails = new SigningDetails(
+                new Signature[]{mockSignature},
+                SigningDetails.SignatureSchemeVersion.SIGNING_BLOCK_V2);
+
+        final PackageSetting target = simulateAddPackage(appsFilter,
+                pkgWithSharedLibrary("com.some.package", "com.some.shared_library"),
+                DUMMY_TARGET_APPID,
+                setting -> setting.setSigningDetails(mockSigningDetails)
+                        .setPkgFlags(ApplicationInfo.FLAG_SYSTEM));
+        final PackageSetting calling = simulateAddPackage(appsFilter,
+                pkg("com.some.other.package"), DUMMY_CALLING_APPID);
+
+        assertTrue(appsFilter.shouldFilterApplication(DUMMY_CALLING_APPID, calling, target,
+                SYSTEM_USER));
+    }
+
+    @Test
+    public void testUsesLibrary_DoesntFilter() throws Exception {
+        final AppsFilter appsFilter = new AppsFilter(mStateProvider, mFeatureConfigMock,
+                new String[]{}, /* systemAppsQueryable */ false, /* overlayProvider */ null,
+                mMockExecutor);
+
+        simulateAddBasicAndroid(appsFilter);
+        appsFilter.onSystemReady();
+
+        final Signature mockSignature = Mockito.mock(Signature.class);
+        final SigningDetails mockSigningDetails = new SigningDetails(
+                new Signature[]{mockSignature},
+                SigningDetails.SignatureSchemeVersion.SIGNING_BLOCK_V2);
+
+        final PackageSetting target = simulateAddPackage(appsFilter,
+                pkgWithSharedLibrary("com.some.package", "com.some.shared_library"),
+                DUMMY_TARGET_APPID,
+                setting -> setting.setSigningDetails(mockSigningDetails)
+                        .setPkgFlags(ApplicationInfo.FLAG_SYSTEM));
+        final PackageSetting calling = simulateAddPackage(appsFilter,
+                pkg("com.some.other.package").addUsesLibrary("com.some.shared_library"),
+                DUMMY_CALLING_APPID);
+
+        assertFalse(appsFilter.shouldFilterApplication(DUMMY_CALLING_APPID, calling, target,
+                SYSTEM_USER));
+    }
+
+    @Test
+    public void testUsesOptionalLibrary_DoesntFilter() throws Exception {
+        final AppsFilter appsFilter = new AppsFilter(mStateProvider, mFeatureConfigMock,
+                new String[]{}, /* systemAppsQueryable */ false, /* overlayProvider */ null,
+                mMockExecutor);
+
+        simulateAddBasicAndroid(appsFilter);
+        appsFilter.onSystemReady();
+
+        final Signature mockSignature = Mockito.mock(Signature.class);
+        final SigningDetails mockSigningDetails = new SigningDetails(
+                new Signature[]{mockSignature},
+                SigningDetails.SignatureSchemeVersion.SIGNING_BLOCK_V2);
+
+        final PackageSetting target = simulateAddPackage(appsFilter,
+                pkgWithSharedLibrary("com.some.package", "com.some.shared_library"),
+                DUMMY_TARGET_APPID,
+                setting -> setting.setSigningDetails(mockSigningDetails)
+                        .setPkgFlags(ApplicationInfo.FLAG_SYSTEM));
+        final PackageSetting calling = simulateAddPackage(appsFilter,
+                pkg("com.some.other.package").addUsesOptionalLibrary("com.some.shared_library"),
+                DUMMY_CALLING_APPID);
+
+        assertFalse(appsFilter.shouldFilterApplication(DUMMY_CALLING_APPID, calling, target,
+                SYSTEM_USER));
+    }
+
+    @Test
+    public void testUsesLibrary_ShareUid_DoesntFilter() throws Exception {
+        final AppsFilter appsFilter = new AppsFilter(mStateProvider, mFeatureConfigMock,
+                new String[]{}, /* systemAppsQueryable */ false, /* overlayProvider */ null,
+                mMockExecutor);
+
+        simulateAddBasicAndroid(appsFilter);
+        appsFilter.onSystemReady();
+
+        final Signature mockSignature = Mockito.mock(Signature.class);
+        final SigningDetails mockSigningDetails = new SigningDetails(
+                new Signature[]{mockSignature},
+                SigningDetails.SignatureSchemeVersion.SIGNING_BLOCK_V2);
+
+        final PackageSetting target = simulateAddPackage(appsFilter,
+                pkgWithSharedLibrary("com.some.package", "com.some.shared_library"),
+                DUMMY_TARGET_APPID,
+                setting -> setting.setSigningDetails(mockSigningDetails)
+                        .setPkgFlags(ApplicationInfo.FLAG_SYSTEM));
+        final PackageSetting calling = simulateAddPackage(appsFilter,
+                pkg("com.some.other.package_a").setSharedUserId("com.some.uid"),
+                DUMMY_CALLING_APPID);
+        simulateAddPackage(appsFilter, pkg("com.some.other.package_b")
+                .setSharedUserId("com.some.uid").addUsesLibrary("com.some.shared_library"),
+                DUMMY_CALLING_APPID);
+
+        // Although package_a doesn't use library, it should be granted visibility. It's because
+        // package_a shares userId with package_b, and package_b uses that shared library.
+        assertFalse(appsFilter.shouldFilterApplication(DUMMY_CALLING_APPID, calling, target,
+                SYSTEM_USER));
+    }
+
+    @Test
     public void testForceQueryable_SystemDoesntFilter() throws Exception {
         final AppsFilter appsFilter =
                 new AppsFilter(mStateProvider, mFeatureConfigMock, new String[]{}, false, null,
@@ -682,10 +799,18 @@ public class AppsFilterTest {
         simulateAddBasicAndroid(appsFilter);
         appsFilter.onSystemReady();
 
-        PackageSetting targetSetting = simulateAddPackage(appsFilter, target, DUMMY_TARGET_APPID);
+        // Packages must be added in actor -> overlay -> target order so that the implicit
+        // visibility of the actor into the overlay can be tested
+
+        PackageSetting actorSetting = simulateAddPackage(appsFilter, actor, DUMMY_ACTOR_APPID);
         PackageSetting overlaySetting =
                 simulateAddPackage(appsFilter, overlay, DUMMY_OVERLAY_APPID);
-        PackageSetting actorSetting = simulateAddPackage(appsFilter, actor, DUMMY_ACTOR_APPID);
+
+        // Actor can not see overlay (yet)
+        assertTrue(appsFilter.shouldFilterApplication(DUMMY_ACTOR_APPID, actorSetting,
+                overlaySetting, SYSTEM_USER));
+
+        PackageSetting targetSetting = simulateAddPackage(appsFilter, target, DUMMY_TARGET_APPID);
 
         // Actor can see both target and overlay
         assertFalse(appsFilter.shouldFilterApplication(DUMMY_ACTOR_APPID, actorSetting,
@@ -704,6 +829,12 @@ public class AppsFilterTest {
                 actorSetting, SYSTEM_USER));
         assertTrue(appsFilter.shouldFilterApplication(DUMMY_OVERLAY_APPID, overlaySetting,
                 actorSetting, SYSTEM_USER));
+
+        appsFilter.removePackage(targetSetting);
+
+        // Actor loses visibility to the overlay via removal of the target
+        assertTrue(appsFilter.shouldFilterApplication(DUMMY_ACTOR_APPID, actorSetting,
+                overlaySetting, SYSTEM_USER));
     }
 
     @Test

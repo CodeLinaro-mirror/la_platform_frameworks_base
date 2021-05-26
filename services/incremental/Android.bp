@@ -68,6 +68,7 @@ cc_defaults {
         "libutils",
         "libvold_binder",
         "libc++fs",
+        "libziparchive_for_incfs",
     ],
     shared_libs: [
         "libandroidfw",
@@ -76,8 +77,8 @@ cc_defaults {
         "libcutils",
         "libincfs",
         "liblog",
+        "libpermission",
         "libz",
-        "libziparchive",
     ],
 }
 

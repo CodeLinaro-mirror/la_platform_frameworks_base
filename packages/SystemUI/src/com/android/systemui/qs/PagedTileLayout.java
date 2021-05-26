@@ -7,9 +7,6 @@ import android.animation.ObjectAnimator;
 import android.animation.PropertyValuesHolder;
 import android.content.Context;
 import android.content.res.Configuration;
-import android.content.res.Resources;
-import android.content.res.TypedArray;
-import android.graphics.Rect;
 import android.os.Bundle;
 import android.util.AttributeSet;
 import android.util.Log;
@@ -64,14 +61,11 @@ public class PagedTileLayout extends ViewPager implements QSTileLayout {
     private int mPageToRestore = -1;
     private int mLayoutOrientation;
     private int mLayoutDirection;
-    private final Rect mClippingRect;
     private final UiEventLogger mUiEventLogger = QSEvents.INSTANCE.getQsUiEventsLogger();
     private int mExcessHeight;
     private int mLastExcessHeight;
     private int mMinRows = 1;
     private int mMaxColumns = TileLayout.NO_MAX_COLUMNS;
-
-    private final boolean mSideLabels;
 
     public PagedTileLayout(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -81,14 +75,15 @@ public class PagedTileLayout extends ViewPager implements QSTileLayout {
         setCurrentItem(0, false);
         mLayoutOrientation = getResources().getConfiguration().orientation;
         mLayoutDirection = getLayoutDirection();
-        mClippingRect = new Rect();
-
-        TypedArray t = context.getTheme().obtainStyledAttributes(
-                attrs, R.styleable.PagedTileLayout, 0, 0);
-        mSideLabels = t.getBoolean(R.styleable.PagedTileLayout_sideLabels, false);
-        t.recycle();
     }
     private int mLastMaxHeight = -1;
+
+    @Override
+    public void setPageMargin(int marginPixels) {
+        if (marginPixels != getPageMargin()) {
+            super.setPageMargin(marginPixels);
+        }
+    }
 
     public void saveInstanceState(Bundle outState) {
         outState.putInt(CURRENT_PAGE, getCurrentItem());
@@ -224,8 +219,7 @@ public class PagedTileLayout extends ViewPager implements QSTileLayout {
 
     private TileLayout createTileLayout() {
         TileLayout page = (TileLayout) LayoutInflater.from(getContext())
-                .inflate(mSideLabels ? R.layout.qs_paged_page_side_labels
-                        : R.layout.qs_paged_page, this, false);
+                .inflate(R.layout.qs_paged_page, this, false);
         page.setMinRows(mMinRows);
         page.setMaxColumns(mMaxColumns);
         return page;
@@ -338,9 +332,6 @@ public class PagedTileLayout extends ViewPager implements QSTileLayout {
 
     @Override
     public boolean updateResources() {
-        // Update bottom padding, useful for removing extra space once the panel page indicator is
-        // hidden.
-        Resources res = getContext().getResources();
         setPadding(0, 0, 0,
                 getContext().getResources().getDimensionPixelSize(
                         R.dimen.qs_paged_tile_layout_padding_bottom));
@@ -353,14 +344,6 @@ public class PagedTileLayout extends ViewPager implements QSTileLayout {
             requestLayout();
         }
         return changed;
-    }
-
-    @Override
-    protected void onLayout(boolean changed, int l, int t, int r, int b) {
-        super.onLayout(changed, l, t, r, b);
-        // Clip to margins
-        mClippingRect.set(0, 0, (r - l), b - t);
-        setClipBounds(mClippingRect);
     }
 
     @Override
@@ -542,18 +525,6 @@ public class PagedTileLayout extends ViewPager implements QSTileLayout {
                     }
                 }
             };
-
-    public static class TilePage extends TileLayout {
-
-        public TilePage(Context context, AttributeSet attrs) {
-            super(context, attrs);
-        }
-
-        public boolean isFull() {
-            return mRecords.size() >= maxTiles();
-        }
-
-    }
 
     private final PagerAdapter mAdapter = new PagerAdapter() {
         @Override

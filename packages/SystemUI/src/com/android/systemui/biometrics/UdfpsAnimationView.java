@@ -16,57 +16,82 @@
 
 package com.android.systemui.biometrics;
 
-import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.Context;
-import android.graphics.Canvas;
-import android.graphics.PointF;
 import android.graphics.RectF;
 import android.util.AttributeSet;
+import android.view.View;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
-
-import com.android.systemui.doze.DozeReceiver;
-import com.android.systemui.statusbar.phone.StatusBar;
 
 /**
  * Base class for views containing UDFPS animations. Note that this is a FrameLayout so that we
- * can support multiple child views drawing on the same region around the sensor location.
+ * can support multiple child views drawing in the same region around the sensor location.
+ *
+ * - hides animation view when pausing auth
+ * - sends illumination events to fingerprint drawable
+ * - sends sensor rect updates to fingerprint drawable
+ * - optionally can override dozeTimeTick to adjust views for burn-in mitigation
  */
-public abstract class UdfpsAnimationView extends FrameLayout implements DozeReceiver,
-        StatusBar.ExpansionChangedListener {
-
-    private static final String TAG = "UdfpsAnimationView";
-
-    @Nullable protected abstract UdfpsAnimation getUdfpsAnimation();
-
-    @NonNull private UdfpsView mParent;
-    @NonNull private RectF mSensorRect;
+abstract class UdfpsAnimationView extends FrameLayout {
+    // mAlpha takes into consideration the status bar expansion amount to fade out icon when
+    // the status bar is expanded
     private int mAlpha;
+    boolean mPauseAuth;
 
     public UdfpsAnimationView(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
-        mSensorRect = new RectF();
-        setWillNotDraw(false);
     }
 
-    @Override
-    protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas);
+    /**
+     * Fingerprint drawable
+     */
+    abstract UdfpsDrawable getDrawable();
 
-        if (getUdfpsAnimation() != null) {
-            final int alpha = mParent.shouldPauseAuth() ? mAlpha : 255;
-            getUdfpsAnimation().setAlpha(alpha);
-            getUdfpsAnimation().draw(canvas);
+    void onSensorRectUpdated(RectF bounds) {
+        getDrawable().onSensorRectUpdated(bounds);
+    }
+
+    void onIlluminationStarting() {
+        getDrawable().setIlluminationShowing(true);
+        getDrawable().invalidateSelf();
+    }
+
+    void onIlluminationStopped() {
+        getDrawable().setIlluminationShowing(false);
+        getDrawable().invalidateSelf();
+    }
+
+    /**
+     * @return true if changed
+     */
+    boolean setPauseAuth(boolean pauseAuth) {
+        if (pauseAuth != mPauseAuth) {
+            mPauseAuth = pauseAuth;
+            updateAlpha();
+            return true;
+        }
+        return false;
+    }
+
+    protected void updateAlpha() {
+        int alpha = calculateAlpha();
+        getDrawable().setAlpha(alpha);
+
+        // this is necessary so that touches won't be intercepted if udfps is paused:
+        if (mPauseAuth && alpha == 0 && getParent() != null) {
+            ((ViewGroup) getParent()).setVisibility(View.INVISIBLE);
+        } else {
+            ((ViewGroup) getParent()).setVisibility(View.VISIBLE);
         }
     }
 
-    @Override
-    protected void onDetachedFromWindow() {
-        super.onDetachedFromWindow();
+    int calculateAlpha() {
+        return mPauseAuth ? mAlpha : 255;
+    }
 
-        if (getUdfpsAnimation() != null) {
-            getUdfpsAnimation().onDestroy();
-        }
+    boolean isPauseAuth() {
+        return mPauseAuth;
     }
 
     private int expansionToAlpha(float expansion) {
@@ -81,76 +106,15 @@ public abstract class UdfpsAnimationView extends FrameLayout implements DozeRece
         return (int) ((1 - percent) * 255);
     }
 
-    void onIlluminationStarting() {
-        if (getUdfpsAnimation() == null) {
-            return;
-        }
-
-        getUdfpsAnimation().setIlluminationShowing(true);
-        postInvalidate();
-    }
-
-    void onIlluminationStopped() {
-        if (getUdfpsAnimation() == null) {
-            return;
-        }
-
-        getUdfpsAnimation().setIlluminationShowing(false);
-        postInvalidate();
-    }
-
-    void setParent(@NonNull UdfpsView parent) {
-        mParent = parent;
-    }
-
-    void onSensorRectUpdated(@NonNull RectF sensorRect) {
-        mSensorRect = sensorRect;
-        if (getUdfpsAnimation() != null) {
-            getUdfpsAnimation().onSensorRectUpdated(mSensorRect);
-        }
-    }
-
-    void updateColor() {
-        if (getUdfpsAnimation() != null) {
-            getUdfpsAnimation().updateColor();
-        }
-        postInvalidate();
-    }
-
-    @Override
-    public void dozeTimeTick() {
-        if (getUdfpsAnimation() instanceof DozeReceiver) {
-            ((DozeReceiver) getUdfpsAnimation()).dozeTimeTick();
-        }
-    }
-
-    @Override
     public void onExpansionChanged(float expansion, boolean expanded) {
         mAlpha = expansionToAlpha(expansion);
-        postInvalidate();
-    }
-
-    public int getPaddingX() {
-        if (getUdfpsAnimation() == null) {
-            return 0;
-        }
-        return getUdfpsAnimation().getPaddingX();
-    }
-
-    public int getPaddingY() {
-        if (getUdfpsAnimation() == null) {
-            return 0;
-        }
-        return getUdfpsAnimation().getPaddingY();
+        updateAlpha();
     }
 
     /**
-     * @return the amount of translation needed if the view currently requires the user to touch
-     *         somewhere other than the exact center of the sensor. For example, this can happen
-     *         during guided enrollment.
+     * @return true if handled
      */
-    @NonNull
-    PointF getTouchTranslation() {
-        return new PointF(0, 0);
+    boolean dozeTimeTick() {
+        return false;
     }
 }

@@ -17,13 +17,12 @@
 package com.android.wm.shell.onehanded;
 
 import android.content.Context;
-import android.content.res.Resources;
+import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.util.Log;
 import android.view.SurfaceControl;
 import android.view.SurfaceSession;
-import android.view.WindowManager;
 import android.window.DisplayAreaAppearedInfo;
 import android.window.DisplayAreaInfo;
 import android.window.DisplayAreaOrganizer;
@@ -31,11 +30,13 @@ import android.window.DisplayAreaOrganizer;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
+import androidx.core.content.ContextCompat;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.wm.shell.R;
-import com.android.wm.shell.common.DisplayController;
+import com.android.wm.shell.common.DisplayLayout;
 
+import java.io.PrintWriter;
 import java.util.List;
 import java.util.concurrent.Executor;
 
@@ -50,14 +51,16 @@ public class OneHandedBackgroundPanelOrganizer extends DisplayAreaOrganizer
 
     private final Object mLock = new Object();
     private final SurfaceSession mSurfaceSession = new SurfaceSession();
-    private final float[] mColor;
-    private final float mAlpha;
-    private final Rect mRect;
+    private final float[] mDefaultColor;
     private final Executor mMainExecutor;
-    private final Rect mDisplaySize;
     private final OneHandedSurfaceTransactionHelper.SurfaceControlTransactionFactory
             mSurfaceControlTransactionFactory;
 
+    /**
+     * The background to distinguish the boundary of translated windows and empty region when
+     * one handed mode triggered.
+     */
+    private Rect mBkgBounds;
     @VisibleForTesting
     @GuardedBy("mLock")
     boolean mIsShowing;
@@ -82,15 +85,18 @@ public class OneHandedBackgroundPanelOrganizer extends DisplayAreaOrganizer
         mMainExecutor.execute(() -> removeBackgroundPanelLayer());
     }
 
-    public OneHandedBackgroundPanelOrganizer(Context context, WindowManager windowManager,
-            DisplayController displayController, Executor executor) {
+    public OneHandedBackgroundPanelOrganizer(Context context, DisplayLayout displayLayout,
+            Executor executor) {
         super(executor);
-        mDisplaySize = windowManager.getCurrentWindowMetrics().getBounds();
-        final Resources res = context.getResources();
-        final float defaultRGB = res.getFloat(R.dimen.config_one_handed_background_rgb);
-        mColor = new float[]{defaultRGB, defaultRGB, defaultRGB};
-        mAlpha = res.getFloat(R.dimen.config_one_handed_background_alpha);
-        mRect = new Rect(0, 0, mDisplaySize.width(), mDisplaySize.height());
+        // Ensure the mBkgBounds is portrait, due to OHM only support on portrait
+        if (displayLayout.height() > displayLayout.width()) {
+            mBkgBounds = new Rect(0, 0, displayLayout.width(), displayLayout.height());
+        } else {
+            mBkgBounds = new Rect(0, 0, displayLayout.height(), displayLayout.width());
+        }
+        final int defaultColor = ContextCompat.getColor(context, R.color.GM2_grey_800);
+        mDefaultColor = new float[]{Color.red(defaultColor) / 255.0f,
+                Color.green(defaultColor) / 255.0f, Color.blue(defaultColor) / 255.0f};
         mMainExecutor = executor;
         mSurfaceControlTransactionFactory = SurfaceControl.Transaction::new;
     }
@@ -144,9 +150,10 @@ public class OneHandedBackgroundPanelOrganizer extends DisplayAreaOrganizer
             if (mBackgroundSurface == null) {
                 mBackgroundSurface = new SurfaceControl.Builder(mSurfaceSession)
                         .setParent(mParentLeash)
+                        .setBufferSize(mBkgBounds.width(), mBkgBounds.height())
                         .setColorLayer()
-                        .setFormat(PixelFormat.RGBA_8888)
-                        .setOpaque(false)
+                        .setFormat(PixelFormat.RGB_888)
+                        .setOpaque(true)
                         .setName("one-handed-background-panel")
                         .setCallsite("OneHandedBackgroundPanelOrganizer")
                         .build();
@@ -170,8 +177,7 @@ public class OneHandedBackgroundPanelOrganizer extends DisplayAreaOrganizer
             SurfaceControl.Transaction transaction =
                     mSurfaceControlTransactionFactory.getTransaction();
             transaction.setLayer(mBackgroundSurface, -1 /* at bottom-most layer */)
-                    .setColor(mBackgroundSurface, mColor)
-                    .setAlpha(mBackgroundSurface, mAlpha)
+                    .setColor(mBackgroundSurface, mDefaultColor)
                     .show(mBackgroundSurface)
                     .apply();
             transaction.close();
@@ -188,11 +194,21 @@ public class OneHandedBackgroundPanelOrganizer extends DisplayAreaOrganizer
 
             SurfaceControl.Transaction transaction =
                     mSurfaceControlTransactionFactory.getTransaction();
-            transaction.remove(mBackgroundSurface);
-            transaction.apply();
+            transaction.remove(mBackgroundSurface).apply();
             transaction.close();
             mBackgroundSurface = null;
             mIsShowing = false;
         }
+    }
+
+    void dump(@NonNull PrintWriter pw) {
+        final String innerPrefix = "  ";
+        pw.println(TAG);
+        pw.print(innerPrefix + "mIsShowing=");
+        pw.println(mIsShowing);
+        pw.print(innerPrefix + "mBkgBounds=");
+        pw.println(mBkgBounds);
+        pw.print(innerPrefix + "mDefaultColor=");
+        pw.println(mDefaultColor);
     }
 }

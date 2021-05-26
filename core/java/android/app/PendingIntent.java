@@ -53,7 +53,6 @@ import android.os.RemoteException;
 import android.os.UserHandle;
 import android.util.AndroidException;
 import android.util.ArraySet;
-import android.util.Log;
 import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.os.IResultReceiver;
@@ -359,32 +358,21 @@ public final class PendingIntent implements Parcelable {
     private static void checkFlags(int flags, String packageName) {
         final boolean flagImmutableSet = (flags & PendingIntent.FLAG_IMMUTABLE) != 0;
         final boolean flagMutableSet = (flags & PendingIntent.FLAG_MUTABLE) != 0;
-        String msg = packageName + ": Targeting S+ (version " + Build.VERSION_CODES.S
-                    + " and above) requires that one of FLAG_IMMUTABLE or FLAG_MUTABLE"
-                    + " be specified when creating a PendingIntent.\nStrongly consider"
-                    + " using FLAG_IMMUTABLE, only use FLAG_MUTABLE if some functionality"
-                    + " depends on the PendingIntent being mutable, e.g. if it needs to"
-                    + " be used with inline replies or bubbles.";
 
         if (flagImmutableSet && flagMutableSet) {
             throw new IllegalArgumentException(
                 "Cannot set both FLAG_IMMUTABLE and FLAG_MUTABLE for PendingIntent");
         }
 
-        // TODO(b/178092897) Remove the below instrumentation check and enforce
-        // the explicit mutability requirement for apps under instrumentation.
-        ActivityThread thread = ActivityThread.currentActivityThread();
-        Instrumentation mInstrumentation = thread.getInstrumentation();
-
         if (Compatibility.isChangeEnabled(PENDING_INTENT_EXPLICIT_MUTABILITY_REQUIRED)
                 && !flagImmutableSet && !flagMutableSet) {
-
-            //TODO(b/178065720) Remove check for chrome and enforce this requirement
-            if (packageName.equals("com.android.chrome") || mInstrumentation.isInstrumenting()) {
-                Log.e(TAG, msg);
-            } else {
+            String msg = packageName + ": Targeting S+ (version " + Build.VERSION_CODES.S
+                    + " and above) requires that one of FLAG_IMMUTABLE or FLAG_MUTABLE"
+                    + " be specified when creating a PendingIntent.\nStrongly consider"
+                    + " using FLAG_IMMUTABLE, only use FLAG_MUTABLE if some functionality"
+                    + " depends on the PendingIntent being mutable, e.g. if it needs to"
+                    + " be used with inline replies or bubbles.";
                 throw new IllegalArgumentException(msg);
-            }
         }
     }
 
@@ -1010,7 +998,7 @@ public final class PendingIntent implements Parcelable {
      * @deprecated Renamed to {@link #getCreatorPackage()}.
      */
     @Deprecated
-    @NonNull
+    @Nullable
     public String getTargetPackage() {
         return getCreatorPackage();
     }
@@ -1032,7 +1020,7 @@ public final class PendingIntent implements Parcelable {
      *
      * @return The package name of the PendingIntent.
      */
-    @NonNull
+    @Nullable
     public String getCreatorPackage() {
         return getCachedInfo().getCreatorPackage();
     }

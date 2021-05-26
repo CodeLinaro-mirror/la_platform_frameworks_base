@@ -36,6 +36,7 @@ import static android.net.NetworkCapabilities.TRANSPORT_TEST;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
+import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.net.NetworkCapabilities.NetCapability;
@@ -45,7 +46,7 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.Process;
 import android.text.TextUtils;
-import android.util.proto.ProtoOutputStream;
+import android.util.Range;
 
 import java.util.Arrays;
 import java.util.List;
@@ -114,6 +115,10 @@ public class NetworkRequest implements Parcelable {
      *       for the network (if any) that satisfies the default Internet
      *       request.
      *
+     *     - TRACK_BEST, which causes the framework to send callbacks about
+     *       the single, highest scoring current network (if any) that matches
+     *       the specified NetworkCapabilities.
+     *
      *     - BACKGROUND_REQUEST, like REQUEST but does not cause any networks
      *       to retain the NET_CAPABILITY_FOREGROUND capability. A network with
      *       no foreground requests is in the background. A network that has
@@ -136,6 +141,7 @@ public class NetworkRequest implements Parcelable {
         REQUEST,
         BACKGROUND_REQUEST,
         TRACK_SYSTEM_DEFAULT,
+        LISTEN_FOR_BEST,
     };
 
     /**
@@ -209,6 +215,18 @@ public class NetworkRequest implements Parcelable {
         }
 
         /**
+         * Creates a new Builder of NetworkRequest from an existing instance.
+         */
+        public Builder(@NonNull final NetworkRequest request) {
+            Objects.requireNonNull(request);
+            mNetworkCapabilities = request.networkCapabilities;
+            // If the caller constructed the builder from a request, it means the user
+            // might explicitly want the capabilities from the request. Thus, the NOT_VCN_MANAGED
+            // capabilities should not be touched later.
+            mModifiedNotVcnManaged = true;
+        }
+
+        /**
          * Build {@link NetworkRequest} give the current set of capabilities.
          */
         public NetworkRequest build() {
@@ -272,11 +290,14 @@ public class NetworkRequest implements Parcelable {
          * Set the watched UIDs for this request. This will be reset and wiped out unless
          * the calling app holds the CHANGE_NETWORK_STATE permission.
          *
-         * @param uids The watched UIDs as a set of UidRanges, or null for everything.
+         * @param uids The watched UIDs as a set of {@code Range<Integer>}, or null for everything.
          * @return The builder to facilitate chaining.
          * @hide
          */
-        public Builder setUids(Set<UidRange> uids) {
+        @NonNull
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        @SuppressLint("MissingGetterMatchingBuilder")
+        public Builder setUids(@Nullable Set<Range<Integer>> uids) {
             mNetworkCapabilities.setUids(uids);
             return this;
         }
@@ -290,13 +311,33 @@ public class NetworkRequest implements Parcelable {
          *
          * @see #addCapability(int)
          *
-         * @param capability The capability to add to unwanted capability list.
+         * @param capability The capability to add to forbidden capability list.
          * @return The builder to facilitate chaining.
          *
          * @hide
          */
-        public Builder addUnwantedCapability(@NetworkCapabilities.NetCapability int capability) {
-            mNetworkCapabilities.addUnwantedCapability(capability);
+        @NonNull
+        @SuppressLint("MissingGetterMatchingBuilder")
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        public Builder addForbiddenCapability(@NetworkCapabilities.NetCapability int capability) {
+            mNetworkCapabilities.addForbiddenCapability(capability);
+            return this;
+        }
+
+        /**
+         * Removes (if found) the given forbidden capability from this builder instance.
+         *
+         * @param capability The forbidden capability to remove.
+         * @return The builder to facilitate chaining.
+         *
+         * @hide
+         */
+        @NonNull
+        @SuppressLint("BuilderSetStyle")
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        public Builder removeForbiddenCapability(
+                @NetworkCapabilities.NetCapability int capability) {
+            mNetworkCapabilities.removeForbiddenCapability(capability);
             return this;
         }
 
@@ -456,6 +497,26 @@ public class NetworkRequest implements Parcelable {
             }
             nc.addCapability(NET_CAPABILITY_NOT_VCN_MANAGED);
         }
+
+        /**
+         * Sets the optional subscription ID set.
+         * <p>
+         * This specify the subscription IDs requirement.
+         * A network will satisfy this request only if it matches one of the subIds in this set.
+         * An empty set matches all networks, including those without a subId.
+         *
+         * <p>Registering a NetworkRequest with a non-empty set of subIds requires the
+         * NETWORK_FACTORY permission.
+         *
+         * @param subIds A {@code Set} that represents subscription IDs.
+         * @hide
+         */
+        @NonNull
+        @SystemApi
+        public Builder setSubscriptionIds(@NonNull Set<Integer> subIds) {
+            mNetworkCapabilities.setSubscriptionIds(subIds);
+            return this;
+        }
     }
 
     // implement the Parcelable interface
@@ -494,6 +555,15 @@ public class NetworkRequest implements Parcelable {
     }
 
     /**
+     * Returns true iff. this NetworkRequest is of type LISTEN_FOR_BEST.
+     *
+     * @hide
+     */
+    public boolean isListenForBest() {
+        return type == Type.LISTEN_FOR_BEST;
+    }
+
+    /**
      * Returns true iff. the contained NetworkRequest is one that:
      *
      *     - should be associated with at most one satisfying network
@@ -529,12 +599,13 @@ public class NetworkRequest implements Parcelable {
     }
 
     /**
-     * @see Builder#addUnwantedCapability(int)
+     * @see Builder#addForbiddenCapability(int)
      *
      * @hide
      */
-    public boolean hasUnwantedCapability(@NetCapability int capability) {
-        return networkCapabilities.hasUnwantedCapability(capability);
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+    public boolean hasForbiddenCapability(@NetCapability int capability) {
+        return networkCapabilities.hasForbiddenCapability(capability);
     }
 
     /**
@@ -594,37 +665,6 @@ public class NetworkRequest implements Parcelable {
                 ", " + networkCapabilities.toString() + " ]";
     }
 
-    private int typeToProtoEnum(Type t) {
-        switch (t) {
-            case NONE:
-                return NetworkRequestProto.TYPE_NONE;
-            case LISTEN:
-                return NetworkRequestProto.TYPE_LISTEN;
-            case TRACK_DEFAULT:
-                return NetworkRequestProto.TYPE_TRACK_DEFAULT;
-            case REQUEST:
-                return NetworkRequestProto.TYPE_REQUEST;
-            case BACKGROUND_REQUEST:
-                return NetworkRequestProto.TYPE_BACKGROUND_REQUEST;
-            case TRACK_SYSTEM_DEFAULT:
-                return NetworkRequestProto.TYPE_TRACK_SYSTEM_DEFAULT;
-            default:
-                return NetworkRequestProto.TYPE_UNKNOWN;
-        }
-    }
-
-    /** @hide */
-    public void dumpDebug(ProtoOutputStream proto, long fieldId) {
-        final long token = proto.start(fieldId);
-
-        proto.write(NetworkRequestProto.TYPE, typeToProtoEnum(type));
-        proto.write(NetworkRequestProto.REQUEST_ID, requestId);
-        proto.write(NetworkRequestProto.LEGACY_TYPE, legacyType);
-        networkCapabilities.dumpDebug(proto, NetworkRequestProto.NETWORK_CAPABILITIES);
-
-        proto.end(token);
-    }
-
     public boolean equals(@Nullable Object obj) {
         if (obj instanceof NetworkRequest == false) return false;
         NetworkRequest that = (NetworkRequest)obj;
@@ -636,5 +676,44 @@ public class NetworkRequest implements Parcelable {
 
     public int hashCode() {
         return Objects.hash(requestId, legacyType, networkCapabilities, type);
+    }
+
+    /**
+     * Gets all the capabilities set on this {@code NetworkRequest} instance.
+     *
+     * @return an array of capability values for this instance.
+     */
+    @NonNull
+    public @NetCapability int[] getCapabilities() {
+        // No need to make a defensive copy here as NC#getCapabilities() already returns
+        // a new array.
+        return networkCapabilities.getCapabilities();
+    }
+
+    /**
+     * Gets all the forbidden capabilities set on this {@code NetworkRequest} instance.
+     *
+     * @return an array of forbidden capability values for this instance.
+     *
+     * @hide
+     */
+    @NonNull
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+    public @NetCapability int[] getForbiddenCapabilities() {
+        // No need to make a defensive copy here as NC#getForbiddenCapabilities() already returns
+        // a new array.
+        return networkCapabilities.getForbiddenCapabilities();
+    }
+
+    /**
+     * Gets all the transports set on this {@code NetworkRequest} instance.
+     *
+     * @return an array of transport type values for this instance.
+     */
+    @NonNull
+    public @Transport int[] getTransportTypes() {
+        // No need to make a defensive copy here as NC#getTransportTypes() already returns
+        // a new array.
+        return networkCapabilities.getTransportTypes();
     }
 }

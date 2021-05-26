@@ -25,6 +25,7 @@
 #include "hwui/Paint.h"
 
 #include <SkCanvas.h>
+#include "pipeline/skia/AnimatedDrawables.h"
 #include "src/core/SkArenaAlloc.h"
 
 #include <cassert>
@@ -59,6 +60,8 @@ public:
     virtual void enableZ(bool enableZ) override {
         LOG_ALWAYS_FATAL("SkiaCanvas does not support enableZ");
     }
+
+    virtual void punchHole(const SkRRect& rect) override;
 
     virtual void setBitmap(const SkBitmap& bitmap) override;
 
@@ -146,12 +149,7 @@ public:
                             uirenderer::CanvasPropertyPrimitive* y,
                             uirenderer::CanvasPropertyPrimitive* radius,
                             uirenderer::CanvasPropertyPaint* paint) override;
-    virtual void drawRipple(uirenderer::CanvasPropertyPrimitive* x,
-                            uirenderer::CanvasPropertyPrimitive* y,
-                            uirenderer::CanvasPropertyPrimitive* radius,
-                            uirenderer::CanvasPropertyPaint* paint,
-                            uirenderer::CanvasPropertyPrimitive* progress,
-                            const SkRuntimeShaderBuilder& effectBuilder) override;
+    virtual void drawRipple(const uirenderer::skiapipeline::RippleDrawableParams& params) override;
 
     virtual void drawLayer(uirenderer::DeferredLayerUpdater* layerHandle) override;
     virtual void drawRenderNode(uirenderer::RenderNode* renderNode) override;

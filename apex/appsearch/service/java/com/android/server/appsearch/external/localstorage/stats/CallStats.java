@@ -19,10 +19,9 @@ package com.android.server.appsearch.external.localstorage.stats;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 
-import com.android.internal.util.Preconditions;
-
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.Objects;
 
 /**
  * A class for setting basic information to log for all function calls.
@@ -75,8 +74,8 @@ public class CallStats {
     private final int mNumOperationsFailed;
 
     CallStats(@NonNull Builder builder) {
-        Preconditions.checkNotNull(builder);
-        mGeneralStats = Preconditions.checkNotNull(builder.mGeneralStats);
+        Objects.requireNonNull(builder);
+        mGeneralStats = Objects.requireNonNull(builder.mGeneralStatsBuilder).build();
         mCallType = builder.mCallType;
         mEstimatedBinderLatencyMillis = builder.mEstimatedBinderLatencyMillis;
         mNumOperationsSucceeded = builder.mNumOperationsSucceeded;
@@ -132,15 +131,23 @@ public class CallStats {
 
     /** Builder for {@link CallStats}. */
     public static class Builder {
-        @NonNull final GeneralStats mGeneralStats;
+        @NonNull final GeneralStats.Builder mGeneralStatsBuilder;
         @CallType int mCallType;
         int mEstimatedBinderLatencyMillis;
         int mNumOperationsSucceeded;
         int mNumOperationsFailed;
 
-        /** Builder takes {@link GeneralStats} to hold general stats. */
-        public Builder(@NonNull GeneralStats generalStats) {
-            mGeneralStats = Preconditions.checkNotNull(generalStats);
+        /** Builder takes {@link GeneralStats.Builder}. */
+        public Builder(@NonNull String packageName, @NonNull String database) {
+            Objects.requireNonNull(packageName);
+            Objects.requireNonNull(database);
+            mGeneralStatsBuilder = new GeneralStats.Builder(packageName, database);
+        }
+
+        /** Returns {@link GeneralStats.Builder}. */
+        @NonNull
+        public GeneralStats.Builder getGeneralStatsBuilder() {
+            return mGeneralStatsBuilder;
         }
 
         /** Sets type of the call. */

@@ -16,12 +16,14 @@
 
 package android.window;
 
+import static android.app.WindowConfiguration.ROTATION_UNDEFINED;
 import static android.view.WindowManager.TRANSIT_CHANGE;
 import static android.view.WindowManager.TRANSIT_CLOSE;
 import static android.view.WindowManager.TRANSIT_NONE;
 import static android.view.WindowManager.TRANSIT_OPEN;
 import static android.view.WindowManager.TRANSIT_TO_BACK;
 import static android.view.WindowManager.TRANSIT_TO_FRONT;
+import static android.view.WindowManager.transitTypeToString;
 
 import android.annotation.IntDef;
 import android.annotation.NonNull;
@@ -31,6 +33,7 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.view.Surface;
 import android.view.SurfaceControl;
 import android.view.WindowManager;
 
@@ -74,13 +77,21 @@ public final class TransitionInfo implements Parcelable {
     /** The container is the recipient of a transferred starting-window */
     public static final int FLAG_STARTING_WINDOW_TRANSFER_RECIPIENT = 1 << 3;
 
+    /** The container has voice session. */
+    public static final int FLAG_IS_VOICE_INTERACTION = 1 << 4;
+
+    /** The first unused bit. This can be used by remotes to attach custom flags to this change. */
+    public static final int FLAG_FIRST_CUSTOM = 1 << 5;
+
     /** @hide */
     @IntDef(prefix = { "FLAG_" }, value = {
             FLAG_NONE,
             FLAG_SHOW_WALLPAPER,
             FLAG_IS_WALLPAPER,
             FLAG_TRANSLUCENT,
-            FLAG_STARTING_WINDOW_TRANSFER_RECIPIENT
+            FLAG_STARTING_WINDOW_TRANSFER_RECIPIENT,
+            FLAG_IS_VOICE_INTERACTION,
+            FLAG_FIRST_CUSTOM
     })
     public @interface ChangeFlags {}
 
@@ -200,7 +211,7 @@ public final class TransitionInfo implements Parcelable {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append("{t=" + mType + " f=" + Integer.toHexString(mFlags)
+        sb.append("{t=" + transitTypeToString(mType) + " f=" + Integer.toHexString(mFlags)
                 + " ro=" + mRootOffset + " c=[");
         for (int i = 0; i < mChanges.size(); ++i) {
             if (i > 0) {
@@ -243,6 +254,12 @@ public final class TransitionInfo implements Parcelable {
         if ((flags & FLAG_STARTING_WINDOW_TRANSFER_RECIPIENT) != 0) {
             sb.append((sb.length() == 0 ? "" : "|") + "STARTING_WINDOW_TRANSFER");
         }
+        if ((flags & FLAG_IS_VOICE_INTERACTION) != 0) {
+            sb.append((sb.length() == 0 ? "" : "|") + "IS_VOICE_INTERACTION");
+        }
+        if ((flags & FLAG_FIRST_CUSTOM) != 0) {
+            sb.append((sb.length() == 0 ? "" : "|") + "FIRST_CUSTOM");
+        }
         return sb.toString();
     }
 
@@ -250,7 +267,8 @@ public final class TransitionInfo implements Parcelable {
      * Indication that `change` is independent of parents (ie. it has a different type of
      * transition vs. "going along for the ride")
      */
-    public static boolean isIndependent(TransitionInfo.Change change, TransitionInfo info) {
+    public static boolean isIndependent(@NonNull TransitionInfo.Change change,
+            @NonNull TransitionInfo info) {
         // If the change has no parent (it is root), then it is independent
         if (change.getParent() == null) return true;
 
@@ -284,6 +302,8 @@ public final class TransitionInfo implements Parcelable {
         private final Rect mEndAbsBounds = new Rect();
         private final Point mEndRelOffset = new Point();
         private ActivityManager.RunningTaskInfo mTaskInfo = null;
+        private int mStartRotation = ROTATION_UNDEFINED;
+        private int mEndRotation = ROTATION_UNDEFINED;
 
         public Change(@Nullable WindowContainerToken container, @NonNull SurfaceControl leash) {
             mContainer = container;
@@ -301,6 +321,8 @@ public final class TransitionInfo implements Parcelable {
             mEndAbsBounds.readFromParcel(in);
             mEndRelOffset.readFromParcel(in);
             mTaskInfo = in.readTypedObject(ActivityManager.RunningTaskInfo.CREATOR);
+            mStartRotation = in.readInt();
+            mEndRotation = in.readInt();
         }
 
         /** Sets the parent of this change's container. The parent must be a participant or null. */
@@ -337,8 +359,14 @@ public final class TransitionInfo implements Parcelable {
          * Sets the taskinfo of this container if this is a task. WARNING: this takes the
          * reference, so don't modify it afterwards.
          */
-        public void setTaskInfo(ActivityManager.RunningTaskInfo taskInfo) {
+        public void setTaskInfo(@Nullable ActivityManager.RunningTaskInfo taskInfo) {
             mTaskInfo = taskInfo;
+        }
+
+        /** Sets the start and end rotation of this container. */
+        public void setRotation(@Surface.Rotation int start, @Surface.Rotation int end) {
+            mStartRotation = start;
+            mEndRotation = end;
         }
 
         /** @return the container that is changing. May be null if non-remotable (eg. activity) */
@@ -404,8 +432,16 @@ public final class TransitionInfo implements Parcelable {
             return mTaskInfo;
         }
 
-        @Override
+        public int getStartRotation() {
+            return mStartRotation;
+        }
+
+        public int getEndRotation() {
+            return mEndRotation;
+        }
+
         /** @hide */
+        @Override
         public void writeToParcel(@NonNull Parcel dest, int flags) {
             dest.writeTypedObject(mContainer, flags);
             dest.writeTypedObject(mParent, flags);
@@ -416,6 +452,8 @@ public final class TransitionInfo implements Parcelable {
             mEndAbsBounds.writeToParcel(dest, flags);
             mEndRelOffset.writeToParcel(dest, flags);
             dest.writeTypedObject(mTaskInfo, flags);
+            dest.writeInt(mStartRotation);
+            dest.writeInt(mEndRotation);
         }
 
         @NonNull
@@ -432,8 +470,8 @@ public final class TransitionInfo implements Parcelable {
                     }
                 };
 
-        @Override
         /** @hide */
+        @Override
         public int describeContents() {
             return 0;
         }
@@ -442,7 +480,8 @@ public final class TransitionInfo implements Parcelable {
         public String toString() {
             return "{" + mContainer + "(" + mParent + ") leash=" + mLeash
                     + " m=" + modeToString(mMode) + " f=" + flagsToString(mFlags) + " sb="
-                    + mStartAbsBounds + " eb=" + mEndAbsBounds + " eo=" + mEndRelOffset + "}";
+                    + mStartAbsBounds + " eb=" + mEndAbsBounds + " eo=" + mEndRelOffset + " r="
+                    + mStartRotation + "->" + mEndRotation + "}";
         }
     }
 }

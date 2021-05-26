@@ -17,6 +17,7 @@
 package android.app.appsearch;
 
 import android.annotation.NonNull;
+import android.compat.annotation.UnsupportedAppUsage;
 import android.util.ArraySet;
 
 import com.android.internal.util.Preconditions;
@@ -24,21 +25,21 @@ import com.android.internal.util.Preconditions;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Objects;
 import java.util.Set;
 
 /**
- * Encapsulates a request to remove documents by namespace and URIs from the {@link
- * AppSearchSession} database.
- *
- * @see AppSearchSession#remove
+ * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+ * @hide
  */
+@Deprecated
 public final class RemoveByUriRequest {
     private final String mNamespace;
-    private final Set<String> mUris;
+    private final Set<String> mIds;
 
-    RemoveByUriRequest(String namespace, Set<String> uris) {
+    RemoveByUriRequest(String namespace, Set<String> ids) {
         mNamespace = namespace;
-        mUris = uris;
+        mIds = ids;
     }
 
     /** Returns the namespace to remove documents from. */
@@ -47,10 +48,20 @@ public final class RemoveByUriRequest {
         return mNamespace;
     }
 
-    /** Returns the set of URIs attached to the request. */
+    /** Returns the set of document IDs attached to the request. */
     @NonNull
     public Set<String> getUris() {
-        return Collections.unmodifiableSet(mUris);
+        return Collections.unmodifiableSet(mIds);
+    }
+
+    /**
+     * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+     * @hide
+     */
+    @Deprecated
+    @NonNull
+    public RemoveByDocumentIdRequest toRemoveByDocumentIdRequest() {
+        return new RemoveByDocumentIdRequest.Builder(mNamespace).addIds(mIds).build();
     }
 
     /**
@@ -59,59 +70,56 @@ public final class RemoveByUriRequest {
      * <p>Once {@link #build} is called, the instance can no longer be used.
      */
     public static final class Builder {
-        private String mNamespace = GenericDocument.DEFAULT_NAMESPACE;
-        private final Set<String> mUris = new ArraySet<>();
+        private final String mNamespace;
+        private final Set<String> mIds = new ArraySet<>();
         private boolean mBuilt = false;
 
         /**
-         * Sets the namespace to remove documents for.
-         *
-         * <p>If this is not set, it defaults to {@link GenericDocument#DEFAULT_NAMESPACE}.
+         * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+         * @hide
+         */
+        @Deprecated
+        @UnsupportedAppUsage
+        public Builder(@NonNull String namespace) {
+            mNamespace = Objects.requireNonNull(namespace);
+        }
+
+        /**
+         * Adds one or more document IDs to the request.
          *
          * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
-        public Builder setNamespace(@NonNull String namespace) {
+        public Builder addUris(@NonNull String... ids) {
+            Objects.requireNonNull(ids);
+            return addUris(Arrays.asList(ids));
+        }
+
+        /**
+         * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+         * @hide
+         */
+        @Deprecated
+        @UnsupportedAppUsage
+        @NonNull
+        public Builder addUris(@NonNull Collection<String> ids) {
             Preconditions.checkState(!mBuilt, "Builder has already been used");
-            Preconditions.checkNotNull(namespace);
-            mNamespace = namespace;
+            Objects.requireNonNull(ids);
+            mIds.addAll(ids);
             return this;
         }
 
         /**
-         * Adds one or more URIs to the request.
-         *
-         * @throws IllegalStateException if the builder has already been used.
+         * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+         * @hide
          */
-        @NonNull
-        public Builder addUris(@NonNull String... uris) {
-            Preconditions.checkNotNull(uris);
-            return addUris(Arrays.asList(uris));
-        }
-
-        /**
-         * Adds a collection of URIs to the request.
-         *
-         * @throws IllegalStateException if the builder has already been used.
-         */
-        @NonNull
-        public Builder addUris(@NonNull Collection<String> uris) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
-            Preconditions.checkNotNull(uris);
-            mUris.addAll(uris);
-            return this;
-        }
-
-        /**
-         * Builds a new {@link RemoveByUriRequest}.
-         *
-         * @throws IllegalStateException if the builder has already been used.
-         */
+        @Deprecated
+        @UnsupportedAppUsage
         @NonNull
         public RemoveByUriRequest build() {
             Preconditions.checkState(!mBuilt, "Builder has already been used");
             mBuilt = true;
-            return new RemoveByUriRequest(mNamespace, mUris);
+            return new RemoveByUriRequest(mNamespace, mIds);
         }
     }
 }

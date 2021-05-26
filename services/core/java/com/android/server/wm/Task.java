@@ -131,6 +131,7 @@ import static com.android.server.wm.TaskProto.BOUNDS;
 import static com.android.server.wm.TaskProto.CREATED_BY_ORGANIZER;
 import static com.android.server.wm.TaskProto.DISPLAY_ID;
 import static com.android.server.wm.TaskProto.FILLS_PARENT;
+import static com.android.server.wm.TaskProto.HAS_CHILD_PIP_ACTIVITY;
 import static com.android.server.wm.TaskProto.LAST_NON_FULLSCREEN_BOUNDS;
 import static com.android.server.wm.TaskProto.MIN_HEIGHT;
 import static com.android.server.wm.TaskProto.MIN_WIDTH;
@@ -175,12 +176,15 @@ import android.app.servertransaction.NewIntentItem;
 import android.app.servertransaction.PauseActivityItem;
 import android.app.servertransaction.ResumeActivityItem;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.content.res.Resources;
+import android.graphics.Matrix;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.Binder;
@@ -210,6 +214,7 @@ import android.view.SurfaceControl;
 import android.view.WindowManager;
 import android.view.WindowManager.TransitionOldType;
 import android.window.ITaskOrganizer;
+import android.window.PictureInPictureSurfaceTransaction;
 import android.window.StartingWindowInfo;
 import android.window.TaskSnapshot;
 import android.window.WindowContainerToken;
@@ -469,14 +474,14 @@ class Task extends WindowContainer<WindowContainer> {
     int mMinWidth;
     int mMinHeight;
 
-    // The bounds of the target when recents animation is finished.
+    // The surface transition of the target when recents animation is finished.
     // This is originally introduced to carry out the current surface control position and window
     // crop when a multi-activity task enters pip with autoEnterPip enabled. In such case,
     // the surface control of the task will be animated in Launcher and then the top activity is
     // reparented to pinned root task.
-    // Do not forget to reset this to null after reparenting.
+    // Do not forget to reset this after reparenting.
     // TODO: remove this once the recents animation is moved to the Shell
-    final Rect mLastRecentsAnimationBounds = new Rect();
+    PictureInPictureSurfaceTransaction mLastRecentsAnimationTransaction;
 
     static final int LAYER_RANK_INVISIBLE = -1;
     // Ranking (from top) of this task among all visible tasks. (-1 means it's not visible)
@@ -835,6 +840,14 @@ class Task extends WindowContainer<WindowContainer> {
 
     // The task will be removed when TaskOrganizer, which is managing the task, is destroyed.
     boolean mRemoveWithTaskOrganizer;
+
+    /**
+     * Reference to the pinned activity that is logically parented to this task, ie.
+     * the previous top activity within this task is put into pinned mode.
+     * This always gets cleared in pair with the ActivityRecord-to-Task link as seen in
+     * {@link ActivityRecord#clearLastParentBeforePip()}.
+     */
+    ActivityRecord mChildPipActivity;
 
     private Task(ActivityTaskManagerService atmService, int _taskId, Intent _intent,
             Intent _affinityIntent, String _affinity, String _rootAffinity,
@@ -1841,6 +1854,10 @@ class Task extends WindowContainer<WindowContainer> {
 
     /** Completely remove all activities associated with an existing task. */
     void performClearTask(String reason) {
+        // The original task is to be removed, try remove also the pinned task.
+        if (mChildPipActivity != null && mChildPipActivity.getTask() != null) {
+            mTaskSupervisor.removeRootTask(mChildPipActivity.getTask());
+        }
         // Broken down into to cases to avoid object create due to capturing mStack.
         if (getRootTask() == null) {
             forAllActivities((r) -> {
@@ -1977,7 +1994,25 @@ class Task extends WindowContainer<WindowContainer> {
 
     boolean supportsMultiWindow() {
         return mAtmService.mSupportsMultiWindow
-                && (isResizeable() || mAtmService.mSupportsNonResizableMultiWindow);
+                && (isResizeable() || mAtmService.mDevEnableNonResizableMultiWindow);
+    }
+
+    // TODO(b/176061101) replace supportsMultiWindow() after fixing tests.
+    boolean supportsMultiWindow2() {
+        if (!mAtmService.mSupportsMultiWindow) {
+            return false;
+        }
+        final TaskDisplayArea tda = getDisplayArea();
+        if (tda == null) {
+            return false;
+        }
+
+        if (!isResizeable() && !tda.supportsNonResizableMultiWindow()) {
+            // Not support non-resizable in multi window.
+            return false;
+        }
+
+        return tda.supportsActivityMinWidthHeightMultiWindow(mMinWidth, mMinHeight);
     }
 
     /**
@@ -2223,7 +2258,6 @@ class Task extends WindowContainer<WindowContainer> {
         mTmpPrevBounds.set(getBounds());
         final boolean wasInMultiWindowMode = inMultiWindowMode();
         final boolean wasInPictureInPicture = inPinnedWindowingMode();
-        final int oldOrientation = getOrientation();
         super.onConfigurationChanged(newParentConfig);
         // Only need to update surface size here since the super method will handle updating
         // surface position.
@@ -2252,7 +2286,6 @@ class Task extends WindowContainer<WindowContainer> {
         }
 
         if (pipChanging) {
-            mDisplayContent.getPinnedTaskController().setPipWindowingModeChanging(true);
             // If the top activity is using fixed rotation, it should be changing from PiP to
             // fullscreen with display orientation change. Do not notify fullscreen task organizer
             // because the restoration of task surface and the transformation of activity surface
@@ -2261,29 +2294,10 @@ class Task extends WindowContainer<WindowContainer> {
             if (r != null && mDisplayContent.isFixedRotationLaunchingApp(r)) {
                 mForceNotOrganized = true;
             }
-        } else if (mForceNotOrganized) {
+        } else {
             // If the display orientation change is done, let the corresponding task organizer take
             // back the control of this task.
-            final ActivityRecord r = topRunningActivity();
-            if (r == null || !mDisplayContent.isFixedRotationLaunchingApp(r)) {
-                mForceNotOrganized = false;
-            }
-        }
-        try {
-            // We have 2 reasons why we need to report orientation change here.
-            // 1. In some cases (e.g. freeform -> fullscreen) we don't have other ways of reporting.
-            // 2. Report orientation as soon as possible so that the display can freeze earlier if
-            // the display orientation will be changed. Because the surface bounds of activity
-            // may have been set to fullscreen but the activity hasn't redrawn its content yet,
-            // the rotation animation needs to capture snapshot earlier to avoid animating from
-            // an intermediate state.
-            if (oldOrientation != getOrientation()) {
-                onDescendantOrientationChanged(this);
-            }
-        } finally {
-            if (pipChanging) {
-                mDisplayContent.getPinnedTaskController().setPipWindowingModeChanging(false);
-            }
+            mForceNotOrganized = false;
         }
 
         saveLaunchingStateIfNeeded();
@@ -2306,6 +2320,15 @@ class Task extends WindowContainer<WindowContainer> {
 
     @Override
     public void onConfigurationChanged(Configuration newParentConfig) {
+        if (mDisplayContent != null
+                && mDisplayContent.mPinnedTaskController.isFreezingTaskConfig(this)) {
+            // It happens when animating from fullscreen to PiP with orientation change. Because
+            // the activity in this pinned task is in fullscreen windowing mode (see
+            // RootWindowContainer#moveActivityToPinnedRootTask) and the activity will be set to
+            // pinned mode after the animation is done, the configuration change by orientation
+            // change is just an intermediate state that should be ignored to avoid flickering.
+            return;
+        }
         // Calling Task#onConfigurationChanged() for leaf task since the ops in this method are
         // particularly for root tasks, like preventing bounds changes when inheriting certain
         // windowing mode.
@@ -2382,11 +2405,11 @@ class Task extends WindowContainer<WindowContainer> {
     }
 
     @Override
-    void migrateToNewSurfaceControl() {
-        super.migrateToNewSurfaceControl();
+    void migrateToNewSurfaceControl(SurfaceControl.Transaction t) {
+        super.migrateToNewSurfaceControl(t);
         mLastSurfaceSize.x = 0;
         mLastSurfaceSize.y = 0;
-        updateSurfaceSize(getPendingTransaction());
+        updateSurfaceSize(t);
     }
 
     void updateSurfaceSize(SurfaceControl.Transaction transaction) {
@@ -2825,14 +2848,13 @@ class Task extends WindowContainer<WindowContainer> {
             getResolvedOverrideConfiguration().windowConfiguration.setWindowingMode(windowingMode);
         }
 
-        // Do not allow non-resizable tasks to be in a multi-window mode, unless it is in pinned
-        // windowing mode or supports non-resizable tasks in multi-window mode.
-        if (!isResizeable()) {
+        // Do not allow tasks not support multi window to be in a multi-window mode, unless it is in
+        // pinned windowing mode.
+        if (!supportsMultiWindow()) {
             final int candidateWindowingMode =
                     windowingMode != WINDOWING_MODE_UNDEFINED ? windowingMode : parentWindowingMode;
             if (WindowConfiguration.inMultiWindowMode(candidateWindowingMode)
-                    && candidateWindowingMode != WINDOWING_MODE_PINNED
-                    && !mTaskSupervisor.mService.mSupportsNonResizableMultiWindow) {
+                    && candidateWindowingMode != WINDOWING_MODE_PINNED) {
                 getResolvedOverrideConfiguration().windowConfiguration.setWindowingMode(
                         WINDOWING_MODE_FULLSCREEN);
             }
@@ -3595,7 +3617,7 @@ class Task extends WindowContainer<WindowContainer> {
             return false;
         }
 
-        if (r.occludesParent() || r.hasWallpaper) {
+        if (r.occludesParent()) {
             // Root task isn't translucent if it has at least one fullscreen activity
             // that is visible.
             return true;
@@ -4068,6 +4090,7 @@ class Task extends WindowContainer<WindowContainer> {
         info.lastActiveTime = lastActiveTime;
         info.taskDescription = new ActivityManager.TaskDescription(getTaskDescription());
         info.supportsSplitScreenMultiWindow = supportsSplitScreenWindowingMode();
+        info.supportsMultiWindow = supportsMultiWindow();
         info.configuration.setTo(getConfiguration());
         // Update to the task's current activity type and windowing mode which may differ from the
         // window configuration
@@ -4135,6 +4158,8 @@ class Task extends WindowContainer<WindowContainer> {
         final StartingWindowInfo info = new StartingWindowInfo();
         info.taskInfo = getTaskInfo();
 
+        info.isKeyguardOccluded =
+            mAtmService.mKeyguardController.isDisplayOccluded(DEFAULT_DISPLAY);
         final ActivityRecord topActivity = getTopMostActivity();
         if (topActivity != null) {
             info.startingWindowTypeParameter =
@@ -4447,16 +4472,17 @@ class Task extends WindowContainer<WindowContainer> {
         }
         pw.print(prefix); pw.print("taskId=" + mTaskId);
         pw.println(" rootTaskId=" + getRootTaskId());
+        pw.print(prefix); pw.println("hasChildPipActivity=" + (mChildPipActivity != null));
         pw.print(prefix); pw.print("mHasBeenVisible="); pw.println(getHasBeenVisible());
         pw.print(prefix); pw.print("mResizeMode=");
         pw.print(ActivityInfo.resizeModeToString(mResizeMode));
         pw.print(" mSupportsPictureInPicture="); pw.print(mSupportsPictureInPicture);
         pw.print(" isResizeable="); pw.println(isResizeable());
         pw.print(prefix); pw.print("lastActiveTime="); pw.print(lastActiveTime);
+        pw.println(" (inactive for " + (getInactiveDuration() / 1000) + "s)");
         if (mForceNotOrganized) {
             pw.print(prefix); pw.println("mForceNotOrganized=true");
         }
-        pw.println(" (inactive for " + (getInactiveDuration() / 1000) + "s)");
     }
 
     @Override
@@ -4909,9 +4935,15 @@ class Task extends WindowContainer<WindowContainer> {
         task.mLastNonFullscreenBounds = lastNonFullscreenBounds;
         task.setBounds(lastNonFullscreenBounds);
         task.mWindowLayoutAffinity = windowLayoutAffinity;
+        if (activities.size() > 0) {
+            // We need to add the task into hierarchy before adding child to it.
+            final DisplayContent dc =
+                    taskSupervisor.mRootWindowContainer.getDisplayContent(DEFAULT_DISPLAY);
+            dc.getDefaultTaskDisplayArea().addChild(task, POSITION_BOTTOM);
 
-        for (int activityNdx = activities.size() - 1; activityNdx >= 0; --activityNdx) {
-            task.addChild(activities.get(activityNdx));
+            for (int activityNdx = activities.size() - 1; activityNdx >= 0; --activityNdx) {
+                task.addChild(activities.get(activityNdx));
+            }
         }
 
         if (DEBUG_RECENTS) Slog.d(TAG_RECENTS, "Restored task=" + task);
@@ -5245,15 +5277,34 @@ class Task extends WindowContainer<WindowContainer> {
         if (mForceHiddenFlags == newFlags) {
             return false;
         }
+
         final boolean wasHidden = isForceHidden();
+        final boolean wasVisible = isVisible();
         mForceHiddenFlags = newFlags;
-        if (wasHidden != isForceHidden() && isTopActivityFocusable()) {
-            // The change in force-hidden state will change visibility without triggering a root
-            // task order change, so we should reset the preferred top focusable root task to ensure
-            // it's not used if a new activity is started from this task.
-            getDisplayArea().resetPreferredTopFocusableRootTaskIfNeeded(this);
+        final boolean nowHidden = isForceHidden();
+        if (wasHidden != nowHidden) {
+            final String reason = "setForceHidden";
+            if (wasVisible && nowHidden) {
+                // Move this visible task to back when the task is forced hidden
+                moveToBack(reason, null);
+            } else if (isAlwaysOnTop()) {
+                // Move this always-on-top task to front when no longer hidden
+                moveToFront(reason);
+            }
         }
         return true;
+    }
+
+    @Override
+    public boolean isAlwaysOnTop() {
+        return !isForceHidden() && super.isAlwaysOnTop();
+    }
+
+    /**
+     * @return whether this task is always on top without taking visibility into account.
+     */
+    public boolean isAlwaysOnTopWhenVisible() {
+        return super.isAlwaysOnTop();
     }
 
     /**
@@ -5301,7 +5352,6 @@ class Task extends WindowContainer<WindowContainer> {
             return;
         }
         final int currentMode = getWindowingMode();
-        final int currentOverrideMode = getRequestedOverrideWindowingMode();
         final Task topTask = getTopMostTask();
         int windowingMode = preferredWindowingMode;
 
@@ -5370,23 +5420,37 @@ class Task extends WindowContainer<WindowContainer> {
                 mTaskSupervisor.mNoAnimActivities.add(topActivity);
             }
             super.setWindowingMode(windowingMode);
-            // setWindowingMode triggers an onConfigurationChanged cascade which can result in a
-            // different resolved windowing mode (usually when preferredWindowingMode is UNDEFINED).
-            windowingMode = getWindowingMode();
+
+            // Try reparent pinned activity back to its original task after onConfigurationChanged
+            // cascade finishes. This is done on Task level instead of
+            // {@link ActivityRecord#onConfigurationChanged(Configuration)} since when we exit PiP,
+            // we set final windowing mode on the ActivityRecord first and then on its Task when
+            // the exit PiP transition finishes. Meanwhile, the exit transition is always
+            // performed on its original task, reparent immediately in ActivityRecord breaks it.
+            if (currentMode == WINDOWING_MODE_PINNED) {
+                if (topActivity != null && topActivity.getLastParentBeforePip() != null) {
+                    // Do not reparent if the pinned task is in removal, indicated by the
+                    // force hidden flag.
+                    if (!isForceHidden()) {
+                        final Task lastParentBeforePip = topActivity.getLastParentBeforePip();
+                        topActivity.reparent(lastParentBeforePip,
+                                lastParentBeforePip.getChildCount() /* top */,
+                                "movePinnedActivityToOriginalTask");
+                        lastParentBeforePip.moveToFront("movePinnedActivityToOriginalTask");
+                    }
+                }
+            }
 
             if (creating) {
                 // Nothing else to do if we don't have a window container yet. E.g. call from ctor.
                 return;
             }
 
-            if (windowingMode == WINDOWING_MODE_SPLIT_SCREEN_PRIMARY && alreadyInSplitScreenMode) {
-                // We already have a root split-screen task in this display, so just move the
-                // tasks over.
-                // TODO: Figure-out how to do all the stuff in
-                // AMS.setTaskWindowingModeSplitScreenPrimary
-                throw new IllegalArgumentException("Setting primary split-screen windowing mode"
-                        + " while there is already one isn't currently supported");
-                //return;
+            // From fullscreen to PiP.
+            if (topActivity != null && currentMode == WINDOWING_MODE_FULLSCREEN
+                    && windowingMode == WINDOWING_MODE_PINNED) {
+                mDisplayContent.mPinnedTaskController
+                        .deferOrientationChangeForEnteringPipFromFullScreenIfNeeded();
             }
         } finally {
             mAtmService.continueWindowLayout();
@@ -5514,7 +5578,7 @@ class Task extends WindowContainer<WindowContainer> {
         mCurrentUser = userId;
 
         super.switchUser(userId);
-        if (isLeafTask() && showToCurrentUser()) {
+        if (!isRootTask() && showToCurrentUser()) {
             getParent().positionChildAt(POSITION_TOP, this, false /*includeParents*/);
         }
     }
@@ -6040,12 +6104,10 @@ class Task extends WindowContainer<WindowContainer> {
                 int idx = mChildren.size() - 1;
                 while (idx >= 0) {
                     final Task child = (Task) getChildAt(idx--);
-                    if (!child.isFocusableAndVisible()) {
-                        break;
+                    if (!child.isTopActivityFocusable()) {
+                        continue;
                     }
-
-                    // Only allow one activity to be resumed among sibling tasks in split-screen.
-                    if (inSplitScreenWindowingMode() && someActivityResumed) {
+                    if (child.getVisibility(null /* starting */) != TASK_VISIBILITY_VISIBLE) {
                         break;
                     }
 
@@ -6264,6 +6326,8 @@ class Task extends WindowContainer<WindowContainer> {
         // Launching this app's activity, make sure the app is no longer
         // considered stopped.
         try {
+            mTaskSupervisor.getActivityMetricsLogger()
+                    .notifyBeforePackageUnstopped(next.packageName);
             mAtmService.getPackageManager().setPackageStoppedState(
                     next.packageName, false, next.mUserId); /* TODO: Verify if correct userid */
         } catch (RemoteException e1) {
@@ -6507,7 +6571,8 @@ class Task extends WindowContainer<WindowContainer> {
     }
 
     void startActivityLocked(ActivityRecord r, @Nullable ActivityRecord focusedTopActivity,
-            boolean newTask, boolean keepCurTransition, ActivityOptions options) {
+            boolean newTask, boolean keepCurTransition, ActivityOptions options,
+            boolean samePackage) {
         Task rTask = r.getTask();
         final boolean allowMoveToFront = options == null || !options.getAvoidMoveToFront();
         final boolean isOrhasTask = rTask == this || hasChild(rTask);
@@ -6626,10 +6691,32 @@ class Task extends WindowContainer<WindowContainer> {
                         prev = null;
                     }
                 }
-                final int splashScreenThemeResId = options != null
+
+                // TODO(185200798): Persist theme name instead of theme if
+                int splashScreenThemeResId = options != null
                         ? options.getSplashScreenThemeResId() : 0;
+
+                // User can override the splashscreen theme. The theme name is used to persist
+                // the setting, so if no theme is set in the ActivityOptions, we check if has
+                // been persisted here.
+                if (splashScreenThemeResId == 0) {
+                    try {
+                        String themeName = mAtmService.getPackageManager()
+                                .getSplashScreenTheme(r.packageName, r.mUserId);
+                        if (themeName != null) {
+                            Context packageContext = mAtmService.mContext
+                                    .createPackageContext(r.packageName, 0);
+                            splashScreenThemeResId = packageContext.getResources()
+                                    .getIdentifier(themeName, null, null);
+                        }
+                    } catch (RemoteException | PackageManager.NameNotFoundException
+                            | Resources.NotFoundException ignore) {
+                        // Just use the default theme
+                    }
+                }
+
                 r.showStartingWindow(prev, newTask, isTaskSwitch(r, focusedTopActivity),
-                        splashScreenThemeResId);
+                        splashScreenThemeResId, samePackage);
             }
         } else {
             // If this is the first activity, don't do any fancy animations,
@@ -7101,8 +7188,11 @@ class Task extends WindowContainer<WindowContainer> {
         if (DEBUG_TRANSITION) Slog.v(TAG_TRANSITION, "Prepare to back transition: task="
                 + tr.mTaskId);
 
-        mDisplayContent.prepareAppTransition(TRANSIT_TO_BACK);
-        mDisplayContent.requestTransitionAndLegacyPrepare(TRANSIT_TO_BACK, tr);
+        // Skip the transition for pinned task.
+        if (!inPinnedWindowingMode()) {
+            mDisplayContent.prepareAppTransition(TRANSIT_TO_BACK);
+            mDisplayContent.requestTransitionAndLegacyPrepare(TRANSIT_TO_BACK, tr);
+        }
         moveToBack("moveTaskToBackLocked", tr);
 
         if (inPinnedWindowingMode()) {
@@ -7482,17 +7572,22 @@ class Task extends WindowContainer<WindowContainer> {
     }
 
     public void setAlwaysOnTop(boolean alwaysOnTop) {
-        if (isAlwaysOnTop() == alwaysOnTop) {
+        // {@link #isAwaysonTop} overrides the original behavior which also evaluates if this
+        // task is force hidden, so super.isAlwaysOnTop() is used here to see whether the
+        // alwaysOnTop attributes should be updated.
+        if (super.isAlwaysOnTop() == alwaysOnTop) {
             return;
         }
         super.setAlwaysOnTop(alwaysOnTop);
-        final TaskDisplayArea taskDisplayArea = getDisplayArea();
         // positionChildAtTop() must be called even when always on top gets turned off because we
         // need to make sure that the root task is moved from among always on top windows to
         // below other always on top windows. Since the position the root task should be inserted
         // into is calculated properly in {@link DisplayContent#getTopInsertPosition()} in both
         // cases, we can just request that the root task is put at top here.
-        taskDisplayArea.positionChildAt(POSITION_TOP, this, false /* includingParents */);
+        // Don't bother moving task to top if this task is force hidden and invisible to user.
+        if (!isForceHidden()) {
+            getDisplayArea().positionChildAt(POSITION_TOP, this, false /* includingParents */);
+        }
     }
 
     void dismissPip() {
@@ -7509,7 +7604,11 @@ class Task extends WindowContainer<WindowContainer> {
             final Task task = getBottomMostTask();
             setWindowingMode(WINDOWING_MODE_UNDEFINED);
 
-            getDisplayArea().positionChildAt(POSITION_TOP, this, false /* includingParents */);
+            // Task could have been removed from the hierarchy due to windowing mode change
+            // where its only child is reparented back to their original parent task.
+            if (isAttached()) {
+                getDisplayArea().positionChildAt(POSITION_TOP, this, false /* includingParents */);
+            }
 
             mTaskSupervisor.scheduleUpdatePictureInPictureModeIfNeeded(task, this);
         });
@@ -7608,14 +7707,22 @@ class Task extends WindowContainer<WindowContainer> {
         reparent(newParent, onTop ? POSITION_TOP : POSITION_BOTTOM);
     }
 
-    void maybeApplyLastRecentsAnimationBounds() {
-        if (!mLastRecentsAnimationBounds.isEmpty()) {
-            getPendingTransaction()
-                    .setPosition(mSurfaceControl, mLastRecentsAnimationBounds.left,
-                            mLastRecentsAnimationBounds.top)
-                    .setWindowCrop(mSurfaceControl, mLastRecentsAnimationBounds.width(),
-                            mLastRecentsAnimationBounds.height());
-            mLastRecentsAnimationBounds.setEmpty();
+    void setLastRecentsAnimationTransaction(
+            @NonNull PictureInPictureSurfaceTransaction transaction) {
+        mLastRecentsAnimationTransaction = new PictureInPictureSurfaceTransaction(transaction);
+    }
+
+    void clearLastRecentsAnimationTransaction() {
+        mLastRecentsAnimationTransaction = null;
+        // reset also the transform introduced by mLastRecentsAnimationTransaction
+        getPendingTransaction().setMatrix(mSurfaceControl, Matrix.IDENTITY_MATRIX, new float[9]);
+    }
+
+    void maybeApplyLastRecentsAnimationTransaction() {
+        if (mLastRecentsAnimationTransaction != null) {
+            PictureInPictureSurfaceTransaction.apply(mLastRecentsAnimationTransaction,
+                    mSurfaceControl, getPendingTransaction());
+            mLastRecentsAnimationTransaction = null;
         }
     }
 
@@ -7810,6 +7917,7 @@ class Task extends WindowContainer<WindowContainer> {
 
         proto.write(CREATED_BY_ORGANIZER, mCreatedByOrganizer);
         proto.write(AFFINITY, affinity);
+        proto.write(HAS_CHILD_PIP_ACTIVITY, mChildPipActivity != null);
 
         proto.end(token);
     }
@@ -7859,12 +7967,33 @@ class Task extends WindowContainer<WindowContainer> {
         private boolean mHasBeenVisible;
         private boolean mRemoveWithTaskOrganizer;
 
+        /**
+         * Records the source task that requesting to build a new task, used to determine which of
+         * the adjacent roots should be launch root of the new task.
+         */
+        private Task mSourceTask;
+
+        /**
+         * Records launch flags to apply when launching new task.
+         */
+        private int mLaunchFlags;
+
         Builder(ActivityTaskManagerService atm) {
             mAtmService = atm;
         }
 
         Builder setParent(WindowContainer parent) {
             mParent = parent;
+            return this;
+        }
+
+        Builder setSourceTask(Task sourceTask) {
+            mSourceTask = sourceTask;
+            return this;
+        }
+
+        Builder setLaunchFlags(int launchFlags) {
+            mLaunchFlags = launchFlags;
             return this;
         }
 
@@ -8122,9 +8251,14 @@ class Task extends WindowContainer<WindowContainer> {
                 tda.getRootPinnedTask().dismissPip();
             }
 
+            if (mIntent != null) {
+                mLaunchFlags |= mIntent.getFlags();
+            }
+
             // Task created by organizer are added as root.
             final Task launchRootTask = mCreatedByOrganizer
-                    ? null : tda.getLaunchRootTask(mWindowingMode, mActivityType, mActivityOptions);
+                    ? null : tda.getLaunchRootTask(mWindowingMode, mActivityType, mActivityOptions,
+                    mSourceTask, mLaunchFlags);
             if (launchRootTask != null) {
                 // Since this task will be put into a root task, its windowingMode will be
                 // inherited.

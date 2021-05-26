@@ -292,7 +292,8 @@ class TaskLaunchParamsModifier implements LaunchParamsModifier {
                     mSupervisor.mRootWindowContainer.resolveActivityType(root, options, task);
             display.forAllTaskDisplayAreas(displayArea -> {
                 final Task launchRoot = displayArea.getLaunchRootTask(
-                        resolvedMode, activityType, null /* ActivityOptions */);
+                        resolvedMode, activityType, null /* ActivityOptions */,
+                        null /* sourceTask*/, 0 /* launchFlags */);
                 if (launchRoot == null) {
                     return false;
                 }
@@ -436,6 +437,13 @@ class TaskLaunchParamsModifier implements LaunchParamsModifier {
         // Re-route to default display if the device didn't declare support for multi-display
         if (taskDisplayArea != null && !mSupervisor.mService.mSupportsMultiDisplay
                 && taskDisplayArea.getDisplayId() != DEFAULT_DISPLAY) {
+            taskDisplayArea = mSupervisor.mRootWindowContainer.getDefaultTaskDisplayArea();
+        }
+
+        // Re-route to default display if the home activity doesn't support multi-display
+        if (taskDisplayArea != null && activityRecord.isActivityTypeHome()
+                && !mSupervisor.mRootWindowContainer.canStartHomeOnDisplayArea(activityRecord.info,
+                        taskDisplayArea, false /* allowInstrumenting */)) {
             taskDisplayArea = mSupervisor.mRootWindowContainer.getDefaultTaskDisplayArea();
         }
 
@@ -604,7 +612,7 @@ class TaskLaunchParamsModifier implements LaunchParamsModifier {
 
     private boolean shouldLaunchUnresizableAppInFreeform(ActivityRecord activity,
             TaskDisplayArea displayArea) {
-        if (!mSupervisor.mService.mSupportsNonResizableMultiWindow || activity.isResizeable()) {
+        if (!activity.supportsFreeform() || activity.isResizeable()) {
             return false;
         }
 

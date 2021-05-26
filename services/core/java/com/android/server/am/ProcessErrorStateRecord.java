@@ -26,12 +26,18 @@ import android.app.AnrController;
 import android.app.ApplicationErrorReport;
 import android.app.ApplicationExitInfo;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.IncrementalStatesInfo;
 import android.content.pm.PackageManagerInternal;
+import android.os.IBinder;
 import android.os.Message;
 import android.os.Process;
+import android.os.ServiceManager;
 import android.os.SystemClock;
+import android.os.incremental.IIncrementalService;
+import android.os.incremental.IncrementalManager;
+import android.os.incremental.IncrementalMetrics;
 import android.provider.Settings;
 import android.util.EventLog;
 import android.util.Slog;
@@ -293,18 +299,6 @@ class ProcessErrorStateRecord {
             }
         }
 
-        // Check if package is still being loaded
-        boolean isPackageLoading = false;
-        final PackageManagerInternal packageManagerInternal = mService.getPackageManagerInternal();
-        if (aInfo != null && aInfo.packageName != null) {
-            IncrementalStatesInfo incrementalStatesInfo =
-                    packageManagerInternal.getIncrementalStatesInfo(
-                            aInfo.packageName, mApp.uid, mApp.userId);
-            if (incrementalStatesInfo != null) {
-                isPackageLoading = incrementalStatesInfo.isLoading();
-            }
-        }
-
         // Log the ANR to the main log.
         StringBuilder info = new StringBuilder();
         info.setLength(0);
@@ -320,13 +314,6 @@ class ProcessErrorStateRecord {
         if (parentShortComponentName != null
                 && parentShortComponentName.equals(activityShortComponentName)) {
             info.append("Parent: ").append(parentShortComponentName).append("\n");
-        }
-
-        if (isPackageLoading) {
-            // Report in the main log that the package is still loading
-            final float loadingProgress = packageManagerInternal.getIncrementalStatesInfo(
-                    aInfo.packageName, mApp.uid, mApp.userId).getProgress();
-            info.append("Package is ").append((int) (loadingProgress * 100)).append("% loaded.\n");
         }
 
         // Retrieve controller with max ANR delay from AnrControllers
@@ -401,6 +388,36 @@ class ProcessErrorStateRecord {
                     pid, mApp.uid, mApp.getPackageList(), tracesFile, offsets[0], offsets[1]);
         }
 
+        // Check if package is still being loaded
+        float loadingProgress = 1;
+        IncrementalMetrics incrementalMetrics = null;
+        final PackageManagerInternal packageManagerInternal = mService.getPackageManagerInternal();
+        if (mApp.info != null && mApp.info.packageName != null) {
+            IncrementalStatesInfo incrementalStatesInfo =
+                    packageManagerInternal.getIncrementalStatesInfo(
+                            mApp.info.packageName, mApp.uid, mApp.userId);
+            if (incrementalStatesInfo != null) {
+                loadingProgress = incrementalStatesInfo.getProgress();
+            }
+            final String codePath = mApp.info.getCodePath();
+            if (IncrementalManager.isIncrementalPath(codePath)) {
+                // Report in the main log that the incremental package is still loading
+                Slog.e(TAG, "App ANR on incremental package " + mApp.info.packageName
+                        + " which is " + ((int) (loadingProgress * 100)) + "% loaded.");
+                final IBinder incrementalService = ServiceManager.getService(
+                        Context.INCREMENTAL_SERVICE);
+                if (incrementalService != null) {
+                    final IncrementalManager incrementalManager = new IncrementalManager(
+                            IIncrementalService.Stub.asInterface(incrementalService));
+                    incrementalMetrics = incrementalManager.getMetrics(codePath);
+                }
+            }
+        }
+        if (incrementalMetrics != null) {
+            // Report in the main log about the incremental package
+            info.append("Package is ").append((int) (loadingProgress * 100)).append("% loaded.\n");
+        }
+
         FrameworkStatsLog.write(FrameworkStatsLog.ANR_OCCURRED, mApp.uid, mApp.processName,
                 activityShortComponentName == null ? "unknown" : activityShortComponentName,
                 annotation,
@@ -412,12 +429,34 @@ class ProcessErrorStateRecord {
                         ? FrameworkStatsLog.ANROCCURRED__FOREGROUND_STATE__FOREGROUND
                         : FrameworkStatsLog.ANROCCURRED__FOREGROUND_STATE__BACKGROUND,
                 mApp.getProcessClassEnum(),
-                (mApp.info != null) ? mApp.info.packageName : "", isPackageLoading);
+                (mApp.info != null) ? mApp.info.packageName : "",
+                incrementalMetrics != null /* isIncremental */, loadingProgress,
+                incrementalMetrics != null ? incrementalMetrics.getMillisSinceOldestPendingRead()
+                        : -1,
+                incrementalMetrics != null ? incrementalMetrics.getStorageHealthStatusCode()
+                        : -1,
+                incrementalMetrics != null ? incrementalMetrics.getDataLoaderStatusCode()
+                        : -1,
+                incrementalMetrics != null && incrementalMetrics.getReadLogsEnabled(),
+                incrementalMetrics != null ? incrementalMetrics.getMillisSinceLastDataLoaderBind()
+                        : -1,
+                incrementalMetrics != null ? incrementalMetrics.getDataLoaderBindDelayMillis()
+                        : -1,
+                incrementalMetrics != null ? incrementalMetrics.getTotalDelayedReads()
+                        : -1,
+                incrementalMetrics != null ? incrementalMetrics.getTotalFailedReads()
+                        : -1,
+                incrementalMetrics != null ? incrementalMetrics.getLastReadErrorUid()
+                        : -1,
+                incrementalMetrics != null ? incrementalMetrics.getMillisSinceLastReadError()
+                        : -1,
+                incrementalMetrics != null ? incrementalMetrics.getLastReadErrorNumber()
+                        : 0);
         final ProcessRecord parentPr = parentProcess != null
                 ? (ProcessRecord) parentProcess.mOwner : null;
         mService.addErrorToDropBox("anr", mApp, mApp.processName, activityShortComponentName,
                 parentShortComponentName, parentPr, annotation, report.toString(), tracesFile,
-                null);
+                null, new Float(loadingProgress), incrementalMetrics);
 
         if (mApp.getWindowProcessController().appNotResponding(info.toString(),
                 () -> {
@@ -450,11 +489,6 @@ class ProcessErrorStateRecord {
                 makeAppNotRespondingLSP(activityShortComponentName,
                         annotation != null ? "ANR " + annotation : "ANR", info.toString());
                 mDialogController.setAnrController(anrController);
-            }
-
-            // Notify package manager service to possibly update package state
-            if (aInfo != null && aInfo.packageName != null) {
-                packageManagerInternal.notifyPackageCrashOrAnr(aInfo.packageName);
             }
 
             // mUiHandler can be null if the AMS is constructed with injector only. This will only

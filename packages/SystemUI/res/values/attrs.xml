@@ -124,7 +124,10 @@
     <attr name="darkIconTheme" format="reference" />
     <attr name="wallpaperTextColor" format="reference|color" />
     <attr name="wallpaperTextColorSecondary" format="reference|color" />
+    <attr name="wallpaperTextColorAccent" format="reference|color" />
     <attr name="backgroundProtectedStyle" format="reference" />
+    <attr name="offStateColor" format="reference|color" />
+    <attr name="underSurfaceColor" format="reference|color" />
 
     <declare-styleable name="SmartReplyView">
         <attr name="spacing" format="dimension" />
@@ -173,10 +176,6 @@
         <attr name="android:alpha" />
     </declare-styleable>
 
-    <declare-styleable name="PagedTileLayout">
-        <attr name="sideLabels" format="boolean"/>
-    </declare-styleable>
-
     <declare-styleable name="CropView">
         <attr name="handleThickness" />
         <attr name="handleColor" />
@@ -189,6 +188,12 @@
         <attr name="scrimColor" />
         <attr name="borderThickness" format="dimension" />
         <attr name="borderColor" format="color" />
+    </declare-styleable>
+
+    <declare-styleable name="DualHeightHorizontalLinearLayout">
+        <attr name="singleLineHeight" format="dimension" />
+        <attr name="singleLineVerticalPadding" format="dimension" />
+        <attr name="textViewId" format="reference" />
     </declare-styleable>
 </resources>
 

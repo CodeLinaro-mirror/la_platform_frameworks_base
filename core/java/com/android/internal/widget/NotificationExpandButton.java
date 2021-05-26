@@ -20,6 +20,7 @@ import android.annotation.ColorInt;
 import android.annotation.Nullable;
 import android.content.Context;
 import android.content.res.ColorStateList;
+import android.graphics.PorterDuff;
 import android.graphics.Rect;
 import android.util.AttributeSet;
 import android.view.RemotableViewMethod;
@@ -164,13 +165,23 @@ public class NotificationExpandButton extends FrameLayout {
 
     private void updateColors() {
         if (shouldShowNumber() && !mDisallowColor) {
-            mPillView.setBackgroundTintList(ColorStateList.valueOf(mHighlightPillColor));
-            mIconView.setColorFilter(mHighlightTextColor);
-            mNumberView.setTextColor(mHighlightTextColor);
+            if (mHighlightPillColor != 0) {
+                mPillView.setBackgroundTintList(ColorStateList.valueOf(mHighlightPillColor));
+            }
+            mPillView.setBackgroundTintMode(PorterDuff.Mode.SRC_IN);
+            mIconView.setColorFilter(mHighlightTextColor, PorterDuff.Mode.SRC_IN);
+            if (mHighlightTextColor != 0) {
+                mNumberView.setTextColor(mHighlightTextColor);
+            }
         } else {
-            mPillView.setBackgroundTintList(ColorStateList.valueOf(mDefaultPillColor));
-            mIconView.setColorFilter(mDefaultTextColor);
-            mNumberView.setTextColor(mDefaultTextColor);
+            if (mDefaultPillColor != 0) {
+                mPillView.setBackgroundTintList(ColorStateList.valueOf(mDefaultPillColor));
+            }
+            mPillView.setBackgroundTintMode(PorterDuff.Mode.SRC_IN);
+            mIconView.setColorFilter(mDefaultTextColor, PorterDuff.Mode.SRC_IN);
+            if (mDefaultTextColor != 0) {
+                mNumberView.setTextColor(mDefaultTextColor);
+            }
         }
     }
 

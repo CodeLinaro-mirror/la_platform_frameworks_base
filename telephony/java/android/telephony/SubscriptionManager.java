@@ -56,6 +56,7 @@ import android.os.RemoteException;
 import android.provider.Telephony.SimInfo;
 import android.telephony.euicc.EuiccManager;
 import android.telephony.ims.ImsMmTelManager;
+import android.util.Base64;
 import android.util.Log;
 import android.util.Pair;
 
@@ -67,6 +68,11 @@ import com.android.internal.util.FunctionalUtils;
 import com.android.internal.util.Preconditions;
 import com.android.telephony.Rlog;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
@@ -416,7 +422,7 @@ public class SubscriptionManager {
      * <p>
      * Use this {@link Uri} with a {@link ContentObserver} to be notified of changes to the
      * subscription cross sim calling enabled
-     * {@link ImsMmTelManager#isCrossSimCallingEnabledByUser()}
+     * {@link ImsMmTelManager#isCrossSimCallingEnabled()}
      * while your app is running. You can also use a {@link android.app.job.JobService}
      * to ensure your app
      * is notified of changes to the {@link Uri} even when it is not running.
@@ -600,6 +606,50 @@ public class SubscriptionManager {
                     NAME_SOURCE_SIM_PNN
             })
     public @interface SimDisplayNameSource {}
+
+    /**
+     * Device status is not shared to a remote party.
+     */
+    public static final int D2D_SHARING_DISABLED = 0;
+
+    /**
+     * Device status is shared with all numbers in the user's contacts.
+     */
+    public static final int D2D_SHARING_ALL_CONTACTS = 1;
+
+    /**
+     * Device status is shared with all selected contacts.
+     */
+    public static final int D2D_SHARING_SELECTED_CONTACTS = 2;
+
+    /**
+     * Device status is shared whenever possible.
+     */
+    public static final int D2D_SHARING_ALL = 3;
+
+    /** @hide */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(prefix = {"D2D_SHARING_"},
+            value = {
+                    D2D_SHARING_DISABLED,
+                    D2D_SHARING_ALL_CONTACTS,
+                    D2D_SHARING_SELECTED_CONTACTS,
+                    D2D_SHARING_ALL
+            })
+    public @interface DeviceToDeviceStatusSharingPreference {}
+
+    /**
+     * TelephonyProvider column name for device to device sharing status.
+     * <P>Type: INTEGER (int)</P>
+     */
+    public static final String D2D_STATUS_SHARING = SimInfo.COLUMN_D2D_STATUS_SHARING;
+
+    /**
+     * TelephonyProvider column name for contacts information that allow device to device sharing.
+     * <P>Type: TEXT (String)</P>
+     */
+    public static final String D2D_STATUS_SHARING_SELECTED_CONTACTS =
+            SimInfo.COLUMN_D2D_STATUS_SHARING_SELECTED_CONTACTS;
 
     /**
      * TelephonyProvider column name for the color of a SIM.
@@ -2402,6 +2452,57 @@ public class SubscriptionManager {
     }
 
     /**
+     * Serialize list of contacts uri to string
+     * @hide
+     */
+    public static String serializeUriLists(List<Uri> uris) {
+        List<String> contacts = new ArrayList<>();
+        for (Uri uri : uris) {
+            contacts.add(uri.toString());
+        }
+        try {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            ObjectOutputStream oos = new ObjectOutputStream(bos);
+            oos.writeObject(contacts);
+            oos.flush();
+            return Base64.encodeToString(bos.toByteArray(), Base64.DEFAULT);
+        } catch (IOException e) {
+            logd("serializeUriLists IO exception");
+        }
+        return "";
+    }
+
+    /**
+     * Return list of contacts uri corresponding to query result.
+     * @param subId Subscription Id of Subscription
+     * @param propKey Column name in SubscriptionInfo database
+     * @return list of contacts uri to be returned
+     * @hide
+     */
+    private static List<Uri> getContactsFromSubscriptionProperty(int subId, String propKey,
+            Context context) {
+        String result = getSubscriptionProperty(subId, propKey, context);
+        if (result != null) {
+            try {
+                byte[] b = Base64.decode(result, Base64.DEFAULT);
+                ByteArrayInputStream bis = new ByteArrayInputStream(b);
+                ObjectInputStream ois = new ObjectInputStream(bis);
+                List<String> contacts = ArrayList.class.cast(ois.readObject());
+                List<Uri> uris = new ArrayList<>();
+                for (String contact : contacts) {
+                    uris.add(Uri.parse(contact));
+                }
+                return uris;
+            } catch (IOException e) {
+                logd("getContactsFromSubscriptionProperty IO exception");
+            } catch (ClassNotFoundException e) {
+                logd("getContactsFromSubscriptionProperty ClassNotFound exception");
+            }
+        }
+        return new ArrayList<>();
+    }
+
+    /**
      * Store properties associated with SubscriptionInfo in database
      * @param subId Subscription Id of Subscription
      * @param propKey Column name in SubscriptionInfo database
@@ -2532,7 +2633,10 @@ public class SubscriptionManager {
         if (subInfo != null) {
             overrideConfig.mcc = subInfo.getMcc();
             overrideConfig.mnc = subInfo.getMnc();
-            if (overrideConfig.mnc == 0) overrideConfig.mnc = Configuration.MNC_ZERO;
+            if (overrideConfig.mnc == 0) {
+                overrideConfig.mnc = Configuration.MNC_ZERO;
+                cacheKey = null;
+            }
         }
 
         if (useRootLocale) {
@@ -2681,7 +2785,8 @@ public class SubscriptionManager {
      * @param subId the subscriber this override applies to.
      * @param overrideUnmetered set if the billing relationship should be
      *            considered unmetered.
-     * @param networkTypes the network types this override applies to.
+     * @param networkTypes the network types this override applies to. If no
+     *            network types are specified, override values will be ignored.
      *            {@see TelephonyManager#getAllNetworkTypes()}
      * @param timeoutMillis the timeout after which the requested override will
      *            be automatically cleared, or {@code 0} to leave in the
@@ -2745,7 +2850,8 @@ public class SubscriptionManager {
      * @param subId the subscriber this override applies to.
      * @param overrideCongested set if the subscription should be considered
      *            congested.
-     * @param networkTypes the network types this override applies to.
+     * @param networkTypes the network types this override applies to. If no
+     *            network types are specified, override values will be ignored.
      *            {@see TelephonyManager#getAllNetworkTypes()}
      * @param timeoutMillis the timeout after which the requested override will
      *            be automatically cleared, or {@code 0} to leave in the
@@ -2766,6 +2872,10 @@ public class SubscriptionManager {
      * Checks whether the app with the given context is authorized to manage the given subscription
      * according to its metadata.
      *
+     * Only supported for embedded subscriptions (if {@link SubscriptionInfo#isEmbedded} returns
+     * true). To check for permissions for non-embedded subscription as well,
+     * {@see android.telephony.TelephonyManager#hasCarrierPrivileges}.
+     *
      * @param info The subscription to check.
      * @return whether the app is authorized to manage this subscription per its metadata.
      */
@@ -2777,6 +2887,10 @@ public class SubscriptionManager {
      * Checks whether the given app is authorized to manage the given subscription. An app can only
      * be authorized if it is included in the {@link android.telephony.UiccAccessRule} of the
      * {@link android.telephony.SubscriptionInfo} with the access status.
+     *
+     * Only supported for embedded subscriptions (if {@link SubscriptionInfo#isEmbedded} returns
+     * true). To check for permissions for non-embedded subscription as well,
+     * {@see android.telephony.TelephonyManager#hasCarrierPrivileges}.
      *
      * @param info The subscription to check.
      * @param packageName Package name of the app to check.
@@ -3288,7 +3402,10 @@ public class SubscriptionManager {
      * Set uicc applications being enabled or disabled.
      * The value will be remembered on the subscription and will be applied whenever it's present.
      * If the subscription in currently present, it will also apply the setting to modem
-     * immediately.
+     * immediately (the setting in the modem will not change until the modem receives and responds
+     * to the request, but typically this should only take a few seconds. The user visible setting
+     * available from SubscriptionInfo.areUiccApplicationsEnabled() will be updated
+     * immediately.)
      *
      * Permissions android.Manifest.permission.MODIFY_PHONE_STATE is required
      *
@@ -3371,6 +3488,72 @@ public class SubscriptionManager {
         }
 
         return false;
+    }
+
+    /**
+     * Set the device to device status sharing user preference for a subscription ID. The setting
+     * app uses this method to indicate with whom they wish to share device to device status
+     * information.
+     * @param sharing the status sharing preference
+     * @param subscriptionId the unique Subscription ID in database
+     */
+    @RequiresPermission(Manifest.permission.MODIFY_PHONE_STATE)
+    public void setDeviceToDeviceStatusSharingPreference(int subscriptionId,
+            @DeviceToDeviceStatusSharingPreference int sharing) {
+        if (VDBG) {
+            logd("[setDeviceToDeviceStatusSharing] + sharing: " + sharing + " subId: "
+                    + subscriptionId);
+        }
+        setSubscriptionPropertyHelper(subscriptionId, "setDeviceToDeviceSharingStatus",
+                (iSub)->iSub.setDeviceToDeviceStatusSharing(sharing, subscriptionId));
+    }
+
+    /**
+     * Returns the user-chosen device to device status sharing preference
+     * @param subscriptionId Subscription id of subscription
+     * @return The device to device status sharing preference
+     */
+    public @DeviceToDeviceStatusSharingPreference int getDeviceToDeviceStatusSharingPreference(
+            int subscriptionId) {
+        if (VDBG) {
+            logd("[getDeviceToDeviceStatusSharing] + subId: " + subscriptionId);
+        }
+        return getIntegerSubscriptionProperty(subscriptionId, D2D_STATUS_SHARING,
+                D2D_SHARING_DISABLED, mContext);
+    }
+
+    /**
+     * Set the list of contacts that allow device to device status sharing for a subscription ID.
+     * The setting app uses this method to indicate with whom they wish to share device to device
+     * status information.
+     * @param contacts The list of contacts that allow device to device status sharing
+     * @param subscriptionId The unique Subscription ID in database
+     */
+    @RequiresPermission(Manifest.permission.MODIFY_PHONE_STATE)
+    public void setDeviceToDeviceStatusSharingContacts(int subscriptionId,
+            @NonNull List<Uri> contacts) {
+        String contactString = serializeUriLists(contacts);
+        if (VDBG) {
+            logd("[setDeviceToDeviceStatusSharingContacts] + contacts: " + contactString
+                    + " subId: " + subscriptionId);
+        }
+        setSubscriptionPropertyHelper(subscriptionId, "setDeviceToDeviceSharingStatus",
+                (iSub)->iSub.setDeviceToDeviceStatusSharingContacts(serializeUriLists(contacts),
+                        subscriptionId));
+    }
+
+    /**
+     * Returns the list of contacts that allow device to device status sharing.
+     * @param subscriptionId Subscription id of subscription
+     * @return The list of contacts that allow device to device status sharing
+     */
+    public @NonNull List<Uri> getDeviceToDeviceStatusSharingContacts(
+            int subscriptionId) {
+        if (VDBG) {
+            logd("[getDeviceToDeviceStatusSharingContacts] + subId: " + subscriptionId);
+        }
+        return getContactsFromSubscriptionProperty(subscriptionId,
+                D2D_STATUS_SHARING_SELECTED_CONTACTS, mContext);
     }
 
     /**

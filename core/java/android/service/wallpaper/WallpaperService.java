@@ -37,6 +37,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.content.res.TypedArray;
+import android.graphics.BLASTBufferQueue;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
@@ -208,8 +209,8 @@ public abstract class WallpaperService extends Service {
         int mCurHeight;
         float mZoom = 0f;
         int mWindowFlags = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-        int mWindowPrivateFlags =
-                WindowManager.LayoutParams.PRIVATE_FLAG_WANTS_OFFSET_NOTIFICATIONS;
+        int mWindowPrivateFlags = WindowManager.LayoutParams.PRIVATE_FLAG_WANTS_OFFSET_NOTIFICATIONS
+                | WindowManager.LayoutParams.PRIVATE_FLAG_USE_BLAST;
         int mCurWindowFlags = mWindowFlags;
         int mCurWindowPrivateFlags = mWindowPrivateFlags;
         Rect mPreviewSurfacePosition;
@@ -253,6 +254,8 @@ public abstract class WallpaperService extends Service {
         private int mDisplayState;
 
         SurfaceControl mSurfaceControl = new SurfaceControl();
+        SurfaceControl mBbqSurfaceControl;
+        BLASTBufferQueue mBlastBufferQueue;
 
         final BaseSurfaceHolder mSurfaceHolder = new BaseSurfaceHolder() {
             {
@@ -761,11 +764,18 @@ public abstract class WallpaperService extends Service {
         public void notifyLocalColorsChanged(@NonNull List<RectF> regions,
                 @NonNull List<WallpaperColors> colors)
                 throws RuntimeException {
-            for (int i = 0; i < regions.size() && i < colors.size() && colors.get(i) != null; i++) {
+            for (int i = 0; i < regions.size() && i < colors.size(); i++) {
+                WallpaperColors color = colors.get(i);
+                RectF area = regions.get(i);
+                if (color == null || area == null) {
+                    Log.wtf(TAG, "notifyLocalColorsChanged null values. color: "
+                            + color + " area " + area);
+                    continue;
+                }
                 try {
                     mConnection.onLocalWallpaperColorsChanged(
-                            regions.get(i),
-                            colors.get(i),
+                            area,
+                            color,
                             mDisplayContext.getDisplayId()
                     );
                 } catch (RemoteException e) {
@@ -967,15 +977,26 @@ public abstract class WallpaperService extends Service {
                             View.VISIBLE, 0, -1, mWinFrames, mMergedConfiguration, mSurfaceControl,
                             mInsetsState, mTempControls, mSurfaceSize);
                     if (mSurfaceControl.isValid()) {
-                        mSurfaceHolder.mSurface.copyFrom(mSurfaceControl);
+                        if (mBbqSurfaceControl == null) {
+                            mBbqSurfaceControl = new SurfaceControl.Builder()
+                                    .setName("Wallpaper BBQ wrapper")
+                                    .setHidden(false)
+                                    .setBLASTLayer()
+                                    .setParent(mSurfaceControl)
+                                    .setCallsite("Wallpaper#relayout")
+                                    .build();
+                        }
+                        Surface blastSurface = getOrCreateBLASTSurface(mSurfaceSize.x,
+                                mSurfaceSize.y, mFormat);
+                        // If blastSurface == null that means it hasn't changed since the last
+                        // time we called. In this situation, avoid calling transferFrom as we
+                        // would then inc the generation ID and cause EGL resources to be recreated.
+                        if (blastSurface != null) {
+                            mSurfaceHolder.mSurface.transferFrom(blastSurface);
+                        }
                     }
                     if (!mLastSurfaceSize.equals(mSurfaceSize)) {
                         mLastSurfaceSize.set(mSurfaceSize.x, mSurfaceSize.y);
-                        if (mSurfaceControl != null && mSurfaceControl.isValid()) {
-                            SurfaceControl.Transaction t = new SurfaceControl.Transaction();
-                            t.setBufferSize(mSurfaceControl, mSurfaceSize.x, mSurfaceSize.y);
-                            t.apply();
-                        }
                     }
 
                     if (DEBUG) Log.v(TAG, "New surface: " + mSurfaceHolder.mSurface
@@ -1355,7 +1376,8 @@ public abstract class WallpaperService extends Service {
                         + xOffsetStep);
             }
             //below is the default implementation
-            if (xOffset % xOffsetStep > MIN_PAGE_ALLOWED_MARGIN) return;
+            if (xOffset % xOffsetStep > MIN_PAGE_ALLOWED_MARGIN
+                    || !mSurfaceHolder.getSurface().isValid()) return;
             int xPage;
             int xPages;
             if (!validStep(xOffsetStep)) {
@@ -1447,13 +1469,12 @@ public abstract class WallpaperService extends Service {
                 return;
             }
             Surface surface = mSurfaceHolder.getSurface();
-            boolean widthIsLarger =
-                    mSurfaceControl.getWidth() > mSurfaceControl.getHeight();
-            int smaller = widthIsLarger ? mSurfaceControl.getWidth()
-                    : mSurfaceControl.getHeight();
+            boolean widthIsLarger = mSurfaceSize.x > mSurfaceSize.y;
+            int smaller = widthIsLarger ? mSurfaceSize.x
+                    : mSurfaceSize.y;
             float ratio = (float) MIN_BITMAP_SCREENSHOT_WIDTH / (float) smaller;
-            int width = (int) (ratio * mSurfaceControl.getWidth());
-            int height = (int) (ratio * mSurfaceControl.getHeight());
+            int width = (int) (ratio * mSurfaceSize.x);
+            int height = (int) (ratio * mSurfaceSize.y);
             if (width <= 0 || height <= 0) {
                 Log.e(TAG, "wrong width and height values of bitmap " + width + " " + height);
                 return;
@@ -1671,6 +1692,10 @@ public abstract class WallpaperService extends Service {
             }
             for (int i = 0; i < areas.size(); i++) {
                 RectF currentArea = areas.get(i);
+                if (currentArea == null || !isValid(currentArea)) {
+                    Log.wtf(TAG, "invalid local area " + currentArea);
+                    continue;
+                }
                 EngineWindowPage page;
                 RectF area;
                 int pageIndx;
@@ -1810,6 +1835,14 @@ public abstract class WallpaperService extends Service {
                 } catch (RemoteException e) {
                 }
                 mSurfaceHolder.mSurface.release();
+                if (mBlastBufferQueue != null) {
+                    mBlastBufferQueue.destroy();
+                    mBlastBufferQueue = null;
+                }
+                if (mBbqSurfaceControl != null) {
+                    new SurfaceControl.Transaction().remove(mBbqSurfaceControl).apply();
+                    mBbqSurfaceControl = null;
+                }
                 mCreated = false;
             }
         }
@@ -1830,6 +1863,21 @@ public abstract class WallpaperService extends Service {
             public void onDisplayAdded(int displayId) {
             }
         };
+
+        private Surface getOrCreateBLASTSurface(int width, int height, int format) {
+            Surface ret = null;
+            if (mBlastBufferQueue == null) {
+                mBlastBufferQueue = new BLASTBufferQueue("Wallpaper", mBbqSurfaceControl,
+                        width, height, format);
+                // We only return the Surface the first time, as otherwise
+                // it hasn't changed and there is no need to update.
+                ret = mBlastBufferQueue.createSurface();
+            } else {
+                mBlastBufferQueue.update(mBbqSurfaceControl, width, height, format);
+            }
+
+            return ret;
+        }
     }
 
     private boolean isValid(RectF area) {
@@ -1968,6 +2016,11 @@ public abstract class WallpaperService extends Service {
         public void scalePreview(Rect position) {
             Message msg = mCaller.obtainMessageO(MSG_SCALE_PREVIEW, position);
             mCaller.sendMessage(msg);
+        }
+
+        @Nullable
+        public SurfaceControl mirrorSurfaceControl() {
+            return mEngine == null ? null : SurfaceControl.mirrorSurface(mEngine.mSurfaceControl);
         }
 
         private void doDetachEngine() {
