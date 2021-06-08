@@ -193,6 +193,12 @@
       "group": "WM_ERROR",
       "at": "com\/android\/server\/wm\/WindowManagerService.java"
     },
+    "-1906387645": {
+      "message": "SURFACE controller=%s alpha=%f HScale=%f, VScale=%f: %s",
+      "level": "INFO",
+      "group": "WM_SHOW_TRANSACTIONS",
+      "at": "com\/android\/server\/wm\/WindowStateAnimator.java"
+    },
     "-1905191109": {
       "message": "SyncGroup %d: Finished!",
       "level": "VERBOSE",
@@ -307,6 +313,12 @@
       "group": "WM_DEBUG_STARTING_WINDOW",
       "at": "com\/android\/server\/wm\/ActivityRecord.java"
     },
+    "-1777196134": {
+      "message": "goodToGo(): No apps to animate, mPendingAnimations=%d",
+      "level": "DEBUG",
+      "group": "WM_DEBUG_REMOTE_ANIMATIONS",
+      "at": "com\/android\/server\/wm\/RemoteAnimationController.java"
+    },
     "-1770075711": {
       "message": "Adding window client %s that is dead, aborting.",
       "level": "WARN",
@@ -354,12 +366,6 @@
       "level": "VERBOSE",
       "group": "WM_DEBUG_ORIENTATION",
       "at": "com\/android\/server\/wm\/DisplayRotation.java"
-    },
-    "-1729340764": {
-      "message": "setFinishTaskBounds(%d): bounds=%s",
-      "level": "DEBUG",
-      "group": "WM_DEBUG_RECENTS_ANIMATIONS",
-      "at": "com\/android\/server\/wm\/RecentsAnimationController.java"
     },
     "-1715268616": {
       "message": "Last window, removing starting window %s",
@@ -817,12 +823,6 @@
       "group": "WM_DEBUG_STATES",
       "at": "com\/android\/server\/wm\/Task.java"
     },
-    "-1159577965": {
-      "message": "Focus requested for input consumer=%s",
-      "level": "VERBOSE",
-      "group": "WM_DEBUG_FOCUS_LIGHT",
-      "at": "com\/android\/server\/wm\/InputMonitor.java"
-    },
     "-1156118957": {
       "message": "Updated config=%s",
       "level": "DEBUG",
@@ -1177,6 +1177,12 @@
       "group": "WM_DEBUG_REMOTE_ANIMATIONS",
       "at": "com\/android\/server\/wm\/WallpaperAnimationAdapter.java"
     },
+    "-760764543": {
+      "message": "Focus not requested for window=%s because it has no surface or is not focusable.",
+      "level": "VERBOSE",
+      "group": "WM_DEBUG_FOCUS_LIGHT",
+      "at": "com\/android\/server\/wm\/InputMonitor.java"
+    },
     "-754503024": {
       "message": "Relayout %s: oldVis=%d newVis=%d. %s",
       "level": "INFO",
@@ -1219,17 +1225,17 @@
       "group": "WM_DEBUG_ORIENTATION",
       "at": "com\/android\/server\/wm\/DragState.java"
     },
-    "-681380736": {
-      "message": "Sandbox max bounds for uid %s to bounds %s due to letterboxing from mismatch with parent bounds? %s size compat mode %s",
-      "level": "DEBUG",
-      "group": "WM_DEBUG_CONFIGURATION",
-      "at": "com\/android\/server\/wm\/ActivityRecord.java"
-    },
     "-677449371": {
       "message": "moveTaskToRootTask: moving task=%d to rootTaskId=%d toTop=%b",
       "level": "DEBUG",
       "group": "WM_DEBUG_TASKS",
       "at": "com\/android\/server\/wm\/ActivityTaskManagerService.java"
+    },
+    "-672355406": {
+      "message": "  Rejecting as no-op: %s",
+      "level": "VERBOSE",
+      "group": "WM_DEBUG_WINDOW_TRANSITIONS",
+      "at": "com\/android\/server\/wm\/Transition.java"
     },
     "-672228342": {
       "message": "resumeTopActivityLocked: Top activity resumed %s",
@@ -1693,6 +1699,12 @@
       "group": "WM_ERROR",
       "at": "com\/android\/server\/wm\/WindowManagerService.java"
     },
+    "-163974242": {
+      "message": "setFinishTaskTransaction(%d): transaction=%s",
+      "level": "DEBUG",
+      "group": "WM_DEBUG_RECENTS_ANIMATIONS",
+      "at": "com\/android\/server\/wm\/RecentsAnimationController.java"
+    },
     "-143556958": {
       "message": "resumeNextFocusableActivityWhenRootTaskIsEmpty: %s, go home",
       "level": "DEBUG",
@@ -1722,6 +1734,12 @@
       "level": "DEBUG",
       "group": "WM_DEBUG_IME",
       "at": "com\/android\/server\/wm\/InsetsSourceProvider.java"
+    },
+    "-108977760": {
+      "message": "Sandbox max bounds for uid %s to bounds %s. config to never sandbox = %s, config to always sandbox = %s, letterboxing from mismatch with parent bounds = %s, has mCompatDisplayInsets = %s, should create compatDisplayInsets = %s",
+      "level": "DEBUG",
+      "group": "WM_DEBUG_CONFIGURATION",
+      "at": "com\/android\/server\/wm\/ActivityRecord.java"
     },
     "-106400104": {
       "message": "Preload recents with %s",
@@ -1777,6 +1795,12 @@
       "group": "WM_DEBUG_RECENTS_ANIMATIONS",
       "at": "com\/android\/server\/wm\/RecentsAnimation.java"
     },
+    "3593205": {
+      "message": "commitVisibility: %s: visible=%b mVisibleRequested=%b",
+      "level": "VERBOSE",
+      "group": "WM_DEBUG_APP_TRANSITIONS",
+      "at": "com\/android\/server\/wm\/WallpaperWindowToken.java"
+    },
     "9803449": {
       "message": "startFreezingDisplayLocked: exitAnim=%d enterAnim=%d called by %s",
       "level": "DEBUG",
@@ -1806,6 +1830,12 @@
       "level": "DEBUG",
       "group": "WM_DEBUG_IME",
       "at": "com\/android\/server\/wm\/InsetsSourceProvider.java"
+    },
+    "35398067": {
+      "message": "goodToGo(): onAnimationStart, transit=%s, apps=%d, wallpapers=%d, nonApps=%d",
+      "level": "DEBUG",
+      "group": "WM_DEBUG_REMOTE_ANIMATIONS",
+      "at": "com\/android\/server\/wm\/RemoteAnimationController.java"
     },
     "38267433": {
       "message": "Attempted to reset replacing window on non-existing app token %s",
@@ -1843,12 +1873,6 @@
       "group": "WM_DEBUG_TASKS",
       "at": "com\/android\/server\/wm\/RootWindowContainer.java"
     },
-    "63329306": {
-      "message": "commitVisibility: %s: visible=%b mVisibleRequested=%b",
-      "level": "VERBOSE",
-      "group": "WM_DEBUG_WINDOW_TRANSITIONS",
-      "at": "com\/android\/server\/wm\/WallpaperWindowToken.java"
-    },
     "73987756": {
       "message": "ControlAdapter onAnimationCancelled mSource: %s mControlTarget: %s",
       "level": "INFO",
@@ -1872,12 +1896,6 @@
       "level": "DEBUG",
       "group": "WM_DEBUG_RECENTS_ANIMATIONS",
       "at": "com\/android\/server\/wm\/RecentsAnimationController.java"
-    },
-    "86989930": {
-      "message": "setTaskWindowingMode: moving task=%d to windowingMode=%d toTop=%b",
-      "level": "DEBUG",
-      "group": "WM_DEBUG_TASKS",
-      "at": "com\/android\/server\/wm\/ActivityTaskManagerService.java"
     },
     "90764070": {
       "message": "Could not report token removal to the window token client.",
@@ -1987,12 +2005,6 @@
       "group": "WM_DEBUG_STATES",
       "at": "com\/android\/server\/wm\/ActivityRecord.java"
     },
-    "194124419": {
-      "message": "goodToGo(): Animation finished already, canceled=%s mPendingAnimations=%d",
-      "level": "DEBUG",
-      "group": "WM_DEBUG_REMOTE_ANIMATIONS",
-      "at": "com\/android\/server\/wm\/RemoteAnimationController.java"
-    },
     "200829729": {
       "message": "ScreenRotationAnimation onAnimationEnd",
       "level": "DEBUG",
@@ -2022,12 +2034,6 @@
       "level": "VERBOSE",
       "group": "WM_DEBUG_WINDOW_ORGANIZER",
       "at": "com\/android\/server\/wm\/TaskOrganizerController.java"
-    },
-    "236210101": {
-      "message": "registerWindowContextListener: trying to add listener to a non-existing display:%d",
-      "level": "WARN",
-      "group": "WM_ERROR",
-      "at": "com\/android\/server\/wm\/WindowManagerService.java"
     },
     "240271590": {
       "message": "moveFocusableActivityToTop: unfocusable activity=%s",
@@ -2088,6 +2094,12 @@
       "level": "DEBUG",
       "group": "WM_DEBUG_ORIENTATION",
       "at": "com\/android\/server\/wm\/DragState.java"
+    },
+    "269976641": {
+      "message": "goodToGo(): Animation canceled already",
+      "level": "DEBUG",
+      "group": "WM_DEBUG_REMOTE_ANIMATIONS",
+      "at": "com\/android\/server\/wm\/RemoteAnimationController.java"
     },
     "274773837": {
       "message": "applyAnimation: anim=%s nextAppTransition=ANIM_CLIP_REVEAL transit=%s Callers=%s",
@@ -2461,6 +2473,12 @@
       "group": "WM_DEBUG_SCREEN_ON",
       "at": "com\/android\/server\/wm\/WindowManagerService.java"
     },
+    "666937535": {
+      "message": "attachWindowContextToDisplayArea: trying to attach to a non-existing display:%d",
+      "level": "WARN",
+      "group": "WM_ERROR",
+      "at": "com\/android\/server\/wm\/WindowManagerService.java"
+    },
     "674932310": {
       "message": "Setting Intent of %s to target %s",
       "level": "VERBOSE",
@@ -2472,12 +2490,6 @@
       "level": "VERBOSE",
       "group": "WM_DEBUG_RESIZE",
       "at": "com\/android\/server\/wm\/WindowState.java"
-    },
-    "690411811": {
-      "message": "goodToGo(): No apps to animate",
-      "level": "DEBUG",
-      "group": "WM_DEBUG_REMOTE_ANIMATIONS",
-      "at": "com\/android\/server\/wm\/RemoteAnimationController.java"
     },
     "691515534": {
       "message": "  Commit wallpaper becoming invisible: %s",
@@ -2598,12 +2610,6 @@
       "level": "DEBUG",
       "group": "WM_DEBUG_REMOTE_ANIMATIONS",
       "at": "com\/android\/server\/wm\/RemoteAnimationController.java"
-    },
-    "883475718": {
-      "message": "Report configuration: %s %s %s",
-      "level": "VERBOSE",
-      "group": "WM_DEBUG_CONFIGURATION",
-      "at": "com\/android\/server\/wm\/ActivityClientController.java"
     },
     "892244061": {
       "message": "Waiting for drawn %s: removed=%b visible=%b mHasSurface=%b drawState=%d",
@@ -2910,6 +2916,12 @@
       "level": "INFO",
       "group": "WM_DEBUG_FOCUS_LIGHT",
       "at": "com\/android\/server\/wm\/WindowState.java"
+    },
+    "1305412562": {
+      "message": "Report configuration: %s %s",
+      "level": "VERBOSE",
+      "group": "WM_DEBUG_CONFIGURATION",
+      "at": "com\/android\/server\/wm\/ActivityClientController.java"
     },
     "1316533291": {
       "message": "State movement: %s from:%s to:%s reason:%s",
@@ -3277,12 +3289,6 @@
       "group": "WM_DEBUG_ORIENTATION",
       "at": "com\/android\/server\/wm\/ActivityRecord.java"
     },
-    "1747941491": {
-      "message": "SURFACE controller=%s alpha=%f matrix=[%f*%f,%f*%f][%f*%f,%f*%f]: %s",
-      "level": "INFO",
-      "group": "WM_SHOW_TRANSACTIONS",
-      "at": "com\/android\/server\/wm\/WindowStateAnimator.java"
-    },
     "1756082882": {
       "message": "Orientation change skips hidden %s",
       "level": "VERBOSE",
@@ -3301,6 +3307,12 @@
       "group": "WM_DEBUG_RECENTS_ANIMATIONS",
       "at": "com\/android\/server\/wm\/RecentsAnimation.java"
     },
+    "1789321832": {
+      "message": "Then token:%s is invalid. It might be removed",
+      "level": "WARN",
+      "group": "WM_ERROR",
+      "at": "com\/android\/server\/wm\/WindowManagerService.java"
+    },
     "1789603530": {
       "message": "Removing activity %s hasSavedState=%b stateNotNeeded=%s finishing=%b state=%s callers=%s",
       "level": "INFO",
@@ -3312,6 +3324,12 @@
       "level": "VERBOSE",
       "group": "WM_DEBUG_WINDOW_TRANSITIONS",
       "at": "com\/android\/server\/wm\/TransitionController.java"
+    },
+    "1804245629": {
+      "message": "Attempted to add starting window to token but already cleaned",
+      "level": "WARN",
+      "group": "WM_ERROR",
+      "at": "com\/android\/server\/wm\/WindowManagerService.java"
     },
     "1810019902": {
       "message": "TRANSIT_FLAG_OPEN_BEHIND,  adding %s to mOpeningApps",
@@ -3439,6 +3457,12 @@
       "group": "WM_DEBUG_IME",
       "at": "com\/android\/server\/wm\/ImeInsetsSourceProvider.java"
     },
+    "1931178855": {
+      "message": "\tnonApp=%s",
+      "level": "DEBUG",
+      "group": "WM_DEBUG_REMOTE_ANIMATIONS",
+      "at": "com\/android\/server\/wm\/RemoteAnimationController.java"
+    },
     "1947239194": {
       "message": "Deferring rotation, still finishing previous rotation",
       "level": "VERBOSE",
@@ -3486,6 +3510,12 @@
       "level": "VERBOSE",
       "group": "WM_DEBUG_CONFIGURATION",
       "at": "com\/android\/server\/wm\/ActivityRecord.java"
+    },
+    "1999594750": {
+      "message": "startAnimation",
+      "level": "DEBUG",
+      "group": "WM_DEBUG_REMOTE_ANIMATIONS",
+      "at": "com\/android\/server\/wm\/NonAppWindowAnimationAdapter.java"
     },
     "2018454757": {
       "message": "WS.removeImmediately: %s Already removed...",

@@ -826,7 +826,8 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
                         r.getSavedState(), r.getPersistentSavedState(), results, newIntents,
                         r.takeOptions(), dc.isNextTransitionForward(),
                         proc.createProfilerInfoIfNeeded(), r.assistToken, activityClientController,
-                        r.createFixedRotationAdjustmentsIfNeeded(), r.shareableActivityToken));
+                        r.createFixedRotationAdjustmentsIfNeeded(), r.shareableActivityToken,
+                        r.getLaunchedFromBubble()));
 
                 // Set desired final state.
                 final ActivityLifecycleItem lifecycleItem;
@@ -2026,7 +2027,9 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
     }
 
     final void scheduleIdle() {
-        mHandler.sendEmptyMessage(IDLE_NOW_MSG);
+        if (!mHandler.hasMessages(IDLE_NOW_MSG)) {
+            mHandler.sendEmptyMessage(IDLE_NOW_MSG);
+        }
     }
 
     /**
@@ -2114,8 +2117,16 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
         }
     }
 
-    void scheduleProcessStoppingAndFinishingActivities() {
-        if (!mHandler.hasMessages(PROCESS_STOPPING_AND_FINISHING_MSG)) {
+    void scheduleProcessStoppingAndFinishingActivitiesIfNeeded() {
+        if (mStoppingActivities.isEmpty() && mFinishingActivities.isEmpty()) {
+            return;
+        }
+        if (mRootWindowContainer.allResumedActivitiesIdle()) {
+            scheduleIdle();
+            return;
+        }
+        if (!mHandler.hasMessages(PROCESS_STOPPING_AND_FINISHING_MSG)
+                && mRootWindowContainer.allResumedActivitiesVisible()) {
             mHandler.sendEmptyMessage(PROCESS_STOPPING_AND_FINISHING_MSG);
         }
     }
@@ -2243,7 +2254,7 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
         scheduleUpdatePictureInPictureModeIfNeeded(task, rootTask.getRequestedOverrideBounds());
     }
 
-    private void scheduleUpdatePictureInPictureModeIfNeeded(Task task, Rect targetRootTaskBounds) {
+    void scheduleUpdatePictureInPictureModeIfNeeded(Task task, Rect targetRootTaskBounds) {
         final PooledConsumer c = PooledLambda.obtainConsumer(
                 ActivityTaskSupervisor::addToPipModeChangedList, this,
                 PooledLambda.__(ActivityRecord.class));
@@ -2265,16 +2276,6 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
         // change list as the processing of pip change will make sure multi-window changed
         // message is processed in the right order relative to pip changed.
         mMultiWindowModeChangedActivities.remove(r);
-    }
-
-    void updatePictureInPictureMode(Task task, Rect targetRootTaskBounds, boolean forceUpdate) {
-        mHandler.removeMessages(REPORT_PIP_MODE_CHANGED_MSG);
-        final PooledConsumer c = PooledLambda.obtainConsumer(
-                ActivityRecord::updatePictureInPictureMode,
-                PooledLambda.__(ActivityRecord.class), targetRootTaskBounds, forceUpdate);
-        task.getRootTask().setBounds(targetRootTaskBounds);
-        task.forAllActivities(c);
-        c.recycle();
     }
 
     void wakeUp(String reason) {
@@ -2541,7 +2542,8 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
                     targetActivity.applyOptionsAnimation();
                 } finally {
                     mActivityMetricsLogger.notifyActivityLaunched(launchingState,
-                            START_TASK_TO_FRONT, targetActivity, activityOptions);
+                            START_TASK_TO_FRONT, false /* newActivityCreated */, targetActivity,
+                            activityOptions);
                 }
 
                 mService.getActivityStartController().postStartActivityProcessingForLastStarter(

@@ -25,9 +25,11 @@ import android.content.Intent;
 import android.content.pm.IntentFilterVerificationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.pm.PackageSettingsSnapshotProvider;
 import android.content.pm.ResolveInfo;
 import android.content.pm.verify.domain.DomainVerificationInfo;
 import android.content.pm.verify.domain.DomainVerificationManager;
+import android.content.pm.verify.domain.DomainVerificationState;
 import android.os.Binder;
 import android.os.UserHandle;
 import android.util.IndentingPrintWriter;
@@ -35,8 +37,9 @@ import android.util.Pair;
 import android.util.TypedXmlPullParser;
 import android.util.TypedXmlSerializer;
 
+import com.android.server.pm.PackageManagerService;
 import com.android.server.pm.PackageSetting;
-import com.android.server.pm.parsing.pkg.AndroidPackage;
+import com.android.server.pm.Settings;
 import com.android.server.pm.verify.domain.models.DomainVerificationPkgState;
 import com.android.server.pm.verify.domain.proxy.DomainVerificationProxy;
 
@@ -51,6 +54,28 @@ import java.util.function.Function;
 public interface DomainVerificationManagerInternal {
 
     UUID DISABLED_ID = new UUID(0, 0);
+
+    /**
+     * The app was not installed for the user.
+     */
+    int APPROVAL_LEVEL_NOT_INSTALLED = -4;
+
+    /**
+     * The app was not enabled for the user.
+     */
+    int APPROVAL_LEVEL_DISABLED = -3;
+
+    /**
+     * The app has not declared this domain in a valid web intent-filter in their manifest, and so
+     * would never be able to be approved for this domain.
+     */
+    int APPROVAL_LEVEL_UNDECLARED = -2;
+
+    /**
+     * The app has declared this domain as a valid autoVerify domain, but it failed or has not
+     * succeeded verification.
+     */
+    int APPROVAL_LEVEL_UNVERIFIED = -1;
 
     /**
      * The app has not been approved for this domain and should never be able to open it through
@@ -80,14 +105,14 @@ public interface DomainVerificationManagerInternal {
      * been preserved for migration purposes, but is otherwise ignored. Corresponds to
      * {@link PackageManager#INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_ALWAYS}.
      */
-    int APPROVAL_LEVEL_LEGACY_ALWAYS = 1;
+    int APPROVAL_LEVEL_LEGACY_ALWAYS = 2;
 
     /**
      * The app has been chosen by the user through
      * {@link DomainVerificationManager#setDomainVerificationUserSelection(UUID, Set, boolean)},
      * indicating an explicit choice to use this app to open an unverified domain.
      */
-    int APPROVAL_LEVEL_SELECTION = 2;
+    int APPROVAL_LEVEL_SELECTION = 3;
 
     /**
      * The app is approved through the digital asset link statement being hosted at the domain
@@ -95,7 +120,7 @@ public interface DomainVerificationManagerInternal {
      * {@link DomainVerificationManager#setDomainVerificationStatus(UUID, Set, int)} by
      * the domain verification agent on device.
      */
-    int APPROVAL_LEVEL_VERIFIED = 3;
+    int APPROVAL_LEVEL_VERIFIED = 4;
 
     /**
      * The app has been installed as an instant app, which grants it total authority on the domains
@@ -105,17 +130,22 @@ public interface DomainVerificationManagerInternal {
      * The user is still able to disable instant app link handling through
      * {@link DomainVerificationManager#setDomainVerificationLinkHandlingAllowed(String, boolean)}.
      */
-    int APPROVAL_LEVEL_INSTANT_APP = 4;
+    int APPROVAL_LEVEL_INSTANT_APP = 5;
 
     /**
-     * Defines the possible values for {@link #approvalLevelForDomain(PackageSetting, Intent, int)}
-     * which sorts packages by approval priority. A higher numerical value means the package should
-     * override all lower values. This means that comparison using less/greater than IS valid.
+     * Defines the possible values for
+     * {@link #approvalLevelForDomain(PackageSetting, Intent, List, int, int)} which sorts packages
+     * by approval priority. A higher numerical value means the package should override all lower
+     * values. This means that comparison using less/greater than IS valid.
      *
-     * Negative values are possible, although not implemented, reserved if explicit disable of a
-     * package for a domain needs to be tracked.
+     * Negative values are possible, used for tracking specific reasons for why an app doesn't have
+     * approval.
      */
     @IntDef({
+            APPROVAL_LEVEL_NOT_INSTALLED,
+            APPROVAL_LEVEL_DISABLED,
+            APPROVAL_LEVEL_UNDECLARED,
+            APPROVAL_LEVEL_UNVERIFIED,
             APPROVAL_LEVEL_NONE,
             APPROVAL_LEVEL_LEGACY_ASK,
             APPROVAL_LEVEL_LEGACY_ALWAYS,
@@ -124,6 +154,33 @@ public interface DomainVerificationManagerInternal {
             APPROVAL_LEVEL_INSTANT_APP
     })
     @interface ApprovalLevel {
+    }
+
+    static String approvalLevelToDebugString(@ApprovalLevel int level) {
+        switch (level) {
+            case APPROVAL_LEVEL_NOT_INSTALLED:
+                return "NOT_INSTALLED";
+            case APPROVAL_LEVEL_DISABLED:
+                return "DISABLED";
+            case APPROVAL_LEVEL_UNDECLARED:
+                return "UNDECLARED";
+            case APPROVAL_LEVEL_UNVERIFIED:
+                return "UNVERIFIED";
+            case APPROVAL_LEVEL_NONE:
+                return "NONE";
+            case APPROVAL_LEVEL_LEGACY_ASK:
+                return "LEGACY_ASK";
+            case APPROVAL_LEVEL_LEGACY_ALWAYS:
+                return "LEGACY_ALWAYS";
+            case APPROVAL_LEVEL_SELECTION:
+                return "USER_SELECTION";
+            case APPROVAL_LEVEL_VERIFIED:
+                return "VERIFIED";
+            case APPROVAL_LEVEL_INSTANT_APP:
+                return "INSTANT_APP";
+            default:
+                return "UNKNOWN";
+        }
     }
 
     /** @see DomainVerificationManager#getDomainVerificationInfo(String) */
@@ -176,35 +233,42 @@ public interface DomainVerificationManagerInternal {
      * This will mutate internal {@link DomainVerificationPkgState} and so will hold the internal
      * lock. This should never be called from within the domain verification classes themselves.
      * <p>
-     * This will NOT call {@link #writeSettings(TypedXmlSerializer)}. That must be handled by the
-     * caller.
+     * This will NOT call {@link #writeSettings(TypedXmlSerializer, boolean, int)}. That must be
+     * handled by the caller.
      */
     void addPackage(@NonNull PackageSetting newPkgSetting);
 
     /**
      * Migrates verification state from a previous install to a new one. It is expected that the
      * {@link PackageSetting#getDomainSetId()} already be set to the correct value, usually from
-     * {@link #generateNewId()}. This will preserve {@link DomainVerificationManager#STATE_SUCCESS}
+     * {@link #generateNewId()}. This will preserve {@link DomainVerificationState#STATE_SUCCESS}
      * domains under the assumption that the new package will pass the same server side config as
      * the previous package, as they have matching signatures.
      * <p>
      * This will mutate internal {@link DomainVerificationPkgState} and so will hold the internal
      * lock. This should never be called from within the domain verification classes themselves.
      * <p>
-     * This will NOT call {@link #writeSettings(TypedXmlSerializer)}. That must be handled by the
-     * caller.
+     * This will NOT call {@link #writeSettings(TypedXmlSerializer, boolean, int)}. That must be
+     * handled by the caller.
      */
     void migrateState(@NonNull PackageSetting oldPkgSetting, @NonNull PackageSetting newPkgSetting);
 
     /**
      * Serializes the entire internal state. This is equivalent to a full backup of the existing
      * verification state. This write includes legacy state, as a sibling tag the modern state.
+     *
+     * @param includeSignatures Whether to include the package signatures in the output, mainly
+     *                          used for backing up the user settings and ensuring they're
+     *                          re-attached to the same package.
+     * @param userId The user to write out. Supports {@link UserHandle#USER_ALL} if all users
+     *               should be written.
      */
-    void writeSettings(@NonNull TypedXmlSerializer serializer) throws IOException;
+    void writeSettings(@NonNull TypedXmlSerializer serializer, boolean includeSignatures,
+            @UserIdInt int userId) throws IOException;
 
     /**
      * Read back a list of {@link DomainVerificationPkgState}s previously written by {@link
-     * #writeSettings(TypedXmlSerializer)}. Assumes that the
+     * #writeSettings(TypedXmlSerializer, boolean, int)}. Assumes that the
      * {@link DomainVerificationPersistence#TAG_DOMAIN_VERIFICATIONS} tag has already been entered.
      * <p>
      * This is expected to only be used to re-attach states for packages already known to be on the
@@ -228,6 +292,11 @@ public interface DomainVerificationManagerInternal {
     void clearPackage(@NonNull String packageName);
 
     /**
+     * Remove all state for the given package for the given user.
+     */
+    void clearPackageForUser(@NonNull String packageName, @UserIdInt int userId);
+
+    /**
      * Delete all the state for a user. This can be because the user has been removed from the
      * device, or simply that the state for a user should be deleted.
      */
@@ -235,7 +304,7 @@ public interface DomainVerificationManagerInternal {
 
     /**
      * Restore a list of {@link DomainVerificationPkgState}s previously written by {@link
-     * #writeSettings(TypedXmlSerializer)}. Assumes that the
+     * #writeSettings(TypedXmlSerializer, boolean, int)}. Assumes that the
      * {@link DomainVerificationPersistence#TAG_DOMAIN_VERIFICATIONS}
      * tag has already been entered.
      * <p>
@@ -271,7 +340,7 @@ public interface DomainVerificationManagerInternal {
 
     /**
      * Until the legacy APIs are entirely removed, returns the legacy state from the previously
-     * written info stored in {@link com.android.server.pm.Settings}.
+     * written info stored in {@link Settings}.
      */
     int getLegacyState(@NonNull String packageName, @UserIdInt int userId);
 
@@ -283,15 +352,12 @@ public interface DomainVerificationManagerInternal {
      * @param userId             the specific user to print, or null to skip printing user selection
      *                           states, supports {@link android.os.UserHandle#USER_ALL}
      * @param pkgSettingFunction the method by which to retrieve package data; if this is called
-     *                           from {@link com.android.server.pm.PackageManagerService}, it is
-     *                           expected to pass in the snapshot of {@link PackageSetting} objects,
-     *                           or if null is passed, the manager may decide to lock {@link
-     *                           com.android.server.pm.PackageManagerService} through {@link
-     *                           Connection#getPackageSettingLocked(String)}
+     *                           from {@link PackageManagerService}, it is
+     *                           expected to pass in the snapshot of {@link PackageSetting} objects
      */
     void printState(@NonNull IndentingPrintWriter writer, @Nullable String packageName,
             @Nullable @UserIdInt Integer userId,
-            @Nullable Function<String, PackageSetting> pkgSettingFunction)
+            @NonNull Function<String, PackageSetting> pkgSettingFunction)
             throws NameNotFoundException;
 
     @NonNull
@@ -333,17 +399,18 @@ public interface DomainVerificationManagerInternal {
     @Nullable
     UUID getDomainVerificationInfoId(@NonNull String packageName);
 
+    @DomainVerificationManager.Error
     @RequiresPermission(android.Manifest.permission.DOMAIN_VERIFICATION_AGENT)
-    void setDomainVerificationStatusInternal(int callingUid, @NonNull UUID domainSetId,
-            @NonNull Set<String> domains, int state)
-            throws IllegalArgumentException, NameNotFoundException;
+    int setDomainVerificationStatusInternal(int callingUid, @NonNull UUID domainSetId,
+            @NonNull Set<String> domains, int state) throws NameNotFoundException;
 
 
-    interface Connection extends DomainVerificationEnforcer.Callback {
+    interface Connection extends DomainVerificationEnforcer.Callback,
+            PackageSettingsSnapshotProvider {
 
         /**
          * Notify that a settings change has been made and that eventually
-         * {@link #writeSettings(TypedXmlSerializer)} should be invoked by the parent.
+         * {@link #writeSettings(TypedXmlSerializer, boolean, int)} should be invoked by the parent.
          */
         void scheduleWriteSettings();
 
@@ -362,16 +429,6 @@ public interface DomainVerificationManagerInternal {
          * @see DomainVerificationProxy.BaseConnection#schedule(int, java.lang.Object)
          */
         void schedule(int code, @Nullable Object object);
-
-        // TODO(b/178733426): Make DomainVerificationService PMS snapshot aware so it can avoid
-        //  locking package state at all. This can be as simple as removing this method in favor of
-        //  accepting a PackageSetting function in at every method call, although should probably
-        //  be abstracted to a wrapper class.
-        @Nullable
-        PackageSetting getPackageSettingLocked(@NonNull String pkgName);
-
-        @Nullable
-        AndroidPackage getPackageLocked(@NonNull String pkgName);
 
         @UserIdInt
         int[] getAllUserIds();

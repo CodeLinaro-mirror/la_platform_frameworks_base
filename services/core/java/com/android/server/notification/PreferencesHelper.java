@@ -33,6 +33,7 @@ import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
+import android.app.ActivityManager;
 import android.app.AppOpsManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -73,7 +74,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlSerializer;
 
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -139,7 +139,7 @@ public class PreferencesHelper implements RankingConfig {
     private static final boolean DEFAULT_OEM_LOCKED_IMPORTANCE  = false;
     private static final boolean DEFAULT_APP_LOCKED_IMPORTANCE  = false;
 
-    static final boolean DEFAULT_GLOBAL_ALLOW_BUBBLE = true;
+    static final boolean DEFAULT_BUBBLES_ENABLED = true;
     @VisibleForTesting
     static final int DEFAULT_BUBBLE_PREFERENCE = BUBBLE_PREFERENCE_NONE;
     static final boolean DEFAULT_MEDIA_NOTIFICATION_FILTERING = true;
@@ -173,9 +173,9 @@ public class PreferencesHelper implements RankingConfig {
     private final AppOpsManager mAppOps;
 
     private SparseBooleanArray mBadgingEnabled;
+    private SparseBooleanArray mBubblesEnabled;
     private SparseBooleanArray mLockScreenShowNotifications;
     private SparseBooleanArray mLockScreenPrivateNotifications;
-    private boolean mBubblesEnabledGlobally = DEFAULT_GLOBAL_ALLOW_BUBBLE;
     private boolean mIsMediaNotificationFilteringEnabled = DEFAULT_MEDIA_NOTIFICATION_FILTERING;
     private boolean mAreChannelsBypassingDnd;
     private boolean mHideSilentStatusBarIcons = DEFAULT_HIDE_SILENT_STATUS_BAR_ICONS;
@@ -183,6 +183,8 @@ public class PreferencesHelper implements RankingConfig {
     private boolean mAllowInvalidShortcuts = false;
 
     private Map<String, List<String>> mOemLockedApps = new HashMap();
+
+    private int mCurrentUserId = UserHandle.USER_NULL;
 
     public PreferencesHelper(Context context, PackageManager pm, RankingHandler rankingHandler,
             ZenModeHelper zenHelper, NotificationChannelLogger notificationChannelLogger,
@@ -199,7 +201,8 @@ public class PreferencesHelper implements RankingConfig {
         updateBadgingEnabled();
         updateBubblesEnabled();
         updateMediaNotificationFilteringEnabled();
-        syncChannelsBypassingDnd(mContext.getUserId());
+        mCurrentUserId = ActivityManager.getCurrentUser();
+        syncChannelsBypassingDnd();
     }
 
     public void readXml(TypedXmlPullParser parser, boolean forRestore, int userId)
@@ -806,7 +809,7 @@ public class PreferencesHelper implements RankingConfig {
                     // but the system can
                     if (group.isBlocked() != oldGroup.isBlocked()) {
                         group.lockFields(NotificationChannelGroup.USER_LOCKED_BLOCKED_STATE);
-                        updateChannelsBypassingDnd(mContext.getUserId());
+                        updateChannelsBypassingDnd();
                     }
                 }
             }
@@ -888,13 +891,13 @@ public class PreferencesHelper implements RankingConfig {
                 // fields on the channel yet
                 if (existing.getUserLockedFields() == 0 && hasDndAccess) {
                     boolean bypassDnd = channel.canBypassDnd();
-                    if (bypassDnd != existing.canBypassDnd()) {
+                    if (bypassDnd != existing.canBypassDnd() || wasUndeleted) {
                         existing.setBypassDnd(bypassDnd);
                         needsPolicyFileChange = true;
 
                         if (bypassDnd != mAreChannelsBypassingDnd
                                 || previousExistingImportance != existing.getImportance()) {
-                            updateChannelsBypassingDnd(mContext.getUserId());
+                            updateChannelsBypassingDnd();
                         }
                     }
                 }
@@ -958,7 +961,7 @@ public class PreferencesHelper implements RankingConfig {
 
             r.channels.put(channel.getId(), channel);
             if (channel.canBypassDnd() != mAreChannelsBypassingDnd) {
-                updateChannelsBypassingDnd(mContext.getUserId());
+                updateChannelsBypassingDnd();
             }
             MetricsLogger.action(getChannelLog(channel, pkg).setType(
                     com.android.internal.logging.nano.MetricsProto.MetricsEvent.TYPE_OPEN));
@@ -1047,7 +1050,7 @@ public class PreferencesHelper implements RankingConfig {
 
             if (updatedChannel.canBypassDnd() != mAreChannelsBypassingDnd
                     || channel.getImportance() != updatedChannel.getImportance()) {
-                updateChannelsBypassingDnd(mContext.getUserId());
+                updateChannelsBypassingDnd();
             }
         }
         updateConfig();
@@ -1145,7 +1148,7 @@ public class PreferencesHelper implements RankingConfig {
             mNotificationChannelLogger.logNotificationChannelDeleted(channel, uid, pkg);
 
             if (mAreChannelsBypassingDnd && channel.canBypassDnd()) {
-                updateChannelsBypassingDnd(mContext.getUserId());
+                updateChannelsBypassingDnd();
             }
         }
     }
@@ -1512,7 +1515,7 @@ public class PreferencesHelper implements RankingConfig {
                 }
             }
             if (!deletedChannelIds.isEmpty() && mAreChannelsBypassingDnd) {
-                updateChannelsBypassingDnd(mContext.getUserId());
+                updateChannelsBypassingDnd();
             }
             return deletedChannelIds;
         }
@@ -1658,29 +1661,29 @@ public class PreferencesHelper implements RankingConfig {
     }
 
     /**
-     * Syncs {@link #mAreChannelsBypassingDnd} with the user's notification policy before
+     * Syncs {@link #mAreChannelsBypassingDnd} with the current user's notification policy before
      * updating
-     * @param userId
      */
-    private void syncChannelsBypassingDnd(int userId) {
+    private void syncChannelsBypassingDnd() {
         mAreChannelsBypassingDnd = (mZenModeHelper.getNotificationPolicy().state
                 & NotificationManager.Policy.STATE_CHANNELS_BYPASSING_DND) == 1;
-        updateChannelsBypassingDnd(userId);
+        updateChannelsBypassingDnd();
     }
 
     /**
-     * Updates the user's NotificationPolicy based on whether the given userId
+     * Updates the user's NotificationPolicy based on whether the current userId
      * has channels bypassing DND
      * @param userId
      */
-    private void updateChannelsBypassingDnd(int userId) {
+    private void updateChannelsBypassingDnd() {
         synchronized (mPackagePreferences) {
             final int numPackagePreferences = mPackagePreferences.size();
             for (int i = 0; i < numPackagePreferences; i++) {
                 final PackagePreferences r = mPackagePreferences.valueAt(i);
-                // Package isn't associated with this userId or notifications from this package are
-                // blocked
-                if (userId != UserHandle.getUserId(r.uid) || r.importance == IMPORTANCE_NONE) {
+                // Package isn't associated with the current userId or notifications from this
+                // package are blocked
+                if (mCurrentUserId != UserHandle.getUserId(r.uid)
+                        || r.importance == IMPORTANCE_NONE) {
                     continue;
                 }
 
@@ -2226,14 +2229,16 @@ public class PreferencesHelper implements RankingConfig {
      * Called when user switches
      */
     public void onUserSwitched(int userId) {
-        syncChannelsBypassingDnd(userId);
+        mCurrentUserId = userId;
+        syncChannelsBypassingDnd();
     }
 
     /**
      * Called when user is unlocked
      */
     public void onUserUnlocked(int userId) {
-        syncChannelsBypassingDnd(userId);
+        mCurrentUserId = userId;
+        syncChannelsBypassingDnd();
     }
 
     public void onUserRemoved(int userId) {
@@ -2367,20 +2372,6 @@ public class PreferencesHelper implements RankingConfig {
                 .setPackageName(pkg);
     }
 
-    public void updateBubblesEnabled() {
-        final boolean newValue = Settings.Global.getInt(mContext.getContentResolver(),
-                Settings.Global.NOTIFICATION_BUBBLES,
-                DEFAULT_GLOBAL_ALLOW_BUBBLE ? 1 : 0) == 1;
-        if (newValue != mBubblesEnabledGlobally) {
-            mBubblesEnabledGlobally = newValue;
-            updateConfig();
-        }
-    }
-
-    public boolean bubblesEnabled() {
-        return mBubblesEnabledGlobally;
-    }
-
     /** Requests check of the feature setting for showing media notifications in quick settings. */
     public void updateMediaNotificationFilteringEnabled() {
         final boolean newValue = Settings.Global.getInt(mContext.getContentResolver(),
@@ -2428,6 +2419,42 @@ public class PreferencesHelper implements RankingConfig {
                             DEFAULT_SHOW_BADGE ? 1 : 0, userId) != 0);
         }
         return mBadgingEnabled.get(userId, DEFAULT_SHOW_BADGE);
+    }
+
+    /** Updates whether bubbles are enabled for this user. */
+    public void updateBubblesEnabled() {
+        if (mBubblesEnabled == null) {
+            mBubblesEnabled = new SparseBooleanArray();
+        }
+        boolean changed = false;
+        // update the cached values
+        for (int index = 0; index < mBubblesEnabled.size(); index++) {
+            int userId = mBubblesEnabled.keyAt(index);
+            final boolean oldValue = mBubblesEnabled.get(userId);
+            final boolean newValue = Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                    Settings.Secure.NOTIFICATION_BUBBLES,
+                    DEFAULT_BUBBLES_ENABLED ? 1 : 0, userId) != 0;
+            mBubblesEnabled.put(userId, newValue);
+            changed |= oldValue != newValue;
+        }
+        if (changed) {
+            updateConfig();
+        }
+    }
+
+    /** Returns true if bubbles are enabled for this user. */
+    public boolean bubblesEnabled(UserHandle userHandle) {
+        int userId = userHandle.getIdentifier();
+        if (userId == UserHandle.USER_ALL) {
+            return false;
+        }
+        if (mBubblesEnabled.indexOfKey(userId) < 0) {
+            mBubblesEnabled.put(userId,
+                    Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                            Settings.Secure.NOTIFICATION_BUBBLES,
+                            DEFAULT_BUBBLES_ENABLED ? 1 : 0, userId) != 0);
+        }
+        return mBubblesEnabled.get(userId, DEFAULT_BUBBLES_ENABLED);
     }
 
     public void updateLockScreenPrivateNotifications() {

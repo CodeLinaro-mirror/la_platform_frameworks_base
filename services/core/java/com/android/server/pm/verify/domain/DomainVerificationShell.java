@@ -38,6 +38,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
+import java.util.function.Function;
 
 public class DomainVerificationShell {
 
@@ -51,7 +53,16 @@ public class DomainVerificationShell {
     public void printHelp(@NonNull PrintWriter pw) {
         pw.println("  get-app-links [--user <USER_ID>] [<PACKAGE>]");
         pw.println("    Prints the domain verification state for the given package, or for all");
-        pw.println("    packages if none is specified.");
+        pw.println("    packages if none is specified. State codes are defined as follows:");
+        pw.println("        - none: nothing has been recorded for this domain");
+        pw.println("        - verified: the domain has been successfully verified");
+        pw.println("        - approved: force approved, usually through shell");
+        pw.println("        - denied: force denied, usually through shell");
+        pw.println("        - migrated: preserved verification from a legacy response");
+        pw.println("        - restored: preserved verification from a user data restore");
+        pw.println("        - legacy_failure: rejected by a legacy verifier, unknown reason");
+        pw.println("        - system_configured: automatically approved by the device config");
+        pw.println("        - >= 1024: Custom error code which is specific to the device verifier");
         pw.println("      --user <USER_ID>: include user selections (includes all domains, not");
         pw.println("        just autoVerify ones)");
         pw.println("  reset-app-links [--user <USER_ID>] [<PACKAGE>]");
@@ -87,7 +98,7 @@ public class DomainVerificationShell {
         pw.println("    must be declared by the package for this to work. This command will not");
         pw.println("    report a failure for domains that could not be applied.");
         pw.println("      --user <USER_ID>: the user to change selections for");
-        pw.println("      --package <PACKAGE>: the package to set, or \"all\" to set all packages");
+        pw.println("      --package <PACKAGE>: the package to set");
         pw.println("      <ENABLED>: whether or not to approve the domain");
         pw.println("      <DOMAINS>: space separated list of domains to change, or \"all\" to");
         pw.println("        change every domain.");
@@ -99,6 +110,13 @@ public class DomainVerificationShell {
         pw.println("        packages will be reset if no one package is specified.");
         pw.println("      <ALLOWED>: true to allow the package to open auto verified links, false");
         pw.println("        to disable");
+        pw.println("  get-app-link-owners [--user <USER_ID>] [--package <PACKAGE>] [<DOMAINS>]");
+        pw.println("    Print the owners for a specific domain for a given user in low to high");
+        pw.println("    priority order.");
+        pw.println("      --user <USER_ID>: the user to query for");
+        pw.println("      --package <PACKAGE>: optionally also print for all web domains declared");
+        pw.println("        by a package, or \"all\" to print all packages");
+        pw.println("      --<DOMAINS>: space separated list of domains to query for");
     }
 
     /**
@@ -121,6 +139,8 @@ public class DomainVerificationShell {
                 return runSetAppLinksUserState(commandHandler);
             case "set-app-links-allowed":
                 return runSetAppLinksAllowed(commandHandler);
+            case "get-app-link-owners":
+                return runGetAppLinkOwners(commandHandler);
         }
 
         return null;
@@ -215,8 +235,6 @@ public class DomainVerificationShell {
         if (TextUtils.isEmpty(packageName)) {
             commandHandler.getErrPrintWriter().println("Error: no package specified");
             return false;
-        } else if (packageName.equalsIgnoreCase("all")) {
-            packageName = null;
         }
 
         if (userId == null) {
@@ -226,22 +244,19 @@ public class DomainVerificationShell {
 
         userId = translateUserId(userId, "runSetAppLinksUserState");
 
-        String enabledString = commandHandler.getNextArgRequired();
+        String enabledArg = commandHandler.getNextArg();
+        if (TextUtils.isEmpty(enabledArg)) {
+            commandHandler.getErrPrintWriter().println("Error: enabled param not specified");
+            return false;
+        }
 
-        // Manually ensure that "true" and "false" are the only options, to ensure a domain isn't
-        // accidentally parsed as a boolean
         boolean enabled;
-        switch (enabledString) {
-            case "true":
-                enabled = true;
-                break;
-            case "false":
-                enabled = false;
-                break;
-            default:
-                commandHandler.getErrPrintWriter().println(
-                        "Invalid enabled param: " + enabledString);
-                return false;
+        try {
+            enabled = parseEnabled(enabledArg);
+        } catch (IllegalArgumentException e) {
+            commandHandler.getErrPrintWriter()
+                    .println("Error: invalid enabled param: " + e.getMessage());
+            return false;
         }
 
         ArraySet<String> domains = new ArraySet<>(getRemainingArgs(commandHandler));
@@ -255,8 +270,8 @@ public class DomainVerificationShell {
         }
 
         try {
-            mCallback.setDomainVerificationUserSelectionInternal(userId,
-                    packageName, enabled, domains);
+            mCallback.setDomainVerificationUserSelectionInternal(userId, packageName, enabled,
+                    domains);
         } catch (NameNotFoundException e) {
             commandHandler.getErrPrintWriter().println("Package not found: " + packageName);
             return false;
@@ -362,15 +377,12 @@ public class DomainVerificationShell {
     private boolean runSetAppLinksAllowed(@NonNull BasicShellCommandHandler commandHandler) {
         String packageName = null;
         Integer userId = null;
-        Boolean allowed = null;
         String option;
         while ((option = commandHandler.getNextOption()) != null) {
             if (option.equals("--package")) {
-                packageName = commandHandler.getNextArgRequired();
-            } if (option.equals("--user")) {
+                packageName = commandHandler.getNextArg();
+            } else if (option.equals("--user")) {
                 userId = UserHandle.parseUserArg(commandHandler.getNextArgRequired());
-            } else if (allowed == null) {
-                allowed = Boolean.valueOf(option);
             } else {
                 commandHandler.getErrPrintWriter().println("Error: unexpected option: " + option);
                 return false;
@@ -389,8 +401,18 @@ public class DomainVerificationShell {
             return false;
         }
 
-        if (allowed == null) {
+        String allowedArg = commandHandler.getNextArg();
+        if (TextUtils.isEmpty(allowedArg)) {
             commandHandler.getErrPrintWriter().println("Error: allowed setting not specified");
+            return false;
+        }
+
+        boolean allowed;
+        try {
+            allowed = parseEnabled(allowedArg);
+        } catch (IllegalArgumentException e) {
+            commandHandler.getErrPrintWriter()
+                    .println("Error: invalid allowed setting: " + e.getMessage());
             return false;
         }
 
@@ -407,6 +429,67 @@ public class DomainVerificationShell {
         return true;
     }
 
+    // pm get-app-link-owners [--user <USER_ID>] [--package <PACKAGE>] [<DOMAINS>]
+    private boolean runGetAppLinkOwners(@NonNull BasicShellCommandHandler commandHandler) {
+        String packageName = null;
+        Integer userId = null;
+        String option;
+        while ((option = commandHandler.getNextOption()) != null) {
+            switch (option) {
+                case "--user":
+                    userId = UserHandle.parseUserArg(commandHandler.getNextArgRequired());
+                    break;
+                case "--package":
+                    packageName = commandHandler.getNextArgRequired();
+                    if (TextUtils.isEmpty(packageName)) {
+                        commandHandler.getErrPrintWriter().println("Error: no package specified");
+                        return false;
+                    }
+                    break;
+                default:
+                    commandHandler.getErrPrintWriter().println(
+                            "Error: unexpected option: " + option);
+                    return false;
+            }
+        }
+
+        ArrayList<String> domains = getRemainingArgs(commandHandler);
+        if (domains.isEmpty() && TextUtils.isEmpty(packageName)) {
+            commandHandler.getErrPrintWriter()
+                    .println("Error: no package name or domain specified");
+            return false;
+        }
+
+        if (userId != null) {
+            userId = translateUserId(userId, "runSetAppLinksAllowed");
+        }
+
+        try (IndentingPrintWriter writer = new IndentingPrintWriter(
+                commandHandler.getOutPrintWriter(), /* singleIndent */ "  ", /* wrapLength */
+                120)) {
+            writer.increaseIndent();
+            if (packageName != null) {
+                if (packageName.equals("all")) {
+                    packageName = null;
+                }
+
+                try {
+                    mCallback.printOwnersForPackage(writer, packageName, userId);
+                } catch (NameNotFoundException e) {
+                    commandHandler.getErrPrintWriter()
+                            .println("Error: package not found: " + packageName);
+                    return false;
+                }
+            }
+            if (!domains.isEmpty()) {
+                mCallback.printOwnersForDomains(writer, domains, userId);
+            }
+            writer.decreaseIndent();
+            return true;
+        }
+    }
+
+    @NonNull
     private ArrayList<String> getRemainingArgs(@NonNull BasicShellCommandHandler commandHandler) {
         ArrayList<String> args = new ArrayList<>();
         String arg;
@@ -419,6 +502,22 @@ public class DomainVerificationShell {
     private int translateUserId(@UserIdInt int userId, @NonNull String logContext) {
         return ActivityManager.handleIncomingUser(Binder.getCallingPid(), Binder.getCallingUid(),
                 userId, true, true, logContext, "pm command");
+    }
+
+    /**
+     * Manually ensure that "true" and "false" are the only options, to ensure a domain isn't
+     * accidentally parsed as a boolean.
+     */
+    @NonNull
+    private boolean parseEnabled(@NonNull String arg) throws IllegalArgumentException {
+        switch (arg.toLowerCase(Locale.US)) {
+            case "true":
+                return true;
+            case "false":
+                return false;
+            default:
+                throw new IllegalArgumentException(arg + " is not a valid boolean");
+        }
     }
 
     /**
@@ -447,13 +546,15 @@ public class DomainVerificationShell {
          * Variant for use by PackageManagerShellCommand to allow the system/developer to override
          * the state for a domain.
          *
-         * @param packageName the package whose state to change, or all packages if non is
-         *                    specified
+         * If an approval fails because of a higher level owner, this method will silently skip the
+         * domain.
+         *
+         * @param packageName the package whose state to change
          * @param enabled     whether the domain is now approved by the user
          * @param domains     the set of domains to change, or null to affect all domains
          */
         void setDomainVerificationUserSelectionInternal(@UserIdInt int userId,
-                @Nullable String packageName, boolean enabled, @Nullable ArraySet<String> domains)
+                @NonNull String packageName, boolean enabled, @Nullable ArraySet<String> domains)
                 throws PackageManager.NameNotFoundException;
 
         /**
@@ -498,9 +599,23 @@ public class DomainVerificationShell {
         void verifyPackages(@Nullable List<String> packageNames, boolean reVerify);
 
         /**
-         * @see DomainVerificationManagerInternal#printState(IndentingPrintWriter, String, Integer)
+         * @see DomainVerificationManagerInternal#printState(IndentingPrintWriter, String, Integer,
+         * Function)
          */
         void printState(@NonNull IndentingPrintWriter writer, @Nullable String packageName,
                 @Nullable @UserIdInt Integer userId) throws NameNotFoundException;
+
+        /**
+         * Print the owners for all domains in a given package.
+         */
+        void printOwnersForPackage(@NonNull IndentingPrintWriter writer,
+                @Nullable String packageName, @Nullable @UserIdInt Integer userId)
+                throws NameNotFoundException;
+
+        /**
+         * Print the owners for the given domains.
+         */
+        void printOwnersForDomains(@NonNull IndentingPrintWriter writer,
+                @NonNull List<String> domains, @Nullable @UserIdInt Integer userId);
     }
 }

@@ -19,10 +19,13 @@ package android.media;
 import android.annotation.NonNull;
 import android.content.ContentResolver;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.Log;
+
+import com.android.modules.annotation.MinSdk;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
@@ -77,6 +80,7 @@ import java.util.Set;
  There are four types of HDR video(Dolby-Vision, HDR10, HDR10+, HLG) supported by the platform,
  application will only need to specify individual types they supported.
  */
+@MinSdk(Build.VERSION_CODES.S)
 public final class ApplicationMediaCapabilities implements Parcelable {
     private static final String TAG = "ApplicationMediaCapabilities";
 
@@ -238,7 +242,7 @@ public final class ApplicationMediaCapabilities implements Parcelable {
                 }
             };
 
-    /*
+    /**
      * Query the video codec mime types supported by the application.
      * @return List of supported video codec mime types. The list will be empty if there are none.
      */
@@ -247,7 +251,7 @@ public final class ApplicationMediaCapabilities implements Parcelable {
         return new ArrayList<>(mSupportedVideoMimeTypes);
     }
 
-    /*
+    /**
      * Query the video codec mime types that are not supported by the application.
      * @return List of unsupported video codec mime types. The list will be empty if there are none.
      */
@@ -256,7 +260,7 @@ public final class ApplicationMediaCapabilities implements Parcelable {
         return new ArrayList<>(mUnsupportedVideoMimeTypes);
     }
 
-    /*
+    /**
      * Query all hdr types that are supported by the application.
      * @return List of supported hdr types. The list will be empty if there are none.
      */
@@ -265,7 +269,7 @@ public final class ApplicationMediaCapabilities implements Parcelable {
         return new ArrayList<>(mSupportedHdrTypes);
     }
 
-    /*
+    /**
      * Query all hdr types that are not supported by the application.
      * @return List of unsupported hdr types. The list will be empty if there are none.
      */
@@ -274,7 +278,7 @@ public final class ApplicationMediaCapabilities implements Parcelable {
         return new ArrayList<>(mUnsupportedHdrTypes);
     }
 
-    /*
+    /**
      * Whether handling of slow-motion video is supported
      * @hide
      */

@@ -32,7 +32,10 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.Handler;
 import android.os.ICancellationSignal;
+import android.os.RemoteException;
+import android.platform.test.annotations.Presubmit;
 
+import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
 import org.junit.Before;
@@ -45,6 +48,8 @@ import org.mockito.MockitoAnnotations;
  * Tests of {@link ScrollCaptureConnection}.
  */
 @SuppressWarnings("UnnecessaryLocalVariable")
+@Presubmit
+@SmallTest
 @RunWith(AndroidJUnit4.class)
 public class ScrollCaptureConnectionTest {
 
@@ -74,7 +79,7 @@ public class ScrollCaptureConnectionTest {
 
         mTarget = new ScrollCaptureTarget(mView, mLocalVisibleRect, mPositionInWindow, mCallback);
         mTarget.setScrollBounds(mScrollBounds);
-        mConnection = new ScrollCaptureConnection(Runnable::run, mTarget, mRemote);
+        mConnection = new ScrollCaptureConnection(Runnable::run, mTarget);
     }
 
     /** Test creating a client with valid info */
@@ -83,7 +88,7 @@ public class ScrollCaptureConnectionTest {
         ScrollCaptureTarget target = new ScrollCaptureTarget(
                 mView, mLocalVisibleRect, mPositionInWindow, mCallback);
         target.setScrollBounds(new Rect(1, 2, 3, 4));
-        new ScrollCaptureConnection(Runnable::run, target, mRemote);
+        new ScrollCaptureConnection(Runnable::run, target);
     }
 
     /** Test creating a client fails if arguments are not valid. */
@@ -91,20 +96,20 @@ public class ScrollCaptureConnectionTest {
     public void testConstruction_requiresScrollBounds() {
         try {
             mTarget.setScrollBounds(null);
-            new ScrollCaptureConnection(Runnable::run, mTarget, mRemote);
+            new ScrollCaptureConnection(Runnable::run, mTarget);
             fail("An exception was expected.");
         } catch (RuntimeException ex) {
             // Ignore, expected.
         }
     }
 
-    /** @see ScrollCaptureConnection#startCapture(Surface) */
+    /** @see ScrollCaptureConnection#startCapture(Surface, IScrollCaptureCallbacks) */
     @Test
     public void testStartCapture() throws Exception {
-        mConnection.startCapture(mSurface);
+        mConnection.startCapture(mSurface, mRemote);
 
         mCallback.completeStartRequest();
-        assertTrue(mConnection.isStarted());
+        assertTrue(mConnection.isActive());
 
         verify(mRemote, times(1)).onCaptureStarted();
         verifyNoMoreInteractions(mRemote);
@@ -112,11 +117,11 @@ public class ScrollCaptureConnectionTest {
 
     @Test
     public void testStartCapture_cancellation() throws Exception {
-        ICancellationSignal signal = mConnection.startCapture(mSurface);
+        ICancellationSignal signal = mConnection.startCapture(mSurface, mRemote);
         signal.cancel();
 
         mCallback.completeStartRequest();
-        assertFalse(mConnection.isStarted());
+        assertFalse(mConnection.isActive());
 
         verifyNoMoreInteractions(mRemote);
     }
@@ -124,7 +129,7 @@ public class ScrollCaptureConnectionTest {
     /** @see ScrollCaptureConnection#requestImage(Rect) */
     @Test
     public void testRequestImage() throws Exception {
-        mConnection.startCapture(mSurface);
+        mConnection.startCapture(mSurface, mRemote);
         mCallback.completeStartRequest();
         reset(mRemote);
 
@@ -138,7 +143,7 @@ public class ScrollCaptureConnectionTest {
 
     @Test
     public void testRequestImage_cancellation() throws Exception {
-        mConnection.startCapture(mSurface);
+        mConnection.startCapture(mSurface, mRemote);
         mCallback.completeStartRequest();
         reset(mRemote);
 
@@ -152,7 +157,7 @@ public class ScrollCaptureConnectionTest {
     /** @see ScrollCaptureConnection#endCapture() */
     @Test
     public void testEndCapture() throws Exception {
-        mConnection.startCapture(mSurface);
+        mConnection.startCapture(mSurface, mRemote);
         mCallback.completeStartRequest();
         reset(mRemote);
 
@@ -167,7 +172,7 @@ public class ScrollCaptureConnectionTest {
     /** @see ScrollCaptureConnection#endCapture() */
     @Test
     public void testEndCapture_cancellation() throws Exception {
-        mConnection.startCapture(mSurface);
+        mConnection.startCapture(mSurface, mRemote);
         mCallback.completeStartRequest();
         reset(mRemote);
 
@@ -179,10 +184,21 @@ public class ScrollCaptureConnectionTest {
     }
 
     @Test
-    public void testClose() throws Exception {
+    public void testClose() {
         mConnection.close();
-        assertFalse(mConnection.isConnected());
+        assertFalse(mConnection.isActive());
         verifyNoMoreInteractions(mRemote);
     }
 
+    @Test
+    public void testClose_whileActive() throws RemoteException {
+        mConnection.startCapture(mSurface, mRemote);
+
+        mCallback.completeStartRequest();
+        assertTrue(mConnection.isActive());
+
+        mConnection.close();
+        mCallback.completeEndRequest();
+        assertFalse(mConnection.isActive());
+    }
 }

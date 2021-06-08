@@ -21,13 +21,15 @@ import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.CompoundButton;
 import android.widget.SeekBar;
 
 import androidx.annotation.Nullable;
 
 import com.android.settingslib.RestrictedLockUtils;
+import com.android.systemui.Gefingerpoken;
 import com.android.systemui.R;
+import com.android.systemui.classifier.Classifier;
+import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.statusbar.policy.BrightnessMirrorController;
 import com.android.systemui.util.ViewController;
 
@@ -42,25 +44,36 @@ import javax.inject.Inject;
  *
  * @see BrightnessMirrorController
  */
-public class BrightnessSlider
-        extends ViewController<View>
-        implements ToggleSlider {
+public class BrightnessSlider extends ViewController<BrightnessSliderView> implements ToggleSlider {
 
     private Listener mListener;
     private ToggleSlider mMirror;
-    private final BrightnessSliderView mBrightnessSliderView;
     private BrightnessMirrorController mMirrorController;
     private boolean mTracking;
-    private final boolean mUseMirror;
+    private final FalsingManager mFalsingManager;
+
+    private final Gefingerpoken mOnInterceptListener = new Gefingerpoken() {
+        @Override
+        public boolean onInterceptTouchEvent(MotionEvent ev) {
+            int action = ev.getActionMasked();
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                mFalsingManager.isFalseTouch(Classifier.BRIGHTNESS_SLIDER);
+            }
+
+            return false;
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent ev) {
+            return false;
+        }
+    };
 
     BrightnessSlider(
-            View rootView,
             BrightnessSliderView brightnessSliderView,
-            boolean useMirror
-    ) {
-        super(rootView);
-        mBrightnessSliderView = brightnessSliderView;
-        mUseMirror = useMirror;
+            FalsingManager falsingManager) {
+        super(brightnessSliderView);
+        mFalsingManager = falsingManager;
     }
 
     /**
@@ -70,21 +83,18 @@ public class BrightnessSlider
         return mView;
     }
 
-    private void enableSlider(boolean enable) {
-        mBrightnessSliderView.enableSlider(enable);
-    }
 
     @Override
     protected void onViewAttached() {
-        mBrightnessSliderView.setOnSeekBarChangeListener(mSeekListener);
-        mBrightnessSliderView.setOnCheckedChangeListener(mCheckListener);
+        mView.setOnSeekBarChangeListener(mSeekListener);
+        mView.setOnInterceptListener(mOnInterceptListener);
     }
 
     @Override
     protected void onViewDetached() {
-        mBrightnessSliderView.setOnSeekBarChangeListener(null);
-        mBrightnessSliderView.setOnCheckedChangeListener(null);
-        mBrightnessSliderView.setOnDispatchTouchEventListener(null);
+        mView.setOnSeekBarChangeListener(null);
+        mView.setOnDispatchTouchEventListener(null);
+        mView.setOnInterceptListener(null);
     }
 
     @Override
@@ -93,7 +103,7 @@ public class BrightnessSlider
             return copyEventToMirror(ev);
         } else {
             // We are the mirror, so we have to dispatch the event
-            return mBrightnessSliderView.dispatchTouchEvent(ev);
+            return mView.dispatchTouchEvent(ev);
         }
     }
 
@@ -106,20 +116,19 @@ public class BrightnessSlider
 
     @Override
     public void setEnforcedAdmin(RestrictedLockUtils.EnforcedAdmin admin) {
-        mBrightnessSliderView.setEnforcedAdmin(admin);
+        mView.setEnforcedAdmin(admin);
     }
 
     private void setMirror(ToggleSlider toggleSlider) {
         mMirror = toggleSlider;
         if (mMirror != null) {
-            mMirror.setChecked(mBrightnessSliderView.isChecked());
-            mMirror.setMax(mBrightnessSliderView.getMax());
-            mMirror.setValue(mBrightnessSliderView.getValue());
-            mBrightnessSliderView.setOnDispatchTouchEventListener(this::mirrorTouchEvent);
+            mMirror.setMax(mView.getMax());
+            mMirror.setValue(mView.getValue());
+            mView.setOnDispatchTouchEventListener(this::mirrorTouchEvent);
         } else {
             // If there's no mirror, we may be the ones dispatching, events but we should not mirror
             // them
-            mBrightnessSliderView.setOnDispatchTouchEventListener(null);
+            mView.setOnDispatchTouchEventListener(null);
         }
     }
 
@@ -130,14 +139,13 @@ public class BrightnessSlider
      */
     @Override
     public void setMirrorControllerAndMirror(BrightnessMirrorController c) {
-        if (!mUseMirror) return;
         mMirrorController = c;
         if (c != null) {
             setMirror(c.getToggleSlider());
         } else {
             // If there's no mirror, we may be the ones dispatching, events but we should not mirror
             // them
-            mBrightnessSliderView.setOnDispatchTouchEventListener(null);
+            mView.setOnDispatchTouchEventListener(null);
         }
     }
 
@@ -147,18 +155,8 @@ public class BrightnessSlider
     }
 
     @Override
-    public void setChecked(boolean checked) {
-        mBrightnessSliderView.setChecked(checked);
-    }
-
-    @Override
-    public boolean isChecked() {
-        return mBrightnessSliderView.isChecked();
-    }
-
-    @Override
     public void setMax(int max) {
-        mBrightnessSliderView.setMax(max);
+        mView.setMax(max);
         if (mMirror != null) {
             mMirror.setMax(max);
         }
@@ -166,12 +164,12 @@ public class BrightnessSlider
 
     @Override
     public int getMax() {
-        return mBrightnessSliderView.getMax();
+        return mView.getMax();
     }
 
     @Override
     public void setValue(int value) {
-        mBrightnessSliderView.setValue(value);
+        mView.setValue(value);
         if (mMirror != null) {
             mMirror.setValue(value);
         }
@@ -179,7 +177,7 @@ public class BrightnessSlider
 
     @Override
     public int getValue() {
-        return mBrightnessSliderView.getValue();
+        return mView.getValue();
     }
 
     private final SeekBar.OnSeekBarChangeListener mSeekListener =
@@ -187,7 +185,7 @@ public class BrightnessSlider
         @Override
         public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
             if (mListener != null) {
-                mListener.onChanged(mTracking, isChecked(), progress, false);
+                mListener.onChanged(mTracking, progress, false);
             }
         }
 
@@ -196,15 +194,12 @@ public class BrightnessSlider
             mTracking = true;
 
             if (mListener != null) {
-                mListener.onChanged(mTracking, isChecked(),
-                        getValue(), false);
+                mListener.onChanged(mTracking, getValue(), false);
             }
-
-            setChecked(false);
 
             if (mMirrorController != null) {
                 mMirrorController.showMirror();
-                mMirrorController.setLocation((View) mBrightnessSliderView.getParent());
+                mMirrorController.setLocationAndSize(mView);
             }
         }
 
@@ -213,8 +208,7 @@ public class BrightnessSlider
             mTracking = false;
 
             if (mListener != null) {
-                mListener.onChanged(mTracking, isChecked(),
-                        getValue(), true);
+                mListener.onChanged(mTracking, getValue(), true);
             }
 
             if (mMirrorController != null) {
@@ -223,34 +217,16 @@ public class BrightnessSlider
         }
     };
 
-    private final CompoundButton.OnCheckedChangeListener mCheckListener =
-            new CompoundButton.OnCheckedChangeListener() {
-        @Override
-        public void onCheckedChanged(CompoundButton toggle, boolean checked) {
-            enableSlider(!checked);
-
-            if (mListener != null) {
-                mListener.onChanged(mTracking, checked, getValue(), false);
-            }
-
-            if (mMirror != null) {
-                mMirror.setChecked(checked);
-            }
-        }
-    };
-
     /**
      * Creates a {@link BrightnessSlider} with its associated view.
-     *
-     * The views inflated are determined by {@link BrightnessControllerSettings#useThickSlider()}.
      */
     public static class Factory {
 
-        BrightnessControllerSettings mSettings;
+        private final FalsingManager mFalsingManager;
 
         @Inject
-        public Factory(BrightnessControllerSettings settings) {
-            mSettings = settings;
+        public Factory(FalsingManager falsingManager) {
+            mFalsingManager = falsingManager;
         }
 
         /**
@@ -262,22 +238,14 @@ public class BrightnessSlider
          */
         public BrightnessSlider create(Context context, @Nullable ViewGroup viewRoot) {
             int layout = getLayout();
-            ViewGroup root = (ViewGroup) LayoutInflater.from(context)
+            BrightnessSliderView root = (BrightnessSliderView) LayoutInflater.from(context)
                     .inflate(layout, viewRoot, false);
-            return fromTree(root, mSettings.useMirrorOnThickSlider());
-        }
-
-        private BrightnessSlider fromTree(ViewGroup root, boolean useMirror) {
-            BrightnessSliderView v = root.requireViewById(R.id.brightness_slider);
-
-            return new BrightnessSlider(root, v, useMirror);
+            return new BrightnessSlider(root, mFalsingManager);
         }
 
         /** Get the layout to inflate based on what slider to use */
         private int getLayout() {
-            return mSettings.useThickSlider()
-                    ? R.layout.quick_settings_brightness_dialog_thick
-                    : R.layout.quick_settings_brightness_dialog;
+            return R.layout.quick_settings_brightness_dialog;
         }
     }
 }

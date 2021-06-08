@@ -22,7 +22,7 @@ import static com.google.common.truth.Truth.assertWithMessage;
 import android.app.appsearch.AppSearchBatchResult;
 import android.app.appsearch.AppSearchSessionShim;
 import android.app.appsearch.GenericDocument;
-import android.app.appsearch.GetByUriRequest;
+import android.app.appsearch.GetByDocumentIdRequest;
 import android.app.appsearch.SearchResult;
 import android.app.appsearch.SearchResultsShim;
 
@@ -43,47 +43,52 @@ public class AppSearchTestUtils {
     }
 
     public static List<GenericDocument> doGet(
-            AppSearchSessionShim session, String namespace, String... uris) throws Exception {
+            AppSearchSessionShim session, String namespace, String... ids) throws Exception {
         AppSearchBatchResult<String, GenericDocument> result =
                 checkIsBatchResultSuccess(
-                        session.getByUri(
-                                new GetByUriRequest.Builder()
-                                        .setNamespace(namespace)
-                                        .addUris(uris)
-                                        .build()));
-        assertThat(result.getSuccesses()).hasSize(uris.length);
+                        session.getByDocumentId(
+                                new GetByDocumentIdRequest.Builder(namespace).addIds(ids).build()));
+        assertThat(result.getSuccesses()).hasSize(ids.length);
         assertThat(result.getFailures()).isEmpty();
-        List<GenericDocument> list = new ArrayList<>(uris.length);
-        for (String uri : uris) {
-            list.add(result.getSuccesses().get(uri));
+        List<GenericDocument> list = new ArrayList<>(ids.length);
+        for (String id : ids) {
+            list.add(result.getSuccesses().get(id));
         }
         return list;
     }
 
-    public static List<GenericDocument> doGet(AppSearchSessionShim session, GetByUriRequest request)
-            throws Exception {
+    public static List<GenericDocument> doGet(
+            AppSearchSessionShim session, GetByDocumentIdRequest request) throws Exception {
         AppSearchBatchResult<String, GenericDocument> result =
-                checkIsBatchResultSuccess(session.getByUri(request));
-        Set<String> uris = request.getUris();
-        assertThat(result.getSuccesses()).hasSize(uris.size());
+                checkIsBatchResultSuccess(session.getByDocumentId(request));
+        Set<String> ids = request.getIds();
+        assertThat(result.getSuccesses()).hasSize(ids.size());
         assertThat(result.getFailures()).isEmpty();
-        List<GenericDocument> list = new ArrayList<>(uris.size());
-        for (String uri : uris) {
-            list.add(result.getSuccesses().get(uri));
+        List<GenericDocument> list = new ArrayList<>(ids.size());
+        for (String id : ids) {
+            list.add(result.getSuccesses().get(id));
         }
         return list;
     }
 
     public static List<GenericDocument> convertSearchResultsToDocuments(
             SearchResultsShim searchResults) throws Exception {
-        List<SearchResult> results = searchResults.getNextPage().get();
-        List<GenericDocument> documents = new ArrayList<>();
-        while (results.size() > 0) {
-            for (SearchResult result : results) {
-                documents.add(result.getDocument());
-            }
-            results = searchResults.getNextPage().get();
+        List<SearchResult> results = retrieveAllSearchResults(searchResults);
+        List<GenericDocument> documents = new ArrayList<>(results.size());
+        for (SearchResult result : results) {
+            documents.add(result.getGenericDocument());
         }
         return documents;
+    }
+
+    public static List<SearchResult> retrieveAllSearchResults(SearchResultsShim searchResults)
+            throws Exception {
+        List<SearchResult> page = searchResults.getNextPage().get();
+        List<SearchResult> results = new ArrayList<>();
+        while (!page.isEmpty()) {
+            results.addAll(page);
+            page = searchResults.getNextPage().get();
+        }
+        return results;
     }
 }

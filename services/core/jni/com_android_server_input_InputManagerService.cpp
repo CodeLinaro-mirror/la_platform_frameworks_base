@@ -118,6 +118,7 @@ static struct {
     jmethodID getVirtualKeyQuietTimeMillis;
     jmethodID getExcludedDeviceNames;
     jmethodID getInputPortAssociations;
+    jmethodID getInputUniqueIdAssociations;
     jmethodID getKeyRepeatTimeout;
     jmethodID getKeyRepeatDelay;
     jmethodID getHoverTapTimeout;
@@ -131,6 +132,7 @@ static struct {
     jmethodID getDeviceAlias;
     jmethodID getTouchCalibrationForInputDevice;
     jmethodID getContextForDisplay;
+    jmethodID notifyDropWindow;
 } gServiceClassInfo;
 
 static struct {
@@ -335,6 +337,7 @@ public:
     bool checkInjectEventsPermissionNonReentrant(int32_t injectorPid, int32_t injectorUid) override;
     void onPointerDownOutsideFocus(const sp<IBinder>& touchedToken) override;
     void setPointerCapture(bool enabled) override;
+    void notifyDropWindow(const sp<IBinder>& token, float x, float y) override;
 
     /* --- PointerControllerPolicyInterface implementation --- */
 
@@ -576,6 +579,21 @@ void NativeInputManager::getReaderConfiguration(InputReaderConfiguration* outCon
             outConfig->portAssociations.insert({inputPort, displayPort});
         }
         env->DeleteLocalRef(portAssociations);
+    }
+    outConfig->uniqueIdAssociations.clear();
+    jobjectArray uniqueIdAssociations = jobjectArray(
+            env->CallObjectMethod(mServiceObj, gServiceClassInfo.getInputUniqueIdAssociations));
+    if (!checkAndClearExceptionFromCallback(env, "getInputUniqueIdAssociations") &&
+        uniqueIdAssociations) {
+        jsize length = env->GetArrayLength(uniqueIdAssociations);
+        for (jsize i = 0; i < length / 2; i++) {
+            std::string inputDeviceUniqueId =
+                    getStringElementFromJavaArray(env, uniqueIdAssociations, 2 * i);
+            std::string displayUniqueId =
+                    getStringElementFromJavaArray(env, uniqueIdAssociations, 2 * i + 1);
+            outConfig->uniqueIdAssociations.insert({inputDeviceUniqueId, displayUniqueId});
+        }
+        env->DeleteLocalRef(uniqueIdAssociations);
     }
 
     jint hoverTapTimeout = env->CallIntMethod(mServiceObj,
@@ -903,6 +921,20 @@ void NativeInputManager::notifyFocusChanged(const sp<IBinder>& oldToken,
     env->CallVoidMethod(mServiceObj, gServiceClassInfo.notifyFocusChanged,
             oldTokenObj, newTokenObj);
     checkAndClearExceptionFromCallback(env, "notifyFocusChanged");
+}
+
+void NativeInputManager::notifyDropWindow(const sp<IBinder>& token, float x, float y) {
+#if DEBUG_INPUT_DISPATCHER_POLICY
+    ALOGD("notifyDropWindow");
+#endif
+    ATRACE_CALL();
+
+    JNIEnv* env = jniEnv();
+    ScopedLocalFrame localFrame(env);
+
+    jobject tokenObj = javaObjectForIBinder(env, token);
+    env->CallVoidMethod(mServiceObj, gServiceClassInfo.notifyDropWindow, tokenObj, x, y);
+    checkAndClearExceptionFromCallback(env, "notifyDropWindow");
 }
 
 void NativeInputManager::notifySensorEvent(int32_t deviceId, InputDeviceSensorType sensorType,
@@ -1783,8 +1815,9 @@ static void nativeSetSystemUiLightsOut(JNIEnv* /* env */, jclass /* clazz */, jl
     im->setSystemUiLightsOut(lightsOut);
 }
 
-static jboolean nativeTransferTouchFocus(JNIEnv* env,
-        jclass /* clazz */, jlong ptr, jobject fromChannelTokenObj, jobject toChannelTokenObj) {
+static jboolean nativeTransferTouchFocus(JNIEnv* env, jclass /* clazz */, jlong ptr,
+                                         jobject fromChannelTokenObj, jobject toChannelTokenObj,
+                                         jboolean isDragDrop) {
     if (fromChannelTokenObj == nullptr || toChannelTokenObj == nullptr) {
         return JNI_FALSE;
     }
@@ -1793,8 +1826,8 @@ static jboolean nativeTransferTouchFocus(JNIEnv* env,
     sp<IBinder> toChannelToken = ibinderForJavaObject(env, toChannelTokenObj);
 
     NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
-    if (im->getInputManager()->getDispatcher()->transferTouchFocus(
-            fromChannelToken, toChannelToken)) {
+    if (im->getInputManager()->getDispatcher()->transferTouchFocus(fromChannelToken, toChannelToken,
+                                                                   isDragDrop)) {
         return JNI_TRUE;
     } else {
         return JNI_FALSE;
@@ -1903,7 +1936,7 @@ static void nativeVibrateCombined(JNIEnv* env, jclass /* clazz */, jlong ptr, ji
         // VibrationEffect.validate guarantees duration > 0.
         std::chrono::milliseconds duration(patternMillis[i]);
         element.duration = std::min(duration, MAX_VIBRATE_PATTERN_DELAY_MILLIS);
-        for (int32_t channel = 0; channel < CHANNEL_SIZE; channel++) {
+        for (int32_t channel = 0; channel < amplSize; channel++) {
             element.addChannel(vibratorIdArray[channel],
                                static_cast<uint8_t>(amplitudesArray[channel][i]));
         }
@@ -2117,6 +2150,12 @@ static void nativeNotifyPortAssociationsChanged(JNIEnv* env, jclass /* clazz */,
             InputReaderConfiguration::CHANGE_DISPLAY_INFO);
 }
 
+static void nativeChangeUniqueIdAssociation(JNIEnv* env, jclass /* clazz */, jlong ptr) {
+    NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
+    im->getInputManager()->getReader()->requestRefreshConfiguration(
+            InputReaderConfiguration::CHANGE_DISPLAY_INFO);
+}
+
 static void nativeSetMotionClassifierEnabled(JNIEnv* /* env */, jclass /* clazz */, jlong ptr,
                                              jboolean enabled) {
     NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
@@ -2267,7 +2306,7 @@ static const JNINativeMethod gInputManagerMethods[] = {
          (void*)nativeRequestPointerCapture},
         {"nativeSetInputDispatchMode", "(JZZ)V", (void*)nativeSetInputDispatchMode},
         {"nativeSetSystemUiLightsOut", "(JZ)V", (void*)nativeSetSystemUiLightsOut},
-        {"nativeTransferTouchFocus", "(JLandroid/os/IBinder;Landroid/os/IBinder;)Z",
+        {"nativeTransferTouchFocus", "(JLandroid/os/IBinder;Landroid/os/IBinder;Z)Z",
          (void*)nativeTransferTouchFocus},
         {"nativeSetPointerSpeed", "(JI)V", (void*)nativeSetPointerSpeed},
         {"nativeSetShowTouches", "(JZ)V", (void*)nativeSetShowTouches},
@@ -2299,6 +2338,7 @@ static const JNINativeMethod gInputManagerMethods[] = {
          (void*)nativeSetCustomPointerIcon},
         {"nativeCanDispatchToDisplay", "(JII)Z", (void*)nativeCanDispatchToDisplay},
         {"nativeNotifyPortAssociationsChanged", "(J)V", (void*)nativeNotifyPortAssociationsChanged},
+        {"nativeChangeUniqueIdAssociation", "(J)V", (void*)nativeChangeUniqueIdAssociation},
         {"nativeSetMotionClassifierEnabled", "(JZ)V", (void*)nativeSetMotionClassifierEnabled},
         {"nativeGetSensorList", "(JI)[Landroid/hardware/input/InputSensorInfo;",
          (void*)nativeGetSensorList},
@@ -2349,6 +2389,8 @@ int register_android_server_InputManager(JNIEnv* env) {
 
     GET_METHOD_ID(gServiceClassInfo.notifyFocusChanged, clazz,
             "notifyFocusChanged", "(Landroid/os/IBinder;Landroid/os/IBinder;)V");
+    GET_METHOD_ID(gServiceClassInfo.notifyDropWindow, clazz, "notifyDropWindow",
+                  "(Landroid/os/IBinder;FF)V");
 
     GET_METHOD_ID(gServiceClassInfo.notifySensorEvent, clazz, "notifySensorEvent", "(IIIJ[F)V");
 
@@ -2405,6 +2447,9 @@ int register_android_server_InputManager(JNIEnv* env) {
 
     GET_METHOD_ID(gServiceClassInfo.getInputPortAssociations, clazz,
             "getInputPortAssociations", "()[Ljava/lang/String;");
+
+    GET_METHOD_ID(gServiceClassInfo.getInputUniqueIdAssociations, clazz,
+                  "getInputUniqueIdAssociations", "()[Ljava/lang/String;");
 
     GET_METHOD_ID(gServiceClassInfo.getKeyRepeatTimeout, clazz,
             "getKeyRepeatTimeout", "()I");

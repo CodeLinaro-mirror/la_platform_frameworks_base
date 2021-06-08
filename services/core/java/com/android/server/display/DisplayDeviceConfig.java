@@ -34,6 +34,7 @@ import com.android.server.display.config.HbmTiming;
 import com.android.server.display.config.HighBrightnessMode;
 import com.android.server.display.config.NitsMap;
 import com.android.server.display.config.Point;
+import com.android.server.display.config.SensorDetails;
 import com.android.server.display.config.XmlParser;
 
 import org.xmlpull.v1.XmlPullParserException;
@@ -75,6 +76,12 @@ public class DisplayDeviceConfig {
 
     private final Context mContext;
 
+    // The details of the ambient light sensor associated with this display.
+    private final SensorIdentifier mAmbientLightSensor = new SensorIdentifier();
+
+    // The details of the proximity sensor associated with this display.
+    private final SensorIdentifier mProximitySensor = new SensorIdentifier();
+
     // Nits and backlight values that are loaded from either the display device config file, or
     // config.xml. These are the raw values and just used for the dumpsys
     private float[] mRawNits;
@@ -100,6 +107,7 @@ public class DisplayDeviceConfig {
     private float mBrightnessRampSlowIncrease = Float.NaN;
     private Spline mBrightnessToBacklightSpline;
     private Spline mBacklightToBrightnessSpline;
+    private Spline mBacklightToNitsSpline;
     private List<String> mQuirks;
     private boolean mIsHighBrightnessModeEnabled = false;
     private HighBrightnessModeData mHbmData;
@@ -215,6 +223,20 @@ public class DisplayDeviceConfig {
     }
 
     /**
+     * Calculates the nits value for the specified backlight value if a mapping exists.
+     *
+     * @return The mapped nits or 0 if no mapping exits.
+     */
+    public float getNitsFromBacklight(float backlight) {
+        if (mBacklightToNitsSpline == null) {
+            Slog.wtf(TAG, "requesting nits when no mapping exists.");
+            return -1;
+        }
+        backlight = Math.max(backlight, mBacklightMinimum);
+        return mBacklightToNitsSpline.interpolate(backlight);
+    }
+
+    /**
      * Return an array of equal length to backlight and nits, that covers the entire system
      * brightness range of 0.0-1.0.
      *
@@ -247,6 +269,21 @@ public class DisplayDeviceConfig {
 
     public float getBrightnessRampSlowIncrease() {
         return mBrightnessRampSlowIncrease;
+    }
+
+    SensorIdentifier getAmbientLightSensor() {
+        return mAmbientLightSensor;
+    }
+
+    SensorIdentifier getProximitySensor() {
+        return mProximitySensor;
+    }
+
+    /**
+     * @return true if a nits to backlight mapping is defined in this config, false otherwise.
+     */
+    public boolean hasNitsMapping() {
+        return mBacklightToNitsSpline != null;
     }
 
     /**
@@ -291,6 +328,8 @@ public class DisplayDeviceConfig {
                 + ", mBrightnessRampFastIncrease=" + mBrightnessRampFastIncrease
                 + ", mBrightnessRampSlowDecrease=" + mBrightnessRampSlowDecrease
                 + ", mBrightnessRampSlowIncrease=" + mBrightnessRampSlowIncrease
+                + ", mAmbientLightSensor=" + mAmbientLightSensor
+                + ", mProximitySensor=" + mProximitySensor
                 + "}";
         return str;
     }
@@ -318,7 +357,7 @@ public class DisplayDeviceConfig {
 
     private static DisplayDeviceConfig getConfigFromPmValues(Context context) {
         DisplayDeviceConfig config = new DisplayDeviceConfig(context);
-        config.initFromPmValues();
+        config.initFromDefaultValues();
         return config;
     }
 
@@ -342,6 +381,8 @@ public class DisplayDeviceConfig {
                 loadHighBrightnessModeData(config);
                 loadQuirks(config);
                 loadBrightnessRamps(config);
+                loadAmbientLightSensorFromDdc(config);
+                loadProxSensorFromDdc(config);
             } else {
                 Slog.w(TAG, "DisplayDeviceConfig file is null");
             }
@@ -357,9 +398,11 @@ public class DisplayDeviceConfig {
         loadBrightnessConstraintsFromConfigXml();
         loadBrightnessMapFromConfigXml();
         loadBrightnessRampsFromConfigXml();
+        loadAmbientLightSensorFromConfigXml();
+        setProxSensorUnspecified();
     }
 
-    private void initFromPmValues() {
+    private void initFromDefaultValues() {
         // Set all to basic values
         mBacklightMinimum = PowerManager.BRIGHTNESS_MIN;
         mBacklightMaximum = PowerManager.BRIGHTNESS_MAX;
@@ -369,6 +412,8 @@ public class DisplayDeviceConfig {
         mBrightnessRampSlowDecrease = PowerManager.BRIGHTNESS_MAX;
         mBrightnessRampSlowIncrease = PowerManager.BRIGHTNESS_MAX;
         setSimpleMappingStrategyValues();
+        loadAmbientLightSensorFromConfigXml();
+        setProxSensorUnspecified();
     }
 
     private void loadBrightnessDefaultFromDdcXml(DisplayConfiguration config) {
@@ -572,6 +617,7 @@ public class DisplayDeviceConfig {
         }
         mBrightnessToBacklightSpline = Spline.createSpline(mBrightness, mBacklight);
         mBacklightToBrightnessSpline = Spline.createSpline(mBacklight, mBrightness);
+        mBacklightToNitsSpline = Spline.createSpline(mBacklight, mNits);
     }
 
     private void loadQuirks(DisplayConfiguration config) {
@@ -637,6 +683,48 @@ public class DisplayDeviceConfig {
         mBrightnessRampSlowDecrease = mBrightnessRampSlowIncrease;
     }
 
+    private void loadAmbientLightSensorFromConfigXml() {
+        mAmbientLightSensor.name = "";
+        mAmbientLightSensor.type = mContext.getResources().getString(
+                com.android.internal.R.string.config_displayLightSensorType);
+    }
+
+    private void loadAmbientLightSensorFromDdc(DisplayConfiguration config) {
+        final SensorDetails sensorDetails = config.getLightSensor();
+        if (sensorDetails != null) {
+            mAmbientLightSensor.type = sensorDetails.getType();
+            mAmbientLightSensor.name = sensorDetails.getName();
+        }
+    }
+
+    private void setProxSensorUnspecified() {
+        mProximitySensor.name = "";
+        mProximitySensor.type = "";
+    }
+
+    private void loadProxSensorFromDdc(DisplayConfiguration config) {
+        SensorDetails sensorDetails = config.getProxSensor();
+        if (sensorDetails != null) {
+            mProximitySensor.name = sensorDetails.getName();
+            mProximitySensor.type = sensorDetails.getType();
+        } else {
+            setProxSensorUnspecified();
+        }
+    }
+
+    static class SensorIdentifier {
+        public String type;
+        public String name;
+
+        @Override
+        public String toString() {
+            return "Sensor{"
+                    + "type: \"" + type + "\""
+                    + ", name: \"" + name + "\""
+                    + "} ";
+        }
+    }
+
     /**
      * Container for high brightness mode configuration data.
      */
@@ -655,6 +743,17 @@ public class DisplayDeviceConfig {
 
         /** Minimum time that HBM can be on before being enabled. */
         public long timeMinMillis;
+
+        HighBrightnessModeData() {}
+
+        HighBrightnessModeData(float minimumLux, float transitionPoint,
+                long timeWindowMillis, long timeMaxMillis, long timeMinMillis) {
+            this.minimumLux = minimumLux;
+            this.transitionPoint = transitionPoint;
+            this.timeWindowMillis = timeWindowMillis;
+            this.timeMaxMillis = timeMaxMillis;
+            this.timeMinMillis = timeMinMillis;
+        }
 
         /**
          * Copies the HBM data to the specified parameter instance.

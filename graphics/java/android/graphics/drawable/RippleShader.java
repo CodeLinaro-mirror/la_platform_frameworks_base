@@ -20,15 +20,26 @@ import android.annotation.ColorInt;
 import android.graphics.Color;
 import android.graphics.RuntimeShader;
 import android.graphics.Shader;
+import android.util.DisplayMetrics;
 
 final class RippleShader extends RuntimeShader {
     private static final String SHADER_UNIFORMS =  "uniform vec2 in_origin;\n"
+            + "uniform vec2 in_touch;\n"
             + "uniform float in_progress;\n"
             + "uniform float in_maxRadius;\n"
-            + "uniform vec2 in_resolution;\n"
+            + "uniform vec2 in_resolutionScale;\n"
+            + "uniform vec2 in_noiseScale;\n"
             + "uniform float in_hasMask;\n"
-            + "uniform float in_secondsOffset;\n"
+            + "uniform float in_noisePhase;\n"
+            + "uniform float in_turbulencePhase;\n"
+            + "uniform vec2 in_tCircle1;\n"
+            + "uniform vec2 in_tCircle2;\n"
+            + "uniform vec2 in_tCircle3;\n"
+            + "uniform vec2 in_tRotation1;\n"
+            + "uniform vec2 in_tRotation2;\n"
+            + "uniform vec2 in_tRotation3;\n"
             + "uniform vec4 in_color;\n"
+            + "uniform vec4 in_sparkleColor;\n"
             + "uniform shader in_shader;\n";
     private static final String SHADER_LIB =
             "float triangleNoise(vec2 n) {\n"
@@ -39,108 +50,81 @@ final class RippleShader extends RuntimeShader {
             + "}"
             + "const float PI = 3.1415926535897932384626;\n"
             + "\n"
-            + "float threshold(float v, float l, float h) {\n"
-            + "  return step(l, v) * (1.0 - step(h, v));\n"
-            + "}\n"
-            + "\n"
             + "float sparkles(vec2 uv, float t) {\n"
             + "  float n = triangleNoise(uv);\n"
             + "  float s = 0.0;\n"
             + "  for (float i = 0; i < 4; i += 1) {\n"
-            + "    float l = i * 0.25;\n"
-            + "    float h = l + 0.025;\n"
-            + "    float o = abs(sin(0.1 * PI * (t + i)));\n"
-            + "    s += threshold(n + o, l, h);\n"
+            + "    float l = i * 0.01;\n"
+            + "    float h = l + 0.2;\n"
+            + "    float o = smoothstep(n - l, h, n);\n"
+            + "    o *= abs(sin(PI * o * (t + 0.55 * i)));\n"
+            + "    s += o;\n"
             + "  }\n"
-            + "  return saturate(s);\n"
+            + "  return saturate(s) * in_sparkleColor.a;\n"
             + "}\n"
-            + "\n"
             + "float softCircle(vec2 uv, vec2 xy, float radius, float blur) {\n"
             + "  float blurHalf = blur * 0.5;\n"
             + "  float d = distance(uv, xy);\n"
             + "  return 1. - smoothstep(1. - blurHalf, 1. + blurHalf, d / radius);\n"
             + "}\n"
-            + "\n"
-            + "float softRing(vec2 uv, vec2 xy, float radius, float blur) {\n"
-            + "  float thickness = 0.4;\n"
-            + "  float circle_outer = softCircle(uv, xy, radius + thickness * 0.5, blur);\n"
-            + "  float circle_inner = softCircle(uv, xy, radius - thickness * 0.5, blur);\n"
-            + "  return circle_outer - circle_inner;\n"
+            + "float softRing(vec2 uv, vec2 xy, float radius, float progress, float blur) {\n"
+            + "  float thickness = 0.3 * radius;\n"
+            + "  float currentRadius = radius * progress;\n"
+            + "  float circle_outer = softCircle(uv, xy, currentRadius + thickness, blur);\n"
+            + "  float circle_inner = softCircle(uv, xy, max(currentRadius - thickness, 0.), "
+            + "    blur);\n"
+            + "  return saturate(circle_outer - circle_inner);\n"
             + "}\n"
-            + "\n"
-            + "struct Viewport {\n"
-            + "  float aspect;\n"
-            + "  vec2 uv;\n"
-            + "  vec2 resolution_pixels;\n"
-            + "};\n"
-            + "\n"
-            + "Viewport getViewport(vec2 frag_coord, vec2 resolution_pixels) {\n"
-            + "  Viewport v;\n"
-            + "  v.aspect = resolution_pixels.y / resolution_pixels.x;\n"
-            + "  v.uv = frag_coord / resolution_pixels;\n"
-            + "  v.uv.y = (1.0 - v.uv.y) * v.aspect;\n"
-            + "  v.resolution_pixels = resolution_pixels;\n"
-            + "  return v;\n"
-            + "}\n"
-            + "\n"
-            + "vec2 getTouch(vec2 touch_position_pixels, Viewport viewport) {\n"
-            + "  vec2 touch = touch_position_pixels / viewport.resolution_pixels;\n"
-            + "  touch.y *= viewport.aspect;\n"
-            + "  return touch;\n"
-            + "}\n"
-            + "\n"
-            + "struct Wave {\n"
-            + "  float ring;\n"
-            + "  float circle;\n"
-            + "};\n"
-            + "\n"
-            + "Wave getWave(Viewport viewport, vec2 touch, float progress) {\n"
-            + "  float fade = pow((clamp(progress, 0.8, 1.0)), 8.);\n"
-            + "  Wave w;\n"
-            + "  w.ring = max(softRing(viewport.uv, touch, progress, 0.45) - fade, 0.);\n"
-            + "  w.circle = softCircle(viewport.uv, touch, 2.0 * progress, 0.2) - progress;\n"
-            + "  return w;\n"
-            + "}\n"
-            + "\n"
-            + "vec4 getRipple(vec4 color, float loudness, float sparkle, Wave wave) {\n"
-            + "  float alpha = wave.ring * sparkle * loudness\n"
-            + "        + wave.circle * color.a;\n"
-            + "  return vec4(color.rgb, saturate(alpha));\n"
-            + "}\n"
-            + "\n"
-            + "float getRingMask(vec2 frag, vec2 center, float r, float progress) {\n"
-            + "      float dist = distance(frag, center);\n"
-            + "      float expansion = r * .6;\n"
-            + "      r = r * min(1.,progress);\n"
-            + "      float minD = max(r - expansion, 0.);\n"
-            + "      float maxD = r + expansion;\n"
-            + "      if (dist > maxD || dist < minD) return .0;\n"
-            + "      return min(maxD - dist, dist - minD) / expansion;    \n"
-            + "}\n"
-            + "\n"
             + "float subProgress(float start, float end, float progress) {\n"
             + "    float sub = clamp(progress, start, end);\n"
             + "    return (sub - start) / (end - start); \n"
+            + "}\n"
+            + "mat2 rotate2d(vec2 rad){\n"
+            + "  return mat2(rad.x, -rad.y, rad.y, rad.x);\n"
+            + "}\n"
+            + "float circle_grid(vec2 resolution, vec2 coord, float time, vec2 center,\n"
+            + "    vec2 rotation, float cell_diameter) {\n"
+            + "  coord = rotate2d(rotation) * (center - coord) + center;\n"
+            + "  coord = mod(coord, cell_diameter) / resolution;\n"
+            + "  float normal_radius = cell_diameter / resolution.y * 0.5;\n"
+            + "  float radius = 0.65 * normal_radius;\n"
+            + "  return softCircle(coord, vec2(normal_radius), radius, radius * 50.0);\n"
+            + "}\n"
+            + "float turbulence(vec2 uv, float t) {\n"
+            + "  const vec2 scale = vec2(1.5);\n"
+            + "  uv = uv * scale;\n"
+            + "  float g1 = circle_grid(scale, uv, t, in_tCircle1, in_tRotation1, 0.17);\n"
+            + "  float g2 = circle_grid(scale, uv, t, in_tCircle2, in_tRotation2, 0.2);\n"
+            + "  float g3 = circle_grid(scale, uv, t, in_tCircle3, in_tRotation3, 0.275);\n"
+            + "  float v = (g1 * g1 + g2 - g3) * 0.5;\n"
+            + "  return saturate(0.45 + 0.8 * v);\n"
             + "}\n";
     private static final String SHADER_MAIN = "vec4 main(vec2 p) {\n"
-            + "    float fadeIn = subProgress(0., 0.175, in_progress);\n"
-            + "    float fadeOutNoise = subProgress(0.375, 1., in_progress);\n"
-            + "    float fadeOutRipple = subProgress(0.375, 0.75, in_progress);\n"
-            + "    Viewport vp = getViewport(p, in_resolution);\n"
-            + "    vec2 touch = getTouch(in_origin, vp);\n"
-            + "    Wave w = getWave(vp, touch, in_progress * 0.25);\n"
-            + "    float ring = getRingMask(p, in_origin, in_maxRadius, fadeIn);\n"
+            + "    float fadeIn = subProgress(0., 0.1, in_progress);\n"
+            + "    float scaleIn = subProgress(0., 0.45, in_progress);\n"
+            + "    float fadeOutNoise = subProgress(0.5, 0.95, in_progress);\n"
+            + "    float fadeOutRipple = subProgress(0.5, 1., in_progress);\n"
+            + "    vec2 center = mix(in_touch, in_origin, scaleIn);\n"
+            + "    float ring = softRing(p, center, in_maxRadius, scaleIn, 0.45);\n"
             + "    float alpha = min(fadeIn, 1. - fadeOutNoise);\n"
-            + "    float sparkle = sparkles(p, in_progress * 0.25 + in_secondsOffset)\n"
-            + "        * ring * alpha;\n"
-            + "    vec4 r = getRipple(in_color, 1., sparkle, w);\n"
-            + "    float fade = min(fadeIn, 1.-fadeOutRipple);\n"
-            + "    vec4 circle = vec4(in_color.rgb, softCircle(p, in_origin, in_maxRadius "
-            + "      * fadeIn, 0.2) * fade * in_color.a);\n"
-            + "    float mask = in_hasMask == 1. ? sample(in_shader).a > 0. ? 1. : 0. : 1.;\n"
-            + "    return mix(circle, vec4(1.), sparkle * mask);\n"
+            + "    vec2 uv = p * in_resolutionScale;\n"
+            + "    vec2 densityUv = uv - mod(uv, in_noiseScale);\n"
+            + "    float turbulence = turbulence(uv, in_turbulencePhase);\n"
+            + "    float sparkle = sparkles(densityUv, in_noisePhase) * ring * alpha "
+            + "* turbulence;\n"
+            + "    float fade = min(fadeIn, 1. - fadeOutRipple);\n"
+            + "    float circleAlpha = softCircle(p, center, in_maxRadius * scaleIn, 0.2) * fade;\n"
+            + "    vec3 color = mix(in_color.rgb, in_sparkleColor.rgb, sparkle);\n"
+            + "    float mask = in_hasMask == 1. ? sample(in_shader, p).a > 0. ? 1. : 0. : 1.;\n"
+            + "    float a = (in_color.a * circleAlpha + in_sparkleColor.a * sparkle) * mask;\n"
+            + "    return vec4(color * a, a);\n"
             + "}";
     private static final String SHADER = SHADER_UNIFORMS + SHADER_LIB + SHADER_MAIN;
+    private static final double PI_ROTATE_RIGHT = Math.PI * 0.0078125;
+    private static final double PI_ROTATE_LEFT = Math.PI * -0.0078125;
+
+    private float mNoisePhase;
+    private float mProgress;
 
     RippleShader() {
         super(SHADER, false);
@@ -160,28 +144,75 @@ final class RippleShader extends RuntimeShader {
     /**
      * Continuous offset used as noise phase.
      */
-    public void setSecondsOffset(float t) {
-        setUniform("in_secondsOffset", t);
+    public void setNoisePhase(float phase) {
+        mNoisePhase = phase;
+        setUniform("in_noisePhase", phase);
+        updateTurbulence();
     }
 
     public void setOrigin(float x, float y) {
         setUniform("in_origin", new float[] {x, y});
     }
 
+    public void setTouch(float x, float y) {
+        setUniform("in_touch", new float[] {x, y});
+    }
+
     public void setProgress(float progress) {
+        mProgress = progress;
         setUniform("in_progress", progress);
+        updateTurbulence();
+    }
+
+    private void updateTurbulence() {
+        final float turbulencePhase = (float) ((mProgress + mNoisePhase * 0.333f) * 5f * Math.PI);
+        setUniform("in_turbulencePhase", turbulencePhase);
+
+        //
+        // Keep in sync with: frameworks/base/libs/hwui/pipeline/skia/AnimatedDrawables.h
+        //
+        final float scale = 1.5f;
+        setUniform("in_tCircle1", new float[]{
+                (float) (scale * 0.5 + (turbulencePhase * 0.01 * Math.cos(scale * 0.55))),
+                (float) (scale * 0.5 + (turbulencePhase * 0.01 * Math.sin(scale * 0.55)))
+        });
+        setUniform("in_tCircle2", new float[]{
+                (float) (scale * 0.2 + (turbulencePhase * -0.0066 * Math.cos(scale * 0.45))),
+                (float) (scale * 0.2 + (turbulencePhase * -0.0066 * Math.sin(scale * 0.45)))
+        });
+        setUniform("in_tCircle3", new float[]{
+                (float) (scale + (turbulencePhase * -0.0066 * Math.cos(scale * 0.35))),
+                (float) (scale + (turbulencePhase * -0.0066 * Math.sin(scale * 0.35)))
+        });
+        final double rotation1 = turbulencePhase * PI_ROTATE_RIGHT + 1.7 * Math.PI;
+        setUniform("in_tRotation1", new float[]{
+                (float) Math.cos(rotation1), (float) Math.sin(rotation1)
+        });
+        final double rotation2 = turbulencePhase * PI_ROTATE_LEFT + 2 * Math.PI;
+        setUniform("in_tRotation2", new float[]{
+                (float) Math.cos(rotation2), (float) Math.sin(rotation2)
+        });
+        final double rotation3 = turbulencePhase * PI_ROTATE_RIGHT + 2.75 * Math.PI;
+        setUniform("in_tRotation3", new float[]{
+                (float) Math.cos(rotation3), (float) Math.sin(rotation3)
+        });
     }
 
     /**
      * Color of the circle that's under the sparkles. Sparkles will always be white.
      */
-    public void setColor(@ColorInt int colorIn) {
-        Color color = Color.valueOf(colorIn);
-        this.setUniform("in_color", new float[] {color.red(),
+    public void setColor(@ColorInt int colorInt, @ColorInt int sparkleColorInt) {
+        Color color = Color.valueOf(colorInt);
+        Color sparkleColor = Color.valueOf(sparkleColorInt);
+        setUniform("in_color", new float[] {color.red(),
                 color.green(), color.blue(), color.alpha()});
+        setUniform("in_sparkleColor", new float[] {sparkleColor.red(),
+                sparkleColor.green(), sparkleColor.blue(), sparkleColor.alpha()});
     }
 
-    public void setResolution(float w, float h) {
-        setUniform("in_resolution", w, h);
+    public void setResolution(float w, float h, int density) {
+        final float densityScale = density * DisplayMetrics.DENSITY_DEFAULT_SCALE;
+        setUniform("in_resolutionScale", new float[] {1f / w, 1f / h});
+        setUniform("in_noiseScale", new float[] {densityScale / w, densityScale / h});
     }
 }

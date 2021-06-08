@@ -22,6 +22,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
+import android.annotation.TestApi;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.os.Build;
@@ -32,12 +33,10 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
 import android.telephony.data.EpsBearerQosSessionAttributes;
+import android.telephony.data.NrQosSessionAttributes;
 import android.util.Log;
 
-import com.android.connectivity.aidl.INetworkAgent;
-import com.android.connectivity.aidl.INetworkAgentRegistry;
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.util.Protocol;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -108,6 +107,9 @@ public abstract class NetworkAgent {
     private final String LOG_TAG;
     private static final boolean DBG = true;
     private static final boolean VDBG = false;
+    /** @hide */
+    @TestApi
+    public static final int MIN_LINGER_TIMER_MS = 2000;
     private final ArrayList<RegistryAction> mPreConnectedQueue = new ArrayList<>();
     private volatile long mLastBwRefreshTime = 0;
     private static final long BW_REFRESH_MIN_WIN_MS = 500;
@@ -125,7 +127,10 @@ public abstract class NetworkAgent {
      */
     public final int providerId;
 
-    private static final int BASE = Protocol.BASE_NETWORK_AGENT;
+    // ConnectivityService parses message constants from itself and NetworkAgent with MessageUtils
+    // for debugging purposes, and crashes if some messages have the same values.
+    // TODO: have ConnectivityService store message names in different maps and remove this base
+    private static final int BASE = 200;
 
     /**
      * Sent by ConnectivityService to the NetworkAgent to inform it of
@@ -184,6 +189,20 @@ public abstract class NetworkAgent {
     public static final int EVENT_UNDERLYING_NETWORKS_CHANGED = BASE + 5;
 
     /**
+     * Sent by the NetworkAgent to ConnectivityService to pass the current value of the teardown
+     * delay.
+     * arg1 = teardown delay in milliseconds
+     * @hide
+     */
+    public static final int EVENT_TEARDOWN_DELAY_CHANGED = BASE + 6;
+
+    /**
+     * The maximum value for the teardown delay, in milliseconds.
+     * @hide
+     */
+    public static final int MAX_TEARDOWN_DELAY_MS = 5000;
+
+    /**
      * Sent by ConnectivityService to the NetworkAgent to inform the agent of the
      * networks status - whether we could use the network or could not, due to
      * either a bad network configuration (no internet link) or captive portal.
@@ -195,7 +214,6 @@ public abstract class NetworkAgent {
      * @hide
      */
     public static final int CMD_REPORT_NETWORK_STATUS = BASE + 7;
-
 
     /**
      * Network validation suceeded.
@@ -361,14 +379,46 @@ public abstract class NetworkAgent {
      */
     public static final int CMD_UNREGISTER_QOS_CALLBACK = BASE + 21;
 
+    /**
+     * Sent by ConnectivityService to {@link NetworkAgent} to inform the agent that its native
+     * network was created and the Network object is now valid.
+     *
+     * @hide
+     */
+    public static final int CMD_NETWORK_CREATED = BASE + 22;
+
+    /**
+     * Sent by ConnectivityService to {@link NetworkAgent} to inform the agent that its native
+     * network was destroyed.
+     *
+     * @hide
+     */
+    public static final int CMD_NETWORK_DESTROYED = BASE + 23;
+
+    /**
+     * Sent by the NetworkAgent to ConnectivityService to set the linger duration for this network
+     * agent.
+     * arg1 = the linger duration, represents by {@link Duration}.
+     *
+     * @hide
+     */
+    public static final int EVENT_LINGER_DURATION_CHANGED = BASE + 24;
+
     private static NetworkInfo getLegacyNetworkInfo(final NetworkAgentConfig config) {
-        // The subtype can be changed with (TODO) setLegacySubtype, but it starts
-        // with 0 (TelephonyManager.NETWORK_TYPE_UNKNOWN) and an empty description.
-        final NetworkInfo ni = new NetworkInfo(config.legacyType, 0, config.legacyTypeName, "");
+        final NetworkInfo ni = new NetworkInfo(config.legacyType, config.legacySubType,
+                config.legacyTypeName, config.legacySubTypeName);
         ni.setIsAvailable(true);
         ni.setDetailedState(NetworkInfo.DetailedState.CONNECTING, null /* reason */,
                 config.getLegacyExtraInfo());
         return ni;
+    }
+
+    // Temporary backward compatibility constructor
+    public NetworkAgent(@NonNull Context context, @NonNull Looper looper, @NonNull String logTag,
+            @NonNull NetworkCapabilities nc, @NonNull LinkProperties lp, int score,
+            @NonNull NetworkAgentConfig config, @Nullable NetworkProvider provider) {
+        this(context, looper, logTag, nc, lp,
+                new NetworkScore.Builder().setLegacyInt(score).build(), config, provider);
     }
 
     /**
@@ -384,8 +434,9 @@ public abstract class NetworkAgent {
      * @param provider the {@link NetworkProvider} managing this agent.
      */
     public NetworkAgent(@NonNull Context context, @NonNull Looper looper, @NonNull String logTag,
-            @NonNull NetworkCapabilities nc, @NonNull LinkProperties lp, int score,
-            @NonNull NetworkAgentConfig config, @Nullable NetworkProvider provider) {
+            @NonNull NetworkCapabilities nc, @NonNull LinkProperties lp,
+            @NonNull NetworkScore score, @NonNull NetworkAgentConfig config,
+            @Nullable NetworkProvider provider) {
         this(looper, context, logTag, nc, lp, score, config,
                 provider == null ? NetworkProvider.ID_NONE : provider.getProviderId(),
                 getLegacyNetworkInfo(config));
@@ -395,12 +446,12 @@ public abstract class NetworkAgent {
         public final Context context;
         public final NetworkCapabilities capabilities;
         public final LinkProperties properties;
-        public final int score;
+        public final NetworkScore score;
         public final NetworkAgentConfig config;
         public final NetworkInfo info;
         InitialConfiguration(@NonNull Context context, @NonNull NetworkCapabilities capabilities,
-                @NonNull LinkProperties properties, int score, @NonNull NetworkAgentConfig config,
-                @NonNull NetworkInfo info) {
+                @NonNull LinkProperties properties, @NonNull NetworkScore score,
+                @NonNull NetworkAgentConfig config, @NonNull NetworkInfo info) {
             this.context = context;
             this.capabilities = capabilities;
             this.properties = properties;
@@ -412,8 +463,9 @@ public abstract class NetworkAgent {
     private volatile InitialConfiguration mInitialConfiguration;
 
     private NetworkAgent(@NonNull Looper looper, @NonNull Context context, @NonNull String logTag,
-            @NonNull NetworkCapabilities nc, @NonNull LinkProperties lp, int score,
-            @NonNull NetworkAgentConfig config, int providerId, @NonNull NetworkInfo ni) {
+            @NonNull NetworkCapabilities nc, @NonNull LinkProperties lp,
+            @NonNull NetworkScore score, @NonNull NetworkAgentConfig config, int providerId,
+            @NonNull NetworkInfo ni) {
         mHandler = new NetworkAgentHandler(looper);
         LOG_TAG = logTag;
         mNetworkInfo = new NetworkInfo(ni);
@@ -423,7 +475,7 @@ public abstract class NetworkAgent {
         }
 
         mInitialConfiguration = new InitialConfiguration(context,
-                new NetworkCapabilities(nc, /* parcelLocationSensitiveFields */ true),
+                new NetworkCapabilities(nc, NetworkCapabilities.REDACT_NONE),
                 new LinkProperties(lp), score, config, ni);
     }
 
@@ -549,6 +601,14 @@ public abstract class NetworkAgent {
                 case CMD_UNREGISTER_QOS_CALLBACK: {
                     onQosCallbackUnregistered(
                             msg.arg1 /* QoS callback id */);
+                    break;
+                }
+                case CMD_NETWORK_CREATED: {
+                    onNetworkCreated();
+                    break;
+                }
+                case CMD_NETWORK_DESTROYED: {
+                    onNetworkDestroyed();
                     break;
                 }
             }
@@ -691,6 +751,16 @@ public abstract class NetworkAgent {
             mHandler.sendMessage(mHandler.obtainMessage(
                     CMD_UNREGISTER_QOS_CALLBACK, qosCallbackId, 0, null));
         }
+
+        @Override
+        public void onNetworkCreated() {
+            mHandler.sendMessage(mHandler.obtainMessage(CMD_NETWORK_CREATED));
+        }
+
+        @Override
+        public void onNetworkDestroyed() {
+            mHandler.sendMessage(mHandler.obtainMessage(CMD_NETWORK_DESTROYED));
+        }
     }
 
     /**
@@ -807,6 +877,29 @@ public abstract class NetworkAgent {
     }
 
     /**
+     * Sets the value of the teardown delay.
+     *
+     * The teardown delay is the time between when the network disconnects and when the native
+     * network corresponding to this {@code NetworkAgent} is destroyed. By default, the native
+     * network is destroyed immediately. If {@code teardownDelayMs} is non-zero, then when this
+     * network disconnects, the system will instead immediately mark the network as restricted
+     * and unavailable to unprivileged apps, but will defer destroying the native network until the
+     * teardown delay timer expires.
+     *
+     * The interfaces in use by this network will remain in use until the native network is
+     * destroyed and cannot be reused until {@link #onNetworkDestroyed()} is called.
+     *
+     * This method may be called at any time while the network is connected. It has no effect if
+     * the network is already disconnected and the teardown delay timer is running.
+     *
+     * @param teardownDelayMillis the teardown delay to set, or 0 to disable teardown delay.
+     */
+    public void setTeardownDelayMillis(
+            @IntRange(from = 0, to = MAX_TEARDOWN_DELAY_MS) int teardownDelayMillis) {
+        queueOrSendMessage(reg -> reg.sendTeardownDelayMs(teardownDelayMillis));
+    }
+
+    /**
      * Change the legacy subtype of this network agent.
      *
      * This is only for backward compatibility and should not be used by non-legacy network agents,
@@ -818,6 +911,7 @@ public abstract class NetworkAgent {
      * @hide
      */
     @Deprecated
+    @SystemApi
     public void setLegacySubtype(final int legacySubtype, @NonNull final String legacySubtypeName) {
         mNetworkInfo.setSubtype(legacySubtype, legacySubtypeName);
         queueOrSendNetworkInfo(mNetworkInfo);
@@ -867,21 +961,28 @@ public abstract class NetworkAgent {
         mBandwidthUpdatePending.set(false);
         mLastBwRefreshTime = System.currentTimeMillis();
         final NetworkCapabilities nc =
-                new NetworkCapabilities(networkCapabilities,
-                        /* parcelLocationSensitiveFields */ true);
+                new NetworkCapabilities(networkCapabilities, NetworkCapabilities.REDACT_NONE);
         queueOrSendMessage(reg -> reg.sendNetworkCapabilities(nc));
     }
 
     /**
      * Must be called by the agent to update the score of this network.
      *
+     * @param score the new score.
+     */
+    public final void sendNetworkScore(@NonNull NetworkScore score) {
+        Objects.requireNonNull(score);
+        queueOrSendMessage(reg -> reg.sendScore(score));
+    }
+
+    /**
+     * Must be called by the agent to update the score of this network.
+     *
      * @param score the new score, between 0 and 99.
+     * deprecated use sendNetworkScore(NetworkScore) TODO : remove in S.
      */
     public final void sendNetworkScore(@IntRange(from = 0, to = 99) int score) {
-        if (score < 0) {
-            throw new IllegalArgumentException("Score must be >= 0");
-        }
-        queueOrSendMessage(reg -> reg.sendScore(score));
+        sendNetworkScore(new NetworkScore.Builder().setLegacyInt(score).build());
     }
 
     /**
@@ -943,6 +1044,7 @@ public abstract class NetworkAgent {
      * shall try to overwrite this method and produce a bandwidth update if capable.
      * @hide
      */
+    @SystemApi
     public void onBandwidthUpdateRequested() {
         pollLceData();
     }
@@ -989,6 +1091,17 @@ public abstract class NetworkAgent {
     /** @hide TODO delete once subclasses have moved to onSaveAcceptUnvalidated */
     protected void saveAcceptUnvalidated(boolean accept) {
     }
+
+    /**
+     * Called when ConnectivityService has successfully created this NetworkAgent's native network.
+     */
+    public void onNetworkCreated() {}
+
+
+    /**
+     * Called when ConnectivityService has successfully destroy this NetworkAgent's native network.
+     */
+    public void onNetworkDestroyed() {}
 
     /**
      * Requests that the network hardware send the specified packet at the specified interval.
@@ -1141,29 +1254,37 @@ public abstract class NetworkAgent {
 
 
     /**
-     * Sends the attributes of Eps Bearer Qos Session back to the Application
+     * Sends the attributes of Qos Session back to the Application
      *
      * @param qosCallbackId the callback id that the session belongs to
-     * @param sessionId the unique session id across all Eps Bearer Qos Sessions
-     * @param attributes the attributes of the Eps Qos Session
+     * @param sessionId the unique session id across all Qos Sessions
+     * @param attributes the attributes of the Qos Session
      */
     public final void sendQosSessionAvailable(final int qosCallbackId, final int sessionId,
-            @NonNull final EpsBearerQosSessionAttributes attributes) {
+            @NonNull final QosSessionAttributes attributes) {
         Objects.requireNonNull(attributes, "The attributes must be non-null");
-        queueOrSendMessage(ra -> ra.sendEpsQosSessionAvailable(qosCallbackId,
-                new QosSession(sessionId, QosSession.TYPE_EPS_BEARER),
-                attributes));
+        if (attributes instanceof EpsBearerQosSessionAttributes) {
+            queueOrSendMessage(ra -> ra.sendEpsQosSessionAvailable(qosCallbackId,
+                    new QosSession(sessionId, QosSession.TYPE_EPS_BEARER),
+                    (EpsBearerQosSessionAttributes)attributes));
+        } else if (attributes instanceof NrQosSessionAttributes) {
+            queueOrSendMessage(ra -> ra.sendNrQosSessionAvailable(qosCallbackId,
+                    new QosSession(sessionId, QosSession.TYPE_NR_BEARER),
+                    (NrQosSessionAttributes)attributes));
+        }
     }
 
     /**
-     * Sends event that the Eps Qos Session was lost.
+     * Sends event that the Qos Session was lost.
      *
      * @param qosCallbackId the callback id that the session belongs to
-     * @param sessionId the unique session id across all Eps Bearer Qos Sessions
+     * @param sessionId the unique session id across all Qos Sessions
+     * @param qosSessionType the session type {@code QosSesson#QosSessionType}
      */
-    public final void sendQosSessionLost(final int qosCallbackId, final int sessionId) {
+    public final void sendQosSessionLost(final int qosCallbackId,
+            final int sessionId, final int qosSessionType) {
         queueOrSendMessage(ra -> ra.sendQosSessionLost(qosCallbackId,
-                new QosSession(sessionId, QosSession.TYPE_EPS_BEARER)));
+                new QosSession(sessionId, qosSessionType)));
     }
 
     /**
@@ -1179,6 +1300,22 @@ public abstract class NetworkAgent {
         queueOrSendMessage(ra -> ra.sendQosCallbackError(qosCallbackId, exceptionType));
     }
 
+    /**
+     * Set the linger duration for this network agent.
+     * @param duration the delay between the moment the network becomes unneeded and the
+     *                 moment the network is disconnected or moved into the background.
+     *                 Note that If this duration has greater than millisecond precision, then
+     *                 the internal implementation will drop any excess precision.
+     */
+    public void setLingerDuration(@NonNull final Duration duration) {
+        Objects.requireNonNull(duration);
+        final long durationMs = duration.toMillis();
+        if (durationMs < MIN_LINGER_TIMER_MS || durationMs > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Duration must be within ["
+                    + MIN_LINGER_TIMER_MS + "," + Integer.MAX_VALUE + "]ms");
+        }
+        queueOrSendMessage(ra -> ra.sendLingerDuration((int) durationMs));
+    }
 
     /** @hide */
     protected void log(final String s) {

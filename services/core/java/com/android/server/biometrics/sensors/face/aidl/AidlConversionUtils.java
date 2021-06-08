@@ -18,52 +18,156 @@ package com.android.server.biometrics.sensors.face.aidl;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.hardware.biometrics.BiometricFaceConstants;
+import android.hardware.biometrics.face.AcquiredInfo;
 import android.hardware.biometrics.face.AuthenticationFrame;
 import android.hardware.biometrics.face.BaseFrame;
 import android.hardware.biometrics.face.Cell;
 import android.hardware.biometrics.face.EnrollmentFrame;
+import android.hardware.biometrics.face.EnrollmentStage;
+import android.hardware.biometrics.face.Error;
+import android.hardware.biometrics.face.Feature;
 import android.hardware.face.FaceAuthenticationFrame;
 import android.hardware.face.FaceDataFrame;
 import android.hardware.face.FaceEnrollCell;
 import android.hardware.face.FaceEnrollFrame;
+import android.hardware.face.FaceEnrollStages;
+import android.hardware.face.FaceEnrollStages.FaceEnrollStage;
+import android.util.Slog;
 
 /**
- * Utilities for converting between hardware and framework-defined AIDL models.
+ * Utilities for converting from hardware to framework-defined AIDL models.
  */
 final class AidlConversionUtils {
+
+    private static final String TAG = "AidlConversionUtils";
+
     // Prevent instantiation.
-    private AidlConversionUtils() {}
+    private AidlConversionUtils() {
+    }
 
-    @NonNull
-    public static FaceAuthenticationFrame convert(@NonNull AuthenticationFrame frame) {
-        return new FaceAuthenticationFrame(convert(frame.data));
+    @BiometricFaceConstants.FaceError
+    public static int toFrameworkError(byte aidlError) {
+        switch (aidlError) {
+            case Error.HW_UNAVAILABLE:
+                return BiometricFaceConstants.FACE_ERROR_HW_UNAVAILABLE;
+            case Error.UNABLE_TO_PROCESS:
+                return BiometricFaceConstants.FACE_ERROR_UNABLE_TO_PROCESS;
+            case Error.TIMEOUT:
+                return BiometricFaceConstants.FACE_ERROR_TIMEOUT;
+            case Error.NO_SPACE:
+                return BiometricFaceConstants.FACE_ERROR_NO_SPACE;
+            case Error.CANCELED:
+                return BiometricFaceConstants.FACE_ERROR_CANCELED;
+            case Error.UNABLE_TO_REMOVE:
+                return BiometricFaceConstants.FACE_ERROR_UNABLE_TO_REMOVE;
+            case Error.VENDOR:
+                return BiometricFaceConstants.FACE_ERROR_VENDOR;
+            case Error.REENROLL_REQUIRED:
+                return BiometricFaceConstants.BIOMETRIC_ERROR_RE_ENROLL;
+            case Error.UNKNOWN:
+            default:
+                return BiometricFaceConstants.FACE_ERROR_UNKNOWN;
+        }
+    }
+
+    @BiometricFaceConstants.FaceAcquired
+    public static int toFrameworkAcquiredInfo(byte aidlAcquiredInfo) {
+        switch (aidlAcquiredInfo) {
+            case AcquiredInfo.GOOD:
+                return BiometricFaceConstants.FACE_ACQUIRED_GOOD;
+            case AcquiredInfo.INSUFFICIENT:
+                return BiometricFaceConstants.FACE_ACQUIRED_INSUFFICIENT;
+            case AcquiredInfo.TOO_BRIGHT:
+                return BiometricFaceConstants.FACE_ACQUIRED_TOO_BRIGHT;
+            case AcquiredInfo.TOO_DARK:
+                return BiometricFaceConstants.FACE_ACQUIRED_TOO_DARK;
+            case AcquiredInfo.TOO_CLOSE:
+                return BiometricFaceConstants.FACE_ACQUIRED_TOO_CLOSE;
+            case AcquiredInfo.TOO_FAR:
+                return BiometricFaceConstants.FACE_ACQUIRED_TOO_FAR;
+            case AcquiredInfo.FACE_TOO_HIGH:
+                return BiometricFaceConstants.FACE_ACQUIRED_TOO_HIGH;
+            case AcquiredInfo.FACE_TOO_LOW:
+                return BiometricFaceConstants.FACE_ACQUIRED_TOO_LOW;
+            case AcquiredInfo.FACE_TOO_RIGHT:
+                return BiometricFaceConstants.FACE_ACQUIRED_TOO_RIGHT;
+            case AcquiredInfo.FACE_TOO_LEFT:
+                return BiometricFaceConstants.FACE_ACQUIRED_TOO_LEFT;
+            case AcquiredInfo.POOR_GAZE:
+                return BiometricFaceConstants.FACE_ACQUIRED_POOR_GAZE;
+            case AcquiredInfo.NOT_DETECTED:
+                return BiometricFaceConstants.FACE_ACQUIRED_NOT_DETECTED;
+            case AcquiredInfo.TOO_MUCH_MOTION:
+                return BiometricFaceConstants.FACE_ACQUIRED_TOO_MUCH_MOTION;
+            case AcquiredInfo.RECALIBRATE:
+                return BiometricFaceConstants.FACE_ACQUIRED_RECALIBRATE;
+            case AcquiredInfo.TOO_DIFFERENT:
+                return BiometricFaceConstants.FACE_ACQUIRED_TOO_DIFFERENT;
+            case AcquiredInfo.TOO_SIMILAR:
+                return BiometricFaceConstants.FACE_ACQUIRED_TOO_SIMILAR;
+            case AcquiredInfo.PAN_TOO_EXTREME:
+                return BiometricFaceConstants.FACE_ACQUIRED_PAN_TOO_EXTREME;
+            case AcquiredInfo.TILT_TOO_EXTREME:
+                return BiometricFaceConstants.FACE_ACQUIRED_TILT_TOO_EXTREME;
+            case AcquiredInfo.ROLL_TOO_EXTREME:
+                return BiometricFaceConstants.FACE_ACQUIRED_ROLL_TOO_EXTREME;
+            case AcquiredInfo.FACE_OBSCURED:
+                return BiometricFaceConstants.FACE_ACQUIRED_FACE_OBSCURED;
+            case AcquiredInfo.START:
+                return BiometricFaceConstants.FACE_ACQUIRED_START;
+            case AcquiredInfo.SENSOR_DIRTY:
+                return BiometricFaceConstants.FACE_ACQUIRED_SENSOR_DIRTY;
+            case AcquiredInfo.VENDOR:
+                return BiometricFaceConstants.FACE_ACQUIRED_VENDOR;
+            case AcquiredInfo.UNKNOWN:
+            case AcquiredInfo.FIRST_FRAME_RECEIVED:
+            case AcquiredInfo.DARK_GLASSES_DETECTED:
+            case AcquiredInfo.MOUTH_COVERING_DETECTED:
+            default:
+                return BiometricFaceConstants.FACE_ACQUIRED_UNKNOWN;
+        }
+    }
+
+    @FaceEnrollStage
+    public static int toFrameworkEnrollmentStage(int aidlEnrollmentStage) {
+        switch (aidlEnrollmentStage) {
+            case EnrollmentStage.FIRST_FRAME_RECEIVED:
+                return FaceEnrollStages.FIRST_FRAME_RECEIVED;
+            case EnrollmentStage.WAITING_FOR_CENTERING:
+                return FaceEnrollStages.WAITING_FOR_CENTERING;
+            case EnrollmentStage.HOLD_STILL_IN_CENTER:
+                return FaceEnrollStages.HOLD_STILL_IN_CENTER;
+            case EnrollmentStage.ENROLLING_MOVEMENT_1:
+                return FaceEnrollStages.ENROLLING_MOVEMENT_1;
+            case EnrollmentStage.ENROLLING_MOVEMENT_2:
+                return FaceEnrollStages.ENROLLING_MOVEMENT_2;
+            case EnrollmentStage.ENROLLMENT_FINISHED:
+                return FaceEnrollStages.ENROLLMENT_FINISHED;
+            case EnrollmentStage.UNKNOWN:
+            default:
+                return FaceEnrollStages.UNKNOWN;
+        }
     }
 
     @NonNull
-    public static AuthenticationFrame convert(@NonNull FaceAuthenticationFrame frame) {
-        final AuthenticationFrame convertedFrame = new AuthenticationFrame();
-        convertedFrame.data = convert(frame.getData());
-        return convertedFrame;
+    public static FaceAuthenticationFrame toFrameworkAuthenticationFrame(
+            @NonNull AuthenticationFrame frame) {
+        return new FaceAuthenticationFrame(toFrameworkBaseFrame(frame.data));
     }
 
     @NonNull
-    public static FaceEnrollFrame convert(@NonNull EnrollmentFrame frame) {
-        return new FaceEnrollFrame(convert(frame.cell), frame.stage, convert(frame.data));
+    public static FaceEnrollFrame toFrameworkEnrollmentFrame(@NonNull EnrollmentFrame frame) {
+        return new FaceEnrollFrame(
+                toFrameworkCell(frame.cell),
+                toFrameworkEnrollmentStage(frame.stage),
+                toFrameworkBaseFrame(frame.data));
     }
 
     @NonNull
-    public static EnrollmentFrame convert(@NonNull FaceEnrollFrame frame) {
-        final EnrollmentFrame convertedFrame = new EnrollmentFrame();
-        convertedFrame.cell = convert(frame.getCell());
-        convertedFrame.stage = (byte) frame.getStage();
-        convertedFrame.data = convert(frame.getData());
-        return convertedFrame;
-    }
-
-    @NonNull
-    public static FaceDataFrame convert(@NonNull BaseFrame frame) {
+    public static FaceDataFrame toFrameworkBaseFrame(@NonNull BaseFrame frame) {
         return new FaceDataFrame(
-                frame.acquiredInfo,
+                toFrameworkAcquiredInfo(frame.acquiredInfo),
                 frame.vendorCode,
                 frame.pan,
                 frame.tilt,
@@ -71,33 +175,32 @@ final class AidlConversionUtils {
                 frame.isCancellable);
     }
 
-    @NonNull
-    public static BaseFrame convert(@NonNull FaceDataFrame frame) {
-        final BaseFrame convertedFrame = new BaseFrame();
-        convertedFrame.acquiredInfo = (byte) frame.getAcquiredInfo();
-        convertedFrame.vendorCode = frame.getVendorCode();
-        convertedFrame.pan = frame.getPan();
-        convertedFrame.tilt = frame.getTilt();
-        convertedFrame.distance = frame.getDistance();
-        convertedFrame.isCancellable = frame.isCancellable();
-        return convertedFrame;
-    }
-
     @Nullable
-    public static FaceEnrollCell convert(@Nullable Cell cell) {
+    public static FaceEnrollCell toFrameworkCell(@Nullable Cell cell) {
         return cell == null ? null : new FaceEnrollCell(cell.x, cell.y, cell.z);
     }
 
-    @Nullable
-    public static Cell convert(@Nullable FaceEnrollCell cell) {
-        if (cell == null) {
-            return null;
+    public static byte convertFrameworkToAidlFeature(int feature) throws IllegalArgumentException {
+        switch (feature) {
+            case BiometricFaceConstants.FEATURE_REQUIRE_ATTENTION:
+                return Feature.REQUIRE_ATTENTION;
+            case BiometricFaceConstants.FEATURE_REQUIRE_REQUIRE_DIVERSITY:
+                return Feature.REQUIRE_DIVERSE_POSES;
+            default:
+                Slog.e(TAG, "Unsupported feature : " + feature);
+                throw new IllegalArgumentException();
         }
+    }
 
-        final Cell convertedCell = new Cell();
-        convertedCell.x = cell.getX();
-        convertedCell.y = cell.getY();
-        convertedCell.z = cell.getZ();
-        return convertedCell;
+    public static int convertAidlToFrameworkFeature(byte feature) throws IllegalArgumentException {
+        switch (feature) {
+            case Feature.REQUIRE_ATTENTION:
+                return BiometricFaceConstants.FEATURE_REQUIRE_ATTENTION;
+            case Feature.REQUIRE_DIVERSE_POSES:
+                return BiometricFaceConstants.FEATURE_REQUIRE_REQUIRE_DIVERSITY;
+            default:
+                Slog.e(TAG, "Unsupported feature : " + feature);
+                throw new IllegalArgumentException();
+        }
     }
 }

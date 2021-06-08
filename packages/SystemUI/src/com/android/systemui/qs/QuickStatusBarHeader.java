@@ -17,15 +17,11 @@ package com.android.systemui.qs;
 import static android.app.StatusBarManager.DISABLE2_QUICK_SETTINGS;
 import static android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
 
-import android.annotation.ColorInt;
-import android.app.AlarmManager.AlarmClockInfo;
 import android.content.Context;
-import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Color;
 import android.graphics.Rect;
-import android.media.AudioManager;
 import android.util.AttributeSet;
 import android.util.MathUtils;
 import android.util.Pair;
@@ -34,80 +30,78 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.RelativeLayout;
 import android.widget.Space;
-import android.widget.TextView;
-
-import androidx.annotation.NonNull;
-import androidx.lifecycle.Lifecycle;
-import androidx.lifecycle.LifecycleOwner;
-import androidx.lifecycle.LifecycleRegistry;
 
 import com.android.settingslib.Utils;
 import com.android.systemui.BatteryMeterView;
-import com.android.systemui.Interpolators;
 import com.android.systemui.R;
-import com.android.systemui.privacy.OngoingPrivacyChip;
+import com.android.systemui.animation.Interpolators;
 import com.android.systemui.qs.QSDetail.Callback;
+import com.android.systemui.statusbar.StatusBarIconView;
 import com.android.systemui.statusbar.phone.StatusBarIconController.TintedIconManager;
 import com.android.systemui.statusbar.phone.StatusBarWindowView;
+import com.android.systemui.statusbar.phone.StatusIconContainer;
 import com.android.systemui.statusbar.policy.Clock;
 
-import java.util.Locale;
-import java.util.Objects;
-
 /**
- * View that contains the top-most bits of the screen (primarily the status bar with date, time, and
- * battery) and also contains the {@link QuickQSPanel} along with some of the panel's inner
- * contents.
+ * View that contains the top-most bits of the QS panel (primarily the status bar with date, time,
+ * battery, carrier info and privacy icons) and also contains the {@link QuickQSPanel}.
  */
-public class QuickStatusBarHeader extends RelativeLayout implements LifecycleOwner {
-
-    public static final int MAX_TOOLTIP_SHOWN_COUNT = 2;
+public class QuickStatusBarHeader extends FrameLayout {
 
     private boolean mExpanded;
     private boolean mQsDisabled;
 
+    private TouchAnimator mAlphaAnimator;
+    private TouchAnimator mTranslationAnimator;
+    private TouchAnimator mIconsAlphaAnimator;
+    private TouchAnimator mIconsAlphaAnimatorFixed;
+
     protected QuickQSPanel mHeaderQsPanel;
-    private TouchAnimator mStatusIconsAlphaAnimator;
-    private TouchAnimator mHeaderTextContainerAlphaAnimator;
+    private View mDatePrivacyView;
+    private View mDateView;
+    private View mSecurityHeaderView;
+    private View mClockIconsView;
+    private View mContainer;
 
-    private View mSystemIconsView;
-    private View mQuickQsStatusIcons;
-    private View mHeaderTextContainerView;
-
-    private ImageView mNextAlarmIcon;
-    /** {@link TextView} containing the actual text indicating when the next alarm will go off. */
-    private TextView mNextAlarmTextView;
-    private View mNextAlarmContainer;
-    private View mStatusSeparator;
-    private ImageView mRingerModeIcon;
-    private TextView mRingerModeTextView;
-    private View mRingerContainer;
+    private View mQSCarriers;
     private Clock mClockView;
-    private OngoingPrivacyChip mPrivacyChip;
     private Space mSpace;
     private BatteryMeterView mBatteryRemainingIcon;
-    private TintedIconManager mTintedIconManager;
+    private StatusIconContainer mIconContainer;
+    private View mPrivacyChip;
 
-    // Used for RingerModeTracker
-    private final LifecycleRegistry mLifecycle = new LifecycleRegistry(this);
+    private TintedIconManager mTintedIconManager;
+    private QSExpansionPathInterpolator mQSExpansionPathInterpolator;
 
     private int mStatusBarPaddingTop = 0;
     private int mRoundedCornerPadding = 0;
-    private int mContentMarginStart;
-    private int mContentMarginEnd;
     private int mWaterfallTopInset;
     private int mCutOutPaddingLeft;
     private int mCutOutPaddingRight;
-    private float mExpandedHeaderAlpha = 1.0f;
+    private float mClockIconsAlpha = 1.0f;
     private float mKeyguardExpansionFraction;
     private int mTextColorPrimary = Color.TRANSPARENT;
+    private int mTopViewMeasureHeight;
+
+    private final String mMobileSlotName;
+    private final String mCallStrengthSlotName;
 
     public QuickStatusBarHeader(Context context, AttributeSet attrs) {
         super(context, attrs);
+        mMobileSlotName = context.getString(com.android.internal.R.string.status_bar_no_calling);
+        mCallStrengthSlotName =
+                context.getString(com.android.internal.R.string.status_bar_call_strength);
+    }
+
+    /**
+     * How much the view containing the clock and QQS will translate down when QS is fully expanded.
+     *
+     * This matches the measured height of the view containing the date and privacy icons.
+     */
+    public int getOffsetTranslation() {
+        return mTopViewMeasureHeight;
     }
 
     @Override
@@ -115,19 +109,15 @@ public class QuickStatusBarHeader extends RelativeLayout implements LifecycleOwn
         super.onFinishInflate();
 
         mHeaderQsPanel = findViewById(R.id.quick_qs_panel);
-        mSystemIconsView = findViewById(R.id.quick_status_bar_system_icons);
-        mQuickQsStatusIcons = findViewById(R.id.quick_qs_status_icons);
-
-        // Views corresponding to the header info section (e.g. ringer and next alarm).
-        mHeaderTextContainerView = findViewById(R.id.header_text_container);
-        mStatusSeparator = findViewById(R.id.status_separator);
-        mNextAlarmIcon = findViewById(R.id.next_alarm_icon);
-        mNextAlarmTextView = findViewById(R.id.next_alarm_text);
-        mNextAlarmContainer = findViewById(R.id.alarm_container);
-        mRingerModeIcon = findViewById(R.id.ringer_mode_icon);
-        mRingerModeTextView = findViewById(R.id.ringer_mode_text);
-        mRingerContainer = findViewById(R.id.ringer_container);
+        mDatePrivacyView = findViewById(R.id.quick_status_bar_date_privacy);
+        mClockIconsView = findViewById(R.id.quick_qs_status_icons);
+        mQSCarriers = findViewById(R.id.carrier_group);
+        mContainer = findViewById(R.id.qs_container);
+        mIconContainer = findViewById(R.id.statusIcons);
         mPrivacyChip = findViewById(R.id.privacy_chip);
+        mDateView = findViewById(R.id.date);
+        mSecurityHeaderView = findViewById(R.id.header_text_container);
+
         mClockView = findViewById(R.id.clock);
         mSpace = findViewById(R.id.space);
         // Tint for the battery icons are handled in setupHost()
@@ -140,77 +130,37 @@ public class QuickStatusBarHeader extends RelativeLayout implements LifecycleOwn
         // QS will always show the estimate, and BatteryMeterView handles the case where
         // it's unavailable or charging
         mBatteryRemainingIcon.setPercentShowMode(BatteryMeterView.MODE_ESTIMATE);
-        mRingerModeTextView.setSelected(true);
-        mNextAlarmTextView.setSelected(true);
+
+        mIconsAlphaAnimatorFixed = new TouchAnimator.Builder()
+                .addFloat(mIconContainer, "alpha", 0, 1)
+                .addFloat(mBatteryRemainingIcon, "alpha", 0, 1)
+                .build();
     }
 
-    void onAttach(TintedIconManager iconManager) {
+    void onAttach(TintedIconManager iconManager,
+            QSExpansionPathInterpolator qsExpansionPathInterpolator) {
         mTintedIconManager = iconManager;
         int fillColor = Utils.getColorAttrDefaultColor(getContext(),
                 android.R.attr.textColorPrimary);
 
         // Set the correct tint for the status icons so they contrast
         iconManager.setTint(fillColor);
-        mNextAlarmIcon.setImageTintList(ColorStateList.valueOf(fillColor));
-        mRingerModeIcon.setImageTintList(ColorStateList.valueOf(fillColor));
+
+        mQSExpansionPathInterpolator = qsExpansionPathInterpolator;
+        updateAnimators();
     }
 
     public QuickQSPanel getHeaderQsPanel() {
         return mHeaderQsPanel;
     }
 
-    void updateStatusText(int ringerMode, AlarmClockInfo nextAlarm, boolean zenOverridingRinger,
-            boolean use24HourFormat) {
-        boolean changed = updateRingerStatus(ringerMode, zenOverridingRinger)
-                || updateAlarmStatus(nextAlarm, use24HourFormat);
-
-        if (changed) {
-            boolean alarmVisible = mNextAlarmTextView.getVisibility() == View.VISIBLE;
-            boolean ringerVisible = mRingerModeTextView.getVisibility() == View.VISIBLE;
-            mStatusSeparator.setVisibility(alarmVisible && ringerVisible ? View.VISIBLE
-                    : View.GONE);
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        if (mDatePrivacyView.getMeasuredHeight() != mTopViewMeasureHeight) {
+            mTopViewMeasureHeight = mDatePrivacyView.getMeasuredHeight();
+            updateAnimators();
         }
-    }
-
-    private boolean updateRingerStatus(int ringerMode, boolean zenOverridingRinger) {
-        boolean isOriginalVisible = mRingerModeTextView.getVisibility() == View.VISIBLE;
-        CharSequence originalRingerText = mRingerModeTextView.getText();
-
-        boolean ringerVisible = false;
-        if (!zenOverridingRinger) {
-            if (ringerMode == AudioManager.RINGER_MODE_VIBRATE) {
-                mRingerModeIcon.setImageResource(R.drawable.ic_volume_ringer_vibrate);
-                mRingerModeTextView.setText(R.string.qs_status_phone_vibrate);
-                ringerVisible = true;
-            } else if (ringerMode == AudioManager.RINGER_MODE_SILENT) {
-                mRingerModeIcon.setImageResource(R.drawable.ic_volume_ringer_mute);
-                mRingerModeTextView.setText(R.string.qs_status_phone_muted);
-                ringerVisible = true;
-            }
-        }
-        mRingerModeIcon.setVisibility(ringerVisible ? View.VISIBLE : View.GONE);
-        mRingerModeTextView.setVisibility(ringerVisible ? View.VISIBLE : View.GONE);
-        mRingerContainer.setVisibility(ringerVisible ? View.VISIBLE : View.GONE);
-
-        return isOriginalVisible != ringerVisible ||
-                !Objects.equals(originalRingerText, mRingerModeTextView.getText());
-    }
-
-    private boolean updateAlarmStatus(AlarmClockInfo nextAlarm, boolean use24HourFormat) {
-        boolean isOriginalVisible = mNextAlarmTextView.getVisibility() == View.VISIBLE;
-        CharSequence originalAlarmText = mNextAlarmTextView.getText();
-
-        boolean alarmVisible = false;
-        if (nextAlarm != null) {
-            alarmVisible = true;
-            mNextAlarmTextView.setText(formatNextAlarm(nextAlarm, use24HourFormat));
-        }
-        mNextAlarmIcon.setVisibility(alarmVisible ? View.VISIBLE : View.GONE);
-        mNextAlarmTextView.setVisibility(alarmVisible ? View.VISIBLE : View.GONE);
-        mNextAlarmContainer.setVisibility(alarmVisible ? View.VISIBLE : View.GONE);
-
-        return isOriginalVisible != alarmVisible ||
-                !Objects.equals(originalAlarmText, mNextAlarmTextView.getText());
     }
 
     @Override
@@ -225,40 +175,27 @@ public class QuickStatusBarHeader extends RelativeLayout implements LifecycleOwn
         updateResources();
     }
 
-    /**
-     * The height of QQS should always be the status bar height + 128dp. This is normally easy, but
-     * when there is a notch involved the status bar can remain a fixed pixel size.
-     */
-    private void updateMinimumHeight() {
-        int sbHeight = mContext.getResources().getDimensionPixelSize(
-                com.android.internal.R.dimen.status_bar_height);
-        int qqsHeight = mContext.getResources().getDimensionPixelSize(
-                R.dimen.qs_quick_header_panel_height);
-
-        setMinimumHeight(sbHeight + qqsHeight);
-    }
-
     void updateResources() {
         Resources resources = mContext.getResources();
-        updateMinimumHeight();
 
         mRoundedCornerPadding = resources.getDimensionPixelSize(
                 R.dimen.rounded_corner_content_padding);
         mStatusBarPaddingTop = resources.getDimensionPixelSize(R.dimen.status_bar_padding_top);
 
-        // Update height for a few views, especially due to landscape mode restricting space.
-        mHeaderTextContainerView.getLayoutParams().height =
-                resources.getDimensionPixelSize(R.dimen.qs_header_tooltip_height);
-        mHeaderTextContainerView.setLayoutParams(mHeaderTextContainerView.getLayoutParams());
-
-        mSystemIconsView.getLayoutParams().height = resources.getDimensionPixelSize(
+        int qsOffsetHeight = resources.getDimensionPixelSize(
                 com.android.internal.R.dimen.quick_qs_offset_height);
-        mSystemIconsView.setLayoutParams(mSystemIconsView.getLayoutParams());
+
+        mDatePrivacyView.getLayoutParams().height =
+                Math.max(qsOffsetHeight, mDatePrivacyView.getMinimumHeight());
+        mDatePrivacyView.setLayoutParams(mDatePrivacyView.getLayoutParams());
+
+        mClockIconsView.getLayoutParams().height =
+                Math.max(qsOffsetHeight, mClockIconsView.getMinimumHeight());
+        mClockIconsView.setLayoutParams(mClockIconsView.getLayoutParams());
 
         ViewGroup.LayoutParams lp = getLayoutParams();
         if (mQsDisabled) {
-            lp.height = resources.getDimensionPixelSize(
-                    com.android.internal.R.dimen.quick_qs_offset_height);
+            lp.height = mClockIconsView.getLayoutParams().height;
         } else {
             lp.height = WRAP_CONTENT;
         }
@@ -276,21 +213,68 @@ public class QuickStatusBarHeader extends RelativeLayout implements LifecycleOwn
             mBatteryRemainingIcon.updateColors(mTextColorPrimary, textColorSecondary,
                     mTextColorPrimary);
         }
-
-        updateStatusIconAlphaAnimator();
-        updateHeaderTextContainerAlphaAnimator();
+        updateHeadersPadding();
+        updateAnimators();
     }
 
-    private void updateStatusIconAlphaAnimator() {
-        mStatusIconsAlphaAnimator = new TouchAnimator.Builder()
-                .addFloat(mQuickQsStatusIcons, "alpha", 1, 0, 0)
+    private void updateAnimators() {
+        updateAlphaAnimator();
+        int offset = mTopViewMeasureHeight;
+
+        mTranslationAnimator = new TouchAnimator.Builder()
+                .addFloat(mContainer, "translationY", 0, offset)
+                .setInterpolator(mQSExpansionPathInterpolator != null
+                        ? mQSExpansionPathInterpolator.getYInterpolator()
+                        : null)
                 .build();
     }
 
-    private void updateHeaderTextContainerAlphaAnimator() {
-        mHeaderTextContainerAlphaAnimator = new TouchAnimator.Builder()
-                .addFloat(mHeaderTextContainerView, "alpha", 0, 0, mExpandedHeaderAlpha)
-                .build();
+    private void updateAlphaAnimator() {
+        StatusBarIconView noCallingIcon =
+                ((StatusBarIconView) mIconContainer.getViewForSlot(mMobileSlotName));
+        StatusBarIconView callStrengthIcon =
+                ((StatusBarIconView) mIconContainer.getViewForSlot(mCallStrengthSlotName));
+        TouchAnimator.Builder builder = new TouchAnimator.Builder()
+                // The following two views have to be hidden manually, so as not to hide the
+                // Privacy chip in QQS
+                .addFloat(mDateView, "alpha", 0, 1)
+                .addFloat(mSecurityHeaderView, "alpha", 0, 1)
+                .addFloat(mQSCarriers, "alpha", 0, 1);
+        builder.setListener(new TouchAnimator.ListenerAdapter() {
+            @Override
+            public void onAnimationAtEnd() {
+                mIconContainer.addIgnoredSlot(mMobileSlotName);
+                mIconContainer.addIgnoredSlot(mCallStrengthSlotName);
+            }
+
+            @Override
+            public void onAnimationStarted() {
+                mIconContainer.addIgnoredSlot(mMobileSlotName);
+                mIconContainer.addIgnoredSlot(mCallStrengthSlotName);
+            }
+
+            @Override
+            public void onAnimationAtStart() {
+                super.onAnimationAtStart();
+                mIconContainer.removeIgnoredSlot(mMobileSlotName);
+                mIconContainer.removeIgnoredSlot(mCallStrengthSlotName);
+            }
+        });
+        mAlphaAnimator = builder.build();
+    }
+
+    void setChipVisibility(boolean visibility) {
+        mPrivacyChip.setVisibility(visibility ? View.VISIBLE : View.GONE);
+        if (visibility) {
+            // Animates the icons and battery indicator from alpha 0 to 1, when the chip is visible
+            mIconsAlphaAnimator = mIconsAlphaAnimatorFixed;
+            mIconsAlphaAnimator.setPosition(mKeyguardExpansionFraction);
+        } else {
+            mIconsAlphaAnimator = null;
+            mIconContainer.setAlpha(1);
+            mBatteryRemainingIcon.setAlpha(1);
+        }
+
     }
 
     /** */
@@ -312,25 +296,22 @@ public class QuickStatusBarHeader extends RelativeLayout implements LifecycleOwn
     public void setExpansion(boolean forceExpanded, float expansionFraction,
                              float panelTranslationY) {
         final float keyguardExpansionFraction = forceExpanded ? 1f : expansionFraction;
-        if (mStatusIconsAlphaAnimator != null) {
-            mStatusIconsAlphaAnimator.setPosition(keyguardExpansionFraction);
-        }
 
+        if (mAlphaAnimator != null) {
+            mAlphaAnimator.setPosition(keyguardExpansionFraction);
+        }
+        if (mTranslationAnimator != null) {
+            mTranslationAnimator.setPosition(keyguardExpansionFraction);
+        }
+        if (mIconsAlphaAnimator != null) {
+            mIconsAlphaAnimator.setPosition(keyguardExpansionFraction);
+        }
+        // If forceExpanded (we are opening QS from lockscreen), the animators have been set to
+        // position = 1f.
         if (forceExpanded) {
-            // If the keyguard is showing, we want to offset the text so that it comes in at the
-            // same time as the panel as it slides down.
-            mHeaderTextContainerView.setTranslationY(panelTranslationY);
+            setTranslationY(panelTranslationY);
         } else {
-            mHeaderTextContainerView.setTranslationY(0f);
-        }
-
-        if (mHeaderTextContainerAlphaAnimator != null) {
-            mHeaderTextContainerAlphaAnimator.setPosition(keyguardExpansionFraction);
-            if (keyguardExpansionFraction > 0) {
-                mHeaderTextContainerView.setVisibility(VISIBLE);
-            } else {
-                mHeaderTextContainerView.setVisibility(INVISIBLE);
-            }
+            setTranslationY(0);
         }
 
         mKeyguardExpansionFraction = keyguardExpansionFraction;
@@ -341,28 +322,21 @@ public class QuickStatusBarHeader extends RelativeLayout implements LifecycleOwn
         if (disabled == mQsDisabled) return;
         mQsDisabled = disabled;
         mHeaderQsPanel.setDisabledByPolicy(disabled);
-        mHeaderTextContainerView.setVisibility(mQsDisabled ? View.GONE : View.VISIBLE);
-        mQuickQsStatusIcons.setVisibility(mQsDisabled ? View.GONE : View.VISIBLE);
+        mClockIconsView.setVisibility(mQsDisabled ? View.GONE : View.VISIBLE);
         updateResources();
     }
 
     @Override
     public WindowInsets onApplyWindowInsets(WindowInsets insets) {
-        // Handle padding of the clock
+        // Handle padding of the views
         DisplayCutout cutout = insets.getDisplayCutout();
         Pair<Integer, Integer> cornerCutoutPadding = StatusBarWindowView.cornerCutoutMargins(
                 cutout, getDisplay());
         Pair<Integer, Integer> padding =
                 StatusBarWindowView.paddingNeededForCutoutAndRoundedCorner(
                         cutout, cornerCutoutPadding, -1);
-        if (padding == null) {
-            mSystemIconsView.setPaddingRelative(
-                    getResources().getDimensionPixelSize(R.dimen.status_bar_padding_start), 0,
-                    getResources().getDimensionPixelSize(R.dimen.status_bar_padding_end), 0);
-        } else {
-            mSystemIconsView.setPadding(padding.first, 0, padding.second, 0);
-
-        }
+        mDatePrivacyView.setPadding(padding.first, 0, padding.second, 0);
+        mClockIconsView.setPadding(padding.first, 0, padding.second, 0);
         LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) mSpace.getLayoutParams();
         boolean cornerCutout = cornerCutoutPadding != null
                 && (cornerCutoutPadding.first == 0 || cornerCutoutPadding.second == 0);
@@ -380,13 +354,15 @@ public class QuickStatusBarHeader extends RelativeLayout implements LifecycleOwn
         mCutOutPaddingLeft = padding.first;
         mCutOutPaddingRight = padding.second;
         mWaterfallTopInset = cutout == null ? 0 : cutout.getWaterfallInsets().top;
-        updateClockPadding();
+        updateHeadersPadding();
         return super.onApplyWindowInsets(insets);
     }
 
-    private void updateClockPadding() {
-        int clockPaddingLeft = 0;
-        int clockPaddingRight = 0;
+    private void updateHeadersPadding() {
+        setContentMargins(mDatePrivacyView, 0, 0);
+        setContentMargins(mClockIconsView, 0, 0);
+        int paddingLeft = 0;
+        int paddingRight = 0;
 
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) getLayoutParams();
         int leftMargin = lp.leftMargin;
@@ -398,19 +374,21 @@ public class QuickStatusBarHeader extends RelativeLayout implements LifecycleOwn
         if (mCutOutPaddingLeft > 0) {
             // if there's a cutout, let's use at least the rounded corner inset
             int cutoutPadding = Math.max(mCutOutPaddingLeft, mRoundedCornerPadding);
-            int contentMarginLeft = isLayoutRtl() ? mContentMarginEnd : mContentMarginStart;
-            clockPaddingLeft = Math.max(cutoutPadding - contentMarginLeft - leftMargin, 0);
+            paddingLeft = Math.max(cutoutPadding - leftMargin, 0);
         }
         if (mCutOutPaddingRight > 0) {
             // if there's a cutout, let's use at least the rounded corner inset
             int cutoutPadding = Math.max(mCutOutPaddingRight, mRoundedCornerPadding);
-            int contentMarginRight = isLayoutRtl() ? mContentMarginStart : mContentMarginEnd;
-            clockPaddingRight = Math.max(cutoutPadding - contentMarginRight - rightMargin, 0);
+            paddingRight = Math.max(cutoutPadding - rightMargin, 0);
         }
 
-        mSystemIconsView.setPadding(clockPaddingLeft,
+        mDatePrivacyView.setPadding(paddingLeft,
                 mWaterfallTopInset + mStatusBarPaddingTop,
-                clockPaddingRight,
+                paddingRight,
+                0);
+        mClockIconsView.setPadding(paddingLeft,
+                mWaterfallTopInset + mStatusBarPaddingTop,
+                paddingRight,
                 0);
     }
 
@@ -422,61 +400,43 @@ public class QuickStatusBarHeader extends RelativeLayout implements LifecycleOwn
         mHeaderQsPanel.setCallback(qsPanelCallback);
     }
 
-    private String formatNextAlarm(AlarmClockInfo info, boolean use24HourFormat) {
-        if (info == null) {
-            return "";
-        }
-        String skeleton = use24HourFormat ? "EHm" : "Ehma";
-        String pattern = android.text.format.DateFormat
-                .getBestDateTimePattern(Locale.getDefault(), skeleton);
-        return android.text.format.DateFormat.format(pattern, info.getTriggerTime()).toString();
+    private void setContentMargins(View view, int marginStart, int marginEnd) {
+        MarginLayoutParams lp = (MarginLayoutParams) view.getLayoutParams();
+        lp.setMarginStart(marginStart);
+        lp.setMarginEnd(marginEnd);
+        view.setLayoutParams(lp);
     }
 
-    public static float getColorIntensity(@ColorInt int color) {
-        return color == Color.WHITE ? 0 : 1;
-    }
-
-    @NonNull
-    @Override
-    public Lifecycle getLifecycle() {
-        return mLifecycle;
-    }
-
-    /** */
-    public void setContentMargins(int marginStart, int marginEnd,
-            QuickQSPanelController quickQSPanelController) {
-        mContentMarginStart = marginStart;
-        mContentMarginEnd = marginEnd;
-        for (int i = 0; i < getChildCount(); i++) {
-            View view = getChildAt(i);
-            if (view == mHeaderQsPanel) {
-                // QS panel doesn't lays out some of its content full width
-                quickQSPanelController.setContentMargins(marginStart, marginEnd);
-            } else {
-                MarginLayoutParams lp = (MarginLayoutParams) view.getLayoutParams();
-                lp.setMarginStart(marginStart);
-                lp.setMarginEnd(marginEnd);
-                view.setLayoutParams(lp);
-            }
-        }
-        updateClockPadding();
-    }
-
+    /**
+     * When QS is scrolling, mClockIconsAlpha should scroll away and fade out.
+     *
+     * For a given scroll level, this method does the following:
+     * <ol>
+     *     <li>Determine the alpha that {@code mClockIconsView} should have when the panel is fully
+     *         expanded.</li>
+     *     <li>Set the scroll of {@code mClockIconsView} to the same of {@code QSPanel}.</li>
+     *     <li>Set the alpha of {@code mClockIconsView} to that determined by the expansion of
+     *         the panel, interpolated between 1 (no expansion) and {@code mClockIconsAlpha} (fully
+     *         expanded), matching the animator.</li>
+     * </ol>
+     *
+     * @param scrollY the scroll of the QSPanel container
+     */
     public void setExpandedScrollAmount(int scrollY) {
         // The scrolling of the expanded qs has changed. Since the header text isn't part of it,
         // but would overlap content, we're fading it out.
         float newAlpha = 1.0f;
-        if (mHeaderTextContainerView.getHeight() > 0) {
-            newAlpha = MathUtils.map(0, mHeaderTextContainerView.getHeight() / 2.0f, 1.0f, 0.0f,
+        if (mClockIconsView.getHeight() > 0) {
+            newAlpha = MathUtils.map(0, mClockIconsView.getHeight() / 2.0f, 1.0f, 0.0f,
                     scrollY);
             newAlpha = Interpolators.ALPHA_OUT.getInterpolation(newAlpha);
         }
-        mHeaderTextContainerView.setScrollY(scrollY);
-        if (newAlpha != mExpandedHeaderAlpha) {
-            mExpandedHeaderAlpha = newAlpha;
-            mHeaderTextContainerView.setAlpha(MathUtils.lerp(0.0f, mExpandedHeaderAlpha,
+        mClockIconsView.setScrollY(scrollY);
+        if (newAlpha != mClockIconsAlpha) {
+            mClockIconsAlpha = newAlpha;
+            mClockIconsView.setAlpha(MathUtils.lerp(1.0f, mClockIconsAlpha,
                     mKeyguardExpansionFraction));
-            updateHeaderTextContainerAlphaAnimator();
+            updateAlphaAnimator();
         }
     }
 }

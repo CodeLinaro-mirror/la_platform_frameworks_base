@@ -49,29 +49,29 @@ namespace android::os::incremental {
 
 class MockVoldService : public VoldServiceWrapper {
 public:
-    MOCK_CONST_METHOD4(mountIncFs,
+    MOCK_CONST_METHOD5(mountIncFs,
                        binder::Status(const std::string& backingPath, const std::string& targetDir,
-                                      int32_t flags,
+                                      int32_t flags, const std::string& sysfsName,
                                       IncrementalFileSystemControlParcel* _aidl_return));
     MOCK_CONST_METHOD1(unmountIncFs, binder::Status(const std::string& dir));
     MOCK_CONST_METHOD2(bindMount,
                        binder::Status(const std::string& sourceDir, const std::string& argetDir));
-    MOCK_CONST_METHOD2(
+    MOCK_CONST_METHOD3(
             setIncFsMountOptions,
             binder::Status(const ::android::os::incremental::IncrementalFileSystemControlParcel&,
-                           bool));
+                           bool, bool));
 
     void mountIncFsFails() {
-        ON_CALL(*this, mountIncFs(_, _, _, _))
+        ON_CALL(*this, mountIncFs(_, _, _, _, _))
                 .WillByDefault(
                         Return(binder::Status::fromExceptionCode(1, String8("failed to mount"))));
     }
     void mountIncFsInvalidControlParcel() {
-        ON_CALL(*this, mountIncFs(_, _, _, _))
+        ON_CALL(*this, mountIncFs(_, _, _, _, _))
                 .WillByDefault(Invoke(this, &MockVoldService::getInvalidControlParcel));
     }
     void mountIncFsSuccess() {
-        ON_CALL(*this, mountIncFs(_, _, _, _))
+        ON_CALL(*this, mountIncFs(_, _, _, _, _))
                 .WillByDefault(Invoke(this, &MockVoldService::incFsSuccess));
     }
     void bindMountFails() {
@@ -83,36 +83,52 @@ public:
         ON_CALL(*this, bindMount(_, _)).WillByDefault(Return(binder::Status::ok()));
     }
     void setIncFsMountOptionsFails() const {
-        ON_CALL(*this, setIncFsMountOptions(_, _))
+        ON_CALL(*this, setIncFsMountOptions(_, _, _))
                 .WillByDefault(Return(
                         binder::Status::fromExceptionCode(1, String8("failed to set options"))));
     }
     void setIncFsMountOptionsSuccess() {
-        ON_CALL(*this, setIncFsMountOptions(_, _)).WillByDefault(Return(binder::Status::ok()));
+        ON_CALL(*this, setIncFsMountOptions(_, _, _))
+                .WillByDefault(Invoke(this, &MockVoldService::setIncFsMountOptionsOk));
     }
     binder::Status getInvalidControlParcel(const std::string& imagePath,
                                            const std::string& targetDir, int32_t flags,
+                                           const std::string& sysfsName,
                                            IncrementalFileSystemControlParcel* _aidl_return) {
         _aidl_return = {};
         return binder::Status::ok();
     }
     binder::Status incFsSuccess(const std::string& imagePath, const std::string& targetDir,
-                                int32_t flags, IncrementalFileSystemControlParcel* _aidl_return) {
+                                int32_t flags, const std::string& sysfsName,
+                                IncrementalFileSystemControlParcel* _aidl_return) {
         _aidl_return->pendingReads.reset(base::unique_fd(dup(STDIN_FILENO)));
         _aidl_return->cmd.reset(base::unique_fd(dup(STDIN_FILENO)));
         _aidl_return->log.reset(base::unique_fd(dup(STDIN_FILENO)));
         return binder::Status::ok();
     }
+    binder::Status setIncFsMountOptionsOk(
+            const ::android::os::incremental::IncrementalFileSystemControlParcel& control,
+            bool enableReadLogs, bool enableReadTimeouts) {
+        mReadLogsEnabled = enableReadLogs;
+        mReadTimeoutsEnabled = enableReadTimeouts;
+        return binder::Status::ok();
+    }
+
+    bool readLogsEnabled() const { return mReadLogsEnabled; }
+    bool readTimeoutsEnabled() const { return mReadTimeoutsEnabled; }
 
 private:
     TemporaryFile cmdFile;
     TemporaryFile logFile;
+
+    bool mReadLogsEnabled = false;
+    bool mReadTimeoutsEnabled = true;
 };
 
 class MockDataLoader : public IDataLoader {
 public:
     MockDataLoader() {
-        ON_CALL(*this, create(_, _, _, _)).WillByDefault(Invoke(this, &MockDataLoader::createOk));
+        initializeCreateOk();
         ON_CALL(*this, start(_)).WillByDefault(Invoke(this, &MockDataLoader::startOk));
         ON_CALL(*this, stop(_)).WillByDefault(Invoke(this, &MockDataLoader::stopOk));
         ON_CALL(*this, destroy(_)).WillByDefault(Invoke(this, &MockDataLoader::destroyOk));
@@ -131,6 +147,10 @@ public:
                  binder::Status(int32_t id, const std::vector<InstallationFileParcel>& addedFiles,
                                 const std::vector<std::string>& removedFiles));
 
+    void initializeCreateOk() {
+        ON_CALL(*this, create(_, _, _, _)).WillByDefault(Invoke(this, &MockDataLoader::createOk));
+    }
+
     void initializeCreateOkNoStatus() {
         ON_CALL(*this, create(_, _, _, _))
                 .WillByDefault(Invoke(this, &MockDataLoader::createOkNoStatus));
@@ -140,9 +160,7 @@ public:
                             const content::pm::FileSystemControlParcel& control,
                             const sp<content::pm::IDataLoaderStatusListener>& listener) {
         createOkNoStatus(id, params, control, listener);
-        if (mListener) {
-            mListener->onStatusChanged(id, IDataLoaderStatusListener::DATA_LOADER_CREATED);
-        }
+        reportStatus(id);
         return binder::Status::ok();
     }
     binder::Status createOkNoStatus(int32_t id, const content::pm::DataLoaderParamsParcel& params,
@@ -150,45 +168,26 @@ public:
                                     const sp<content::pm::IDataLoaderStatusListener>& listener) {
         mServiceConnector = control.service;
         mListener = listener;
+        mStatus = IDataLoaderStatusListener::DATA_LOADER_CREATED;
         return binder::Status::ok();
     }
     binder::Status startOk(int32_t id) {
-        if (mListener) {
-            mListener->onStatusChanged(id, IDataLoaderStatusListener::DATA_LOADER_STARTED);
-        }
+        setAndReportStatus(id, IDataLoaderStatusListener::DATA_LOADER_STARTED);
         return binder::Status::ok();
     }
     binder::Status stopOk(int32_t id) {
-        if (mListener) {
-            mListener->onStatusChanged(id, IDataLoaderStatusListener::DATA_LOADER_STOPPED);
-        }
+        setAndReportStatus(id, IDataLoaderStatusListener::DATA_LOADER_STOPPED);
         return binder::Status::ok();
     }
     binder::Status destroyOk(int32_t id) {
-        if (mListener) {
-            mListener->onStatusChanged(id, IDataLoaderStatusListener::DATA_LOADER_DESTROYED);
-        }
+        setAndReportStatus(id, IDataLoaderStatusListener::DATA_LOADER_DESTROYED);
         mListener = nullptr;
         return binder::Status::ok();
     }
     binder::Status prepareImageOk(int32_t id,
                                   const ::std::vector<content::pm::InstallationFileParcel>&,
                                   const ::std::vector<::std::string>&) {
-        if (mListener) {
-            mListener->onStatusChanged(id, IDataLoaderStatusListener::DATA_LOADER_IMAGE_READY);
-        }
-        return binder::Status::ok();
-    }
-    binder::Status storageError(int32_t id) {
-        if (mListener) {
-            mListener->reportStreamHealth(id, IDataLoaderStatusListener::STREAM_STORAGE_ERROR);
-        }
-        return binder::Status::ok();
-    }
-    binder::Status transportError(int32_t id) {
-        if (mListener) {
-            mListener->reportStreamHealth(id, IDataLoaderStatusListener::STREAM_INTEGRITY_ERROR);
-        }
+        setAndReportStatus(id, IDataLoaderStatusListener::DATA_LOADER_IMAGE_READY);
         return binder::Status::ok();
     }
     int32_t setStorageParams(bool enableReadLogs) {
@@ -197,10 +196,22 @@ public:
         EXPECT_TRUE(mServiceConnector->setStorageParams(enableReadLogs, &result).isOk());
         return result;
     }
+    int status() const { return mStatus; }
 
 private:
+    void setAndReportStatus(int id, int status) {
+        mStatus = status;
+        reportStatus(id);
+    }
+    void reportStatus(int id) {
+        if (mListener) {
+            mListener->onStatusChanged(id, mStatus);
+        }
+    }
+
     sp<IIncrementalServiceConnector> mServiceConnector;
     sp<IDataLoaderStatusListener> mListener;
+    int mStatus = IDataLoaderStatusListener::DATA_LOADER_DESTROYED;
 };
 
 class MockDataLoaderManager : public DataLoaderManagerWrapper {
@@ -242,18 +253,56 @@ public:
         mId = mountId;
         mListener = listener;
         mDataLoader = mDataLoaderHolder;
+        mBindDelayMs = bindDelayMs;
         *_aidl_return = true;
         if (mListener) {
             mListener->onStatusChanged(mId, IDataLoaderStatusListener::DATA_LOADER_BOUND);
         }
         return binder::Status::ok();
     }
+    binder::Status bindToDataLoaderNotOkWithNoDelay(int32_t mountId,
+                                                    const DataLoaderParamsParcel& params,
+                                                    int bindDelayMs,
+                                                    const sp<IDataLoaderStatusListener>& listener,
+                                                    bool* _aidl_return) {
+        CHECK(bindDelayMs == 0) << bindDelayMs;
+        *_aidl_return = false;
+        return binder::Status::ok();
+    }
+    binder::Status bindToDataLoaderBindingWithNoDelay(int32_t mountId,
+                                                      const DataLoaderParamsParcel& params,
+                                                      int bindDelayMs,
+                                                      const sp<IDataLoaderStatusListener>& listener,
+                                                      bool* _aidl_return) {
+        CHECK(bindDelayMs == 0) << bindDelayMs;
+        *_aidl_return = true;
+        if (listener) {
+            listener->onStatusChanged(mId, IDataLoaderStatusListener::DATA_LOADER_BINDING);
+        }
+        return binder::Status::ok();
+    }
+    binder::Status bindToDataLoaderOkWithNoDelay(int32_t mountId,
+                                                 const DataLoaderParamsParcel& params,
+                                                 int bindDelayMs,
+                                                 const sp<IDataLoaderStatusListener>& listener,
+                                                 bool* _aidl_return) {
+        CHECK(bindDelayMs == 0) << bindDelayMs;
+        return bindToDataLoaderOk(mountId, params, bindDelayMs, listener, _aidl_return);
+    }
+    binder::Status bindToDataLoaderOkWith1sDelay(int32_t mountId,
+                                                 const DataLoaderParamsParcel& params,
+                                                 int bindDelayMs,
+                                                 const sp<IDataLoaderStatusListener>& listener,
+                                                 bool* _aidl_return) {
+        CHECK(100 * 9 <= bindDelayMs && bindDelayMs <= 100 * 11) << bindDelayMs;
+        return bindToDataLoaderOk(mountId, params, bindDelayMs, listener, _aidl_return);
+    }
     binder::Status bindToDataLoaderOkWith10sDelay(int32_t mountId,
                                                   const DataLoaderParamsParcel& params,
                                                   int bindDelayMs,
                                                   const sp<IDataLoaderStatusListener>& listener,
                                                   bool* _aidl_return) {
-        CHECK(1000 * 9 <= bindDelayMs && bindDelayMs <= 1000 * 11) << bindDelayMs;
+        CHECK(100 * 9 * 9 <= bindDelayMs && bindDelayMs <= 100 * 11 * 11) << bindDelayMs;
         return bindToDataLoaderOk(mountId, params, bindDelayMs, listener, _aidl_return);
     }
     binder::Status bindToDataLoaderOkWith100sDelay(int32_t mountId,
@@ -261,7 +310,7 @@ public:
                                                    int bindDelayMs,
                                                    const sp<IDataLoaderStatusListener>& listener,
                                                    bool* _aidl_return) {
-        CHECK(1000 * 9 * 9 < bindDelayMs && bindDelayMs < 1000 * 11 * 11) << bindDelayMs;
+        CHECK(100 * 9 * 9 * 9 < bindDelayMs && bindDelayMs < 100 * 11 * 11 * 11) << bindDelayMs;
         return bindToDataLoaderOk(mountId, params, bindDelayMs, listener, _aidl_return);
     }
     binder::Status bindToDataLoaderOkWith1000sDelay(int32_t mountId,
@@ -269,7 +318,8 @@ public:
                                                     int bindDelayMs,
                                                     const sp<IDataLoaderStatusListener>& listener,
                                                     bool* _aidl_return) {
-        CHECK(1000 * 9 * 9 * 9 < bindDelayMs && bindDelayMs < 1000 * 11 * 11 * 11) << bindDelayMs;
+        CHECK(100 * 9 * 9 * 9 * 9 < bindDelayMs && bindDelayMs < 100 * 11 * 11 * 11 * 11)
+                << bindDelayMs;
         return bindToDataLoaderOk(mountId, params, bindDelayMs, listener, _aidl_return);
     }
     binder::Status bindToDataLoaderOkWith10000sDelay(int32_t mountId,
@@ -277,7 +327,7 @@ public:
                                                      int bindDelayMs,
                                                      const sp<IDataLoaderStatusListener>& listener,
                                                      bool* _aidl_return) {
-        CHECK(1000 * 9 * 9 * 9 * 9 < bindDelayMs && bindDelayMs < 1000 * 11 * 11 * 11 * 11)
+        CHECK(100 * 9 * 9 * 9 * 9 * 9 < bindDelayMs && bindDelayMs < 100 * 11 * 11 * 11 * 11 * 11)
                 << bindDelayMs;
         return bindToDataLoaderOk(mountId, params, bindDelayMs, listener, _aidl_return);
     }
@@ -302,20 +352,23 @@ public:
         mListener->onStatusChanged(mId, IDataLoaderStatusListener::DATA_LOADER_UNRECOVERABLE);
     }
     binder::Status unbindFromDataLoaderOk(int32_t id) {
+        mBindDelayMs = -1;
         if (mDataLoader) {
             if (auto status = mDataLoader->destroy(id); !status.isOk()) {
                 return status;
             }
             mDataLoader = nullptr;
-        }
-        if (mListener) {
+        } else if (mListener) {
             mListener->onStatusChanged(id, IDataLoaderStatusListener::DATA_LOADER_DESTROYED);
         }
         return binder::Status::ok();
     }
 
+    int bindDelayMs() const { return mBindDelayMs; }
+
 private:
-    int mId;
+    int mId = -1;
+    int mBindDelayMs = -1;
     sp<IDataLoaderStatusListener> mListener;
     sp<IDataLoader> mDataLoader;
     sp<IDataLoader> mDataLoaderHolder;
@@ -341,24 +394,35 @@ public:
     MOCK_CONST_METHOD2(getMetadata, RawMetadata(const Control& control, FileId fileid));
     MOCK_CONST_METHOD2(getMetadata, RawMetadata(const Control& control, std::string_view path));
     MOCK_CONST_METHOD2(getFileId, FileId(const Control& control, std::string_view path));
-    MOCK_CONST_METHOD1(toString, std::string(FileId fileId));
     MOCK_CONST_METHOD2(countFilledBlocks,
                        std::pair<IncFsBlockIndex, IncFsBlockIndex>(const Control& control,
                                                                    std::string_view path));
+    MOCK_CONST_METHOD2(isFileFullyLoaded,
+                       incfs::LoadingState(const Control& control, std::string_view path));
+    MOCK_CONST_METHOD2(isFileFullyLoaded, incfs::LoadingState(const Control& control, FileId id));
+    MOCK_CONST_METHOD1(isEverythingFullyLoaded, incfs::LoadingState(const Control& control));
     MOCK_CONST_METHOD3(link,
                        ErrorCode(const Control& control, std::string_view from,
                                  std::string_view to));
     MOCK_CONST_METHOD2(unlink, ErrorCode(const Control& control, std::string_view path));
     MOCK_CONST_METHOD2(openForSpecialOps, UniqueFd(const Control& control, FileId id));
     MOCK_CONST_METHOD1(writeBlocks, ErrorCode(std::span<const DataBlock> blocks));
+    MOCK_CONST_METHOD3(reserveSpace, ErrorCode(const Control& control, FileId id, IncFsSize size));
     MOCK_CONST_METHOD3(waitForPendingReads,
                        WaitResult(const Control& control, std::chrono::milliseconds timeout,
-                                  std::vector<incfs::ReadInfo>* pendingReadsBuffer));
+                                  std::vector<incfs::ReadInfoWithUid>* pendingReadsBuffer));
     MOCK_CONST_METHOD2(setUidReadTimeouts,
                        ErrorCode(const Control& control,
                                  const std::vector<PerUidReadTimeouts>& perUidReadTimeouts));
+    MOCK_CONST_METHOD2(forEachFile, ErrorCode(const Control& control, FileCallback cb));
+    MOCK_CONST_METHOD2(forEachIncompleteFile, ErrorCode(const Control& control, FileCallback cb));
+    MOCK_CONST_METHOD1(getMetrics, std::optional<Metrics>(std::string_view path));
+    MOCK_CONST_METHOD1(getLastReadError, std::optional<LastReadError>(const Control& control));
 
-    MockIncFs() { ON_CALL(*this, listExistingMounts(_)).WillByDefault(Return()); }
+    MockIncFs() {
+        ON_CALL(*this, listExistingMounts(_)).WillByDefault(Return());
+        ON_CALL(*this, reserveSpace(_, _, _)).WillByDefault(Return(0));
+    }
 
     void makeFileFails() { ON_CALL(*this, makeFile(_, _, _, _, _)).WillByDefault(Return(-1)); }
     void makeFileSuccess() { ON_CALL(*this, makeFile(_, _, _, _, _)).WillByDefault(Return(0)); }
@@ -388,7 +452,7 @@ public:
         ON_CALL(*this, waitForPendingReads(_, _, _))
                 .WillByDefault(
                         Invoke([ts](const Control& control, std::chrono::milliseconds timeout,
-                                    std::vector<incfs::ReadInfo>* pendingReadsBuffer) {
+                                    std::vector<incfs::ReadInfoWithUid>* pendingReadsBuffer) {
                             pendingReadsBuffer->push_back({.bootClockTsUs = ts});
                             return android::incfs::WaitResult::HaveData;
                         }));
@@ -557,6 +621,32 @@ public:
     }
 };
 
+class MockClockWrapper : public ClockWrapper {
+public:
+    MOCK_CONST_METHOD0(now, TimePoint());
+
+    void start() { ON_CALL(*this, now()).WillByDefault(Invoke(this, &MockClockWrapper::getClock)); }
+
+    template <class Delta>
+    void advance(Delta delta) {
+        mClock += delta;
+    }
+
+    void advanceMs(int deltaMs) { mClock += std::chrono::milliseconds(deltaMs); }
+
+    TimePoint getClock() const { return mClock; }
+    std::optional<timespec> getClockMono() const {
+        const auto nsSinceEpoch =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(mClock.time_since_epoch())
+                        .count();
+        timespec ts = {.tv_sec = static_cast<time_t>(nsSinceEpoch / 1000000000LL),
+                       .tv_nsec = static_cast<long>(nsSinceEpoch % 1000000000LL)};
+        return ts;
+    }
+
+    TimePoint mClock = Clock::now();
+};
+
 class MockStorageHealthListener : public os::incremental::BnStorageHealthListener {
 public:
     MOCK_METHOD2(onHealthStatus, binder::Status(int32_t storageId, int32_t status));
@@ -594,7 +684,7 @@ public:
                        std::unique_ptr<MockLooperWrapper> looper,
                        std::unique_ptr<MockTimedQueueWrapper> timedQueue,
                        std::unique_ptr<MockTimedQueueWrapper> progressUpdateJobQueue,
-                       std::unique_ptr<MockFsWrapper> fs)
+                       std::unique_ptr<MockFsWrapper> fs, std::unique_ptr<MockClockWrapper> clock)
           : mVold(std::move(vold)),
             mDataLoaderManager(std::move(dataLoaderManager)),
             mIncFs(std::move(incfs)),
@@ -603,7 +693,8 @@ public:
             mLooper(std::move(looper)),
             mTimedQueue(std::move(timedQueue)),
             mProgressUpdateJobQueue(std::move(progressUpdateJobQueue)),
-            mFs(std::move(fs)) {}
+            mFs(std::move(fs)),
+            mClock(std::move(clock)) {}
     std::unique_ptr<VoldServiceWrapper> getVoldService() final { return std::move(mVold); }
     std::unique_ptr<DataLoaderManagerWrapper> getDataLoaderManager() final {
         return std::move(mDataLoaderManager);
@@ -619,6 +710,7 @@ public:
         return std::move(mProgressUpdateJobQueue);
     }
     std::unique_ptr<FsWrapper> getFs() final { return std::move(mFs); }
+    std::unique_ptr<ClockWrapper> getClock() final { return std::move(mClock); }
 
 private:
     std::unique_ptr<MockVoldService> mVold;
@@ -630,6 +722,7 @@ private:
     std::unique_ptr<MockTimedQueueWrapper> mTimedQueue;
     std::unique_ptr<MockTimedQueueWrapper> mProgressUpdateJobQueue;
     std::unique_ptr<MockFsWrapper> mFs;
+    std::unique_ptr<MockClockWrapper> mClock;
 };
 
 // --- IncrementalServiceTest ---
@@ -657,6 +750,8 @@ public:
         mProgressUpdateJobQueue = progressUpdateJobQueue.get();
         auto fs = std::make_unique<NiceMock<MockFsWrapper>>();
         mFs = fs.get();
+        auto clock = std::make_unique<NiceMock<MockClockWrapper>>();
+        mClock = clock.get();
         mIncrementalService = std::make_unique<
                 IncrementalService>(MockServiceManager(std::move(vold),
                                                        std::move(dataloaderManager),
@@ -664,12 +759,13 @@ public:
                                                        std::move(jni), std::move(looper),
                                                        std::move(timedQueue),
                                                        std::move(progressUpdateJobQueue),
-                                                       std::move(fs)),
+                                                       std::move(fs), std::move(clock)),
                                     mRootDir.path);
         mDataLoaderParcel.packageName = "com.test";
         mDataLoaderParcel.arguments = "uri";
         mDataLoaderManager->unbindFromDataLoaderSuccess();
         mIncrementalService->onSystemReady();
+        mClock->start();
         setupSuccess();
     }
 
@@ -702,16 +798,53 @@ public:
         mDataLoaderManager->getDataLoaderSuccess();
     }
 
-    void checkMillisSinceOldestPendingRead(int storageId, long expected) {
+    void checkHealthMetrics(int storageId, long expectedMillisSinceOldestPendingRead,
+                            int expectedStorageHealthStatusCode) {
         android::os::PersistableBundle result{};
         mIncrementalService->getMetrics(storageId, &result);
-        int64_t value = -1;
+        ASSERT_EQ(6, (int)result.size());
+        int64_t millisSinceOldestPendingRead = -1;
         ASSERT_TRUE(result.getLong(String16(BnIncrementalService::
                                                     METRICS_MILLIS_SINCE_OLDEST_PENDING_READ()
                                                             .c_str()),
-                                   &value));
-        ASSERT_EQ(expected, value);
-        ASSERT_EQ(1, (int)result.size());
+                                   &millisSinceOldestPendingRead));
+        ASSERT_EQ(expectedMillisSinceOldestPendingRead, millisSinceOldestPendingRead);
+        int storageHealthStatusCode = -1;
+        ASSERT_TRUE(
+                result.getInt(String16(BnIncrementalService::METRICS_STORAGE_HEALTH_STATUS_CODE()
+                                               .c_str()),
+                              &storageHealthStatusCode));
+        ASSERT_EQ(expectedStorageHealthStatusCode, storageHealthStatusCode);
+        int dataLoaderStatusCode = -1;
+        ASSERT_TRUE(result.getInt(String16(BnIncrementalService::METRICS_DATA_LOADER_STATUS_CODE()
+                                                   .c_str()),
+                                  &dataLoaderStatusCode));
+        ASSERT_EQ(IDataLoaderStatusListener::DATA_LOADER_STARTED, dataLoaderStatusCode);
+    }
+
+    void checkBindingMetrics(int storageId, int64_t expectedMillisSinceLastDataLoaderBind,
+                             int64_t expectedDataLoaderBindDelayMillis) {
+        android::os::PersistableBundle result{};
+        mIncrementalService->getMetrics(storageId, &result);
+        ASSERT_EQ(6, (int)result.size());
+        int dataLoaderStatus = -1;
+        ASSERT_TRUE(result.getInt(String16(BnIncrementalService::METRICS_DATA_LOADER_STATUS_CODE()
+                                                   .c_str()),
+                                  &dataLoaderStatus));
+        ASSERT_EQ(IDataLoaderStatusListener::DATA_LOADER_STARTED, dataLoaderStatus);
+        int64_t millisSinceLastDataLoaderBind = -1;
+        ASSERT_TRUE(result.getLong(String16(BnIncrementalService::
+                                                    METRICS_MILLIS_SINCE_LAST_DATA_LOADER_BIND()
+                                                            .c_str()),
+                                   &millisSinceLastDataLoaderBind));
+        ASSERT_EQ(expectedMillisSinceLastDataLoaderBind, millisSinceLastDataLoaderBind);
+        int64_t dataLoaderBindDelayMillis = -1;
+        ASSERT_TRUE(
+                result.getLong(String16(
+                                       BnIncrementalService::METRICS_DATA_LOADER_BIND_DELAY_MILLIS()
+                                               .c_str()),
+                               &dataLoaderBindDelayMillis));
+        ASSERT_EQ(expectedDataLoaderBindDelayMillis, dataLoaderBindDelayMillis);
     }
 
 protected:
@@ -724,6 +857,7 @@ protected:
     NiceMock<MockTimedQueueWrapper>* mTimedQueue = nullptr;
     NiceMock<MockTimedQueueWrapper>* mProgressUpdateJobQueue = nullptr;
     NiceMock<MockFsWrapper>* mFs = nullptr;
+    NiceMock<MockClockWrapper>* mClock = nullptr;
     NiceMock<MockDataLoader>* mDataLoader = nullptr;
     std::unique_ptr<IncrementalService> mIncrementalService;
     TemporaryDir mRootDir;
@@ -812,10 +946,10 @@ TEST_F(IncrementalServiceTest, testDeleteStorageSuccess) {
 }
 
 TEST_F(IncrementalServiceTest, testDataLoaderDestroyedAndDelayed) {
-    EXPECT_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _)).Times(6);
+    EXPECT_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _)).Times(7);
     EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_)).Times(1);
-    EXPECT_CALL(*mDataLoader, create(_, _, _, _)).Times(6);
-    EXPECT_CALL(*mDataLoader, start(_)).Times(6);
+    EXPECT_CALL(*mDataLoader, create(_, _, _, _)).Times(7);
+    EXPECT_CALL(*mDataLoader, start(_)).Times(7);
     EXPECT_CALL(*mDataLoader, destroy(_)).Times(1);
     EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
     TemporaryDir tempDir;
@@ -829,27 +963,180 @@ TEST_F(IncrementalServiceTest, testDataLoaderDestroyedAndDelayed) {
 
     ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
             .WillByDefault(Invoke(mDataLoaderManager,
+                                  &MockDataLoaderManager::bindToDataLoaderOkWith1sDelay));
+    checkBindingMetrics(storageId, 0, 0);
+    mClock->advanceMs(mDataLoaderManager->bindDelayMs());
+    checkBindingMetrics(storageId, 0, 0);
+    mDataLoaderManager->setDataLoaderStatusDestroyed();
+
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager,
                                   &MockDataLoaderManager::bindToDataLoaderOkWith10sDelay));
+    checkBindingMetrics(storageId, 0, mDataLoaderManager->bindDelayMs());
+    mClock->advanceMs(mDataLoaderManager->bindDelayMs());
+    checkBindingMetrics(storageId, mDataLoaderManager->bindDelayMs(),
+                        mDataLoaderManager->bindDelayMs());
     mDataLoaderManager->setDataLoaderStatusDestroyed();
 
     ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
             .WillByDefault(Invoke(mDataLoaderManager,
                                   &MockDataLoaderManager::bindToDataLoaderOkWith100sDelay));
+    checkBindingMetrics(storageId, 0, mDataLoaderManager->bindDelayMs());
+    mClock->advanceMs(mDataLoaderManager->bindDelayMs());
+    checkBindingMetrics(storageId, mDataLoaderManager->bindDelayMs(),
+                        mDataLoaderManager->bindDelayMs());
     mDataLoaderManager->setDataLoaderStatusDestroyed();
 
     ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
             .WillByDefault(Invoke(mDataLoaderManager,
                                   &MockDataLoaderManager::bindToDataLoaderOkWith1000sDelay));
+    checkBindingMetrics(storageId, 0, mDataLoaderManager->bindDelayMs());
+    mClock->advanceMs(mDataLoaderManager->bindDelayMs());
+    checkBindingMetrics(storageId, mDataLoaderManager->bindDelayMs(),
+                        mDataLoaderManager->bindDelayMs());
     mDataLoaderManager->setDataLoaderStatusDestroyed();
 
     ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
             .WillByDefault(Invoke(mDataLoaderManager,
                                   &MockDataLoaderManager::bindToDataLoaderOkWith10000sDelay));
+    checkBindingMetrics(storageId, 0, mDataLoaderManager->bindDelayMs());
+    // Try the reduced delay, just in case.
+    mClock->advanceMs(mDataLoaderManager->bindDelayMs() / 2);
+    checkBindingMetrics(storageId, mDataLoaderManager->bindDelayMs() / 2,
+                        mDataLoaderManager->bindDelayMs());
     mDataLoaderManager->setDataLoaderStatusDestroyed();
 
     ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
             .WillByDefault(Invoke(mDataLoaderManager,
                                   &MockDataLoaderManager::bindToDataLoaderOkWith10000sDelay));
+    checkBindingMetrics(storageId, 0, mDataLoaderManager->bindDelayMs());
+    mClock->advanceMs(mDataLoaderManager->bindDelayMs());
+    checkBindingMetrics(storageId, mDataLoaderManager->bindDelayMs(),
+                        mDataLoaderManager->bindDelayMs());
+    mDataLoaderManager->setDataLoaderStatusDestroyed();
+}
+
+TEST_F(IncrementalServiceTest, testDataLoaderOnRestart) {
+    mIncFs->waitForPendingReadsSuccess();
+    mIncFs->openMountSuccess();
+
+    constexpr auto bindRetryInterval = 5s;
+
+    EXPECT_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _)).Times(11);
+    EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_)).Times(1);
+    EXPECT_CALL(*mDataLoader, create(_, _, _, _)).Times(7);
+    EXPECT_CALL(*mDataLoader, start(_)).Times(7);
+    EXPECT_CALL(*mDataLoader, destroy(_)).Times(1);
+    EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
+    EXPECT_CALL(*mTimedQueue, addJob(_, _, _)).Times(4);
+    TemporaryDir tempDir;
+    int storageId =
+            mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
+                                               IncrementalService::CreateOptions::CreateNew);
+    ASSERT_GE(storageId, 0);
+
+    // First binds to DataLoader fails... because it's restart.
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager,
+                                  &MockDataLoaderManager::bindToDataLoaderNotOkWithNoDelay));
+
+    // Request DL start.
+    mIncrementalService->startLoading(storageId, std::move(mDataLoaderParcel), {}, {}, {}, {});
+
+    // Retry callback present.
+    ASSERT_EQ(storageId, mTimedQueue->mId);
+    ASSERT_EQ(mTimedQueue->mAfter, bindRetryInterval);
+    auto retryCallback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(storageId);
+
+    // Expecting the same bindToDataLoaderNotOkWithNoDelay call.
+    mClock->advance(5s);
+
+    retryCallback();
+    // Retry callback present.
+    ASSERT_EQ(storageId, mTimedQueue->mId);
+    ASSERT_EQ(mTimedQueue->mAfter, bindRetryInterval);
+    retryCallback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(storageId);
+
+    // Returning "binding" so that we can retry.
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager,
+                                  &MockDataLoaderManager::bindToDataLoaderBindingWithNoDelay));
+
+    // Expecting bindToDataLoaderBindingWithNoDelay call.
+    mClock->advance(5s);
+
+    retryCallback();
+    // No retry callback.
+    ASSERT_EQ(mTimedQueue->mAfter, 0ms);
+    ASSERT_EQ(mTimedQueue->mWhat, nullptr);
+
+    // Should not change the bindToDataLoader call count
+    ASSERT_NE(nullptr, mLooper->mCallback);
+    ASSERT_NE(nullptr, mLooper->mCallbackData);
+    auto looperCb = mLooper->mCallback;
+    auto looperCbData = mLooper->mCallbackData;
+    looperCb(-1, -1, looperCbData);
+
+    // Expecting the same bindToDataLoaderBindingWithNoDelay call.
+    mClock->advance(5s);
+
+    // Use pending reads callback to trigger binding.
+    looperCb(-1, -1, looperCbData);
+
+    // No retry callback.
+    ASSERT_EQ(mTimedQueue->mAfter, 0ms);
+    ASSERT_EQ(mTimedQueue->mWhat, nullptr);
+
+    // Now we are out of 10m "retry" budget, let's finally bind.
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager, &MockDataLoaderManager::bindToDataLoaderOk));
+    mClock->advance(11min);
+
+    // Use pending reads callback to trigger binding.
+    looperCb(-1, -1, looperCbData);
+
+    // No retry callback.
+    ASSERT_EQ(mTimedQueue->mAfter, 0ms);
+    ASSERT_EQ(mTimedQueue->mWhat, nullptr);
+
+    // And test the rest of the backoff.
+    // Simulated crash/other connection breakage.
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager,
+                                  &MockDataLoaderManager::bindToDataLoaderOkWith1sDelay));
+    mClock->advanceMs(mDataLoaderManager->bindDelayMs());
+    mDataLoaderManager->setDataLoaderStatusDestroyed();
+
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager,
+                                  &MockDataLoaderManager::bindToDataLoaderOkWith10sDelay));
+    mClock->advanceMs(mDataLoaderManager->bindDelayMs());
+    mDataLoaderManager->setDataLoaderStatusDestroyed();
+
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager,
+                                  &MockDataLoaderManager::bindToDataLoaderOkWith100sDelay));
+    mClock->advanceMs(mDataLoaderManager->bindDelayMs());
+    mDataLoaderManager->setDataLoaderStatusDestroyed();
+
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager,
+                                  &MockDataLoaderManager::bindToDataLoaderOkWith1000sDelay));
+    mClock->advanceMs(mDataLoaderManager->bindDelayMs());
+    mDataLoaderManager->setDataLoaderStatusDestroyed();
+
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager,
+                                  &MockDataLoaderManager::bindToDataLoaderOkWith10000sDelay));
+    mClock->advanceMs(mDataLoaderManager->bindDelayMs());
+    mDataLoaderManager->setDataLoaderStatusDestroyed();
+
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager,
+                                  &MockDataLoaderManager::bindToDataLoaderOkWith10000sDelay));
+    mClock->advanceMs(mDataLoaderManager->bindDelayMs());
     mDataLoaderManager->setDataLoaderStatusDestroyed();
 }
 
@@ -946,10 +1233,79 @@ TEST_F(IncrementalServiceTest, testStartDataLoaderRecreateOnPendingReads) {
     ASSERT_GE(storageId, 0);
     ASSERT_TRUE(mIncrementalService->startLoading(storageId, std::move(mDataLoaderParcel), {}, {},
                                                   {}, {}));
-    mDataLoaderManager->setDataLoaderStatusUnavailable();
+    mDataLoaderManager->setDataLoaderStatusUnrecoverable();
+
+    // Timed callback present.
+    ASSERT_EQ(storageId, mTimedQueue->mId);
+    ASSERT_GE(mTimedQueue->mAfter, 10ms);
+    auto timedCallback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(storageId);
+
+    // First callback call to propagate unrecoverable.
+    timedCallback();
+
+    // And second call to trigger recreation.
     ASSERT_NE(nullptr, mLooper->mCallback);
     ASSERT_NE(nullptr, mLooper->mCallbackData);
     mLooper->mCallback(-1, -1, mLooper->mCallbackData);
+}
+
+TEST_F(IncrementalServiceTest, testStartDataLoaderUnavailable) {
+    mIncFs->openMountSuccess();
+    mDataLoader->initializeCreateOkNoStatus();
+
+    EXPECT_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _)).Times(3);
+    EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_)).Times(3);
+    EXPECT_CALL(*mDataLoader, create(_, _, _, _)).Times(3);
+    EXPECT_CALL(*mDataLoader, start(_)).Times(1);
+    EXPECT_CALL(*mDataLoader, destroy(_)).Times(2);
+    EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
+    EXPECT_CALL(*mLooper, addFd(MockIncFs::kPendingReadsFd, _, _, _, _)).Times(1);
+    EXPECT_CALL(*mLooper, removeFd(MockIncFs::kPendingReadsFd)).Times(1);
+    TemporaryDir tempDir;
+    int storageId =
+            mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
+                                               IncrementalService::CreateOptions::CreateNew);
+    ASSERT_GE(storageId, 0);
+
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager,
+                                  &MockDataLoaderManager::bindToDataLoaderOkWithNoDelay));
+
+    ASSERT_TRUE(mIncrementalService->startLoading(storageId, std::move(mDataLoaderParcel), {}, {},
+                                                  {}, {}));
+
+    // Unavailable.
+    mDataLoaderManager->setDataLoaderStatusUnavailable();
+
+    // Timed callback present.
+    ASSERT_EQ(storageId, mTimedQueue->mId);
+    ASSERT_GE(mTimedQueue->mAfter, 10ms);
+    auto timedCallback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(storageId);
+
+    // Propagating unavailable and expecting it to trigger rebind with 1s retry delay.
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager,
+                                  &MockDataLoaderManager::bindToDataLoaderOkWith1sDelay));
+    timedCallback();
+
+    // Unavailable #2.
+    mDataLoaderManager->setDataLoaderStatusUnavailable();
+
+    // Timed callback present.
+    ASSERT_EQ(storageId, mTimedQueue->mId);
+    ASSERT_GE(mTimedQueue->mAfter, 10ms);
+    timedCallback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(storageId);
+
+    // Propagating unavailable and expecting it to trigger rebind with 10s retry delay.
+    // This time succeed.
+    mDataLoader->initializeCreateOk();
+    ON_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _))
+            .WillByDefault(Invoke(mDataLoaderManager,
+                                  &MockDataLoaderManager::bindToDataLoaderOkWith10sDelay));
+    timedCallback();
 }
 
 TEST_F(IncrementalServiceTest, testStartDataLoaderUnhealthyStorage) {
@@ -963,7 +1319,7 @@ TEST_F(IncrementalServiceTest, testStartDataLoaderUnhealthyStorage) {
     EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
     EXPECT_CALL(*mLooper, addFd(MockIncFs::kPendingReadsFd, _, _, _, _)).Times(2);
     EXPECT_CALL(*mLooper, removeFd(MockIncFs::kPendingReadsFd)).Times(2);
-    EXPECT_CALL(*mTimedQueue, addJob(_, _, _)).Times(4);
+    EXPECT_CALL(*mTimedQueue, addJob(_, _, _)).Times(6);
 
     sp<NiceMock<MockStorageHealthListener>> listener{new NiceMock<MockStorageHealthListener>};
     NiceMock<MockStorageHealthListener>* listenerMock = listener.get();
@@ -1008,7 +1364,7 @@ TEST_F(IncrementalServiceTest, testStartDataLoaderUnhealthyStorage) {
     ASSERT_NE(nullptr, mLooper->mCallbackData);
     ASSERT_EQ(storageId, listener->mStorageId);
     ASSERT_EQ(IStorageHealthListener::HEALTH_STATUS_OK, listener->mStatus);
-    checkMillisSinceOldestPendingRead(storageId, 0);
+    checkHealthMetrics(storageId, 0, listener->mStatus);
 
     // Looper/epoll callback.
     mIncFs->waitForPendingReadsSuccess(kFirstTimestampUs);
@@ -1034,7 +1390,7 @@ TEST_F(IncrementalServiceTest, testStartDataLoaderUnhealthyStorage) {
     ASSERT_EQ(nullptr, mLooper->mCallbackData);
     ASSERT_EQ(storageId, listener->mStorageId);
     ASSERT_EQ(IStorageHealthListener::HEALTH_STATUS_BLOCKED, listener->mStatus);
-    checkMillisSinceOldestPendingRead(storageId, params.blockedTimeoutMs);
+    checkHealthMetrics(storageId, params.blockedTimeoutMs, listener->mStatus);
 
     // Timed callback present.
     ASSERT_EQ(storageId, mTimedQueue->mId);
@@ -1051,7 +1407,7 @@ TEST_F(IncrementalServiceTest, testStartDataLoaderUnhealthyStorage) {
     ASSERT_EQ(nullptr, mLooper->mCallbackData);
     ASSERT_EQ(storageId, listener->mStorageId);
     ASSERT_EQ(IStorageHealthListener::HEALTH_STATUS_UNHEALTHY, listener->mStatus);
-    checkMillisSinceOldestPendingRead(storageId, params.unhealthyTimeoutMs);
+    checkHealthMetrics(storageId, params.unhealthyTimeoutMs, listener->mStatus);
 
     // Timed callback present.
     ASSERT_EQ(storageId, mTimedQueue->mId);
@@ -1068,7 +1424,7 @@ TEST_F(IncrementalServiceTest, testStartDataLoaderUnhealthyStorage) {
     ASSERT_EQ(nullptr, mLooper->mCallbackData);
     ASSERT_EQ(storageId, listener->mStorageId);
     ASSERT_EQ(IStorageHealthListener::HEALTH_STATUS_UNHEALTHY, listener->mStatus);
-    checkMillisSinceOldestPendingRead(storageId, params.unhealthyTimeoutMs);
+    checkHealthMetrics(storageId, params.unhealthyTimeoutMs, listener->mStatus);
 
     // Timed callback present.
     ASSERT_EQ(storageId, mTimedQueue->mId);
@@ -1085,7 +1441,7 @@ TEST_F(IncrementalServiceTest, testStartDataLoaderUnhealthyStorage) {
     ASSERT_NE(nullptr, mLooper->mCallbackData);
     ASSERT_EQ(storageId, listener->mStorageId);
     ASSERT_EQ(IStorageHealthListener::HEALTH_STATUS_OK, listener->mStatus);
-    checkMillisSinceOldestPendingRead(storageId, 0);
+    checkHealthMetrics(storageId, 0, listener->mStatus);
 }
 
 TEST_F(IncrementalServiceTest, testSetIncFsMountOptionsSuccess) {
@@ -1094,8 +1450,10 @@ TEST_F(IncrementalServiceTest, testSetIncFsMountOptionsSuccess) {
 
     EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_));
     EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
+    // on startLoading
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, false, _)).Times(1);
     // We are calling setIncFsMountOptions(true).
-    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true)).Times(1);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true, _)).Times(1);
     // After setIncFsMountOptions succeeded expecting to start watching.
     EXPECT_CALL(*mAppOpsManager, startWatchingMode(_, _, _)).Times(1);
     // Not expecting callback removal.
@@ -1117,8 +1475,8 @@ TEST_F(IncrementalServiceTest, testSetIncFsMountOptionsSuccessAndDisabled) {
     EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_));
     EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
     // Enabling and then disabling readlogs.
-    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true)).Times(1);
-    EXPECT_CALL(*mVold, setIncFsMountOptions(_, false)).Times(1);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true, _)).Times(1);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, false, _)).Times(2);
     // After setIncFsMountOptions succeeded expecting to start watching.
     EXPECT_CALL(*mAppOpsManager, startWatchingMode(_, _, _)).Times(1);
     // Not expecting callback removal.
@@ -1136,6 +1494,164 @@ TEST_F(IncrementalServiceTest, testSetIncFsMountOptionsSuccessAndDisabled) {
     ASSERT_EQ(mDataLoader->setStorageParams(true), -EPERM);
 }
 
+TEST_F(IncrementalServiceTest, testSetIncFsMountOptionsSuccessAndTimedOut) {
+    mVold->setIncFsMountOptionsSuccess();
+    mAppOpsManager->checkPermissionSuccess();
+
+    const auto readLogsMaxInterval = 2h;
+
+    EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_));
+    EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
+    // Enabling and then disabling readlogs.
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true, _)).Times(2);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, false, _)).Times(2);
+    // After setIncFsMountOptions succeeded expecting to start watching.
+    EXPECT_CALL(*mAppOpsManager, startWatchingMode(_, _, _)).Times(1);
+    // Not expecting callback removal.
+    EXPECT_CALL(*mAppOpsManager, stopWatchingMode(_)).Times(0);
+    EXPECT_CALL(*mTimedQueue, addJob(_, _, _)).Times(2);
+    TemporaryDir tempDir;
+    int storageId =
+            mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
+                                               IncrementalService::CreateOptions::CreateNew);
+    ASSERT_GE(storageId, 0);
+    ASSERT_TRUE(mIncrementalService->startLoading(storageId, std::move(mDataLoaderParcel), {}, {},
+                                                  {}, {}));
+
+    // Disable readlogs callback present.
+    ASSERT_EQ(storageId, mTimedQueue->mId);
+    ASSERT_EQ(mTimedQueue->mAfter, readLogsMaxInterval);
+    auto callback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(storageId);
+
+    ASSERT_GE(mDataLoader->setStorageParams(true), 0);
+    // Now advance clock for 1hr.
+    mClock->advance(1h);
+    ASSERT_GE(mDataLoader->setStorageParams(true), 0);
+    // Now call the timed callback, it should turn off the readlogs.
+    callback();
+    // Now advance clock for 2hrs.
+    mClock->advance(readLogsMaxInterval);
+    ASSERT_EQ(mDataLoader->setStorageParams(true), -EPERM);
+}
+
+TEST_F(IncrementalServiceTest, testSetIncFsMountOptionsSuccessAndNoTimedOutForSystem) {
+    mVold->setIncFsMountOptionsSuccess();
+    mAppOpsManager->checkPermissionSuccess();
+
+    const auto readLogsMaxInterval = 2h;
+
+    EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_));
+    EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
+    // Enabling and then disabling readlogs.
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true, _)).Times(3);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, false, _)).Times(1);
+    // After setIncFsMountOptions succeeded expecting to start watching.
+    EXPECT_CALL(*mAppOpsManager, startWatchingMode(_, _, _)).Times(1);
+    // Not expecting callback removal.
+    EXPECT_CALL(*mAppOpsManager, stopWatchingMode(_)).Times(0);
+    EXPECT_CALL(*mTimedQueue, addJob(_, _, _)).Times(2);
+    // System data loader.
+    mDataLoaderParcel.packageName = "android";
+    TemporaryDir tempDir;
+    int storageId =
+            mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
+                                               IncrementalService::CreateOptions::CreateNew);
+    ASSERT_GE(storageId, 0);
+    ASSERT_TRUE(mIncrementalService->startLoading(storageId, std::move(mDataLoaderParcel), {}, {},
+                                                  {}, {}));
+
+    // IfsState callback.
+    auto callback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(storageId);
+
+    ASSERT_GE(mDataLoader->setStorageParams(true), 0);
+    // Now advance clock for 1hr.
+    mClock->advance(1h);
+    ASSERT_GE(mDataLoader->setStorageParams(true), 0);
+    // Now advance clock for 2hrs.
+    mClock->advance(readLogsMaxInterval);
+    // IfsStorage callback should not affect anything.
+    callback();
+    ASSERT_EQ(mDataLoader->setStorageParams(true), 0);
+}
+
+TEST_F(IncrementalServiceTest, testSetIncFsMountOptionsSuccessAndNewInstall) {
+    mVold->setIncFsMountOptionsSuccess();
+    mAppOpsManager->checkPermissionSuccess();
+
+    const auto readLogsMaxInterval = 2h;
+
+    EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_)).Times(2);
+    EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
+    // Enabling and then disabling readlogs.
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true, _)).Times(5);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, false, _)).Times(3);
+    // After setIncFsMountOptions succeeded expecting to start watching.
+    EXPECT_CALL(*mAppOpsManager, startWatchingMode(_, _, _)).Times(1);
+    // Not expecting callback removal.
+    EXPECT_CALL(*mAppOpsManager, stopWatchingMode(_)).Times(0);
+    EXPECT_CALL(*mTimedQueue, addJob(_, _, _)).Times(4);
+    TemporaryDir tempDir;
+    int storageId =
+            mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
+                                               IncrementalService::CreateOptions::CreateNew);
+    ASSERT_GE(storageId, 0);
+
+    // Before install - long timeouts.
+    ASSERT_TRUE(mVold->readTimeoutsEnabled());
+
+    auto dataLoaderParcel = mDataLoaderParcel;
+    ASSERT_TRUE(mIncrementalService->startLoading(storageId, std::move(dataLoaderParcel), {}, {},
+                                                  {}, {}));
+    // During install - short timeouts.
+    ASSERT_FALSE(mVold->readTimeoutsEnabled());
+
+    // Disable readlogs callback present.
+    ASSERT_EQ(storageId, mTimedQueue->mId);
+    ASSERT_EQ(mTimedQueue->mAfter, readLogsMaxInterval);
+    auto callback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(storageId);
+
+    ASSERT_GE(mDataLoader->setStorageParams(true), 0);
+    // Now advance clock for 1.5hrs.
+    mClock->advance(90min);
+    ASSERT_GE(mDataLoader->setStorageParams(true), 0);
+
+    mIncrementalService->onInstallationComplete(storageId);
+    // After install - long timeouts.
+    ASSERT_TRUE(mVold->readTimeoutsEnabled());
+
+    // New installation.
+    ASSERT_TRUE(mIncrementalService->startLoading(storageId, std::move(mDataLoaderParcel), {}, {},
+                                                  {}, {}));
+    // New installation - short timeouts.
+    ASSERT_FALSE(mVold->readTimeoutsEnabled());
+
+    // New callback present.
+    ASSERT_EQ(storageId, mTimedQueue->mId);
+    ASSERT_EQ(mTimedQueue->mAfter, readLogsMaxInterval);
+    auto callback2 = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(storageId);
+
+    // Old callback should not disable readlogs (setIncFsMountOptions should be called only once).
+    callback();
+    // Advance clock for another 1.5hrs.
+    mClock->advance(90min);
+    // Still success even it's 3hrs past first install.
+    ASSERT_GE(mDataLoader->setStorageParams(true), 0);
+
+    // New one should disable.
+    callback2();
+    // And timeout.
+    mClock->advance(90min);
+    ASSERT_EQ(mDataLoader->setStorageParams(true), -EPERM);
+
+    mIncrementalService->onInstallationComplete(storageId);
+    // After install - long timeouts.
+    ASSERT_TRUE(mVold->readTimeoutsEnabled());
+}
+
 TEST_F(IncrementalServiceTest, testSetIncFsMountOptionsSuccessAndPermissionChanged) {
     mVold->setIncFsMountOptionsSuccess();
     mAppOpsManager->checkPermissionSuccess();
@@ -1144,9 +1660,9 @@ TEST_F(IncrementalServiceTest, testSetIncFsMountOptionsSuccessAndPermissionChang
     EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_));
     EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
     // We are calling setIncFsMountOptions(true).
-    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true)).Times(1);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true, _)).Times(1);
     // setIncFsMountOptions(false) is called on the callback.
-    EXPECT_CALL(*mVold, setIncFsMountOptions(_, false)).Times(1);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, false, _)).Times(2);
     // After setIncFsMountOptions succeeded expecting to start watching.
     EXPECT_CALL(*mAppOpsManager, startWatchingMode(_, _, _)).Times(1);
     // After callback is called, disable read logs and remove callback.
@@ -1169,7 +1685,8 @@ TEST_F(IncrementalServiceTest, testSetIncFsMountOptionsCheckPermissionFails) {
     EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_));
     EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
     // checkPermission fails, no calls to set opitions,  start or stop WatchingMode.
-    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true)).Times(0);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true, _)).Times(0);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, false, _)).Times(1);
     EXPECT_CALL(*mAppOpsManager, startWatchingMode(_, _, _)).Times(0);
     EXPECT_CALL(*mAppOpsManager, stopWatchingMode(_)).Times(0);
     TemporaryDir tempDir;
@@ -1188,7 +1705,8 @@ TEST_F(IncrementalServiceTest, testSetIncFsMountOptionsCheckPermissionNoCrossUse
     EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_));
     EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
     // checkPermission fails, no calls to set opitions,  start or stop WatchingMode.
-    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true)).Times(0);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true, _)).Times(0);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, false, _)).Times(1);
     EXPECT_CALL(*mAppOpsManager, startWatchingMode(_, _, _)).Times(0);
     EXPECT_CALL(*mAppOpsManager, stopWatchingMode(_)).Times(0);
     TemporaryDir tempDir;
@@ -1208,7 +1726,8 @@ TEST_F(IncrementalServiceTest, testSetIncFsMountOptionsFails) {
     EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_));
     EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
     // We are calling setIncFsMountOptions.
-    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true)).Times(1);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, true, _)).Times(1);
+    EXPECT_CALL(*mVold, setIncFsMountOptions(_, false, _)).Times(1);
     // setIncFsMountOptions fails, no calls to start or stop WatchingMode.
     EXPECT_CALL(*mAppOpsManager, startWatchingMode(_, _, _)).Times(0);
     EXPECT_CALL(*mAppOpsManager, stopWatchingMode(_)).Times(0);
@@ -1261,51 +1780,37 @@ TEST_F(IncrementalServiceTest, testMakeDirectories) {
     ASSERT_EQ(res, 0);
 }
 
-TEST_F(IncrementalServiceTest, testIsFileFullyLoadedFailsWithNoFile) {
-    mIncFs->countFilledBlocksFails();
-    mFs->hasNoFile();
-
+TEST_F(IncrementalServiceTest, testIsFileFullyLoadedNoData) {
     TemporaryDir tempDir;
     int storageId =
             mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
                                                IncrementalService::CreateOptions::CreateNew);
-    ASSERT_EQ(-1, mIncrementalService->isFileFullyLoaded(storageId, "base.apk"));
+    EXPECT_CALL(*mIncFs, isFileFullyLoaded(_, An<std::string_view>()))
+            .Times(1)
+            .WillOnce(Return(incfs::LoadingState::MissingBlocks));
+    ASSERT_GT((int)mIncrementalService->isFileFullyLoaded(storageId, "base.apk"), 0);
 }
 
-TEST_F(IncrementalServiceTest, testIsFileFullyLoadedFailsWithFailedRanges) {
-    mIncFs->countFilledBlocksFails();
-    mFs->hasFiles();
-
+TEST_F(IncrementalServiceTest, testIsFileFullyLoadedError) {
     TemporaryDir tempDir;
     int storageId =
             mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
                                                IncrementalService::CreateOptions::CreateNew);
-    EXPECT_CALL(*mIncFs, countFilledBlocks(_, _)).Times(1);
-    ASSERT_EQ(-1, mIncrementalService->isFileFullyLoaded(storageId, "base.apk"));
-}
-
-TEST_F(IncrementalServiceTest, testIsFileFullyLoadedSuccessWithEmptyRanges) {
-    mIncFs->countFilledBlocksEmpty();
-    mFs->hasFiles();
-
-    TemporaryDir tempDir;
-    int storageId =
-            mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
-                                               IncrementalService::CreateOptions::CreateNew);
-    EXPECT_CALL(*mIncFs, countFilledBlocks(_, _)).Times(1);
-    ASSERT_EQ(0, mIncrementalService->isFileFullyLoaded(storageId, "base.apk"));
+    EXPECT_CALL(*mIncFs, isFileFullyLoaded(_, An<std::string_view>()))
+            .Times(1)
+            .WillOnce(Return(incfs::LoadingState(-1)));
+    ASSERT_LT((int)mIncrementalService->isFileFullyLoaded(storageId, "base.apk"), 0);
 }
 
 TEST_F(IncrementalServiceTest, testIsFileFullyLoadedSuccess) {
-    mIncFs->countFilledBlocksFullyLoaded();
-    mFs->hasFiles();
-
     TemporaryDir tempDir;
     int storageId =
             mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
                                                IncrementalService::CreateOptions::CreateNew);
-    EXPECT_CALL(*mIncFs, countFilledBlocks(_, _)).Times(1);
-    ASSERT_EQ(0, mIncrementalService->isFileFullyLoaded(storageId, "base.apk"));
+    EXPECT_CALL(*mIncFs, isFileFullyLoaded(_, An<std::string_view>()))
+            .Times(1)
+            .WillOnce(Return(incfs::LoadingState::Full));
+    ASSERT_EQ(0, (int)mIncrementalService->isFileFullyLoaded(storageId, "base.apk"));
 }
 
 TEST_F(IncrementalServiceTest, testGetLoadingProgressSuccessWithNoFile) {
@@ -1316,9 +1821,7 @@ TEST_F(IncrementalServiceTest, testGetLoadingProgressSuccessWithNoFile) {
     int storageId =
             mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
                                                IncrementalService::CreateOptions::CreateNew);
-    ASSERT_EQ(1,
-              mIncrementalService->getLoadingProgress(storageId, /*stopOnFirstIncomplete=*/false)
-                      .getProgress());
+    ASSERT_EQ(1, mIncrementalService->getLoadingProgress(storageId).getProgress());
 }
 
 TEST_F(IncrementalServiceTest, testGetLoadingProgressFailsWithFailedRanges) {
@@ -1330,9 +1833,7 @@ TEST_F(IncrementalServiceTest, testGetLoadingProgressFailsWithFailedRanges) {
             mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
                                                IncrementalService::CreateOptions::CreateNew);
     EXPECT_CALL(*mIncFs, countFilledBlocks(_, _)).Times(1);
-    ASSERT_EQ(-1,
-              mIncrementalService->getLoadingProgress(storageId, /*stopOnFirstIncomplete=*/false)
-                      .getProgress());
+    ASSERT_EQ(-1, mIncrementalService->getLoadingProgress(storageId).getProgress());
 }
 
 TEST_F(IncrementalServiceTest, testGetLoadingProgressSuccessWithEmptyRanges) {
@@ -1344,9 +1845,7 @@ TEST_F(IncrementalServiceTest, testGetLoadingProgressSuccessWithEmptyRanges) {
             mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
                                                IncrementalService::CreateOptions::CreateNew);
     EXPECT_CALL(*mIncFs, countFilledBlocks(_, _)).Times(3);
-    ASSERT_EQ(1,
-              mIncrementalService->getLoadingProgress(storageId, /*stopOnFirstIncomplete=*/false)
-                      .getProgress());
+    ASSERT_EQ(1, mIncrementalService->getLoadingProgress(storageId).getProgress());
 }
 
 TEST_F(IncrementalServiceTest, testGetLoadingProgressSuccess) {
@@ -1358,9 +1857,7 @@ TEST_F(IncrementalServiceTest, testGetLoadingProgressSuccess) {
             mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
                                                IncrementalService::CreateOptions::CreateNew);
     EXPECT_CALL(*mIncFs, countFilledBlocks(_, _)).Times(3);
-    ASSERT_EQ(0.5,
-              mIncrementalService->getLoadingProgress(storageId, /*stopOnFirstIncomplete=*/false)
-                      .getProgress());
+    ASSERT_EQ(0.5, mIncrementalService->getLoadingProgress(storageId).getProgress());
 }
 
 TEST_F(IncrementalServiceTest, testRegisterLoadingProgressListenerSuccess) {
@@ -1403,85 +1900,142 @@ TEST_F(IncrementalServiceTest, testRegisterLoadingProgressListenerFailsToGetProg
     mIncrementalService->registerLoadingProgressListener(storageId, listener);
 }
 
-TEST_F(IncrementalServiceTest, testRegisterStorageHealthListenerSuccess) {
-    mIncFs->openMountSuccess();
-    sp<NiceMock<MockStorageHealthListener>> listener{new NiceMock<MockStorageHealthListener>};
-    sp<NiceMock<MockStorageHealthListener>> newListener{new NiceMock<MockStorageHealthListener>};
-    NiceMock<MockStorageHealthListener>* newListenerMock = newListener.get();
+TEST_F(IncrementalServiceTest, testStartDataLoaderUnbindOnAllDone) {
+    mFs->hasFiles();
 
+    const auto stateUpdateInterval = 1s;
+
+    EXPECT_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _)).Times(1);
+    // No unbinding just yet.
+    EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_)).Times(0);
+    EXPECT_CALL(*mDataLoader, create(_, _, _, _)).Times(1);
+    EXPECT_CALL(*mDataLoader, start(_)).Times(1);
+    EXPECT_CALL(*mDataLoader, destroy(_)).Times(1);
+    EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
+    // System data loader to get rid of readlog timeout callback.
+    mDataLoaderParcel.packageName = "android";
     TemporaryDir tempDir;
     int storageId =
             mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
                                                IncrementalService::CreateOptions::CreateNew);
     ASSERT_GE(storageId, 0);
-    mIncrementalService->startLoading(storageId, std::move(mDataLoaderParcel), {}, {}, listener,
-                                      {});
+    ASSERT_TRUE(mIncrementalService->startLoading(storageId, std::move(mDataLoaderParcel), {}, {},
+                                                  {}, {}));
 
-    StorageHealthCheckParams newParams;
-    newParams.blockedTimeoutMs = 10000;
-    newParams.unhealthyTimeoutMs = 20000;
-    newParams.unhealthyMonitoringMs = 30000;
-    ASSERT_TRUE(mIncrementalService->registerStorageHealthListener(storageId, std::move(newParams),
-                                                                   newListener));
+    // Started.
+    ASSERT_EQ(mDataLoader->status(), IDataLoaderStatusListener::DATA_LOADER_STARTED);
 
-    using MS = std::chrono::milliseconds;
-    using MCS = std::chrono::microseconds;
+    // IfsState callback present.
+    ASSERT_EQ(IncrementalService::kAllStoragesId, mTimedQueue->mId);
+    ASSERT_EQ(mTimedQueue->mAfter, stateUpdateInterval);
+    auto callback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(IncrementalService::kAllStoragesId);
 
-    const auto blockedTimeout = MS(newParams.blockedTimeoutMs);
-    const auto unhealthyTimeout = MS(newParams.unhealthyTimeoutMs);
+    // Not loaded yet.
+    EXPECT_CALL(*mIncFs, isEverythingFullyLoaded(_))
+            .WillOnce(Return(incfs::LoadingState::MissingBlocks));
 
-    const uint64_t kFirstTimestampUs = 1000000000ll;
-    const uint64_t kBlockedTimestampUs =
-            kFirstTimestampUs - std::chrono::duration_cast<MCS>(blockedTimeout).count();
-    const uint64_t kUnhealthyTimestampUs =
-            kFirstTimestampUs - std::chrono::duration_cast<MCS>(unhealthyTimeout).count();
+    // Send the callback, should not do anything.
+    callback();
 
-    // test that old listener was not called
-    EXPECT_CALL(*listener.get(),
-                onHealthStatus(_, IStorageHealthListener::HEALTH_STATUS_READS_PENDING))
-            .Times(0);
-    EXPECT_CALL(*newListenerMock,
-                onHealthStatus(_, IStorageHealthListener::HEALTH_STATUS_READS_PENDING))
-            .Times(1);
-    EXPECT_CALL(*newListenerMock, onHealthStatus(_, IStorageHealthListener::HEALTH_STATUS_BLOCKED))
-            .Times(1);
-    EXPECT_CALL(*newListenerMock,
-                onHealthStatus(_, IStorageHealthListener::HEALTH_STATUS_UNHEALTHY_STORAGE))
-            .Times(1);
-    EXPECT_CALL(*newListenerMock,
-                onHealthStatus(_, IStorageHealthListener::HEALTH_STATUS_UNHEALTHY_TRANSPORT))
-            .Times(1);
-    mIncFs->waitForPendingReadsSuccess(kFirstTimestampUs);
-    mLooper->mCallback(-1, -1, mLooper->mCallbackData);
+    // Still started.
+    ASSERT_EQ(mDataLoader->status(), IDataLoaderStatusListener::DATA_LOADER_STARTED);
 
-    ASSERT_EQ(IStorageHealthListener::HEALTH_STATUS_READS_PENDING, newListener->mStatus);
-    ASSERT_EQ(storageId, newListener->mStorageId);
+    // Still present.
+    ASSERT_EQ(IncrementalService::kAllStoragesId, mTimedQueue->mId);
+    ASSERT_EQ(mTimedQueue->mAfter, stateUpdateInterval);
+    callback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(IncrementalService::kAllStoragesId);
 
-    auto timedCallback = mTimedQueue->mWhat;
-    mTimedQueue->clearJob(storageId);
+    // Fully loaded.
+    EXPECT_CALL(*mIncFs, isEverythingFullyLoaded(_)).WillOnce(Return(incfs::LoadingState::Full));
+    // Expect the unbind.
+    EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_)).Times(1);
 
-    // test when health status is blocked with transport error
-    mDataLoader->transportError(storageId);
-    mIncFs->waitForPendingReadsSuccess(kBlockedTimestampUs);
-    timedCallback();
-    ASSERT_EQ(IStorageHealthListener::HEALTH_STATUS_BLOCKED, newListener->mStatus);
-    timedCallback = mTimedQueue->mWhat;
-    mTimedQueue->clearJob(storageId);
+    callback();
 
-    // test when health status is blocked with storage error
-    mDataLoader->storageError(storageId);
-    mIncFs->waitForPendingReadsSuccess(kBlockedTimestampUs);
-    timedCallback();
-    ASSERT_EQ(IStorageHealthListener::HEALTH_STATUS_UNHEALTHY_STORAGE, newListener->mStatus);
-    timedCallback = mTimedQueue->mWhat;
-    mTimedQueue->clearJob(storageId);
+    // Destroyed.
+    ASSERT_EQ(mDataLoader->status(), IDataLoaderStatusListener::DATA_LOADER_DESTROYED);
+}
 
-    // test when health status is unhealthy with transport error
-    mDataLoader->transportError(storageId);
-    mIncFs->waitForPendingReadsSuccess(kUnhealthyTimestampUs);
-    timedCallback();
-    ASSERT_EQ(IStorageHealthListener::HEALTH_STATUS_UNHEALTHY_TRANSPORT, newListener->mStatus);
-    mTimedQueue->clearJob(storageId);
+TEST_F(IncrementalServiceTest, testStartDataLoaderUnbindOnAllDoneWithReadlogs) {
+    mFs->hasFiles();
+
+    // Readlogs.
+    mVold->setIncFsMountOptionsSuccess();
+    mAppOpsManager->checkPermissionSuccess();
+
+    const auto stateUpdateInterval = 1s;
+
+    EXPECT_CALL(*mDataLoaderManager, bindToDataLoader(_, _, _, _, _)).Times(1);
+    // No unbinding just yet.
+    EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_)).Times(0);
+    EXPECT_CALL(*mDataLoader, create(_, _, _, _)).Times(1);
+    EXPECT_CALL(*mDataLoader, start(_)).Times(1);
+    EXPECT_CALL(*mDataLoader, destroy(_)).Times(1);
+    EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
+    // System data loader to get rid of readlog timeout callback.
+    mDataLoaderParcel.packageName = "android";
+    TemporaryDir tempDir;
+    int storageId =
+            mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
+                                               IncrementalService::CreateOptions::CreateNew);
+    ASSERT_GE(storageId, 0);
+    ASSERT_TRUE(mIncrementalService->startLoading(storageId, std::move(mDataLoaderParcel), {}, {},
+                                                  {}, {}));
+
+    // Started.
+    ASSERT_EQ(mDataLoader->status(), IDataLoaderStatusListener::DATA_LOADER_STARTED);
+
+    // IfsState callback present.
+    ASSERT_EQ(IncrementalService::kAllStoragesId, mTimedQueue->mId);
+    ASSERT_EQ(mTimedQueue->mAfter, stateUpdateInterval);
+    auto callback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(IncrementalService::kAllStoragesId);
+
+    // Not loaded yet.
+    EXPECT_CALL(*mIncFs, isEverythingFullyLoaded(_))
+            .WillOnce(Return(incfs::LoadingState::MissingBlocks));
+
+    // Send the callback, should not do anything.
+    callback();
+
+    // Still started.
+    ASSERT_EQ(mDataLoader->status(), IDataLoaderStatusListener::DATA_LOADER_STARTED);
+
+    // Still present.
+    ASSERT_EQ(IncrementalService::kAllStoragesId, mTimedQueue->mId);
+    ASSERT_EQ(mTimedQueue->mAfter, stateUpdateInterval);
+    callback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(IncrementalService::kAllStoragesId);
+
+    // Fully loaded.
+    EXPECT_CALL(*mIncFs, isEverythingFullyLoaded(_))
+            .WillOnce(Return(incfs::LoadingState::Full))
+            .WillOnce(Return(incfs::LoadingState::Full));
+    // But with readlogs.
+    ASSERT_GE(mDataLoader->setStorageParams(true), 0);
+
+    // Send the callback, still nothing.
+    callback();
+
+    // Still started.
+    ASSERT_EQ(mDataLoader->status(), IDataLoaderStatusListener::DATA_LOADER_STARTED);
+
+    // Still present.
+    ASSERT_EQ(IncrementalService::kAllStoragesId, mTimedQueue->mId);
+    ASSERT_EQ(mTimedQueue->mAfter, stateUpdateInterval);
+    callback = mTimedQueue->mWhat;
+    mTimedQueue->clearJob(IncrementalService::kAllStoragesId);
+
+    // Disable readlogs and expect the unbind.
+    EXPECT_CALL(*mDataLoaderManager, unbindFromDataLoader(_)).Times(1);
+    ASSERT_GE(mDataLoader->setStorageParams(false), 0);
+
+    callback();
+
+    // Destroyed.
+    ASSERT_EQ(mDataLoader->status(), IDataLoaderStatusListener::DATA_LOADER_DESTROYED);
 }
 
 static std::vector<PerUidReadTimeouts> createPerUidTimeouts(
@@ -1519,7 +2073,7 @@ TEST_F(IncrementalServiceTest, testPerUidTimeoutsTooShort) {
     EXPECT_CALL(*mDataLoader, start(_)).Times(1);
     EXPECT_CALL(*mDataLoader, destroy(_)).Times(1);
     EXPECT_CALL(*mIncFs, setUidReadTimeouts(_, _)).Times(0);
-    EXPECT_CALL(*mTimedQueue, addJob(_, _, _)).Times(0);
+    EXPECT_CALL(*mTimedQueue, addJob(_, _, _)).Times(2);
     EXPECT_CALL(*mVold, unmountIncFs(_)).Times(2);
     TemporaryDir tempDir;
     int storageId =
@@ -1543,8 +2097,14 @@ TEST_F(IncrementalServiceTest, testPerUidTimeoutsSuccess) {
             .WillOnce(Invoke(&checkPerUidTimeoutsEmpty));
     EXPECT_CALL(*mTimedQueue, addJob(_, _, _)).Times(3);
 
-    // Empty storage.
-    mIncFs->countFilledBlocksEmpty();
+    // Loading storage.
+    EXPECT_CALL(*mIncFs, isEverythingFullyLoaded(_))
+            .WillOnce(Return(incfs::LoadingState::MissingBlocks))
+            .WillOnce(Return(incfs::LoadingState::MissingBlocks))
+            .WillOnce(Return(incfs::LoadingState::Full));
+
+    // Mark DataLoader as 'system' so that readlogs don't pollute the timed queue.
+    mDataLoaderParcel.packageName = "android";
 
     TemporaryDir tempDir;
     int storageId =
@@ -1557,27 +2117,23 @@ TEST_F(IncrementalServiceTest, testPerUidTimeoutsSuccess) {
 
     {
         // Timed callback present -> 0 progress.
-        ASSERT_EQ(storageId, mTimedQueue->mId);
+        ASSERT_EQ(IncrementalService::kAllStoragesId, mTimedQueue->mId);
         ASSERT_GE(mTimedQueue->mAfter, std::chrono::seconds(1));
         const auto timedCallback = mTimedQueue->mWhat;
-        mTimedQueue->clearJob(storageId);
-
-        // Still loading.
-        mIncFs->countFilledBlocksSuccess();
+        mTimedQueue->clearJob(IncrementalService::kAllStoragesId);
 
         // Call it again.
         timedCallback();
     }
 
     {
-        // Still present -> 0.5 progress.
-        ASSERT_EQ(storageId, mTimedQueue->mId);
+        // Still present -> some progress.
+        ASSERT_EQ(IncrementalService::kAllStoragesId, mTimedQueue->mId);
         ASSERT_GE(mTimedQueue->mAfter, std::chrono::seconds(1));
         const auto timedCallback = mTimedQueue->mWhat;
-        mTimedQueue->clearJob(storageId);
+        mTimedQueue->clearJob(IncrementalService::kAllStoragesId);
 
         // Fully loaded but readlogs collection enabled.
-        mIncFs->countFilledBlocksFullyLoaded();
         ASSERT_GE(mDataLoader->setStorageParams(true), 0);
 
         // Call it again.
@@ -1586,10 +2142,10 @@ TEST_F(IncrementalServiceTest, testPerUidTimeoutsSuccess) {
 
     {
         // Still present -> fully loaded + readlogs.
-        ASSERT_EQ(storageId, mTimedQueue->mId);
+        ASSERT_EQ(IncrementalService::kAllStoragesId, mTimedQueue->mId);
         ASSERT_GE(mTimedQueue->mAfter, std::chrono::seconds(1));
         const auto timedCallback = mTimedQueue->mWhat;
-        mTimedQueue->clearJob(storageId);
+        mTimedQueue->clearJob(IncrementalService::kAllStoragesId);
 
         // Now disable readlogs.
         ASSERT_GE(mDataLoader->setStorageParams(false), 0);
@@ -1615,7 +2171,7 @@ TEST_F(IncrementalServiceTest, testInvalidMetricsQuery) {
     ASSERT_TRUE(result.empty());
 }
 
-TEST_F(IncrementalServiceTest, testNoMetrics) {
+TEST_F(IncrementalServiceTest, testNoDataLoaderMetrics) {
     mVold->setIncFsMountOptionsSuccess();
     TemporaryDir tempDir;
     int storageId =
@@ -1630,7 +2186,12 @@ TEST_F(IncrementalServiceTest, testNoMetrics) {
                                             .c_str()),
                            &value));
     ASSERT_EQ(expected, value);
-    ASSERT_EQ(0, (int)result.size());
+    ASSERT_EQ(1, (int)result.size());
+    bool expectedReadLogsEnabled = false;
+    ASSERT_TRUE(
+            result.getBoolean(String16(BnIncrementalService::METRICS_READ_LOGS_ENABLED().c_str()),
+                              &expectedReadLogsEnabled));
+    ASSERT_EQ(mVold->readLogsEnabled(), expectedReadLogsEnabled);
 }
 
 TEST_F(IncrementalServiceTest, testInvalidMetricsKeys) {
@@ -1647,7 +2208,92 @@ TEST_F(IncrementalServiceTest, testInvalidMetricsKeys) {
     int64_t expected = -1, value = -1;
     ASSERT_FALSE(result.getLong(String16("invalid"), &value));
     ASSERT_EQ(expected, value);
-    ASSERT_EQ(1, (int)result.size());
+    ASSERT_EQ(6, (int)result.size());
+}
+
+TEST_F(IncrementalServiceTest, testMetricsWithNoLastReadError) {
+    mVold->setIncFsMountOptionsSuccess();
+    ON_CALL(*mIncFs, getMetrics(_))
+            .WillByDefault(Return(Metrics{
+                    .readsDelayedMin = 10,
+                    .readsDelayedMinUs = 5000,
+                    .readsDelayedPending = 10,
+                    .readsDelayedPendingUs = 5000,
+                    .readsFailedHashVerification = 10,
+                    .readsFailedOther = 10,
+                    .readsFailedTimedOut = 10,
+            }));
+    ON_CALL(*mIncFs, getLastReadError(_)).WillByDefault(Return(LastReadError{}));
+    TemporaryDir tempDir;
+    int storageId =
+            mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
+                                               IncrementalService::CreateOptions::CreateNew);
+    ASSERT_GE(storageId, 0);
+    ASSERT_TRUE(mIncrementalService->startLoading(storageId, std::move(mDataLoaderParcel), {}, {},
+                                                  {}, {}));
+    android::os::PersistableBundle result{};
+    mIncrementalService->getMetrics(storageId, &result);
+    ASSERT_EQ(9, (int)result.size());
+
+    int expectedtotalDelayedReads = 20, totalDelayedReads = -1;
+    ASSERT_TRUE(result.getInt(String16(BnIncrementalService::METRICS_TOTAL_DELAYED_READS().c_str()),
+                              &totalDelayedReads));
+    ASSERT_EQ(expectedtotalDelayedReads, totalDelayedReads);
+    int expectedtotalFailedReads = 30, totalFailedReads = -1;
+    ASSERT_TRUE(result.getInt(String16(BnIncrementalService::METRICS_TOTAL_FAILED_READS().c_str()),
+                              &totalFailedReads));
+    ASSERT_EQ(expectedtotalFailedReads, totalFailedReads);
+    int64_t expectedtotalDelayedReadsMillis = 10, totalDelayedReadsMillis = -1;
+    ASSERT_TRUE(result.getLong(String16(BnIncrementalService::METRICS_TOTAL_DELAYED_READS_MILLIS()
+                                                .c_str()),
+                               &totalDelayedReadsMillis));
+    ASSERT_EQ(expectedtotalDelayedReadsMillis, totalDelayedReadsMillis);
+
+    int64_t expectedMillisSinceLastReadError = -1, millisSinceLastReadError = -1;
+    ASSERT_FALSE(
+            result.getLong(String16(BnIncrementalService::METRICS_MILLIS_SINCE_LAST_READ_ERROR()
+                                            .c_str()),
+                           &millisSinceLastReadError));
+    ASSERT_EQ(expectedMillisSinceLastReadError, millisSinceLastReadError);
+    int expectedLastReadErrorNumber = -1, lastReadErrorNumber = -1;
+    ASSERT_FALSE(
+            result.getInt(String16(BnIncrementalService::METRICS_LAST_READ_ERROR_NUMBER().c_str()),
+                          &lastReadErrorNumber));
+    ASSERT_EQ(expectedLastReadErrorNumber, lastReadErrorNumber);
+}
+
+TEST_F(IncrementalServiceTest, testMetricsWithLastReadError) {
+    mVold->setIncFsMountOptionsSuccess();
+    ON_CALL(*mIncFs, getMetrics(_)).WillByDefault(Return(Metrics{}));
+    mClock->advanceMs(5);
+    const auto now = mClock->getClock();
+    ON_CALL(*mIncFs, getLastReadError(_))
+            .WillByDefault(Return(LastReadError{.timestampUs = static_cast<uint64_t>(
+                                                        duration_cast<std::chrono::microseconds>(
+                                                                now.time_since_epoch())
+                                                                .count()),
+                                                .errorNo = static_cast<uint32_t>(-ETIME)}));
+    TemporaryDir tempDir;
+    int storageId =
+            mIncrementalService->createStorage(tempDir.path, mDataLoaderParcel,
+                                               IncrementalService::CreateOptions::CreateNew);
+    ASSERT_GE(storageId, 0);
+    ASSERT_TRUE(mIncrementalService->startLoading(storageId, std::move(mDataLoaderParcel), {}, {},
+                                                  {}, {}));
+    mClock->advanceMs(10);
+    android::os::PersistableBundle result{};
+    mIncrementalService->getMetrics(storageId, &result);
+    ASSERT_EQ(11, (int)result.size());
+    int64_t expectedMillisSinceLastReadError = 10, millisSinceLastReadError = -1;
+    ASSERT_TRUE(result.getLong(String16(BnIncrementalService::METRICS_MILLIS_SINCE_LAST_READ_ERROR()
+                                                .c_str()),
+                               &millisSinceLastReadError));
+    ASSERT_EQ(expectedMillisSinceLastReadError, millisSinceLastReadError);
+    int expectedLastReadErrorNumber = -ETIME, lastReadErrorNumber = -1;
+    ASSERT_TRUE(
+            result.getInt(String16(BnIncrementalService::METRICS_LAST_READ_ERROR_NUMBER().c_str()),
+                          &lastReadErrorNumber));
+    ASSERT_EQ(expectedLastReadErrorNumber, lastReadErrorNumber);
 }
 
 } // namespace android::os::incremental

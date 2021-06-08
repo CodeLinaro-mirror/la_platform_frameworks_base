@@ -45,8 +45,10 @@ import android.app.ActivityTaskManager;
 import android.app.IActivityClientController;
 import android.app.IRequestFinishCallback;
 import android.app.PictureInPictureParams;
+import android.app.PictureInPictureUiState;
 import android.app.servertransaction.ClientTransaction;
 import android.app.servertransaction.EnterPipRequestedItem;
+import android.app.servertransaction.PipStateTransactionItem;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -65,6 +67,7 @@ import android.os.Trace;
 import android.service.voice.VoiceInteractionManagerInternal;
 import android.util.Slog;
 import android.view.RemoteAnimationDefinition;
+import android.window.SizeConfigurationBuckets;
 
 import com.android.internal.app.AssistUtils;
 import com.android.internal.policy.IKeyguardDismissCallback;
@@ -73,8 +76,6 @@ import com.android.server.LocalServices;
 import com.android.server.Watchdog;
 import com.android.server.uri.NeededUriGrants;
 import com.android.server.vr.VrManagerInternal;
-
-import java.util.Arrays;
 
 /**
  * Server side implementation for the client activity to interact with system.
@@ -244,16 +245,14 @@ class ActivityClientController extends IActivityClientController.Stub {
     }
 
     @Override
-    public void reportSizeConfigurations(IBinder token, int[] horizontalSizeConfiguration,
-            int[] verticalSizeConfigurations, int[] smallestSizeConfigurations) {
-        ProtoLog.v(WM_DEBUG_CONFIGURATION, "Report configuration: %s %s %s",
-                token, Arrays.toString(horizontalSizeConfiguration),
-                Arrays.toString(verticalSizeConfigurations));
+    public void reportSizeConfigurations(IBinder token,
+            SizeConfigurationBuckets sizeConfigurations) {
+        ProtoLog.v(WM_DEBUG_CONFIGURATION, "Report configuration: %s %s",
+                token, sizeConfigurations);
         synchronized (mGlobalLock) {
             final ActivityRecord r = ActivityRecord.isInRootTaskLocked(token);
             if (r != null) {
-                r.setSizeConfigurations(horizontalSizeConfiguration, verticalSizeConfigurations,
-                        smallestSizeConfigurations);
+                r.setSizeConfigurations(sizeConfigurations);
             }
         }
     }
@@ -782,6 +781,26 @@ class ActivityClientController extends IActivityClientController.Stub {
         }
     }
 
+    /**
+     * Alert the client that the Picture-in-Picture state has changed.
+     */
+    void onPictureInPictureStateChanged(@NonNull ActivityRecord r,
+            PictureInPictureUiState pipState) {
+        if (!r.inPinnedWindowingMode()) {
+            throw new IllegalStateException("Activity is not in PIP mode");
+        }
+
+        try {
+            final ClientTransaction transaction = ClientTransaction.obtain(
+                    r.app.getThread(), r.token);
+            transaction.addCallback(PipStateTransactionItem.obtain(pipState));
+            mService.getLifecycleManager().scheduleTransaction(transaction);
+        } catch (Exception e) {
+            Slog.w(TAG, "Failed to send pip state transaction item: "
+                    + r.intent.getComponent(), e);
+        }
+    }
+
     @Override
     public void toggleFreeformWindowingMode(IBinder token) {
         final long ident = Binder.clearCallingIdentity();
@@ -808,9 +827,9 @@ class ActivityClientController extends IActivityClientController.Stub {
 
                 if (rootTask.inFreeformWindowingMode()) {
                     rootTask.setWindowingMode(WINDOWING_MODE_FULLSCREEN);
-                } else if (!mService.mSupportsNonResizableMultiWindow && r.inSizeCompatMode()) {
-                    throw new IllegalStateException("Size-compat windows are currently not"
-                            + "freeform-enabled");
+                } else if (!r.supportsFreeform()) {
+                    throw new IllegalStateException(
+                            "This activity is currently not freeform-enabled");
                 } else if (rootTask.getParent().inFreeformWindowingMode()) {
                     // If the window is on a freeform display, set it to undefined. It will be
                     // resolved to freeform and it can adjust windowing mode when the display mode

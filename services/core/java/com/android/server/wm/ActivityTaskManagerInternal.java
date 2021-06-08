@@ -32,6 +32,7 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.service.voice.IVoiceInteractionSession;
+import android.util.IntArray;
 import android.util.proto.ProtoOutputStream;
 import android.window.TaskSnapshot;
 
@@ -162,10 +163,10 @@ public abstract class ActivityTaskManagerInternal {
             IVoiceInteractor mInteractor);
 
     /**
-     * Returns the top activity from each of the currently visible root tasks. The first entry
-     * will be the focused activity.
+     * Returns the top activity from each of the currently visible root tasks, and the related task
+     * id. The first entry will be the focused activity.
      */
-    public abstract List<IBinder> getTopVisibleActivities();
+    public abstract List<ActivityAssistInfo> getTopVisibleActivities();
 
     /**
      * Returns whether {@code uid} has any resumed activity.
@@ -220,6 +221,11 @@ public abstract class ActivityTaskManagerInternal {
      */
     public abstract void setBackgroundActivityStartCallback(
             @Nullable BackgroundActivityStartCallback callback);
+
+    /**
+     * Sets the list of UIDs that contain an active accessibility service.
+     */
+    public abstract void setAccessibilityServiceUids(IntArray uids);
 
     /**
      * Start activity {@code intent} without calling user-id check.
@@ -555,6 +561,14 @@ public abstract class ActivityTaskManagerInternal {
     public abstract ActivityMetricsLaunchObserverRegistry getLaunchObserverRegistry();
 
     /**
+     * Returns the URI permission owner associated with the given activity (see
+     * {@link ActivityRecord#getUriPermissionsLocked()}). If the passed-in activity token is
+     * invalid, returns null.
+     */
+    @Nullable
+    public abstract IBinder getUriPermissionOwnerForActivity(@NonNull IBinder activityToken);
+
+    /**
      * Gets bitmap snapshot of the provided task id.
      *
      * <p>Warning! this may restore the snapshot from disk so can block, don't call in a latency
@@ -606,4 +620,10 @@ public abstract class ActivityTaskManagerInternal {
          */
         void commit() throws RemoteException;
     }
+
+    /**
+     * A utility method to check AppOps and PackageManager for SYSTEM_ALERT_WINDOW permission.
+     */
+    public abstract boolean hasSystemAlertWindowPermission(int callingUid, int callingPid,
+            String callingPackage);
 }

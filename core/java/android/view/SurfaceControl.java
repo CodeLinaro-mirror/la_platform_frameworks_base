@@ -34,7 +34,9 @@ import android.annotation.Size;
 import android.annotation.TestApi;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.graphics.Bitmap;
+import android.graphics.BLASTBufferQueue;
 import android.graphics.ColorSpace;
+import android.graphics.GraphicBuffer;
 import android.graphics.Matrix;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
@@ -94,6 +96,7 @@ public final class SurfaceControl implements Parcelable {
     private static native void nativeWriteToParcel(long nativeObject, Parcel out);
     private static native void nativeRelease(long nativeObject);
     private static native void nativeDisconnect(long nativeObject);
+    private static native void nativeUpdateDefaultBufferSize(long nativeObject, int width, int height);
     private static native int nativeCaptureDisplay(DisplayCaptureArgs captureArgs,
             ScreenCaptureListener captureListener);
     private static native int nativeCaptureLayers(LayerCaptureArgs captureArgs,
@@ -104,8 +107,8 @@ public final class SurfaceControl implements Parcelable {
     private static native void nativeApplyTransaction(long transactionObj, boolean sync);
     private static native void nativeMergeTransaction(long transactionObj,
             long otherTransactionObj);
+    private static native void nativeClearTransaction(long transactionObj);
     private static native void nativeSetAnimationTransaction(long transactionObj);
-    private static native void nativeSetEarlyWakeup(long transactionObj);
     private static native void nativeSetEarlyWakeupStart(long transactionObj);
     private static native void nativeSetEarlyWakeupEnd(long transactionObj);
 
@@ -143,8 +146,9 @@ public final class SurfaceControl implements Parcelable {
     private static native void nativeSetBlurRegions(long transactionObj, long nativeObj,
             float[][] regions, int length);
     private static native void nativeSetStretchEffect(long transactionObj, long nativeObj,
-            float left, float top, float right, float bottom, float vecX, float vecY,
-            float maxStretchAmount);
+            float width, float height, float vecX, float vecY,
+            float maxStretchAmountX, float maxStretchAmountY, float childRelativeLeft,
+            float childRelativeTop, float childRelativeRight, float childRelativeBottom);
 
     private static native boolean nativeClearContentFrameStats(long nativeObject);
     private static native boolean nativeGetContentFrameStats(long nativeObject, WindowContentFrameStats outStats);
@@ -186,10 +190,14 @@ public final class SurfaceControl implements Parcelable {
     private static native void nativeSetGameContentType(IBinder displayToken, boolean on);
     private static native void nativeSetDisplayPowerMode(
             IBinder displayToken, int mode);
-    private static native void nativeDeferTransactionUntil(long transactionObj, long nativeObject,
-            long barrierObject, long frame);
     private static native void nativeReparent(long transactionObj, long nativeObject,
             long newParentNativeObject);
+    private static native void nativeSetBuffer(long transactionObj, long nativeObject,
+            GraphicBuffer buffer);
+    private static native void nativeSetColorSpace(long transactionObj, long nativeObject,
+            int colorSpace);
+
+    private static native void nativeOverrideHdrTypes(IBinder displayToken, int[] modes);
 
     private static native void nativeSetInputWindowInfo(long transactionObj, long nativeObject,
             InputWindowHandle handle);
@@ -200,7 +208,8 @@ public final class SurfaceControl implements Parcelable {
     private static native void nativeSyncInputWindows(long transactionObj);
     private static native boolean nativeGetDisplayBrightnessSupport(IBinder displayToken);
     private static native boolean nativeSetDisplayBrightness(IBinder displayToken,
-            float brightness);
+            float sdrBrightness, float sdrBrightnessNits, float displayBrightness,
+            float displayBrightnessNits);
     private static native long nativeReadTransactionFromParcel(Parcel in);
     private static native void nativeWriteTransactionToParcel(long nativeObject, Parcel out);
     private static native void nativeSetShadowRadius(long transactionObj, long nativeObject,
@@ -209,7 +218,7 @@ public final class SurfaceControl implements Parcelable {
             @Size(4) float[] spotColor, float lightPosY, float lightPosZ, float lightRadius);
 
     private static native void nativeSetFrameRate(long transactionObj, long nativeObject,
-            float frameRate, int compatibility, boolean shouldBeSeamless);
+            float frameRate, int compatibility, int changeFrameRateStrategy);
     private static native long nativeGetHandle(long nativeObject);
 
     private static native long nativeAcquireFrameRateFlexibilityToken();
@@ -1077,6 +1086,11 @@ public final class SurfaceControl implements Parcelable {
                 throw new IllegalStateException(
                         "Only buffer layers can set a valid buffer size.");
             }
+
+            if ((mFlags & FX_SURFACE_MASK) == FX_SURFACE_NORMAL) {
+                setBLASTLayer();
+            }
+
             return new SurfaceControl(
                     mSession, mName, mWidth, mHeight, mFormat, mFlags, mParent, mMetadata,
                     mLocalOwnerView, mCallsite);
@@ -1133,9 +1147,6 @@ public final class SurfaceControl implements Parcelable {
             return setFlags(FX_SURFACE_NORMAL, FX_SURFACE_MASK);
         }
 
-        /**
-         * Set the initial size of the controlled surface's buffers in pixels.
-         */
         private void unsetBufferSize() {
             mWidth = 0;
             mHeight = 0;
@@ -1304,7 +1315,6 @@ public final class SurfaceControl implements Parcelable {
          * @hide
          */
         public Builder setBLASTLayer() {
-            unsetBufferSize();
             return setFlags(FX_SURFACE_BLAST, FX_SURFACE_MASK);
         }
 
@@ -2204,6 +2214,18 @@ public final class SurfaceControl implements Parcelable {
     }
 
     /**
+     * Overrides HDR modes for a display device.
+     *
+     * If the caller does not have ACCESS_SURFACE_FLINGER permission, this will throw a Security
+     * Exception.
+     * @hide
+     */
+    @TestApi
+    public static void overrideHdrTypes(@NonNull IBinder displayToken, @NonNull int[] modes) {
+        nativeOverrideHdrTypes(displayToken, modes);
+    }
+
+    /**
      * @hide
      */
     @UnsupportedAppUsage
@@ -2244,6 +2266,8 @@ public final class SurfaceControl implements Parcelable {
      *
      * @hide
      */
+    @TestApi
+    @NonNull
     public static IBinder getInternalDisplayToken() {
         final long[] physicalDisplayIds = getPhysicalDisplayIds();
         if (physicalDisplayIds.length == 0) {
@@ -2405,13 +2429,50 @@ public final class SurfaceControl implements Parcelable {
      * @hide
      */
     public static boolean setDisplayBrightness(IBinder displayToken, float brightness) {
+        return setDisplayBrightness(displayToken, brightness, -1, brightness, -1);
+    }
+
+    /**
+     * Sets the brightness of a display.
+     *
+     * @param displayToken
+     *      The token for the display whose brightness is set.
+     * @param sdrBrightness
+     *      A number between 0.0f (minimum brightness) and 1.0f (maximum brightness), or -1.0f to
+     *      turn the backlight off. Specifies the desired brightness of SDR content.
+     * @param sdrBrightnessNits
+     *      The value of sdrBrightness converted to calibrated nits. -1 if this isn't available.
+     * @param displayBrightness
+     *     A number between 0.0f (minimum brightness) and 1.0f (maximum brightness), or
+     *     -1.0f to turn the backlight off. Specifies the desired brightness of the display itself,
+     *     used directly for HDR content.
+     * @param displayBrightnessNits
+     *      The value of displayBrightness converted to calibrated nits. -1 if this isn't
+     *      available.
+     *
+     * @return Whether the method succeeded or not.
+     *
+     * @throws IllegalArgumentException if:
+     *      - displayToken is null;
+     *      - brightness is NaN or greater than 1.0f.
+     *
+     * @hide
+     */
+    public static boolean setDisplayBrightness(IBinder displayToken, float sdrBrightness,
+            float sdrBrightnessNits, float displayBrightness, float displayBrightnessNits) {
         Objects.requireNonNull(displayToken);
-        if (Float.isNaN(brightness) || brightness > 1.0f
-                || (brightness < 0.0f && brightness != -1.0f)) {
-            throw new IllegalArgumentException("brightness must be a number between 0.0f and 1.0f,"
-                    + " or -1 to turn the backlight off: " + brightness);
+        if (Float.isNaN(displayBrightness) || displayBrightness > 1.0f
+                || (displayBrightness < 0.0f && displayBrightness != -1.0f)) {
+            throw new IllegalArgumentException("displayBrightness must be a number between 0.0f "
+                    + " and 1.0f, or -1 to turn the backlight off: " + displayBrightness);
         }
-        return nativeSetDisplayBrightness(displayToken, brightness);
+        if (Float.isNaN(sdrBrightness) || sdrBrightness > 1.0f
+                || (sdrBrightness < 0.0f && sdrBrightness != -1.0f)) {
+            throw new IllegalArgumentException("sdrBrightness must be a number between 0.0f "
+                    + "and 1.0f, or -1 to turn the backlight off: " + sdrBrightness);
+        }
+        return nativeSetDisplayBrightness(displayToken, sdrBrightness, sdrBrightnessNits,
+                displayBrightness, displayBrightnessNits);
     }
 
     /**
@@ -2538,6 +2599,16 @@ public final class SurfaceControl implements Parcelable {
                 = sRegistry.registerNativeAllocation(this, mNativeObject);
         }
 
+        /**
+         * Create a transaction object that wraps a native peer.
+         * @hide
+         */
+        Transaction(long nativeObject) {
+            mNativeObject = nativeObject;
+            mFreeNativeResources =
+                sRegistry.registerNativeAllocation(this, mNativeObject);
+        }
+
         private Transaction(Parcel in) {
             readFromParcel(in);
         }
@@ -2548,6 +2619,19 @@ public final class SurfaceControl implements Parcelable {
          */
         public void apply() {
             apply(false);
+        }
+
+        /**
+         * Clear the transaction object, without applying it.
+         *
+         * @hide
+         */
+        public void clear() {
+            mResizedSurfaces.clear();
+            mReparentedSurfaces.clear();
+            if (mNativeObject != 0) {
+                nativeClearTransaction(mNativeObject);
+            }
         }
 
         /**
@@ -2579,8 +2663,7 @@ public final class SurfaceControl implements Parcelable {
                 final Point size = mResizedSurfaces.valueAt(i);
                 final SurfaceControl surfaceControl = mResizedSurfaces.keyAt(i);
                 synchronized (surfaceControl.mLock) {
-                    surfaceControl.mWidth = size.x;
-                    surfaceControl.mHeight = size.y;
+                    surfaceControl.resize(size.x, size.y);
                 }
             }
             mResizedSurfaces.clear();
@@ -2956,11 +3039,14 @@ public final class SurfaceControl implements Parcelable {
         /**
          * @hide
          */
-        public Transaction setStretchEffect(SurfaceControl sc, float left, float top, float right,
-                float bottom, float vecX, float vecY, float maxStretchAmount) {
+        public Transaction setStretchEffect(SurfaceControl sc, float width, float height,
+                float vecX, float vecY, float maxStretchAmountX,
+                float maxStretchAmountY, float childRelativeLeft, float childRelativeTop, float childRelativeRight,
+                float childRelativeBottom) {
             checkPreconditions(sc);
-            nativeSetStretchEffect(mNativeObject, sc.mNativeObject, left, top, right, bottom,
-                    vecX, vecY, maxStretchAmount);
+            nativeSetStretchEffect(mNativeObject, sc.mNativeObject, width, height,
+                    vecX, vecY, maxStretchAmountX, maxStretchAmountY, childRelativeLeft, childRelativeTop,
+                    childRelativeRight, childRelativeBottom);
             return this;
         }
 
@@ -2971,21 +3057,6 @@ public final class SurfaceControl implements Parcelable {
         public Transaction setLayerStack(SurfaceControl sc, int layerStack) {
             checkPreconditions(sc);
             nativeSetLayerStack(mNativeObject, sc.mNativeObject, layerStack);
-            return this;
-        }
-
-        /**
-         * @hide
-         */
-        @UnsupportedAppUsage
-        public Transaction deferTransactionUntil(SurfaceControl sc, SurfaceControl barrier,
-                long frameNumber) {
-            if (frameNumber < 0) {
-                return this;
-            }
-            checkPreconditions(sc);
-            nativeDeferTransactionUntil(mNativeObject, sc.mNativeObject, barrier.mNativeObject,
-                    frameNumber);
             return this;
         }
 
@@ -3137,23 +3208,6 @@ public final class SurfaceControl implements Parcelable {
             return this;
         }
 
-        /**
-         * @deprecated use {@link Transaction#setEarlyWakeupStart()}
-         *
-         * Indicate that SurfaceFlinger should wake up earlier than usual as a result of this
-         * transaction. This should be used when the caller thinks that the scene is complex enough
-         * that it's likely to hit GL composition, and thus, SurfaceFlinger needs to more time in
-         * order not to miss frame deadlines.
-         * <p>
-         * Corresponds to setting ISurfaceComposer::eEarlyWakeup
-         * @hide
-         */
-        @Deprecated
-        public Transaction setEarlyWakeup() {
-            nativeSetEarlyWakeup(mNativeObject);
-            return this;
-        }
-
          /**
           * Provides a hint to SurfaceFlinger to change its offset so that SurfaceFlinger wakes up
           * earlier to compose surfaces. The caller should use this as a hint to SurfaceFlinger
@@ -3229,13 +3283,14 @@ public final class SurfaceControl implements Parcelable {
          * Sets the intended frame rate for this surface. Any switching of refresh rates is
          * most probably going to be seamless.
          *
-         * @see #setFrameRate(SurfaceControl, float, int, boolean)
+         * @see #setFrameRate(SurfaceControl, float, int, int)
          */
         @NonNull
         public Transaction setFrameRate(@NonNull SurfaceControl sc,
                 @FloatRange(from = 0.0) float frameRate,
                 @Surface.FrameRateCompatibility int compatibility) {
-            return setFrameRate(sc, frameRate, compatibility, /*shouldBeSeamless*/ true);
+            return setFrameRate(sc, frameRate, compatibility,
+                    Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
         }
 
         /**
@@ -3247,36 +3302,36 @@ public final class SurfaceControl implements Parcelable {
          * because the system may change the display refresh rate, calls to this function may result
          * in changes to Choreographer callback timings, and changes to the time interval at which
          * the system releases buffers back to the application.
+         * <p>
+         * Note that this only has an effect for surfaces presented on the display. If this
+         * surface is consumed by something other than the system compositor, e.g. a media
+         * codec, this call has no effect.
          *
          * @param sc The SurfaceControl to specify the frame rate of.
          * @param frameRate The intended frame rate for this surface, in frames per second. 0 is a
          *                  special value that indicates the app will accept the system's choice for
          *                  the display frame rate, which is the default behavior if this function
-         *                  isn't called. The frameRate param does <em>not</em> need to be a valid
-         *                  refresh rate for this device's display - e.g., it's fine to pass 30fps
-         *                  to a device that can only run the display at 60fps.
+         *                  isn't called. The <code>frameRate</code> param does <em>not</em> need
+         *                  to be a valid refresh rate for this device's display - e.g., it's fine
+         *                  to pass 30fps to a device that can only run the display at 60fps.
          * @param compatibility The frame rate compatibility of this surface. The compatibility
-         *                      value may influence the system's choice of display frame rate. See
-         *                      the Surface.FRAME_RATE_COMPATIBILITY_* values for more info.
-         * @param shouldBeSeamless Whether display refresh rate transitions should be seamless. A
-         *                         seamless transition is one that doesn't have any visual
-         *                         interruptions, such as a black screen for a second or two. True
-         *                         indicates that any frame rate changes caused by this request
-         *                         should be seamless. False indicates that non-seamless refresh
-         *                         rates are also acceptable. Non-seamless switches might be
-         *                         used when the benefit of matching the content's frame rate
-         *                         outweighs the cost of the transition, for example when
-         *                         displaying long-running video content.
+         *                      value may influence the system's choice of display frame rate.
+         *                      This parameter is ignored when <code>frameRate</code> is 0.
+         * @param changeFrameRateStrategy Whether display refresh rate transitions caused by this
+         *                                surface should be seamless. A seamless transition is one
+         *                                that doesn't have any visual interruptions, such as a
+         *                                black screen for a second or two. This parameter is
+         *                                ignored when <code>frameRate</code> is 0.
          * @return This transaction object.
          */
         @NonNull
         public Transaction setFrameRate(@NonNull SurfaceControl sc,
                 @FloatRange(from = 0.0) float frameRate,
                 @Surface.FrameRateCompatibility int compatibility,
-                boolean shouldBeSeamless) {
+                @Surface.ChangeFrameRateStrategy int changeFrameRateStrategy) {
             checkPreconditions(sc);
             nativeSetFrameRate(mNativeObject, sc.mNativeObject, frameRate, compatibility,
-                    shouldBeSeamless);
+                    changeFrameRateStrategy);
             return this;
         }
 
@@ -3331,6 +3386,31 @@ public final class SurfaceControl implements Parcelable {
             } else {
                 nativeSetFlags(mNativeObject, sc.mNativeObject, 0, SKIP_SCREENSHOT);
             }
+            return this;
+        }
+
+        /**
+         * Set a buffer for a SurfaceControl. This can only be used for SurfaceControls that were
+         * created as type {@link #FX_SURFACE_BLAST}
+         *
+         * @hide
+         */
+        public Transaction setBuffer(SurfaceControl sc, GraphicBuffer buffer) {
+            checkPreconditions(sc);
+            nativeSetBuffer(mNativeObject, sc.mNativeObject, buffer);
+            return this;
+        }
+
+        /**
+         * Set the color space for the SurfaceControl. The supported color spaces are SRGB
+         * and Display P3, other color spaces will be treated as SRGB. This can only be used for
+         * SurfaceControls that were created as type {@link #FX_SURFACE_BLAST}
+         *
+         * @hide
+         */
+        public Transaction setColorSpace(SurfaceControl sc, ColorSpace colorSpace) {
+            checkPreconditions(sc);
+            nativeSetColorSpace(mNativeObject, sc.mNativeObject, colorSpace.getId());
             return this;
         }
 
@@ -3397,10 +3477,14 @@ public final class SurfaceControl implements Parcelable {
         public void writeToParcel(@NonNull Parcel dest, @WriteFlags int flags) {
             if (mNativeObject == 0) {
                 dest.writeInt(0);
-            } else {
-                dest.writeInt(1);
+                return;
             }
+
+            dest.writeInt(1);
             nativeWriteTransactionToParcel(mNativeObject, dest);
+            if ((flags & Parcelable.PARCELABLE_WRITE_RETURN_VALUE) != 0) {
+                nativeClearTransaction(mNativeObject);
+            }
         }
 
         private void readFromParcel(Parcel in) {
@@ -3503,5 +3587,14 @@ public final class SurfaceControl implements Parcelable {
      */
     public static Transaction getGlobalTransaction() {
         return sGlobalTransaction;
+    }
+
+    /**
+     * @hide
+     */
+    public void resize(int w, int h) {
+        mWidth = w;
+        mHeight = h;
+        nativeUpdateDefaultBufferSize(mNativeObject, w, h);
     }
 }

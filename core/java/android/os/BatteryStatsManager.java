@@ -23,6 +23,7 @@ import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
+import android.annotation.TestApi;
 import android.content.Context;
 import android.net.NetworkStack;
 import android.os.connectivity.CellularBatteryStats;
@@ -428,10 +429,9 @@ public final class BatteryStatsManager {
      * @param uid Uid of this event. For the active state it represents the uid that was responsible
      *            for waking the radio, or -1 if the system was responsible for waking the radio.
      *            For inactive state, the UID should always be -1.
-     * @throws RuntimeException if there are binder remote-invocation errors.
      */
     @RequiresPermission(android.Manifest.permission.UPDATE_DEVICE_STATS)
-    public void reportMobileRadioPowerState(boolean isActive, int uid) throws RuntimeException {
+    public void reportMobileRadioPowerState(boolean isActive, int uid) {
         try {
             mBatteryStats.noteMobileRadioPowerState(getDataConnectionPowerState(isActive),
                     SystemClock.elapsedRealtimeNanos(), uid);
@@ -447,10 +447,9 @@ public final class BatteryStatsManager {
      * @param uid Uid of this event. For the active state it represents the uid that was responsible
      *            for waking the radio, or -1 if the system was responsible for waking the radio.
      *            For inactive state, the UID should always be -1.
-     * @throws RuntimeException if there are binder remote-invocation errors.
      */
     @RequiresPermission(android.Manifest.permission.UPDATE_DEVICE_STATS)
-    public void reportWifiRadioPowerState(boolean isActive, int uid) throws RuntimeException {
+    public void reportWifiRadioPowerState(boolean isActive, int uid) {
         try {
             mBatteryStats.noteWifiRadioPowerState(getDataConnectionPowerState(isActive),
                     SystemClock.elapsedRealtimeNanos(), uid);
@@ -486,5 +485,75 @@ public final class BatteryStatsManager {
         // generic class or move it to generic package.
         return isActive ? DataConnectionRealTimeInfo.DC_POWER_STATE_HIGH
                 : DataConnectionRealTimeInfo.DC_POWER_STATE_LOW;
+    }
+
+    /**
+     * Sets battery AC charger to enabled/disabled, and freezes the battery state.
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(android.Manifest.permission.DEVICE_POWER)
+    public void setChargerAcOnline(boolean online, boolean forceUpdate) {
+        try {
+            mBatteryStats.setChargerAcOnline(online, forceUpdate);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Sets battery level, and freezes the battery state.
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(android.Manifest.permission.DEVICE_POWER)
+    public void setBatteryLevel(int level, boolean forceUpdate) {
+        try {
+            mBatteryStats.setBatteryLevel(level, forceUpdate);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Unplugs battery, and freezes the battery state.
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(android.Manifest.permission.DEVICE_POWER)
+    public void unplugBattery(boolean forceUpdate) {
+        try {
+            mBatteryStats.unplugBattery(forceUpdate);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Unfreezes battery state, returning to current hardware values.
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(android.Manifest.permission.DEVICE_POWER)
+    public void resetBattery(boolean forceUpdate) {
+        try {
+            mBatteryStats.resetBattery(forceUpdate);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Suspend charging even if plugged in.
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(android.Manifest.permission.DEVICE_POWER)
+    public void suspendBatteryInput() {
+        try {
+            mBatteryStats.suspendBatteryInput();
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
     }
 }

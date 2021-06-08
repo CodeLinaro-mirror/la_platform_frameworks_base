@@ -29,6 +29,7 @@ import static android.content.res.Configuration.ORIENTATION_UNDEFINED;
 import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
 import static android.os.UserHandle.USER_NULL;
 import static android.view.SurfaceControl.Transaction;
+import static android.view.WindowManager.LayoutParams.INVALID_WINDOW_TYPE;
 
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_APP_TRANSITIONS;
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_APP_TRANSITIONS_ANIM;
@@ -36,6 +37,7 @@ import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_ORIENTATION;
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_SYNC_ENGINE;
 import static com.android.server.policy.WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER;
 import static com.android.server.wm.AppTransition.MAX_APP_TRANSITION_DURATION;
+import static com.android.server.wm.DisplayContent.IME_TARGET_LAYERING;
 import static com.android.server.wm.IdentifierProto.HASH_CODE;
 import static com.android.server.wm.IdentifierProto.TITLE;
 import static com.android.server.wm.IdentifierProto.USER_ID;
@@ -389,12 +391,12 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
             mParent.onChildAdded(this);
         }
         if (!mReparenting) {
+            onSyncReparent(oldParent, mParent);
             if (mParent != null && mParent.mDisplayContent != null
                     && mDisplayContent != mParent.mDisplayContent) {
                 onDisplayChanged(mParent.mDisplayContent);
             }
             onParentChanged(mParent, oldParent);
-            onSyncReparent(oldParent, mParent);
         }
     }
 
@@ -460,8 +462,7 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
      * This is used to revoke control of the SurfaceControl from a client process that was
      * previously organizing this WindowContainer.
      */
-    void migrateToNewSurfaceControl() {
-        SurfaceControl.Transaction t = getPendingTransaction();
+    void migrateToNewSurfaceControl(SurfaceControl.Transaction t) {
         t.remove(mSurfaceControl);
         // Clear the last position so the new SurfaceControl will get correct position
         mLastSurfacePosition.set(0, 0);
@@ -1257,7 +1258,14 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
         mOrientation = orientation;
         final WindowContainer parent = getParent();
         if (parent != null) {
-            if (getConfiguration().orientation != getRequestedConfigurationOrientation()) {
+            if (getConfiguration().orientation != getRequestedConfigurationOrientation()
+                    // Update configuration directly only if the change won't be dispatched from
+                    // ancestor. This prevents from computing intermediate configuration when the
+                    // parent also needs to be updated from the ancestor. E.g. the app requests
+                    // portrait but the task is still in landscape. While updating from display,
+                    // the task can be updated to portrait first so the configuration can be
+                    // computed in a consistent environment.
+                    && (inMultiWindowMode() || !handlesOrientationChangeFromDescendant())) {
                 // Resolve the requested orientation.
                 onConfigurationChanged(parent.getConfiguration());
             }
@@ -2689,7 +2697,14 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
             @Nullable ArrayList<WindowContainer> sources) {
         final Task task = asTask();
         if (task != null && !enter && !task.isHomeOrRecentsRootTask()) {
-            mDisplayContent.showImeScreenshot();
+            final InsetsControlTarget imeTarget = mDisplayContent.getImeTarget(IME_TARGET_LAYERING);
+            final boolean isImeLayeringTarget = imeTarget != null && imeTarget.getWindow() != null
+                    && imeTarget.getWindow().getTask() == task;
+            // Attach and show the IME screenshot when the task is the IME target and performing
+            // task closing transition to the next task.
+            if (isImeLayeringTarget && AppTransition.isTaskCloseTransitOld(transit)) {
+                mDisplayContent.showImeScreenshot();
+            }
         }
         final Pair<AnimationAdapter, AnimationAdapter> adapters = getAnimationAdapter(lp,
                 transit, enter, isVoiceInteraction);
@@ -2794,6 +2809,11 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
     boolean okToAnimate(boolean ignoreFrozen) {
         final DisplayContent dc = getDisplayContent();
         return dc != null && dc.okToAnimate(ignoreFrozen);
+    }
+
+    boolean okToAnimate(boolean ignoreFrozen, boolean ignoreScreenOn) {
+        final DisplayContent dc = getDisplayContent();
+        return dc != null && dc.okToAnimate(ignoreFrozen, ignoreScreenOn);
     }
 
     @Override
@@ -3084,6 +3104,11 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
         return null;
     }
 
+    /** Cheap way of doing cast and instanceof. */
+    DisplayContent asDisplayContent() {
+        return null;
+    }
+
     /**
      * @return {@code true} if window container is manage by a
      *          {@link android.window.WindowOrganizer}
@@ -3308,5 +3333,20 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
     void unregisterWindowContainerListener(WindowContainerListener listener) {
         mListeners.remove(listener);
         unregisterConfigurationChangeListener(listener);
+    }
+
+    /**
+     * Returns the {@link WindowManager.LayoutParams.WindowType}.
+     */
+    @WindowManager.LayoutParams.WindowType int getWindowType() {
+        return INVALID_WINDOW_TYPE;
+    }
+
+    boolean setCanScreenshot(boolean canScreenshot) {
+        if (mSurfaceControl == null) {
+            return false;
+        }
+        getPendingTransaction().setSecure(mSurfaceControl, !canScreenshot);
+        return true;
     }
 }

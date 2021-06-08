@@ -119,6 +119,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -306,10 +307,12 @@ public class DevicePolicyManager {
      * succeed. Conversely a result code of {@link android.app.Activity#RESULT_CANCELED} implies
      * that the user backed-out of provisioning, or some precondition for provisioning wasn't met.
      *
-     * @deprecated admin apps must now implement activities with intent filters for the {@link
-     * #ACTION_GET_PROVISIONING_MODE} and {@link #ACTION_ADMIN_POLICY_COMPLIANCE} intent actions;
-     * using {@link #ACTION_PROVISION_MANAGED_DEVICE} to start provisioning will cause the
-     * provisioning to fail.
+     * @deprecated to support {@link android.os.Build.VERSION_CODES#S} and later, admin apps must
+     * implement activities with intent filters for the {@link #ACTION_GET_PROVISIONING_MODE} and
+     * {@link #ACTION_ADMIN_POLICY_COMPLIANCE} intent actions; using {@link
+     * #ACTION_PROVISION_MANAGED_DEVICE} to start provisioning will cause the provisioning to fail;
+     * to additionally support pre-{@link android.os.Build.VERSION_CODES#S}, admin apps must also
+     * continue to use this constant.
      */
     @Deprecated
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
@@ -872,8 +875,7 @@ public class DevicePolicyManager {
      *
      * The name is displayed only during provisioning.
      *
-     * <p>Use in an intent with action {@link #ACTION_PROVISION_MANAGED_DEVICE_FROM_TRUSTED_SOURCE}
-     * or {@link #ACTION_PROVISION_FINANCED_DEVICE}
+     * <p>Use in an intent with action {@link #ACTION_PROVISION_FINANCED_DEVICE}
      *
      * @hide
      */
@@ -987,10 +989,11 @@ public class DevicePolicyManager {
      * The default for this extra is {@code false} - by default, the admin of a fully-managed
      * device has the ability to grant sensors-related permissions.
      *
-     * <p>Use with {@link #ACTION_PROVISION_MANAGED_DEVICE} only.
+     * <p>Use only for device owner provisioning.
+     * @see #ACTION_GET_PROVISIONING_MODE
      */
-    public static final String EXTRA_PROVISIONING_PERMISSION_GRANT_OPT_OUT =
-            "android.app.extra.PROVISIONING_PERMISSION_GRANT_OPT_OUT";
+    public static final String EXTRA_PROVISIONING_SENSORS_PERMISSION_GRANT_OPT_OUT =
+            "android.app.extra.PROVISIONING_SENSORS_PERMISSION_GRANT_OPT_OUT";
 
     /**
      * A String extra holding the URL-safe base64 encoded SHA-256 checksum of any signature of the
@@ -1212,15 +1215,14 @@ public class DevicePolicyManager {
     public @interface ProvisioningTrigger {}
 
     /**
-     * Possible values for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES}.
+     * Flags for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES}.
      *
      * @hide
      */
-    @IntDef(prefix = { "SUPPORTED_MODES_" }, value = {
-            SUPPORTED_MODES_ORGANIZATION_OWNED,
-            SUPPORTED_MODES_PERSONALLY_OWNED,
-            SUPPORTED_MODES_ORGANIZATION_AND_PERSONALLY_OWNED,
-            SUPPORTED_MODES_DEVICE_OWNER
+    @IntDef(flag = true, prefix = { "FLAG_SUPPORTED_MODES_" }, value = {
+            FLAG_SUPPORTED_MODES_ORGANIZATION_OWNED,
+            FLAG_SUPPORTED_MODES_PERSONALLY_OWNED,
+            FLAG_SUPPORTED_MODES_DEVICE_OWNER
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ProvisioningConfiguration {}
@@ -1275,6 +1277,13 @@ public class DevicePolicyManager {
     /**
      * A value for {@link #EXTRA_PROVISIONING_TRIGGER} indicating that the provisioning
      * trigger is persistent device owner enrollment.
+     * <p>This constant is meant to represent a specific type of managed account provisioning which
+     * provisions a device to a device owner by invoking the standard provisioning flow (where
+     * the ManagedProvisioning component downloads and installs the admin app), as opposed to
+     * relying on the provisioning trigger to handle download and install of the admin app.
+     * <p>As of {@link android.os.Build.VERSION_CODES#S}, this constant is no longer used in favor
+     * of the more general {@link #PROVISIONING_TRIGGER_MANAGED_ACCOUNT} which handles all managed
+     * account provisioning types.
      * @deprecated Use the broader {@link #PROVISIONING_TRIGGER_MANAGED_ACCOUNT} instead
      * @see #PROVISIONING_TRIGGER_CLOUD_ENROLLMENT
      * @see #PROVISIONING_TRIGGER_QR_CODE
@@ -1288,6 +1297,7 @@ public class DevicePolicyManager {
     /**
      * A value for {@link #EXTRA_PROVISIONING_TRIGGER} indicating that the provisioning
      * trigger is managed account enrollment.
+     * <p>
      * @see #PROVISIONING_TRIGGER_CLOUD_ENROLLMENT
      * @see #PROVISIONING_TRIGGER_QR_CODE
      * @see #PROVISIONING_TRIGGER_UNSPECIFIED
@@ -1297,7 +1307,7 @@ public class DevicePolicyManager {
     public static final int PROVISIONING_TRIGGER_MANAGED_ACCOUNT = 4;
 
     /**
-     * A value for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES} indicating that provisioning is
+     * Flag for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES} indicating that provisioning is
      * organization-owned.
      *
      * <p>Using this value indicates the admin app can only be provisioned in either a
@@ -1306,55 +1316,48 @@ public class DevicePolicyManager {
      * #EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES} array extra contain {@link
      * #PROVISIONING_MODE_MANAGED_PROFILE} and {@link #PROVISIONING_MODE_FULLY_MANAGED_DEVICE}.
      *
-     * <p>Also, if this value is set, the admin app's {@link #ACTION_GET_PROVISIONING_MODE} activity
+     * <p>Also, if this flag is set, the admin app's {@link #ACTION_GET_PROVISIONING_MODE} activity
      * will not receive the {@link #EXTRA_PROVISIONING_IMEI} and {@link
      * #EXTRA_PROVISIONING_SERIAL_NUMBER} extras.
      *
-     * @hide
-     */
-    @SystemApi
-    public static final int SUPPORTED_MODES_ORGANIZATION_OWNED = 1;
-
-    /**
-     * A value for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES} indicating that provisioning is
-     * personally-owned.
-     *
-     * <p>Using this value will cause the admin app's {@link #ACTION_GET_PROVISIONING_MODE}
-     * activity to have the {@link #EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES} array extra
-     * contain only {@link #PROVISIONING_MODE_MANAGED_PROFILE}.
-     *
-     * @hide
-     */
-    @SystemApi
-    public static final int SUPPORTED_MODES_PERSONALLY_OWNED = 2;
-
-    /**
-     * A value for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES} indicating that provisioning could
-     * be organization-owned or personally-owned.
-     *
-     * <p>Using this value will cause the admin app's {@link #ACTION_GET_PROVISIONING_MODE}
-     * activity to have the {@link #EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES} array extra
-     * contain {@link
+     * <p>This flag can be combined with {@link #FLAG_SUPPORTED_MODES_PERSONALLY_OWNED}. In
+     * that case, the admin app's {@link #ACTION_GET_PROVISIONING_MODE} activity will have
+     * the {@link #EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES} array extra contain {@link
      * #PROVISIONING_MODE_MANAGED_PROFILE}, {@link #PROVISIONING_MODE_FULLY_MANAGED_DEVICE} and
      * {@link #PROVISIONING_MODE_MANAGED_PROFILE_ON_PERSONAL_DEVICE}.
      *
-     * <p>Also, if this value is set, the admin app's {@link #ACTION_GET_PROVISIONING_MODE} activity
-     * will not receive the {@link #EXTRA_PROVISIONING_IMEI} and {@link
-     * #EXTRA_PROVISIONING_SERIAL_NUMBER} extras.
-     *
      * @hide
      */
     @SystemApi
-    public static final int SUPPORTED_MODES_ORGANIZATION_AND_PERSONALLY_OWNED = 3;
+    public static final int FLAG_SUPPORTED_MODES_ORGANIZATION_OWNED = 1;
 
     /**
-     * A value for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES} indicating that the only supported
-     * provisioning mode is device owner.
+     * Flag for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES} indicating that provisioning
+     * is personally-owned.
+     *
+     * <p>Using this flag will cause the admin app's {@link #ACTION_GET_PROVISIONING_MODE}
+     * activity to have the {@link #EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES} array extra
+     * contain only {@link #PROVISIONING_MODE_MANAGED_PROFILE}.
+     *
+     * <p>This flag can be combined with {@link #FLAG_SUPPORTED_MODES_ORGANIZATION_OWNED}. In
+     * that case, the admin app's {@link #ACTION_GET_PROVISIONING_MODE} activity will have the
+     * {@link #EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES} array extra contain {@link
+     * #PROVISIONING_MODE_MANAGED_PROFILE}, {@link #PROVISIONING_MODE_FULLY_MANAGED_DEVICE} and
+     * {@link #PROVISIONING_MODE_MANAGED_PROFILE_ON_PERSONAL_DEVICE}.
      *
      * @hide
      */
     @SystemApi
-    public static final int SUPPORTED_MODES_DEVICE_OWNER = 4;
+    public static final int FLAG_SUPPORTED_MODES_PERSONALLY_OWNED = 1 << 1;
+
+    /**
+     * Flag for {@link #EXTRA_PROVISIONING_SUPPORTED_MODES} indicating that the only
+     * supported provisioning mode is device owner.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final int FLAG_SUPPORTED_MODES_DEVICE_OWNER = 1 << 2;
 
     /**
      * This MIME type is used for starting the device owner provisioning.
@@ -1676,6 +1679,36 @@ public class DevicePolicyManager {
     public @interface PasswordComplexity {}
 
     /**
+     * Indicates that nearby streaming is not controlled by policy, which means nearby streaming is
+     * allowed.
+     */
+    public static final int NEARBY_STREAMING_NOT_CONTROLLED_BY_POLICY = 0;
+
+    /** Indicates that nearby streaming is disabled. */
+    public static final int NEARBY_STREAMING_DISABLED = 1;
+
+    /** Indicates that nearby streaming is enabled. */
+    public static final int NEARBY_STREAMING_ENABLED = 2;
+
+    /**
+     * Indicates that nearby streaming is enabled only to devices offering a comparable level of
+     * security, with the same authenticated managed account.
+     */
+    public static final int NEARBY_STREAMING_SAME_MANAGED_ACCOUNT_ONLY = 3;
+
+    /**
+     * @hide
+     */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(prefix = {"NEARBY_STREAMING_"}, value = {
+        NEARBY_STREAMING_NOT_CONTROLLED_BY_POLICY,
+        NEARBY_STREAMING_DISABLED,
+        NEARBY_STREAMING_ENABLED,
+        NEARBY_STREAMING_SAME_MANAGED_ACCOUNT_ONLY,
+    })
+    public @interface NearbyStreamingPolicy {}
+
+    /**
      * Activity action: have the user enter a new password for the parent profile.
      * If the intent is launched from within a managed profile, this will trigger
      * entering a new password for the parent of the profile. The caller can optionally
@@ -1741,19 +1774,6 @@ public class DevicePolicyManager {
             = "android.app.action.SYSTEM_UPDATE_POLICY_CHANGED";
 
     /**
-     * Broadcast action to notify ManagedProvisioning that
-     * {@link UserManager#DISALLOW_SHARE_INTO_MANAGED_PROFILE} restriction has changed.
-     * @hide
-     * @deprecated No longer needed as ManagedProvisioning no longer handles
-     * {@link UserManager#DISALLOW_SHARE_INTO_MANAGED_PROFILE} restriction changing.
-     */
-    // TODO(b/177221010): Remove when Managed Provisioning no longer depend on it.
-    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    @Deprecated
-    public static final String ACTION_DATA_SHARING_RESTRICTION_CHANGED =
-            "android.app.action.DATA_SHARING_RESTRICTION_CHANGED";
-
-    /**
      * Broadcast action from ManagedProvisioning to notify that the latest change to
      * {@link UserManager#DISALLOW_SHARE_INTO_MANAGED_PROFILE} restriction has been successfully
      * applied (cross profile intent filters updated). Only usesd for CTS tests.
@@ -1763,6 +1783,16 @@ public class DevicePolicyManager {
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_DATA_SHARING_RESTRICTION_APPLIED =
             "android.app.action.DATA_SHARING_RESTRICTION_APPLIED";
+
+    /**
+     * Broadcast action: notify that a value of {@link Settings.Global#DEVICE_POLICY_CONSTANTS}
+     * has been changed.
+     * @hide
+     */
+    @TestApi
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_DEVICE_POLICY_CONSTANTS_CHANGED =
+            "android.app.action.DEVICE_POLICY_CONSTANTS_CHANGED";
 
     /**
      * Permission policy to prompt user for new permission requests for runtime permissions.
@@ -1817,6 +1847,8 @@ public class DevicePolicyManager {
      * Delegation of certificate installation and management. This scope grants access to the
      * {@link #getInstalledCaCerts}, {@link #hasCaCertInstalled}, {@link #installCaCert},
      * {@link #uninstallCaCert}, {@link #uninstallAllUserCaCerts} and {@link #installKeyPair} APIs.
+     * This scope also grants the ability to read identifiers that the delegating device owner or
+     * profile owner can obtain. See {@link #getEnrollmentSpecificId()}.
      */
     public static final String DELEGATION_CERT_INSTALL = "delegation-cert-install";
 
@@ -1892,6 +1924,20 @@ public class DevicePolicyManager {
      * <p> Can be granted by Device Owner or Profile Owner.
      */
     public static final String DELEGATION_CERT_SELECTION = "delegation-cert-selection";
+
+    /**
+     * Grants access to {@link #setSecurityLoggingEnabled}, {@link #isSecurityLoggingEnabled},
+     * {@link #retrieveSecurityLogs}, and {@link #retrievePreRebootSecurityLogs}. Once granted the
+     * delegated app will start receiving {@link DelegatedAdminReceiver#onSecurityLogsAvailable}
+     * callback, and Device owner or Profile Owner will no longer receive the
+     * {@link DeviceAdminReceiver#onSecurityLogsAvailable} callback. There can be at most one app
+     * that has this delegation. If another app already had delegated security logging access, it
+     * will lose the delegation when a new app is delegated.
+     *
+     * <p> Can only be granted by Device Owner or Profile Owner of an organnization owned and
+     * managed profile.
+     */
+    public static final String DELEGATION_SECURITY_LOGGING = "delegation-security-logging";
 
     /**
      * No management for current user in-effect. This is the default.
@@ -2425,7 +2471,7 @@ public class DevicePolicyManager {
 
     /** @hide */
     @Retention(RetentionPolicy.SOURCE)
-    @IntDef(flag = true, prefix = {"PRIVATE_DNS_MODE_"}, value = {
+    @IntDef(prefix = {"PRIVATE_DNS_MODE_"}, value = {
             PRIVATE_DNS_MODE_UNKNOWN,
             PRIVATE_DNS_MODE_OFF,
             PRIVATE_DNS_MODE_OPPORTUNISTIC,
@@ -2593,7 +2639,7 @@ public class DevicePolicyManager {
      * An integer extra indication what provisioning modes should be available for the admin app
      * to pick.
      *
-     * <p>The default value is {@link #SUPPORTED_MODES_ORGANIZATION_OWNED}.
+     * <p>The default value is {@link #FLAG_SUPPORTED_MODES_ORGANIZATION_OWNED}.
      *
      * <p>The value of this extra will determine the contents of the {@link
      * #EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES} array that is passed to the admin app as an
@@ -2604,13 +2650,21 @@ public class DevicePolicyManager {
      * #ACTION_GET_PROVISIONING_MODE} activity via the {@link #EXTRA_PROVISIONING_IMEI} and {@link
      * #EXTRA_PROVISIONING_SERIAL_NUMBER} respectively.
      *
+     * <p>The allowed flag combinations are:
+     * <ul>
+     *     <li>{@link #FLAG_SUPPORTED_MODES_ORGANIZATION_OWNED}</li>
+     *     <li>{@link #FLAG_SUPPORTED_MODES_PERSONALLY_OWNED}</li>
+     *     <li>{@link #FLAG_SUPPORTED_MODES_DEVICE_OWNER}</li>
+     *     <li>{@link #FLAG_SUPPORTED_MODES_ORGANIZATION_OWNED}
+     *             | {@link #FLAG_SUPPORTED_MODES_PERSONALLY_OWNED}</li>
+     * </ul>
+     *
      * <p>This extra is only respected when provided alongside the {@link
      * #ACTION_PROVISION_MANAGED_DEVICE_FROM_TRUSTED_SOURCE} intent action.
      *
-     * @see #SUPPORTED_MODES_ORGANIZATION_OWNED
-     * @see #SUPPORTED_MODES_PERSONALLY_OWNED
-     * @see #SUPPORTED_MODES_ORGANIZATION_AND_PERSONALLY_OWNED
-     * @see #SUPPORTED_MODES_DEVICE_OWNER
+     * @see #FLAG_SUPPORTED_MODES_ORGANIZATION_OWNED
+     * @see #FLAG_SUPPORTED_MODES_PERSONALLY_OWNED
+     * @see #FLAG_SUPPORTED_MODES_DEVICE_OWNER
      * @hide
      */
     @SystemApi
@@ -2621,8 +2675,8 @@ public class DevicePolicyManager {
      * A boolean extra which determines whether to skip the ownership disclaimer screen during the
      * provisioning flow. The default value is {@code false}.
      *
-     * If the value is {@code true}, it is the responsibility of the provisioning initiator to
-     * show the relevant disclaimer.
+     * If the value is {@code true}, the provisioning initiator must display a device ownership
+     * disclaimer screen similar to that provided in AOSP.
      *
      * <p>This extra is only respected when provided alongside the {@link
      * #ACTION_PROVISION_MANAGED_DEVICE_FROM_TRUSTED_SOURCE} intent action.
@@ -2657,7 +2711,13 @@ public class DevicePolicyManager {
     public static final int PROVISIONING_MODE_MANAGED_PROFILE = 2;
 
     /**
-     * The provisioning mode for a work profile on a personal device.
+     * The provisioning mode for a managed profile on a personal device.
+     * <p>This mode is only available when the provisioning initiator has explicitly instructed the
+     * provisioning flow to support managed profile on a personal device provisioning. In that case,
+     * {@link #PROVISIONING_MODE_MANAGED_PROFILE} corresponds to an organization-owned managed
+     * profile, whereas this constant corresponds to a personally-owned managed profile.
+     *
+     * @see #EXTRA_PROVISIONING_MODE
      */
     public static final int PROVISIONING_MODE_MANAGED_PROFILE_ON_PERSONAL_DEVICE = 3;
 
@@ -2986,7 +3046,7 @@ public class DevicePolicyManager {
     /**
      * Checks if it's safe to run operations that can be affected by the given {@code reason}.
      *
-     * <p><b>Note:/b> notice that the operation safety state might change between the time this
+     * <p><b>Note:</b> notice that the operation safety state might change between the time this
      * method returns and the operation's method is called, so calls to the latter could still throw
      * a {@link UnsafeStateException} even when this method returns {@code true}.
      *
@@ -3280,6 +3340,41 @@ public class DevicePolicyManager {
     @SystemApi
     public static final String ACCOUNT_FEATURE_DEVICE_OR_PROFILE_OWNER_DISALLOWED =
             "android.account.DEVICE_OR_PROFILE_OWNER_DISALLOWED";
+
+    /**
+     * A {@code boolean} metadata to be included in a mainline module's {@code <application>}
+     * manifest element, which declares that the module should be considered a required app for
+     * managed users.
+     * <p>Being declared as a required app prevents removal of this package during the
+     * provisioning process.
+     * @hide
+     */
+    @SystemApi
+    public static final String REQUIRED_APP_MANAGED_USER = "android.app.REQUIRED_APP_MANAGED_USER";
+
+    /**
+     * A {@code boolean} metadata to be included in a mainline module's {@code <application>}
+     * manifest element, which declares that the module should be considered a required app for
+     * managed devices.
+     * <p>Being declared as a required app prevents removal of this package during the
+     * provisioning process.
+     * @hide
+     */
+    @SystemApi
+    public static final String REQUIRED_APP_MANAGED_DEVICE =
+            "android.app.REQUIRED_APP_MANAGED_DEVICE";
+
+    /**
+     * A {@code boolean} metadata to be included in a mainline module's {@code <application>}
+     * manifest element, which declares that the module should be considered a required app for
+     * managed profiles.
+     * <p>Being declared as a required app prevents removal of this package during the
+     * provisioning process.
+     * @hide
+     */
+    @SystemApi
+    public static final String REQUIRED_APP_MANAGED_PROFILE =
+            "android.app.REQUIRED_APP_MANAGED_PROFILE";
 
     /**
      * Called by an application that is administering the device to set the password restrictions it
@@ -4478,27 +4573,6 @@ public class DevicePolicyManager {
     }
 
     /**
-     * Determine whether the current profile password the user has set is sufficient
-     * to meet the policy requirements (e.g. quality, minimum length) that have been
-     * requested by the admins of the parent user and its profiles.
-     *
-     * @param userHandle the userId of the profile to check the password for.
-     * @return Returns true if the password would meet the current requirements, else false.
-     * @throws SecurityException if {@code userHandle} is not a managed profile.
-     * @hide
-     */
-    public boolean isProfileActivePasswordSufficientForParent(int userHandle) {
-        if (mService != null) {
-            try {
-                return mService.isProfileActivePasswordSufficientForParent(userHandle);
-            } catch (RemoteException e) {
-                throw e.rethrowFromSystemServer();
-            }
-        }
-        return false;
-    }
-
-    /**
      * Returns whether the given user's credential will be sufficient for all password policy
      * requirement, once the user's profile has switched to unified challenge.
      *
@@ -5212,7 +5286,8 @@ public class DevicePolicyManager {
      *            {@link #WIPE_EXTERNAL_STORAGE}, {@link #WIPE_RESET_PROTECTION_DATA},
      *            {@link #WIPE_EUICC} and {@link #WIPE_SILENTLY}.
      * @throws SecurityException if the calling application does not own an active administrator
-     *            that uses {@link DeviceAdminInfo#USES_POLICY_WIPE_DATA}
+     *            that uses {@link DeviceAdminInfo#USES_POLICY_WIPE_DATA} or is not granted the
+     *            {@link android.Manifest.permission#MASTER_CLEAR} permission.
      */
     public void wipeData(int flags) {
         wipeDataInternal(flags, "");
@@ -5240,7 +5315,8 @@ public class DevicePolicyManager {
      * @param reason a string that contains the reason for wiping data, which can be
      *            presented to the user.
      * @throws SecurityException if the calling application does not own an active administrator
-     *            that uses {@link DeviceAdminInfo#USES_POLICY_WIPE_DATA}
+     *            that uses {@link DeviceAdminInfo#USES_POLICY_WIPE_DATA} or is not granted the
+     *            {@link android.Manifest.permission#MASTER_CLEAR} permission.
      * @throws IllegalArgumentException if the input reason string is null or empty, or if
      *            {@link #WIPE_SILENTLY} is set.
      */
@@ -5416,6 +5492,10 @@ public class DevicePolicyManager {
      * This method requires the caller to be the device owner.
      * <p>
      * This proxy is only a recommendation and it is possible that some apps will ignore it.
+     * <p>
+     * Note: The device owner won't be able to set a global HTTP proxy if there are unaffiliated
+     * secondary users or profiles on the device. It's recommended that affiliation ids are set for
+     * new users as soon as possible after provisioning via {@link #setAffiliationIds}.
      *
      * @see ProxyInfo
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with.
@@ -6158,13 +6238,22 @@ public class DevicePolicyManager {
 
     // STOPSHIP(b/174298501): clarify the expected return value following generateKeyPair call.
     /**
-     * Called by a device or profile owner, or delegated certificate installer, to query whether a
-     * certificate and private key are installed under a given alias.
+     * This API can be called by the following to query whether a certificate and private key are
+     * installed under a given alias:
+     * <ul>
+     *    <li>Device owner</li>
+     *    <li>Profile owner</li>
+     *    <li>Delegated certificate installer</li>
+     *    <li>Credential management app</li>
+     * </ul>
+     *
+     * If called by the credential management app, the alias must exist in the credential
+     * management app's {@link android.security.AppUriAuthenticationPolicy}.
      *
      * @param alias The alias under which the key pair is installed.
      * @return {@code true} if a key pair with this alias exists, {@code false} otherwise.
-     * @throws SecurityException if the caller is not a device or profile owner or a delegated
-     *         certificate installer.
+     * @throws SecurityException if the caller is not a device or profile owner, a delegated
+     *         certificate installer or the credential management app.
      * @see #setDelegatedScopes
      * @see #DELEGATION_CERT_INSTALL
      */
@@ -6335,7 +6424,7 @@ public class DevicePolicyManager {
      * broadcast when access to a key is granted.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with, or
-     *        {@code null} if calling from a delegated certificate installer.
+     *        {@code null} if calling from a delegated certificate chooser.
      * @param alias The alias of the key to grant access to.
      * @param packageName The name of the (already installed) package to grant access to.
      * @return {@code true} if the grant was set successfully, {@code false} otherwise.
@@ -6364,12 +6453,14 @@ public class DevicePolicyManager {
      * to a given KeyChain key.
      *
      * Key are granted on a per-UID basis, so if several apps share the same UID, granting access to
-     * one of them automatically grants it to others. This method returns a set of sets of package
-     * names, where each internal set contains all packages sharing the same UID. Grantee packages
-     * that don't share UID with other packages are represented by singleton sets.
+     * one of them automatically grants it to others. This method returns a map containing one entry
+     * per grantee UID. Entries have UIDs as keys and sets of corresponding package names as values.
+     * In particular, grantee packages that don't share UID with other packages are represented by
+     * entries having singleton sets as values.
      *
      * @param alias The alias of the key to grant access to.
-     * @return package names of apps that have access to a given key, grouped by UIDs
+     * @return apps that have access to a given key, arranged in a map from UID to sets of
+     *       package names.
      *
      * @throws SecurityException if the caller is not a device owner, a profile owner or
      *         delegated certificate chooser.
@@ -6377,26 +6468,11 @@ public class DevicePolicyManager {
      *
      * @see #grantKeyPairToApp(ComponentName, String, String)
      */
-    public @NonNull Set<Set<String>> getKeyPairGrants(@NonNull String alias) {
+    public @NonNull Map<Integer, Set<String>> getKeyPairGrants(@NonNull String alias) {
         throwIfParentInstance("getKeyPairGrants");
         try {
-            // Set of sets is flattened into a null-separated list.
-            final List<String> flattened =
-                    mService.getKeyPairGrants(mContext.getPackageName(), alias);
-            final Set<Set<String>> result = new HashSet<>();
-            Set<String> pkgsForOneUid = new HashSet<>();
-            for (final String pkg : flattened) {
-                if (pkg == null) {
-                    result.add(pkgsForOneUid);
-                    pkgsForOneUid = new HashSet<>();
-                } else {
-                    pkgsForOneUid.add(pkg);
-                }
-            }
-            if (!pkgsForOneUid.isEmpty()) {
-                result.add(pkgsForOneUid);
-            }
-            return result;
+            // The result is wrapped into intermediate parcelable representation.
+            return mService.getKeyPairGrants(mContext.getPackageName(), alias).getPackagesByUid();
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
         }
@@ -6414,7 +6490,7 @@ public class DevicePolicyManager {
      * broadcast when access to a key is revoked.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with, or
-     *        {@code null} if calling from a delegated certificate installer.
+     *        {@code null} if calling from a delegated certificate chooser.
      * @param alias The alias of the key to revoke access from.
      * @param packageName The name of the (already installed) package to revoke access from.
      * @return {@code true} if the grant was revoked successfully, {@code false} otherwise.
@@ -7092,6 +7168,86 @@ public class DevicePolicyManager {
             }
         }
         return false;
+    }
+
+    /**
+     * Called by a device/profile owner to set nearby notification streaming policy. Notification
+     * streaming is sending notification data from pre-installed apps to nearby devices.
+     *
+     * @param policy One of the {@code NearbyStreamingPolicy} constants.
+     * @throws SecurityException if caller is not a device or profile owner
+     */
+    public void setNearbyNotificationStreamingPolicy(@NearbyStreamingPolicy int policy) {
+        throwIfParentInstance("setNearbyNotificationStreamingPolicy");
+        if (mService == null) {
+            return;
+        }
+        try {
+            mService.setNearbyNotificationStreamingPolicy(policy);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Returns the current runtime nearby notification streaming policy set by the device or profile
+     * owner.
+     */
+    public @NearbyStreamingPolicy int getNearbyNotificationStreamingPolicy() {
+        return getNearbyNotificationStreamingPolicy(myUserId());
+    }
+
+    /** @hide per-user version */
+    public @NearbyStreamingPolicy int getNearbyNotificationStreamingPolicy(int userId) {
+        throwIfParentInstance("getNearbyNotificationStreamingPolicy");
+        if (mService == null) {
+            return NEARBY_STREAMING_NOT_CONTROLLED_BY_POLICY;
+        }
+        try {
+            return mService.getNearbyNotificationStreamingPolicy(userId);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Called by a device/profile owner to set nearby app streaming policy. App streaming is when
+     * the device starts an app on a virtual display and sends a video stream of the app to nearby
+     * devices.
+     *
+     * @param policy One of the {@code NearbyStreamingPolicy} constants.
+     * @throws SecurityException if caller is not a device or profile owner.
+     */
+    public void setNearbyAppStreamingPolicy(@NearbyStreamingPolicy int policy) {
+        throwIfParentInstance("setNearbyAppStreamingPolicy");
+        if (mService == null) {
+            return;
+        }
+        try {
+            mService.setNearbyAppStreamingPolicy(policy);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Returns the current runtime nearby app streaming policy set by the device or profile owner.
+     */
+    public @NearbyStreamingPolicy int getNearbyAppStreamingPolicy() {
+        return getNearbyAppStreamingPolicy(myUserId());
+    }
+
+    /** @hide per-user version */
+    public @NearbyStreamingPolicy int getNearbyAppStreamingPolicy(int userId) {
+        throwIfParentInstance("getNearbyAppStreamingPolicy");
+        if (mService == null) {
+            return NEARBY_STREAMING_NOT_CONTROLLED_BY_POLICY;
+        }
+        try {
+            return mService.getNearbyAppStreamingPolicy(userId);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
     }
 
     /**
@@ -9956,78 +10112,51 @@ public class DevicePolicyManager {
     }
 
     /**
-     * Sets whether 5g slicing is enabled on the work profile.
+     * Sets whether preferential network service is enabled on the work profile.
+     * For example, an organization can have a deal/agreement with a carrier that all of
+     * the work data from its employees’ devices will be sent via a network service dedicated
+     * for enterprise use.
      *
-     * Slicing allows operators to virtually divide their networks in portions and use different
-     * portions for specific use cases; for example, a corporation can have a deal/agreement with
-     * a carrier that all of its employees’ devices use data on a slice dedicated for enterprise
-     * use.
+     * An example of a supported preferential network service is the Enterprise
+     * slice on 5G networks.
      *
-     * By default, 5g slicing is enabled on the work profile on supported carriers and devices.
-     * Admins can explicitly disable it with this API.
+     * By default, preferential network service is enabled on the work profile on supported
+     * carriers and devices. Admins can explicitly disable it with this API.
+     * On fully-managed devices this method is unsupported because all traffic is considered
+     * work traffic.
      *
      * <p>This method can only be called by the profile owner of a managed profile.
-     *
-     * @param enabled whether 5g Slice should be enabled.
+     * @param enabled whether preferential network service should be enabled.
      * @throws SecurityException if the caller is not the profile owner.
      **/
-    public void setNetworkSlicingEnabled(boolean enabled) {
-        throwIfParentInstance("setNetworkSlicingEnabled");
-        if (mService != null) {
-            try {
-                mService.setNetworkSlicingEnabled(enabled);
-            } catch (RemoteException e) {
-                throw e.rethrowFromSystemServer();
-            }
-        }
-    }
-
-    /**
-     * Indicates whether 5g slicing is enabled.
-     *
-     * <p>This method can be called by the profile owner of a managed profile.
-     *
-     * @return whether 5g Slice is enabled.
-     * @throws SecurityException if the caller is not the profile owner.
-     */
-    public boolean isNetworkSlicingEnabled() {
-        throwIfParentInstance("isNetworkSlicingEnabled");
+    public void setPreferentialNetworkServiceEnabled(boolean enabled) {
+        throwIfParentInstance("setPreferentialNetworkServiceEnabled");
         if (mService == null) {
-            return false;
+            return;
         }
+
         try {
-            return mService.isNetworkSlicingEnabled(myUserId());
+            mService.setPreferentialNetworkServiceEnabled(enabled);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
     }
 
     /**
-     * Indicates whether 5g slicing is enabled for specific user.
+     * Indicates whether preferential network service is enabled.
      *
-     * This method can be called with permission
-     * {@link android.Manifest.permission#READ_NETWORK_DEVICE_CONFIG} by the profile owner of
-     * a managed profile. And the caller must hold the
-     * {@link android.Manifest.permission#INTERACT_ACROSS_USERS_FULL} permission if query for
-     * other users.
+     * <p>This method can be called by the profile owner of a managed profile.
      *
-     * @param userHandle indicates the user to query the state
-     * @return indicates whether 5g Slice is enabled.
-     * @throws SecurityException if the caller is not granted the permission
-     *         {@link android.Manifest.permission#READ_NETWORK_DEVICE_CONFIG}
-     *         and not profile owner of a managed profile, and not granted the permission
-     *         {@link android.Manifest.permission#INTERACT_ACROSS_USERS_FULL} if query for
-     *         other users.
-     * @hide
+     * @return whether preferential network service is enabled.
+     * @throws SecurityException if the caller is not the profile owner.
      */
-    @SystemApi
-    public boolean isNetworkSlicingEnabledForUser(@NonNull UserHandle userHandle) {
-        throwIfParentInstance("isNetworkSlicingEnabledForUser");
+    public boolean isPreferentialNetworkServiceEnabled() {
+        throwIfParentInstance("isPreferentialNetworkServiceEnabled");
         if (mService == null) {
             return false;
         }
         try {
-            return mService.isNetworkSlicingEnabled(userHandle.getIdentifier());
+            return mService.isPreferentialNetworkServiceEnabled(myUserId());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -10239,6 +10368,9 @@ public class DevicePolicyManager {
 
     /**
      * Called by device owners to set the user's global location setting.
+     *
+     * <p><b>Note: </b> this call is ignored on
+     * {@link android.content.pm.PackageManager#FEATURE_AUTOMOTIVE automotive builds}.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with
      * @param locationEnabled whether location should be enabled or disabled
@@ -10831,8 +10963,8 @@ public class DevicePolicyManager {
      * <p>
      * A device owner, by default, may continue granting these permissions. However, for increased
      * user control, the admin may opt out of controlling grants for these permissions by including
-     * {@link #EXTRA_PROVISIONING_PERMISSION_GRANT_OPT_OUT} in the provisioning parameters. In that
-     * case the device owner's control will be limited do denying these permissions.
+     * {@link #EXTRA_PROVISIONING_SENSORS_PERMISSION_GRANT_OPT_OUT} in the provisioning parameters.
+     * In that case the device owner's control will be limited do denying these permissions.
      * <p>
      * Attempts by the admin to grant these permissions, when the admin is restricted from doing
      * so, will be silently ignored (no exception will be thrown).
@@ -11252,7 +11384,7 @@ public class DevicePolicyManager {
     public void setSecurityLoggingEnabled(@NonNull ComponentName admin, boolean enabled) {
         throwIfParentInstance("setSecurityLoggingEnabled");
         try {
-            mService.setSecurityLoggingEnabled(admin, enabled);
+            mService.setSecurityLoggingEnabled(admin, mContext.getPackageName(), enabled);
         } catch (RemoteException re) {
             throw re.rethrowFromSystemServer();
         }
@@ -11271,7 +11403,7 @@ public class DevicePolicyManager {
     public boolean isSecurityLoggingEnabled(@Nullable ComponentName admin) {
         throwIfParentInstance("isSecurityLoggingEnabled");
         try {
-            return mService.isSecurityLoggingEnabled(admin);
+            return mService.isSecurityLoggingEnabled(admin, mContext.getPackageName());
         } catch (RemoteException re) {
             throw re.rethrowFromSystemServer();
         }
@@ -11296,10 +11428,12 @@ public class DevicePolicyManager {
      * @see #isAffiliatedUser
      * @see DeviceAdminReceiver#onSecurityLogsAvailable
      */
+    @SuppressLint("NullableCollection")
     public @Nullable List<SecurityEvent> retrieveSecurityLogs(@NonNull ComponentName admin) {
         throwIfParentInstance("retrieveSecurityLogs");
         try {
-            ParceledListSlice<SecurityEvent> list = mService.retrieveSecurityLogs(admin);
+            ParceledListSlice<SecurityEvent> list = mService.retrieveSecurityLogs(
+                    admin, mContext.getPackageName());
             if (list != null) {
                 return list.getList();
             } else {
@@ -11449,11 +11583,13 @@ public class DevicePolicyManager {
      * @see #isAffiliatedUser
      * @see #retrieveSecurityLogs
      */
+    @SuppressLint("NullableCollection")
     public @Nullable List<SecurityEvent> retrievePreRebootSecurityLogs(
             @NonNull ComponentName admin) {
         throwIfParentInstance("retrievePreRebootSecurityLogs");
         try {
-            ParceledListSlice<SecurityEvent> list = mService.retrievePreRebootSecurityLogs(admin);
+            ParceledListSlice<SecurityEvent> list = mService.retrievePreRebootSecurityLogs(
+                    admin, mContext.getPackageName());
             if (list != null) {
                 return list.getList();
             } else {
@@ -11838,7 +11974,7 @@ public class DevicePolicyManager {
 
     /**
      * @hide
-     * Force update user setup completed status. This API has no effect on user build.
+     * Force update user setup completed status.
      * @throws {@link SecurityException} if the caller has no
      *         {@code android.Manifest.permission.MANAGE_PROFILE_AND_DEVICE_OWNERS} or the caller is
      *         not {@link UserHandle#SYSTEM_USER}
@@ -12638,6 +12774,11 @@ public class DevicePolicyManager {
      * <p>In this mode, the DNS subsystem will attempt a TLS handshake to the network-supplied
      * resolver prior to attempting name resolution in cleartext.
      *
+     * <p>Note: The device owner won't be able to set the global private DNS mode if there are
+     * unaffiliated secondary users or profiles on the device. It's recommended that affiliation
+     * ids are set for new users as soon as possible after provisioning via
+     * {@link #setAffiliationIds}.
+     *
      * @param admin which {@link DeviceAdminReceiver} this request is associated with.
      *
      * @return {@code PRIVATE_DNS_SET_NO_ERROR} if the mode was set successfully, or
@@ -12672,6 +12813,11 @@ public class DevicePolicyManager {
      * must be reachable both from within and outside the VPN. Otherwise, the device may lose
      * the ability to resolve hostnames as system traffic to the resolver may not go through the
      * VPN.
+     *
+     * <p>Note: The device owner won't be able to set the global private DNS mode if there are
+     * unaffiliated secondary users or profiles on the device. It's recommended that affiliation
+     * ids are set for new users as soon as possible after provisioning via
+     * {@link #setAffiliationIds}.
      *
      * @param admin which {@link DeviceAdminReceiver} this request is associated with.
      * @param privateDnsHost The hostname of a server that implements DNS over TLS (RFC7858).
@@ -13370,6 +13516,63 @@ public class DevicePolicyManager {
     }
 
     /**
+     * Called by a profile owner of an organization-owned managed profile to acknowledge that the
+     * device is compliant and the user can turn the profile off if needed according to the maximum
+     * time off policy.
+     *
+     * This method should be called when the device is deemed compliant after getting
+     * {@link DeviceAdminReceiver#onComplianceAcknowledgementRequired(Context, Intent)} callback in
+     * case it is overridden. Before this method is called the user is still free to turn the
+     * profile off, but the timer won't be reset, so personal apps will be suspended sooner.
+     *
+     * DPCs only need acknowledging device compliance if they override
+     * {@link DeviceAdminReceiver#onComplianceAcknowledgementRequired(Context, Intent)}, otherwise
+     * compliance is acknowledged automatically.
+     *
+     * @throws IllegalStateException if the user isn't unlocked
+     * @see #isComplianceAcknowledgementRequired()
+     * @see #setManagedProfileMaximumTimeOff(ComponentName, long)
+     * @see DeviceAdminReceiver#onComplianceAcknowledgementRequired(Context, Intent)
+     */
+    public void acknowledgeDeviceCompliant() {
+        throwIfParentInstance("acknowledgeDeviceCompliant");
+        if (mService != null) {
+            try {
+                mService.acknowledgeDeviceCompliant();
+            } catch (RemoteException re) {
+                throw re.rethrowFromSystemServer();
+            }
+        }
+    }
+
+    /**
+     * Called by a profile owner of an organization-owned managed profile to query whether it needs
+     * to acknowledge device compliance to allow the user to turn the profile off if needed
+     * according to the maximum profile time off policy.
+     *
+     * Normally when acknowledgement is needed the DPC gets a
+     * {@link DeviceAdminReceiver#onComplianceAcknowledgementRequired(Context, Intent)} callback.
+     * But if the callback was not delivered or handled for some reason, this method can be used to
+     * verify if acknowledgement is needed.
+     *
+     * @throws IllegalStateException if the user isn't unlocked
+     * @see #acknowledgeDeviceCompliant()
+     * @see #setManagedProfileMaximumTimeOff(ComponentName, long)
+     * @see DeviceAdminReceiver#onComplianceAcknowledgementRequired(Context, Intent)
+     */
+    public boolean isComplianceAcknowledgementRequired() {
+        throwIfParentInstance("isComplianceAcknowledgementRequired");
+        if (mService != null) {
+            try {
+                return mService.isComplianceAcknowledgementRequired();
+            } catch (RemoteException re) {
+                throw re.rethrowFromSystemServer();
+            }
+        }
+        return false;
+    }
+
+    /**
      * Returns {@code true} when {@code userId} has a profile owner that is capable of resetting
      * password in RUNNING_LOCKED state. For that it should have at least one direct boot aware
      * component and have an active password reset token. Can only be called by the system.
@@ -13412,11 +13615,19 @@ public class DevicePolicyManager {
      * It is available both in a work profile and on a fully-managed device.
      * The identifier would be consistent even if the work profile is removed and enrolled again
      * (to the same organization), or the device is factory reset and re-enrolled.
-
+     *
      * Can only be called by the Profile Owner or Device Owner, if the
      * {@link #setOrganizationId(String)} was previously called.
      * If {@link #setOrganizationId(String)} was not called, then the returned value will be an
      * empty string.
+     *
+     * <p>Note about access to device identifiers: a device owner, a profile owner of an
+     * organization-owned device or the delegated certificate installer (holding the
+     * {@link #DELEGATION_CERT_INSTALL} delegation) on such a device can still obtain hardware
+     * identifiers by calling e.g. {@link android.os.Build#getSerial()}, in addition to using
+     * this method. However, a profile owner on a personal (non organization-owned) device, or the
+     * delegated certificate installer on such a device, cannot obtain hardware identifiers anymore
+     * and must switch to using this method.
      *
      * @return A stable, enrollment-specific identifier.
      * @throws SecurityException if the caller is not a profile owner or device owner.
@@ -13723,6 +13934,24 @@ public class DevicePolicyManager {
             return mService.listForegroundAffiliatedUsers();
         } catch (RemoteException re) {
             throw re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Lists apps that are exempt from policies (such as
+     * {@link #setPackagesSuspended(ComponentName, String[], boolean)}).
+     *
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(value = android.Manifest.permission.MANAGE_DEVICE_ADMINS)
+    public @NonNull Set<String> getPolicyExemptApps() {
+        if (mService == null) return Collections.emptySet();
+
+        try {
+            return new HashSet<>(mService.listPolicyExemptApps());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
         }
     }
 }

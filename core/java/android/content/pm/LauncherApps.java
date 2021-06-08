@@ -225,7 +225,6 @@ public class LauncherApps {
          * Indicates that a package was modified in the specified profile.
          * This can happen, for example, when the package is updated or when
          * one or more components are enabled or disabled.
-         * It can also happen if package state has changed, i.e., package becomes unstartable.
          *
          * @param packageName The name of the package that has changed.
          * @param user The UserHandle of the profile that generated the change.
@@ -837,6 +836,30 @@ public class LauncherApps {
             mService.showAppDetailsAsUser(mContext.getIApplicationThread(),
                     mContext.getPackageName(), mContext.getAttributionTag(),
                     component, sourceBounds, opts, user);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Returns PendingIntent associated with specified shortcut.
+     *
+     * @param packageName The packageName of the shortcut
+     * @param shortcutId The id of the shortcut
+     * @param opts Options to pass to the PendingIntent
+     * @param user The UserHandle of the profile
+     */
+    @Nullable
+    public PendingIntent getShortcutIntent(@NonNull final String packageName,
+            @NonNull final String shortcutId, @Nullable final Bundle opts,
+            @NonNull final UserHandle user) {
+        logErrorForInvalidProfileAccess(user);
+        if (DEBUG) {
+            Log.i(TAG, "GetShortcutIntent " + packageName + "/" + shortcutId + " " + user);
+        }
+        try {
+            return mService.getShortcutIntent(
+                    mContext.getPackageName(), packageName, shortcutId, opts, user);
         } catch (RemoteException re) {
             throw re.rethrowFromSystemServer();
         }

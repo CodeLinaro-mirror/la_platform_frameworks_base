@@ -20,14 +20,12 @@ import static com.android.systemui.statusbar.notification.TransformState.TRANSFO
 
 import android.app.Notification;
 import android.content.Context;
-import android.content.res.ColorStateList;
 import android.util.ArraySet;
 import android.util.Pair;
 import android.view.NotificationHeaderView;
 import android.view.NotificationTopLineView;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewGroup.MarginLayoutParams;
 import android.view.animation.Interpolator;
 import android.view.animation.PathInterpolator;
 import android.widget.ImageButton;
@@ -36,7 +34,7 @@ import android.widget.TextView;
 
 import com.android.internal.widget.CachingIconView;
 import com.android.internal.widget.NotificationExpandButton;
-import com.android.systemui.Interpolators;
+import com.android.systemui.animation.Interpolators;
 import com.android.systemui.statusbar.TransformableView;
 import com.android.systemui.statusbar.ViewTransformationHelper;
 import com.android.systemui.statusbar.notification.CustomInterpolatorTransformation;
@@ -168,53 +166,6 @@ public class NotificationHeaderViewWrapper extends NotificationViewWrapper {
         }
     }
 
-    public void applyConversationSkin() {
-        if (mAppNameText != null) {
-            final ColorStateList colors = mAppNameText.getTextColors();
-            mAppNameText.setTextAppearance(
-                    com.android.internal.R.style
-                            .TextAppearance_DeviceDefault_Notification_Conversation_AppName);
-            mAppNameText.setTextColor(colors);
-            MarginLayoutParams layoutParams = (MarginLayoutParams) mAppNameText.getLayoutParams();
-            layoutParams.setMarginStart(0);
-        }
-        if (mNotificationTopLine != null) {
-            int paddingStart = mNotificationTopLine.getResources().getDimensionPixelSize(
-                    com.android.internal.R.dimen.conversation_content_start);
-            mNotificationTopLine.setPaddingStart(paddingStart);
-        }
-        if (mIcon != null) {
-            MarginLayoutParams layoutParams = (MarginLayoutParams) mIcon.getLayoutParams();
-            int marginStart = mIcon.getResources().getDimensionPixelSize(
-                    com.android.internal.R.dimen.conversation_icon_circle_start);
-            layoutParams.setMarginStart(marginStart);
-        }
-    }
-
-    public void clearConversationSkin() {
-        if (mAppNameText != null) {
-            final ColorStateList colors = mAppNameText.getTextColors();
-            mAppNameText.setTextAppearance(
-                    com.android.internal.R.style.TextAppearance_DeviceDefault_Notification_Info);
-            mAppNameText.setTextColor(colors);
-            MarginLayoutParams layoutParams = (MarginLayoutParams) mAppNameText.getLayoutParams();
-            final int marginStart = mAppNameText.getResources().getDimensionPixelSize(
-                    com.android.internal.R.dimen.notification_header_app_name_margin_start);
-            layoutParams.setMarginStart(marginStart);
-        }
-        if (mNotificationTopLine != null) {
-            int paddingStart = mNotificationTopLine.getResources().getDimensionPixelSize(
-                    com.android.internal.R.dimen.notification_content_margin_start);
-            mNotificationTopLine.setPaddingStart(paddingStart);
-        }
-        if (mIcon != null) {
-            MarginLayoutParams layoutParams = (MarginLayoutParams) mIcon.getLayoutParams();
-            int marginStart = mIcon.getResources().getDimensionPixelSize(
-                    com.android.internal.R.dimen.notification_icon_circle_start);
-            layoutParams.setMarginStart(marginStart);
-        }
-    }
-
     /**
      * Adds the remaining TransformTypes to the TransformHelper. This is done to make sure that each
      * child is faded automatically and doesn't have to be manually added.
@@ -261,7 +212,8 @@ public class NotificationHeaderViewWrapper extends NotificationViewWrapper {
     }
 
     @Override
-    public void updateExpandability(boolean expandable, View.OnClickListener onClickListener) {
+    public void updateExpandability(boolean expandable, View.OnClickListener onClickListener,
+            boolean requestLayout) {
         mExpandButton.setVisibility(expandable ? View.VISIBLE : View.GONE);
         mExpandButton.setOnClickListener(expandable ? onClickListener : null);
         if (mAltExpandTarget != null) {
@@ -272,6 +224,13 @@ public class NotificationHeaderViewWrapper extends NotificationViewWrapper {
         }
         if (mNotificationHeader != null) {
             mNotificationHeader.setOnClickListener(expandable ? onClickListener : null);
+        }
+        // Unfortunately, the NotificationContentView has to layout its children in order to
+        // determine their heights, and that affects the button visibility.  If that happens
+        // (thankfully it is rare) then we need to request layout of the expand button's parent
+        // in order to ensure it gets laid out correctly.
+        if (requestLayout) {
+            mExpandButton.getParent().requestLayout();
         }
     }
 

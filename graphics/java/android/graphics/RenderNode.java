@@ -275,11 +275,15 @@ public final class RenderNode {
          * Call to apply a stretch effect to any child SurfaceControl layers
          *
          * TODO: Fold this into positionChanged & have HWUI do the ASurfaceControl calls?
+         *   (njawad) update to consume different stretch parameters for horizontal/vertical stretch
+         *   to ensure SkiaGLRenderEngine can also apply the same stretch to a surface
          *
          * @hide
          */
-        default void applyStretch(long frameNumber, float left, float top, float right,
-                float bottom, float vecX, float vecY, float maxStretch) { }
+        default void applyStretch(long frameNumber, float width, float height,
+                float vecX, float vecY,
+                float maxStretchX, float maxStretchY, float childRelativeLeft,
+                float childRelativeTop, float childRelativeRight, float childRelativeBottom) { }
 
         /**
          * Called by native on RenderThread to notify that the view is no longer in the
@@ -324,10 +328,13 @@ public final class RenderNode {
         }
 
         @Override
-        public void applyStretch(long frameNumber, float left, float top, float right, float bottom,
-                float vecX, float vecY, float maxStretch) {
+        public void applyStretch(long frameNumber, float width, float height,
+                float vecX, float vecY, float maxStretchX, float maxStretchY, float childRelativeLeft,
+                float childRelativeTop, float childRelativeRight, float childRelativeBottom) {
             for (PositionUpdateListener pul : mListeners) {
-                pul.applyStretch(frameNumber, left, top, right, bottom, vecX, vecY, maxStretch);
+                pul.applyStretch(frameNumber, width, height, vecX, vecY, maxStretchX,
+                        maxStretchY, childRelativeLeft, childRelativeTop, childRelativeRight,
+                        childRelativeBottom);
             }
         }
     }
@@ -717,32 +724,29 @@ public final class RenderNode {
     }
 
     /** @hide */
-    public boolean stretch(float left, float top, float right, float bottom,
-            float vecX, float vecY, float maxStretchAmount) {
+    public boolean stretch(float vecX, float vecY,
+        float maxStretchAmountX, float maxStretchAmountY) {
         if (Float.isInfinite(vecX) || Float.isNaN(vecX)) {
             throw new IllegalArgumentException("vecX must be a finite, non-NaN value " + vecX);
         }
         if (Float.isInfinite(vecY) || Float.isNaN(vecY)) {
             throw new IllegalArgumentException("vecY must be a finite, non-NaN value " + vecY);
         }
-        if (top >= bottom || left >= right) {
+
+        if (maxStretchAmountX <= 0.0f) {
             throw new IllegalArgumentException(
-                    "Stretch region must not be empty, got "
-                            + new RectF(left, top, right, bottom).toString());
+                    "The max horizontal stretch amount must be >0, got " + maxStretchAmountX);
         }
-        if (maxStretchAmount <= 0.0f) {
+        if (maxStretchAmountY <= 0.0f) {
             throw new IllegalArgumentException(
-                    "The max stretch amount must be >0, got " + maxStretchAmount);
+                    "The max vertical stretch amount must be >0, got " + maxStretchAmountY);
         }
         return nStretch(
                 mNativeRenderNode,
-                left,
-                top,
-                right,
-                bottom,
                 vecX,
                 vecY,
-                maxStretchAmount
+                maxStretchAmountX,
+                maxStretchAmountY
         );
     }
 
@@ -1694,8 +1698,8 @@ public final class RenderNode {
     private static native boolean nClearStretch(long renderNode);
 
     @CriticalNative
-    private static native boolean nStretch(long renderNode, float left, float top, float right,
-            float bottom, float vecX, float vecY, float maxStretch);
+    private static native boolean nStretch(long renderNode, float vecX, float vecY,
+            float maxStretchX, float maxStretchY);
 
     @CriticalNative
     private static native boolean nHasShadow(long renderNode);

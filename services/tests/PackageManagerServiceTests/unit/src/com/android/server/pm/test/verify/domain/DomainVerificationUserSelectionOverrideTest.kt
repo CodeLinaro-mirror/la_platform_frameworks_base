@@ -18,9 +18,11 @@ package com.android.server.pm.test.verify.domain
 
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.PackageUserState
 import android.content.pm.parsing.component.ParsedActivity
 import android.content.pm.parsing.component.ParsedIntentInfo
 import android.content.pm.verify.domain.DomainVerificationManager
+import android.content.pm.verify.domain.DomainVerificationState
 import android.content.pm.verify.domain.DomainVerificationUserState
 import android.os.Build
 import android.os.PatternMatcher
@@ -28,6 +30,7 @@ import android.os.Process
 import android.util.ArraySet
 import com.android.server.pm.PackageSetting
 import com.android.server.pm.parsing.pkg.AndroidPackage
+import com.android.server.pm.test.verify.domain.DomainVerificationTestUtils.mockPackageSettings
 import com.android.server.pm.verify.domain.DomainVerificationService
 import com.android.server.testutils.mockThrowOnUnmocked
 import com.android.server.testutils.whenever
@@ -70,19 +73,24 @@ class DomainVerificationUserStateOverrideTest {
         }, mockThrowOnUnmocked {
             whenever(linkedApps) { ArraySet<String>() }
         }, mockThrowOnUnmocked {
-            whenever(isChangeEnabled(anyLong(), any())) { true }
+            whenever(isChangeEnabledInternalNoLogging(anyLong(), any())) { true }
         }).apply {
             setConnection(mockThrowOnUnmocked {
                 whenever(filterAppAccess(anyString(), anyInt(), anyInt())) { false }
+                whenever(doesUserExist(0)) { true }
+                whenever(doesUserExist(1)) { true }
                 whenever(scheduleWriteSettings())
 
                 // Need to provide an internal UID so some permission checks are ignored
                 whenever(callingUid) { Process.ROOT_UID }
                 whenever(callingUserId) { 0 }
-                whenever(getPackageSettingLocked(PKG_ONE)) { pkg1 }
-                whenever(getPackageSettingLocked(PKG_TWO)) { pkg2 }
-                whenever(getPackageLocked(PKG_ONE)) { pkg1.getPkg() }
-                whenever(getPackageLocked(PKG_TWO)) { pkg2.getPkg() }
+                mockPackageSettings {
+                    when (it) {
+                        PKG_ONE -> pkg1
+                        PKG_TWO -> pkg2
+                        else -> null
+                    }
+                }
             })
             addPackage(pkg1)
             addPackage(pkg2)
@@ -97,6 +105,7 @@ class DomainVerificationUserStateOverrideTest {
         val pkg = mockThrowOnUnmocked<AndroidPackage> {
             whenever(packageName) { pkgName }
             whenever(targetSdkVersion) { Build.VERSION_CODES.S }
+            whenever(isEnabled) { true }
 
             val activityList = listOf(
                 ParsedActivity().apply {
@@ -134,6 +143,9 @@ class DomainVerificationUserStateOverrideTest {
         whenever(this.domainSetId) { domainSetId }
         whenever(getInstantApp(anyInt())) { false }
         whenever(firstInstallTime) { 0L }
+        whenever(readUserState(0)) { PackageUserState() }
+        whenever(readUserState(1)) { PackageUserState() }
+        whenever(isSystem()) { false }
     }
 
     @Test
@@ -154,19 +166,20 @@ class DomainVerificationUserStateOverrideTest {
             .containsExactly(PKG_TWO)
     }
 
-    @Test(expected = IllegalArgumentException::class)
+    @Test
     fun anotherPackageTakeoverFailure() {
         val service = makeService()
 
         // Verify 1 to give it a higher approval level
         service.setDomainVerificationStatus(UUID_ONE, setOf(DOMAIN_ONE),
-            DomainVerificationManager.STATE_SUCCESS)
+            DomainVerificationState.STATE_SUCCESS)
         assertThat(service.stateFor(PKG_ONE, DOMAIN_ONE)).isEqualTo(STATE_VERIFIED)
         assertThat(service.getOwnersForDomain(DOMAIN_ONE, USER_ID).map { it.packageName })
             .containsExactly(PKG_ONE)
 
         // Attempt override by package 2
-        service.setDomainVerificationUserSelection(UUID_TWO, setOf(DOMAIN_ONE), true, USER_ID)
+        assertThat(service.setDomainVerificationUserSelection(UUID_TWO, setOf(DOMAIN_ONE), true,
+                USER_ID)).isEqualTo(DomainVerificationManager.ERROR_UNABLE_TO_APPROVE)
     }
 
     private fun DomainVerificationService.stateFor(pkgName: String, host: String) =

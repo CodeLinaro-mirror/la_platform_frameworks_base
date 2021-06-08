@@ -28,6 +28,8 @@ import android.content.pm.PackageManager;
 
 import androidx.test.core.app.ApplicationProvider;
 
+import com.android.server.appsearch.external.localstorage.util.PrefixUtil;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -65,7 +67,8 @@ public class VisibilityStoreTest {
                         mTemporaryFolder.newFolder(),
                         mContext,
                         mContext.getUserId(),
-                        /*globalQuerierPackage=*/ mContext.getPackageName());
+                        /*globalQuerierPackage=*/ mContext.getPackageName(),
+                        /*logger=*/ null);
         mGlobalQuerierUid =
                 mContext.getPackageManager().getPackageUid(mContext.getPackageName(), /*flags=*/ 0);
 
@@ -78,13 +81,9 @@ public class VisibilityStoreTest {
     @Test
     public void testValidPackageName() {
         assertThat(VisibilityStore.PACKAGE_NAME)
-                .doesNotContain(
-                        "" + AppSearchImpl.PACKAGE_DELIMITER); // Convert the chars to CharSequences
+                .doesNotContain(String.valueOf(PrefixUtil.PACKAGE_DELIMITER));
         assertThat(VisibilityStore.PACKAGE_NAME)
-                .doesNotContain(
-                        ""
-                                + AppSearchImpl
-                                        .DATABASE_DELIMITER); // Convert the chars to CharSequences
+                .doesNotContain(String.valueOf(PrefixUtil.DATABASE_DELIMITER));
     }
 
     /**
@@ -93,13 +92,9 @@ public class VisibilityStoreTest {
     @Test
     public void testValidDatabaseName() {
         assertThat(VisibilityStore.DATABASE_NAME)
-                .doesNotContain(
-                        "" + AppSearchImpl.PACKAGE_DELIMITER); // Convert the chars to CharSequences
+                .doesNotContain(String.valueOf(PrefixUtil.PACKAGE_DELIMITER));
         assertThat(VisibilityStore.DATABASE_NAME)
-                .doesNotContain(
-                        ""
-                                + AppSearchImpl
-                                        .DATABASE_DELIMITER); // Convert the chars to CharSequences
+                .doesNotContain(String.valueOf(PrefixUtil.DATABASE_DELIMITER));
     }
 
     @Test
@@ -169,7 +164,8 @@ public class VisibilityStoreTest {
                         mTemporaryFolder.newFolder(),
                         mContext,
                         mContext.getUserId(),
-                        /*globalQuerierPackage=*/ mContext.getPackageName());
+                        /*globalQuerierPackage=*/ mContext.getPackageName(),
+                        /*logger=*/ null);
         VisibilityStore visibilityStore = appSearchImpl.getVisibilityStoreLocked();
 
         // Use some arbitrary callerUid. If we can't find the global querier's uid though,

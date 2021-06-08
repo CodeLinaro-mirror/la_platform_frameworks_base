@@ -24,14 +24,16 @@ import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import android.hardware.biometrics.common.CommonProps;
+import android.hardware.biometrics.fingerprint.IFingerprint;
+import android.hardware.biometrics.fingerprint.SensorLocation;
 import android.hardware.biometrics.fingerprint.SensorProps;
 import android.os.UserManager;
 import android.platform.test.annotations.Presubmit;
 
+import androidx.annotation.NonNull;
 import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.SmallTest;
 
-import com.android.server.biometrics.sensors.BaseClientMonitor;
 import com.android.server.biometrics.sensors.BiometricScheduler;
 import com.android.server.biometrics.sensors.HalClientMonitor;
 import com.android.server.biometrics.sensors.LockoutResetDispatcher;
@@ -59,7 +61,7 @@ public class FingerprintProviderTest {
 
     private SensorProps[] mSensorProps;
     private LockoutResetDispatcher mLockoutResetDispatcher;
-    private FingerprintProvider mFingerprintProvider;
+    private TestableFingerprintProvider mFingerprintProvider;
 
     private static void waitForIdle() {
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
@@ -75,15 +77,17 @@ public class FingerprintProviderTest {
         final SensorProps sensor1 = new SensorProps();
         sensor1.commonProps = new CommonProps();
         sensor1.commonProps.sensorId = 0;
+        sensor1.sensorLocations = new SensorLocation[] {new SensorLocation()};
         final SensorProps sensor2 = new SensorProps();
         sensor2.commonProps = new CommonProps();
         sensor2.commonProps.sensorId = 1;
+        sensor2.sensorLocations = new SensorLocation[] {new SensorLocation()};
 
         mSensorProps = new SensorProps[] {sensor1, sensor2};
 
         mLockoutResetDispatcher = new LockoutResetDispatcher(mContext);
 
-        mFingerprintProvider = new FingerprintProvider(mContext, mSensorProps, TAG,
+        mFingerprintProvider = new TestableFingerprintProvider(mContext, mSensorProps, TAG,
                 mLockoutResetDispatcher, mGestureAvailabilityDispatcher);
     }
 
@@ -124,6 +128,22 @@ public class FingerprintProviderTest {
                     mFingerprintProvider.mSensors.get(prop.commonProps.sensorId).getScheduler();
             assertNull(scheduler.getCurrentClient());
             assertEquals(0, scheduler.getCurrentPendingCount());
+        }
+    }
+
+    private static class TestableFingerprintProvider extends FingerprintProvider {
+        public TestableFingerprintProvider(@NonNull Context context,
+                @NonNull SensorProps[] props,
+                @NonNull String halInstanceName,
+                @NonNull LockoutResetDispatcher lockoutResetDispatcher,
+                @NonNull GestureAvailabilityDispatcher gestureAvailabilityDispatcher) {
+            super(context, props, halInstanceName, lockoutResetDispatcher,
+                    gestureAvailabilityDispatcher);
+        }
+
+        @Override
+        synchronized IFingerprint getHalInstance() {
+            return mock(IFingerprint.class);
         }
     }
 }

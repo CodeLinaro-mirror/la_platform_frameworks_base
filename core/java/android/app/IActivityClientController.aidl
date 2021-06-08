@@ -25,6 +25,7 @@ import android.content.res.Configuration;
 import android.os.Bundle;
 import android.os.PersistableBundle;
 import android.view.RemoteAnimationDefinition;
+import android.window.SizeConfigurationBuckets;
 
 import com.android.internal.policy.IKeyguardDismissCallback;
 
@@ -36,7 +37,11 @@ import com.android.internal.policy.IKeyguardDismissCallback;
 interface IActivityClientController {
     oneway void activityIdle(in IBinder token, in Configuration config, in boolean stopProfiling);
     oneway void activityResumed(in IBinder token, in boolean handleSplashScreenExit);
-    oneway void activityTopResumedStateLost();
+    /**
+     * This call is not one-way because {@link #activityPaused()) is not one-way, or
+     * the top-resumed-lost could be reported after activity paused.
+     */
+    void activityTopResumedStateLost();
     /**
      * Notifies that the activity has completed paused. This call is not one-way because it can make
      * consecutive launch in the same process more coherent. About the order of binder call, it
@@ -49,8 +54,8 @@ interface IActivityClientController {
     oneway void activityDestroyed(in IBinder token);
     oneway void activityRelaunched(in IBinder token);
 
-    oneway void reportSizeConfigurations(in IBinder token, in int[] horizontalSizeConfiguration,
-            in int[] verticalSizeConfigurations, in int[] smallestWidthConfigurations);
+    oneway void reportSizeConfigurations(in IBinder token,
+            in SizeConfigurationBuckets sizeConfigurations);
     boolean moveActivityTaskToBack(in IBinder token, boolean nonRoot);
     boolean shouldUpRecreateTask(in IBinder token, in String destAffinity);
     boolean navigateUpTo(in IBinder token, in Intent target, int resultCode,

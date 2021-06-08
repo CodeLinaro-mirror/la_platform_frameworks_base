@@ -131,18 +131,10 @@ public class MultiResolutionImageReader implements AutoCloseable {
      * @see
      * android.hardware.camera2.params.MultiResolutionStreamConfigurationMap
      */
-    public static @NonNull MultiResolutionImageReader newInstance(
+    public MultiResolutionImageReader(
             @NonNull Collection<MultiResolutionStreamInfo> streams,
             @Format             int format,
             @IntRange(from = 1) int maxImages) {
-        return new MultiResolutionImageReader(streams, format, maxImages);
-    }
-
-    /**
-     * @hide
-     */
-    protected MultiResolutionImageReader(Collection<MultiResolutionStreamInfo> streams,
-            int format, int maxImages) {
         mFormat = format;
         mMaxImages = maxImages;
 
@@ -273,8 +265,18 @@ public class MultiResolutionImageReader implements AutoCloseable {
      * @return a {@link Surface} to use as the target for a capture request.
      */
     public @NonNull Surface getSurface() {
-        //TODO: Pick the surface from the reader for default mode stream.
-        return mReaders[0].getSurface();
+        // Pick the surface of smallest size. This is necessary for an ultra high resolution
+        // camera not to default to maximum resolution pixel mode.
+        int minReaderSize = mReaders[0].getWidth() * mReaders[0].getHeight();
+        Surface candidateSurface = mReaders[0].getSurface();
+        for (int i = 1; i < mReaders.length; i++) {
+            int readerSize =  mReaders[i].getWidth() * mReaders[i].getHeight();
+            if (readerSize < minReaderSize) {
+                minReaderSize = readerSize;
+                candidateSurface = mReaders[i].getSurface();
+            }
+        }
+        return candidateSurface;
     }
 
     /**

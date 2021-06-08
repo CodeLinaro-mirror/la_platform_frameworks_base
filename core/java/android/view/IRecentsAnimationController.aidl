@@ -19,7 +19,7 @@ package android.view;
 import android.app.ActivityManager;
 import android.view.IRemoteAnimationFinishedCallback;
 import android.graphics.GraphicBuffer;
-import android.graphics.Rect;
+import android.window.PictureInPictureSurfaceTransaction;
 import android.window.TaskSnapshot;
 
 /**
@@ -38,13 +38,14 @@ interface IRecentsAnimationController {
     TaskSnapshot screenshotTask(int taskId);
 
     /**
-     * Sets the final bounds on a Task. This is used by Launcher to notify the system that
-     * animating Activity to PiP has completed and the associated task surface should be updated
-     * accordingly. This should be called before `finish`
+     * Sets the final surface transaction on a Task. This is used by Launcher to notify the system
+     * that animating Activity to PiP has completed and the associated task surface should be
+     * updated accordingly. This should be called before `finish`
      * @param taskId for which the leash should be updated
-     * @param destinationBounds bounds of the final PiP window
+     * @param finishTransaction leash operations for the final transform.
      */
-     void setFinishTaskBounds(int taskId, in Rect destinationBounds);
+     void setFinishTaskTransaction(int taskId,
+             in PictureInPictureSurfaceTransaction finishTransaction);
 
     /**
      * Notifies to the system that the animation into Recents should end, and all leashes associated
@@ -142,7 +143,13 @@ interface IRecentsAnimationController {
      *
      * The system reparents the leash of navigation bar to the app when the recents animation starts
      * and Launcher should call this method to let system restore the navigation bar to its
-     * original position when the quick switch gesture is finished.
+     * original position when the quick switch gesture is finished and will run the fade-in
+     * animation If {@param moveHomeToTop} is {@code true}. Otherwise, restore the navigtation bar
+     * without animation.
+     *
+     * @param moveHomeToTop if {@code true}, the home activity should be moved to the top.
+     *                      Otherwise, the home activity is hidden and the user is returned to the
+     *                      app.
      */
-    void detachNavigationBarFromApp();
+    void detachNavigationBarFromApp(boolean moveHomeToTop);
 }

@@ -16,10 +16,10 @@
 
 package com.android.systemui.people;
 
-import android.app.people.IPeopleManager;
 import android.content.Context;
-import android.content.pm.LauncherApps;
 import android.content.pm.ProviderInfo;
+
+import com.android.systemui.people.widget.PeopleSpaceWidgetManager;
 
 public class PeopleProviderTestable extends PeopleProvider {
 
@@ -30,11 +30,7 @@ public class PeopleProviderTestable extends PeopleProvider {
         attachInfoForTesting(context, info);
     }
 
-    void setLauncherApps(LauncherApps launcherApps) {
-        mLauncherApps = launcherApps;
-    }
-
-    void setPeopleManager(IPeopleManager peopleManager) {
-        mPeopleManager = peopleManager;
+    void setPeopleSpaceWidgetManager(PeopleSpaceWidgetManager peopleSpaceWidgetManager) {
+        mPeopleSpaceWidgetManager = peopleSpaceWidgetManager;
     }
 }

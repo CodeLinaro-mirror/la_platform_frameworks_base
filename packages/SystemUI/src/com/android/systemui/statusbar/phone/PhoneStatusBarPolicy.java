@@ -673,19 +673,20 @@ public class PhoneStatusBarPolicy
             }
         }
 
+        // Disabling for now, but keeping the log
+        /*
         mIconController.setIconVisibility(mSlotCamera, showCamera);
         mIconController.setIconVisibility(mSlotMicrophone, showMicrophone);
-        if (mPrivacyItemController.getAllIndicatorsAvailable()
-                || mPrivacyItemController.getLocationAvailable()) {
+        if (mPrivacyItemController.getLocationAvailable()) {
             mIconController.setIconVisibility(mSlotLocation, showLocation);
         }
+         */
         mPrivacyLogger.logStatusBarIconsVisible(showCamera, showMicrophone,  showLocation);
     }
 
     @Override
     public void onLocationActiveChanged(boolean active) {
-        if (!mPrivacyItemController.getAllIndicatorsAvailable()
-                && !mPrivacyItemController.getLocationAvailable()) {
+        if (!mPrivacyItemController.getLocationAvailable()) {
             updateLocationFromController();
         }
     }

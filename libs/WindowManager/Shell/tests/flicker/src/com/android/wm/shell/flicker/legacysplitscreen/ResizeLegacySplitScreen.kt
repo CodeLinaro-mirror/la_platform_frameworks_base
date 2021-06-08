@@ -40,8 +40,6 @@ import com.android.server.wm.flicker.noUncoveredRegions
 import com.android.server.wm.flicker.startRotation
 import com.android.server.wm.flicker.statusBarLayerIsAlwaysVisible
 import com.android.server.wm.flicker.statusBarLayerRotatesScales
-import com.android.server.wm.flicker.visibleWindowsShownMoreThanOneConsecutiveEntry
-import com.android.server.wm.flicker.visibleLayersShownMoreThanOneConsecutiveEntry
 import com.android.server.wm.flicker.statusBarWindowIsAlwaysVisible
 import com.android.server.wm.flicker.traces.layers.getVisibleBounds
 import com.android.wm.shell.flicker.DOCKED_STACK_DIVIDER
@@ -106,10 +104,6 @@ class ResizeLegacySplitScreen(
     @Test
     fun statusBarWindowIsAlwaysVisible() = testSpec.statusBarWindowIsAlwaysVisible()
 
-    @Test
-    fun visibleWindowsShownMoreThanOneConsecutiveEntry() =
-        testSpec.visibleWindowsShownMoreThanOneConsecutiveEntry()
-
     @FlakyTest(bugId = 156223549)
     @Test
     fun topAppWindowIsAlwaysVisible() {
@@ -142,10 +136,6 @@ class ResizeLegacySplitScreen(
     @Test
     fun statusBarLayerRotatesScales() =
         testSpec.statusBarLayerRotatesScales(testSpec.config.endRotation)
-
-    @Test
-    fun visibleLayersShownMoreThanOneConsecutiveEntry() =
-        testSpec.visibleLayersShownMoreThanOneConsecutiveEntry()
 
     @Test
     fun topAppLayerIsAlwaysVisible() {
@@ -182,8 +172,8 @@ class ResizeLegacySplitScreen(
                 dividerBounds.bottom - WindowUtils.dockedStackDividerInset,
                 displayBounds.right,
                 displayBounds.bottom - WindowUtils.navigationBarHeight)
-            this.coversExactly(topAppBounds, "SimpleActivity")
-                .coversExactly(bottomAppBounds, "ImeActivity")
+            visibleRegion("SimpleActivity").coversExactly(topAppBounds)
+            visibleRegion("ImeActivity").coversExactly(bottomAppBounds)
         }
     }
 
@@ -202,8 +192,8 @@ class ResizeLegacySplitScreen(
                 displayBounds.right,
                 displayBounds.bottom - WindowUtils.navigationBarHeight)
 
-            this.coversExactly(topAppBounds, sSimpleActivity)
-                .coversExactly(bottomAppBounds, sImeActivity)
+            visibleRegion(sSimpleActivity).coversExactly(topAppBounds)
+            visibleRegion(sImeActivity).coversExactly(bottomAppBounds)
         }
     }
 

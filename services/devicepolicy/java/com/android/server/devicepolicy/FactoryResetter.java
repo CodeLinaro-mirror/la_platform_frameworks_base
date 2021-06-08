@@ -26,10 +26,10 @@ import android.os.RemoteException;
 import android.os.UserManager;
 import android.os.storage.StorageManager;
 import android.service.persistentdata.PersistentDataBlockManager;
-import android.util.Slog;
 
 import com.android.internal.os.IResultReceiver;
 import com.android.internal.util.Preconditions;
+import com.android.server.utils.Slogf;
 
 import java.io.IOException;
 import java.util.Objects;
@@ -68,17 +68,16 @@ public final class FactoryResetter {
         IResultReceiver receiver = new IResultReceiver.Stub() {
             @Override
             public void send(int resultCode, Bundle resultData) throws RemoteException {
-                Slog.i(TAG, String.format("Factory reset confirmed by %s, proceeding",
-                        mSafetyChecker));
+                Slogf.i(TAG, "Factory reset confirmed by %s, proceeding", mSafetyChecker);
                 try {
                     factoryResetInternalUnchecked();
                 } catch (IOException e) {
                     // Shouldn't happen
-                    Slog.wtf(TAG, "IOException calling underlying systems", e);
+                    Slogf.wtf(TAG, e, "IOException calling underlying systems");
                 }
             }
         };
-        Slog.i(TAG, String.format("Delaying factory reset until %s confirms", mSafetyChecker));
+        Slogf.i(TAG, "Delaying factory reset until %s confirms", mSafetyChecker);
         mSafetyChecker.onFactoryReset(receiver);
         return false;
     }
@@ -113,9 +112,9 @@ public final class FactoryResetter {
     }
 
     private void factoryResetInternalUnchecked() throws IOException {
-        Slog.i(TAG, String.format("factoryReset(): reason=%s, shutdown=%b, force=%b, wipeEuicc=%b, "
+        Slogf.i(TAG, "factoryReset(): reason=%s, shutdown=%b, force=%b, wipeEuicc=%b, "
                 + "wipeAdoptableStorage=%b, wipeFRP=%b", mReason, mShutdown, mForce, mWipeEuicc,
-                mWipeAdoptableStorage, mWipeFactoryResetProtection));
+                mWipeAdoptableStorage, mWipeFactoryResetProtection);
 
         UserManager um = mContext.getSystemService(UserManager.class);
         if (!mForce && um.hasUserRestriction(UserManager.DISALLOW_FACTORY_RESET)) {
@@ -126,15 +125,15 @@ public final class FactoryResetter {
             PersistentDataBlockManager manager = mContext
                     .getSystemService(PersistentDataBlockManager.class);
             if (manager != null) {
-                Slog.w(TAG, "Wiping factory reset protection");
+                Slogf.w(TAG, "Wiping factory reset protection");
                 manager.wipe();
             } else {
-                Slog.w(TAG, "No need to wipe factory reset protection");
+                Slogf.w(TAG, "No need to wipe factory reset protection");
             }
         }
 
         if (mWipeAdoptableStorage) {
-            Slog.w(TAG, "Wiping adoptable storage");
+            Slogf.w(TAG, "Wiping adoptable storage");
             StorageManager sm = mContext.getSystemService(StorageManager.class);
             sm.wipeAdoptableDisks();
         }

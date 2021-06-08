@@ -194,6 +194,9 @@ void RenderNode::pushLayerUpdate(TreeInfo& info) {
     SkRect dirty;
     info.damageAccumulator->peekAtDirty(&dirty);
     info.layerUpdateQueue->enqueueLayerWithDamage(this, dirty);
+    if (!dirty.isEmpty()) {
+      mStretchMask.markDirty();
+    }
 
     // There might be prefetched layers that need to be accounted for.
     // That might be us, so tell CanvasContext that this layer is in the
@@ -255,15 +258,19 @@ void RenderNode::prepareTreeImpl(TreeObserver& observer, TreeInfo& info, bool fu
 
     if (mDisplayList) {
         info.out.hasFunctors |= mDisplayList.hasFunctor();
+        mHasHolePunches = mDisplayList.hasHolePunches();
         bool isDirty = mDisplayList.prepareListAndChildren(
                 observer, info, childFunctorsNeedLayer,
-                [](RenderNode* child, TreeObserver& observer, TreeInfo& info,
-                   bool functorsNeedLayer) {
+                [this](RenderNode* child, TreeObserver& observer, TreeInfo& info,
+                       bool functorsNeedLayer) {
                     child->prepareTreeImpl(observer, info, functorsNeedLayer);
+                    mHasHolePunches |= child->hasHolePunches();
                 });
         if (isDirty) {
             damageSelf(info);
         }
+    } else {
+        mHasHolePunches = false;
     }
     pushLayerUpdate(info);
 
@@ -298,6 +305,12 @@ void RenderNode::pushStagingPropertiesChanges(TreeInfo& info) {
         damageSelf(info);
         info.damageAccumulator->popTransform();
         syncProperties();
+
+        const StretchEffect& stagingStretch =
+            mProperties.layerProperties().getStretchEffect();
+        if (stagingStretch.isEmpty()) {
+            mStretchMask.clear();
+        }
         // We could try to be clever and only re-damage if the matrix changed.
         // However, we don't need to worry about that. The cost of over-damaging
         // here is only going to be a single additional map rect of this node

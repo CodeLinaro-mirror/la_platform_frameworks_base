@@ -53,6 +53,7 @@ public class KeyguardClockPositionAlgorithmTest extends SysuiTestCase {
     private boolean mHasVisibleNotifs;
     private float mQsExpansion;
     private int mCutoutTopInset = 0; // in pixels
+    private boolean mIsSplitShade = false;
 
     @Before
     public void setUp() {
@@ -265,6 +266,19 @@ public class KeyguardClockPositionAlgorithmTest extends SysuiTestCase {
     }
 
     @Test
+    public void notifPositionAlignedWithClockInSplitShadeMode() {
+        // GIVEN on lock screen and split shade mode
+        givenLockScreen();
+        mIsSplitShade = true;
+        mPreferredClockY = 100;
+        mHasCustomClock = true;
+        // WHEN the position algorithm is run
+        positionClock();
+        // THEN the notif padding DOESN'T adjust for keyguard status height.
+        assertThat(mClockPosition.stackScrollerPadding).isEqualTo(mPreferredClockY);
+    }
+
+    @Test
     public void notifPositionWithLargeClockOnLockScreen() {
         // GIVEN on lock screen and clock has a nonzero height
         givenLockScreen();
@@ -396,8 +410,8 @@ public class KeyguardClockPositionAlgorithmTest extends SysuiTestCase {
                 mPanelExpansion, SCREEN_HEIGHT, mKeyguardStatusHeight,
                 0 /* userSwitchHeight */, mPreferredClockY, 0 /* userSwitchPreferredY */,
                 mHasCustomClock, mHasVisibleNotifs, mDark, ZERO_DRAG, false /* bypassEnabled */,
-                0 /* unlockedStackScrollerPadding */, false /* udfpsEnrolled */, mQsExpansion,
-                mCutoutTopInset);
+                0 /* unlockedStackScrollerPadding */, mQsExpansion,
+                mCutoutTopInset, mIsSplitShade);
         mClockPositionAlgorithm.run(mClockPosition);
     }
 }

@@ -16,20 +16,22 @@
   -->
 
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:priv-android="http://schemas.android.com/apk/prv/res/android"
     android:autoMirrored="true">
-    <item android:id="@+id/slider_foreground">
+    <item android:id="@+id/slider_foreground"
+        android:height="@dimen/rounded_slider_height">
         <shape>
             <size android:height="@dimen/rounded_slider_height" />
-            <solid android:color="?android:attr/colorControlActivated" />
+            <solid android:color="?priv-android:attr/colorAccentPrimary" />
             <corners android:radius="@dimen/rounded_slider_corner_radius"/>
         </shape>
     </item>
     <item
         android:id="@+id/slider_icon"
-        android:gravity="center_vertical|left"
+        android:gravity="center_vertical|right"
         android:height="@dimen/rounded_slider_icon_size"
         android:width="@dimen/rounded_slider_icon_size"
-        android:left="@dimen/rounded_slider_icon_inset">
+        android:right="@dimen/rounded_slider_icon_inset">
         <com.android.systemui.util.AlphaTintDrawableWrapper
             android:drawable="@drawable/ic_brightness"
             android:tint="?android:attr/colorBackground"

@@ -21,7 +21,10 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.service.quicksettings.Tile;
+import android.view.View;
 import android.widget.Switch;
+
+import androidx.annotation.Nullable;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
@@ -29,6 +32,7 @@ import com.android.systemui.R;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.ActivityStarter;
+import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.qs.QSTile.BooleanState;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.qs.QSHost;
@@ -50,14 +54,15 @@ public class WorkModeTile extends QSTileImpl<BooleanState> implements
             QSHost host,
             @Background Looper backgroundLooper,
             @Main Handler mainHandler,
+            FalsingManager falsingManager,
             MetricsLogger metricsLogger,
             StatusBarStateController statusBarStateController,
             ActivityStarter activityStarter,
             QSLogger qsLogger,
             ManagedProfileController managedProfileController
     ) {
-        super(host, backgroundLooper, mainHandler, metricsLogger, statusBarStateController,
-                activityStarter, qsLogger);
+        super(host, backgroundLooper, mainHandler, falsingManager, metricsLogger,
+                statusBarStateController, activityStarter, qsLogger);
         mProfileController = managedProfileController;
         mProfileController.observe(getLifecycle(), this);
     }
@@ -73,7 +78,7 @@ public class WorkModeTile extends QSTileImpl<BooleanState> implements
     }
 
     @Override
-    public void handleClick() {
+    public void handleClick(@Nullable View view) {
         mProfileController.setWorkModeEnabled(!mState.value);
     }
 
@@ -124,6 +129,8 @@ public class WorkModeTile extends QSTileImpl<BooleanState> implements
         state.contentDescription = state.label;
         state.expandedAccessibilityClassName = Switch.class.getName();
         state.state = state.value ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE;
+        state.secondaryLabel = state.value ? "" :
+                mContext.getString(R.string.quick_settings_work_mode_paused);
     }
 
     @Override

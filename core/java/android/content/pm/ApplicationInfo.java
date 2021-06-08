@@ -772,6 +772,19 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
     public @interface ApplicationInfoPrivateFlags {}
 
     /**
+     * Value for {@link #privateFlagsExt}: whether this application can be profiled, either by the
+     * shell user or the system.
+     * @hide
+     */
+    public static final int PRIVATE_FLAG_EXT_PROFILEABLE = 1 << 0;
+
+    /** @hide */
+    @IntDef(flag = true, prefix = { "PRIVATE_FLAG_EXT_" }, value = {
+            PRIVATE_FLAG_EXT_PROFILEABLE,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface ApplicationInfoPrivateFlagsExt {}
+    /**
      * Constant corresponding to <code>allowed</code> in the
      * {@link android.R.attr#autoRevokePermissions} attribute.
      *
@@ -802,6 +815,12 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
     @UnsupportedAppUsage
     @TestApi
     public @ApplicationInfoPrivateFlags int privateFlags;
+
+    /**
+     * More private/hidden flags. See {@code PRIVATE_FLAG_EXT_...} constants.
+     * @hide
+     */
+    public @ApplicationInfoPrivateFlagsExt int privateFlagsExt;
 
     /**
      * @hide
@@ -1363,7 +1382,7 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
      * Indicates if the application has requested GWP-ASan to be enabled, disabled, or left
      * unspecified. Processes can override this setting.
      */
-    private @GwpAsanMode int gwpAsanMode;
+    private @GwpAsanMode int gwpAsanMode = GWP_ASAN_DEFAULT;
 
     /**
      * Default (unspecified) setting of Memtag.
@@ -1402,13 +1421,45 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
      * Indicates if the application has requested Memtag to be enabled, disabled, or left
      * unspecified. Processes can override this setting.
      */
-    private @MemtagMode int memtagMode;
+    private @MemtagMode int memtagMode = MEMTAG_DEFAULT;
+
+    /**
+     * Default (unspecified) setting of nativeHeapZeroInitialized.
+     */
+    public static final int ZEROINIT_DEFAULT = -1;
+
+    /**
+     * Disable zero-initialization of the native heap in this application or process.
+     */
+    public static final int ZEROINIT_DISABLED = 0;
+
+    /**
+     * Enable zero-initialization of the native heap in this application or process.
+     */
+    public static final int ZEROINIT_ENABLED = 1;
+
+    /**
+     * @hide
+     */
+    @IntDef(prefix = {"ZEROINIT_"}, value = {
+            ZEROINIT_DEFAULT,
+            ZEROINIT_DISABLED,
+            ZEROINIT_ENABLED,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface NativeHeapZeroInitialized {}
 
     /**
      * Enable automatic zero-initialization of native heap memory allocations.
      */
+    private @NativeHeapZeroInitialized int nativeHeapZeroInitialized = ZEROINIT_DEFAULT;
+
+    /**
+     * If {@code true} this app requests raw external storage access.
+     * The request may not be honored due to policy or other reasons.
+     */
     @Nullable
-    private Boolean nativeHeapZeroInit;
+    private Boolean requestRawExternalStorageAccess;
 
     /**
      * Represents the default policy. The actual policy used will depend on other properties of
@@ -1563,8 +1614,12 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
             if (memtagMode != MEMTAG_DEFAULT) {
                 pw.println(prefix + "memtagMode=" + memtagMode);
             }
-            if (nativeHeapZeroInit != null) {
-                pw.println(prefix + "nativeHeapZeroInit=" + nativeHeapZeroInit);
+            if (nativeHeapZeroInitialized != ZEROINIT_DEFAULT) {
+                pw.println(prefix + "nativeHeapZeroInitialized=" + nativeHeapZeroInitialized);
+            }
+            if (requestRawExternalStorageAccess != null) {
+                pw.println(prefix + "requestRawExternalStorageAccess="
+                        + requestRawExternalStorageAccess);
             }
         }
         super.dumpBack(pw, prefix);
@@ -1675,8 +1730,9 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
             if (memtagMode != MEMTAG_DEFAULT) {
                 proto.write(ApplicationInfoProto.Detail.ENABLE_MEMTAG, memtagMode);
             }
-            if (nativeHeapZeroInit != null) {
-                proto.write(ApplicationInfoProto.Detail.NATIVE_HEAP_ZERO_INIT, nativeHeapZeroInit);
+            if (nativeHeapZeroInitialized != ZEROINIT_DEFAULT) {
+                proto.write(ApplicationInfoProto.Detail.NATIVE_HEAP_ZERO_INIT,
+                        nativeHeapZeroInitialized);
             }
             proto.end(detailToken);
         }
@@ -1734,6 +1790,7 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
         theme = orig.theme;
         flags = orig.flags;
         privateFlags = orig.privateFlags;
+        privateFlagsExt = orig.privateFlagsExt;
         requiresSmallestWidthDp = orig.requiresSmallestWidthDp;
         compatibleWidthLimitDp = orig.compatibleWidthLimitDp;
         largestWidthLimitDp = orig.largestWidthLimitDp;
@@ -1791,7 +1848,8 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
         zygotePreloadName = orig.zygotePreloadName;
         gwpAsanMode = orig.gwpAsanMode;
         memtagMode = orig.memtagMode;
-        nativeHeapZeroInit = orig.nativeHeapZeroInit;
+        nativeHeapZeroInitialized = orig.nativeHeapZeroInitialized;
+        requestRawExternalStorageAccess = orig.requestRawExternalStorageAccess;
     }
 
     public String toString() {
@@ -1817,6 +1875,7 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
         dest.writeInt(theme);
         dest.writeInt(flags);
         dest.writeInt(privateFlags);
+        dest.writeInt(privateFlagsExt);
         dest.writeInt(requiresSmallestWidthDp);
         dest.writeInt(compatibleWidthLimitDp);
         dest.writeInt(largestWidthLimitDp);
@@ -1879,7 +1938,8 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
         dest.writeString8(zygotePreloadName);
         dest.writeInt(gwpAsanMode);
         dest.writeInt(memtagMode);
-        sForBoolean.parcel(nativeHeapZeroInit, dest, parcelableFlags);
+        dest.writeInt(nativeHeapZeroInitialized);
+        sForBoolean.parcel(requestRawExternalStorageAccess, dest, parcelableFlags);
     }
 
     public static final @android.annotation.NonNull Parcelable.Creator<ApplicationInfo> CREATOR
@@ -1905,6 +1965,7 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
         theme = source.readInt();
         flags = source.readInt();
         privateFlags = source.readInt();
+        privateFlagsExt = source.readInt();
         requiresSmallestWidthDp = source.readInt();
         compatibleWidthLimitDp = source.readInt();
         largestWidthLimitDp = source.readInt();
@@ -1964,7 +2025,8 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
         zygotePreloadName = source.readString8();
         gwpAsanMode = source.readInt();
         memtagMode = source.readInt();
-        nativeHeapZeroInit = sForBoolean.unparcel(source);
+        nativeHeapZeroInitialized = source.readInt();
+        requestRawExternalStorageAccess = sForBoolean.unparcel(source);
     }
 
     /**
@@ -2076,6 +2138,60 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
      */
     public boolean hasRequestedLegacyExternalStorage() {
         return (privateFlags & PRIVATE_FLAG_REQUEST_LEGACY_EXTERNAL_STORAGE) != 0;
+    }
+
+    /**
+     * Use default value for
+     * {@link android.R.styleable#AndroidManifestApplication_requestRawExternalStorageAccess}.
+     */
+    public static final int RAW_EXTERNAL_STORAGE_ACCESS_DEFAULT = 0;
+
+    /**
+     * Raw external storage was requested by this app.
+     */
+    public static final int RAW_EXTERNAL_STORAGE_ACCESS_REQUESTED = 1;
+
+    /**
+     * Raw external storage was not requested by this app.
+     */
+    public static final int RAW_EXTERNAL_STORAGE_ACCESS_NOT_REQUESTED = 2;
+
+    /**
+     * These constants need to match the value of
+     * {@link android.R.styleable#AndroidManifestApplication_requestRawExternalStorageAccess}.
+     * in application manifest.
+     * @hide
+     */
+    @IntDef(prefix = {"RAW_EXTERNAL_STORAGE_"}, value = {
+            RAW_EXTERNAL_STORAGE_ACCESS_DEFAULT,
+            RAW_EXTERNAL_STORAGE_ACCESS_REQUESTED,
+            RAW_EXTERNAL_STORAGE_ACCESS_NOT_REQUESTED,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface RawExternalStorage {}
+
+    /**
+     * @return
+     * <ul>
+     * <li>{@link ApplicationInfo#RAW_EXTERNAL_STORAGE_ACCESS_DEFAULT} if app didn't specify
+     * {@link android.R.styleable#AndroidManifestApplication_requestRawExternalStorageAccess}
+     * attribute in the manifest.
+     * <li>{@link ApplicationInfo#RAW_EXTERNAL_STORAGE_ACCESS_REQUESTED} if this app requested raw
+     * external storage access.
+     * <li>{@link ApplicationInfo#RAW_EXTERNAL_STORAGE_ACCESS_NOT_REQUESTED} if this app requests to
+     * disable raw external storage access
+     * </ul
+     * <p>
+     * Note that this doesn't give any hints on whether the app gets raw external storage access or
+     * not. Also, apps may get raw external storage access by default in some cases, see
+     * {@link android.R.styleable#AndroidManifestApplication_requestRawExternalStorageAccess}.
+     */
+    public @RawExternalStorage int getRequestRawExternalStorageAccess() {
+        if (requestRawExternalStorageAccess == null) {
+            return RAW_EXTERNAL_STORAGE_ACCESS_DEFAULT;
+        }
+        return requestRawExternalStorageAccess ? RAW_EXTERNAL_STORAGE_ACCESS_REQUESTED
+                : RAW_EXTERNAL_STORAGE_ACCESS_NOT_REQUESTED;
     }
 
     /**
@@ -2210,7 +2326,10 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
         return (flags & ApplicationInfo.FLAG_EXTERNAL_STORAGE) == 0;
     }
 
-    /** @hide */
+    /**
+     * True if the application is pre-installed on the OEM partition of the system image.
+     * @hide
+     */
     @SystemApi
     public boolean isOem() {
         return (privateFlags & ApplicationInfo.PRIVATE_FLAG_OEM) != 0;
@@ -2258,13 +2377,19 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
         return (flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0;
     }
 
-    /** @hide */
+    /**
+     * True if the application is pre-installed on the vendor partition of the system image.
+     * @hide
+     */
     @SystemApi
     public boolean isVendor() {
         return (privateFlags & ApplicationInfo.PRIVATE_FLAG_VENDOR) != 0;
     }
 
-    /** @hide */
+    /**
+     * True if the application is pre-installed on the product partition of the system image.
+     * @hide
+     */
     @SystemApi
     public boolean isProduct() {
         return (privateFlags & ApplicationInfo.PRIVATE_FLAG_PRODUCT) != 0;
@@ -2293,6 +2418,13 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
      */
     public boolean isProfileableByShell() {
         return (privateFlags & PRIVATE_FLAG_PROFILEABLE_BY_SHELL) != 0;
+    }
+
+    /**
+     * Returns whether this application can be profiled, either by the shell user or the system.
+     */
+    public boolean isProfileable() {
+        return (privateFlagsExt & PRIVATE_FLAG_EXT_PROFILEABLE) != 0;
     }
 
     /**
@@ -2350,7 +2482,13 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
     /** {@hide} */ public void setSplitResourcePaths(String[] splitResourcePaths) { splitPublicSourceDirs = splitResourcePaths; }
     /** {@hide} */ public void setGwpAsanMode(@GwpAsanMode int value) { gwpAsanMode = value; }
     /** {@hide} */ public void setMemtagMode(@MemtagMode int value) { memtagMode = value; }
-    /** {@hide} */ public void setNativeHeapZeroInit(@Nullable Boolean value) { nativeHeapZeroInit = value; }
+    /** {@hide} */ public void setNativeHeapZeroInitialized(@NativeHeapZeroInitialized int value) {
+        nativeHeapZeroInitialized = value;
+    }
+    /** {@hide} */
+    public void setRequestRawExternalStorageAccess(@Nullable Boolean value) {
+        requestRawExternalStorageAccess = value;
+    }
 
     /** {@hide} */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
@@ -2364,8 +2502,22 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
     /** {@hide} */ public String[] getSplitResourcePaths() { return splitPublicSourceDirs; }
     @GwpAsanMode
     public int getGwpAsanMode() { return gwpAsanMode; }
+
+    /**
+     * Returns whether the application has requested Memtag to be enabled, disabled, or left
+     * unspecified. Processes can override this setting.
+     */
     @MemtagMode
-    public int getMemtagMode() { return memtagMode; }
-    @Nullable
-    public Boolean isNativeHeapZeroInit() { return nativeHeapZeroInit; }
+    public int getMemtagMode() {
+        return memtagMode;
+    }
+
+    /**
+     * Returns whether the application has requested automatic zero-initialization of native heap
+     * memory allocations to be enabled or disabled.
+     */
+    @NativeHeapZeroInitialized
+    public int getNativeHeapZeroInitialized() {
+        return nativeHeapZeroInitialized;
+    }
 }

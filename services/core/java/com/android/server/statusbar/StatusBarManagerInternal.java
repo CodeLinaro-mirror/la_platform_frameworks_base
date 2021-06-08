@@ -18,6 +18,7 @@ package com.android.server.statusbar;
 
 import android.annotation.Nullable;
 import android.app.ITransientNotificationCallback;
+import android.hardware.fingerprint.IUdfpsHbmListener;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
@@ -160,4 +161,17 @@ public interface StatusBarManagerInternal {
      * Handles a logging command from the WM shell command.
      */
     void handleWindowManagerLoggingCommand(String[] args, ParcelFileDescriptor outFd);
+
+    /**
+     * @see com.android.internal.statusbar.IStatusBar#setNavigationBarLumaSamplingEnabled(int,
+     * boolean)
+     */
+    void setNavigationBarLumaSamplingEnabled(int displayId, boolean enable);
+
+    /**
+     * Sets the system-wide listener for UDFPS HBM status changes.
+     *
+     * @see com.android.internal.statusbar.IStatusBar#setUdfpsHbmListener(IUdfpsHbmListener)
+     */
+    void setUdfpsHbmListener(IUdfpsHbmListener listener);
 }

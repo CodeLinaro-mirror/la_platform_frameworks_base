@@ -20,7 +20,6 @@ import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
-import android.compat.annotation.ChangeId;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.os.Binder;
 import android.os.Build;
@@ -111,6 +110,7 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.MessageWaitingIndicatorListener} instead.
      */
     @Deprecated
+    @RequiresPermission(android.Manifest.permission.READ_PHONE_STATE)
     public static final int LISTEN_MESSAGE_WAITING_INDICATOR                = 0x00000004;
 
     /**
@@ -124,6 +124,7 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.CallForwardingIndicatorListener} instead.
      */
     @Deprecated
+    @RequiresPermission(android.Manifest.permission.READ_PHONE_STATE)
     public static final int LISTEN_CALL_FORWARDING_INDICATOR                = 0x00000008;
 
     /**
@@ -142,6 +143,7 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.CellLocationListener} instead.
      */
     @Deprecated
+    @RequiresPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
     public static final int LISTEN_CELL_LOCATION                            = 0x00000010;
 
     /**
@@ -195,7 +197,7 @@ public class PhoneStateListener {
      * @see #onSignalStrengthsChanged
      *
      * @hide
-     * @deprecated Use {@link TelephonyCallback.AlwaysReportedSignalStrengthListener}
+     * @deprecated Use TelephonyManager#setSignalStrengthUpdateRequest
      * instead.
      */
     @Deprecated
@@ -205,13 +207,18 @@ public class PhoneStateListener {
     /**
      * Listen for changes to observed cell info.
      *
-     * Listening to this event requires the {@link Manifest.permission#ACCESS_FINE_LOCATION}
+     * Listening to this event requires the {@link Manifest.permission#READ_PHONE_STATE} and
+     * {@link Manifest.permission#ACCESS_FINE_LOCATION}
      * permission.
      *
      * @see #onCellInfoChanged
      * @deprecated Use {@link TelephonyCallback.CellInfoListener} instead.
      */
     @Deprecated
+    @RequiresPermission(allOf = {
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.ACCESS_FINE_LOCATION
+    })
     public static final int LISTEN_CELL_INFO = 0x00000400;
 
     /**
@@ -262,7 +269,7 @@ public class PhoneStateListener {
      *
      * <p>Requires permission {@link android.Manifest.permission#READ_PRIVILEGED_PHONE_STATE}
      *
-     * @see #onServiceStateChanged(ServiceState)
+     * @see #onSrvccStateChanged
      * @hide
      * @deprecated Use {@link TelephonyCallback.SrvccStateListener} instead.
      */
@@ -344,11 +351,14 @@ public class PhoneStateListener {
     /**
      *  Listen for display info changed event.
      *
-     *  Requires Permission: {@link android.Manifest.permission#READ_PHONE_STATE
-     *  READ_PHONE_STATE} or that the calling app has carrier privileges (see
-     *  {@link TelephonyManager#hasCarrierPrivileges}).
+     * For clients compiled on Android 11 SDK, requires permission:
+     * {@link android.Manifest.permission#READ_PHONE_STATE} or that the calling app has carrier
+     * privileges (see {@link TelephonyManager#hasCarrierPrivileges}).
+     * For clients compiled on Android 12 SDK or newer,
+     * {@link android.Manifest.permission#READ_PHONE_STATE} or carrier privileges is not required
+     * anymore.
      *
-     *  @see #onDisplayInfoChanged
+     * @see #onDisplayInfoChanged
      * @deprecated Use {@link TelephonyCallback.DisplayInfoListener} instead.
      */
     @Deprecated
@@ -374,6 +384,7 @@ public class PhoneStateListener {
      *  @deprecated Use {@link TelephonyCallback.ActiveDataSubscriptionIdListener} instead.
      */
     @Deprecated
+    @RequiresPermission(android.Manifest.permission.READ_PHONE_STATE)
     public static final int LISTEN_ACTIVE_DATA_SUBSCRIPTION_ID_CHANGE = 0x00400000;
 
     /**
@@ -397,6 +408,7 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.EmergencyNumberListListener} instead.
      */
     @Deprecated
+    @RequiresPermission(android.Manifest.permission.READ_PHONE_STATE)
     public static final int LISTEN_EMERGENCY_NUMBER_LIST                   = 0x01000000;
 
     /**
@@ -485,7 +497,10 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.RegistrationFailedListener} instead.
      */
     @Deprecated
-    @RequiresPermission(Manifest.permission.READ_PRECISE_PHONE_STATE)
+    @RequiresPermission(allOf = {
+            Manifest.permission.READ_PRECISE_PHONE_STATE,
+            Manifest.permission.ACCESS_FINE_LOCATION
+    })
     public static final int LISTEN_REGISTRATION_FAILURE = 0x40000000;
 
     /**
@@ -501,7 +516,10 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.BarringInfoListener} instead.
      */
     @Deprecated
-    @RequiresPermission(Manifest.permission.READ_PRECISE_PHONE_STATE)
+    @RequiresPermission(allOf = {
+            Manifest.permission.READ_PRECISE_PHONE_STATE,
+            Manifest.permission.ACCESS_FINE_LOCATION
+    })
     public static final int LISTEN_BARRING_INFO = 0x80000000;
 
     /*
@@ -648,6 +666,7 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.MessageWaitingIndicatorListener} instead.
      */
     @Deprecated
+    @RequiresPermission(android.Manifest.permission.READ_PHONE_STATE)
     public void onMessageWaitingIndicatorChanged(boolean mwi) {
         // default implementation empty
     }
@@ -664,6 +683,7 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.CallForwardingIndicatorListener} instead.
      */
     @Deprecated
+    @RequiresPermission(android.Manifest.permission.READ_PHONE_STATE)
     public void onCallForwardingIndicatorChanged(boolean cfi) {
         // default implementation empty
     }
@@ -680,6 +700,7 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.CellLocationListener} instead.
      */
     @Deprecated
+    @RequiresPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
     public void onCellLocationChanged(CellLocation location) {
         // default implementation empty
     }
@@ -701,6 +722,10 @@ public class PhoneStateListener {
      * calling {@link TelephonyManager#getCallState()} from within this callback may return a
      * different state than the callback reports.
      *
+     * Requires Permission:
+     * {@link android.Manifest.permission#READ_PHONE_STATE READ_PHONE_STATE} for applications
+     * targeting API level 31+.
+     *
      * @param state call state
      * @param phoneNumber call phone number. If application does not have
      * {@link android.Manifest.permission#READ_CALL_LOG READ_CALL_LOG} permission or carrier
@@ -710,6 +735,7 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.CallStateListener} instead.
      */
     @Deprecated
+    @RequiresPermission(value = android.Manifest.permission.READ_PHONE_STATE, conditional = true)
     public void onCallStateChanged(@CallState int state, String phoneNumber) {
         // default implementation empty
     }
@@ -794,6 +820,10 @@ public class PhoneStateListener {
      * @param cellInfo is the list of currently visible cells.
      * @deprecated Use {@link TelephonyCallback.CellInfoListener} instead.
      */
+    @RequiresPermission(allOf = {
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.ACCESS_FINE_LOCATION
+    })
     @Deprecated
     public void onCellInfoChanged(List<CellInfo> cellInfo) {
         // default implementation empty
@@ -868,14 +898,14 @@ public class PhoneStateListener {
      * subId. Otherwise, this callback applies to
      * {@link SubscriptionManager#getDefaultSubscriptionId()}.
      *
-     * <p>Requires permission {@link android.Manifest.permission#MODIFY_PHONE_STATE}
+     * <p>Requires permission {@link android.Manifest.permission#READ_PRECISE_PHONE_STATE}
      * or the calling app has carrier privileges
      * (see {@link TelephonyManager#hasCarrierPrivileges}).
      *
      * @param dataConnectionState {@link PreciseDataConnectionState}
      * @deprecated Use {@link TelephonyCallback.PreciseDataConnectionStateListener} instead.
      */
-    @RequiresPermission(android.Manifest.permission.MODIFY_PHONE_STATE)
+    @RequiresPermission(android.Manifest.permission.READ_PRECISE_PHONE_STATE)
     @Deprecated
     public void onPreciseDataConnectionStateChanged(
             @NonNull PreciseDataConnectionState dataConnectionState) {
@@ -917,6 +947,7 @@ public class PhoneStateListener {
      */
     @SystemApi
     @Deprecated
+    @RequiresPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
     public void onSrvccStateChanged(@SrvccState int srvccState) {
         // default implementation empty
     }
@@ -937,6 +968,7 @@ public class PhoneStateListener {
      */
     @SystemApi
     @Deprecated
+    @RequiresPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
     public void onVoiceActivationStateChanged(@SimActivationState int state) {
         // default implementation empty
     }
@@ -982,8 +1014,12 @@ public class PhoneStateListener {
      * <p> The {@link TelephonyDisplayInfo} contains status information shown to the user based on
      * carrier policy.
      *
-     * Requires Permission: {@link android.Manifest.permission#READ_PHONE_STATE} or that the calling
-     * app has carrier privileges (see {@link TelephonyManager#hasCarrierPrivileges}).
+     * For clients compiled on Android 11 SDK, requires permission:
+     * {@link android.Manifest.permission#READ_PHONE_STATE} or that the calling app has carrier
+     * privileges (see {@link TelephonyManager#hasCarrierPrivileges}).
+     * For clients compiled on Android 12 SDK or newer,
+     * {@link android.Manifest.permission#READ_PHONE_STATE} or carrier privileges is not required
+     * anymore.
      *
      * @param telephonyDisplayInfo The display information.
      * @deprecated Use {@link TelephonyCallback.DisplayInfoListener} instead.
@@ -1015,6 +1051,7 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.EmergencyNumberListListener} instead.
      */
     @Deprecated
+    @RequiresPermission(android.Manifest.permission.READ_PHONE_STATE)
     public void onEmergencyNumberListChanged(
             @NonNull Map<Integer, List<EmergencyNumber>> emergencyNumberList) {
         // default implementation empty
@@ -1032,6 +1069,7 @@ public class PhoneStateListener {
      */
     @SystemApi
     @Deprecated
+    @RequiresPermission(Manifest.permission.READ_ACTIVE_EMERGENCY_SESSION)
     public void onOutgoingEmergencyCall(@NonNull EmergencyNumber placedEmergencyNumber) {
         // default implementation empty
     }
@@ -1057,6 +1095,7 @@ public class PhoneStateListener {
      */
     @SystemApi
     @Deprecated
+    @RequiresPermission(Manifest.permission.READ_ACTIVE_EMERGENCY_SESSION)
     public void onOutgoingEmergencyCall(@NonNull EmergencyNumber placedEmergencyNumber,
             int subscriptionId) {
         // Default implementation for backwards compatibility
@@ -1075,6 +1114,7 @@ public class PhoneStateListener {
      */
     @SystemApi
     @Deprecated
+    @RequiresPermission(Manifest.permission.READ_ACTIVE_EMERGENCY_SESSION)
     public void onOutgoingEmergencySms(@NonNull EmergencyNumber sentEmergencyNumber) {
         // default implementation empty
     }
@@ -1147,6 +1187,7 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.ActiveDataSubscriptionIdListener} instead.
      */
     @Deprecated
+    @RequiresPermission(android.Manifest.permission.READ_PHONE_STATE)
     public void onActiveDataSubscriptionIdChanged(int subId) {
         // default implementation empty
     }
@@ -1167,6 +1208,7 @@ public class PhoneStateListener {
      */
     @SystemApi
     @Deprecated
+    @RequiresPermission(android.Manifest.permission.READ_PRECISE_PHONE_STATE)
     public void onCallAttributesChanged(@NonNull CallAttributes callAttributes) {
         // default implementation empty
     }
@@ -1188,6 +1230,7 @@ public class PhoneStateListener {
      */
     @SystemApi
     @Deprecated
+    @RequiresPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
     public void onRadioPowerStateChanged(@RadioPowerState int state) {
         // default implementation empty
     }
@@ -1242,6 +1285,10 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.RegistrationFailedListener} instead.
      */
     @Deprecated
+    @RequiresPermission(allOf = {
+            Manifest.permission.READ_PRECISE_PHONE_STATE,
+            Manifest.permission.ACCESS_FINE_LOCATION
+    })
     public void onRegistrationFailed(@NonNull CellIdentity cellIdentity, @NonNull String chosenPlmn,
             int domain, int causeCode, int additionalCauseCode) {
         // default implementation empty
@@ -1258,9 +1305,15 @@ public class PhoneStateListener {
      * @deprecated Use {@link TelephonyCallback.BarringInfoListener} instead.
      */
     @Deprecated
+    @RequiresPermission(allOf = {
+            Manifest.permission.READ_PRECISE_PHONE_STATE,
+            Manifest.permission.ACCESS_FINE_LOCATION
+    })
     public void onBarringInfoChanged(@NonNull BarringInfo barringInfo) {
         // default implementation empty
     }
+
+
 
     /**
      * The callback methods need to be called on the handler thread where
@@ -1577,7 +1630,12 @@ public class PhoneStateListener {
             // default implementation empty
         }
 
-        public void onAllowedNetworkTypesChanged(Map allowedNetworkTypesList) {
+        public void onAllowedNetworkTypesChanged(int reason, long allowedNetworkType) {
+            // default implementation empty
+        }
+
+        public void onLinkCapacityEstimateChanged(
+                List<LinkCapacityEstimate> linkCapacityEstimateList) {
             // default implementation empty
         }
     }

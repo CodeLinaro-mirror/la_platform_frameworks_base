@@ -2639,8 +2639,12 @@ public abstract class PackageManager {
     public static final String FEATURE_SE_OMAPI_SD = "android.hardware.se.omapi.sd";
 
     /**
-     * Feature for {@link #getSystemAvailableFeatures} and
-     * {@link #hasSystemFeature}: The device is compatible with Android’s security model.
+     * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}: The device is
+     * compatible with Android’s security model.
+     *
+     * <p>See sections 2 and 9 in the
+     * <a href="https://source.android.com/compatibility/android-cdd">Android CDD</a> for more
+     * details.
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_SECURITY_MODEL_COMPATIBLE =
@@ -3497,22 +3501,63 @@ public abstract class PackageManager {
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}:
-     * The device supports translation of text-to-text in multiple languages via integration with
-     * the system {@link android.service.translation.TranslationService translation provider}.
-     */
-    @SdkConstant(SdkConstantType.FEATURE)
-    public static final String FEATURE_TRANSLATION = "android.software.translation";
-
-    /**
-     * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}:
      * The device implements headtracking suitable for a VR device.
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_VR_HEADTRACKING = "android.hardware.vr.headtracking";
 
     /**
-     * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}:
-     * The device has a StrongBox hardware-backed Keystore.
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature(String, int)}: If this feature is supported, the device implements
+     * the Android Keystore backed by an isolated execution environment. The version indicates
+     * which features are implemented in the isolated execution environment:
+     * <ul>
+     * <li>100: Hardware support for ECDH (see {@link javax.crypto.KeyAgreement}) and support
+     * for app-generated attestation keys (see {@link
+     * android.security.keystore.KeyGenParameterSpec.Builder#setAttestKeyAlias(String)}).
+     * <li>41: Hardware enforcement of device-unlocked keys (see {@link
+     * android.security.keystore.KeyGenParameterSpec.Builder#setUnlockedDeviceRequired(boolean)}).
+     * <li>40: Support for wrapped key import (see {@link
+     * android.security.keystore.WrappedKeyEntry}), optional support for ID attestation (see {@link
+     * android.security.keystore.KeyGenParameterSpec.Builder#setDevicePropertiesAttestationIncluded(boolean)}),
+     * attestation (see {@link
+     * android.security.keystore.KeyGenParameterSpec.Builder#setAttestationChallenge(byte[])}),
+     * AES, HMAC, ECDSA and RSA support where the secret or private key never leaves secure
+     * hardware, and support for requiring user authentication before a key can be used.
+     * </ul>
+     * This feature version is guaranteed to be set for all devices launching with Android 12 and
+     * may be set on devices launching with an earlier version. If the feature version is set, it
+     * will at least have the value 40. If it's not set the device may have a version of
+     * hardware-backed keystore but it may not support all features listed above.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_HARDWARE_KEYSTORE = "android.hardware.hardware_keystore";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures}, {@link #hasSystemFeature(String)}, and
+     * {@link #hasSystemFeature(String, int)}: If this feature is supported, the device implements
+     * the Android Keystore backed by a dedicated secure processor referred to as
+     * <a href="https://source.android.com/security/best-practices/hardware#strongbox-keymaster">
+     * StrongBox</a>. If this feature has a version, the version number indicates which features are
+     * implemented in StrongBox:
+     * <ul>
+     * <li>100: Hardware support for ECDH (see {@link javax.crypto.KeyAgreement}) and support
+     * for app-generated attestation keys (see {@link
+     * android.security.keystore.KeyGenParameterSpec.Builder#setAttestKeyAlias(String)}).
+     * <li>41: Hardware enforcement of device-unlocked keys (see {@link
+     * android.security.keystore.KeyGenParameterSpec.Builder#setUnlockedDeviceRequired(boolean)}).
+     * <li>40: Support for wrapped key import (see {@link
+     * android.security.keystore.WrappedKeyEntry}), optional support for ID attestation (see {@link
+     * android.security.keystore.KeyGenParameterSpec.Builder#setDevicePropertiesAttestationIncluded(boolean)}),
+     * attestation (see {@link
+     * android.security.keystore.KeyGenParameterSpec.Builder#setAttestationChallenge(byte[])}),
+     * AES, HMAC, ECDSA and RSA support where the secret or private key never leaves secure
+     * hardware, and support for requiring user authentication before a key can be used.
+     * </ul>
+     * If a device has StrongBox, this feature version number is guaranteed to be set for all
+     * devices launching with Android 12 and may be set on devices launching with an earlier
+     * version. If the feature version is set, it will at least have the value 40. If it's not
+     * set the device may have StrongBox but it may not support all features listed above.
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_STRONGBOX_KEYSTORE =
@@ -3607,32 +3652,6 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_TUNER = "android.hardware.tv.tuner";
-
-    /**
-     * Feature for {@link #getSystemAvailableFeatures} and
-     * {@link #hasSystemFeature}: The device supports a enabling/disabling sensor privacy for
-     * microphone. When sensory privacy for the microphone is enabled no microphone data is sent to
-     * clients, e.g. all audio data is silent.
-     *
-     * @hide
-     */
-    @SystemApi
-    @TestApi
-    @SdkConstant(SdkConstantType.FEATURE)
-    public static final String FEATURE_MICROPHONE_TOGGLE = "android.hardware.microphone.toggle";
-
-    /**
-     * Feature for {@link #getSystemAvailableFeatures} and
-     * {@link #hasSystemFeature}: The device supports a enabling/disabling sensor privacy for
-     * camera. When sensory privacy for the camera is enabled no camera data is sent to clients,
-     * e.g. the view finder in a camera app would appear blank.
-     *
-     * @hide
-     */
-    @SystemApi
-    @TestApi
-    @SdkConstant(SdkConstantType.FEATURE)
-    public static final String FEATURE_CAMERA_TOGGLE = "android.hardware.camera.toggle";
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}: The device has
@@ -3950,6 +3969,7 @@ public abstract class PackageManager {
      * @hide
      */
     @TestApi
+    @SystemApi
     public static final int FLAG_PERMISSION_REVOKE_WHEN_REQUESTED =  1 << 7;
 
     /**
@@ -4325,39 +4345,6 @@ public abstract class PackageManager {
     public static final int SYSTEM_APP_STATE_UNINSTALLED = 3;
 
     /**
-     * Reasons for why a package is unstartable.
-     * @hide
-     */
-    @IntDef({UNSTARTABLE_REASON_UNKNOWN,
-            UNSTARTABLE_REASON_CONNECTION_ERROR,
-            UNSTARTABLE_REASON_INSUFFICIENT_STORAGE
-    })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface UnstartableReason {}
-
-    /**
-     * Unstartable state with no root cause specified. E.g., data loader seeing missing pages but
-     * unclear about the cause. This corresponds to a generic alert window shown to the user when
-     * the user attempts to launch the app.
-     * @hide
-     */
-    public static final int UNSTARTABLE_REASON_UNKNOWN = 0;
-
-    /**
-     * Unstartable state due to connection issues that interrupt package loading.
-     * This corresponds to an alert window shown to the user indicating connection errors.
-     * @hide
-     */
-    public static final int UNSTARTABLE_REASON_CONNECTION_ERROR = 1;
-
-    /**
-     * Unstartable state after encountering storage limitations.
-     * This corresponds to an alert window indicating limited storage.
-     * @hide
-     */
-    public static final int UNSTARTABLE_REASON_INSUFFICIENT_STORAGE = 2;
-
-    /**
      * A manifest property to control app's participation in {@code adb backup}. Should only
      * be used by system / privileged apps.
      *
@@ -4618,7 +4605,7 @@ public abstract class PackageManager {
      * Query for all of the permissions associated with a particular group.
      *
      * @param permissionGroup The fully qualified name (i.e. com.google.permission.LOGIN)
-     *            of the permission group you are interested in. Use null to
+     *            of the permission group you are interested in. Use {@code null} to
      *            find all of the permissions not associated with a group.
      * @param flags Additional option flags to modify the data returned.
      * @return Returns a list of {@link PermissionInfo} containing information
@@ -4628,7 +4615,7 @@ public abstract class PackageManager {
      */
     //@Deprecated
     @NonNull
-    public abstract List<PermissionInfo> queryPermissionsByGroup(@NonNull String permissionGroup,
+    public abstract List<PermissionInfo> queryPermissionsByGroup(@Nullable String permissionGroup,
             @PermissionInfoFlags int flags) throws NameNotFoundException;
 
     /**
@@ -7730,6 +7717,9 @@ public abstract class PackageManager {
      * {@link #SYSTEM_APP_STATE_HIDDEN_UNTIL_INSTALLED_VISIBLE} or its installation state (via
      * {@link #SYSTEM_APP_STATE_INSTALLED} and {@link #SYSTEM_APP_STATE_UNINSTALLED}.
      *
+     * This API may only be called from {@link android.os.Process#SYSTEM_UID} or
+     * {@link android.os.Process#PHONE_UID}.
+     *
      * @param packageName Package name of the app.
      * @param state State of the app.
      * @hide
@@ -8721,7 +8711,7 @@ public abstract class PackageManager {
      * @throws NameNotFoundException if a package with the given name cannot be found on the system.
      */
     public void requestChecksums(@NonNull String packageName, boolean includeSplits,
-            @Checksum.Type int required, @NonNull List<Certificate> trustedInstallers,
+            @Checksum.TypeMask int required, @NonNull List<Certificate> trustedInstallers,
             @NonNull OnChecksumsReadyListener onChecksumsReadyListener)
             throws CertificateEncodingException, NameNotFoundException {
         throw new UnsupportedOperationException("requestChecksums not implemented in subclass");

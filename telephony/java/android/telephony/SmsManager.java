@@ -19,6 +19,7 @@ package android.telephony;
 import android.Manifest;
 import android.annotation.CallbackExecutor;
 import android.annotation.IntDef;
+import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
@@ -451,9 +452,6 @@ public final class SmsManager {
      *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> or any of the RESULT_RIL errors,
      *  the sentIntent may include the extra "errorCode" containing a radio technology specific
      *  value, generally only useful for troubleshooting.<br>
-     *  The per-application based SMS control checks sentIntent. If sentIntent
-     *  is NULL the caller will be checked against all unknown applications,
-     *  which cause smaller number of SMS to be sent in checking period.
      * @param deliveryIntent if not NULL this <code>PendingIntent</code> is
      *  broadcast when the message is delivered to the recipient.  The
      *  raw pdu of the status report is in the extended data ("pdu").
@@ -567,9 +565,6 @@ public final class SmsManager {
      *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> or any of the RESULT_RIL errors,
      *  the sentIntent may include the extra "errorCode" containing a radio technology specific
      *  value, generally only useful for troubleshooting.<br>
-     *  The per-application based SMS control checks sentIntent. If sentIntent
-     *  is NULL the caller will be checked against all unknown applications,
-     *  which cause smaller number of SMS to be sent in checking period.
      * @param deliveryIntent if not NULL this <code>PendingIntent</code> is
      *  broadcast when the message is delivered to the recipient.  The
      *  raw pdu of the status report is in the extended data ("pdu").
@@ -969,9 +964,6 @@ public final class SmsManager {
      *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> or any of the RESULT_RIL errors,
      *  the sentIntent may include the extra "errorCode" containing a radio technology specific
      *  value, generally only useful for troubleshooting.<br>
-     *  The per-application based SMS control checks sentIntent. If sentIntent
-     *  is NULL the caller will be checked against all unknown applications,
-     *  which cause smaller number of SMS to be sent in checking period.
      * @param deliveryIntents if not null, an <code>ArrayList</code> of
      *  <code>PendingIntent</code>s (one for each message part) that is
      *  broadcast when the corresponding message part has been delivered
@@ -1228,9 +1220,6 @@ public final class SmsManager {
      *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> or any of the RESULT_RIL errors,
      *  the sentIntent may include the extra "errorCode" containing a radio technology specific
      *  value, generally only useful for troubleshooting.<br>
-     *  The per-application based SMS control checks sentIntent. If sentIntent
-     *  is NULL the caller will be checked against all unknown applications,
-     *  which cause smaller number of SMS to be sent in checking period.
      * @param deliveryIntents if not null, an <code>ArrayList</code> of
      *  <code>PendingIntent</code>s (one for each message part) that is
      *  broadcast when the corresponding message part has been delivered
@@ -1429,9 +1418,6 @@ public final class SmsManager {
      *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> or any of the RESULT_RIL errors,
      *  the sentIntent may include the extra "errorCode" containing a radio technology specific
      *  value, generally only useful for troubleshooting.<br>
-     *  The per-application based SMS control checks sentIntent. If sentIntent
-     *  is NULL the caller will be checked against all unknown applications,
-     *  which cause smaller number of SMS to be sent in checking period.
      * @param deliveryIntent if not NULL this <code>PendingIntent</code> is
      *  broadcast when the message is delivered to the recipient.  The
      *  raw pdu of the status report is in the extended data ("pdu").
@@ -2207,7 +2193,9 @@ public final class SmsManager {
      *
      * @return the total number of SMS records which can be stored on the SIM card.
      */
-    @RequiresPermission(android.Manifest.permission.READ_PHONE_STATE)
+    @RequiresPermission(anyOf = {android.Manifest.permission.READ_PHONE_STATE,
+            android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE})
+    @IntRange(from = 0)
     public int getSmsCapacityOnIcc() {
         int ret = 0;
         try {
@@ -2216,7 +2204,7 @@ public final class SmsManager {
                 ret = iccISms.getSmsCapacityOnIccForSubscriber(getSubscriptionId());
             }
         } catch (RemoteException ex) {
-            throw new RuntimeException(ex);
+            Log.e(TAG, "getSmsCapacityOnIcc() RemoteException", ex);
         }
         return ret;
     }

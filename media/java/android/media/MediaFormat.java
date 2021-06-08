@@ -109,6 +109,15 @@ import java.util.stream.Collectors;
  * <tr><td>{@link #KEY_ENCODER_DELAY}</td><td>Integer</td><td>optional, the number of frames to trim from the start of the decoded audio stream.</td></tr>
  * <tr><td>{@link #KEY_ENCODER_PADDING}</td><td>Integer</td><td>optional, the number of frames to trim from the end of the decoded audio stream.</td></tr>
  * <tr><td>{@link #KEY_FLAC_COMPRESSION_LEVEL}</td><td>Integer</td><td><b>encoder-only</b>, optional, if content is FLAC audio, specifies the desired compression level.</td></tr>
+ * <tr><td>{@link #KEY_MPEGH_PROFILE_LEVEL_INDICATION}</td><td>Integer</td>
+ *     <td><b>decoder-only</b>, optional, if content is MPEG-H audio,
+ *         specifies the profile and level of the stream.</td></tr>
+ * <tr><td>{@link #KEY_MPEGH_COMPATIBLE_SETS}</td><td>ByteBuffer</td>
+ *     <td><b>decoder-only</b>, optional, if content is MPEG-H audio,
+ *         specifies the compatible sets (profile and level) of the stream.</td></tr>
+ * <tr><td>{@link #KEY_MPEGH_REFERENCE_CHANNEL_LAYOUT}</td>
+ *     <td>Integer</td><td><b>decoder-only</b>, optional, if content is MPEG-H audio,
+ *         specifies the preferred reference channel layout of the stream.</td></tr>
  * </table>
  *
  * Subtitle formats have the following keys:
@@ -161,6 +170,10 @@ public final class MediaFormat {
     public static final String MIMETYPE_AUDIO_EAC3_JOC = "audio/eac3-joc";
     public static final String MIMETYPE_AUDIO_AC4 = "audio/ac4";
     public static final String MIMETYPE_AUDIO_SCRAMBLED = "audio/scrambled";
+    /** MIME type for MPEG-H Audio single stream */
+    public static final String MIMETYPE_AUDIO_MPEGH_MHA1 = "audio/mha1";
+    /** MIME type for MPEG-H Audio single stream, encapsulated in MHAS */
+    public static final String MIMETYPE_AUDIO_MPEGH_MHM1 = "audio/mhm1";
 
     /**
      * MIME type for HEIF still image data encoded in HEVC.
@@ -213,6 +226,15 @@ public final class MediaFormat {
 
     @UnsupportedAppUsage
     private Map<String, Object> mMap;
+
+    /**
+     * A key describing the log session ID for MediaCodec. The log session ID is a random 32-byte
+     * hexadecimal string that is used to associate metrics from multiple media codec instances
+     * to the same playback or recording session.
+     * The associated value is a string.
+     * @hide
+     */
+    public static final String LOG_SESSION_ID = "log-session-id";
 
     /**
      * A key describing the mime type of the MediaFormat.
@@ -854,6 +876,30 @@ public final class MediaFormat {
     public static final String KEY_FLAC_COMPRESSION_LEVEL = "flac-compression-level";
 
     /**
+     * A key describing the MPEG-H stream profile-level indication.
+     *
+     * See ISO_IEC_23008-3;2019 MHADecoderConfigurationRecord mpegh3daProfileLevelIndication.
+     */
+    public static final String KEY_MPEGH_PROFILE_LEVEL_INDICATION =
+            "mpegh-profile-level-indication";
+
+    /**
+     * A key describing the MPEG-H stream compatible sets.
+     *
+     * See FDAmd_2 of ISO_IEC_23008-3;2019 MHAProfileAndLevelCompatibilitySetBox.
+     */
+    public static final String KEY_MPEGH_COMPATIBLE_SETS = "mpegh-compatible-sets";
+
+    /**
+     * A key describing the MPEG-H stream reference channel layout.
+     *
+     * See ISO_IEC_23008-3;2019 MHADecoderConfigurationRecord referenceChannelLayout
+     * and ISO_IEC_23001‐8 ChannelConfiguration value.
+     */
+    public static final String KEY_MPEGH_REFERENCE_CHANNEL_LAYOUT =
+            "mpegh-reference-channel-layout";
+
+    /**
      * A key describing the encoding complexity.
      * The associated value is an integer.  These values are device and codec specific,
      * but lower values generally result in faster and/or less power-hungry encoding.
@@ -981,19 +1027,27 @@ public final class MediaFormat {
 
     /**
      * A key describing the maximum Quantization Parameter allowed for encoding video.
-     * This key applies to all three video frame types (I, P, and B). This value fills
-     * in for any of the frame-specific #KEY_VIDEO_QP_I_MAX, #KEY_VIDEO_QP_P_MAX, or
-     * #KEY_VIDEO_QP_B_MAX keys that are not specified
+     * This key applies to all three video picture types (I, P, and B).
+     * The value is used directly for picture type I; a per-mime formula is used
+     * to calculate the value for the remaining picture types.
+     *
+     * This calculation can be avoided by directly specifying values for each picture type
+     * using the type-specific keys {@link #KEY_VIDEO_QP_I_MAX}, {@link #KEY_VIDEO_QP_P_MAX},
+     * and {@link #KEY_VIDEO_QP_B_MAX}.
      *
      * The associated value is an integer.
      */
     public static final String KEY_VIDEO_QP_MAX = "video-qp-max";
 
     /**
-     * A key describing the maximum Quantization Parameter allowed for encoding video.
-     * This key applies to all three video frame types (I, P, and B). This value fills
-     * in for any of the frame-specific #KEY_VIDEO_QP_I_MIN, #KEY_VIDEO_QP_P_MIN, or
-     * #KEY_VIDEO_QP_B_MIN keys that are not specified
+     * A key describing the minimum Quantization Parameter allowed for encoding video.
+     * This key applies to all three video frame types (I, P, and B).
+     * The value is used directly for picture type I; a per-mime formula is used
+     * to calculate the value for the remaining picture types.
+     *
+     * This calculation can be avoided by directly specifying values for each picture type
+     * using the type-specific keys {@link #KEY_VIDEO_QP_I_MIN}, {@link #KEY_VIDEO_QP_P_MIN},
+     * and {@link #KEY_VIDEO_QP_B_MIN}.
      *
      * The associated value is an integer.
      */
@@ -1055,6 +1109,17 @@ public final class MediaFormat {
      * @see MediaCodecInfo.CodecCapabilities#FEATURE_TunneledPlayback
      */
     public static final String KEY_AUDIO_SESSION_ID = "audio-session-id";
+
+    /**
+     * A key describing the audio hardware sync ID of the AudioTrack associated
+     * to a tunneled video codec. The associated value is an integer.
+     *
+     * @hide
+     *
+     * @see MediaCodecInfo.CodecCapabilities#FEATURE_TunneledPlayback
+     * @see AudioManager#getAudioHwSyncForSession
+     */
+    public static final String KEY_AUDIO_HW_SYNC = "audio-hw-sync";
 
     /**
      * A key for boolean AUTOSELECT behavior for the track. Tracks with AUTOSELECT=true

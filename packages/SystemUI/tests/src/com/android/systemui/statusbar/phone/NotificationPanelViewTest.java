@@ -29,18 +29,17 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.annotation.IdRes;
 import android.app.ActivityManager;
-import android.app.StatusBarManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.hardware.biometrics.BiometricSourceType;
 import android.os.PowerManager;
 import android.os.UserManager;
+import android.service.quickaccesswallet.QuickAccessWalletClient;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.util.DisplayMetrics;
@@ -65,7 +64,9 @@ import com.android.keyguard.KeyguardClockSwitchController;
 import com.android.keyguard.KeyguardStatusView;
 import com.android.keyguard.KeyguardStatusViewController;
 import com.android.keyguard.KeyguardUpdateMonitor;
+import com.android.keyguard.LockIconViewController;
 import com.android.keyguard.dagger.KeyguardQsUserSwitchComponent;
+import com.android.keyguard.dagger.KeyguardStatusBarViewComponent;
 import com.android.keyguard.dagger.KeyguardStatusViewComponent;
 import com.android.keyguard.dagger.KeyguardUserSwitcherComponent;
 import com.android.systemui.R;
@@ -74,6 +75,7 @@ import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.classifier.FalsingCollectorFake;
 import com.android.systemui.classifier.FalsingManagerFake;
 import com.android.systemui.doze.DozeLog;
+import com.android.systemui.media.KeyguardMediaController;
 import com.android.systemui.media.MediaDataManager;
 import com.android.systemui.media.MediaHierarchyManager;
 import com.android.systemui.qs.QSDetailDisplayer;
@@ -81,6 +83,7 @@ import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.FeatureFlags;
 import com.android.systemui.statusbar.KeyguardAffordanceView;
 import com.android.systemui.statusbar.NotificationLockscreenUserManager;
+import com.android.systemui.statusbar.NotificationShadeDepthController;
 import com.android.systemui.statusbar.NotificationShelfController;
 import com.android.systemui.statusbar.PulseExpansionHandler;
 import com.android.systemui.statusbar.StatusBarStateControllerImpl;
@@ -97,6 +100,8 @@ import com.android.systemui.statusbar.notification.stack.NotificationStackScroll
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
+import com.android.systemui.util.concurrency.FakeExecutor;
+import com.android.systemui.util.time.FakeSystemClock;
 import com.android.wm.shell.animation.FlingAnimationUtils;
 
 import org.junit.Before;
@@ -108,7 +113,6 @@ import org.mockito.MockitoAnnotations;
 import org.mockito.stubbing.Answer;
 
 import java.util.List;
-import java.util.function.Consumer;
 
 @SmallTest
 @RunWith(AndroidTestingRunner.class)
@@ -206,11 +210,19 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     @Mock
     private KeyguardStatusViewComponent mKeyguardStatusViewComponent;
     @Mock
+    private KeyguardStatusBarViewComponent.Factory mKeyguardStatusBarViewComponentFactory;
+    @Mock
+    private KeyguardStatusBarViewComponent mKeyguardStatusBarViewComponent;
+    @Mock
     private KeyguardClockSwitchController mKeyguardClockSwitchController;
     @Mock
     private KeyguardStatusViewController mKeyguardStatusViewController;
     @Mock
+    private KeyguardStatusBarViewController mKeyguardStatusBarViewController;
+    @Mock
     private NotificationStackScrollLayoutController mNotificationStackScrollLayoutController;
+    @Mock
+    private NotificationShadeDepthController mNotificationShadeDepthController;
     @Mock
     private AuthController mAuthController;
     @Mock
@@ -225,6 +237,12 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     private UserManager mUserManager;
     @Mock
     private UiEventLogger mUiEventLogger;
+    @Mock
+    private LockIconViewController mLockIconViewController;
+    @Mock
+    private QuickAccessWalletClient mQuickAccessWalletClient;
+    @Mock
+    private KeyguardMediaController mKeyguardMediaController;
 
     private SysuiStatusBarStateController mStatusBarStateController;
     private NotificationPanelViewController mNotificationPanelViewController;
@@ -267,6 +285,7 @@ public class NotificationPanelViewTest extends SysuiTestCase {
         mNotificationContainerParent = new NotificationsQuickSettingsContainer(getContext(), null);
         mNotificationContainerParent.addView(newViewWithId(R.id.qs_frame));
         mNotificationContainerParent.addView(newViewWithId(R.id.notification_stack_scroller));
+        mNotificationContainerParent.addView(newViewWithId(R.id.keyguard_status_view));
         when(mView.findViewById(R.id.notification_container_parent))
                 .thenReturn(mNotificationContainerParent);
         FlingAnimationUtils.Builder flingAnimationUtilsBuilder = new FlingAnimationUtils.Builder(
@@ -296,6 +315,10 @@ public class NotificationPanelViewTest extends SysuiTestCase {
                 .thenReturn(mKeyguardClockSwitchController);
         when(mKeyguardStatusViewComponent.getKeyguardStatusViewController())
                 .thenReturn(mKeyguardStatusViewController);
+        when(mKeyguardStatusBarViewComponentFactory.build(any()))
+                .thenReturn(mKeyguardStatusBarViewComponent);
+        when(mKeyguardStatusBarViewComponent.getKeyguardStatusBarViewController())
+                .thenReturn(mKeyguardStatusBarViewController);
 
         mNotificationPanelViewController = new NotificationPanelViewController(mView,
                 mResources,
@@ -314,6 +337,7 @@ public class NotificationPanelViewTest extends SysuiTestCase {
                 mKeyguardStatusViewComponentFactory,
                 mKeyguardQsUserSwitchComponentFactory,
                 mKeyguardUserSwitcherComponentFactory,
+                mKeyguardStatusBarViewComponentFactory,
                 mQSDetailDisplayer,
                 mGroupManager,
                 mNotificationAreaController,
@@ -321,8 +345,13 @@ public class NotificationPanelViewTest extends SysuiTestCase {
                 mScrimController,
                 mUserManager,
                 mMediaDataManager,
+                mNotificationShadeDepthController,
                 mAmbientState,
-                mFeatureFlags);
+                mLockIconViewController,
+                mFeatureFlags,
+                mQuickAccessWalletClient,
+                mKeyguardMediaController,
+                new FakeExecutor(new FakeSystemClock()));
         mNotificationPanelViewController.initDependencies(
                 mStatusBar,
                 mNotificationShelfController);
@@ -352,19 +381,6 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     public void testSetExpandedHeight() {
         mNotificationPanelViewController.setExpandedHeight(200);
         assertThat((int) mNotificationPanelViewController.getExpandedHeight()).isEqualTo(200);
-    }
-
-    @Test
-    public void testAffordanceLaunchingListener() {
-        Consumer<Boolean> listener = spy((showing) -> { });
-        mNotificationPanelViewController.setExpandedFraction(1f);
-        mNotificationPanelViewController.setLaunchAffordanceListener(listener);
-        mNotificationPanelViewController.launchCamera(false /* animate */,
-                StatusBarManager.CAMERA_LAUNCH_SOURCE_POWER_DOUBLE_TAP);
-        verify(listener).accept(eq(true));
-
-        mNotificationPanelViewController.onAffordanceLaunchEnded();
-        verify(listener).accept(eq(false));
     }
 
     @Test
@@ -465,6 +481,20 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     }
 
     @Test
+    public void testKeyguardStatusView_isAlignedToGuidelineInSplitShadeMode() {
+        mNotificationPanelViewController.updateResources();
+
+        assertThat(getConstraintSetLayout(R.id.keyguard_status_view).endToEnd)
+                .isEqualTo(ConstraintSet.PARENT_ID);
+
+        enableSplitShade();
+        mNotificationPanelViewController.updateResources();
+
+        assertThat(getConstraintSetLayout(R.id.keyguard_status_view).endToEnd)
+                .isEqualTo(R.id.qs_edge_guideline);
+    }
+
+    @Test
     public void testSplitShadeLayout_isAlignedToGuideline() {
         enableSplitShade();
 
@@ -536,11 +566,40 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     @Test
     public void testCanCollapsePanelOnTouch_falseInDualPaneShade() {
         mStatusBarStateController.setState(SHADE);
-        when(mResources.getBoolean(R.bool.config_use_split_notification_shade)).thenReturn(true);
-        when(mFeatureFlags.isTwoColumnNotificationShadeEnabled()).thenReturn(true);
+        enableSplitShade();
         mNotificationPanelViewController.setQsExpanded(true);
 
         assertThat(mNotificationPanelViewController.canCollapsePanelOnTouch()).isFalse();
+    }
+
+    @Test
+    public void testSwipeWhileLocked_notifiesKeyguardState() {
+        mStatusBarStateController.setState(KEYGUARD);
+
+        // Fling expanded (cancelling the keyguard exit swipe). We should notify keyguard state that
+        // the fling occurred and did not dismiss the keyguard.
+        mNotificationPanelViewController.flingToHeight(
+                0f, true /* expand */, 1000f, 1f, false);
+        verify(mKeyguardStateController).notifyPanelFlingStart(false /* dismissKeyguard */);
+
+        // Fling un-expanded, which is a keyguard exit fling when we're in KEYGUARD state.
+        mNotificationPanelViewController.flingToHeight(
+                0f, false /* expand */, 1000f, 1f, false);
+        verify(mKeyguardStateController).notifyPanelFlingStart(true /* dismissKeyguard */);
+    }
+
+    @Test
+    public void testCancelSwipeWhileLocked_notifiesKeyguardState() {
+        mStatusBarStateController.setState(KEYGUARD);
+
+        mNotificationPanelViewController.setOverExpansion(100f, true);
+
+        // Fling expanded (cancelling the keyguard exit swipe). We should notify keyguard state that
+        // the fling occurred and did not dismiss the keyguard.
+        mNotificationPanelViewController.flingToHeight(
+                0f, true /* expand */, 1000f, 1f, false);
+        mNotificationPanelViewController.cancelHeightAnimator();
+        verify(mKeyguardStateController).notifyPanelFlingEnd();
     }
 
     private View newViewWithId(int id) {
@@ -562,6 +621,7 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     private void enableSplitShade() {
         when(mResources.getBoolean(R.bool.config_use_split_notification_shade)).thenReturn(true);
         when(mFeatureFlags.isTwoColumnNotificationShadeEnabled()).thenReturn(true);
+        mNotificationPanelViewController.updateResources();
     }
 
     private void onTouchEvent(MotionEvent ev) {

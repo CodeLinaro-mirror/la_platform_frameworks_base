@@ -25,6 +25,7 @@ import android.util.IndentingPrintWriter;
 import android.util.Slog;
 import android.util.proto.ProtoOutputStream;
 
+import com.android.internal.annotations.GuardedBy;
 import com.android.server.job.JobSchedulerService;
 import com.android.server.job.JobSchedulerService.Constants;
 import com.android.server.job.StateChangedListener;
@@ -75,6 +76,12 @@ public abstract class StateController {
     }
 
     /**
+     * Optionally implement logic here for when a job that was about to be executed failed to start.
+     */
+    public void unprepareFromExecutionLocked(JobStatus jobStatus) {
+    }
+
+    /**
      * Remove task - this will happen if the task is cancelled, completed, etc.
      */
     public abstract void maybeStopTrackingJobLocked(JobStatus jobStatus, JobStatus incomingJob,
@@ -103,6 +110,10 @@ public abstract class StateController {
     public void onAppRemovedLocked(String packageName, int uid) {
     }
 
+    /** Called when a user is added to the device. */
+    public void onUserAddedLocked(int userId) {
+    }
+
     /** Called when a user is removed from the device. */
     public void onUserRemovedLocked(int userId) {
     }
@@ -119,6 +130,14 @@ public abstract class StateController {
      * internal state tracking dependent on this UID.
      */
     public void reevaluateStateLocked(int uid) {
+    }
+
+    /**
+     * Called when a UID's base priority has changed. The more positive the priority, the more
+     * important the UID is.
+     */
+    @GuardedBy("mLock")
+    public void onUidPriorityChangedLocked(int uid, int newPriority) {
     }
 
     protected boolean wouldBeReadyWithConstraintLocked(JobStatus jobStatus, int constraint) {

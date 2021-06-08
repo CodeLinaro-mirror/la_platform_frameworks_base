@@ -222,7 +222,6 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
         super.disableDevice(initiatedByCec, callback);
         assertRunOnServiceThread();
         mService.unregisterTvInputCallback(mTvInputCallback);
-        // TODO(b/129088603): check disableDevice and onStandby behaviors per spec
     }
 
     @Override
@@ -316,7 +315,8 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
 
     @Override
     @ServiceThreadOnly
-    protected boolean handleActiveSource(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    protected int handleActiveSource(HdmiCecMessage message) {
         assertRunOnServiceThread();
         int logicalAddress = message.getSource();
         int physicalAddress = HdmiUtils.twoBytesToInt(message.getParams());
@@ -339,52 +339,59 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
             mDelayedMessageBuffer.removeActiveSource();
             return super.handleActiveSource(message);
         }
-        return true;
+        return Constants.HANDLED;
     }
 
     @Override
     @ServiceThreadOnly
-    protected boolean handleInitiateArc(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    protected int handleInitiateArc(HdmiCecMessage message) {
         assertRunOnServiceThread();
         // TODO(amyjojo): implement initiate arc handler
         HdmiLogger.debug(TAG + "Stub handleInitiateArc");
-        return true;
+        return Constants.HANDLED;
     }
 
     @Override
     @ServiceThreadOnly
-    protected boolean handleReportArcInitiate(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    protected int handleReportArcInitiate(HdmiCecMessage message) {
         assertRunOnServiceThread();
-        // TODO(amyjojo): implement report arc initiate handler
-        HdmiLogger.debug(TAG + "Stub handleReportArcInitiate");
-        return true;
+        /*
+         * Ideally, we should have got this response before the {@link ArcInitiationActionFromAvr}
+         * has timed out. Even if the response is late, {@link ArcInitiationActionFromAvr
+         * #handleInitiateArcTimeout()} would not have disabled ARC. So nothing needs to be done
+         * here.
+         */
+        return Constants.HANDLED;
     }
 
     @Override
     @ServiceThreadOnly
-    protected boolean handleReportArcTermination(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    protected int handleReportArcTermination(HdmiCecMessage message) {
         assertRunOnServiceThread();
-        // TODO(amyjojo): implement report arc terminate handler
-        HdmiLogger.debug(TAG + "Stub handleReportArcTermination");
-        return true;
+        processArcTermination();
+        return Constants.HANDLED;
     }
 
     @Override
     @ServiceThreadOnly
-    protected boolean handleGiveAudioStatus(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    protected int handleGiveAudioStatus(HdmiCecMessage message) {
         assertRunOnServiceThread();
         if (isSystemAudioControlFeatureEnabled() && mService.getHdmiCecVolumeControl()
                 == HdmiControlManager.VOLUME_CONTROL_ENABLED) {
             reportAudioStatus(message.getSource());
-        } else {
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_REFUSED);
+            return Constants.HANDLED;
         }
-        return true;
+        return Constants.ABORT_REFUSED;
     }
 
     @Override
     @ServiceThreadOnly
-    protected boolean handleGiveSystemAudioModeStatus(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    protected int handleGiveSystemAudioModeStatus(HdmiCecMessage message) {
         assertRunOnServiceThread();
         // If the audio system is initiating the system audio mode on and TV asks the sam status at
         // the same time, respond with true. Since we know TV supports sam in this situation.
@@ -399,52 +406,53 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
         mService.sendCecCommand(
                 HdmiCecMessageBuilder.buildReportSystemAudioMode(
                         mAddress, message.getSource(), isSystemAudioModeOnOrTurningOn));
-        return true;
+        return Constants.HANDLED;
     }
 
     @Override
     @ServiceThreadOnly
-    protected boolean handleRequestArcInitiate(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    protected int handleRequestArcInitiate(HdmiCecMessage message) {
         assertRunOnServiceThread();
         removeAction(ArcInitiationActionFromAvr.class);
         if (!mService.readBooleanSystemProperty(Constants.PROPERTY_ARC_SUPPORT, true)) {
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_UNRECOGNIZED_OPCODE);
+            return Constants.ABORT_UNRECOGNIZED_OPCODE;
         } else if (!isDirectConnectToTv()) {
             HdmiLogger.debug("AVR device is not directly connected with TV");
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_NOT_IN_CORRECT_MODE);
+            return Constants.ABORT_NOT_IN_CORRECT_MODE;
         } else {
             addAndStartAction(new ArcInitiationActionFromAvr(this));
+            return Constants.HANDLED;
         }
-        return true;
     }
 
     @Override
     @ServiceThreadOnly
-    protected boolean handleRequestArcTermination(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    protected int handleRequestArcTermination(HdmiCecMessage message) {
         assertRunOnServiceThread();
         if (!SystemProperties.getBoolean(Constants.PROPERTY_ARC_SUPPORT, true)) {
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_UNRECOGNIZED_OPCODE);
+            return Constants.ABORT_UNRECOGNIZED_OPCODE;
         } else if (!isArcEnabled()) {
             HdmiLogger.debug("ARC is not established between TV and AVR device");
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_NOT_IN_CORRECT_MODE);
+            return Constants.ABORT_NOT_IN_CORRECT_MODE;
         } else {
             removeAction(ArcTerminationActionFromAvr.class);
             addAndStartAction(new ArcTerminationActionFromAvr(this));
+            return Constants.HANDLED;
         }
-        return true;
     }
 
     @ServiceThreadOnly
-    protected boolean handleRequestShortAudioDescriptor(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    protected int handleRequestShortAudioDescriptor(HdmiCecMessage message) {
         assertRunOnServiceThread();
         HdmiLogger.debug(TAG + "Stub handleRequestShortAudioDescriptor");
         if (!isSystemAudioControlFeatureEnabled()) {
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_REFUSED);
-            return true;
+            return Constants.ABORT_REFUSED;
         }
         if (!isSystemAudioActivated()) {
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_NOT_IN_CORRECT_MODE);
-            return true;
+            return Constants.ABORT_NOT_IN_CORRECT_MODE;
         }
 
         List<DeviceConfig> config = null;
@@ -468,21 +476,20 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
         } else {
             AudioDeviceInfo deviceInfo = getSystemAudioDeviceInfo();
             if (deviceInfo == null) {
-                mService.maySendFeatureAbortCommand(message, Constants.ABORT_UNABLE_TO_DETERMINE);
-                return true;
+                return Constants.ABORT_UNABLE_TO_DETERMINE;
             }
 
             sadBytes = getSupportedShortAudioDescriptors(deviceInfo, audioFormatCodes);
         }
 
         if (sadBytes.length == 0) {
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_INVALID_OPERAND);
+            return Constants.ABORT_INVALID_OPERAND;
         } else {
             mService.sendCecCommand(
                     HdmiCecMessageBuilder.buildReportShortAudioDescriptor(
                             mAddress, message.getSource(), sadBytes));
+            return Constants.HANDLED;
         }
-        return true;
     }
 
     private byte[] getSupportedShortAudioDescriptors(
@@ -603,7 +610,6 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
                     Arrays.stream(device.getEncodings()).mapToObj(
                             AudioFormat::toLogFriendlyEncoding
                     ).collect(Collectors.joining(", ")));
-            // TODO(b/80297701) use the actual device type that system audio mode is connected to.
             if (device.getType() == AudioDeviceInfo.TYPE_HDMI_ARC) {
                 return device;
             }
@@ -624,7 +630,8 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
 
     @Override
     @ServiceThreadOnly
-    protected boolean handleSystemAudioModeRequest(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    protected int handleSystemAudioModeRequest(HdmiCecMessage message) {
         assertRunOnServiceThread();
         boolean systemAudioStatusOn = message.getParams().length != 0;
         // Check if the request comes from a non-TV device.
@@ -632,8 +639,7 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
         // if non-TV device tries to turn on the feature
         if (message.getSource() != Constants.ADDR_TV) {
             if (systemAudioStatusOn) {
-                handleSystemAudioModeOnFromNonTvDevice(message);
-                return true;
+                return handleSystemAudioModeOnFromNonTvDevice(message);
             }
         } else {
             // If TV request the feature on
@@ -644,8 +650,7 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
         // If TV or Audio System does not support the feature,
         // will send abort command.
         if (!checkSupportAndSetSystemAudioMode(systemAudioStatusOn)) {
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_REFUSED);
-            return true;
+            return Constants.ABORT_REFUSED;
         }
 
         mService.sendCecCommand(
@@ -660,7 +665,7 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
             if (HdmiUtils.getLocalPortFromPhysicalAddress(
                     sourcePhysicalAddress, getDeviceInfo().getPhysicalAddress())
                             != HdmiUtils.TARGET_NOT_UNDER_LOCAL_DEVICE) {
-                return true;
+                return Constants.HANDLED;
             }
             HdmiDeviceInfo safeDeviceInfoByPath =
                     mService.getHdmiCecNetwork().getSafeDeviceInfoByPath(sourcePhysicalAddress);
@@ -668,29 +673,31 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
                 switchInputOnReceivingNewActivePath(sourcePhysicalAddress);
             }
         }
-        return true;
+        return Constants.HANDLED;
     }
 
     @Override
     @ServiceThreadOnly
-    protected boolean handleSetSystemAudioMode(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    protected int handleSetSystemAudioMode(HdmiCecMessage message) {
         assertRunOnServiceThread();
         if (!checkSupportAndSetSystemAudioMode(
                 HdmiUtils.parseCommandParamSystemAudioStatus(message))) {
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_REFUSED);
+            return Constants.ABORT_REFUSED;
         }
-        return true;
+        return Constants.HANDLED;
     }
 
     @Override
     @ServiceThreadOnly
-    protected boolean handleSystemAudioModeStatus(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    protected int handleSystemAudioModeStatus(HdmiCecMessage message) {
         assertRunOnServiceThread();
         if (!checkSupportAndSetSystemAudioMode(
                 HdmiUtils.parseCommandParamSystemAudioStatus(message))) {
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_REFUSED);
+            return Constants.ABORT_REFUSED;
         }
-        return true;
+        return Constants.HANDLED;
     }
 
     @ServiceThreadOnly
@@ -704,6 +711,14 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
         notifyArcStatusToAudioService(enabled);
         // 3. Update arc status;
         mArcEstablished = enabled;
+    }
+
+    void processArcTermination() {
+        setArcStatus(false);
+        // Switch away from ARC input when ARC is terminated.
+        if (getLocalActivePort() == Constants.CEC_SWITCH_ARC) {
+            routeToInputFromPortId(getRoutingPort());
+        }
     }
 
     /** Switch hardware ARC circuit in the system. */
@@ -830,7 +845,6 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
     }
 
     protected void switchToAudioInput() {
-        // TODO(b/111396634): switch input according to PROPERTY_SYSTEM_AUDIO_MODE_AUDIO_PORT
     }
 
     protected boolean isDirectConnectToTv() {
@@ -948,13 +962,13 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
     /**
      * Handler of System Audio Mode Request on from non TV device
      */
-    void handleSystemAudioModeOnFromNonTvDevice(HdmiCecMessage message) {
+    @Constants.HandleMessageResult
+    int handleSystemAudioModeOnFromNonTvDevice(HdmiCecMessage message) {
         if (!isSystemAudioControlFeatureEnabled()) {
             HdmiLogger.debug(
                     "Cannot turn on" + "system audio mode "
                             + "because the System Audio Control feature is disabled.");
-            mService.maySendFeatureAbortCommand(message, Constants.ABORT_REFUSED);
-            return;
+            return Constants.ABORT_REFUSED;
         }
         // Wake up device
         mService.wakeUp();
@@ -967,7 +981,7 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
             mService.sendCecCommand(
                 HdmiCecMessageBuilder.buildSetSystemAudioMode(
                     mAddress, Constants.ADDR_BROADCAST, true));
-            return;
+            return Constants.HANDLED;
         }
         // Check if TV supports System Audio Control.
         // Handle broadcasting setSystemAudioMode on or aborting message on callback.
@@ -983,6 +997,7 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
                 }
             }
         });
+        return Constants.HANDLED;
     }
 
     void setTvSystemAudioModeSupport(boolean supported) {
@@ -1011,7 +1026,6 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
         if (isSystemAudioActivated() && port < 0) {
             // If system audio mode is on and the new active source is not under the current device,
             // Will switch to ARC input.
-            // TODO(b/115637145): handle system aduio without ARC
             routeToInputFromPortId(Constants.CEC_SWITCH_ARC);
         } else if (mIsSwitchDevice && port >= 0) {
             // If current device is a switch and the new active source is under it,
@@ -1112,7 +1126,6 @@ public class HdmiCecLocalDeviceAudioSystem extends HdmiCecLocalDeviceSource {
 
     // Handle the system audio(ARC) part of the logic on receiving routing change or information.
     private void handleRoutingChangeAndInformationForSystemAudio() {
-        // TODO(b/115637145): handle system aduio without ARC
         routeToInputFromPortId(Constants.CEC_SWITCH_ARC);
     }
 

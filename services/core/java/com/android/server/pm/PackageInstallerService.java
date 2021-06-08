@@ -20,6 +20,7 @@ import static org.xmlpull.v1.XmlPullParser.END_DOCUMENT;
 import static org.xmlpull.v1.XmlPullParser.START_TAG;
 
 import android.Manifest;
+import android.annotation.NonNull;
 import android.app.ActivityManager;
 import android.app.AppGlobals;
 import android.app.AppOpsManager;
@@ -88,7 +89,7 @@ import com.android.server.SystemConfig;
 import com.android.server.SystemService;
 import com.android.server.SystemServiceManager;
 import com.android.server.pm.parsing.PackageParser2;
-import com.android.server.pm.permission.PermissionManagerServiceInternal;
+import com.android.server.pm.utils.RequestThrottle;
 
 import libcore.io.IoUtils;
 
@@ -145,7 +146,6 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
     private final PackageManagerService mPm;
     private final ApexManager mApexManager;
     private final StagingManager mStagingManager;
-    private final PermissionManagerServiceInternal mPermissionManager;
 
     private AppOpsManager mAppOps;
 
@@ -222,11 +222,18 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
         }
     }
 
+    @NonNull
+    private final RequestThrottle mSettingsWriteRequest = new RequestThrottle(IoThread.getHandler(),
+            () -> {
+                synchronized (mSessions) {
+                    return writeSessionsLocked();
+                }
+            });
+
     public PackageInstallerService(Context context, PackageManagerService pm,
             Supplier<PackageParser2> apexParserSupplier) {
         mContext = context;
         mPm = pm;
-        mPermissionManager = LocalServices.getService(PermissionManagerServiceInternal.class);
 
         mInstallThread = new HandlerThread(TAG);
         mInstallThread.start();
@@ -278,7 +285,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
 
             // Invalid sessions might have been marked while parsing. Re-write the database with
             // the updated information.
-            writeSessionsLocked();
+            mSettingsWriteRequest.runNow();
 
         }
     }
@@ -467,7 +474,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
     }
 
     @GuardedBy("mSessions")
-    private void writeSessionsLocked() {
+    private boolean writeSessionsLocked() {
         if (LOGD) Slog.v(TAG, "writeSessionsLocked()");
 
         FileOutputStream fos = null;
@@ -486,26 +493,18 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
             out.endDocument();
 
             mSessionsFile.finishWrite(fos);
+            return true;
         } catch (IOException e) {
             if (fos != null) {
                 mSessionsFile.failWrite(fos);
             }
         }
+
+        return false;
     }
 
     private File buildAppIconFile(int sessionId) {
         return new File(mSessionsDir, "app_icon." + sessionId + ".png");
-    }
-
-    private void writeSessionsAsync() {
-        IoThread.getHandler().post(new Runnable() {
-            @Override
-            public void run() {
-                synchronized (mSessions) {
-                    writeSessionsLocked();
-                }
-            }
-        });
     }
 
     @Override
@@ -528,6 +527,14 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
 
         if (mPm.isUserRestricted(userId, UserManager.DISALLOW_INSTALL_APPS)) {
             throw new SecurityException("User restriction prevents installing");
+        }
+
+        if (params.dataLoaderParams != null
+                && mContext.checkCallingOrSelfPermission(Manifest.permission.USE_INSTALLER_V2)
+                        != PackageManager.PERMISSION_GRANTED) {
+            throw new SecurityException("You need the "
+                    + "com.android.permission.USE_INSTALLER_V2 permission "
+                    + "to use a data loader");
         }
 
         // INSTALL_REASON_ROLLBACK allows an app to be rolled back without requiring the ROLLBACK
@@ -579,11 +586,15 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
 
             params.installFlags &= ~PackageManager.INSTALL_FROM_ADB;
             params.installFlags &= ~PackageManager.INSTALL_ALL_USERS;
-            params.installFlags &= ~PackageManager.INSTALL_ALLOW_TEST;
             params.installFlags |= PackageManager.INSTALL_REPLACE_EXISTING;
             if ((params.installFlags & PackageManager.INSTALL_VIRTUAL_PRELOAD) != 0
                     && !mPm.isCallerVerifier(callingUid)) {
                 params.installFlags &= ~PackageManager.INSTALL_VIRTUAL_PRELOAD;
+            }
+            if (mContext.checkCallingOrSelfPermission(
+                    Manifest.permission.INSTALL_TEST_ONLY_PACKAGE)
+                    != PackageManager.PERMISSION_GRANTED) {
+                params.installFlags &= ~PackageManager.INSTALL_ALLOW_TEST;
             }
         }
 
@@ -755,7 +766,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
 
         mCallbacks.notifySessionCreated(session.sessionId, session.userId);
 
-        writeSessionsAsync();
+        mSettingsWriteRequest.schedule();
         return sessionId;
     }
 
@@ -1365,7 +1376,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
     class InternalCallback {
         public void onSessionBadgingChanged(PackageInstallerSession session) {
             mCallbacks.notifySessionBadgingChanged(session.sessionId, session.userId);
-            writeSessionsAsync();
+            mSettingsWriteRequest.schedule();
         }
 
         public void onSessionActiveChanged(PackageInstallerSession session, boolean active) {
@@ -1380,7 +1391,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
 
         public void onStagedSessionChanged(PackageInstallerSession session) {
             session.markUpdated();
-            writeSessionsAsync();
+            mSettingsWriteRequest.schedule();
             if (mOkToSendBroadcasts && !session.isDestroyed()) {
                 // we don't scrub the data here as this is sent only to the installer several
                 // privileged system packages
@@ -1410,7 +1421,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
                             appIconFile.delete();
                         }
 
-                        writeSessionsLocked();
+                        mSettingsWriteRequest.runNow();
                     }
                 }
             });
@@ -1419,16 +1430,14 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
         public void onSessionPrepared(PackageInstallerSession session) {
             // We prepared the destination to write into; we want to persist
             // this, but it's not critical enough to block for.
-            writeSessionsAsync();
+            mSettingsWriteRequest.schedule();
         }
 
         public void onSessionSealedBlocking(PackageInstallerSession session) {
             // It's very important that we block until we've recorded the
             // session as being sealed, since we never want to allow mutation
             // after sealing.
-            synchronized (mSessions) {
-                writeSessionsLocked();
-            }
+            mSettingsWriteRequest.runNow();
         }
     }
 }

@@ -18,12 +18,11 @@ package com.android.systemui.people;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 import android.app.people.ConversationChannel;
-import android.app.people.IPeopleManager;
-import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.content.pm.ShortcutInfo;
 import android.net.Uri;
@@ -36,6 +35,7 @@ import android.widget.RemoteViews;
 import androidx.test.filters.SmallTest;
 
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.people.widget.PeopleSpaceWidgetManager;
 import com.android.systemui.shared.system.PeopleProviderUtils;
 
 import junit.framework.Assert;
@@ -68,11 +68,11 @@ public class PeopleProviderTest extends SysuiTestCase {
     private Bundle mExtras = new Bundle();
 
     @Mock
-    private LauncherApps mLauncherApps;
-    @Mock
     private PackageManager mPackageManager;
     @Mock
-    private IPeopleManager mPeopleManager;
+    private PeopleSpaceWidgetManager mPeopleSpaceWidgetManager;
+    @Mock
+    private RemoteViews mRemoteViews;
 
     @Before
     public void setUp() throws Exception {
@@ -82,8 +82,7 @@ public class PeopleProviderTest extends SysuiTestCase {
         PeopleProviderTestable provider = new PeopleProviderTestable();
         provider.initializeForTesting(
                 mContext, PeopleProviderUtils.PEOPLE_PROVIDER_AUTHORITY);
-        provider.setLauncherApps(mLauncherApps);
-        provider.setPeopleManager(mPeopleManager);
+        provider.setPeopleSpaceWidgetManager(mPeopleSpaceWidgetManager);
         mContext.getContentResolver().addProvider(
                 PeopleProviderUtils.PEOPLE_PROVIDER_AUTHORITY, provider);
 
@@ -91,9 +90,9 @@ public class PeopleProviderTest extends SysuiTestCase {
                 PeopleProviderUtils.GET_PEOPLE_TILE_PREVIEW_PERMISSION,
                 PackageManager.PERMISSION_GRANTED);
 
-        when(mPeopleManager.getConversation(
-                eq(PACKAGE_NAME_A), eq(USER_HANDLE_A.getIdentifier()), eq(SHORTCUT_ID_A)))
-                .thenReturn(mConversationChannel);
+        when(mPeopleSpaceWidgetManager.getPreview(
+                eq(SHORTCUT_ID_A), eq(USER_HANDLE_A), eq(PACKAGE_NAME_A), any()))
+                .thenReturn(mRemoteViews);
 
         mExtras.putString(PeopleProviderUtils.EXTRAS_KEY_SHORTCUT_ID, SHORTCUT_ID_A);
         mExtras.putString(PeopleProviderUtils.EXTRAS_KEY_PACKAGE_NAME, PACKAGE_NAME_A);
@@ -142,8 +141,8 @@ public class PeopleProviderTest extends SysuiTestCase {
 
     @Test
     public void testPermissionGrantedNoConversationForShortcutReturnsNull() throws RemoteException {
-        when(mPeopleManager.getConversation(
-                eq(PACKAGE_NAME_A), eq(USER_HANDLE_A.getIdentifier()), eq(SHORTCUT_ID_A)))
+        when(mPeopleSpaceWidgetManager.getPreview(
+                eq(SHORTCUT_ID_A), eq(USER_HANDLE_A), eq(PACKAGE_NAME_A), any()))
                 .thenReturn(null);
         try {
             Bundle result = mContext.getContentResolver().call(

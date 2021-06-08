@@ -44,6 +44,8 @@ import com.android.internal.util.Preconditions;
 /** In memory event log for location events. */
 public class LocationEventLog extends LocalEventLog {
 
+    public static final LocationEventLog EVENT_LOG = new LocationEventLog();
+
     private static int getLogSize() {
         if (Build.IS_DEBUGGABLE || D) {
             return 500;
@@ -52,16 +54,21 @@ public class LocationEventLog extends LocalEventLog {
         }
     }
 
-    private static final int EVENT_LOCATION_ENABLED = 1;
-    private static final int EVENT_PROVIDER_ENABLED = 2;
-    private static final int EVENT_PROVIDER_MOCKED = 3;
-    private static final int EVENT_PROVIDER_REGISTER_CLIENT = 4;
-    private static final int EVENT_PROVIDER_UNREGISTER_CLIENT = 5;
-    private static final int EVENT_PROVIDER_UPDATE_REQUEST = 6;
-    private static final int EVENT_PROVIDER_RECEIVE_LOCATION = 7;
-    private static final int EVENT_PROVIDER_DELIVER_LOCATION = 8;
-    private static final int EVENT_PROVIDER_STATIONARY_THROTTLED = 9;
-    private static final int EVENT_LOCATION_POWER_SAVE_MODE_CHANGE = 10;
+    private static final int EVENT_USER_SWITCHED = 1;
+    private static final int EVENT_LOCATION_ENABLED = 2;
+    private static final int EVENT_PROVIDER_ENABLED = 3;
+    private static final int EVENT_PROVIDER_MOCKED = 4;
+    private static final int EVENT_PROVIDER_CLIENT_REGISTER = 5;
+    private static final int EVENT_PROVIDER_CLIENT_UNREGISTER = 6;
+    private static final int EVENT_PROVIDER_CLIENT_FOREGROUND = 7;
+    private static final int EVENT_PROVIDER_CLIENT_BACKGROUND = 8;
+    private static final int EVENT_PROVIDER_CLIENT_PERMITTED = 9;
+    private static final int EVENT_PROVIDER_CLIENT_UNPERMITTED = 10;
+    private static final int EVENT_PROVIDER_UPDATE_REQUEST = 11;
+    private static final int EVENT_PROVIDER_RECEIVE_LOCATION = 12;
+    private static final int EVENT_PROVIDER_DELIVER_LOCATION = 13;
+    private static final int EVENT_PROVIDER_STATIONARY_THROTTLED = 14;
+    private static final int EVENT_LOCATION_POWER_SAVE_MODE_CHANGE = 15;
 
     @GuardedBy("mAggregateStats")
     private final ArrayMap<String, ArrayMap<CallerIdentity, AggregateStats>> mAggregateStats;
@@ -90,19 +97,24 @@ public class LocationEventLog extends LocalEventLog {
                 packageMap = new ArrayMap<>(2);
                 mAggregateStats.put(provider, packageMap);
             }
-            CallerIdentity stripped = identity.stripListenerId();
-            AggregateStats stats = packageMap.get(stripped);
+            CallerIdentity aggregate = CallerIdentity.forAggregation(identity);
+            AggregateStats stats = packageMap.get(aggregate);
             if (stats == null) {
                 stats = new AggregateStats();
-                packageMap.put(stripped, stats);
+                packageMap.put(aggregate, stats);
             }
             return stats;
         }
     }
 
+    /** Logs a user switched event. */
+    public void logUserSwitched(int userIdFrom, int userIdTo) {
+        addLogEvent(EVENT_USER_SWITCHED, userIdFrom, userIdTo);
+    }
+
     /** Logs a location enabled/disabled event. */
     public void logLocationEnabled(int userId, boolean enabled) {
-        addLogEvent(EVENT_LOCATION_POWER_SAVE_MODE_CHANGE, userId, enabled);
+        addLogEvent(EVENT_LOCATION_ENABLED, userId, enabled);
     }
 
     /** Logs a location provider enabled/disabled event. */
@@ -118,13 +130,13 @@ public class LocationEventLog extends LocalEventLog {
     /** Logs a new client registration for a location provider. */
     public void logProviderClientRegistered(String provider, CallerIdentity identity,
             LocationRequest request) {
-        addLogEvent(EVENT_PROVIDER_REGISTER_CLIENT, provider, identity, request);
+        addLogEvent(EVENT_PROVIDER_CLIENT_REGISTER, provider, identity, request);
         getAggregateStats(provider, identity).markRequestAdded(request.getIntervalMillis());
     }
 
     /** Logs a client unregistration for a location provider. */
     public void logProviderClientUnregistered(String provider, CallerIdentity identity) {
-        addLogEvent(EVENT_PROVIDER_UNREGISTER_CLIENT, provider, identity);
+        addLogEvent(EVENT_PROVIDER_CLIENT_UNREGISTER, provider, identity);
         getAggregateStats(provider, identity).markRequestRemoved();
     }
 
@@ -140,12 +152,32 @@ public class LocationEventLog extends LocalEventLog {
 
     /** Logs a client for a location provider entering the foreground state. */
     public void logProviderClientForeground(String provider, CallerIdentity identity) {
+        if (Build.IS_DEBUGGABLE || D) {
+            addLogEvent(EVENT_PROVIDER_CLIENT_FOREGROUND, provider, identity);
+        }
         getAggregateStats(provider, identity).markRequestForeground();
     }
 
     /** Logs a client for a location provider leaving the foreground state. */
     public void logProviderClientBackground(String provider, CallerIdentity identity) {
+        if (Build.IS_DEBUGGABLE || D) {
+            addLogEvent(EVENT_PROVIDER_CLIENT_BACKGROUND, provider, identity);
+        }
         getAggregateStats(provider, identity).markRequestBackground();
+    }
+
+    /** Logs a client for a location provider entering the permitted state. */
+    public void logProviderClientPermitted(String provider, CallerIdentity identity) {
+        if (Build.IS_DEBUGGABLE || D) {
+            addLogEvent(EVENT_PROVIDER_CLIENT_PERMITTED, provider, identity);
+        }
+    }
+
+    /** Logs a client for a location provider leaving the permitted state. */
+    public void logProviderClientUnpermitted(String provider, CallerIdentity identity) {
+        if (Build.IS_DEBUGGABLE || D) {
+            addLogEvent(EVENT_PROVIDER_CLIENT_UNPERMITTED, provider, identity);
+        }
     }
 
     /** Logs a change to the provider request for a location provider. */
@@ -170,8 +202,9 @@ public class LocationEventLog extends LocalEventLog {
     }
 
     /** Logs that a provider has entered or exited stationary throttling. */
-    public void logProviderStationaryThrottled(String provider, boolean throttled) {
-        addLogEvent(EVENT_PROVIDER_STATIONARY_THROTTLED, provider, throttled);
+    public void logProviderStationaryThrottled(String provider, boolean throttled,
+            ProviderRequest request) {
+        addLogEvent(EVENT_PROVIDER_STATIONARY_THROTTLED, provider, throttled, request);
     }
 
     /** Logs that the location power save mode has changed. */
@@ -183,19 +216,33 @@ public class LocationEventLog extends LocalEventLog {
     @Override
     protected LogEvent createLogEvent(long timeDelta, int event, Object... args) {
         switch (event) {
+            case EVENT_USER_SWITCHED:
+                return new UserSwitchedEvent(timeDelta, (Integer) args[0], (Integer) args[1]);
             case EVENT_LOCATION_ENABLED:
-                return new LocationEnabledEvent(timeDelta, (Integer) args[1], (Boolean) args[2]);
+                return new LocationEnabledEvent(timeDelta, (Integer) args[0], (Boolean) args[1]);
             case EVENT_PROVIDER_ENABLED:
                 return new ProviderEnabledEvent(timeDelta, (String) args[0], (Integer) args[1],
                         (Boolean) args[2]);
             case EVENT_PROVIDER_MOCKED:
                 return new ProviderMockedEvent(timeDelta, (String) args[0], (Boolean) args[1]);
-            case EVENT_PROVIDER_REGISTER_CLIENT:
-                return new ProviderRegisterEvent(timeDelta, (String) args[0], true,
+            case EVENT_PROVIDER_CLIENT_REGISTER:
+                return new ProviderClientRegisterEvent(timeDelta, (String) args[0], true,
                         (CallerIdentity) args[1], (LocationRequest) args[2]);
-            case EVENT_PROVIDER_UNREGISTER_CLIENT:
-                return new ProviderRegisterEvent(timeDelta, (String) args[0], false,
+            case EVENT_PROVIDER_CLIENT_UNREGISTER:
+                return new ProviderClientRegisterEvent(timeDelta, (String) args[0], false,
                         (CallerIdentity) args[1], null);
+            case EVENT_PROVIDER_CLIENT_FOREGROUND:
+                return new ProviderClientForegroundEvent(timeDelta, (String) args[0], true,
+                        (CallerIdentity) args[1]);
+            case EVENT_PROVIDER_CLIENT_BACKGROUND:
+                return new ProviderClientForegroundEvent(timeDelta, (String) args[0], false,
+                        (CallerIdentity) args[1]);
+            case EVENT_PROVIDER_CLIENT_PERMITTED:
+                return new ProviderClientPermittedEvent(timeDelta, (String) args[0], true,
+                        (CallerIdentity) args[1]);
+            case EVENT_PROVIDER_CLIENT_UNPERMITTED:
+                return new ProviderClientPermittedEvent(timeDelta, (String) args[0], false,
+                        (CallerIdentity) args[1]);
             case EVENT_PROVIDER_UPDATE_REQUEST:
                 return new ProviderUpdateEvent(timeDelta, (String) args[0],
                         (ProviderRequest) args[1]);
@@ -207,7 +254,7 @@ public class LocationEventLog extends LocalEventLog {
                         (Integer) args[1], (CallerIdentity) args[2]);
             case EVENT_PROVIDER_STATIONARY_THROTTLED:
                 return new ProviderStationaryThrottledEvent(timeDelta, (String) args[0],
-                        (Boolean) args[1]);
+                        (Boolean) args[1], (ProviderRequest) args[2]);
             case EVENT_LOCATION_POWER_SAVE_MODE_CHANGE:
                 return new LocationPowerSaveModeEvent(timeDelta, (Integer) args[0]);
             default:
@@ -268,13 +315,13 @@ public class LocationEventLog extends LocalEventLog {
         }
     }
 
-    private static final class ProviderRegisterEvent extends ProviderEvent {
+    private static final class ProviderClientRegisterEvent extends ProviderEvent {
 
         private final boolean mRegistered;
         private final CallerIdentity mIdentity;
         @Nullable private final LocationRequest mLocationRequest;
 
-        ProviderRegisterEvent(long timeDelta, String provider, boolean registered,
+        ProviderClientRegisterEvent(long timeDelta, String provider, boolean registered,
                 CallerIdentity identity, @Nullable LocationRequest locationRequest) {
             super(timeDelta, provider);
             mRegistered = registered;
@@ -285,11 +332,49 @@ public class LocationEventLog extends LocalEventLog {
         @Override
         public String getLogString() {
             if (mRegistered) {
-                return mProvider + " provider " + "+registration " + mIdentity + " -> "
+                return mProvider + " provider +registration " + mIdentity + " -> "
                         + mLocationRequest;
             } else {
-                return mProvider + " provider " + "-registration " + mIdentity;
+                return mProvider + " provider -registration " + mIdentity;
             }
+        }
+    }
+
+    private static final class ProviderClientForegroundEvent extends ProviderEvent {
+
+        private final boolean mForeground;
+        private final CallerIdentity mIdentity;
+
+        ProviderClientForegroundEvent(long timeDelta, String provider, boolean foreground,
+                CallerIdentity identity) {
+            super(timeDelta, provider);
+            mForeground = foreground;
+            mIdentity = identity;
+        }
+
+        @Override
+        public String getLogString() {
+            return mProvider + " provider client " + mIdentity + " -> "
+                    + (mForeground ? "foreground" : "background");
+        }
+    }
+
+    private static final class ProviderClientPermittedEvent extends ProviderEvent {
+
+        private final boolean mPermitted;
+        private final CallerIdentity mIdentity;
+
+        ProviderClientPermittedEvent(long timeDelta, String provider, boolean permitted,
+                CallerIdentity identity) {
+            super(timeDelta, provider);
+            mPermitted = permitted;
+            mIdentity = identity;
+        }
+
+        @Override
+        public String getLogString() {
+            return mProvider + " provider client " + mIdentity + " -> "
+                    + (mPermitted ? "permitted" : "unpermitted");
         }
     }
 
@@ -345,17 +430,19 @@ public class LocationEventLog extends LocalEventLog {
     private static final class ProviderStationaryThrottledEvent extends ProviderEvent {
 
         private final boolean mStationaryThrottled;
+        private final ProviderRequest mRequest;
 
         ProviderStationaryThrottledEvent(long timeDelta, String provider,
-                boolean stationaryThrottled) {
+                boolean stationaryThrottled, ProviderRequest request) {
             super(timeDelta, provider);
             mStationaryThrottled = stationaryThrottled;
+            mRequest = request;
         }
 
         @Override
         public String getLogString() {
             return mProvider + " provider stationary/idle " + (mStationaryThrottled ? "throttled"
-                    : "unthrottled");
+                    : "unthrottled") + ", request = " + mRequest;
         }
     }
 
@@ -397,6 +484,23 @@ public class LocationEventLog extends LocalEventLog {
         }
     }
 
+    private static final class UserSwitchedEvent extends LogEvent {
+
+        private final int mUserIdFrom;
+        private final int mUserIdTo;
+
+        UserSwitchedEvent(long timeDelta, int userIdFrom, int userIdTo) {
+            super(timeDelta);
+            mUserIdFrom = userIdFrom;
+            mUserIdTo = userIdTo;
+        }
+
+        @Override
+        public String getLogString() {
+            return "current user switched from u" + mUserIdFrom + " to u" + mUserIdTo;
+        }
+    }
+
     private static final class LocationEnabledEvent extends LogEvent {
 
         private final int mUserId;
@@ -410,7 +514,7 @@ public class LocationEventLog extends LocalEventLog {
 
         @Override
         public String getLogString() {
-            return "[u" + mUserId + "] location setting " + (mEnabled ? "enabled" : "disabled");
+            return "location [u" + mUserId + "] " + (mEnabled ? "enabled" : "disabled");
         }
     }
 

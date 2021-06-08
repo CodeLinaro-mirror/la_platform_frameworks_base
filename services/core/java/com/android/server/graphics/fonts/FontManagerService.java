@@ -31,17 +31,18 @@ import android.os.SharedMemory;
 import android.os.ShellCallback;
 import android.system.ErrnoException;
 import android.text.FontConfig;
+import android.text.TextUtils;
 import android.util.AndroidException;
 import android.util.IndentingPrintWriter;
 import android.util.Slog;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.graphics.fonts.IFontManager;
+import com.android.internal.security.VerityUtils;
 import com.android.internal.util.DumpUtils;
 import com.android.internal.util.Preconditions;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
-import com.android.server.security.VerityUtils;
 
 import java.io.File;
 import java.io.FileDescriptor;
@@ -51,7 +52,6 @@ import java.io.PrintWriter;
 import java.nio.ByteBuffer;
 import java.nio.NioUtils;
 import java.nio.channels.FileChannel;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -66,6 +66,8 @@ public final class FontManagerService extends IFontManager.Stub {
 
     @Override
     public FontConfig getFontConfig() {
+        getContext().enforceCallingPermission(Manifest.permission.UPDATE_FONTS,
+                "UPDATE_FONTS permission required.");
         return getSystemFontConfig();
     }
 
@@ -158,6 +160,31 @@ public final class FontManagerService extends IFontManager.Stub {
         }
 
         @Override
+        public String buildFontFileName(File file) throws IOException {
+            ByteBuffer buffer = mmap(file);
+            try {
+                String psName = FontFileUtil.getPostScriptName(buffer, 0);
+                int isType1Font = FontFileUtil.isPostScriptType1Font(buffer, 0);
+                int isCollection = FontFileUtil.isCollectionFont(buffer);
+
+                if (TextUtils.isEmpty(psName) || isType1Font == -1 || isCollection == -1) {
+                    return null;
+                }
+
+                String extension;
+                if (isCollection == 1) {
+                    extension = isType1Font == 1 ? ".otc" : ".ttc";
+                } else {
+                    extension = isType1Font == 1 ? ".otf" : ".ttf";
+                }
+                return psName + extension;
+            } finally {
+                NioUtils.freeDirectBuffer(buffer);
+            }
+
+        }
+
+        @Override
         public long getRevision(File file) throws IOException {
             ByteBuffer buffer = mmap(file);
             try {
@@ -221,8 +248,6 @@ public final class FontManagerService extends IFontManager.Stub {
         // If apk verity is supported, fs-verity should be available.
         if (!VerityUtils.isFsVeritySupported()) return null;
         return new UpdatableFontDir(new File(FONT_FILES_DIR),
-                Arrays.asList(new File(SystemFonts.SYSTEM_FONT_DIR),
-                        new File(SystemFonts.OEM_FONT_DIR)),
                 new OtfFontFileParser(), new FsverityUtilImpl());
     }
 
@@ -286,12 +311,16 @@ public final class FontManagerService extends IFontManager.Stub {
         }
     }
 
+    /* package */ void restart() {
+        initialize();
+    }
+
     /* package */ Map<String, File> getFontFileMap() {
         if (mUpdatableFontDir == null) {
             return Collections.emptyMap();
         }
         synchronized (mUpdatableFontDirLock) {
-            return mUpdatableFontDir.getFontFileMap();
+            return mUpdatableFontDir.getPostScriptMap();
         }
     }
 

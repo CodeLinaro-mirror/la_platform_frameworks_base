@@ -4,6 +4,7 @@ import collections
 import copy
 import glob
 from os import path
+import re
 import sys
 from xml.etree import ElementTree
 
@@ -113,7 +114,7 @@ def get_variation_sequences_cmap(font):
 def get_emoji_map(font):
     # Add normal characters
     emoji_map = copy.copy(get_best_cmap(font))
-    reverse_cmap = {glyph: code for code, glyph in emoji_map.items()}
+    reverse_cmap = {glyph: code for code, glyph in emoji_map.items() if not contains_pua(code) }
 
     # Add variation sequences
     vs_dict = get_variation_sequences_cmap(font).uvsDict
@@ -199,8 +200,9 @@ def check_hyphens(hyphens_dir):
 
 
 class FontRecord(object):
-    def __init__(self, name, scripts, variant, weight, style, fallback_for, font):
+    def __init__(self, name, psName, scripts, variant, weight, style, fallback_for, font):
         self.name = name
+        self.psName = psName
         self.scripts = scripts
         self.variant = variant
         self.weight = weight
@@ -236,6 +238,7 @@ def parse_fonts_xml(fonts_xml_path):
             assert variant in {None, 'elegant', 'compact'}, (
                 'Unexpected value for variant: %s' % variant)
 
+    trim_re = re.compile(r"^[ \n\r\t]*(.+)[ \n\r\t]*$")
     for family in families:
         name = family.get('name')
         variant = family.get('variant')
@@ -251,6 +254,10 @@ def parse_fonts_xml(fonts_xml_path):
             assert child.tag == 'font', (
                 'Unknown tag <%s>' % child.tag)
             font_file = child.text.rstrip()
+
+            m = trim_re.match(font_file)
+            font_file = m.group(1)
+
             weight = int(child.get('weight'))
             assert weight % 100 == 0, (
                 'Font weight "%d" is not a multiple of 100.' % weight)
@@ -270,11 +277,12 @@ def parse_fonts_xml(fonts_xml_path):
             if index:
                 index = int(index)
 
-            if not path.exists(path.join(_fonts_dir, font_file)):
+            if not path.exists(path.join(_fonts_dir, m.group(1))):
                 continue # Missing font is a valid case. Just ignore the missing font files.
 
             record = FontRecord(
                 name,
+                child.get('postScriptName'),
                 frozenset(scripts),
                 variant,
                 weight,
@@ -314,6 +322,22 @@ def get_emoji_font():
     return emoji_fonts[0]
 
 
+def is_pua(x):
+    return 0xE000 <= x <= 0xF8FF or 0xF0000 <= x <= 0xFFFFD or 0x100000 <= x <= 0x10FFFD
+
+def contains_pua(sequence):
+  if type(sequence) is tuple:
+    return any([is_pua(x) for x in sequence])
+  else:
+    return is_pua(sequence)
+
+
+def check_emoji_compat():
+    ttf = open_font(get_emoji_font())
+    meta = ttf['meta']
+    assert meta, 'Compat font must have meta table'
+    assert 'Emji' in meta.data, 'meta table should have \'Emji\' data.'
+
 def check_emoji_font_coverage(emoji_font, all_emoji, equivalent_emoji):
     coverage = get_emoji_map(emoji_font)
 
@@ -327,6 +351,11 @@ def check_emoji_font_coverage(emoji_font, all_emoji, equivalent_emoji):
         if sequence in {0x0000, 0x000D, 0x0020}:
             # The font needs to support a few extra characters, which is OK
             continue
+
+        if contains_pua(sequence):
+            # The font needs to have some PUA for EmojiCompat library.
+            continue
+
         if sequence not in all_emoji:
           errors.append('%s support unexpected in the emoji font.' % printable(sequence))
 
@@ -339,7 +368,8 @@ def check_emoji_font_coverage(emoji_font, all_emoji, equivalent_emoji):
                 printable(second)))
 
     for glyph in set(coverage.values()):
-        maps_to_glyph = [seq for seq in coverage if coverage[seq] == glyph]
+        maps_to_glyph = [
+            seq for seq in coverage if coverage[seq] == glyph and not contains_pua(seq) ]
         if len(maps_to_glyph) > 1:
             # There are more than one sequences mapping to the same glyph. We
             # need to make sure they were expected to be equivalent.
@@ -664,51 +694,37 @@ def check_cjk_punctuation():
                 break
             assert_font_supports_none_of_chars(record.font, cjk_punctuation, name)
 
-
 def getPostScriptName(font):
-  ttf = open_font(font)
+  font_file, index = font
+  font_path = path.join(_fonts_dir, font_file)
+  if index is not None:
+      # Use the first font file in the collection for resolving post script name.
+      ttf = ttLib.TTFont(font_path, fontNumber=0)
+  else:
+      ttf = ttLib.TTFont(font_path)
+
   nameTable = ttf['name']
   for name in nameTable.names:
-    if name.nameID == 6 and name.platformID == 3 and name.platEncID == 1 and name.langID == 0x0409:
-      return str(name)
-
-
-def getSuffix(font):
-  file_path, index = font
-  with open(path.join(_fonts_dir, file_path), 'rb') as f:
-    tag = f.read(4)
-    isCollection = tag == b'ttcf'
-
-  ttf = open_font(font)
-  isType1 = ('CFF ' in ttf or 'CFF2' in ttf)
-
-  if isType1:
-    if isCollection:
-      return '.otc'
-    else:
-      return '.otf'
-  else:
-    if isCollection:
-      return '.ttc'
-    else:
-      return '.ttf'
-
+      if (name.nameID == 6 and name.platformID == 3 and name.platEncID == 1
+          and name.langID == 0x0409):
+          return str(name)
 
 def check_canonical_name():
-  for record in _all_fonts:
-    file_name, index = record.font
+    for record in _all_fonts:
+        file_name, index = record.font
 
-    if index and index != 0:
-      continue
+        psName = getPostScriptName(record.font)
+        if record.psName:
+            # If fonts element has postScriptName attribute, it should match with the PostScript
+            # name in the name table.
+            assert psName == record.psName, ('postScriptName attribute %s should match with %s' % (
+                record.psName, psName))
+        else:
+            # If fonts element doesn't have postScriptName attribute, the file name should match
+            # with the PostScript name in the name table.
+            assert psName == file_name[:-4], ('file name %s should match with %s' % (
+                file_name, psName))
 
-    psName = getPostScriptName(record.font)
-    assert psName, 'PostScript must be defined'
-
-    suffix = getSuffix(record.font)
-    canonicalName = '%s%s' % (psName, suffix)
-
-    assert file_name == canonicalName, (
-        '%s is not a canonical name. Must be %s' % (file_name, canonicalName))
 
 def main():
     global _fonts_dir
@@ -734,6 +750,7 @@ def main():
         ucd_path = sys.argv[3]
         parse_ucd(ucd_path)
         all_emoji, default_emoji, equivalent_emoji = compute_expected_emoji()
+        check_emoji_compat()
         check_emoji_coverage(all_emoji, equivalent_emoji)
         check_emoji_defaults(default_emoji)
 

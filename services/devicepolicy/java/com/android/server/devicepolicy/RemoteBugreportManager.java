@@ -25,6 +25,8 @@ import static android.app.admin.DevicePolicyManager.NOTIFICATION_BUGREPORT_ACCEP
 import static android.app.admin.DevicePolicyManager.NOTIFICATION_BUGREPORT_FINISHED_NOT_ACCEPTED;
 import static android.app.admin.DevicePolicyManager.NOTIFICATION_BUGREPORT_STARTED;
 
+import static com.android.server.devicepolicy.DevicePolicyManagerService.LOG_TAG;
+
 import android.annotation.IntDef;
 import android.app.Notification;
 import android.app.PendingIntent;
@@ -43,11 +45,11 @@ import android.os.UserHandle;
 import android.provider.Settings;
 import android.text.format.DateUtils;
 import android.util.Pair;
-import android.util.Slog;
 
 import com.android.internal.R;
 import com.android.internal.messages.nano.SystemMessageProto.SystemMessage;
 import com.android.internal.notification.SystemNotificationChannels;
+import com.android.server.utils.Slogf;
 
 import java.io.FileNotFoundException;
 import java.lang.annotation.Retention;
@@ -58,7 +60,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Class managing bugreport collection upon device owner's request.
  */
 public class RemoteBugreportManager {
-    private static final String LOG_TAG = DevicePolicyManagerService.LOG_TAG;
 
     static final String BUGREPORT_MIMETYPE = "application/vnd.android.bugreport";
 
@@ -134,7 +135,7 @@ public class RemoteBugreportManager {
         if (targetInfo != null) {
             dialogIntent.setComponent(targetInfo.getComponentName());
         } else {
-            Slog.wtf(LOG_TAG, "Failed to resolve intent for remote bugreport dialog");
+            Slogf.wtf(LOG_TAG, "Failed to resolve intent for remote bugreport dialog");
         }
 
         // Simple notification clicks are immutable
@@ -148,7 +149,8 @@ public class RemoteBugreportManager {
                         .setLocalOnly(true)
                         .setContentIntent(pendingDialogIntent)
                         .setColor(mContext.getColor(
-                                com.android.internal.R.color.system_notification_accent_color));
+                                com.android.internal.R.color.system_notification_accent_color))
+                        .extend(new Notification.TvExtender());
 
         if (type == NOTIFICATION_BUGREPORT_ACCEPTED_NOT_FINISHED) {
             builder.setContentTitle(mContext.getString(
@@ -189,7 +191,7 @@ public class RemoteBugreportManager {
     public boolean requestBugreport() {
         if (mRemoteBugreportServiceIsActive.get()
                 || (mService.getDeviceOwnerRemoteBugreportUriAndHash() != null)) {
-            Slog.d(LOG_TAG, "Remote bugreport wasn't started because there's already one running.");
+            Slogf.d(LOG_TAG, "Remote bugreport wasn't started because there's already one running");
             return false;
         }
 
@@ -206,7 +208,7 @@ public class RemoteBugreportManager {
             return true;
         } catch (RemoteException re) {
             // should never happen
-            Slog.e(LOG_TAG, "Failed to make remote calls to start bugreportremote service", re);
+            Slogf.e(LOG_TAG, "Failed to make remote calls to start bugreportremote service", re);
             return false;
         } finally {
             mInjector.binderRestoreCallingIdentity(callingIdentity);
@@ -220,7 +222,7 @@ public class RemoteBugreportManager {
             mContext.registerReceiver(mRemoteBugreportFinishedReceiver, filterFinished);
         } catch (IntentFilter.MalformedMimeTypeException e) {
             // should never happen, as setting a constant
-            Slog.w(LOG_TAG, "Failed to set type " + BUGREPORT_MIMETYPE, e);
+            Slogf.w(LOG_TAG, e, "Failed to set type %s", BUGREPORT_MIMETYPE);
         }
         final IntentFilter filterConsent = new IntentFilter();
         filterConsent.addAction(ACTION_BUGREPORT_SHARING_DECLINED);

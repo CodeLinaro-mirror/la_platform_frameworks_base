@@ -210,9 +210,8 @@ class WindowManagerProxy {
         ActivityManager.RunningTaskInfo topHomeTask = null;
         for (int i = rootTasks.size() - 1; i >= 0; --i) {
             final ActivityManager.RunningTaskInfo rootTask = rootTasks.get(i);
-            // Only move resizeable task to split secondary. However, we have an exception
-            // for non-resizable home because we will minimize to show it.
-            if (!rootTask.isResizeable && rootTask.topActivityType != ACTIVITY_TYPE_HOME) {
+            // Check whether the task can be moved to split secondary.
+            if (!rootTask.supportsMultiWindow && rootTask.topActivityType != ACTIVITY_TYPE_HOME) {
                 continue;
             }
             // Only move fullscreen tasks to split secondary.

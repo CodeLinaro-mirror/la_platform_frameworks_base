@@ -263,7 +263,7 @@ public final class TelephonyPermissions {
             return true;
         }
         return checkPrivilegedReadPermissionOrCarrierPrivilegePermission(
-                context, subId, callingPackage, callingFeatureId, message, true);
+                context, subId, callingPackage, callingFeatureId, message, true, true);
     }
 
     /**
@@ -286,14 +286,28 @@ public final class TelephonyPermissions {
      */
     public static boolean checkCallingOrSelfReadSubscriberIdentifiers(Context context, int subId,
             String callingPackage, @Nullable String callingFeatureId, String message) {
+        return checkCallingOrSelfReadSubscriberIdentifiers(context, subId, callingPackage,
+                callingFeatureId, message, true);
+    }
+
+    /**
+     * Same as {@link #checkCallingOrSelfReadSubscriberIdentifiers(Context, int, String, String,
+     * String)} except this allows an additional parameter reportFailure. Caller may not want to
+     * report a failure when this is an internal/intermediate check, for example,
+     * SubscriptionController calls this with an INVALID_SUBID to check if caller has the required
+     * permissions to bypass carrier privilege checks.
+     * @param reportFailure Indicates if failure should be reported.
+     */
+    public static boolean checkCallingOrSelfReadSubscriberIdentifiers(Context context, int subId,
+            String callingPackage, @Nullable String callingFeatureId, String message,
+            boolean reportFailure) {
         if (checkCallingOrSelfUseIccAuthWithDeviceIdentifier(context, callingPackage,
                 callingFeatureId, message)) {
             return true;
         }
         return checkPrivilegedReadPermissionOrCarrierPrivilegePermission(
-                context, subId, callingPackage, callingFeatureId, message, false);
+                context, subId, callingPackage, callingFeatureId, message, false, reportFailure);
     }
-
     /**
      * Checks whether the app with the given pid/uid can read device identifiers.
      *
@@ -314,7 +328,7 @@ public final class TelephonyPermissions {
      */
     private static boolean checkPrivilegedReadPermissionOrCarrierPrivilegePermission(
             Context context, int subId, String callingPackage, @Nullable String callingFeatureId,
-            String message, boolean allowCarrierPrivilegeOnAnySub) {
+            String message, boolean allowCarrierPrivilegeOnAnySub, boolean reportFailure) {
         int uid = Binder.getCallingUid();
         int pid = Binder.getCallingPid();
 
@@ -334,8 +348,12 @@ public final class TelephonyPermissions {
             return true;
         }
 
-        return reportAccessDeniedToReadIdentifiers(context, subId, pid, uid, callingPackage,
-                message);
+        if (reportFailure) {
+            return reportAccessDeniedToReadIdentifiers(context, subId, pid, uid, callingPackage,
+                    message);
+        } else {
+            return false;
+        }
     }
 
     /**
@@ -482,64 +500,25 @@ public final class TelephonyPermissions {
     public static boolean checkReadPhoneNumber(
             Context context, int subId, int pid, int uid,
             String callingPackage, @Nullable String callingFeatureId, String message) {
-        // First, check if the SDK version is below R
-        boolean preR = false;
-        try {
-            ApplicationInfo info = context.getPackageManager().getApplicationInfoAsUser(
-                    callingPackage, 0, UserHandle.getUserHandleForUid(Binder.getCallingUid()));
-            preR = info.targetSdkVersion <= Build.VERSION_CODES.Q;
-        } catch (PackageManager.NameNotFoundException nameNotFoundException) {
-        }
-        if (preR) {
-            // SDK < R allows READ_PHONE_STATE, READ_PRIVILEGED_PHONE_STATE, or carrier privilege
-            try {
-                return checkReadPhoneState(
-                        context, subId, pid, uid, callingPackage, callingFeatureId, message);
-            } catch (SecurityException readPhoneStateException) {
-            }
-        } else {
-            // SDK >= R allows READ_PRIVILEGED_PHONE_STATE or carrier privilege
-            try {
-                context.enforcePermission(
-                        android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE, pid, uid, message);
-                // Skip checking for runtime permission since caller has privileged permission
-                return true;
-            } catch (SecurityException readPrivilegedPhoneStateException) {
-                if (SubscriptionManager.isValidSubscriptionId(subId)) {
-                    try {
-                        enforceCarrierPrivilege(context, subId, uid, message);
-                        // Skip checking for runtime permission since caller has carrier privilege
-                        return true;
-                    } catch (SecurityException carrierPrivilegeException) {
-                    }
-                }
-            }
-        }
-
-        // Default SMS app can always read it.
-        AppOpsManager appOps = (AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
-        if (appOps.noteOp(AppOpsManager.OPSTR_WRITE_SMS, uid, callingPackage, callingFeatureId,
-                null) == AppOpsManager.MODE_ALLOWED) {
+        LegacyPermissionManager permissionManager = (LegacyPermissionManager)
+                context.getSystemService(Context.LEGACY_PERMISSION_SERVICE);
+        // Apps with target SDK version < R can have the READ_PHONE_STATE permission granted with
+        // the appop denied. If PERMISSION_GRANTED is not received then check if the caller has
+        // carrier privileges; if not and the permission result is MODE_IGNORED then return false
+        // to return null data to the caller.
+        int permissionResult = permissionManager.checkPhoneNumberAccess(callingPackage, message,
+                callingFeatureId, pid, uid);
+        if (permissionResult == PackageManager.PERMISSION_GRANTED) {
             return true;
         }
-        // Can be read with READ_SMS too.
-        try {
-            context.enforcePermission(android.Manifest.permission.READ_SMS, pid, uid, message);
-            if (appOps.noteOp(AppOpsManager.OPSTR_READ_SMS, uid, callingPackage,
-                    callingFeatureId, null) == AppOpsManager.MODE_ALLOWED) {
+        if (SubscriptionManager.isValidSubscriptionId(subId)) {
+            if (TelephonyPermissions.getCarrierPrivilegeStatus(context, subId, uid)
+                    == TelephonyManager.CARRIER_PRIVILEGE_STATUS_HAS_ACCESS) {
                 return true;
             }
-        } catch (SecurityException readSmsSecurityException) {
         }
-        // Can be read with READ_PHONE_NUMBERS too.
-        try {
-            context.enforcePermission(android.Manifest.permission.READ_PHONE_NUMBERS, pid, uid,
-                    message);
-            if (appOps.noteOp(AppOpsManager.OPSTR_READ_PHONE_NUMBERS, uid, callingPackage,
-                    callingFeatureId, null) == AppOpsManager.MODE_ALLOWED) {
-                return true;
-            }
-        } catch (SecurityException readPhoneNumberSecurityException) {
+        if (permissionResult == AppOpsManager.MODE_IGNORED) {
+            return false;
         }
 
         throw new SecurityException(message + ": Neither user " + uid
@@ -571,7 +550,7 @@ public final class TelephonyPermissions {
      *
      * @throws SecurityException if the caller does not have the required permission/privileges
      */
-    public static void enforeceCallingOrSelfReadPhoneStatePermissionOrCarrierPrivilege(
+    public static void enforceCallingOrSelfReadPhoneStatePermissionOrCarrierPrivilege(
             Context context, int subId, String message) {
         if (context.checkCallingOrSelfPermission(android.Manifest.permission.READ_PHONE_STATE)
                 == PERMISSION_GRANTED) {
@@ -591,7 +570,7 @@ public final class TelephonyPermissions {
      *
      * @throws SecurityException if the caller does not have the required permission/privileges
      */
-    public static void enforeceCallingOrSelfReadPrivilegedPhoneStatePermissionOrCarrierPrivilege(
+    public static void enforceCallingOrSelfReadPrivilegedPhoneStatePermissionOrCarrierPrivilege(
             Context context, int subId, String message) {
         if (context.checkCallingOrSelfPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
                 == PERMISSION_GRANTED) {
@@ -613,7 +592,7 @@ public final class TelephonyPermissions {
      *
      * @throws SecurityException if the caller does not have the required permission/privileges
      */
-    public static void enforeceCallingOrSelfReadPrecisePhoneStatePermissionOrCarrierPrivilege(
+    public static void enforceCallingOrSelfReadPrecisePhoneStatePermissionOrCarrierPrivilege(
             Context context, int subId, String message) {
         if (context.checkCallingOrSelfPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
                 == PERMISSION_GRANTED) {

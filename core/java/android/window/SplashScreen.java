@@ -17,12 +17,17 @@
 package android.window;
 
 import android.annotation.NonNull;
-import android.annotation.Nullable;
+import android.annotation.StyleRes;
 import android.annotation.SuppressLint;
+import android.annotation.UiThread;
 import android.app.Activity;
 import android.app.ActivityThread;
+import android.app.AppGlobals;
 import android.content.Context;
+import android.content.res.Resources;
 import android.os.IBinder;
+import android.os.RemoteException;
+import android.util.Log;
 import android.util.Singleton;
 import android.util.Slog;
 
@@ -52,7 +57,24 @@ public interface SplashScreen {
      * @see OnExitAnimationListener#onSplashScreenExit(SplashScreenView)
      */
     @SuppressLint("ExecutorRegistration")
-    void setOnExitAnimationListener(@Nullable SplashScreen.OnExitAnimationListener listener);
+    void setOnExitAnimationListener(@NonNull SplashScreen.OnExitAnimationListener listener);
+
+    /**
+     * Clear exist listener
+     * @see #setOnExitAnimationListener
+     */
+    void clearOnExitAnimationListener();
+
+
+    /**
+     * Overrides the theme used for the {@link SplashScreen}s of this application.
+     * <p>
+     * By default, the {@link SplashScreen} uses the theme set in the manifest. This method
+     * overrides and persists the theme used for the {@link SplashScreen} of this application.
+     * <p>
+     * To reset to the default theme, set this the themeId to {@link Resources#ID_NULL}.
+     */
+    void setSplashScreenTheme(@StyleRes int themeId);
 
     /**
      * Listens for the splash screen exit event.
@@ -63,15 +85,14 @@ public interface SplashScreen {
          * of the activity. The {@link SplashScreenView} represents the splash screen view
          * object, developer can make an exit animation based on this view.</p>
          *
-         * <p>If {@link SplashScreenView#remove} is not called after 5000ms, the method will be
-         * automatically called and the splash screen removed.</p>
-         *
-         * <p>This method is never invoked if your activity sets
-         * {@link #setOnExitAnimationListener} to <code>null</code>..
+         * <p>This method is never invoked if your activity clear the listener by
+         * {@link #clearOnExitAnimationListener}.
          *
          * @param view The view object which on top of this Activity.
          * @see #setOnExitAnimationListener
+         * @see #clearOnExitAnimationListener
          */
+        @UiThread
         void onSplashScreenExit(@NonNull SplashScreenView view);
     }
 
@@ -79,6 +100,8 @@ public interface SplashScreen {
      * @hide
      */
     class SplashScreenImpl implements SplashScreen {
+        private static final String TAG = "SplashScreenImpl";
+
         private OnExitAnimationListener mExitAnimationListener;
         private final IBinder mActivityToken;
         private final SplashScreenManagerGlobal mGlobal;
@@ -90,18 +113,51 @@ public interface SplashScreen {
 
         @Override
         public void setOnExitAnimationListener(
-                @Nullable SplashScreen.OnExitAnimationListener listener) {
+                @NonNull SplashScreen.OnExitAnimationListener listener) {
             if (mActivityToken == null) {
                 // This is not an activity.
                 return;
             }
             synchronized (mGlobal.mGlobalLock) {
-                mExitAnimationListener = listener;
                 if (listener != null) {
+                    mExitAnimationListener = listener;
                     mGlobal.addImpl(this);
-                } else {
-                    mGlobal.removeImpl(this);
                 }
+            }
+        }
+
+        @Override
+        public void clearOnExitAnimationListener() {
+            if (mActivityToken == null) {
+                // This is not an activity.
+                return;
+            }
+            synchronized (mGlobal.mGlobalLock) {
+                mExitAnimationListener = null;
+                mGlobal.removeImpl(this);
+            }
+        }
+
+        public void setSplashScreenTheme(@StyleRes int themeId) {
+            if (mActivityToken == null) {
+                Log.w(TAG, "Couldn't persist the starting theme. This instance is not an Activity");
+                return;
+            }
+
+            Activity activity = ActivityThread.currentActivityThread().getActivity(
+                    mActivityToken);
+            if (activity == null) {
+                return;
+            }
+            String themeName = themeId != Resources.ID_NULL
+                    ? activity.getResources().getResourceName(themeId) : null;
+
+            try {
+                AppGlobals.getPackageManager().setSplashScreenTheme(
+                        activity.getComponentName().getPackageName(),
+                        themeName, activity.getUserId());
+            } catch (RemoteException e) {
+                Log.w(TAG, "Couldn't persist the starting theme", e);
             }
         }
     }

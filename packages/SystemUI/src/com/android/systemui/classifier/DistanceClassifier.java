@@ -22,6 +22,9 @@ import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.BRIGHT
 import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.BRIGHTLINE_FALSING_DISTANCE_VELOCITY_TO_DISTANCE;
 import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.BRIGHTLINE_FALSING_DISTANCE_VERTICAL_FLING_THRESHOLD_IN;
 import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.BRIGHTLINE_FALSING_DISTANCE_VERTICAL_SWIPE_THRESHOLD_IN;
+import static com.android.systemui.classifier.Classifier.BRIGHTNESS_SLIDER;
+import static com.android.systemui.classifier.Classifier.QS_COLLAPSE;
+import static com.android.systemui.classifier.Classifier.SHADE_DRAG;
 
 import android.provider.DeviceConfig;
 import android.view.MotionEvent;
@@ -136,8 +139,6 @@ class DistanceClassifier extends FalsingClassifier {
         float dX = getLastMotionEvent().getX() - getFirstMotionEvent().getX();
         float dY = getLastMotionEvent().getY() - getFirstMotionEvent().getY();
 
-        logInfo("dX: " + dX + " dY: " + dY + " xV: " + vX + " yV: " + vY);
-
         return new DistanceVectors(dX, dY, vX, vY);
     }
 
@@ -147,9 +148,19 @@ class DistanceClassifier extends FalsingClassifier {
     }
 
     @Override
-    Result calculateFalsingResult(double historyPenalty, double historyConfidence) {
-        return !getPassedFlingThreshold()
-                ? Result.falsed(0.5, getReason()) : Result.passed(0.5);
+    Result calculateFalsingResult(
+            @Classifier.InteractionType int interactionType,
+            double historyBelief, double historyConfidence) {
+        if (interactionType == BRIGHTNESS_SLIDER
+                || interactionType == SHADE_DRAG
+                || interactionType == QS_COLLAPSE
+                || interactionType == Classifier.UDFPS_AUTHENTICATION
+                || interactionType == Classifier.DISABLED_UDFPS_AFFORDANCE
+                || interactionType == Classifier.QS_SWIPE) {
+            return Result.passed(0);
+        }
+
+        return !getPassedFlingThreshold() ? falsed(0.5, getReason()) : Result.passed(0.5);
     }
 
     String getReason() {
@@ -172,7 +183,7 @@ class DistanceClassifier extends FalsingClassifier {
     Result isLongSwipe() {
         boolean longSwipe = getPassedDistanceThreshold();
         logDebug("Is longSwipe? " + longSwipe);
-        return longSwipe ? Result.passed(0.5) : Result.falsed(0.5, getReason());
+        return longSwipe ? Result.passed(0.5) : falsed(0.5, getReason());
     }
 
     private boolean getPassedDistanceThreshold() {

@@ -20,23 +20,26 @@ import android.net.Uri;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.systemui.plugins.FalsingManager;
-import com.android.systemui.util.sensors.ThresholdSensor;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Simple Fake for testing where {@link FalsingManager} is required.
  */
 public class FalsingManagerFake implements FalsingManager {
     private boolean mIsFalseTouch;
-    private boolean mIsFalseTap;
+    private boolean mIsSimpleTap;
     private boolean mIsFalseDoubleTap;
     private boolean mIsUnlockingDisabled;
     private boolean mIsClassiferEnabled;
     private boolean mShouldEnforceBouncer;
     private boolean mIsReportingEnabled;
     private boolean mIsFalseRobustTap;
+
+    private final List<FalsingBeliefListener> mFalsingBeliefListeners = new ArrayList<>();
 
     @Override
     public void onSuccessfulUnlock() {
@@ -63,12 +66,12 @@ public class FalsingManagerFake implements FalsingManager {
         return mIsFalseTouch;
     }
 
-    public void setFalseRobustTap(boolean falseRobustTap) {
+    public void setFalseTap(boolean falseRobustTap) {
         mIsFalseRobustTap = falseRobustTap;
     }
 
-    public void setFalseTap(boolean falseTap) {
-        mIsFalseTap = falseTap;
+    public void setSimpleTap(boolean isSimpleTape) {
+        mIsSimpleTap = isSimpleTape;
     }
 
     public void setFalseDoubleTap(boolean falseDoubleTap) {
@@ -76,8 +79,13 @@ public class FalsingManagerFake implements FalsingManager {
     }
 
     @Override
-    public boolean isFalseTap(boolean robustCheck) {
-        return robustCheck ? mIsFalseRobustTap : mIsFalseTap;
+    public boolean isSimpleTap() {
+        return mIsSimpleTap;
+    }
+
+    @Override
+    public boolean isFalseTap(@Penalty int penalty) {
+        return mIsFalseRobustTap;
     }
 
     @Override
@@ -124,7 +132,27 @@ public class FalsingManagerFake implements FalsingManager {
     }
 
     @Override
-    public void onProximityEvent(ThresholdSensor.ThresholdSensorEvent proximityEvent) {
+    public void onProximityEvent(ProximityEvent proximityEvent) {
+
+    }
+
+    @Override
+    public void addFalsingBeliefListener(FalsingBeliefListener listener) {
+        mFalsingBeliefListeners.add(listener);
+    }
+
+    @Override
+    public void removeFalsingBeliefListener(FalsingBeliefListener listener) {
+        mFalsingBeliefListeners.remove(listener);
+    }
+
+    @Override
+    public void addTapListener(FalsingTapListener falsingTapListener) {
+
+    }
+
+    @Override
+    public void removeTapListener(FalsingTapListener falsingTapListener) {
 
     }
 }

@@ -121,7 +121,7 @@ public class AppWidgetProviderInfo implements Parcelable {
      *
      * @see #widgetFeatures
      */
-    public static final int WIDGET_FEATURE_CONFIGURATION_OPTIONAL = 3;
+    public static final int WIDGET_FEATURE_CONFIGURATION_OPTIONAL = 4;
 
     /** @hide */
     @IntDef(flag = true, prefix = { "FLAG_" }, value = {
@@ -455,13 +455,14 @@ public class AppWidgetProviderInfo implements Parcelable {
     @Nullable
     public final CharSequence loadDescription(@NonNull Context context) {
         if (ResourceId.isValid(descriptionRes)) {
-            return context.getPackageManager()
-                    .getText(
+            CharSequence description =
+                    context.getPackageManager().getText(
                             providerInfo.packageName,
                             descriptionRes,
-                            providerInfo.applicationInfo)
-                    .toString()
-                    .trim();
+                            providerInfo.applicationInfo);
+            if (description != null) {
+                return description.toString().trim();
+            }
         }
         return null;
     }
@@ -479,7 +480,7 @@ public class AppWidgetProviderInfo implements Parcelable {
      * Returns the broadcast receiver that is providing this widget.
      */
     @NonNull
-    public ActivityInfo getProviderInfo() {
+    public ActivityInfo getActivityInfo() {
         return providerInfo;
     }
 

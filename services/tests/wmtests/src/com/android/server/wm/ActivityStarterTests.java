@@ -339,8 +339,8 @@ public class ActivityStarterTests extends WindowTestsBase {
             // Direct starter to use spy stack.
             doReturn(stack).when(mRootWindowContainer)
                     .getLaunchRootTask(any(), any(), any(), anyBoolean());
-            doReturn(stack).when(mRootWindowContainer).getLaunchRootTask(any(), any(), any(),
-                    anyBoolean(), any(), anyInt(), anyInt());
+            doReturn(stack).when(mRootWindowContainer).getLaunchRootTask(any(), any(), any(), any(),
+                    anyBoolean(), any(), anyInt(), anyInt(), anyInt());
         }
 
         // Set up mock package manager internal and make sure no unmocked methods are called
@@ -870,7 +870,8 @@ public class ActivityStarterTests extends WindowTestsBase {
         verify(secondaryTaskContainer, times(2)).createRootTask(anyInt(), anyInt(), anyBoolean());
         // The metrics logger should receive the same result and non-null options.
         verify(mActivityMetricsLogger).notifyActivityLaunched(any() /* launchingState */,
-                eq(result), eq(singleTaskActivity), notNull() /* options */);
+                eq(result), eq(false) /* newActivityCreated */, eq(singleTaskActivity),
+                notNull() /* options */);
     }
 
     @Test
@@ -1119,8 +1120,8 @@ public class ActivityStarterTests extends WindowTestsBase {
 
         stack.addChild(targetRecord);
 
-        doReturn(stack).when(mRootWindowContainer)
-                .getLaunchRootTask(any(), any(), any(), anyBoolean(), any(), anyInt(), anyInt());
+        doReturn(stack).when(mRootWindowContainer).getLaunchRootTask(any(), any(), any(), any(),
+                anyBoolean(), any(), anyInt(), anyInt(), anyInt());
 
         starter.mStartActivity = new ActivityBuilder(mAtm).build();
 
@@ -1141,5 +1142,39 @@ public class ActivityStarterTests extends WindowTestsBase {
         verify(stack).ensureActivitiesVisible(null, 0, !PRESERVE_WINDOWS);
         verify(targetRecord).makeVisibleIfNeeded(null, true);
         assertTrue(targetRecord.mVisibleRequested);
+    }
+
+    @Test
+    public void testLaunchCookie_newAndExistingTask() {
+        final ActivityStarter starter = prepareStarter(0, false);
+
+        // Put an activity on default display as the top focused activity.
+        ActivityRecord r = new ActivityBuilder(mAtm).setCreateTask(true).build();
+
+        // Start an activity with a launch cookie
+        final Binder cookie = new Binder();
+        final ActivityOptions options = ActivityOptions.makeBasic();
+        options.setLaunchCookie(cookie);
+        final Intent intent = new Intent();
+        intent.setComponent(ActivityBuilder.getDefaultComponent());
+        starter.setReason("testLaunchCookie_newTask")
+                .setIntent(intent)
+                .setActivityOptions(options.toBundle())
+                .execute();
+
+        // Verify the cookie is set
+        assertTrue(mRootWindowContainer.topRunningActivity().mLaunchCookie == cookie);
+
+        // Relaunch the activity to bring the task forward
+        final Binder newCookie = new Binder();
+        final ActivityOptions newOptions = ActivityOptions.makeBasic();
+        newOptions.setLaunchCookie(newCookie);
+        starter.setReason("testLaunchCookie_existingTask")
+                .setIntent(intent)
+                .setActivityOptions(newOptions.toBundle())
+                .execute();
+
+        // Verify the cookie is updated
+        assertTrue(mRootWindowContainer.topRunningActivity().mLaunchCookie == newCookie);
     }
 }

@@ -16,6 +16,9 @@
 
 package com.android.server.am;
 
+import static android.os.PowerExemptionManager.TEMPORARY_ALLOW_LIST_TYPE_FOREGROUND_SERVICE_NOT_ALLOWED;
+import static android.os.PowerExemptionManager.TEMPORARY_ALLOW_LIST_TYPE_NONE;
+
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_POWER_QUICK;
 
 import android.app.ActivityThread;
@@ -27,6 +30,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
+import android.os.PowerExemptionManager;
 import android.provider.DeviceConfig;
 import android.provider.DeviceConfig.OnPropertiesChangedListener;
 import android.provider.DeviceConfig.Properties;
@@ -48,7 +52,8 @@ final class ActivityManagerConstants extends ContentObserver {
     private static final String TAG = "ActivityManagerConstants";
 
     // Key names stored in the settings value.
-    private static final String KEY_BACKGROUND_SETTLE_TIME = "background_settle_time";
+    static final String KEY_BACKGROUND_SETTLE_TIME = "background_settle_time";
+
     private static final String KEY_FGSERVICE_MIN_SHOWN_TIME
             = "fgservice_min_shown_time";
     private static final String KEY_FGSERVICE_MIN_REPORT_TIME
@@ -69,10 +74,16 @@ final class ActivityManagerConstants extends ContentObserver {
     private static final String KEY_POWER_CHECK_MAX_CPU_2 = "power_check_max_cpu_2";
     private static final String KEY_POWER_CHECK_MAX_CPU_3 = "power_check_max_cpu_3";
     private static final String KEY_POWER_CHECK_MAX_CPU_4 = "power_check_max_cpu_4";
-    private static final String KEY_SERVICE_USAGE_INTERACTION_TIME
-            = "service_usage_interaction_time";
-    private static final String KEY_USAGE_STATS_INTERACTION_INTERVAL
-            = "usage_stats_interaction_interval";
+    /** Used for all apps on R and earlier versions. */
+    private static final String KEY_SERVICE_USAGE_INTERACTION_TIME_PRE_S =
+            "service_usage_interaction_time";
+    private static final String KEY_SERVICE_USAGE_INTERACTION_TIME_POST_S =
+            "service_usage_interaction_time_post_s";
+    /** Used for all apps on R and earlier versions. */
+    private static final String KEY_USAGE_STATS_INTERACTION_INTERVAL_PRE_S =
+            "usage_stats_interaction_interval";
+    private static final String KEY_USAGE_STATS_INTERACTION_INTERVAL_POST_S =
+            "usage_stats_interaction_interval_post_s";
     private static final String KEY_IMPERCEPTIBLE_KILL_EXEMPT_PACKAGES =
             "imperceptible_kill_exempt_packages";
     private static final String KEY_IMPERCEPTIBLE_KILL_EXEMPT_PROC_STATES =
@@ -95,9 +106,12 @@ final class ActivityManagerConstants extends ContentObserver {
             "process_crash_count_reset_interval";
     static final String KEY_PROCESS_CRASH_COUNT_LIMIT = "process_crash_count_limit";
     static final String KEY_BOOT_TIME_TEMP_ALLOWLIST_DURATION = "boot_time_temp_allowlist_duration";
+    static final String KEY_FG_TO_BG_FGS_GRACE_DURATION = "fg_to_bg_fgs_grace_duration";
+    static final String KEY_FGS_START_FOREGROUND_TIMEOUT = "fgs_start_foreground_timeout";
+    static final String KEY_FGS_ATOM_SAMPLE_RATE = "fgs_atom_sample_rate";
+    static final String KEY_KILL_FAS_CACHED_IDLE = "kill_fas_cached_idle";
 
     private static final int DEFAULT_MAX_CACHED_PROCESSES = 32;
-    private static final long DEFAULT_BACKGROUND_SETTLE_TIME = 60*1000;
     private static final long DEFAULT_FGSERVICE_MIN_SHOWN_TIME = 2*1000;
     private static final long DEFAULT_FGSERVICE_MIN_REPORT_TIME = 3*1000;
     private static final long DEFAULT_FGSERVICE_SCREEN_ON_BEFORE_TIME = 1*1000;
@@ -113,8 +127,10 @@ final class ActivityManagerConstants extends ContentObserver {
     private static final int DEFAULT_POWER_CHECK_MAX_CPU_2 = 25;
     private static final int DEFAULT_POWER_CHECK_MAX_CPU_3 = 10;
     private static final int DEFAULT_POWER_CHECK_MAX_CPU_4 = 2;
-    private static final long DEFAULT_SERVICE_USAGE_INTERACTION_TIME = 30*60*1000;
-    private static final long DEFAULT_USAGE_STATS_INTERACTION_INTERVAL = 2*60*60*1000L;
+    private static final long DEFAULT_SERVICE_USAGE_INTERACTION_TIME_PRE_S = 30 * 60 * 1000;
+    private static final long DEFAULT_SERVICE_USAGE_INTERACTION_TIME_POST_S = 60 * 1000;
+    private static final long DEFAULT_USAGE_STATS_INTERACTION_INTERVAL_PRE_S = 2 * 60 * 60 * 1000;
+    private static final long DEFAULT_USAGE_STATS_INTERACTION_INTERVAL_POST_S = 10 * 60 * 1000;
     private static final long DEFAULT_SERVICE_RESTART_DURATION = 1*1000;
     private static final long DEFAULT_SERVICE_RESET_RUN_DURATION = 60*1000;
     private static final int DEFAULT_SERVICE_RESTART_DURATION_FACTOR = 4;
@@ -132,8 +148,19 @@ final class ActivityManagerConstants extends ContentObserver {
     private static final int DEFAULT_MAX_PHANTOM_PROCESSES = 32;
     private static final int DEFAULT_PROCESS_CRASH_COUNT_RESET_INTERVAL = 12 * 60 * 60 * 1000;
     private static final int DEFAULT_PROCESS_CRASH_COUNT_LIMIT = 12;
-    private static final int DEFAULT_BOOT_TIME_TEMP_ALLOWLIST_DURATION = 10 * 1000;
+    private static final int DEFAULT_BOOT_TIME_TEMP_ALLOWLIST_DURATION = 20 * 1000;
+    private static final long DEFAULT_FG_TO_BG_FGS_GRACE_DURATION = 5 * 1000;
+    private static final int DEFAULT_FGS_START_FOREGROUND_TIMEOUT_MS = 10 * 1000;
+    private static final float DEFAULT_FGS_ATOM_SAMPLE_RATE = 1; // 100 %
 
+    static final long DEFAULT_BACKGROUND_SETTLE_TIME = 60 * 1000;
+    static final boolean DEFAULT_KILL_FAS_CACHED_IDLE = true;
+
+    /**
+     * Same as {@link TEMPORARY_ALLOW_LIST_TYPE_FOREGROUND_SERVICE_NOT_ALLOWED}
+     */
+    private static final int
+            DEFAULT_PUSH_MESSAGING_OVER_QUOTA_BEHAVIOR = 1;
 
     // Flag stored in the DeviceConfig API.
     /**
@@ -169,6 +196,13 @@ final class ActivityManagerConstants extends ContentObserver {
             "default_fgs_starts_restriction_enabled";
 
     /**
+     * Default value for mFgsStartRestrictionCheckCallerTargetSdk if not explicitly set in
+     * Settings.Global.
+     */
+    private static final String KEY_DEFAULT_FGS_STARTS_RESTRICTION_CHECK_CALLER_TARGET_SDK =
+            "default_fgs_starts_restriction_check_caller_target_sdk";
+
+    /**
      * Whether FGS notification display is deferred following the transition into
      * the foreground state.  Default behavior is {@code true} unless overridden.
      */
@@ -188,6 +222,22 @@ final class ActivityManagerConstants extends ContentObserver {
      */
     private static final String KEY_DEFERRED_FGS_NOTIFICATION_INTERVAL =
             "deferred_fgs_notification_interval";
+
+    /**
+     * Time in milliseconds; once an FGS notification for a given uid has been
+     * deferred, no subsequent FGS notification from that uid will be deferred
+     * until this amount of time has passed.  Default is two minutes
+     * (2 * 60 * 1000) unless overridden.
+     */
+    private static final String KEY_DEFERRED_FGS_NOTIFICATION_EXCLUSION_TIME =
+            "deferred_fgs_notification_exclusion_time";
+
+    /**
+     * Default value for mPushMessagingOverQuotaBehavior if not explicitly set in
+     * Settings.Global.
+     */
+    private static final String KEY_PUSH_MESSAGING_OVER_QUOTA_BEHAVIOR =
+            "push_messaging_over_quota_behavior";
 
     // Maximum number of cached processes we will allow.
     public int MAX_CACHED_PROCESSES = DEFAULT_MAX_CACHED_PROCESSES;
@@ -266,11 +316,23 @@ final class ActivityManagerConstants extends ContentObserver {
 
     // This is the amount of time an app needs to be running a foreground service before
     // we will consider it to be doing interaction for usage stats.
-    long SERVICE_USAGE_INTERACTION_TIME = DEFAULT_SERVICE_USAGE_INTERACTION_TIME;
+    // Only used for apps targeting pre-S versions.
+    long SERVICE_USAGE_INTERACTION_TIME_PRE_S = DEFAULT_SERVICE_USAGE_INTERACTION_TIME_PRE_S;
+
+    // This is the amount of time an app needs to be running a foreground service before
+    // we will consider it to be doing interaction for usage stats.
+    // Only used for apps targeting versions S and above.
+    long SERVICE_USAGE_INTERACTION_TIME_POST_S = DEFAULT_SERVICE_USAGE_INTERACTION_TIME_POST_S;
 
     // Maximum amount of time we will allow to elapse before re-reporting usage stats
     // interaction with foreground processes.
-    long USAGE_STATS_INTERACTION_INTERVAL = DEFAULT_USAGE_STATS_INTERACTION_INTERVAL;
+    // Only used for apps targeting pre-S versions.
+    long USAGE_STATS_INTERACTION_INTERVAL_PRE_S = DEFAULT_USAGE_STATS_INTERACTION_INTERVAL_PRE_S;
+
+    // Maximum amount of time we will allow to elapse before re-reporting usage stats
+    // interaction with foreground processes.
+    // Only used for apps targeting versions S and above.
+    long USAGE_STATS_INTERACTION_INTERVAL_POST_S = DEFAULT_USAGE_STATS_INTERACTION_INTERVAL_POST_S;
 
     // How long a service needs to be running until restarting its process
     // is no longer considered to be a relaunch of the service.
@@ -368,6 +430,13 @@ final class ActivityManagerConstants extends ContentObserver {
     // at all.
     volatile boolean mFlagFgsStartRestrictionEnabled = true;
 
+    /**
+     * Indicates whether the foreground service background start restriction is enabled for
+     * caller app that is targeting S+.
+     * This is in addition to check of {@link #mFlagFgsStartRestrictionEnabled} flag.
+     */
+    volatile boolean mFgsStartRestrictionCheckCallerTargetSdk = true;
+
     // Whether we defer FGS notifications a few seconds following their transition to
     // the foreground state.  Applies only to S+ apps; enabled by default.
     volatile boolean mFlagFgsNotificationDeferralEnabled = true;
@@ -381,12 +450,48 @@ final class ActivityManagerConstants extends ContentObserver {
     // the foreground state.
     volatile long mFgsNotificationDeferralInterval = 10_000;
 
+    // Rate limit: minimum time after an app's FGS notification is deferred
+    // before another FGS notifiction from that app can be deferred.
+    volatile long mFgsNotificationDeferralExclusionTime = 2 * 60 * 1000L;
+
+    /**
+     * When server pushing message is over the quote, select one of the temp allow list type as
+     * defined in {@link PowerExemptionManager.TempAllowListType}
+     */
+    volatile @PowerExemptionManager.TempAllowListType int mPushMessagingOverQuotaBehavior =
+            DEFAULT_PUSH_MESSAGING_OVER_QUOTA_BEHAVIOR;
+
     /*
      * At boot time, broadcast receiver ACTION_BOOT_COMPLETED, ACTION_LOCKED_BOOT_COMPLETED and
      * ACTION_PRE_BOOT_COMPLETED are temp allowlisted to start FGS for a duration of time in
      * milliseconds.
      */
     volatile long mBootTimeTempAllowlistDuration = DEFAULT_BOOT_TIME_TEMP_ALLOWLIST_DURATION;
+
+    /**
+     * The grace period in milliseconds to allow a process to start FGS from background after
+     * switching from foreground to background; currently it's only applicable to its activities.
+     */
+    volatile long mFgToBgFgsGraceDuration = DEFAULT_FG_TO_BG_FGS_GRACE_DURATION;
+
+    /**
+     * When service started from background, before the timeout it can be promoted to FGS by calling
+     * Service.startForeground().
+     */
+    volatile long mFgsStartForegroundTimeoutMs = DEFAULT_FGS_START_FOREGROUND_TIMEOUT_MS;
+
+    /**
+     * Sample rate for the FGS westworld atom.
+     *
+     * If the value is 0.1, 10% of the installed packages would be sampled.
+     */
+    volatile float mFgsAtomSampleRate = DEFAULT_FGS_ATOM_SAMPLE_RATE;
+
+    /**
+     * Whether or not to kill apps in force-app-standby state and it's cached, its UID state is
+     * idle.
+     */
+    volatile boolean mKillForceAppStandByAndCachedIdle = DEFAULT_KILL_FAS_CACHED_IDLE;
 
     private final ActivityManagerService mService;
     private ContentResolver mResolver;
@@ -539,6 +644,9 @@ final class ActivityManagerConstants extends ContentObserver {
                             case KEY_DEFAULT_FGS_STARTS_RESTRICTION_ENABLED:
                                 updateFgsStartsRestriction();
                                 break;
+                            case KEY_DEFAULT_FGS_STARTS_RESTRICTION_CHECK_CALLER_TARGET_SDK:
+                                updateFgsStartsRestrictionCheckCallerTargetSdk();
+                                break;
                             case KEY_DEFERRED_FGS_NOTIFICATIONS_ENABLED:
                                 updateFgsNotificationDeferralEnable();
                                 break;
@@ -547,6 +655,12 @@ final class ActivityManagerConstants extends ContentObserver {
                                 break;
                             case KEY_DEFERRED_FGS_NOTIFICATION_INTERVAL:
                                 updateFgsNotificationDeferralInterval();
+                                break;
+                            case KEY_DEFERRED_FGS_NOTIFICATION_EXCLUSION_TIME:
+                                updateFgsNotificationDeferralExclusionTime();
+                                break;
+                            case KEY_PUSH_MESSAGING_OVER_QUOTA_BEHAVIOR:
+                                updatePushMessagingOverQuotaBehavior();
                                 break;
                             case KEY_OOMADJ_UPDATE_POLICY:
                                 updateOomAdjUpdatePolicy();
@@ -574,6 +688,18 @@ final class ActivityManagerConstants extends ContentObserver {
                                 break;
                             case KEY_BOOT_TIME_TEMP_ALLOWLIST_DURATION:
                                 updateBootTimeTempAllowListDuration();
+                                break;
+                            case KEY_FG_TO_BG_FGS_GRACE_DURATION:
+                                updateFgToBgFgsGraceDuration();
+                                break;
+                            case KEY_FGS_START_FOREGROUND_TIMEOUT:
+                                updateFgsStartForegroundTimeout();
+                                break;
+                            case KEY_FGS_ATOM_SAMPLE_RATE:
+                                updateFgsAtomSamplePercent();
+                                break;
+                            case KEY_KILL_FAS_CACHED_IDLE:
+                                updateKillFasCachedIdle();
                                 break;
                             default:
                                 break;
@@ -725,10 +851,18 @@ final class ActivityManagerConstants extends ContentObserver {
                     DEFAULT_POWER_CHECK_MAX_CPU_3);
             POWER_CHECK_MAX_CPU_4 = mParser.getInt(KEY_POWER_CHECK_MAX_CPU_4,
                     DEFAULT_POWER_CHECK_MAX_CPU_4);
-            SERVICE_USAGE_INTERACTION_TIME = mParser.getLong(KEY_SERVICE_USAGE_INTERACTION_TIME,
-                    DEFAULT_SERVICE_USAGE_INTERACTION_TIME);
-            USAGE_STATS_INTERACTION_INTERVAL = mParser.getLong(KEY_USAGE_STATS_INTERACTION_INTERVAL,
-                    DEFAULT_USAGE_STATS_INTERACTION_INTERVAL);
+            SERVICE_USAGE_INTERACTION_TIME_PRE_S = mParser.getLong(
+                    KEY_SERVICE_USAGE_INTERACTION_TIME_PRE_S,
+                    DEFAULT_SERVICE_USAGE_INTERACTION_TIME_PRE_S);
+            SERVICE_USAGE_INTERACTION_TIME_POST_S = mParser.getLong(
+                    KEY_SERVICE_USAGE_INTERACTION_TIME_POST_S,
+                    DEFAULT_SERVICE_USAGE_INTERACTION_TIME_POST_S);
+            USAGE_STATS_INTERACTION_INTERVAL_PRE_S = mParser.getLong(
+                    KEY_USAGE_STATS_INTERACTION_INTERVAL_PRE_S,
+                    DEFAULT_USAGE_STATS_INTERACTION_INTERVAL_PRE_S);
+            USAGE_STATS_INTERACTION_INTERVAL_POST_S = mParser.getLong(
+                    KEY_USAGE_STATS_INTERACTION_INTERVAL_POST_S,
+                    DEFAULT_USAGE_STATS_INTERACTION_INTERVAL_POST_S);
             SERVICE_RESTART_DURATION = mParser.getLong(KEY_SERVICE_RESTART_DURATION,
                     DEFAULT_SERVICE_RESTART_DURATION);
             SERVICE_RESET_RUN_DURATION = mParser.getLong(KEY_SERVICE_RESET_RUN_DURATION,
@@ -808,6 +942,13 @@ final class ActivityManagerConstants extends ContentObserver {
                 /*defaultValue*/ true);
     }
 
+    private void updateFgsStartsRestrictionCheckCallerTargetSdk() {
+        mFgsStartRestrictionCheckCallerTargetSdk = DeviceConfig.getBoolean(
+                DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
+                KEY_DEFAULT_FGS_STARTS_RESTRICTION_CHECK_CALLER_TARGET_SDK,
+                /*defaultValue*/ true);
+    }
+
     private void updateFgsNotificationDeferralEnable() {
         mFlagFgsNotificationDeferralEnabled = DeviceConfig.getBoolean(
                 DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
@@ -827,6 +968,26 @@ final class ActivityManagerConstants extends ContentObserver {
                 DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
                 KEY_DEFERRED_FGS_NOTIFICATION_INTERVAL,
                 /*default value*/ 10_000L);
+    }
+
+    private void updateFgsNotificationDeferralExclusionTime() {
+        mFgsNotificationDeferralExclusionTime = DeviceConfig.getLong(
+                DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
+                KEY_DEFERRED_FGS_NOTIFICATION_EXCLUSION_TIME,
+                /*default value*/ 2 * 60 * 1000L);
+    }
+
+    private void updatePushMessagingOverQuotaBehavior() {
+        mPushMessagingOverQuotaBehavior = DeviceConfig.getInt(
+                DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
+                KEY_PUSH_MESSAGING_OVER_QUOTA_BEHAVIOR,
+                DEFAULT_PUSH_MESSAGING_OVER_QUOTA_BEHAVIOR);
+        if (mPushMessagingOverQuotaBehavior < TEMPORARY_ALLOW_LIST_TYPE_NONE
+                || mPushMessagingOverQuotaBehavior
+                > TEMPORARY_ALLOW_LIST_TYPE_FOREGROUND_SERVICE_NOT_ALLOWED) {
+            mPushMessagingOverQuotaBehavior =
+                    DEFAULT_PUSH_MESSAGING_OVER_QUOTA_BEHAVIOR;
+        }
     }
 
     private void updateOomAdjUpdatePolicy() {
@@ -849,6 +1010,34 @@ final class ActivityManagerConstants extends ContentObserver {
                 DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
                 KEY_BOOT_TIME_TEMP_ALLOWLIST_DURATION,
                 DEFAULT_BOOT_TIME_TEMP_ALLOWLIST_DURATION);
+    }
+
+    private void updateFgToBgFgsGraceDuration() {
+        mFgToBgFgsGraceDuration = DeviceConfig.getLong(
+                DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
+                KEY_FG_TO_BG_FGS_GRACE_DURATION,
+                DEFAULT_FG_TO_BG_FGS_GRACE_DURATION);
+    }
+
+    private void updateFgsStartForegroundTimeout() {
+        mFgsStartForegroundTimeoutMs = DeviceConfig.getLong(
+                DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
+                KEY_FGS_START_FOREGROUND_TIMEOUT,
+                DEFAULT_FGS_START_FOREGROUND_TIMEOUT_MS);
+    }
+
+    private void updateFgsAtomSamplePercent() {
+        mFgsAtomSampleRate = DeviceConfig.getFloat(
+                DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
+                KEY_FGS_ATOM_SAMPLE_RATE,
+                DEFAULT_FGS_ATOM_SAMPLE_RATE);
+    }
+
+    private void updateKillFasCachedIdle() {
+        mKillForceAppStandByAndCachedIdle = DeviceConfig.getBoolean(
+                DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
+                KEY_KILL_FAS_CACHED_IDLE,
+                DEFAULT_KILL_FAS_CACHED_IDLE);
     }
 
     private void updateImperceptibleKillExemptions() {
@@ -995,10 +1184,14 @@ final class ActivityManagerConstants extends ContentObserver {
         pw.println(POWER_CHECK_MAX_CPU_3);
         pw.print("  "); pw.print(KEY_POWER_CHECK_MAX_CPU_4); pw.print("=");
         pw.println(POWER_CHECK_MAX_CPU_4);
-        pw.print("  "); pw.print(KEY_SERVICE_USAGE_INTERACTION_TIME); pw.print("=");
-        pw.println(SERVICE_USAGE_INTERACTION_TIME);
-        pw.print("  "); pw.print(KEY_USAGE_STATS_INTERACTION_INTERVAL); pw.print("=");
-        pw.println(USAGE_STATS_INTERACTION_INTERVAL);
+        pw.print("  "); pw.print(KEY_SERVICE_USAGE_INTERACTION_TIME_PRE_S); pw.print("=");
+        pw.println(SERVICE_USAGE_INTERACTION_TIME_PRE_S);
+        pw.print("  "); pw.print(KEY_SERVICE_USAGE_INTERACTION_TIME_POST_S); pw.print("=");
+        pw.println(SERVICE_USAGE_INTERACTION_TIME_POST_S);
+        pw.print("  "); pw.print(KEY_USAGE_STATS_INTERACTION_INTERVAL_PRE_S); pw.print("=");
+        pw.println(USAGE_STATS_INTERACTION_INTERVAL_PRE_S);
+        pw.print("  "); pw.print(KEY_USAGE_STATS_INTERACTION_INTERVAL_POST_S); pw.print("=");
+        pw.println(USAGE_STATS_INTERACTION_INTERVAL_POST_S);
         pw.print("  "); pw.print(KEY_SERVICE_RESTART_DURATION); pw.print("=");
         pw.println(SERVICE_RESTART_DURATION);
         pw.print("  "); pw.print(KEY_SERVICE_RESET_RUN_DURATION); pw.print("=");
@@ -1051,6 +1244,22 @@ final class ActivityManagerConstants extends ContentObserver {
         pw.println(MAX_PHANTOM_PROCESSES);
         pw.print("  "); pw.print(KEY_BOOT_TIME_TEMP_ALLOWLIST_DURATION); pw.print("=");
         pw.println(mBootTimeTempAllowlistDuration);
+        pw.print("  "); pw.print(KEY_FG_TO_BG_FGS_GRACE_DURATION); pw.print("=");
+        pw.println(mFgToBgFgsGraceDuration);
+        pw.print("  "); pw.print(KEY_FGS_START_FOREGROUND_TIMEOUT); pw.print("=");
+        pw.println(mFgsStartForegroundTimeoutMs);
+        pw.print("  "); pw.print(KEY_DEFAULT_BACKGROUND_ACTIVITY_STARTS_ENABLED); pw.print("=");
+        pw.println(mFlagBackgroundActivityStartsEnabled);
+        pw.print("  "); pw.print(KEY_DEFAULT_BACKGROUND_FGS_STARTS_RESTRICTION_ENABLED);
+        pw.print("="); pw.println(mFlagBackgroundFgsStartRestrictionEnabled);
+        pw.print("  "); pw.print(KEY_DEFAULT_FGS_STARTS_RESTRICTION_ENABLED); pw.print("=");
+        pw.println(mFlagFgsStartRestrictionEnabled);
+        pw.print("  "); pw.print(KEY_DEFAULT_FGS_STARTS_RESTRICTION_CHECK_CALLER_TARGET_SDK);
+        pw.print("="); pw.println(mFgsStartRestrictionCheckCallerTargetSdk);
+        pw.print("  "); pw.print(KEY_FGS_ATOM_SAMPLE_RATE);
+        pw.print("="); pw.println(mFgsAtomSampleRate);
+        pw.print("  "); pw.print(KEY_PUSH_MESSAGING_OVER_QUOTA_BEHAVIOR);
+        pw.print("="); pw.println(mPushMessagingOverQuotaBehavior);
 
         pw.println();
         if (mOverrideMaxCachedProcesses >= 0) {

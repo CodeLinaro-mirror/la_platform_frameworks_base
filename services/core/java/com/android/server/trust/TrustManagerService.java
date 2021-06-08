@@ -41,6 +41,7 @@ import android.content.res.TypedArray;
 import android.content.res.XmlResourceParser;
 import android.database.ContentObserver;
 import android.graphics.drawable.Drawable;
+import android.hardware.biometrics.BiometricManager;
 import android.hardware.biometrics.BiometricSourceType;
 import android.net.Uri;
 import android.os.Binder;
@@ -56,7 +57,6 @@ import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Settings;
 import android.security.Authorization;
-import android.security.KeyStore;
 import android.service.trust.TrustAgentService;
 import android.text.TextUtils;
 import android.util.ArrayMap;
@@ -189,8 +189,6 @@ public class TrustManagerService extends SystemService {
     private boolean mTrustAgentsCanRun = false;
     private int mCurrentUser = UserHandle.USER_SYSTEM;
 
-    private Authorization mAuthorizationService;
-
     public TrustManagerService(Context context) {
         super(context);
         mContext = context;
@@ -200,7 +198,6 @@ public class TrustManagerService extends SystemService {
         mStrongAuthTracker = new StrongAuthTracker(context);
         mAlarmManager = (AlarmManager) mContext.getSystemService(Context.ALARM_SERVICE);
         mSettingsObserver = new SettingsObserver(mHandler);
-        mAuthorizationService = new Authorization();
     }
 
     @Override
@@ -702,15 +699,14 @@ public class TrustManagerService extends SystemService {
         }
         if (changed) {
             dispatchDeviceLocked(userId, locked);
-
-            Authorization.onLockScreenEvent(locked, userId, null);
-            KeyStore.getInstance().onUserLockedStateChanged(userId, locked);
+            Authorization.onLockScreenEvent(locked, userId, null,
+                    getBiometricSids(userId));
             // Also update the user's profiles who have unified challenge, since they
             // share the same unlocked state (see {@link #isDeviceLocked(int)})
             for (int profileHandle : mUserManager.getEnabledProfileIds(userId)) {
                 if (mLockPatternUtils.isManagedProfileWithUnifiedChallenge(profileHandle)) {
-                    mAuthorizationService.onLockScreenEvent(locked, profileHandle, null);
-                    KeyStore.getInstance().onUserLockedStateChanged(profileHandle, locked);
+                    Authorization.onLockScreenEvent(locked, profileHandle, null,
+                            getBiometricSids(profileHandle));
                 }
             }
         }
@@ -1050,6 +1046,14 @@ public class TrustManagerService extends SystemService {
         }
     }
 
+    private long[] getBiometricSids(int userId) {
+        BiometricManager biometricManager = mContext.getSystemService(BiometricManager.class);
+        if (biometricManager == null) {
+            return null;
+        }
+        return biometricManager.getAuthenticatorIds(userId);
+    }
+
     // User lifecycle
 
     @Override
@@ -1261,8 +1265,8 @@ public class TrustManagerService extends SystemService {
                         mDeviceLockedForUser.put(userId, locked);
                     }
 
-                    Authorization.onLockScreenEvent(locked, userId, null);
-                    KeyStore.getInstance().onUserLockedStateChanged(userId, locked);
+                    Authorization.onLockScreenEvent(locked, userId, null,
+                            getBiometricSids(userId));
 
                     if (locked) {
                         try {

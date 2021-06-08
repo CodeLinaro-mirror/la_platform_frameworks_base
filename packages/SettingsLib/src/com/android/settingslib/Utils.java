@@ -23,7 +23,6 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.location.LocationManager;
 import android.media.AudioManager;
-import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.TetheringManager;
 import android.net.vcn.VcnTransportInfo;
@@ -37,6 +36,7 @@ import android.provider.Settings;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
+import android.telephony.TelephonyManager;
 
 import androidx.annotation.NonNull;
 import androidx.core.graphics.drawable.RoundedBitmapDrawable;
@@ -204,18 +204,23 @@ public class Utils {
             statusString = res.getString(R.string.battery_info_status_full);
         } else {
             if (status == BatteryManager.BATTERY_STATUS_CHARGING) {
-                switch (batteryStatus.getChargingSpeed(context)) {
-                    case BatteryStatus.CHARGING_FAST:
-                        statusString = res.getString(R.string.battery_info_status_charging_fast);
-                        break;
-                    case BatteryStatus.CHARGING_SLOWLY:
-                        statusString = res.getString(R.string.battery_info_status_charging_slow);
-                        break;
-                    default:
-                        statusString = res.getString(R.string.battery_info_status_charging);
-                        break;
+                if (batteryStatus.isPluggedInWired()) {
+                    switch (batteryStatus.getChargingSpeed(context)) {
+                        case BatteryStatus.CHARGING_FAST:
+                            statusString = res.getString(
+                                    R.string.battery_info_status_charging_fast);
+                            break;
+                        case BatteryStatus.CHARGING_SLOWLY:
+                            statusString = res.getString(
+                                    R.string.battery_info_status_charging_slow);
+                            break;
+                        default:
+                            statusString = res.getString(R.string.battery_info_status_charging);
+                            break;
+                    }
+                } else {
+                    statusString = res.getString(R.string.battery_info_status_charging_wireless);
                 }
-
             } else if (status == BatteryManager.BATTERY_STATUS_DISCHARGING) {
                 statusString = res.getString(R.string.battery_info_status_discharging);
             } else if (status == BatteryManager.BATTERY_STATUS_NOT_CHARGING) {
@@ -439,8 +444,7 @@ public class Utils {
     }
 
     public static boolean isWifiOnly(Context context) {
-        return !context.getSystemService(ConnectivityManager.class)
-                .isNetworkSupported(ConnectivityManager.TYPE_MOBILE);
+        return !context.getSystemService(TelephonyManager.class).isDataCapable();
     }
 
     /** Returns if the automatic storage management feature is turned on or not. **/

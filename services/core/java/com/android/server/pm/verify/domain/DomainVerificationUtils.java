@@ -22,18 +22,21 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
-import android.content.pm.ResolveInfo;
-import android.os.Binder;
+import android.text.TextUtils;
+import android.util.Patterns;
 
 import com.android.internal.util.CollectionUtils;
 import com.android.server.compat.PlatformCompat;
 import com.android.server.pm.PackageManagerService;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
 
-import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
 
 public final class DomainVerificationUtils {
+
+    private static final ThreadLocal<Matcher> sCachedMatcher = ThreadLocal.withInitial(
+            () -> Patterns.DOMAIN_NAME.matcher(""));
 
     /**
      * Consolidates package exception messages. A generic unavailable message is included since the
@@ -46,9 +49,17 @@ public final class DomainVerificationUtils {
     }
 
     public static boolean isDomainVerificationIntent(Intent intent,
-            @NonNull List<ResolveInfo> candidates,
             @PackageManager.ResolveInfoFlags int resolveInfoFlags) {
         if (!intent.isWebIntent()) {
+            return false;
+        }
+
+        String host = intent.getData().getHost();
+        if (TextUtils.isEmpty(host)) {
+            return false;
+        }
+
+        if (!sCachedMatcher.get().reset(host).matches()) {
             return false;
         }
 
@@ -63,50 +74,24 @@ public final class DomainVerificationUtils {
                     && intent.hasCategory(Intent.CATEGORY_BROWSABLE);
         }
 
-            // In cases where at least one browser is resolved and only one non-browser is resolved,
-        // the Intent is coerced into an app links intent, under the assumption the browser can
-        // be skipped if the app is approved at any level for the domain.
-        boolean foundBrowser = false;
-        boolean foundOneApp = false;
-
-        final int candidatesSize = candidates.size();
-        for (int index = 0; index < candidatesSize; index++) {
-            final ResolveInfo info = candidates.get(index);
-            if (info.handleAllWebDataURI) {
-                foundBrowser = true;
-            } else if (foundOneApp) {
-                // Already true, so duplicate app
-                foundOneApp = false;
-                break;
-            } else {
-                foundOneApp = true;
-            }
-        }
-
         boolean matchDefaultByFlags = (resolveInfoFlags & PackageManager.MATCH_DEFAULT_ONLY) != 0;
-        boolean onlyOneNonBrowser = foundBrowser && foundOneApp;
 
         // Check if matches (BROWSABLE || none) && DEFAULT
         if (categoriesSize == 0) {
-            // No categories, run coerce case, matching DEFAULT by flags
-            return onlyOneNonBrowser && matchDefaultByFlags;
-        } else if (intent.hasCategory(Intent.CATEGORY_DEFAULT)) {
-            // Run coerce case, matching by explicit DEFAULT
-            return onlyOneNonBrowser;
+            // No categories, only allow matching DEFAULT by flags
+            return matchDefaultByFlags;
         } else if (intent.hasCategory(Intent.CATEGORY_BROWSABLE)) {
             // Intent matches BROWSABLE, must match DEFAULT by flags
             return matchDefaultByFlags;
         } else {
-            // Otherwise not matching any app link categories
-            return false;
+            // Otherwise only needs to have DEFAULT
+            return intent.hasCategory(Intent.CATEGORY_DEFAULT);
         }
     }
 
     static boolean isChangeEnabled(PlatformCompat platformCompat, AndroidPackage pkg,
             long changeId) {
-        //noinspection ConstantConditions
-        return Binder.withCleanCallingIdentity(
-                () -> platformCompat.isChangeEnabled(changeId, buildMockAppInfo(pkg)));
+        return  platformCompat.isChangeEnabledInternalNoLogging(changeId, buildMockAppInfo(pkg));
     }
 
     /**

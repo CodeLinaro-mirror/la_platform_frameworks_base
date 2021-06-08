@@ -51,6 +51,7 @@ import android.os.FileUtils;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.os.SystemProperties;
+import android.os.Trace;
 import android.os.UserHandle;
 import android.os.WorkSource;
 import android.os.storage.StorageManager;
@@ -62,6 +63,8 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.server.pm.Installer.InstallerException;
 import com.android.server.pm.dex.ArtManagerService;
+import com.android.server.pm.dex.ArtStatsLogUtils;
+import com.android.server.pm.dex.ArtStatsLogUtils.ArtStatsLogger;
 import com.android.server.pm.dex.DexManager;
 import com.android.server.pm.dex.DexoptOptions;
 import com.android.server.pm.dex.DexoptUtils;
@@ -77,6 +80,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 /**
  * Helper class for running dexopt command on packages.
@@ -98,6 +102,10 @@ public class PackageDexOptimizer {
     @GuardedBy("mInstallLock")
     private final PowerManager.WakeLock mDexoptWakeLock;
     private volatile boolean mSystemReady;
+
+    private final ArtStatsLogger mArtStatsLogger = new ArtStatsLogger();
+
+    private static final Random sRandom = new Random();
 
     PackageDexOptimizer(Installer installer, Object installLock, Context context,
             String wakeLockTag) {
@@ -252,6 +260,30 @@ public class PackageDexOptimizer {
                         profileUpdated, classLoaderContexts[i], dexoptFlags, sharedGid,
                         packageStats, options.isDowngrade(), profileName, dexMetadataPath,
                         options.getCompilationReason());
+
+                // OTAPreopt doesn't have stats so don't report in that case.
+                if (packageStats != null) {
+                    Trace.traceBegin(Trace.TRACE_TAG_PACKAGE_MANAGER, "dex2oat-metrics");
+                    try {
+                        long sessionId = sRandom.nextLong();
+                        ArtStatsLogUtils.writeStatsLog(
+                                mArtStatsLogger,
+                                sessionId,
+                                compilerFilter,
+                                pkg.getUid(),
+                                packageStats.getCompileTime(path),
+                                dexMetadataPath,
+                                options.getCompilationReason(),
+                                newResult,
+                                ArtStatsLogUtils.getApkType(path, pkg.getBaseApkPath(),
+                                        pkg.getSplitCodePaths()),
+                                dexCodeIsa,
+                                path);
+                    } finally {
+                        Trace.traceEnd(Trace.TRACE_TAG_PACKAGE_MANAGER);
+                    }
+                }
+
                 // The end result is:
                 //  - FAILED if any path failed,
                 //  - PERFORMED if at least one path needed compilation,
@@ -461,9 +493,9 @@ public class PackageDexOptimizer {
         String classLoaderContext = null;
         if (dexUseInfo.isUnsupportedClassLoaderContext()
                 || dexUseInfo.isVariableClassLoaderContext()) {
-            // If we have an unknown (not yet set), or a variable class loader chain. Just extract
+            // If we have an unknown (not yet set), or a variable class loader chain. Just verify
             // the dex file.
-            compilerFilter = "extract";
+            compilerFilter = "verify";
         } else {
             classLoaderContext = dexUseInfo.getClassLoaderContext();
         }

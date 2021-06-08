@@ -30,8 +30,8 @@ import android.content.pm.UserInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
-import android.os.PowerWhitelistManager.ReasonCode;
-import android.os.PowerWhitelistManager.TempAllowListType;
+import android.os.PowerExemptionManager.ReasonCode;
+import android.os.PowerExemptionManager.TempAllowListType;
 import android.os.TransactionTooLargeException;
 import android.os.WorkSource;
 import android.util.ArraySet;
@@ -450,6 +450,21 @@ public abstract class ActivityManagerInternal {
     public abstract boolean hasRunningForegroundService(int uid, int foregroundServiceType);
 
     /**
+     * Returns {@code true} if the given notification channel currently has a
+     * notification associated with a foreground service.  This is an AMS check
+     * because that is the source of truth for the FGS state.
+     */
+    public abstract boolean hasForegroundServiceNotification(String pkg, @UserIdInt int userId,
+            String channelId);
+
+    /**
+     * If the given app has any FGSs whose notifications are in the given channel,
+     * stop them.
+     */
+    public abstract void stopForegroundServicesForChannel(String pkg, @UserIdInt int userId,
+            String channelId);
+
+    /**
      * Registers the specified {@code processObserver} to be notified of future changes to
      * process state.
      */
@@ -546,6 +561,14 @@ public abstract class ActivityManagerInternal {
     public abstract Intent getIntentForIntentSender(IIntentSender sender);
 
     /**
+     * Effectively PendingIntent.getActivityForUser(), but the PendingIntent is
+     * owned by the given uid rather than by the caller (i.e. the system).
+     */
+    public abstract PendingIntent getPendingIntentActivityAsApp(
+            int requestCode, @NonNull Intent intent, int flags, Bundle options,
+            String ownerPkgName, int ownerUid);
+
+    /**
      * @return mBootTimeTempAllowlistDuration of ActivityManagerConstants.
      */
     public abstract long getBootTimeTempAllowListDuration();
@@ -555,4 +578,14 @@ public abstract class ActivityManagerInternal {
 
     /** Unregister an {@link AnrController} */
     public abstract void unregisterAnrController(AnrController controller);
+
+    /**
+     * Is the FGS started from an uid temporarily allowed to have while-in-use permission?
+     */
+    public abstract boolean isTempAllowlistedForFgsWhileInUse(int uid);
+
+    /**
+     * Return the temp allowlist type when server push messaging is over the quota.
+     */
+    public abstract @TempAllowListType int getPushMessagingOverQuotaBehavior();
 }

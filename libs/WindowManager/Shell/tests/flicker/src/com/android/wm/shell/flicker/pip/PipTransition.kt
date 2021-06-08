@@ -18,27 +18,38 @@ package com.android.wm.shell.flicker.pip
 
 import android.app.Instrumentation
 import android.content.Intent
+import android.platform.test.annotations.Presubmit
 import android.view.Surface
+import androidx.test.filters.FlakyTest
 import androidx.test.platform.app.InstrumentationRegistry
 import com.android.server.wm.flicker.FlickerBuilderProvider
 import com.android.server.wm.flicker.FlickerTestParameter
 import com.android.server.wm.flicker.dsl.FlickerBuilder
+import com.android.server.wm.flicker.helpers.WindowUtils
 import com.android.server.wm.flicker.helpers.isRotated
 import com.android.server.wm.flicker.helpers.setRotation
 import com.android.server.wm.flicker.helpers.wakeUpAndGoToHomeScreen
+import com.android.server.wm.flicker.navBarLayerIsAlwaysVisible
+import com.android.server.wm.flicker.navBarLayerRotatesAndScales
+import com.android.server.wm.flicker.navBarWindowIsAlwaysVisible
+import com.android.server.wm.flicker.noUncoveredRegions
 import com.android.server.wm.flicker.repetitions
+import com.android.server.wm.flicker.rules.RemoveAllTasksButHomeRule.Companion.removeAllTasksButHome
 import com.android.server.wm.flicker.startRotation
+import com.android.server.wm.flicker.statusBarLayerIsAlwaysVisible
+import com.android.server.wm.flicker.statusBarLayerRotatesScales
+import com.android.server.wm.flicker.statusBarWindowIsAlwaysVisible
 import com.android.wm.shell.flicker.helpers.PipAppHelper
-import com.android.wm.shell.flicker.removeAllTasksButHome
 import com.android.wm.shell.flicker.testapp.Components
+import org.junit.Test
 
 abstract class PipTransition(protected val testSpec: FlickerTestParameter) {
     protected val instrumentation: Instrumentation = InstrumentationRegistry.getInstrumentation()
     protected val isRotated = testSpec.config.startRotation.isRotated()
     protected val pipApp = PipAppHelper(instrumentation)
+    protected val displayBounds = WindowUtils.getDisplayBounds(testSpec.config.startRotation)
     protected val broadcastActionTrigger = BroadcastActionTrigger(instrumentation)
     protected abstract val transition: FlickerBuilder.(Map<String, Any?>) -> Unit
-
     // Helper class to process test actions by broadcast.
     protected class BroadcastActionTrigger(private val instrumentation: Instrumentation) {
         private fun createIntentWithAction(broadcastAction: String): Intent {
@@ -121,13 +132,13 @@ abstract class PipTransition(protected val testSpec: FlickerTestParameter) {
                     removeAllTasksButHome()
                     if (!eachRun) {
                         pipApp.launchViaIntent(wmHelper, stringExtras = stringExtras)
-                        wmHelper.waitPipWindowShown()
+                        wmHelper.waitFor { it.wmState.hasPipWindow() }
                     }
                 }
                 eachRun {
                     if (eachRun) {
                         pipApp.launchViaIntent(wmHelper, stringExtras = stringExtras)
-                        wmHelper.waitPipWindowShown()
+                        wmHelper.waitFor { it.wmState.hasPipWindow() }
                     }
                 }
             }
@@ -148,4 +159,35 @@ abstract class PipTransition(protected val testSpec: FlickerTestParameter) {
             extraSpec(this, configuration)
         }
     }
+
+    @Presubmit
+    @Test
+    open fun navBarWindowIsAlwaysVisible() = testSpec.navBarWindowIsAlwaysVisible()
+
+    @Presubmit
+    @Test
+    open fun statusBarWindowIsAlwaysVisible() = testSpec.statusBarWindowIsAlwaysVisible()
+
+    @FlakyTest
+    @Test
+    open fun navBarLayerIsAlwaysVisible() = testSpec.navBarLayerIsAlwaysVisible()
+
+    @FlakyTest
+    @Test
+    open fun statusBarLayerIsAlwaysVisible() = testSpec.statusBarLayerIsAlwaysVisible()
+
+    @Presubmit
+    @Test
+    open fun navBarLayerRotatesAndScales() =
+        testSpec.navBarLayerRotatesAndScales(testSpec.config.startRotation, Surface.ROTATION_0)
+
+    @Presubmit
+    @Test
+    open fun statusBarLayerRotatesScales() =
+        testSpec.statusBarLayerRotatesScales(testSpec.config.startRotation, Surface.ROTATION_0)
+
+    @Presubmit
+    @Test
+    open fun noUncoveredRegions() =
+        testSpec.noUncoveredRegions(testSpec.config.startRotation, Surface.ROTATION_0)
 }

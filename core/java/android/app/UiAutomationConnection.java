@@ -18,6 +18,7 @@ package android.app;
 
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.accessibilityservice.IAccessibilityServiceClient;
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
@@ -49,6 +50,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.List;
 
 /**
  * This is a remote object that is passed from the shell to an instrumentation
@@ -205,6 +207,32 @@ public final class UiAutomationConnection extends IUiAutomationConnection.Stub {
         }
     }
 
+    @Nullable
+    @Override
+    public Bitmap takeSurfaceControlScreenshot(@NonNull SurfaceControl surfaceControl) {
+        synchronized (mLock) {
+            throwIfCalledByNotTrustedUidLocked();
+            throwIfShutdownLocked();
+            throwIfNotConnectedLocked();
+        }
+
+        SurfaceControl.ScreenshotHardwareBuffer captureBuffer;
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            captureBuffer = SurfaceControl.captureLayers(
+                    new SurfaceControl.LayerCaptureArgs.Builder(surfaceControl)
+                            .setChildrenOnly(false)
+                            .build());
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+
+        if (captureBuffer == null) {
+            return null;
+        }
+        return captureBuffer.asBitmap();
+    }
+
     @Override
     public boolean clearWindowContentFrameStats(int windowId) throws RemoteException {
         synchronized (mLock) {
@@ -335,6 +363,22 @@ public final class UiAutomationConnection extends IUiAutomationConnection.Stub {
         final long identity = Binder.clearCallingIdentity();
         try {
             mActivityManager.stopDelegateShellPermissionIdentity();
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+    }
+
+    @Override
+    @Nullable
+    public List<String> getAdoptedShellPermissions() throws RemoteException {
+        synchronized (mLock) {
+            throwIfCalledByNotTrustedUidLocked();
+            throwIfShutdownLocked();
+            throwIfNotConnectedLocked();
+        }
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            return mActivityManager.getDelegatedShellPermissions();
         } finally {
             Binder.restoreCallingIdentity(identity);
         }

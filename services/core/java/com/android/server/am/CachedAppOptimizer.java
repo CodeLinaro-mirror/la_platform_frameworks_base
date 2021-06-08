@@ -23,6 +23,8 @@ import static com.android.server.am.ActivityManagerDebugConfig.TAG_AM;
 import android.app.ActivityManager;
 import android.app.ActivityThread;
 import android.app.ApplicationExitInfo;
+import android.database.ContentObserver;
+import android.net.Uri;
 import android.os.Debug;
 import android.os.Handler;
 import android.os.Message;
@@ -80,6 +82,8 @@ public final class CachedAppOptimizer {
             "compact_full_delta_rss_throttle_kb";
     @VisibleForTesting static final String KEY_COMPACT_PROC_STATE_THROTTLE =
             "compact_proc_state_throttle";
+    @VisibleForTesting static final String KEY_FREEZER_DEBOUNCE_TIMEOUT =
+            "freeze_debounce_timeout";
 
     // Phenotype sends int configurations and we map them to the strings we'll use on device,
     // preventing a weird string value entering the kernel.
@@ -116,6 +120,10 @@ public final class CachedAppOptimizer {
     // Format of this string should be a comma separated list of integers.
     @VisibleForTesting static final String DEFAULT_COMPACT_PROC_STATE_THROTTLE =
             String.valueOf(ActivityManager.PROCESS_STATE_RECEIVER);
+    @VisibleForTesting static final long DEFAULT_FREEZER_DEBOUNCE_TIMEOUT = 600_000L;
+
+    @VisibleForTesting static final Uri CACHED_APP_FREEZER_ENABLED_URI = Settings.Global.getUriFor(
+                Settings.Global.CACHED_APPS_FREEZER_ENABLED);
 
     @VisibleForTesting
     interface PropertyChangedCallbackForTest {
@@ -140,9 +148,6 @@ public final class CachedAppOptimizer {
     static final int COMPACT_SYSTEM_MSG = 2;
     static final int SET_FROZEN_PROCESS_MSG = 3;
     static final int REPORT_UNFREEZE_MSG = 4;
-
-    //TODO:change this static definition into a configurable flag.
-    static final long FREEZE_TIMEOUT_MS = 600000;
 
     static final int DO_FREEZE = 1;
     static final int REPORT_UNFREEZE = 2;
@@ -198,6 +203,8 @@ public final class CachedAppOptimizer {
                                 updateMinOomAdjThrottle();
                             } else if (KEY_COMPACT_THROTTLE_MAX_OOM_ADJ.equals(name)) {
                                 updateMaxOomAdjThrottle();
+                            } else if (KEY_FREEZER_DEBOUNCE_TIMEOUT.equals(name)) {
+                                updateFreezerDebounceTimeout();
                             }
                         }
                     }
@@ -206,6 +213,23 @@ public final class CachedAppOptimizer {
                     }
                 }
             };
+
+    private final class SettingsContentObserver extends ContentObserver {
+        SettingsContentObserver() {
+            super(mAm.mHandler);
+        }
+
+        @Override
+        public void onChange(boolean selfChange, Uri uri) {
+            if (CACHED_APP_FREEZER_ENABLED_URI.equals(uri)) {
+                synchronized (mPhenotypeFlagLock) {
+                    updateUseFreezer();
+                }
+            }
+        }
+    }
+
+    private final SettingsContentObserver mSettingsObserver;
 
     private final Object mPhenotypeFlagLock = new Object();
 
@@ -259,6 +283,8 @@ public final class CachedAppOptimizer {
     @GuardedBy("mProcLock")
     private boolean mFreezerOverride = false;
 
+    @VisibleForTesting volatile long mFreezerDebounceTimeout = DEFAULT_FREEZER_DEBOUNCE_TIMEOUT;
+
     // Maps process ID to last compaction statistics for processes that we've fully compacted. Used
     // when evaluating throttles that we only consider for "full" compaction, so we don't store
     // data for "some" compactions. Uses LinkedHashMap to ensure insertion order is kept and
@@ -293,6 +319,7 @@ public final class CachedAppOptimizer {
         mProcStateThrottle = new HashSet<>();
         mProcessDependencies = processDependencies;
         mTestCallback = callback;
+        mSettingsObserver = new SettingsContentObserver();
     }
 
     /**
@@ -303,6 +330,8 @@ public final class CachedAppOptimizer {
         // TODO: initialize flags to default and only update them if values are set in DeviceConfig
         DeviceConfig.addOnPropertiesChangedListener(DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
                 ActivityThread.currentApplication().getMainExecutor(), mOnFlagsChangedListener);
+        mAm.mContext.getContentResolver().registerContentObserver(
+                CACHED_APP_FREEZER_ENABLED_URI, false, mSettingsObserver);
         synchronized (mPhenotypeFlagLock) {
             updateUseCompaction();
             updateCompactionActions();
@@ -315,6 +344,7 @@ public final class CachedAppOptimizer {
             updateUseFreezer();
             updateMinOomAdjThrottle();
             updateMaxOomAdjThrottle();
+            updateFreezerDebounceTimeout();
         }
     }
 
@@ -365,8 +395,9 @@ public final class CachedAppOptimizer {
 
             pw.println("  Tracking last compaction stats for " + mLastCompactionStats.size()
                     + " processes.");
-            pw.println(" " + KEY_USE_FREEZER + "=" + mUseFreezer);
+            pw.println("  " + KEY_USE_FREEZER + "=" + mUseFreezer);
             pw.println("  " + KEY_FREEZER_STATSD_SAMPLE_RATE + "=" + mFreezerStatsdSampleRate);
+            pw.println("  " + KEY_FREEZER_DEBOUNCE_TIMEOUT + "=" + mFreezerDebounceTimeout);
             if (DEBUG_COMPACTION) {
                 for (Map.Entry<Integer, LastCompactionStats> entry
                         : mLastCompactionStats.entrySet()) {
@@ -382,10 +413,13 @@ public final class CachedAppOptimizer {
     @GuardedBy("mProcLock")
     void compactAppSome(ProcessRecord app) {
         app.mOptRecord.setReqCompactAction(COMPACT_PROCESS_SOME);
-        mPendingCompactionProcesses.add(app);
-        mCompactionHandler.sendMessage(
-                mCompactionHandler.obtainMessage(
-                COMPACT_PROCESS_MSG, app.mState.getSetAdj(), app.mState.getSetProcState()));
+        if (!app.mOptRecord.hasPendingCompact()) {
+            app.mOptRecord.setHasPendingCompact(true);
+            mPendingCompactionProcesses.add(app);
+            mCompactionHandler.sendMessage(
+                    mCompactionHandler.obtainMessage(
+                    COMPACT_PROCESS_MSG, app.mState.getSetAdj(), app.mState.getSetProcState()));
+        }
     }
 
     @GuardedBy("mProcLock")
@@ -396,10 +430,13 @@ public final class CachedAppOptimizer {
                 && app.mState.getCurAdj() >= mCompactThrottleMinOomAdj
                 && app.mState.getCurAdj() <= mCompactThrottleMaxOomAdj) {
             app.mOptRecord.setReqCompactAction(COMPACT_PROCESS_FULL);
-            mPendingCompactionProcesses.add(app);
-            mCompactionHandler.sendMessage(
-                mCompactionHandler.obtainMessage(
-                    COMPACT_PROCESS_MSG, app.mState.getSetAdj(), app.mState.getSetProcState()));
+            if (!app.mOptRecord.hasPendingCompact()) {
+                app.mOptRecord.setHasPendingCompact(true);
+                mPendingCompactionProcesses.add(app);
+                mCompactionHandler.sendMessage(
+                        mCompactionHandler.obtainMessage(
+                        COMPACT_PROCESS_MSG, app.mState.getSetAdj(), app.mState.getSetProcState()));
+            }
         } else {
             if (DEBUG_COMPACTION) {
                 Slog.d(TAG_AM, "Skipping full compaction for " + app.processName
@@ -412,10 +449,13 @@ public final class CachedAppOptimizer {
     @GuardedBy("mProcLock")
     void compactAppPersistent(ProcessRecord app) {
         app.mOptRecord.setReqCompactAction(COMPACT_PROCESS_PERSISTENT);
-        mPendingCompactionProcesses.add(app);
-        mCompactionHandler.sendMessage(
-                mCompactionHandler.obtainMessage(
+        if (!app.mOptRecord.hasPendingCompact()) {
+            app.mOptRecord.setHasPendingCompact(true);
+            mPendingCompactionProcesses.add(app);
+            mCompactionHandler.sendMessage(
+                    mCompactionHandler.obtainMessage(
                     COMPACT_PROCESS_MSG, app.mState.getCurAdj(), app.mState.getSetProcState()));
+        }
     }
 
     @GuardedBy("mProcLock")
@@ -427,10 +467,13 @@ public final class CachedAppOptimizer {
     @GuardedBy("mProcLock")
     void compactAppBfgs(ProcessRecord app) {
         app.mOptRecord.setReqCompactAction(COMPACT_PROCESS_BFGS);
-        mPendingCompactionProcesses.add(app);
-        mCompactionHandler.sendMessage(
-                mCompactionHandler.obtainMessage(
+        if (!app.mOptRecord.hasPendingCompact()) {
+            app.mOptRecord.setHasPendingCompact(true);
+            mPendingCompactionProcesses.add(app);
+            mCompactionHandler.sendMessage(
+                    mCompactionHandler.obtainMessage(
                     COMPACT_PROCESS_MSG, app.mState.getCurAdj(), app.mState.getSetProcState()));
+        }
     }
 
     @GuardedBy("mProcLock")
@@ -615,21 +658,28 @@ public final class CachedAppOptimizer {
             mUseFreezer = isFreezerSupported();
         }
 
-        if (mUseFreezer && mFreezeHandler == null) {
-            Slog.d(TAG_AM, "Freezer enabled");
-            enableFreezer(true);
+        final boolean useFreezer = mUseFreezer;
+        // enableFreezer() would need the global ActivityManagerService lock, post it.
+        mAm.mHandler.post(() -> {
+            if (useFreezer) {
+                Slog.d(TAG_AM, "Freezer enabled");
+                enableFreezer(true);
 
-            if (!mCachedAppOptimizerThread.isAlive()) {
-                mCachedAppOptimizerThread.start();
+                if (!mCachedAppOptimizerThread.isAlive()) {
+                    mCachedAppOptimizerThread.start();
+                }
+
+                if (mFreezeHandler == null) {
+                    mFreezeHandler = new FreezeHandler();
+                }
+
+                Process.setThreadGroupAndCpuset(mCachedAppOptimizerThread.getThreadId(),
+                        Process.THREAD_GROUP_SYSTEM);
+            } else {
+                Slog.d(TAG_AM, "Freezer disabled");
+                enableFreezer(false);
             }
-
-            mFreezeHandler = new FreezeHandler();
-
-            Process.setThreadGroupAndCpuset(mCachedAppOptimizerThread.getThreadId(),
-                    Process.THREAD_GROUP_SYSTEM);
-        } else {
-            enableFreezer(false);
-        }
+        });
     }
 
     @GuardedBy("mPhenotypeFlagLock")
@@ -782,6 +832,16 @@ public final class CachedAppOptimizer {
         }
     }
 
+    @GuardedBy("mPhenotypeFlagLock")
+    private void updateFreezerDebounceTimeout() {
+        mFreezerDebounceTimeout = DeviceConfig.getLong(DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
+                KEY_FREEZER_DEBOUNCE_TIMEOUT, DEFAULT_FREEZER_DEBOUNCE_TIMEOUT);
+
+        if (mFreezerDebounceTimeout < 0) {
+            mFullDeltaRssThrottleKb = DEFAULT_FREEZER_DEBOUNCE_TIMEOUT;
+        }
+    }
+
     private boolean parseProcStateThrottle(String procStateThrottleString) {
         String[] procStates = TextUtils.split(procStateThrottleString, ",");
         mProcStateThrottle.clear();
@@ -806,7 +866,7 @@ public final class CachedAppOptimizer {
         return COMPACT_ACTION_STRING[action];
     }
 
-    // This will ensure app will be out of the freezer for at least FREEZE_TIMEOUT_MS
+    // This will ensure app will be out of the freezer for at least mFreezerDebounceTimeout.
     @GuardedBy("mAm")
     void unfreezeTemporarily(ProcessRecord app) {
         if (mUseFreezer) {
@@ -826,7 +886,7 @@ public final class CachedAppOptimizer {
         mFreezeHandler.sendMessageDelayed(
                 mFreezeHandler.obtainMessage(
                     SET_FROZEN_PROCESS_MSG, DO_FREEZE, 0, app),
-                FREEZE_TIMEOUT_MS);
+                mFreezerDebounceTimeout);
     }
 
     @GuardedBy({"mAm", "mProcLock"})
@@ -914,6 +974,16 @@ public final class CachedAppOptimizer {
         }
     }
 
+    /**
+     * To be called when the given app is killed.
+     */
+    @GuardedBy({"mAm", "mProcLock"})
+    void unscheduleFreezeAppLSP(ProcessRecord app) {
+        if (mUseFreezer) {
+            mFreezeHandler.removeMessages(SET_FROZEN_PROCESS_MSG, app);
+        }
+    }
+
     @VisibleForTesting
     static final class LastCompactionStats {
         private final long[] mRssAfterCompaction;
@@ -954,6 +1024,7 @@ public final class CachedAppOptimizer {
                         pendingAction = opt.getReqCompactAction();
                         pid = proc.getPid();
                         name = proc.processName;
+                        opt.setHasPendingCompact(false);
 
                         // don't compact if the process has returned to perceptible
                         // and this is only a cached/home/prev compaction

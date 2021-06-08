@@ -30,8 +30,7 @@ import com.android.server.wm.flicker.helpers.reopenAppFromOverview
 import com.android.server.wm.flicker.layerBecomesInvisible
 import com.android.server.wm.flicker.navBarWindowIsAlwaysVisible
 import com.android.server.wm.flicker.statusBarWindowIsAlwaysVisible
-import com.android.server.wm.flicker.visibleLayersShownMoreThanOneConsecutiveEntry
-import com.android.server.wm.flicker.visibleWindowsShownMoreThanOneConsecutiveEntry
+import com.android.server.wm.traces.parser.windowmanager.WindowManagerStateHelper
 import com.android.wm.shell.flicker.dockedStackDividerIsInvisible
 import com.android.wm.shell.flicker.helpers.SplitScreenHelper
 import org.junit.FixMethodOrder
@@ -70,23 +69,20 @@ class ExitPrimarySplitScreenShowSecondaryFullscreen(
             }
         }
 
+    override val ignoredWindows: List<String>
+        get() = listOf(LAUNCHER_PACKAGE_NAME, WindowManagerStateHelper.SPLASH_SCREEN_NAME,
+            splitScreenApp.defaultWindowName, secondaryApp.defaultWindowName,
+            WindowManagerStateHelper.SNAPSHOT_WINDOW_NAME)
+
     @FlakyTest(bugId = 175687842)
     @Test
     fun dockedStackDividerIsInvisible() = testSpec.dockedStackDividerIsInvisible()
 
-    @Presubmit
+    @FlakyTest
     @Test
     fun layerBecomesInvisible() = testSpec.layerBecomesInvisible(splitScreenApp.defaultWindowName)
 
-    @FlakyTest(bugId = 178447631)
-    @Test
-    fun visibleLayersShownMoreThanOneConsecutiveEntry() =
-        testSpec.visibleLayersShownMoreThanOneConsecutiveEntry(
-            listOf(LAUNCHER_PACKAGE_NAME, splitScreenApp.defaultWindowName,
-                secondaryApp.defaultWindowName)
-        )
-
-    @Presubmit
+    @FlakyTest
     @Test
     fun appWindowBecomesInVisible() =
         testSpec.appWindowBecomesInVisible(splitScreenApp.defaultWindowName)
@@ -98,14 +94,6 @@ class ExitPrimarySplitScreenShowSecondaryFullscreen(
     @Presubmit
     @Test
     fun statusBarWindowIsAlwaysVisible() = testSpec.statusBarWindowIsAlwaysVisible()
-
-    @FlakyTest(bugId = 178447631)
-    @Test
-    fun visibleWindowsShownMoreThanOneConsecutiveEntry() =
-        testSpec.visibleWindowsShownMoreThanOneConsecutiveEntry(
-            listOf(LAUNCHER_PACKAGE_NAME, splitScreenApp.defaultWindowName,
-                secondaryApp.defaultWindowName)
-        )
 
     companion object {
         @Parameterized.Parameters(name = "{0}")

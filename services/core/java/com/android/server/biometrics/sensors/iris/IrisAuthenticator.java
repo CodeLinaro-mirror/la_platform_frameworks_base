@@ -35,7 +35,7 @@ import com.android.server.biometrics.sensors.LockoutTracker;
 public final class IrisAuthenticator extends IBiometricAuthenticator.Stub {
     private final IIrisService mIrisService;
 
-    public IrisAuthenticator(IIrisService irisService, int sensorId) throws RemoteException {
+    public IrisAuthenticator(IIrisService irisService, int sensorId) {
         mIrisService = irisService;
     }
 
@@ -59,7 +59,8 @@ public final class IrisAuthenticator extends IBiometricAuthenticator.Stub {
     @Override
     public void prepareForAuthentication(boolean requireConfirmation, IBinder token,
             long sessionId, int userId, IBiometricSensorReceiver sensorReceiver,
-            String opPackageName, int cookie) throws RemoteException {
+            String opPackageName, int cookie, boolean allowBackgroundAuthentication)
+            throws RemoteException {
     }
 
     @Override
@@ -94,5 +95,10 @@ public final class IrisAuthenticator extends IBiometricAuthenticator.Stub {
     @Override
     public long getAuthenticatorId(int callingUserId) throws RemoteException {
         return 0;
+    }
+
+    @Override
+    public void resetLockout(IBinder token, String opPackageName, int userId,
+            byte[] hardwareAuthToken) throws RemoteException {
     }
 }

@@ -32,10 +32,13 @@ import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.systemui.R;
+import com.android.systemui.animation.ActivityLaunchAnimator;
+import com.android.systemui.globalactions.GlobalActionsDialogLite;
 import com.android.systemui.plugins.ActivityStarter;
+import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.qs.dagger.QSScope;
 import com.android.systemui.settings.UserTracker;
-import com.android.systemui.statusbar.phone.MultiUserSwitch;
+import com.android.systemui.statusbar.phone.MultiUserSwitchController;
 import com.android.systemui.statusbar.phone.SettingsButton;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
 import com.android.systemui.statusbar.policy.UserInfoController;
@@ -57,17 +60,19 @@ public class QSFooterViewController extends ViewController<QSFooterView> impleme
     private final DeviceProvisionedController mDeviceProvisionedController;
     private final UserTracker mUserTracker;
     private final QSPanelController mQsPanelController;
-    private final QSDetailDisplayer mQsDetailDisplayer;
     private final QuickQSPanelController mQuickQSPanelController;
     private final TunerService mTunerService;
     private final MetricsLogger mMetricsLogger;
+    private final FalsingManager mFalsingManager;
+    private final MultiUserSwitchController mMultiUserSwitchController;
     private final SettingsButton mSettingsButton;
+    private final View mSettingsButtonContainer;
     private final TextView mBuildText;
     private final View mEdit;
-    private final MultiUserSwitch mMultiUserSwitch;
     private final PageIndicator mPageIndicator;
     private final View mPowerMenuLite;
     private final boolean mShowPMLiteButton;
+    private GlobalActionsDialogLite mGlobalActionsDialog;
 
     private final UserInfoController.OnUserInfoChangedListener mOnUserInfoChangedListener =
             new UserInfoController.OnUserInfoChangedListener() {
@@ -81,8 +86,9 @@ public class QSFooterViewController extends ViewController<QSFooterView> impleme
     private final View.OnClickListener mSettingsOnClickListener = new View.OnClickListener() {
         @Override
         public void onClick(View v) {
-            // Don't do anything until view are unhidden
-            if (!mExpanded) {
+            // Don't do anything until views are unhidden. Don't do anything if the tap looks
+            // suspicious.
+            if (!mExpanded || mFalsingManager.isFalseTap(FalsingManager.LOW_PENALTY)) {
                 return;
             }
 
@@ -115,6 +121,8 @@ public class QSFooterViewController extends ViewController<QSFooterView> impleme
                 } else {
                     startSettingsActivity();
                 }
+            } else if (v == mPowerMenuLite) {
+                mGlobalActionsDialog.showOrHideDialog(false, true);
             }
         }
     };
@@ -126,10 +134,12 @@ public class QSFooterViewController extends ViewController<QSFooterView> impleme
     QSFooterViewController(QSFooterView view, UserManager userManager,
             UserInfoController userInfoController, ActivityStarter activityStarter,
             DeviceProvisionedController deviceProvisionedController, UserTracker userTracker,
-            QSPanelController qsPanelController, QSDetailDisplayer qsDetailDisplayer,
+            QSPanelController qsPanelController,
+            MultiUserSwitchController multiUserSwitchController,
             QuickQSPanelController quickQSPanelController,
-            TunerService tunerService, MetricsLogger metricsLogger,
-            @Named(PM_LITE_ENABLED) boolean showPMLiteButton) {
+            TunerService tunerService, MetricsLogger metricsLogger, FalsingManager falsingManager,
+            @Named(PM_LITE_ENABLED) boolean showPMLiteButton,
+            GlobalActionsDialogLite globalActionsDialog) {
         super(view);
         mUserManager = userManager;
         mUserInfoController = userInfoController;
@@ -137,23 +147,34 @@ public class QSFooterViewController extends ViewController<QSFooterView> impleme
         mDeviceProvisionedController = deviceProvisionedController;
         mUserTracker = userTracker;
         mQsPanelController = qsPanelController;
-        mQsDetailDisplayer = qsDetailDisplayer;
         mQuickQSPanelController = quickQSPanelController;
         mTunerService = tunerService;
         mMetricsLogger = metricsLogger;
+        mFalsingManager = falsingManager;
+        mMultiUserSwitchController = multiUserSwitchController;
 
         mSettingsButton = mView.findViewById(R.id.settings_button);
+        mSettingsButtonContainer = mView.findViewById(R.id.settings_button_container);
         mBuildText = mView.findViewById(R.id.build);
         mEdit = mView.findViewById(android.R.id.edit);
-        mMultiUserSwitch = mView.findViewById(R.id.multi_user_switch);
         mPageIndicator = mView.findViewById(R.id.footer_page_indicator);
         mPowerMenuLite = mView.findViewById(R.id.pm_lite);
         mShowPMLiteButton = showPMLiteButton;
+        mGlobalActionsDialog = globalActionsDialog;
+    }
+
+    @Override
+    protected void onInit() {
+        super.onInit();
+        mMultiUserSwitchController.init();
     }
 
     @Override
     protected void onViewAttached() {
-        if (!mShowPMLiteButton) {
+        if (mShowPMLiteButton) {
+            mPowerMenuLite.setVisibility(View.VISIBLE);
+            mPowerMenuLite.setOnClickListener(mSettingsOnClickListener);
+        } else {
             mPowerMenuLite.setVisibility(View.GONE);
         }
         mView.addOnLayoutChangeListener(
@@ -175,13 +196,16 @@ public class QSFooterViewController extends ViewController<QSFooterView> impleme
             return false;
         });
 
-        mEdit.setOnClickListener(view ->
-                mActivityStarter.postQSRunnableDismissingKeyguard(() ->
-                        mQsPanelController.showEdit(view)));
+        mEdit.setOnClickListener(view -> {
+            if (mFalsingManager.isFalseTap(FalsingManager.LOW_PENALTY)) {
+                return;
+            }
+            mActivityStarter.postQSRunnableDismissingKeyguard(() ->
+                    mQsPanelController.showEdit(view));
+        });
 
-        mMultiUserSwitch.setQSDetailDisplayer(mQsDetailDisplayer);
         mQsPanelController.setFooterPageIndicator(mPageIndicator);
-        mView.updateEverything(isTunerEnabled());
+        mView.updateEverything(isTunerEnabled(), mMultiUserSwitchController.isMultiUserEnabled());
     }
 
     @Override
@@ -197,9 +221,9 @@ public class QSFooterViewController extends ViewController<QSFooterView> impleme
     @Override
     public void setExpanded(boolean expanded) {
         mExpanded = expanded;
-        mView.setExpanded(expanded, isTunerEnabled());
+        mView.setExpanded(
+                expanded, isTunerEnabled(), mMultiUserSwitchController.isMultiUserEnabled());
     }
-
 
     @Override
     public int getHeight() {
@@ -238,13 +262,15 @@ public class QSFooterViewController extends ViewController<QSFooterView> impleme
 
     @Override
     public void disable(int state1, int state2, boolean animate) {
-        mView.disable(state2, isTunerEnabled());
+        mView.disable(state2, isTunerEnabled(), mMultiUserSwitchController.isMultiUserEnabled());
     }
 
-
     private void startSettingsActivity() {
+        ActivityLaunchAnimator.Controller animationController =
+                mSettingsButtonContainer != null ? ActivityLaunchAnimator.Controller.fromView(
+                        mSettingsButtonContainer) : null;
         mActivityStarter.startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS),
-                true /* dismissShade */);
+                true /* dismissShade */, animationController);
     }
 
     private boolean isTunerEnabled() {

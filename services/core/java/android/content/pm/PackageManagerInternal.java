@@ -60,7 +60,7 @@ import java.util.function.Consumer;
  *
  * @hide Only for use within the system server.
  */
-public abstract class PackageManagerInternal {
+public abstract class PackageManagerInternal implements PackageSettingsSnapshotProvider {
     @IntDef(prefix = "PACKAGE_", value = {
             PACKAGE_SYSTEM,
             PACKAGE_SETUP_WIZARD,
@@ -795,6 +795,9 @@ public abstract class PackageManagerInternal {
      * Perform the given action for each package.
      * Note that packages lock will be held while performing the actions.
      *
+     * If the caller does not need all packages, prefer the potentially non-locking
+     * {@link #withPackageSettingsSnapshot(Consumer)}.
+     *
      * @param actionLocked action to be performed
      */
     public abstract void forEachPackage(Consumer<AndroidPackage> actionLocked);
@@ -802,6 +805,9 @@ public abstract class PackageManagerInternal {
     /**
      * Perform the given action for each {@link PackageSetting}.
      * Note that packages lock will be held while performing the actions.
+     *
+     * If the caller does not need all packages, prefer the potentially non-locking
+     * {@link #withPackageSettingsSnapshot(Consumer)}.
      *
      * @param actionLocked action to be performed
      */
@@ -823,6 +829,12 @@ public abstract class PackageManagerInternal {
     /** Returns whether the given package is enabled for the given user */
     public abstract @PackageManager.EnabledState int getApplicationEnabledState(
             String packageName, int userId);
+
+    /**
+     * Return the enabled setting for a package component (activity, receiver, service, provider).
+     */
+    public abstract @PackageManager.EnabledState int getComponentEnabledSetting(
+            @NonNull ComponentName componentName, int callingUid, int userId);
 
     /**
      * Extra field name for the token of a request to enable rollback for a
@@ -1114,11 +1126,6 @@ public abstract class PackageManagerInternal {
             int filterCallingUid, int userId);
 
     /**
-     * Notifies that a package has crashed or ANR'd.
-     */
-    public abstract void notifyPackageCrashOrAnr(String packageName);
-
-    /**
      * Requesting the checksums for APKs within a package.
      * See {@link PackageManager#requestChecksums} for details.
      *
@@ -1126,7 +1133,7 @@ public abstract class PackageManagerInternal {
      * @param handler to use for postponed calculations.
      */
     public abstract void requestChecksums(@NonNull String packageName, boolean includeSplits,
-            @Checksum.Type int optional, @Checksum.Type int required,
+            @Checksum.TypeMask int optional, @Checksum.TypeMask int required,
             @Nullable List trustedInstallers,
             @NonNull IOnChecksumsReadyListener onChecksumsReadyListener, int userId,
             @NonNull Executor executor, @NonNull Handler handler);
@@ -1141,4 +1148,9 @@ public abstract class PackageManagerInternal {
      */
     public abstract boolean isPackageFrozen(
             @NonNull String packageName, int callingUid, int userId);
+
+    /**
+     * Deletes the OAT artifacts of a package.
+     */
+    public abstract void deleteOatArtifactsOfPackage(String packageName);
 }

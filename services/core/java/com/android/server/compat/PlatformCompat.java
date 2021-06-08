@@ -18,6 +18,7 @@ package com.android.server.compat;
 
 import static android.Manifest.permission.LOG_COMPAT_CHANGE;
 import static android.Manifest.permission.OVERRIDE_COMPAT_CHANGE_CONFIG;
+import static android.Manifest.permission.OVERRIDE_COMPAT_CHANGE_CONFIG_ON_RELEASE_BUILD;
 import static android.Manifest.permission.READ_COMPAT_CHANGE_CONFIG;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.os.Process.SYSTEM_UID;
@@ -45,6 +46,7 @@ import com.android.internal.compat.ChangeReporter;
 import com.android.internal.compat.CompatibilityChangeConfig;
 import com.android.internal.compat.CompatibilityChangeInfo;
 import com.android.internal.compat.CompatibilityOverrideConfig;
+import com.android.internal.compat.CompatibilityOverridesToRemoveConfig;
 import com.android.internal.compat.IOverrideValidator;
 import com.android.internal.compat.IPlatformCompat;
 import com.android.internal.util.DumpUtils;
@@ -53,6 +55,7 @@ import com.android.server.LocalServices;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -66,18 +69,22 @@ public class PlatformCompat extends IPlatformCompat.Stub {
     private final Context mContext;
     private final ChangeReporter mChangeReporter;
     private final CompatConfig mCompatConfig;
+    private final AndroidBuildClassifier mBuildClassifier;
 
     public PlatformCompat(Context context) {
         mContext = context;
         mChangeReporter = new ChangeReporter(ChangeReporter.SOURCE_SYSTEM_SERVER);
-        mCompatConfig = CompatConfig.create(new AndroidBuildClassifier(), mContext);
+        mBuildClassifier = new AndroidBuildClassifier();
+        mCompatConfig = CompatConfig.create(mBuildClassifier, mContext);
     }
 
     @VisibleForTesting
-    PlatformCompat(Context context, CompatConfig compatConfig) {
+    PlatformCompat(Context context, CompatConfig compatConfig,
+                   AndroidBuildClassifier buildClassifier) {
         mContext = context;
         mChangeReporter = new ChangeReporter(ChangeReporter.SOURCE_SYSTEM_SERVER);
         mCompatConfig = compatConfig;
+        mBuildClassifier = buildClassifier;
 
         registerPackageReceiver(context);
     }
@@ -162,6 +169,28 @@ public class PlatformCompat extends IPlatformCompat.Stub {
         return enabled;
     }
 
+    /**
+     * Called by the package manager to check if a given change is enabled for a given package name
+     * and the target sdk version while the package is in the parsing state.
+     *
+     * <p>Does not perform costly permission check.
+     *
+     * @param changeId the ID of the change in question
+     * @param packageName package name to check for
+     * @param targetSdkVersion target sdk version to check for
+     * @return {@code true} if the change would be enabled for this package name.
+     */
+    public boolean isChangeEnabledInternal(long changeId, String packageName,
+            int targetSdkVersion) {
+        if (mCompatConfig.willChangeBeEnabled(changeId, packageName)) {
+            final ApplicationInfo appInfo = new ApplicationInfo();
+            appInfo.packageName = packageName;
+            appInfo.targetSdkVersion = targetSdkVersion;
+            return isChangeEnabledInternalNoLogging(changeId, appInfo);
+        }
+        return false;
+    }
+
     @Override
     public void setOverrides(CompatibilityChangeConfig overrides, String packageName) {
         checkCompatChangeOverridePermission();
@@ -178,11 +207,12 @@ public class PlatformCompat extends IPlatformCompat.Stub {
     }
 
     @Override
-    public void setOverridesFromInstaller(CompatibilityOverrideConfig overrides,
+    public void setOverridesOnReleaseBuilds(CompatibilityOverrideConfig overrides,
             String packageName) {
-        checkCompatChangeOverridePermission();
+        // TODO(b/183630314): Unify the permission enforcement with the other setOverrides* methods.
+        checkCompatChangeOverrideOverridablePermission();
+        checkAllCompatOverridesAreOverridable(overrides.overrides.keySet());
         mCompatConfig.addOverrides(overrides, packageName);
-        killPackage(packageName);
     }
 
     @Override
@@ -242,6 +272,16 @@ public class PlatformCompat extends IPlatformCompat.Stub {
     public boolean clearOverrideForTest(long changeId, String packageName) {
         checkCompatChangeOverridePermission();
         return mCompatConfig.removeOverride(changeId, packageName);
+    }
+
+    @Override
+    public void removeOverridesOnReleaseBuilds(
+            CompatibilityOverridesToRemoveConfig overridesToRemove,
+            String packageName) {
+        // TODO(b/183630314): Unify the permission enforcement with the other setOverrides* methods.
+        checkCompatChangeOverrideOverridablePermission();
+        checkAllCompatOverridesAreOverridable(overridesToRemove.changeIds);
+        mCompatConfig.removePackageOverrides(overridesToRemove, packageName);
     }
 
     @Override
@@ -379,6 +419,26 @@ public class PlatformCompat extends IPlatformCompat.Stub {
         }
     }
 
+    private void checkCompatChangeOverrideOverridablePermission() {
+        // Don't check for permissions within the system process
+        if (Binder.getCallingUid() == SYSTEM_UID) {
+            return;
+        }
+        if (mContext.checkCallingOrSelfPermission(OVERRIDE_COMPAT_CHANGE_CONFIG_ON_RELEASE_BUILD)
+                != PERMISSION_GRANTED) {
+            throw new SecurityException("Cannot override compat change");
+        }
+    }
+
+    private void checkAllCompatOverridesAreOverridable(Collection<Long> changeIds) {
+        for (Long changeId : changeIds) {
+            if (!mCompatConfig.isOverridable(changeId)) {
+                throw new SecurityException("Only change ids marked as Overridable can be "
+                        + "overridden.");
+            }
+        }
+    }
+
     private void checkCompatChangeReadAndLogPermission() {
         checkCompatChangeReadPermission();
         checkCompatChangeLogPermission();
@@ -392,7 +452,8 @@ public class PlatformCompat extends IPlatformCompat.Stub {
             return false;
         }
         if (change.getEnableSinceTargetSdk() > 0) {
-            return change.getEnableSinceTargetSdk() >= Build.VERSION_CODES.Q;
+            return change.getEnableSinceTargetSdk() >= Build.VERSION_CODES.Q
+                && change.getEnableSinceTargetSdk() <= mBuildClassifier.platformTargetSdk();
         }
         return true;
     }

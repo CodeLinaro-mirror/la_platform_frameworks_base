@@ -17,6 +17,7 @@
 package com.android.server.wm;
 
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD;
+import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
 import static android.app.WindowConfiguration.WINDOWING_MODE_SPLIT_SCREEN_PRIMARY;
 import static android.view.InsetsState.ITYPE_STATUS_BAR;
@@ -47,6 +48,7 @@ import static com.android.dx.mockito.inline.extended.ExtendedMockito.reset;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.spy;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.spyOn;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.verify;
+import static com.android.server.wm.DisplayContent.IME_TARGET_CONTROL;
 import static com.android.server.wm.WindowContainer.SYNC_STATE_WAITING_FOR_DRAW;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -249,21 +251,22 @@ public class WindowStateTests extends WindowTestsBase {
         assertFalse(appWindow.canBeImeTarget());
         assertFalse(imeWindow.canBeImeTarget());
 
-        // Simulate the window is in split screen primary stack and the current state is
-        // minimized and home stack is resizable, so that we should ignore input for the stack.
+        // Simulate the window is in split screen primary root task and the current state is
+        // minimized and home root task is resizable, so that we should ignore input for the
+        // root task.
         final DockedTaskDividerController controller =
                 mDisplayContent.getDockedDividerController();
-        final Task stack = createTaskStackOnDisplay(WINDOWING_MODE_SPLIT_SCREEN_PRIMARY,
-                ACTIVITY_TYPE_STANDARD, mDisplayContent);
+        final Task rootTask = createTask(mDisplayContent,
+                WINDOWING_MODE_SPLIT_SCREEN_PRIMARY, ACTIVITY_TYPE_STANDARD);
         spyOn(appWindow);
         spyOn(controller);
-        spyOn(stack);
-        stack.setFocusable(false);
-        doReturn(stack).when(appWindow).getRootTask();
+        spyOn(rootTask);
+        rootTask.setFocusable(false);
+        doReturn(rootTask).when(appWindow).getRootTask();
 
         // Make sure canBeImeTarget is false due to shouldIgnoreInput is true;
         assertFalse(appWindow.canBeImeTarget());
-        assertTrue(stack.shouldIgnoreInput());
+        assertTrue(rootTask.shouldIgnoreInput());
     }
 
     @Test
@@ -521,7 +524,7 @@ public class WindowStateTests extends WindowTestsBase {
         matrix.mapPoints(curSurfacePos);
         verify(t).setPosition(eq(app.mSurfaceControl), eq(curSurfacePos[0]), eq(curSurfacePos[1]));
 
-        app.finishSeamlessRotation(false /* timeout */);
+        app.finishSeamlessRotation(t);
         assertFalse(app.mSeamlesslyRotated);
         assertNull(app.mPendingSeamlessRotate);
 
@@ -875,5 +878,31 @@ public class WindowStateTests extends WindowTestsBase {
         assertTrue(app.isReadyToDispatchInsetsState());
         mDisplayContent.getInsetsStateController().notifyInsetsChanged();
         verify(app).notifyInsetsChanged();
+    }
+
+    @UseTestDisplay(addWindows = { W_ACTIVITY })
+    @Test
+    public void testUpdateImeControlTargetWhenLeavingMultiWindow() {
+        WindowState app = createWindow(null, TYPE_BASE_APPLICATION,
+                mAppWindow.mToken, "app");
+        mDisplayContent.setRemoteInsetsController(createDisplayWindowInsetsController());
+
+        spyOn(app);
+        mDisplayContent.setImeInputTarget(mAppWindow);
+        mDisplayContent.setImeLayeringTarget(mAppWindow);
+
+        // Simulate entering multi-window mode and verify if the IME control target is remote.
+        app.mActivityRecord.getRootTask().setWindowingMode(WINDOWING_MODE_SPLIT_SCREEN_PRIMARY);
+        assertEquals(WINDOWING_MODE_SPLIT_SCREEN_PRIMARY, app.getWindowingMode());
+        assertEquals(mDisplayContent.mRemoteInsetsControlTarget,
+                mDisplayContent.computeImeControlTarget());
+
+        // Simulate exiting multi-window mode and verify if the IME control target changed
+        // to the app window.
+        spyOn(app.getDisplayContent());
+        app.mActivityRecord.getRootTask().setWindowingMode(WINDOWING_MODE_FULLSCREEN);
+
+        verify(app.getDisplayContent()).updateImeControlTarget();
+        assertEquals(mAppWindow, mDisplayContent.getImeTarget(IME_TARGET_CONTROL).getWindow());
     }
 }

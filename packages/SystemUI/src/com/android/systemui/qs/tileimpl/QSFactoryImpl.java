@@ -14,14 +14,10 @@
 
 package com.android.systemui.qs.tileimpl;
 
-import static com.android.systemui.qs.dagger.QSFlagsModule.QS_LABELS_FLAG;
-
 import android.content.Context;
 import android.os.Build;
 import android.util.Log;
-import android.view.ContextThemeWrapper;
 
-import com.android.systemui.R;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.plugins.qs.QSFactory;
 import com.android.systemui.plugins.qs.QSIconView;
@@ -47,6 +43,7 @@ import com.android.systemui.qs.tiles.LocationTile;
 import com.android.systemui.qs.tiles.MicrophoneToggleTile;
 import com.android.systemui.qs.tiles.NfcTile;
 import com.android.systemui.qs.tiles.NightDisplayTile;
+import com.android.systemui.qs.tiles.QuickAccessWalletTile;
 import com.android.systemui.qs.tiles.ReduceBrightColorsTile;
 import com.android.systemui.qs.tiles.RotationLockTile;
 import com.android.systemui.qs.tiles.ScreenRecordTile;
@@ -57,7 +54,6 @@ import com.android.systemui.qs.tiles.WorkModeTile;
 import com.android.systemui.util.leak.GarbageMonitor;
 
 import javax.inject.Inject;
-import javax.inject.Named;
 import javax.inject.Provider;
 
 import dagger.Lazy;
@@ -93,16 +89,14 @@ public class QSFactoryImpl implements QSFactory {
     private final Provider<MicrophoneToggleTile> mMicrophoneToggleTileProvider;
     private final Provider<DeviceControlsTile> mDeviceControlsTileProvider;
     private final Provider<AlarmTile> mAlarmTileProvider;
+    private final Provider<QuickAccessWalletTile> mQuickAccessWalletTileProvider;
 
     private final Lazy<QSHost> mQsHostLazy;
     private final Provider<CustomTile.Builder> mCustomTileBuilderProvider;
 
-    private final boolean mSideLabels;
-
     @Inject
     public QSFactoryImpl(
             Lazy<QSHost> qsHostLazy,
-            @Named(QS_LABELS_FLAG) boolean useSideLabels,
             Provider<CustomTile.Builder> customTileBuilderProvider,
             Provider<WifiTile> wifiTileProvider,
             Provider<InternetTile> internetTileProvider,
@@ -129,11 +123,10 @@ public class QSFactoryImpl implements QSFactory {
             Provider<CameraToggleTile> cameraToggleTileProvider,
             Provider<MicrophoneToggleTile> microphoneToggleTileProvider,
             Provider<DeviceControlsTile> deviceControlsTileProvider,
-            Provider<AlarmTile> alarmTileProvider) {
+            Provider<AlarmTile> alarmTileProvider,
+            Provider<QuickAccessWalletTile> quickAccessWalletTileProvider) {
         mQsHostLazy = qsHostLazy;
         mCustomTileBuilderProvider = customTileBuilderProvider;
-
-        mSideLabels = useSideLabels;
 
         mWifiTileProvider = wifiTileProvider;
         mInternetTileProvider = internetTileProvider;
@@ -161,6 +154,7 @@ public class QSFactoryImpl implements QSFactory {
         mMicrophoneToggleTileProvider = microphoneToggleTileProvider;
         mDeviceControlsTileProvider = deviceControlsTileProvider;
         mAlarmTileProvider = alarmTileProvider;
+        mQuickAccessWalletTileProvider = quickAccessWalletTileProvider;
     }
 
     public QSTile createTile(String tileSpec) {
@@ -224,6 +218,8 @@ public class QSFactoryImpl implements QSFactory {
                 return mDeviceControlsTileProvider.get();
             case "alarm":
                 return mAlarmTileProvider.get();
+            case "wallet":
+                return mQuickAccessWalletTileProvider.get();
         }
 
         // Custom tiles
@@ -245,15 +241,8 @@ public class QSFactoryImpl implements QSFactory {
     }
 
     @Override
-    public QSTileView createTileView(QSTile tile, boolean collapsedView) {
-        Context context = new ContextThemeWrapper(mQsHostLazy.get().getContext(), R.style.qs_theme);
+    public QSTileView createTileView(Context context, QSTile tile, boolean collapsedView) {
         QSIconView icon = tile.createTileView(context);
-        if (collapsedView) {
-            return new QSTileBaseView(context, icon, collapsedView);
-        } else if (mSideLabels) {
-            return new QSTileViewHorizontal(context, icon);
-        } else {
-            return new com.android.systemui.qs.tileimpl.QSTileView(context, icon);
-        }
+        return new QSTileViewImpl(context, icon, collapsedView);
     }
 }

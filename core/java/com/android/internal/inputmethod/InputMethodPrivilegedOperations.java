@@ -18,6 +18,7 @@ package com.android.internal.inputmethod;
 
 import android.annotation.AnyThread;
 import android.annotation.DrawableRes;
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.net.Uri;
 import android.os.IBinder;
@@ -27,6 +28,8 @@ import android.view.View;
 import android.view.inputmethod.InputMethodSubtype;
 
 import com.android.internal.annotations.GuardedBy;
+
+import java.util.Objects;
 
 /**
  * A utility class to take care of boilerplate code around IPCs.
@@ -47,7 +50,7 @@ public final class InputMethodPrivilegedOperations {
          * @param privOps Binder interface to be set
          */
         @AnyThread
-        public synchronized void set(IInputMethodPrivilegedOperations privOps) {
+        public synchronized void set(@NonNull IInputMethodPrivilegedOperations privOps) {
             if (mPrivOps != null) {
                 throw new IllegalStateException(
                         "IInputMethodPrivilegedOperations must be set at most once."
@@ -90,13 +93,13 @@ public final class InputMethodPrivilegedOperations {
      * @param privOps Binder interface to be set
      */
     @AnyThread
-    public void set(IInputMethodPrivilegedOperations privOps) {
+    public void set(@NonNull IInputMethodPrivilegedOperations privOps) {
+        Objects.requireNonNull(privOps, "privOps must not be null");
         mOps.set(privOps);
     }
 
     /**
-     * Calls {@link IInputMethodPrivilegedOperations#setImeWindowStatus(int, int,
-     * IVoidResultCallback)}.
+     * Calls {@link IInputMethodPrivilegedOperations#setImeWindowStatusAsync(int, int}.
      *
      * @param vis visibility flags
      * @param backDisposition disposition flags
@@ -107,36 +110,31 @@ public final class InputMethodPrivilegedOperations {
      * @see android.inputmethodservice.InputMethodService#BACK_DISPOSITION_ADJUST_NOTHING
      */
     @AnyThread
-    public void setImeWindowStatus(int vis, int backDisposition) {
+    public void setImeWindowStatusAsync(int vis, int backDisposition) {
         final IInputMethodPrivilegedOperations ops = mOps.getAndWarnIfNull();
         if (ops == null) {
             return;
         }
         try {
-            final Completable.Void value = Completable.createVoid();
-            ops.setImeWindowStatus(vis, backDisposition, ResultCallbacks.of(value));
-            Completable.getResult(value);
+            ops.setImeWindowStatusAsync(vis, backDisposition);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
     }
 
     /**
-     * Calls {@link IInputMethodPrivilegedOperations#reportStartInput(IBinder,
-     * IVoidResultCallback)}.
+     * Calls {@link IInputMethodPrivilegedOperations#reportStartInputAsync(IBinder)}.
      *
      * @param startInputToken {@link IBinder} token to distinguish startInput session
      */
     @AnyThread
-    public void reportStartInput(IBinder startInputToken) {
+    public void reportStartInputAsync(IBinder startInputToken) {
         final IInputMethodPrivilegedOperations ops = mOps.getAndWarnIfNull();
         if (ops == null) {
             return;
         }
         try {
-            final Completable.Void value = Completable.createVoid();
-            ops.reportStartInput(startInputToken, ResultCallbacks.of(value));
-            Completable.getResult(value);
+            ops.reportStartInputAsync(startInputToken);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -171,43 +169,37 @@ public final class InputMethodPrivilegedOperations {
     }
 
     /**
-     * Calls {@link IInputMethodPrivilegedOperations#reportFullscreenMode(boolean,
-     * IVoidResultCallback)}.
+     * Calls {@link IInputMethodPrivilegedOperations#reportFullscreenModeAsync(boolean)}.
      *
      * @param fullscreen {@code true} if the IME enters full screen mode
      */
     @AnyThread
-    public void reportFullscreenMode(boolean fullscreen) {
+    public void reportFullscreenModeAsync(boolean fullscreen) {
         final IInputMethodPrivilegedOperations ops = mOps.getAndWarnIfNull();
         if (ops == null) {
             return;
         }
         try {
-            final Completable.Void value = Completable.createVoid();
-            ops.reportFullscreenMode(fullscreen, ResultCallbacks.of(value));
-            Completable.getResult(value);
+            ops.reportFullscreenModeAsync(fullscreen);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
     }
 
     /**
-     * Calls {@link IInputMethodPrivilegedOperations#updateStatusIcon(String, int,
-     * IVoidResultCallback)}.
+     * Calls {@link IInputMethodPrivilegedOperations#updateStatusIconAsync(String, int)}.
      *
      * @param packageName package name from which the status icon should be loaded
      * @param iconResId resource ID of the icon to be loaded
      */
     @AnyThread
-    public void updateStatusIcon(String packageName, @DrawableRes int iconResId) {
+    public void updateStatusIconAsync(String packageName, @DrawableRes int iconResId) {
         final IInputMethodPrivilegedOperations ops = mOps.getAndWarnIfNull();
         if (ops == null) {
             return;
         }
         try {
-            final Completable.Void value = Completable.createVoid();
-            ops.updateStatusIcon(packageName, iconResId, ResultCallbacks.of(value));
-            Completable.getResult(value);
+            ops.updateStatusIconAsync(packageName, iconResId);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -367,26 +359,23 @@ public final class InputMethodPrivilegedOperations {
     }
 
     /**
-     * Calls {@link IInputMethodPrivilegedOperations#notifyUserAction(IVoidResultCallback)}
+     * Calls {@link IInputMethodPrivilegedOperations#notifyUserActionAsync()}
      */
     @AnyThread
-    public void notifyUserAction() {
+    public void notifyUserActionAsync() {
         final IInputMethodPrivilegedOperations ops = mOps.getAndWarnIfNull();
         if (ops == null) {
             return;
         }
         try {
-            final Completable.Void value = Completable.createVoid();
-            ops.notifyUserAction(ResultCallbacks.of(value));
-            Completable.getResult(value);
+            ops.notifyUserActionAsync();
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
     }
 
     /**
-     * Calls {@link IInputMethodPrivilegedOperations#applyImeVisibility(IBinder, boolean,
-     * IVoidResultCallback)}.
+     * Calls {@link IInputMethodPrivilegedOperations#applyImeVisibilityAsync(IBinder, boolean)}.
      *
      * @param showOrHideInputToken placeholder token that maps to window requesting
      *        {@link android.view.inputmethod.InputMethodManager#showSoftInput(View, int)} or
@@ -395,15 +384,13 @@ public final class InputMethodPrivilegedOperations {
      * @param setVisible {@code true} to set IME visible, else hidden.
      */
     @AnyThread
-    public void applyImeVisibility(IBinder showOrHideInputToken, boolean setVisible) {
+    public void applyImeVisibilityAsync(IBinder showOrHideInputToken, boolean setVisible) {
         final IInputMethodPrivilegedOperations ops = mOps.getAndWarnIfNull();
         if (ops == null) {
             return;
         }
         try {
-            final Completable.Void value = Completable.createVoid();
-            ops.applyImeVisibility(showOrHideInputToken, setVisible, ResultCallbacks.of(value));
-            Completable.getResult(value);
+            ops.applyImeVisibilityAsync(showOrHideInputToken, setVisible);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

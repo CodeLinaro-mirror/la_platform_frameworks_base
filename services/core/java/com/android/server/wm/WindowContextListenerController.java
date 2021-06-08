@@ -33,6 +33,7 @@ import android.os.RemoteException;
 import android.util.ArrayMap;
 import android.view.View;
 import android.view.WindowManager.LayoutParams.WindowType;
+import android.window.WindowContext;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.protolog.common.ProtoLog;
@@ -40,22 +41,21 @@ import com.android.internal.protolog.common.ProtoLog;
 import java.util.Objects;
 
 /**
- * A controller to register/unregister {@link WindowContainerListener} for
- * {@link android.app.WindowContext}.
+ * A controller to register/unregister {@link WindowContainerListener} for {@link WindowContext}.
  *
  * <ul>
- *   <li>When a {@link android.app.WindowContext} is created, it registers the listener via
+ *   <li>When a {@link WindowContext} is created, it registers the listener via
  *     {@link WindowManagerService#registerWindowContextListener(IBinder, int, int, Bundle)}
  *     automatically.</li>
- *   <li>When the {@link android.app.WindowContext} adds the first window to the screen via
+ *   <li>When the {@link WindowContext} adds the first window to the screen via
  *     {@link android.view.WindowManager#addView(View, android.view.ViewGroup.LayoutParams)},
  *     {@link WindowManagerService} then updates the {@link WindowContextListenerImpl} to listen
  *     to corresponding {@link WindowToken} via this controller.</li>
- *   <li>When the {@link android.app.WindowContext} is GCed, it unregisters the previously
+ *   <li>When the {@link WindowContext} is GCed, it unregisters the previously
  *     registered listener via
  *     {@link WindowManagerService#unregisterWindowContextListener(IBinder)}.
  *     {@link WindowManagerService} is also responsible for removing the
- *     {@link android.app.WindowContext} created {@link WindowToken}.</li>
+ *     {@link WindowContext} created {@link WindowToken}.</li>
  * </ul>
  * <p>Note that the listener may be removed earlier than the
  * {@link #unregisterWindowContainerListener(IBinder)} if the listened {@link WindowContainer} was
@@ -103,7 +103,11 @@ class WindowContextListenerController {
         listener.unregister();
     }
 
-    boolean assertCallerCanRemoveListener(IBinder clientToken, boolean callerCanManageAppTokens,
+    /**
+     * Verifies if the caller is allowed to do the operation to the listener specified by
+     * {@code clientToken}.
+     */
+    boolean assertCallerCanModifyListener(IBinder clientToken, boolean callerCanManageAppTokens,
             int callingUid) {
         final WindowContextListenerImpl listener = mListeners.get(clientToken);
         if (listener == null) {
@@ -227,7 +231,7 @@ class WindowContextListenerController {
         }
 
         @Override
-        public void onRequestedOverrideConfigurationChanged(Configuration overrideConfiguration) {
+        public void onMergedOverrideConfigurationChanged(Configuration mergedOverrideConfig) {
             reportConfigToWindowTokenClient();
         }
 
@@ -266,6 +270,21 @@ class WindowContextListenerController {
         public void onRemoved() {
             if (mDeathRecipient == null) {
                 throw new IllegalStateException("Invalid client token: " + mClientToken);
+            }
+            final WindowToken windowToken = mContainer.asWindowToken();
+            if (windowToken != null && windowToken.isFromClient()) {
+                // If the WindowContext created WindowToken is removed by
+                // WMS#postWindowRemoveCleanupLocked, the WindowContext should switch back to
+                // listen to previous associated DisplayArea.
+                final DisplayContent dc = windowToken.mWmService.mRoot
+                        .getDisplayContent(mLastReportedDisplay);
+                // If we cannot obtain the DisplayContent, the DisplayContent may also be removed.
+                // We should proceed the removal process.
+                if (dc != null) {
+                    final DisplayArea da = dc.findAreaForToken(windowToken);
+                    updateContainer(da);
+                    return;
+                }
             }
             mDeathRecipient.unlinkToDeath();
             IWindowToken windowTokenClient = IWindowToken.Stub.asInterface(mClientToken);

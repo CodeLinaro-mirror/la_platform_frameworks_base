@@ -20,6 +20,8 @@ import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.BRIGHT
 import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.BRIGHTLINE_FALSING_ZIGZAG_X_SECONDARY_DEVIANCE;
 import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.BRIGHTLINE_FALSING_ZIGZAG_Y_PRIMARY_DEVIANCE;
 import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.BRIGHTLINE_FALSING_ZIGZAG_Y_SECONDARY_DEVIANCE;
+import static com.android.systemui.classifier.Classifier.BRIGHTNESS_SLIDER;
+import static com.android.systemui.classifier.Classifier.SHADE_DRAG;
 
 import android.graphics.Point;
 import android.provider.DeviceConfig;
@@ -84,7 +86,13 @@ class ZigZagClassifier extends FalsingClassifier {
     }
 
     @Override
-    Result calculateFalsingResult(double historyPenalty, double historyConfidence) {
+    Result calculateFalsingResult(
+            @Classifier.InteractionType int interactionType,
+            double historyBelief, double historyConfidence) {
+        if (interactionType == BRIGHTNESS_SLIDER || interactionType == SHADE_DRAG) {
+            return Result.passed(0);
+        }
+
         List<MotionEvent> motionEvents = getRecentMotionEvents();
         // Rotate horizontal gestures to be horizontal between their first and last point.
         // Rotate vertical gestures to be vertical between their first and last point.
@@ -156,7 +164,7 @@ class ZigZagClassifier extends FalsingClassifier {
         logDebug("Straightness Deviance: (" + devianceX + "," + devianceY + ") vs "
                 + "(" + maxXDeviance + "," + maxYDeviance + ")");
         return devianceX > maxXDeviance || devianceY > maxYDeviance
-            ? Result.falsed(0.5, getReason()) : Result.passed(0.5);
+            ? falsed(0.5, getReason()) : Result.passed(0.5);
     }
 
     private String getReason() {

@@ -51,12 +51,14 @@ java_defaults {
 
 android_test {
     name: "FrameworksNetTests",
-    defaults: ["FrameworksNetTests-jni-defaults"],
+    defaults: [
+        "framework-connectivity-test-defaults",
+        "FrameworksNetTests-jni-defaults",
+    ],
     srcs: [
         "java/**/*.java",
         "java/**/*.kt",
     ],
-    platform_apis: true,
     test_suites: ["device-tests"],
     certificate: "platform",
     jarjar_rules: "jarjar-rules.txt",
@@ -79,6 +81,7 @@ android_test {
         "android.test.runner",
         "android.test.base",
         "android.test.mock",
+        "ServiceConnectivityResources",
     ],
     jni_libs: [
         "libservice-connectivity",

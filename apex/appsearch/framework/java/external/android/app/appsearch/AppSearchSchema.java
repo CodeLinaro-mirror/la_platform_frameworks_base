@@ -17,12 +17,11 @@
 package android.app.appsearch;
 
 import android.annotation.IntDef;
-import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.annotation.SuppressLint;
 import android.app.appsearch.exceptions.IllegalSchemaException;
 import android.app.appsearch.util.BundleUtil;
+import android.compat.annotation.UnsupportedAppUsage;
 import android.os.Bundle;
 import android.util.ArraySet;
 
@@ -47,14 +46,13 @@ import java.util.Set;
  */
 public final class AppSearchSchema {
     private static final String SCHEMA_TYPE_FIELD = "schemaType";
-    private static final String VERSION_FIELD = "version";
     private static final String PROPERTIES_FIELD = "properties";
 
     private final Bundle mBundle;
 
     /** @hide */
     public AppSearchSchema(@NonNull Bundle bundle) {
-        Preconditions.checkNotNull(bundle);
+        Objects.requireNonNull(bundle);
         mBundle = bundle;
     }
 
@@ -77,11 +75,6 @@ public final class AppSearchSchema {
     @NonNull
     public String getSchemaType() {
         return mBundle.getString(SCHEMA_TYPE_FIELD, "");
-    }
-
-    /** Returns the version of this {@link AppSearchSchema}. */
-    public @IntRange(from = 0) int getVersion() {
-        return mBundle.getInt(VERSION_FIELD);
     }
 
     /**
@@ -116,15 +109,12 @@ public final class AppSearchSchema {
         if (!getSchemaType().equals(otherSchema.getSchemaType())) {
             return false;
         }
-        if (getVersion() != otherSchema.getVersion()) {
-            return false;
-        }
         return getProperties().equals(otherSchema.getProperties());
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(getSchemaType(), getVersion(), getProperties());
+        return Objects.hash(getSchemaType(), getProperties());
     }
 
     /** Builder for {@link AppSearchSchema objects}. */
@@ -132,12 +122,11 @@ public final class AppSearchSchema {
         private final String mSchemaType;
         private final ArrayList<Bundle> mPropertyBundles = new ArrayList<>();
         private final Set<String> mPropertyNames = new ArraySet<>();
-        private int mVersion;
         private boolean mBuilt = false;
 
         /** Creates a new {@link AppSearchSchema.Builder}. */
         public Builder(@NonNull String schemaType) {
-            Preconditions.checkNotNull(schemaType);
+            Objects.requireNonNull(schemaType);
             mSchemaType = schemaType;
         }
 
@@ -145,48 +134,12 @@ public final class AppSearchSchema {
         @NonNull
         public AppSearchSchema.Builder addProperty(@NonNull PropertyConfig propertyConfig) {
             Preconditions.checkState(!mBuilt, "Builder has already been used");
-            Preconditions.checkNotNull(propertyConfig);
+            Objects.requireNonNull(propertyConfig);
             String name = propertyConfig.getName();
             if (!mPropertyNames.add(name)) {
                 throw new IllegalSchemaException("Property defined more than once: " + name);
             }
             mPropertyBundles.add(propertyConfig.mBundle);
-            return this;
-        }
-
-        /**
-         * Sets the version number of the {@link AppSearchSchema}.
-         *
-         * <p>The {@link AppSearchSession} database can only ever hold documents for one version of
-         * a {@link AppSearchSchema} type at a time.
-         *
-         * <p>Setting a version number that is different from the version number of the schema
-         * currently stored in AppSearch will result in AppSearch calling the {@link Migrator}
-         * provided to {@link AppSearchSession#setSchema} to migrate the documents already in
-         * AppSearch from the previous version to the one set in this request. The version number
-         * can be updated without any other changes to the schema.
-         *
-         * <p>The version number can stay the same, increase, or decrease relative to the current
-         * version number of the {@link AppSearchSchema} type that is already stored in the {@link
-         * AppSearchSession} database.
-         *
-         * <p>The version number will be updated if the {@link SetSchemaRequest} contains
-         * backwards-compatible changes or {@link SetSchemaRequest.Builder#setForceOverride} method
-         * is set to {@code true}.
-         *
-         * @param version A non-negative int number represents the version of this {@link
-         *     AppSearchSchema}, default version is 0.
-         * @throws IllegalStateException if the version is negative or the builder has already been
-         *     used.
-         * @see AppSearchSession#setSchema
-         * @see AppSearchSchema.Migrator
-         * @see SetSchemaRequest.Builder#setMigrator
-         */
-        @NonNull
-        public AppSearchSchema.Builder setVersion(@IntRange(from = 0) int version) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
-            Preconditions.checkArgumentNonnegative(version);
-            mVersion = version;
             return this;
         }
 
@@ -200,7 +153,6 @@ public final class AppSearchSchema {
             Preconditions.checkState(!mBuilt, "Builder has already been used");
             Bundle bundle = new Bundle();
             bundle.putString(AppSearchSchema.SCHEMA_TYPE_FIELD, mSchemaType);
-            bundle.putInt(AppSearchSchema.VERSION_FIELD, mVersion);
             bundle.putParcelableArrayList(AppSearchSchema.PROPERTIES_FIELD, mPropertyBundles);
             mBuilt = true;
             return new AppSearchSchema(bundle);
@@ -295,7 +247,7 @@ public final class AppSearchSchema {
         @Nullable private Integer mHashCode;
 
         PropertyConfig(@NonNull Bundle bundle) {
-            mBundle = Preconditions.checkNotNull(bundle);
+            mBundle = Objects.requireNonNull(bundle);
         }
 
         @Override
@@ -309,7 +261,11 @@ public final class AppSearchSchema {
             return mBundle.getString(NAME_FIELD, "");
         }
 
-        /** Returns the type of data the property contains (e.g. string, int, bytes, etc). */
+        /**
+         * Returns the type of data the property contains (e.g. string, int, bytes, etc).
+         *
+         * @hide
+         */
         public @DataType int getDataType() {
             return mBundle.getInt(DATA_TYPE_FIELD, -1);
         }
@@ -318,7 +274,7 @@ public final class AppSearchSchema {
          * Returns the cardinality of the property (whether it is optional, required or repeated).
          */
         public @Cardinality int getCardinality() {
-            return mBundle.getInt(CARDINALITY_FIELD, -1);
+            return mBundle.getInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
         }
 
         @Override
@@ -452,11 +408,7 @@ public final class AppSearchSchema {
             return mBundle.getInt(TOKENIZER_TYPE_FIELD);
         }
 
-        /**
-         * Builder for {@link StringPropertyConfig}.
-         *
-         * <p>{@link #setCardinality} must be called or {@link #build} will fail.
-         */
+        /** Builder for {@link StringPropertyConfig}. */
         public static final class Builder {
             private final Bundle mBundle = new Bundle();
             private boolean mBuilt = false;
@@ -465,12 +417,16 @@ public final class AppSearchSchema {
             public Builder(@NonNull String propertyName) {
                 mBundle.putString(NAME_FIELD, propertyName);
                 mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_STRING);
+                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
+                mBundle.putInt(INDEXING_TYPE_FIELD, INDEXING_TYPE_NONE);
+                mBundle.putInt(TOKENIZER_TYPE_FIELD, TOKENIZER_TYPE_NONE);
             }
 
             /**
              * The cardinality of the property (whether it is optional, required or repeated).
              *
-             * <p>This property must be set.
+             * <p>If this method is not called, the default cardinality is {@link
+             * PropertyConfig#CARDINALITY_OPTIONAL}.
              */
             @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
             @NonNull
@@ -484,6 +440,9 @@ public final class AppSearchSchema {
 
             /**
              * Configures how a property should be indexed so that it can be retrieved by queries.
+             *
+             * <p>If this method is not called, the default indexing type is {@link
+             * StringPropertyConfig#INDEXING_TYPE_NONE}, so that it cannot be matched by queries.
              */
             @NonNull
             public StringPropertyConfig.Builder setIndexingType(@IndexingType int indexingType) {
@@ -494,7 +453,17 @@ public final class AppSearchSchema {
                 return this;
             }
 
-            /** Configures how this property should be tokenized (split into words). */
+            /**
+             * Configures how this property should be tokenized (split into words).
+             *
+             * <p>If this method is not called, the default indexing type is {@link
+             * StringPropertyConfig#TOKENIZER_TYPE_NONE}, so that it is not tokenized.
+             *
+             * <p>This method must be called with a value other than {@link
+             * StringPropertyConfig#TOKENIZER_TYPE_NONE} if the property is indexed (i.e. if {@link
+             * #setIndexingType} has been called with a value other than {@link
+             * StringPropertyConfig#INDEXING_TYPE_NONE}).
+             */
             @NonNull
             public StringPropertyConfig.Builder setTokenizerType(@TokenizerType int tokenizerType) {
                 Preconditions.checkState(!mBuilt, "Builder has already been used");
@@ -509,16 +478,11 @@ public final class AppSearchSchema {
              *
              * <p>After calling this method, the builder must no longer be used.
              *
-             * @throws IllegalSchemaException if the property is not correctly populated
+             * @throws IllegalStateException if the builder has already been used
              */
             @NonNull
             public StringPropertyConfig build() {
                 Preconditions.checkState(!mBuilt, "Builder has already been used");
-                // TODO(b/147692920): Send the schema to Icing Lib for official validation, instead
-                //     of partially reimplementing some of the validation Icing does here.
-                if (!mBundle.containsKey(CARDINALITY_FIELD)) {
-                    throw new IllegalSchemaException("Missing field: cardinality");
-                }
                 mBuilt = true;
                 return new StringPropertyConfig(mBundle);
             }
@@ -531,11 +495,7 @@ public final class AppSearchSchema {
             super(bundle);
         }
 
-        /**
-         * Builder for {@link Int64PropertyConfig}.
-         *
-         * <p>{@link #setCardinality} must be called or {@link #build} will fail.
-         */
+        /** Builder for {@link Int64PropertyConfig}. */
         public static final class Builder {
             private final Bundle mBundle = new Bundle();
             private boolean mBuilt = false;
@@ -544,12 +504,14 @@ public final class AppSearchSchema {
             public Builder(@NonNull String propertyName) {
                 mBundle.putString(NAME_FIELD, propertyName);
                 mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_INT64);
+                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
             }
 
             /**
              * The cardinality of the property (whether it is optional, required or repeated).
              *
-             * <p>This property must be set.
+             * <p>If this method is not called, the default cardinality is {@link
+             * PropertyConfig#CARDINALITY_OPTIONAL}.
              */
             @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
             @NonNull
@@ -566,14 +528,11 @@ public final class AppSearchSchema {
              *
              * <p>After calling this method, the builder must no longer be used.
              *
-             * @throws IllegalSchemaException if the property is not correctly populated
+             * @throws IllegalStateException if the builder has already been used
              */
             @NonNull
             public Int64PropertyConfig build() {
                 Preconditions.checkState(!mBuilt, "Builder has already been used");
-                if (!mBundle.containsKey(CARDINALITY_FIELD)) {
-                    throw new IllegalSchemaException("Missing field: cardinality");
-                }
                 mBuilt = true;
                 return new Int64PropertyConfig(mBundle);
             }
@@ -586,11 +545,7 @@ public final class AppSearchSchema {
             super(bundle);
         }
 
-        /**
-         * Builder for {@link DoublePropertyConfig}.
-         *
-         * <p>{@link #setCardinality} must be called or {@link #build} will fail.
-         */
+        /** Builder for {@link DoublePropertyConfig}. */
         public static final class Builder {
             private final Bundle mBundle = new Bundle();
             private boolean mBuilt = false;
@@ -599,12 +554,14 @@ public final class AppSearchSchema {
             public Builder(@NonNull String propertyName) {
                 mBundle.putString(NAME_FIELD, propertyName);
                 mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_DOUBLE);
+                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
             }
 
             /**
              * The cardinality of the property (whether it is optional, required or repeated).
              *
-             * <p>This property must be set.
+             * <p>If this method is not called, the default cardinality is {@link
+             * PropertyConfig#CARDINALITY_OPTIONAL}.
              */
             @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
             @NonNull
@@ -621,14 +578,11 @@ public final class AppSearchSchema {
              *
              * <p>After calling this method, the builder must no longer be used.
              *
-             * @throws IllegalSchemaException if the property is not correctly populated
+             * @throws IllegalStateException if the builder has already been used
              */
             @NonNull
             public DoublePropertyConfig build() {
                 Preconditions.checkState(!mBuilt, "Builder has already been used");
-                if (!mBundle.containsKey(CARDINALITY_FIELD)) {
-                    throw new IllegalSchemaException("Missing field: cardinality");
-                }
                 mBuilt = true;
                 return new DoublePropertyConfig(mBundle);
             }
@@ -641,11 +595,7 @@ public final class AppSearchSchema {
             super(bundle);
         }
 
-        /**
-         * Builder for {@link BooleanPropertyConfig}.
-         *
-         * <p>{@link #setCardinality} must be called or {@link #build} will fail.
-         */
+        /** Builder for {@link BooleanPropertyConfig}. */
         public static final class Builder {
             private final Bundle mBundle = new Bundle();
             private boolean mBuilt = false;
@@ -654,12 +604,14 @@ public final class AppSearchSchema {
             public Builder(@NonNull String propertyName) {
                 mBundle.putString(NAME_FIELD, propertyName);
                 mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_BOOLEAN);
+                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
             }
 
             /**
              * The cardinality of the property (whether it is optional, required or repeated).
              *
-             * <p>This property must be set.
+             * <p>If this method is not called, the default cardinality is {@link
+             * PropertyConfig#CARDINALITY_OPTIONAL}.
              */
             @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
             @NonNull
@@ -676,14 +628,11 @@ public final class AppSearchSchema {
              *
              * <p>After calling this method, the builder must no longer be used.
              *
-             * @throws IllegalSchemaException if the property is not correctly populated
+             * @throws IllegalStateException if the builder has already been used
              */
             @NonNull
             public BooleanPropertyConfig build() {
                 Preconditions.checkState(!mBuilt, "Builder has already been used");
-                if (!mBundle.containsKey(CARDINALITY_FIELD)) {
-                    throw new IllegalSchemaException("Missing field: cardinality");
-                }
                 mBuilt = true;
                 return new BooleanPropertyConfig(mBundle);
             }
@@ -696,11 +645,7 @@ public final class AppSearchSchema {
             super(bundle);
         }
 
-        /**
-         * Builder for {@link BytesPropertyConfig}.
-         *
-         * <p>{@link #setCardinality} must be called or {@link #build} will fail.
-         */
+        /** Builder for {@link BytesPropertyConfig}. */
         public static final class Builder {
             private final Bundle mBundle = new Bundle();
             private boolean mBuilt = false;
@@ -709,12 +654,14 @@ public final class AppSearchSchema {
             public Builder(@NonNull String propertyName) {
                 mBundle.putString(NAME_FIELD, propertyName);
                 mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_BYTES);
+                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
             }
 
             /**
              * The cardinality of the property (whether it is optional, required or repeated).
              *
-             * <p>This property must be set.
+             * <p>If this method is not called, the default cardinality is {@link
+             * PropertyConfig#CARDINALITY_OPTIONAL}.
              */
             @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
             @NonNull
@@ -731,14 +678,11 @@ public final class AppSearchSchema {
              *
              * <p>After calling this method, the builder must no longer be used.
              *
-             * @throws IllegalSchemaException if the property is not correctly populated
+             * @throws IllegalStateException if the builder has already been used
              */
             @NonNull
             public BytesPropertyConfig build() {
                 Preconditions.checkState(!mBuilt, "Builder has already been used");
-                if (!mBundle.containsKey(CARDINALITY_FIELD)) {
-                    throw new IllegalSchemaException("Missing field: cardinality");
-                }
                 mBuilt = true;
                 return new BytesPropertyConfig(mBundle);
             }
@@ -757,7 +701,7 @@ public final class AppSearchSchema {
         /** Returns the logical schema-type of the contents of this document property. */
         @NonNull
         public String getSchemaType() {
-            return Preconditions.checkNotNull(mBundle.getString(SCHEMA_TYPE_FIELD));
+            return Objects.requireNonNull(mBundle.getString(SCHEMA_TYPE_FIELD));
         }
 
         /**
@@ -767,7 +711,7 @@ public final class AppSearchSchema {
          * <p>If false, the nested document's properties are not indexed regardless of its own
          * schema.
          */
-        public boolean isIndexNestedProperties() {
+        public boolean shouldIndexNestedProperties() {
             return mBundle.getBoolean(INDEX_NESTED_PROPERTIES_FIELD);
         }
 
@@ -786,21 +730,44 @@ public final class AppSearchSchema {
             private final Bundle mBundle = new Bundle();
             private boolean mBuilt = false;
 
-            /** Creates a new {@link DocumentPropertyConfig.Builder}. */
-            public Builder(@NonNull String propertyName) {
+            /**
+             * Creates a new {@link DocumentPropertyConfig.Builder}.
+             *
+             * @param propertyName The logical name of the property in the schema, which will be
+             *     used as the key for this property in {@link
+             *     GenericDocument.Builder#setPropertyDocument}.
+             * @param schemaType The type of documents which will be stored in this property.
+             *     Documents of different types cannot be mixed into a single property.
+             */
+            public Builder(@NonNull String propertyName, @NonNull String schemaType) {
                 mBundle.putString(NAME_FIELD, propertyName);
                 mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_DOCUMENT);
+                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
+                mBundle.putBoolean(INDEX_NESTED_PROPERTIES_FIELD, false);
+                mBundle.putString(SCHEMA_TYPE_FIELD, schemaType);
             }
 
             /**
-             * The logical schema-type of the contents of this property.
-             *
-             * <p>This property must be set.
+             * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+             * @hide
              */
+            @Deprecated
+            @UnsupportedAppUsage
+            public Builder(@NonNull String propertyName) {
+                mBundle.putString(NAME_FIELD, propertyName);
+                mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_DOCUMENT);
+                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
+                mBundle.putBoolean(INDEX_NESTED_PROPERTIES_FIELD, false);
+            }
+
+            /**
+             * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+             * @hide
+             */
+            @Deprecated
+            @UnsupportedAppUsage
             @NonNull
-            public DocumentPropertyConfig.Builder setSchemaType(@NonNull String schemaType) {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
-                Preconditions.checkNotNull(schemaType);
+            public Builder setSchemaType(@NonNull String schemaType) {
                 mBundle.putString(SCHEMA_TYPE_FIELD, schemaType);
                 return this;
             }
@@ -808,7 +775,8 @@ public final class AppSearchSchema {
             /**
              * The cardinality of the property (whether it is optional, required or repeated).
              *
-             * <p>This property must be set.
+             * <p>If this method is not called, the default cardinality is {@link
+             * PropertyConfig#CARDINALITY_OPTIONAL}.
              */
             @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
             @NonNull
@@ -828,7 +796,7 @@ public final class AppSearchSchema {
              * schema.
              */
             @NonNull
-            public DocumentPropertyConfig.Builder setIndexNestedProperties(
+            public DocumentPropertyConfig.Builder setShouldIndexNestedProperties(
                     boolean indexNestedProperties) {
                 Preconditions.checkState(!mBuilt, "Builder has already been used");
                 mBundle.putBoolean(INDEX_NESTED_PROPERTIES_FIELD, indexNestedProperties);
@@ -836,64 +804,31 @@ public final class AppSearchSchema {
             }
 
             /**
+             * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+             * @hide
+             */
+            @Deprecated
+            @UnsupportedAppUsage
+            @NonNull
+            public DocumentPropertyConfig.Builder setIndexNestedProperties(
+                    boolean indexNestedProperties) {
+                return setShouldIndexNestedProperties(indexNestedProperties);
+            }
+
+            /**
              * Constructs a new {@link PropertyConfig} from the contents of this builder.
              *
              * <p>After calling this method, the builder must no longer be used.
              *
-             * @throws IllegalSchemaException If the property is not correctly populated (e.g.
-             *     missing {@code dataType}).
+             * @throws IllegalStateException if the builder has already been used (e.g. missing
+             *     {@code dataType}).
              */
             @NonNull
             public DocumentPropertyConfig build() {
                 Preconditions.checkState(!mBuilt, "Builder has already been used");
-                if (mBundle.getString(SCHEMA_TYPE_FIELD, "").isEmpty()) {
-                    throw new IllegalSchemaException("Missing field: schemaType");
-                }
-                if (!mBundle.containsKey(CARDINALITY_FIELD)) {
-                    throw new IllegalSchemaException("Missing field: cardinality");
-                }
                 mBuilt = true;
                 return new DocumentPropertyConfig(mBundle);
             }
         }
-    }
-
-    /**
-     * A migrator class to translate {@link GenericDocument} from different version of {@link
-     * AppSearchSchema}
-     */
-    public interface Migrator {
-
-        /**
-         * Migrates {@link GenericDocument} to a newer version of {@link AppSearchSchema}.
-         *
-         * <p>This methods will be invoked only if the {@link SetSchemaRequest} is setting a higher
-         * version number than the current {@link AppSearchSchema} saved in AppSearch.
-         *
-         * @param currentVersion The current version of the document's schema.
-         * @param targetVersion The final version that documents need to be migrated to.
-         * @param helper The helper class could help to query all documents need to be migrated.
-         */
-        // This method will be overridden by users, allow them to throw any customer Exceptions.
-        @SuppressLint("GenericException")
-        default void onUpgrade(
-                int currentVersion, int targetVersion, @NonNull AppSearchMigrationHelper helper)
-                throws Exception {}
-
-        /**
-         * Migrates {@link GenericDocument} to an older version of {@link AppSearchSchema}.
-         *
-         * <p>The methods will be invoked only if the {@link SetSchemaRequest} is setting a higher
-         * version number than the current {@link AppSearchSchema} saved in AppSearch.
-         *
-         * @param currentVersion The current version of the document's schema.
-         * @param targetVersion The final version that documents need to be migrated to.
-         * @param helper The helper class could help to query all documents need to be migrated.
-         */
-        // This method will be overridden by users, allow them to throw any customer Exceptions.
-        @SuppressLint("GenericException")
-        default void onDowngrade(
-                int currentVersion, int targetVersion, @NonNull AppSearchMigrationHelper helper)
-                throws Exception {}
     }
 }

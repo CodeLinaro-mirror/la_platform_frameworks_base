@@ -18,16 +18,13 @@ package com.android.wm.shell.flicker.pip
 
 import android.platform.test.annotations.Presubmit
 import android.view.Surface
+import androidx.test.filters.FlakyTest
 import androidx.test.filters.RequiresDevice
 import com.android.server.wm.flicker.FlickerParametersRunnerFactory
 import com.android.server.wm.flicker.FlickerTestParameter
 import com.android.server.wm.flicker.FlickerTestParameterFactory
 import com.android.server.wm.flicker.dsl.FlickerBuilder
 import com.android.server.wm.flicker.helpers.WindowUtils
-import com.android.server.wm.flicker.navBarLayerIsAlwaysVisible
-import com.android.server.wm.flicker.navBarWindowIsAlwaysVisible
-import com.android.server.wm.flicker.statusBarLayerIsAlwaysVisible
-import com.android.server.wm.flicker.statusBarWindowIsAlwaysVisible
 import com.android.wm.shell.flicker.helpers.FixedAppHelper
 import com.android.wm.shell.flicker.pip.PipTransition.BroadcastActionTrigger.Companion.ORIENTATION_LANDSCAPE
 import com.android.wm.shell.flicker.pip.PipTransition.BroadcastActionTrigger.Companion.ORIENTATION_PORTRAIT
@@ -78,10 +75,24 @@ class EnterPipToOtherOrientationTest(
                 // Enter PiP, and assert that the PiP is within bounds now that the device is back
                 // in portrait
                 broadcastActionTrigger.doAction(ACTION_ENTER_PIP)
-                wmHelper.waitPipWindowShown()
+                wmHelper.waitFor { it.wmState.hasPipWindow() }
                 wmHelper.waitForAppTransitionIdle()
             }
         }
+
+    @FlakyTest
+    @Test
+    override fun navBarLayerRotatesAndScales() = super.navBarLayerRotatesAndScales()
+
+    @FlakyTest
+    @Test
+    override fun statusBarLayerRotatesScales() = super.statusBarLayerRotatesScales()
+
+    @FlakyTest
+    @Test
+    override fun noUncoveredRegions() {
+        super.noUncoveredRegions()
+    }
 
     @Presubmit
     @Test
@@ -109,17 +120,9 @@ class EnterPipToOtherOrientationTest(
 
     @Presubmit
     @Test
-    fun navBarWindowIsAlwaysVisible() = testSpec.navBarWindowIsAlwaysVisible()
-
-    @Presubmit
-    @Test
-    fun statusBarWindowIsAlwaysVisible() = testSpec.statusBarWindowIsAlwaysVisible()
-
-    @Presubmit
-    @Test
     fun pipAppLayerHidesTestApp() {
         testSpec.assertLayersStart {
-            coversExactly(startingBounds, pipApp.defaultWindowName)
+            visibleRegion(pipApp.defaultWindowName).coversExactly(startingBounds)
             isInvisible(testApp.defaultWindowName)
         }
     }
@@ -128,17 +131,9 @@ class EnterPipToOtherOrientationTest(
     @Test
     fun testAppLayerCoversFullScreen() {
         testSpec.assertLayersEnd {
-            coversExactly(endingBounds, testApp.defaultWindowName)
+            visibleRegion(testApp.defaultWindowName).coversExactly(endingBounds)
         }
     }
-
-    @Presubmit
-    @Test
-    fun navBarLayerIsAlwaysVisible() = testSpec.navBarLayerIsAlwaysVisible()
-
-    @Presubmit
-    @Test
-    fun statusBarLayerIsAlwaysVisible() = testSpec.statusBarLayerIsAlwaysVisible()
 
     companion object {
         @Parameterized.Parameters(name = "{0}")

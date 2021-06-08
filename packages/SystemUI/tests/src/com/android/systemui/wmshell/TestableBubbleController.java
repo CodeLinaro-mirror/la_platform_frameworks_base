@@ -29,8 +29,10 @@ import com.android.wm.shell.bubbles.BubbleData;
 import com.android.wm.shell.bubbles.BubbleDataRepository;
 import com.android.wm.shell.bubbles.BubbleLogger;
 import com.android.wm.shell.bubbles.BubblePositioner;
+import com.android.wm.shell.common.DisplayController;
 import com.android.wm.shell.common.FloatingContentCoordinator;
 import com.android.wm.shell.common.ShellExecutor;
+import com.android.wm.shell.common.TaskStackListenerImpl;
 
 /**
  * Testable BubbleController subclass that immediately synchronizes surfaces.
@@ -47,13 +49,17 @@ public class TestableBubbleController extends BubbleController {
             WindowManagerShellWrapper windowManagerShellWrapper,
             LauncherApps launcherApps,
             BubbleLogger bubbleLogger,
+            TaskStackListenerImpl taskStackListener,
             ShellTaskOrganizer shellTaskOrganizer,
             BubblePositioner positioner,
+            DisplayController displayController,
             ShellExecutor shellMainExecutor,
             Handler shellMainHandler) {
         super(context, data, Runnable::run, floatingContentCoordinator, dataRepository,
                 statusBarService, windowManager, windowManagerShellWrapper, launcherApps,
-                bubbleLogger, shellTaskOrganizer, positioner, shellMainExecutor, shellMainHandler);
+                bubbleLogger, taskStackListener, shellTaskOrganizer, positioner, displayController,
+                shellMainExecutor, shellMainHandler);
         setInflateSynchronously(true);
+        initialize();
     }
 }

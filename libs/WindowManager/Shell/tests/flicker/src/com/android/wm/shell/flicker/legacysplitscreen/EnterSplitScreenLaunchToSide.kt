@@ -30,8 +30,7 @@ import com.android.server.wm.flicker.helpers.reopenAppFromOverview
 import com.android.server.wm.flicker.navBarWindowIsAlwaysVisible
 import com.android.server.wm.flicker.startRotation
 import com.android.server.wm.flicker.statusBarWindowIsAlwaysVisible
-import com.android.server.wm.flicker.visibleLayersShownMoreThanOneConsecutiveEntry
-import com.android.server.wm.flicker.visibleWindowsShownMoreThanOneConsecutiveEntry
+import com.android.server.wm.traces.parser.windowmanager.WindowManagerStateHelper
 import com.android.wm.shell.flicker.dockedStackDividerBecomesVisible
 import com.android.wm.shell.flicker.dockedStackPrimaryBoundsIsVisible
 import com.android.wm.shell.flicker.dockedStackSecondaryBoundsIsVisible
@@ -62,6 +61,11 @@ class EnterSplitScreenLaunchToSide(
             }
         }
 
+    override val ignoredWindows: List<String>
+        get() = listOf(LAUNCHER_PACKAGE_NAME, splitScreenApp.defaultWindowName,
+            secondaryApp.defaultWindowName, WindowManagerStateHelper.SPLASH_SCREEN_NAME,
+            WindowManagerStateHelper.SNAPSHOT_WINDOW_NAME)
+
     @FlakyTest(bugId = 169271943)
     @Test
     fun dockedStackPrimaryBoundsIsVisible() =
@@ -79,17 +83,6 @@ class EnterSplitScreenLaunchToSide(
     // b/169271943
     fun dockedStackDividerBecomesVisible() = testSpec.dockedStackDividerBecomesVisible()
 
-    @FlakyTest(bugId = 178447631)
-    @Test
-    // TODO(b/178447631) Remove Splash Screen from white list when flicker lib
-    //                   add a wait for splash screen be gone
-    fun visibleLayersShownMoreThanOneConsecutiveEntry() =
-        testSpec.visibleLayersShownMoreThanOneConsecutiveEntry(
-            listOf(LAUNCHER_PACKAGE_NAME, SPLASH_SCREEN_NAME,
-                splitScreenApp.defaultWindowName,
-                secondaryApp.defaultWindowName)
-        )
-
     @Presubmit
     @Test
     fun appWindowBecomesVisible() = testSpec.appWindowBecomesVisible(secondaryApp.defaultWindowName)
@@ -101,15 +94,6 @@ class EnterSplitScreenLaunchToSide(
     @Presubmit
     @Test
     fun statusBarWindowIsAlwaysVisible() = testSpec.statusBarWindowIsAlwaysVisible()
-
-    @Presubmit
-    @Test
-    fun visibleWindowsShownMoreThanOneConsecutiveEntry() =
-        testSpec.visibleWindowsShownMoreThanOneConsecutiveEntry(
-            listOf(LAUNCHER_PACKAGE_NAME, SPLASH_SCREEN_NAME,
-                splitScreenApp.defaultWindowName,
-                secondaryApp.defaultWindowName)
-        )
 
     companion object {
         @Parameterized.Parameters(name = "{0}")

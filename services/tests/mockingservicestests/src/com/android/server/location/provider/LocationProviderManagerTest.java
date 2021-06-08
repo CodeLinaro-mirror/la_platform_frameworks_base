@@ -61,6 +61,8 @@ import android.location.ILocationListener;
 import android.location.LastLocationRequest;
 import android.location.Location;
 import android.location.LocationManagerInternal;
+import android.location.LocationManagerInternal.LocationTagInfo;
+import android.location.LocationManagerInternal.OnProviderLocationTagsChangeListener;
 import android.location.LocationManagerInternal.ProviderEnabledListener;
 import android.location.LocationRequest;
 import android.location.LocationResult;
@@ -83,7 +85,6 @@ import androidx.test.runner.AndroidJUnit4;
 
 import com.android.server.FgThread;
 import com.android.server.LocalServices;
-import com.android.server.location.eventlog.LocationEventLog;
 import com.android.server.location.injector.FakeUserInfoHelper;
 import com.android.server.location.injector.TestInjector;
 
@@ -91,6 +92,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 
@@ -161,19 +163,17 @@ public class LocationProviderManagerTest {
         doReturn(mPowerManager).when(mContext).getSystemService(PowerManager.class);
         doReturn(mWakeLock).when(mPowerManager).newWakeLock(anyInt(), anyString());
 
-        LocationEventLog eventLog = new LocationEventLog();
-
-        mInjector = new TestInjector(eventLog);
+        mInjector = new TestInjector();
         mInjector.getUserInfoHelper().startUser(OTHER_USER);
 
-        mPassive = new PassiveLocationProviderManager(mContext, mInjector, eventLog);
+        mPassive = new PassiveLocationProviderManager(mContext, mInjector);
         mPassive.startManager();
         mPassive.setRealProvider(new PassiveLocationProvider(mContext));
 
         mProvider = new TestProvider(PROPERTIES, PROVIDER_IDENTITY);
         mProvider.setProviderAllowed(true);
 
-        mManager = new LocationProviderManager(mContext, mInjector, eventLog, NAME, mPassive);
+        mManager = new LocationProviderManager(mContext, mInjector, NAME, mPassive);
         mManager.startManager();
         mManager.setRealProvider(mProvider);
     }
@@ -216,6 +216,21 @@ public class LocationProviderManagerTest {
 
         mManager.setRealProvider(null);
         assertThat(mManager.hasProvider()).isFalse();
+    }
+
+    @Test
+    public void testAttributionTags() {
+        OnProviderLocationTagsChangeListener listener = mock(
+                OnProviderLocationTagsChangeListener.class);
+        mManager.setOnProviderLocationTagsChangeListener(listener);
+
+        mProvider.setExtraAttributionTags(Collections.singleton("extra"));
+
+        ArgumentCaptor<LocationTagInfo> captor = ArgumentCaptor.forClass(LocationTagInfo.class);
+        verify(listener, times(2)).onLocationTagsChanged(captor.capture());
+
+        assertThat(captor.getAllValues().get(0).getTags()).isEmpty();
+        assertThat(captor.getAllValues().get(1).getTags()).containsExactly("extra", "attribution");
     }
 
     @Test

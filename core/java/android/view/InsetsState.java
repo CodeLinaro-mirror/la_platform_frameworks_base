@@ -34,6 +34,7 @@ import static android.view.WindowManager.LayoutParams.TYPE_SYSTEM_ERROR;
 import static android.view.WindowManager.LayoutParams.TYPE_WALLPAPER;
 
 import android.annotation.IntDef;
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.WindowConfiguration;
 import android.graphics.Insets;
@@ -400,7 +401,7 @@ public class InsetsState implements Parcelable {
      * Retrieves the side for a certain {@code insets}. It is required that only one field l/t/r/b
      * is set in order that this method returns a meaningful result.
      */
-    private @InternalInsetsSide int getInsetSide(Insets insets) {
+    static @InternalInsetsSide int getInsetSide(Insets insets) {
         if (Insets.NONE.equals(insets)) {
             return ISIDE_FLOATING;
         }
@@ -808,7 +809,7 @@ public class InsetsState implements Parcelable {
         dest.writeTypedObject(mRoundedCorners, flags);
     }
 
-    public static final @android.annotation.NonNull Creator<InsetsState> CREATOR = new Creator<InsetsState>() {
+    public static final @NonNull Creator<InsetsState> CREATOR = new Creator<InsetsState>() {
 
         public InsetsState createFromParcel(Parcel in) {
             return new InsetsState(in);
@@ -841,6 +842,17 @@ public class InsetsState implements Parcelable {
                 + ", mRoundedCorners=" + mRoundedCorners
                 + ", mSources= { " + joiner
                 + " }";
+    }
+
+    public @NonNull String toSourceVisibilityString() {
+        StringJoiner joiner = new StringJoiner(", ");
+        for (int i = 0; i < SIZE; i++) {
+            InsetsSource source = mSources[i];
+            if (source != null) {
+                joiner.add(typeToString(i) + ": " + (source.isVisible() ? "visible" : "invisible"));
+            }
+        }
+        return joiner.toString();
     }
 }
 

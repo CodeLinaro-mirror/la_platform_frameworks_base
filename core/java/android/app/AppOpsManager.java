@@ -33,6 +33,7 @@ import android.compat.Compatibility;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledAfter;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.content.AttributionSource;
 import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -56,7 +57,7 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.UserManager;
-import android.provider.Settings;
+import android.provider.DeviceConfig;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.LongSparseArray;
@@ -89,6 +90,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -200,8 +202,11 @@ public class AppOpsManager {
     @EnabledAfter(targetSdkVersion = Build.VERSION_CODES.R)
     public static final long SECURITY_EXCEPTION_ON_INVALID_ATTRIBUTION_TAG_CHANGE = 151105954L;
 
+    private static final String FULL_LOG = "privacy_attribution_tag_full_log_enabled";
 
     private static final int MAX_UNFORWARDED_OPS = 10;
+
+    private static Boolean sFullLog = null;
 
     final Context mContext;
 
@@ -1069,6 +1074,10 @@ public class AppOpsManager {
     /** @hide */
     @UnsupportedAppUsage
     public static final int OP_BLUETOOTH_SCAN = AppProtoEnums.APP_OP_BLUETOOTH_SCAN;
+    /** @hide */
+    public static final int OP_BLUETOOTH_CONNECT = AppProtoEnums.APP_OP_BLUETOOTH_CONNECT;
+    /** @hide */
+    public static final int OP_BLUETOOTH_ADVERTISE = AppProtoEnums.APP_OP_BLUETOOTH_ADVERTISE;
     /** @hide Use the BiometricPrompt/BiometricManager APIs. */
     public static final int OP_USE_BIOMETRIC = AppProtoEnums.APP_OP_USE_BIOMETRIC;
     /** @hide Physical activity recognition. */
@@ -1203,9 +1212,42 @@ public class AppOpsManager {
      */
     public static final int OP_COARSE_LOCATION_SOURCE = AppProtoEnums.APP_OP_COARSE_LOCATION_SOURCE;
 
+    /**
+     * Allow apps to create the requests to manage the media files without user confirmation.
+     *
+     * @see android.Manifest.permission#MANAGE_MEDIA
+     * @see android.provider.MediaStore#createDeleteRequest(ContentResolver, Collection)
+     * @see android.provider.MediaStore#createTrashRequest(ContentResolver, Collection, boolean)
+     * @see android.provider.MediaStore#createWriteRequest(ContentResolver, Collection)
+     *
+     * @hide
+     */
+    public static final int OP_MANAGE_MEDIA = AppProtoEnums.APP_OP_MANAGE_MEDIA;
+
+    /** @hide */
+    public static final int OP_UWB_RANGING = AppProtoEnums.APP_OP_UWB_RANGING;
+
+    /**
+     * Activity recognition being accessed by an activity recognition source, which
+     * is a component that already has access since it is the one that detects
+     * activity recognition.
+     *
+     * @hide
+     */
+    public static final int OP_ACTIVITY_RECOGNITION_SOURCE =
+            AppProtoEnums.APP_OP_ACTIVITY_RECOGNITION_SOURCE;
+
+    /**
+     * Incoming phone audio is being recorded
+     *
+     * @hide
+     */
+    public static final int OP_RECORD_INCOMING_PHONE_AUDIO =
+            AppProtoEnums.APP_OP_RECORD_INCOMING_PHONE_AUDIO;
+
     /** @hide */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-    public static final int _NUM_OP = 110;
+    public static final int _NUM_OP = 116;
 
     /** Access to coarse location information. */
     public static final String OPSTR_COARSE_LOCATION = "android:coarse_location";
@@ -1449,11 +1491,16 @@ public class AppOpsManager {
     public static final String OPSTR_START_FOREGROUND = "android:start_foreground";
     /** @hide */
     public static final String OPSTR_BLUETOOTH_SCAN = "android:bluetooth_scan";
+    /** @hide */
+    public static final String OPSTR_BLUETOOTH_CONNECT = "android:bluetooth_connect";
+    /** @hide */
+    public static final String OPSTR_BLUETOOTH_ADVERTISE = "android:bluetooth_advertise";
 
     /** @hide Use the BiometricPrompt/BiometricManager APIs. */
     public static final String OPSTR_USE_BIOMETRIC = "android:use_biometric";
 
     /** @hide Recognize physical activity. */
+    @TestApi
     public static final String OPSTR_ACTIVITY_RECOGNITION = "android:activity_recognition";
 
     /** @hide Financial app read sms. */
@@ -1541,12 +1588,14 @@ public class AppOpsManager {
      *
      * @hide
      */
+    @TestApi
     public static final String OPSTR_PHONE_CALL_MICROPHONE = "android:phone_call_microphone";
     /**
      * Phone call is using camera
      *
      * @hide
      */
+    @TestApi
     public static final String OPSTR_PHONE_CALL_CAMERA = "android:phone_call_camera";
 
     /**
@@ -1602,6 +1651,37 @@ public class AppOpsManager {
      * @hide
      */
     public static final String OPSTR_COARSE_LOCATION_SOURCE = "android:coarse_location_source";
+
+    /**
+     * Allow apps to create the requests to manage the media files without user confirmation.
+     *
+     * @see android.Manifest.permission#MANAGE_MEDIA
+     * @see android.provider.MediaStore#createDeleteRequest(ContentResolver, Collection)
+     * @see android.provider.MediaStore#createTrashRequest(ContentResolver, Collection, boolean)
+     * @see android.provider.MediaStore#createWriteRequest(ContentResolver, Collection)
+     *
+     * @hide
+     */
+    public static final String OPSTR_MANAGE_MEDIA = "android:manage_media";
+    /** @hide */
+    public static final String OPSTR_UWB_RANGING = "android:uwb_ranging";
+
+    /**
+     * Activity recognition being accessed by an activity recognition source, which
+     * is a component that already has access since it is the one that detects
+     * activity recognition.
+     *
+     * @hide
+     */
+    @TestApi
+    public static final String OPSTR_ACTIVITY_RECOGNITION_SOURCE =
+            "android:activity_recognition_source";
+
+    /**
+     * @hide
+     */
+    public static final String OPSTR_RECORD_INCOMING_PHONE_AUDIO =
+            "android:record_incoming_phone_audio";
 
     /** {@link #sAppOpsToNote} not initialized yet for this op */
     private static final byte SHOULD_COLLECT_NOTE_OP_NOT_INITIALIZED = 0;
@@ -1668,6 +1748,11 @@ public class AppOpsManager {
             OP_WRITE_MEDIA_VIDEO,
             OP_READ_MEDIA_IMAGES,
             OP_WRITE_MEDIA_IMAGES,
+            // Nearby devices
+            OP_BLUETOOTH_SCAN,
+            OP_BLUETOOTH_CONNECT,
+            OP_BLUETOOTH_ADVERTISE,
+            OP_UWB_RANGING,
 
             // APPOP PERMISSIONS
             OP_ACCESS_NOTIFICATIONS,
@@ -1684,6 +1769,7 @@ public class AppOpsManager {
             OP_MANAGE_ONGOING_CALLS,
             OP_USE_ICC_AUTH_WITH_DEVICE_IDENTIFIER,
             OP_SCHEDULE_EXACT_ALARM,
+            OP_MANAGE_MEDIA,
     };
 
     /**
@@ -1772,7 +1858,7 @@ public class AppOpsManager {
             OP_ACCEPT_HANDOVER,                 // ACCEPT_HANDOVER
             OP_MANAGE_IPSEC_TUNNELS,            // MANAGE_IPSEC_HANDOVERS
             OP_START_FOREGROUND,                // START_FOREGROUND
-            OP_COARSE_LOCATION,                 // BLUETOOTH_SCAN
+            OP_BLUETOOTH_SCAN,                  // BLUETOOTH_SCAN
             OP_USE_BIOMETRIC,                   // BIOMETRIC
             OP_ACTIVITY_RECOGNITION,            // ACTIVITY_RECOGNITION
             OP_SMS_FINANCIAL_TRANSACTIONS,      // SMS_FINANCIAL_TRANSACTIONS
@@ -1805,6 +1891,12 @@ public class AppOpsManager {
             OP_SCHEDULE_EXACT_ALARM,            // SCHEDULE_EXACT_ALARM
             OP_FINE_LOCATION,                   // OP_FINE_LOCATION_SOURCE
             OP_COARSE_LOCATION,                 // OP_COARSE_LOCATION_SOURCE
+            OP_MANAGE_MEDIA,                    // MANAGE_MEDIA
+            OP_BLUETOOTH_CONNECT,               // OP_BLUETOOTH_CONNECT
+            OP_UWB_RANGING,                     // OP_UWB_RANGING
+            OP_ACTIVITY_RECOGNITION,            // OP_ACTIVITY_RECOGNITION_SOURCE
+            OP_BLUETOOTH_ADVERTISE,             // OP_BLUETOOTH_ADVERTISE
+            OP_RECORD_INCOMING_PHONE_AUDIO,     // OP_RECORD_INCOMING_PHONE_AUDIO
     };
 
     /**
@@ -1921,6 +2013,12 @@ public class AppOpsManager {
             OPSTR_SCHEDULE_EXACT_ALARM,
             OPSTR_FINE_LOCATION_SOURCE,
             OPSTR_COARSE_LOCATION_SOURCE,
+            OPSTR_MANAGE_MEDIA,
+            OPSTR_BLUETOOTH_CONNECT,
+            OPSTR_UWB_RANGING,
+            OPSTR_ACTIVITY_RECOGNITION_SOURCE,
+            OPSTR_BLUETOOTH_ADVERTISE,
+            OPSTR_RECORD_INCOMING_PHONE_AUDIO,
     };
 
     /**
@@ -2038,6 +2136,12 @@ public class AppOpsManager {
             "SCHEDULE_EXACT_ALARM",
             "FINE_LOCATION_SOURCE",
             "COARSE_LOCATION_SOURCE",
+            "MANAGE_MEDIA",
+            "BLUETOOTH_CONNECT",
+            "UWB_RANGING",
+            "ACTIVITY_RECOGNITION_SOURCE",
+            "BLUETOOTH_ADVERTISE",
+            "RECORD_INCOMING_PHONE_AUDIO",
     };
 
     /**
@@ -2123,7 +2227,7 @@ public class AppOpsManager {
             Manifest.permission.ACCEPT_HANDOVER,
             Manifest.permission.MANAGE_IPSEC_TUNNELS,
             Manifest.permission.FOREGROUND_SERVICE,
-            null, // no permission for OP_BLUETOOTH_SCAN
+            Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.USE_BIOMETRIC,
             Manifest.permission.ACTIVITY_RECOGNITION,
             Manifest.permission.SMS_FINANCIAL_TRANSACTIONS,
@@ -2156,6 +2260,12 @@ public class AppOpsManager {
             Manifest.permission.SCHEDULE_EXACT_ALARM,
             null, // no permission for OP_ACCESS_FINE_LOCATION_SOURCE,
             null, // no permission for OP_ACCESS_COARSE_LOCATION_SOURCE,
+            Manifest.permission.MANAGE_MEDIA,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.UWB_RANGING,
+            null, // no permission for OP_ACTIVITY_RECOGNITION_SOURCE,
+            Manifest.permission.BLUETOOTH_ADVERTISE,
+            null, // no permission for OP_RECORD_INCOMING_PHONE_AUDIO,
     };
 
     /**
@@ -2274,6 +2384,12 @@ public class AppOpsManager {
             null, // SCHEDULE_EXACT_ALARM
             null, // ACCESS_FINE_LOCATION_SOURCE
             null, // ACCESS_COARSE_LOCATION_SOURCE
+            null, // MANAGE_MEDIA
+            null, // BLUETOOTH_CONNECT
+            null, // UWB_RANGING
+            null, // ACTIVITY_RECOGNITION_SOURCE
+            null, // BLUETOOTH_ADVERTISE
+            null, // RECORD_INCOMING_PHONE_AUDIO
     };
 
     /**
@@ -2391,6 +2507,12 @@ public class AppOpsManager {
             null, // SCHEDULE_EXACT_ALARM
             null, // ACCESS_FINE_LOCATION_SOURCE
             null, // ACCESS_COARSE_LOCATION_SOURCE
+            null, // MANAGE_MEDIA
+            null, // BLUETOOTH_CONNECT
+            null, // UWB_RANGING
+            null, // ACTIVITY_RECOGNITION_SOURCE
+            null, // BLUETOOTH_ADVERTISE
+            null, // RECORD_INCOMING_PHONE_AUDIO
     };
 
     /**
@@ -2507,6 +2629,12 @@ public class AppOpsManager {
             AppOpsManager.MODE_DEFAULT, // SCHEDULE_EXACT_ALARM
             AppOpsManager.MODE_ALLOWED, // ACCESS_FINE_LOCATION_SOURCE
             AppOpsManager.MODE_ALLOWED, // ACCESS_COARSE_LOCATION_SOURCE
+            AppOpsManager.MODE_DEFAULT, // MANAGE_MEDIA
+            AppOpsManager.MODE_ALLOWED, // BLUETOOTH_CONNECT
+            AppOpsManager.MODE_ALLOWED, // UWB_RANGING
+            AppOpsManager.MODE_ALLOWED, // ACTIVITY_RECOGNITION_SOURCE
+            AppOpsManager.MODE_ALLOWED, // BLUETOOTH_ADVERTISE
+            AppOpsManager.MODE_ALLOWED, // RECORD_INCOMING_PHONE_AUDIO
     };
 
     /**
@@ -2627,6 +2755,12 @@ public class AppOpsManager {
             false, // SCHEDULE_EXACT_ALARM
             false, // ACCESS_FINE_LOCATION_SOURCE
             false, // ACCESS_COARSE_LOCATION_SOURCE
+            false, // MANAGE_MEDIA
+            false, // BLUETOOTH_CONNECT
+            false, // UWB_RANGING
+            false, // ACTIVITY_RECOGNITION_SOURCE
+            false, // BLUETOOTH_ADVERTISE
+            false, // RECORD_INCOMING_PHONE_AUDIO
     };
 
     /**
@@ -2649,14 +2783,24 @@ public class AppOpsManager {
     private static final ThreadLocal<Integer> sBinderThreadCallingUid = new ThreadLocal<>();
 
     /**
-     * If a thread is currently executing a two-way binder transaction, this stores the op-codes of
-     * the app-ops that were noted during this transaction.
+     * Optimization: we need to propagate to IPCs whether the current thread is collecting
+     * app ops but using only the thread local above is too slow as it requires a map lookup
+     * on every IPC. We add this static var that is lockless and stores an OR-ed mask of the
+     * thread id's currently collecting ops, thus reducing the map lookup to a simple bit
+     * operation except the extremely unlikely case when threads with overlapping id bits
+     * execute op collecting ops.
+     */
+    private static volatile long sThreadsListeningForOpNotedInBinderTransaction = 0L;
+
+    /**
+     * If a thread is currently executing a two-way binder transaction, this stores the
+     * ops that were noted blaming any app (the caller, the caller of the caller, etc).
      *
      * @see #getNotedOpCollectionMode
      * @see #collectNotedOpSync
      */
-    private static final ThreadLocal<ArrayMap<String, long[]>> sAppOpsNotedInThisBinderTransaction =
-            new ThreadLocal<>();
+    private static final ThreadLocal<ArrayMap<String, ArrayMap<String, long[]>>>
+            sAppOpsNotedInThisBinderTransaction = new ThreadLocal<>();
 
     /** Whether noting for an appop should be collected */
     private static final @ShouldCollectNoteOp byte[] sAppOpsToNote = new byte[_NUM_OP];
@@ -4589,8 +4733,8 @@ public class AppOpsManager {
     }
 
     /**
-     * Flag for querying app op history: get only aggregate information and no
-     * discrete accesses.
+     * Flag for querying app op history: get only aggregate information (counts of events) and no
+     * discret accesses information - specific accesses with timestamp.
      *
      * @see #getHistoricalOps(HistoricalOpsRequest, Executor, Consumer)
      *
@@ -4601,8 +4745,8 @@ public class AppOpsManager {
     public static final int HISTORY_FLAG_AGGREGATE = 1 << 0;
 
     /**
-     * Flag for querying app op history: get only discrete information and no
-     * aggregate accesses.
+     * Flag for querying app op history: get only discrete access information (only specific
+     * accesses with timestamps) and no aggregate information (counts over time).
      *
      * @see #getHistoricalOps(HistoricalOpsRequest, Executor, Consumer)
      *
@@ -4613,7 +4757,7 @@ public class AppOpsManager {
     public static final int HISTORY_FLAG_DISCRETE = 1 << 1;
 
     /**
-     * Flag for querying app op history: get all types of historical accesses.
+     * Flag for querying app op history: get all types of historical access information.
      *
      * @see #getHistoricalOps(HistoricalOpsRequest, Executor, Consumer)
      *
@@ -5901,7 +6045,7 @@ public class AppOpsManager {
          *
          * @return The historical ops for the attribution.
          */
-        public @Nullable AttributedHistoricalOps getAttributedOps(@NonNull String attributionTag) {
+        public @Nullable AttributedHistoricalOps getAttributedOps(@Nullable String attributionTag) {
             if (mAttributedHistoricalOps == null) {
                 return null;
             }
@@ -6363,7 +6507,7 @@ public class AppOpsManager {
                     historicalDiscreteAccesses.add(other.mDiscreteAccesses.get(i++));
                 }
             }
-            mDiscreteAccesses = historicalDiscreteAccesses;
+            mDiscreteAccesses = deduplicateDiscreteEvents(historicalDiscreteAccesses);
         }
 
         private void increaseAccessCount(@UidState int uidState, @OpFlags int flags,
@@ -6399,13 +6543,21 @@ public class AppOpsManager {
             NoteOpEvent note = new NoteOpEvent(discreteAccessTime, discreteAccessDuration, null);
             accessEvents.append(key, note);
             AttributedOpEntry access = new AttributedOpEntry(mOp, false, accessEvents, null);
-            for (int i = discreteAccesses.size() - 1; i >= 0; i--) {
-                if (discreteAccesses.get(i).getLastAccessTime(OP_FLAGS_ALL) < discreteAccessTime) {
-                    discreteAccesses.add(i + 1, access);
-                    return;
+            int insertionPoint = discreteAccesses.size() - 1;
+            for (; insertionPoint >= 0; insertionPoint--) {
+                if (discreteAccesses.get(insertionPoint).getLastAccessTime(OP_FLAGS_ALL)
+                        < discreteAccessTime) {
+                    break;
                 }
             }
-            discreteAccesses.add(0, access);
+            insertionPoint++;
+            if (insertionPoint < discreteAccesses.size() && discreteAccesses.get(
+                    insertionPoint).getLastAccessTime(OP_FLAGS_ALL) == discreteAccessTime) {
+                discreteAccesses.set(insertionPoint, mergeAttributedOpEntries(
+                        Arrays.asList(discreteAccesses.get(insertionPoint), access)));
+            } else {
+                discreteAccesses.add(insertionPoint, access);
+            }
         }
 
         /**
@@ -6426,7 +6578,7 @@ public class AppOpsManager {
          * Gets number of discrete historical app ops.
          *
          * @return The number historical app ops.
-         * @see #getOpAt(int)
+         * @see #getDiscreteAccessAt(int)
          */
         public @IntRange(from = 0) int getDiscreteAccessCount() {
             if (mDiscreteAccesses == null) {
@@ -6440,7 +6592,7 @@ public class AppOpsManager {
          *
          * @param index The index to lookup.
          * @return The op at the given index.
-         * @see #getOpCount()
+         * @see #getDiscreteAccessCount()
          */
         public @NonNull AttributedOpEntry getDiscreteAccessAt(@IntRange(from = 0) int index) {
             if (mDiscreteAccesses == null) {
@@ -6702,7 +6854,7 @@ public class AppOpsManager {
             writeLongSparseLongArrayToParcel(mAccessCount, parcel);
             writeLongSparseLongArrayToParcel(mRejectCount, parcel);
             writeLongSparseLongArrayToParcel(mAccessDuration, parcel);
-            writeDiscreteAccessArrayToParcel(mDiscreteAccesses, parcel);
+            writeDiscreteAccessArrayToParcel(mDiscreteAccesses, parcel, flags);
         }
 
         @Override
@@ -6884,7 +7036,7 @@ public class AppOpsManager {
             }
             result.add(entry);
         }
-        return result;
+        return deduplicateDiscreteEvents(result);
     }
 
     /**
@@ -6972,6 +7124,26 @@ public class AppOpsManager {
     AppOpsManager(Context context, IAppOpsService service) {
         mContext = context;
         mService = service;
+
+        if (mContext != null) {
+            final PackageManager pm = mContext.getPackageManager();
+            try {
+                if (pm != null && pm.checkPermission(Manifest.permission.READ_DEVICE_CONFIG,
+                        mContext.getPackageName()) == PackageManager.PERMISSION_GRANTED) {
+                    DeviceConfig.addOnPropertiesChangedListener(DeviceConfig.NAMESPACE_PRIVACY,
+                            mContext.getMainExecutor(), properties -> {
+                                if (properties.getKeyset().contains(FULL_LOG)) {
+                                    sFullLog = properties.getBoolean(FULL_LOG, false);
+                                }
+                            });
+                    return;
+                }
+            } catch (Exception e) {
+                // This manager was made before DeviceConfig is ready, so it's a low-level
+                // system app. We likely don't care about its logs.
+            }
+        }
+        sFullLog = false;
     }
 
     /**
@@ -7326,6 +7498,32 @@ public class AppOpsManager {
             return null;
         }
         return sOpToString[opCode];
+    }
+
+    /**
+     * Resolves special UID's pakcages such as root, shell, media, etc.
+     *
+     * @param uid The uid to resolve.
+     * @param packageName Optional package. If caller system  and null returns "android"
+     * @return The resolved package name.
+     *
+     * @hide
+     */
+    public static @Nullable String resolvePackageName(int uid, @Nullable String packageName)  {
+        if (uid == Process.ROOT_UID) {
+            return "root";
+        } else if (uid == Process.SHELL_UID) {
+            return "com.android.shell";
+        } else if (uid == Process.MEDIA_UID) {
+            return "media";
+        } else if (uid == Process.AUDIOSERVER_UID) {
+            return "audioserver";
+        } else if (uid == Process.CAMERASERVER_UID) {
+            return "cameraserver";
+        } else if (uid == Process.SYSTEM_UID && packageName == null) {
+            return "android";
+        }
+        return packageName;
     }
 
     /**
@@ -7905,7 +8103,7 @@ public class AppOpsManager {
         try {
             collectNoteOpCallsForValidation(op);
             int collectionMode = getNotedOpCollectionMode(uid, packageName, op);
-            boolean shouldCollectMessage = Process.myUid() == Process.SYSTEM_UID ? true : false;
+            boolean shouldCollectMessage = Process.myUid() == Process.SYSTEM_UID;
             if (collectionMode == COLLECT_ASYNC) {
                 if (message == null) {
                     // Set stack trace as default message
@@ -7914,18 +8112,18 @@ public class AppOpsManager {
                 }
             }
 
-            int mode = mService.noteOperation(op, uid, packageName, attributionTag,
+            SyncNotedAppOp syncOp = mService.noteOperation(op, uid, packageName, attributionTag,
                     collectionMode == COLLECT_ASYNC, message, shouldCollectMessage);
 
-            if (mode == MODE_ALLOWED) {
+            if (syncOp.getOpMode() == MODE_ALLOWED) {
                 if (collectionMode == COLLECT_SELF) {
-                    collectNotedOpForSelf(op, attributionTag);
+                    collectNotedOpForSelf(syncOp);
                 } else if (collectionMode == COLLECT_SYNC) {
-                    collectNotedOpSync(op, attributionTag);
+                    collectNotedOpSync(syncOp);
                 }
             }
 
-            return mode;
+            return syncOp.getOpMode();
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -7959,14 +8157,9 @@ public class AppOpsManager {
      */
     public int noteProxyOp(int op, @Nullable String proxiedPackageName, int proxiedUid,
             @Nullable String proxiedAttributionTag, @Nullable String message) {
-        int mode = noteProxyOpNoThrow(op, proxiedPackageName, proxiedUid, proxiedAttributionTag,
-                message);
-        if (mode == MODE_ERRORED) {
-            throw new SecurityException("Proxy package " + mContext.getOpPackageName()
-                    + " from uid " + Process.myUid() + " or calling package " + proxiedPackageName
-                    + " from uid " + proxiedUid + " not allowed to perform " + sOpNames[op]);
-        }
-        return mode;
+        return noteProxyOp(op, new AttributionSource(mContext.getAttributionSource(),
+                new AttributionSource(proxiedUid, proxiedPackageName, proxiedAttributionTag)),
+                message, /*skipProxyOperation*/ false);
     }
 
     /**
@@ -7995,6 +8188,36 @@ public class AppOpsManager {
     }
 
     /**
+     * Make note of an application performing an operation on behalf of another application(s).
+     *
+     * @param op The operation to note. One of the OPSTR_* constants.
+     * @param attributionSource The permission identity for which to note.
+     * @param message A message describing the reason the op was noted
+     * @param skipProxyOperation Whether to skip the proxy note.
+     *
+     * @return Returns {@link #MODE_ALLOWED} if the operation is allowed, or {@link #MODE_IGNORED}
+     * if it is not allowed and should be silently ignored (without causing the app to crash).
+     *
+     * @throws SecurityException If the any proxying operations in the permission identityf
+     *     chain fails.
+     *
+     * @hide
+     */
+    public int noteProxyOp(@NonNull int op, @NonNull AttributionSource attributionSource,
+            @Nullable String message, boolean skipProxyOperation) {
+        final int mode = noteProxyOpNoThrow(op, attributionSource, message, skipProxyOperation);
+        if (mode == MODE_ERRORED) {
+            throw new SecurityException("Proxy package "
+                    + attributionSource.getPackageName()  + " from uid "
+                    + attributionSource.getUid() + " or calling package "
+                    + attributionSource.getNextPackageName() + " from uid "
+                    + attributionSource.getNextUid() + " not allowed to perform "
+                    + sOpNames[op]);
+        }
+        return mode;
+    }
+
+    /**
      * @deprecated Use {@link #noteProxyOpNoThrow(String, String, int, String, String)} instead
      */
     @Deprecated
@@ -8019,24 +8242,36 @@ public class AppOpsManager {
      */
     public int noteProxyOpNoThrow(@NonNull String op, @Nullable String proxiedPackageName,
             int proxiedUid, @Nullable String proxiedAttributionTag, @Nullable String message) {
-        return noteProxyOpNoThrow(strOpToOp(op), proxiedPackageName, proxiedUid,
-                proxiedAttributionTag, message);
+        return noteProxyOpNoThrow(strOpToOp(op), new AttributionSource(
+                mContext.getAttributionSource(), new AttributionSource(proxiedUid,
+                        proxiedPackageName, proxiedAttributionTag)), message,
+                        /*skipProxyOperation*/ false);
     }
 
     /**
-     * @see #noteProxyOpNoThrow(String, String, int, String, String)
+     * Make note of an application performing an operation on behalf of another application(s).
+     *
+     * @param op The operation to note. One of the OPSTR_* constants.
+     * @param attributionSource The permission identity for which to note.
+     * @param message A message describing the reason the op was noted
+     * @param skipProxyOperation Whether to note op for the proxy
+     *
+     * @return Returns {@link #MODE_ALLOWED} if the operation is allowed, or {@link #MODE_IGNORED}
+     * if it is not allowed and should be silently ignored (without causing the app to crash).
      *
      * @hide
      */
     @SuppressWarnings("AndroidFrameworkClientSidePermissionCheck")
-    public int noteProxyOpNoThrow(int op, @Nullable String proxiedPackageName, int proxiedUid,
-            @Nullable String proxiedAttributionTag, @Nullable String message) {
+    public int noteProxyOpNoThrow(int op, @NonNull AttributionSource attributionSource,
+            @Nullable String message, boolean skipProxyOperation) {
         int myUid = Process.myUid();
 
         try {
             collectNoteOpCallsForValidation(op);
-            int collectionMode = getNotedOpCollectionMode(proxiedUid, proxiedPackageName, op);
-            boolean shouldCollectMessage = myUid == Process.SYSTEM_UID ? true : false;
+            int collectionMode = getNotedOpCollectionMode(
+                    attributionSource.getNextUid(),
+                    attributionSource.getNextAttributionTag(), op);
+            boolean shouldCollectMessage = (myUid == Process.SYSTEM_UID);
             if (collectionMode == COLLECT_ASYNC) {
                 if (message == null) {
                     // Set stack trace as default message
@@ -8045,49 +8280,26 @@ public class AppOpsManager {
                 }
             }
 
-            int mode = mService.noteProxyOperation(op, proxiedUid, proxiedPackageName,
-                    proxiedAttributionTag, myUid, mContext.getOpPackageName(),
-                    mContext.getAttributionTag(), collectionMode == COLLECT_ASYNC, message,
-                    shouldCollectMessage);
+            SyncNotedAppOp syncOp = mService.noteProxyOperation(op, attributionSource,
+                    collectionMode == COLLECT_ASYNC, message,
+                    shouldCollectMessage, skipProxyOperation);
 
-            if (mode == MODE_ALLOWED) {
+            if (syncOp.getOpMode() == MODE_ALLOWED) {
                 if (collectionMode == COLLECT_SELF) {
-                    collectNotedOpForSelf(op, proxiedAttributionTag);
+                    collectNotedOpForSelf(syncOp);
                 } else if (collectionMode == COLLECT_SYNC
                         // Only collect app-ops when the proxy is trusted
                         && (mContext.checkPermission(Manifest.permission.UPDATE_APP_OPS_STATS, -1,
-                        myUid) == PackageManager.PERMISSION_GRANTED || isTrustedVoiceServiceProxy(
-                        mContext, mContext.getOpPackageName(), op, mContext.getUserId()))) {
-                    collectNotedOpSync(op, proxiedAttributionTag);
+                        myUid) == PackageManager.PERMISSION_GRANTED ||
+                            Binder.getCallingUid() == attributionSource.getNextUid())) {
+                    collectNotedOpSync(syncOp);
                 }
             }
 
-            return mode;
+            return syncOp.getOpMode();
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
-    }
-
-    /**
-     * Checks if the voice recognition service is a trust proxy.
-     *
-     * @return {@code true} if the package is a trust voice recognition service proxy
-     * @hide
-     */
-    public static boolean isTrustedVoiceServiceProxy(Context context, String packageName,
-            int code, int userId) {
-        // This is a workaround for R QPR, new API change is not allowed. We only allow the current
-        // voice recognizer is also the voice interactor to noteproxy op.
-        if (code != OP_RECORD_AUDIO) {
-            return false;
-        }
-        final String voiceRecognitionComponent = Settings.Secure.getStringForUser(
-                context.getContentResolver(), Settings.Secure.VOICE_RECOGNITION_SERVICE, userId);
-
-        final String voiceRecognitionServicePackageName =
-                getComponentPackageNameFromString(voiceRecognitionComponent);
-        return (Objects.equals(packageName, voiceRecognitionServicePackageName))
-                && isPackagePreInstalled(context, packageName, userId);
     }
 
     private static String getComponentPackageNameFromString(String from) {
@@ -8372,7 +8584,7 @@ public class AppOpsManager {
         try {
             collectNoteOpCallsForValidation(op);
             int collectionMode = getNotedOpCollectionMode(uid, packageName, op);
-            boolean shouldCollectMessage = Process.myUid() == Process.SYSTEM_UID ? true : false;
+            boolean shouldCollectMessage = Process.myUid() == Process.SYSTEM_UID;
             if (collectionMode == COLLECT_ASYNC) {
                 if (message == null) {
                     // Set stack trace as default message
@@ -8381,23 +8593,24 @@ public class AppOpsManager {
                 }
             }
 
-            int mode = mService.startOperation(getClientId(), op, uid, packageName,
+            SyncNotedAppOp syncOp = mService.startOperation(getClientId(), op, uid, packageName,
                     attributionTag, startIfModeDefault, collectionMode == COLLECT_ASYNC, message,
                     shouldCollectMessage);
 
-            if (mode == MODE_ALLOWED) {
+            if (syncOp.getOpMode() == MODE_ALLOWED) {
                 if (collectionMode == COLLECT_SELF) {
-                    collectNotedOpForSelf(op, attributionTag);
+                    collectNotedOpForSelf(syncOp);
                 } else if (collectionMode == COLLECT_SYNC) {
-                    collectNotedOpSync(op, attributionTag);
+                    collectNotedOpSync(syncOp);
                 }
             }
 
-            return mode;
+            return syncOp.getOpMode();
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
     }
+
     /**
      * Report that an application has started executing a long-running operation on behalf of
      * another application when handling an IPC. This function will verify that the calling uid and
@@ -8418,19 +8631,45 @@ public class AppOpsManager {
      */
     public int startProxyOp(@NonNull String op, int proxiedUid, @NonNull String proxiedPackageName,
             @Nullable String proxiedAttributionTag, @Nullable String message) {
-        final int mode = startProxyOpNoThrow(op, proxiedUid, proxiedPackageName,
-                proxiedAttributionTag, message);
+        return startProxyOp(op, new AttributionSource(mContext.getAttributionSource(),
+                new AttributionSource(proxiedUid, proxiedPackageName, proxiedAttributionTag)),
+                message, /*skipProxyOperation*/ false);
+    }
+
+    /**
+     * Report that an application has started executing a long-running operation on behalf of
+     * another application for the attribution chain specified by the {@link AttributionSource}}.
+     *
+     * @param op The op to note
+     * @param attributionSource The permission identity for which to check
+     * @param message A message describing the reason the op was noted
+     * @param skipProxyOperation Whether to skip the proxy start.
+     *
+     * @return Returns {@link #MODE_ALLOWED} if the operation is allowed, or {@link #MODE_IGNORED}
+     * if it is not allowed and should be silently ignored (without causing the app to crash).
+     *
+     * @throws SecurityException If the any proxying operations in the permission identity
+     *     chain fails.
+     *
+     * @hide
+     */
+    public int startProxyOp(@NonNull String op, @NonNull AttributionSource attributionSource,
+            @Nullable String message, boolean skipProxyOperation) {
+        final int mode = startProxyOpNoThrow(AppOpsManager.strOpToOp(op), attributionSource,
+                message, skipProxyOperation);
         if (mode == MODE_ERRORED) {
-            throw new SecurityException("Proxy package " + mContext.getOpPackageName()
-                    + " from uid " + Process.myUid() + " or calling package " + proxiedPackageName
-                    + " from uid " + proxiedUid + " not allowed to perform "
-                    + sOpNames[strOpToOp(op)]);
+            throw new SecurityException("Proxy package "
+                    + attributionSource.getPackageName()  + " from uid "
+                    + attributionSource.getUid() + " or calling package "
+                    + attributionSource.getNextPackageName() + " from uid "
+                    + attributionSource.getNextUid() + " not allowed to perform "
+                    + op);
         }
         return mode;
     }
 
     /**
-     *Like {@link #startProxyOp(String, int, String, String, String)} but instead
+     * Like {@link #startProxyOp(String, int, String, String, String)} but instead
      * of throwing a {@link SecurityException} it returns {@link #MODE_ERRORED}.
      *
      * @see #startProxyOp(String, int, String, String, String)
@@ -8438,11 +8677,28 @@ public class AppOpsManager {
     public int startProxyOpNoThrow(@NonNull String op, int proxiedUid,
             @NonNull String proxiedPackageName, @Nullable String proxiedAttributionTag,
             @Nullable String message) {
-        try {
-            int opInt = strOpToOp(op);
+        return startProxyOpNoThrow(AppOpsManager.strOpToOp(op), new AttributionSource(
+                mContext.getAttributionSource(), new AttributionSource(proxiedUid,
+                        proxiedPackageName, proxiedAttributionTag)), message,
+                /*skipProxyOperation*/ false);
+    }
 
-            collectNoteOpCallsForValidation(opInt);
-            int collectionMode = getNotedOpCollectionMode(proxiedUid, proxiedPackageName, opInt);
+    /**
+     * Like {@link #startProxyOp(String, AttributionSource, String)} but instead
+     * of throwing a {@link SecurityException} it returns {@link #MODE_ERRORED} and
+     * the checks is for the attribution chain specified by the {@link AttributionSource}.
+     *
+     * @see #startProxyOp(String, AttributionSource, String)
+     *
+     * @hide
+     */
+    public int startProxyOpNoThrow(int op, @NonNull AttributionSource attributionSource,
+            @Nullable String message, boolean skipProxyOperation) {
+        try {
+            collectNoteOpCallsForValidation(op);
+            int collectionMode = getNotedOpCollectionMode(
+                    attributionSource.getNextUid(),
+                    attributionSource.getNextPackageName(), op);
             boolean shouldCollectMessage = Process.myUid() == Process.SYSTEM_UID;
             if (collectionMode == COLLECT_ASYNC) {
                 if (message == null) {
@@ -8452,26 +8708,23 @@ public class AppOpsManager {
                 }
             }
 
-            int mode = mService.startProxyOperation(getClientId(), opInt, proxiedUid,
-                    proxiedPackageName, proxiedAttributionTag, Process.myUid(),
-                    mContext.getOpPackageName(), mContext.getAttributionTag(), false,
-                    collectionMode == COLLECT_ASYNC, message, shouldCollectMessage);
+            SyncNotedAppOp syncOp = mService.startProxyOperation(getClientId(), op,
+                    attributionSource, false, collectionMode == COLLECT_ASYNC, message,
+                    shouldCollectMessage, skipProxyOperation);
 
-            if (mode == MODE_ALLOWED) {
+            if (syncOp.getOpMode() == MODE_ALLOWED) {
                 if (collectionMode == COLLECT_SELF) {
-                    collectNotedOpForSelf(opInt, proxiedAttributionTag);
+                    collectNotedOpForSelf(syncOp);
                 } else if (collectionMode == COLLECT_SYNC
                         // Only collect app-ops when the proxy is trusted
                         && (mContext.checkPermission(Manifest.permission.UPDATE_APP_OPS_STATS, -1,
                         Process.myUid()) == PackageManager.PERMISSION_GRANTED
-                        || isTrustedVoiceServiceProxy(mContext, mContext.getOpPackageName(), opInt,
-                        mContext.getUserId()))) {
-                    collectNotedOpSync(opInt, proxiedAttributionTag);
+                        || Binder.getCallingUid() == attributionSource.getNextUid())) {
+                    collectNotedOpSync(syncOp);
                 }
             }
 
-
-            return mode;
+            return syncOp.getOpMode();
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -8529,22 +8782,37 @@ public class AppOpsManager {
     }
 
     /**
-     *  Report that an application is no longer performing an operation that had previously
+     * Report that an application is no longer performing an operation that had previously
      * been started with {@link #startProxyOp(String, int, String, String, String)}. There is no
      * validation of input or result; the parameters supplied here must be the exact same ones
      * previously passed in when starting the operation.
+     *
      * @param op The operation which was started
-     * @param proxiedUid The uid the op was started on behalf of
-     * @param proxiedPackageName The package the op was started on behalf of
-     * @param proxiedAttributionTag The proxied {@link Context#createAttributionContext
-     * attribution tag} or {@code null} for default attribution
+     * @param proxiedUid The proxied appp's UID
+     * @param proxiedPackageName The proxied appp's package name
+     * @param proxiedAttributionTag The proxied appp's attribution tag or
+     *     {@code null} for default attribution
      */
     public void finishProxyOp(@NonNull String op, int proxiedUid,
             @NonNull String proxiedPackageName, @Nullable String proxiedAttributionTag) {
+        finishProxyOp(op, new AttributionSource(mContext.getAttributionSource(),
+                new AttributionSource(proxiedUid, proxiedPackageName, proxiedAttributionTag)));
+    }
+
+    /**
+     * Report that an application is no longer performing an operation that had previously
+     * been started with {@link #startProxyOp(String, AttributionSource, String)}. There is no
+     * validation of input or result; the parameters supplied here must be the exact same ones
+     * previously passed in when starting the operation.
+     *
+     * @param op The operation which was started
+     * @param attributionSource The permission identity for which to finish
+     *
+     * @hide
+     */
+    public void finishProxyOp(@NonNull String op, @NonNull AttributionSource attributionSource) {
         try {
-            mService.finishProxyOperation(getClientId(), strOpToOp(op), proxiedUid,
-                    proxiedPackageName, proxiedAttributionTag, Process.myUid(),
-                    mContext.getOpPackageName(), mContext.getAttributionTag());
+            mService.finishProxyOperation(getClientId(), strOpToOp(op), attributionSource);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -8565,6 +8833,46 @@ public class AppOpsManager {
     }
 
     /**
+     * Get whether you are currently proxying to another package. That applies only
+     * for long running operations like {@link #OP_RECORD_AUDIO}.
+     *
+     * @param op The op.
+     * @param proxyAttributionTag Your attribution tag to query for.
+     * @param proxiedUid The proxied UID to query for.
+     * @param proxiedPackageName The proxied package to query for.
+     * @return Whether you are currently proxying to this target.
+     *
+     * @hide
+     */
+    public boolean isProxying(int op, @NonNull String proxyAttributionTag, int proxiedUid,
+            @NonNull String proxiedPackageName) {
+        try {
+            return mService.isProxying(op, mContext.getOpPackageName(),
+                    mContext.getAttributionTag(), proxiedUid, proxiedPackageName);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Clears the op state (last accesses + op modes) for a package but not
+     * the historical state.
+     *
+     * @param packageName The package to reset.
+     *
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(Manifest.permission.MANAGE_APPOPS)
+    public void resetPackageOpsNoHistory(@NonNull String packageName) {
+        try {
+            mService.resetPackageOpsNoHistory(packageName);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Start collection of noted appops on this thread.
      *
      * <p>Called at the beginning of a two way binder transaction.
@@ -8574,67 +8882,8 @@ public class AppOpsManager {
      * @hide
      */
     public static void startNotedAppOpsCollection(int callingUid) {
+        sThreadsListeningForOpNotedInBinderTransaction |= Thread.currentThread().getId();
         sBinderThreadCallingUid.set(callingUid);
-    }
-
-    /**
-     * State of a temporarily paused noted app-ops collection.
-     *
-     * @see #pauseNotedAppOpsCollection()
-     *
-     * @hide
-     */
-    public static class PausedNotedAppOpsCollection {
-        final int mUid;
-        final @Nullable ArrayMap<String, long[]> mCollectedNotedAppOps;
-
-        PausedNotedAppOpsCollection(int uid, @Nullable ArrayMap<String,
-                long[]> collectedNotedAppOps) {
-            mUid = uid;
-            mCollectedNotedAppOps = collectedNotedAppOps;
-        }
-    }
-
-    /**
-     * Temporarily suspend collection of noted app-ops when binder-thread calls into the other
-     * process. During such a call there might be call-backs coming back on the same thread which
-     * should not be accounted to the current collection.
-     *
-     * @return a state needed to resume the collection
-     *
-     * @hide
-     */
-    public static @Nullable PausedNotedAppOpsCollection pauseNotedAppOpsCollection() {
-        Integer previousUid = sBinderThreadCallingUid.get();
-        if (previousUid != null) {
-            ArrayMap<String, long[]> previousCollectedNotedAppOps =
-                    sAppOpsNotedInThisBinderTransaction.get();
-
-            sBinderThreadCallingUid.remove();
-            sAppOpsNotedInThisBinderTransaction.remove();
-
-            return new PausedNotedAppOpsCollection(previousUid, previousCollectedNotedAppOps);
-        }
-
-        return null;
-    }
-
-    /**
-     * Resume a collection paused via {@link #pauseNotedAppOpsCollection}.
-     *
-     * @param prevCollection The state of the previous collection
-     *
-     * @hide
-     */
-    public static void resumeNotedAppOpsCollection(
-            @Nullable PausedNotedAppOpsCollection prevCollection) {
-        if (prevCollection != null) {
-            sBinderThreadCallingUid.set(prevCollection.mUid);
-
-            if (prevCollection.mCollectedNotedAppOps != null) {
-                sAppOpsNotedInThisBinderTransaction.set(prevCollection.mCollectedNotedAppOps);
-            }
-        }
     }
 
     /**
@@ -8648,6 +8897,7 @@ public class AppOpsManager {
      */
     public static void finishNotedAppOpsCollection() {
         sBinderThreadCallingUid.remove();
+        sThreadsListeningForOpNotedInBinderTransaction &= ~Thread.currentThread().getId();
         sAppOpsNotedInThisBinderTransaction.remove();
     }
 
@@ -8657,13 +8907,13 @@ public class AppOpsManager {
      * @param op The noted op
      * @param attributionTag The attribution tag the op is noted for
      */
-    private void collectNotedOpForSelf(int op, @Nullable String attributionTag) {
+    private void collectNotedOpForSelf(SyncNotedAppOp syncOp) {
         synchronized (sLock) {
             if (sOnOpNotedCallback != null) {
-                sOnOpNotedCallback.onSelfNoted(new SyncNotedAppOp(op, attributionTag));
+                sOnOpNotedCallback.onSelfNoted(syncOp);
             }
         }
-        sMessageCollector.onSelfNoted(new SyncNotedAppOp(op, attributionTag));
+        sMessageCollector.onSelfNoted(syncOp);
     }
 
     /**
@@ -8671,29 +8921,53 @@ public class AppOpsManager {
      *
      * <p> Delivered to caller via {@link #prefixParcelWithAppOpsIfNeeded}
      *
-     * @param op The noted op
-     * @param attributionTag The attribution tag the op is noted for
+     * @param syncOp the op and attribution tag to note for
+     *
+     * @hide
      */
-    private void collectNotedOpSync(int op, @Nullable String attributionTag) {
+    @TestApi
+    public static void collectNotedOpSync(@NonNull SyncNotedAppOp syncOp) {
+        collectNotedOpSync(sOpStrToOp.get(syncOp.getOp()), syncOp.getAttributionTag(),
+                syncOp.getPackageName());
+    }
+
+    /**
+     * Collect a noted op when inside of a two-way binder call.
+     *
+     * <p> Delivered to caller via {@link #prefixParcelWithAppOpsIfNeeded}
+     *
+     * @param code the op code to note for
+     * @param attributionTag the attribution tag to note for
+     * @param packageName the package to note for
+     */
+    private static void collectNotedOpSync(int code, @Nullable String attributionTag,
+            @NonNull String packageName) {
         // If this is inside of a two-way binder call:
         // We are inside of a two-way binder call. Delivered to caller via
         // {@link #prefixParcelWithAppOpsIfNeeded}
-        ArrayMap<String, long[]> appOpsNoted = sAppOpsNotedInThisBinderTransaction.get();
+        ArrayMap<String, ArrayMap<String, long[]>> appOpsNoted =
+                sAppOpsNotedInThisBinderTransaction.get();
         if (appOpsNoted == null) {
             appOpsNoted = new ArrayMap<>(1);
             sAppOpsNotedInThisBinderTransaction.set(appOpsNoted);
         }
 
-        long[] appOpsNotedForAttribution = appOpsNoted.get(attributionTag);
-        if (appOpsNotedForAttribution == null) {
-            appOpsNotedForAttribution = new long[2];
-            appOpsNoted.put(attributionTag, appOpsNotedForAttribution);
+        ArrayMap<String, long[]> packageAppOpsNotedForAttribution = appOpsNoted.get(packageName);
+        if (packageAppOpsNotedForAttribution == null) {
+            packageAppOpsNotedForAttribution = new ArrayMap<>(1);
+            appOpsNoted.put(packageName, packageAppOpsNotedForAttribution);
         }
 
-        if (op < 64) {
-            appOpsNotedForAttribution[0] |= 1L << op;
+        long[] appOpsNotedForAttribution = packageAppOpsNotedForAttribution.get(attributionTag);
+        if (appOpsNotedForAttribution == null) {
+            appOpsNotedForAttribution = new long[2];
+            packageAppOpsNotedForAttribution.put(attributionTag, appOpsNotedForAttribution);
+        }
+
+        if (code < 64) {
+            appOpsNotedForAttribution[0] |= 1L << code;
         } else {
-            appOpsNotedForAttribution[1] |= 1L << (op - 64);
+            appOpsNotedForAttribution[1] |= 1L << (code - 64);
         }
     }
 
@@ -8720,7 +8994,7 @@ public class AppOpsManager {
             packageName = "android";
         }
 
-        // check it the appops needs to be collected and cache result
+        // check if the appops needs to be collected and cache result
         if (sAppOpsToNote[op] == SHOULD_COLLECT_NOTE_OP_NOT_INITIALIZED) {
             boolean shouldCollectNotes;
             try {
@@ -8747,9 +9021,7 @@ public class AppOpsManager {
             }
         }
 
-        Integer binderUid = sBinderThreadCallingUid.get();
-
-        if (binderUid != null && binderUid == uid) {
+        if (isListeningForOpNotedInBinderTransaction()) {
             return COLLECT_SYNC;
         } else {
             return COLLECT_ASYNC;
@@ -8766,21 +9038,34 @@ public class AppOpsManager {
      *
      * @hide
      */
+    // TODO (b/186872903) Refactor how sync noted ops are propagated.
     public static void prefixParcelWithAppOpsIfNeeded(@NonNull Parcel p) {
-        ArrayMap<String, long[]> notedAppOps = sAppOpsNotedInThisBinderTransaction.get();
+        if (!isListeningForOpNotedInBinderTransaction()) {
+            return;
+        }
+        final ArrayMap<String, ArrayMap<String, long[]>> notedAppOps =
+                sAppOpsNotedInThisBinderTransaction.get();
         if (notedAppOps == null) {
             return;
         }
 
         p.writeInt(Parcel.EX_HAS_NOTED_APPOPS_REPLY_HEADER);
 
-        int numAttributionWithNotesAppOps = notedAppOps.size();
-        p.writeInt(numAttributionWithNotesAppOps);
+        final int packageCount = notedAppOps.size();
+        p.writeInt(packageCount);
 
-        for (int i = 0; i < numAttributionWithNotesAppOps; i++) {
+        for (int i = 0; i < packageCount; i++) {
             p.writeString(notedAppOps.keyAt(i));
-            p.writeLong(notedAppOps.valueAt(i)[0]);
-            p.writeLong(notedAppOps.valueAt(i)[1]);
+
+            final ArrayMap<String, long[]> notedTagAppOps = notedAppOps.valueAt(i);
+            final int tagCount = notedTagAppOps.size();
+            p.writeInt(tagCount);
+
+            for (int j = 0; j < tagCount; j++) {
+                p.writeString(notedTagAppOps.keyAt(j));
+                p.writeLong(notedTagAppOps.valueAt(j)[0]);
+                p.writeLong(notedTagAppOps.valueAt(j)[1]);
+            }
         }
     }
 
@@ -8795,36 +9080,54 @@ public class AppOpsManager {
      * @hide
      */
     public static void readAndLogNotedAppops(@NonNull Parcel p) {
-        int numAttributionsWithNotedAppOps = p.readInt();
+        final int packageCount = p.readInt();
+        if (packageCount <= 0) {
+            return;
+        }
 
-        for (int i = 0; i < numAttributionsWithNotedAppOps; i++) {
-            String attributionTag = p.readString();
-            long[] rawNotedAppOps = new long[2];
-            rawNotedAppOps[0] = p.readLong();
-            rawNotedAppOps[1] = p.readLong();
+        final String myPackageName = ActivityThread.currentPackageName();
 
-            if (rawNotedAppOps[0] != 0 || rawNotedAppOps[1] != 0) {
-                BitSet notedAppOps = BitSet.valueOf(rawNotedAppOps);
+        synchronized (sLock) {
+            for (int i = 0; i < packageCount; i++) {
+                final String packageName = p.readString();
 
-                synchronized (sLock) {
+                final int tagCount = p.readInt();
+                for (int j = 0; j < tagCount; j++) {
+                    final String attributionTag = p.readString();
+                    final long[] rawNotedAppOps = new long[2];
+                    rawNotedAppOps[0] = p.readLong();
+                    rawNotedAppOps[1] = p.readLong();
+
+                    if (rawNotedAppOps[0] == 0 && rawNotedAppOps[1] == 0) {
+                        continue;
+                    }
+
+                    final BitSet notedAppOps = BitSet.valueOf(rawNotedAppOps);
                     for (int code = notedAppOps.nextSetBit(0); code != -1;
                             code = notedAppOps.nextSetBit(code + 1)) {
-                        if (sOnOpNotedCallback != null) {
-                            sOnOpNotedCallback.onNoted(new SyncNotedAppOp(code, attributionTag));
-                        } else {
-                            String message = getFormattedStackTrace();
-                            sUnforwardedOps.add(
-                                    new AsyncNotedAppOp(code, Process.myUid(), attributionTag,
-                                            message, System.currentTimeMillis()));
-                            if (sUnforwardedOps.size() > MAX_UNFORWARDED_OPS) {
-                                sUnforwardedOps.remove(0);
+                        if (Objects.equals(myPackageName, packageName)) {
+                            if (sOnOpNotedCallback != null) {
+                                sOnOpNotedCallback.onNoted(new SyncNotedAppOp(code,
+                                        attributionTag, packageName));
+                            } else {
+                                String message = getFormattedStackTrace();
+                                sUnforwardedOps.add(new AsyncNotedAppOp(code, Process.myUid(),
+                                        attributionTag, message, System.currentTimeMillis()));
+                                if (sUnforwardedOps.size() > MAX_UNFORWARDED_OPS) {
+                                    sUnforwardedOps.remove(0);
+                                }
                             }
+                        } else if (isListeningForOpNotedInBinderTransaction()) {
+                            collectNotedOpSync(code, attributionTag, packageName);
                         }
                     }
-                }
-                for (int code = notedAppOps.nextSetBit(0); code != -1;
-                        code = notedAppOps.nextSetBit(code + 1)) {
-                    sMessageCollector.onNoted(new SyncNotedAppOp(code, attributionTag));
+                    for (int code = notedAppOps.nextSetBit(0); code != -1;
+                            code = notedAppOps.nextSetBit(code + 1)) {
+                        if (Objects.equals(myPackageName, packageName)) {
+                            sMessageCollector.onNoted(new SyncNotedAppOp(code,
+                                    attributionTag, packageName));
+                        }
+                    }
                 }
             }
         }
@@ -8931,7 +9234,17 @@ public class AppOpsManager {
      * @hide
      */
     public static boolean isListeningForOpNoted() {
-        return sOnOpNotedCallback != null || isCollectingStackTraces();
+        return sOnOpNotedCallback != null || isListeningForOpNotedInBinderTransaction()
+                || isCollectingStackTraces();
+    }
+
+    /**
+     * @return whether we are in a binder transaction and collecting appops.
+     */
+    private static boolean isListeningForOpNotedInBinderTransaction() {
+        return (sThreadsListeningForOpNotedInBinderTransaction
+                        & Thread.currentThread().getId()) != 0
+                && sBinderThreadCallingUid.get() != null;
     }
 
     /**
@@ -9110,10 +9423,20 @@ public class AppOpsManager {
 
         StringBuilder sb = new StringBuilder();
         for (int i = firstInteresting; i <= lastInteresting; i++) {
+            if (sFullLog == null) {
+                try {
+                    sFullLog = DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_PRIVACY,
+                            FULL_LOG, false);
+                } catch (Exception e) {
+                    // This should not happen, but it may, in rare cases
+                    sFullLog = false;
+                }
+            }
+
             if (i != firstInteresting) {
                 sb.append('\n');
             }
-            if (sb.length() + trace[i].toString().length() > 600) {
+            if (!sFullLog && sb.length() + trace[i].toString().length() > 600) {
                 break;
             }
             sb.append(trace[i]);
@@ -9388,29 +9711,16 @@ public class AppOpsManager {
     }
 
     private static void writeDiscreteAccessArrayToParcel(
-            @Nullable List<AttributedOpEntry> array, @NonNull Parcel parcel) {
-        if (array != null) {
-            final int size = array.size();
-            parcel.writeInt(size);
-            for (int i = 0; i < size; i++) {
-                array.get(i).writeToParcel(parcel, 0);
-            }
-        } else {
-            parcel.writeInt(-1);
-        }
+            @Nullable List<AttributedOpEntry> array, @NonNull Parcel parcel, int flags) {
+        ParceledListSlice<AttributedOpEntry> listSlice =
+                array == null ? null : new ParceledListSlice<>(array);
+        parcel.writeParcelable(listSlice, flags);
     }
 
     private static @Nullable List<AttributedOpEntry> readDiscreteAccessArrayFromParcel(
             @NonNull Parcel parcel) {
-        final int size = parcel.readInt();
-        if (size < 0) {
-            return null;
-        }
-        final List<AttributedOpEntry> array = new ArrayList<>(size);
-        for (int i = 0; i < size; i++) {
-            array.add(new AttributedOpEntry(parcel));
-        }
-        return array;
+        final ParceledListSlice<AttributedOpEntry> listSlice = parcel.readParcelable(null);
+        return listSlice == null ? null : listSlice.getList();
     }
 
     /**
@@ -9540,5 +9850,56 @@ public class AppOpsManager {
                 // Swallow error, only meant for logging ops, should not affect flow of the code
             }
         }
+    }
+
+    private static List<AttributedOpEntry> deduplicateDiscreteEvents(List<AttributedOpEntry> list) {
+        int n = list.size();
+        int i = 0;
+        for (int j = 0, k = 0; j < n; i++, j = k) {
+            long currentAccessTime = list.get(j).getLastAccessTime(OP_FLAGS_ALL);
+            k = j + 1;
+            while(k < n && list.get(k).getLastAccessTime(OP_FLAGS_ALL) == currentAccessTime) {
+                k++;
+            }
+            list.set(i, mergeAttributedOpEntries(list.subList(j, k)));
+        }
+        for (; i < n; i++) {
+            list.remove(list.size() - 1);
+        }
+        return list;
+    }
+
+    private static AttributedOpEntry mergeAttributedOpEntries(List<AttributedOpEntry> opEntries) {
+        if (opEntries.size() == 1) {
+            return opEntries.get(0);
+        }
+        LongSparseArray<AppOpsManager.NoteOpEvent> accessEvents = new LongSparseArray<>();
+        LongSparseArray<AppOpsManager.NoteOpEvent> rejectEvents = new LongSparseArray<>();
+        int opCount = opEntries.size();
+        for (int i = 0; i < opCount; i++) {
+            AttributedOpEntry a = opEntries.get(i);
+            ArraySet<Long> keys = a.collectKeys();
+            final int keyCount = keys.size();
+            for (int k = 0; k < keyCount; k++) {
+                final long key = keys.valueAt(k);
+
+                final int uidState = extractUidStateFromKey(key);
+                final int flags = extractFlagsFromKey(key);
+
+                NoteOpEvent access = a.getLastAccessEvent(uidState, uidState, flags);
+                NoteOpEvent reject = a.getLastRejectEvent(uidState, uidState, flags);
+
+                if (access != null) {
+                    NoteOpEvent existingAccess = accessEvents.get(key);
+                    if (existingAccess == null || existingAccess.getDuration() == -1) {
+                        accessEvents.append(key, access);
+                    }
+                }
+                if (reject != null) {
+                    rejectEvents.append(key, reject);
+                }
+            }
+        }
+        return new AttributedOpEntry(opEntries.get(0).mOp, false, accessEvents, rejectEvents);
     }
 }

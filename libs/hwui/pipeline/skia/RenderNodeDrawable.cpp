@@ -16,8 +16,10 @@
 
 #include "RenderNodeDrawable.h"
 #include <SkPaintFilterCanvas.h>
+#include "StretchMask.h"
 #include "RenderNode.h"
 #include "SkiaDisplayList.h"
+#include "TransformCanvas.h"
 #include "utils/TraceUtils.h"
 
 #include <include/effects/SkImageFilters.h>
@@ -179,20 +181,7 @@ static bool layerNeedsPaint(const sk_sp<SkImage>& snapshotImage, const LayerProp
         paint->setColorFilter(sk_ref_sp(properties.getColorFilter()));
 
         sk_sp<SkImageFilter> imageFilter = sk_ref_sp(properties.getImageFilter());
-        sk_sp<SkImageFilter> stretchFilter =
-                properties.getStretchEffect().getImageFilter(snapshotImage);
-        sk_sp<SkImageFilter> filter;
-        if (imageFilter && stretchFilter) {
-            filter = SkImageFilters::Compose(
-                  std::move(stretchFilter),
-                  std::move(imageFilter)
-            );
-        } else if (stretchFilter) {
-            filter = std::move(stretchFilter);
-        } else {
-            filter = std::move(imageFilter);
-        }
-        paint->setImageFilter(std::move(filter));
+        paint->setImageFilter(std::move(imageFilter));
         return true;
     }
     return false;
@@ -256,8 +245,41 @@ void RenderNodeDrawable::drawContent(SkCanvas* canvas) const {
                 canvas->drawAnnotation(bounds, String8::format(
                     "SurfaceID|%" PRId64, renderNode->uniqueId()).c_str(), nullptr);
             }
-            canvas->drawImageRect(snapshotImage, bounds, bounds, sampling, &paint,
-                                  SkCanvas::kStrict_SrcRectConstraint);
+
+            const StretchEffect& stretch = properties.layerProperties().getStretchEffect();
+            if (stretch.isEmpty()) {
+                // If we don't have any stretch effects, issue the filtered
+                // canvas draw calls to make sure we still punch a hole
+                // with the same canvas transformation + clip into the target
+                // canvas then draw the layer on top
+                if (renderNode->hasHolePunches()) {
+                    TransformCanvas transformCanvas(canvas, SkBlendMode::kClear);
+                    displayList->draw(&transformCanvas);
+                }
+                canvas->drawImageRect(snapshotImage, bounds, bounds, sampling, &paint,
+                                      SkCanvas::kStrict_SrcRectConstraint);
+            } else {
+                // If we do have stretch effects and have hole punches,
+                // then create a mask and issue the filtered draw calls to
+                // get the corresponding hole punches.
+                // Then apply the stretch to the mask and draw the mask to
+                // the destination
+                if (renderNode->hasHolePunches()) {
+                    GrRecordingContext* context = canvas->recordingContext();
+                    StretchMask& stretchMask = renderNode->getStretchMask();
+                    stretchMask.draw(context,
+                                     stretch,
+                                     bounds,
+                                     displayList,
+                                     canvas);
+                }
+
+                sk_sp<SkShader> stretchShader = stretch.getShader(bounds.width(),
+                                                                  bounds.height(),
+                                                                  snapshotImage);
+                paint.setShader(stretchShader);
+                canvas->drawRect(bounds, paint);
+            }
 
             if (!renderNode->getSkiaLayer()->hasRenderedSinceRepaint) {
                 renderNode->getSkiaLayer()->hasRenderedSinceRepaint = true;

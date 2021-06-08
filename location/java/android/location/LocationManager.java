@@ -397,6 +397,9 @@ public class LocationManager {
         }
     }
 
+    private static volatile LocationEnabledCache sLocationEnabledCache =
+            new LocationEnabledCache(4);
+
     @GuardedBy("sLocationListeners")
     private static final WeakHashMap<LocationListener, WeakReference<LocationListenerTransport>>
             sLocationListeners = new WeakHashMap<>();
@@ -422,20 +425,6 @@ public class LocationManager {
 
     final Context mContext;
     final ILocationManager mService;
-
-    private volatile PropertyInvalidatedCache<Integer, Boolean> mLocationEnabledCache =
-            new PropertyInvalidatedCache<Integer, Boolean>(
-                    4,
-                    CACHE_KEY_LOCATION_ENABLED_PROPERTY) {
-                @Override
-                protected Boolean recompute(Integer userHandle) {
-                    try {
-                        return mService.isLocationEnabledForUser(userHandle);
-                    } catch (RemoteException e) {
-                        throw e.rethrowFromSystemServer();
-                    }
-                }
-            };
 
     /**
      * @hide
@@ -570,7 +559,7 @@ public class LocationManager {
      * @return true if location is enabled and false if location is disabled.
      */
     public boolean isLocationEnabled() {
-        return isLocationEnabledForUser(Process.myUserHandle());
+        return isLocationEnabledForUser(mContext.getUser());
     }
 
     /**
@@ -583,12 +572,17 @@ public class LocationManager {
      */
     @SystemApi
     public boolean isLocationEnabledForUser(@NonNull UserHandle userHandle) {
-        PropertyInvalidatedCache<Integer, Boolean> cache = mLocationEnabledCache;
-        if (cache != null) {
-            return cache.query(userHandle.getIdentifier());
+        // skip the cache for any "special" user ids - special ids like CURRENT_USER may change
+        // their meaning over time and should never be in the cache. we could resolve the special
+        // user ids here, but that would require an x-process call anyways, and the whole point of
+        // the cache is to avoid x-process calls.
+        if (userHandle.getIdentifier() >= 0) {
+            PropertyInvalidatedCache<Integer, Boolean> cache = sLocationEnabledCache;
+            if (cache != null) {
+                return cache.query(userHandle.getIdentifier());
+            }
         }
 
-        // fallback if cache is disabled
         try {
             return mService.isLocationEnabledForUser(userHandle.getIdentifier());
         } catch (RemoteException e) {
@@ -1990,7 +1984,7 @@ public class LocationManager {
 
     /**
      * Sets a new location for the given test provider. This location will be identiable as a mock
-     * location to all clients via {@link Location#isFromMockProvider()}.
+     * location to all clients via {@link Location#isMock()}.
      *
      * <p>The location object must have a minimum number of fields set to be considered valid, as
      * per documentation on {@link Location} class.
@@ -3041,7 +3035,7 @@ public class LocationManager {
             ListenerExecutor, CancellationSignal.OnCancelListener {
 
         private final Executor mExecutor;
-        private volatile @Nullable Consumer<Location> mConsumer;
+        volatile @Nullable Consumer<Location> mConsumer;
 
         GetCurrentLocationTransport(Executor executor, Consumer<Location> consumer,
                 @Nullable CancellationSignal cancellationSignal) {
@@ -3502,6 +3496,37 @@ public class LocationManager {
         }
     }
 
+    private static class LocationEnabledCache extends PropertyInvalidatedCache<Integer, Boolean> {
+
+        // this is not loaded immediately because this class is created as soon as LocationManager
+        // is referenced for the first time, and within the system server, the ILocationManager
+        // service may not have been loaded yet at that time.
+        private @Nullable ILocationManager mManager;
+
+        LocationEnabledCache(int numEntries) {
+            super(numEntries, CACHE_KEY_LOCATION_ENABLED_PROPERTY);
+        }
+
+        @Override
+        protected Boolean recompute(Integer userId) {
+            Preconditions.checkArgument(userId >= 0);
+
+            if (mManager == null) {
+                try {
+                    mManager = getService();
+                } catch (RemoteException e) {
+                    e.rethrowFromSystemServer();
+                }
+            }
+
+            try {
+                return mManager.isLocationEnabledForUser(userId);
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+        }
+    }
+
     /**
      * @hide
      */
@@ -3512,7 +3537,7 @@ public class LocationManager {
     /**
      * @hide
      */
-    public void disableLocalLocationEnabledCaches() {
-        mLocationEnabledCache = null;
+    public static void disableLocalLocationEnabledCaches() {
+        sLocationEnabledCache = null;
     }
 }

@@ -18,6 +18,7 @@ package com.android.settingslib.widget;
 
 import android.content.Context;
 import android.content.res.TypedArray;
+import android.graphics.drawable.Drawable;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.AttributeSet;
@@ -28,7 +29,8 @@ import android.widget.LinearLayout;
 import android.widget.Switch;
 import android.widget.TextView;
 
-import androidx.core.content.res.TypedArrayUtils;
+import androidx.annotation.ColorInt;
+import androidx.core.os.BuildCompat;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -42,10 +44,17 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
 
     private final List<OnMainSwitchChangeListener> mSwitchChangeListeners = new ArrayList<>();
 
-    private View mAboveDivider;
-    private View mBelowDivider;
+    @ColorInt
+    private int mBackgroundColor;
+    @ColorInt
+    private int mBackgroundActivatedColor;
+
     protected TextView mTextView;
     protected Switch mSwitch;
+    private Drawable mBackgroundOn;
+    private Drawable mBackgroundOff;
+    private Drawable mBackgroundDisabled;
+    private View mFrameView;
 
     public MainSwitchBar(Context context) {
         this(context, null);
@@ -63,13 +72,26 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
             int defStyleRes) {
         super(context, attrs, defStyleAttr, defStyleRes);
 
-        LayoutInflater.from(context).inflate(R.layout.main_switch_bar, this);
+        LayoutInflater.from(context).inflate(resourceId(context, "layout", "main_switch_bar"),
+                this);
+
+        if (!BuildCompat.isAtLeastS()) {
+            final TypedArray a = context.obtainStyledAttributes(
+                    new int[]{android.R.attr.colorAccent});
+            mBackgroundActivatedColor = a.getColor(0, 0);
+            mBackgroundColor = context.getColor(R.color.switchbar_background_color);
+            a.recycle();
+        }
 
         setFocusable(true);
         setClickable(true);
 
+        mFrameView = findViewById(R.id.frame);
         mTextView = (TextView) findViewById(R.id.switch_text);
         mSwitch = (Switch) findViewById(android.R.id.switch_widget);
+        mBackgroundOn = getContext().getDrawable(R.drawable.switch_bar_bg_on);
+        mBackgroundOff = getContext().getDrawable(R.drawable.switch_bar_bg_off);
+        mBackgroundDisabled = getContext().getDrawable(R.drawable.switch_bar_bg_disabled);
 
         addOnSwitchChangeListener((switchView, isChecked) -> setChecked(isChecked));
 
@@ -79,12 +101,13 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
             final TypedArray a = context.obtainStyledAttributes(attrs,
                     androidx.preference.R.styleable.Preference, 0 /*defStyleAttr*/,
                     0 /*defStyleRes*/);
-            final CharSequence title = TypedArrayUtils.getText(a,
-                    androidx.preference.R.styleable.Preference_title,
+            final CharSequence title = a.getText(
                     androidx.preference.R.styleable.Preference_android_title);
             setTitle(title);
             a.recycle();
         }
+
+        setBackground(true);
     }
 
     @Override
@@ -104,6 +127,7 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
         if (mSwitch != null) {
             mSwitch.setChecked(checked);
         }
+        setBackground(checked);
     }
 
     /**
@@ -179,12 +203,30 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
         super.setEnabled(enabled);
         mTextView.setEnabled(enabled);
         mSwitch.setEnabled(enabled);
+
+        if (BuildCompat.isAtLeastS()) {
+            if (enabled) {
+                mFrameView.setBackground(isChecked() ? mBackgroundOn : mBackgroundOff);
+            } else {
+                mFrameView.setBackground(mBackgroundDisabled);
+            }
+        }
     }
 
     private void propagateChecked(boolean isChecked) {
+        setBackground(isChecked);
+
         final int count = mSwitchChangeListeners.size();
         for (int n = 0; n < count; n++) {
             mSwitchChangeListeners.get(n).onSwitchChanged(mSwitch, isChecked);
+        }
+    }
+
+    private void setBackground(boolean isChecked) {
+        if (!BuildCompat.isAtLeastS()) {
+            setBackgroundColor(isChecked ? mBackgroundActivatedColor : mBackgroundColor);
+        } else {
+            mFrameView.setBackground(isChecked ? mBackgroundOn : mBackgroundOff);
         }
     }
 
@@ -250,9 +292,14 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
 
         mSwitch.setChecked(ss.mChecked);
         setChecked(ss.mChecked);
+        setBackground(ss.mChecked);
         setVisibility(ss.mVisible ? View.VISIBLE : View.GONE);
         mSwitch.setOnCheckedChangeListener(ss.mVisible ? this : null);
 
         requestLayout();
+    }
+
+    private int resourceId(Context context, String type, String name) {
+        return context.getResources().getIdentifier(name, type, context.getPackageName());
     }
 }

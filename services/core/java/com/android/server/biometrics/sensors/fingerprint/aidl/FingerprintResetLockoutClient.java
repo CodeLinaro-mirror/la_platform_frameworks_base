@@ -27,6 +27,7 @@ import android.util.Slog;
 
 import com.android.server.biometrics.BiometricsProto;
 import com.android.server.biometrics.HardwareAuthTokenUtils;
+import com.android.server.biometrics.sensors.ErrorConsumer;
 import com.android.server.biometrics.sensors.HalClientMonitor;
 import com.android.server.biometrics.sensors.LockoutCache;
 import com.android.server.biometrics.sensors.LockoutResetDispatcher;
@@ -37,7 +38,7 @@ import com.android.server.biometrics.sensors.LockoutTracker;
  * Updates the framework's lockout cache and notifies clients such as Keyguard when lockout is
  * cleared.
  */
-class FingerprintResetLockoutClient extends HalClientMonitor<ISession> {
+class FingerprintResetLockoutClient extends HalClientMonitor<ISession> implements ErrorConsumer {
 
     private static final String TAG = "FingerprintResetLockoutClient";
 
@@ -63,9 +64,15 @@ class FingerprintResetLockoutClient extends HalClientMonitor<ISession> {
     }
 
     @Override
+    public void start(@NonNull Callback callback) {
+        super.start(callback);
+        startHalOperation();
+    }
+
+    @Override
     protected void startHalOperation() {
         try {
-            getFreshDaemon().resetLockout(mSequentialId, mHardwareAuthToken);
+            getFreshDaemon().resetLockout(mHardwareAuthToken);
         } catch (RemoteException e) {
             Slog.e(TAG, "Unable to reset lockout", e);
             mCallback.onClientFinished(this, false /* success */);
@@ -81,5 +88,11 @@ class FingerprintResetLockoutClient extends HalClientMonitor<ISession> {
     @Override
     public int getProtoEnum() {
         return BiometricsProto.CM_RESET_LOCKOUT;
+    }
+
+    @Override
+    public void onError(int errorCode, int vendorCode) {
+        Slog.e(TAG, "Error during resetLockout: " + errorCode);
+        mCallback.onClientFinished(this, false /* success */);
     }
 }

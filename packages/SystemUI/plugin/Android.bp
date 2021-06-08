@@ -25,11 +25,16 @@ java_library {
 
     name: "SystemUIPluginLib",
 
-    srcs: ["src/**/*.java"],
+    srcs: [
+        "src/**/*.java",
+        "src/**/*.kt",
+        "bcsmartspace/src/**/*.java",
+    ],
 
     static_libs: [
+        "androidx.annotation_annotation",
         "PluginCoreLib",
-        "SystemUI-sensors",
+        "SystemUIAnimationLib",
     ],
 
 }

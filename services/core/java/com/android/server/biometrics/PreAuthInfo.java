@@ -23,6 +23,7 @@ import static android.hardware.biometrics.BiometricAuthenticator.TYPE_IRIS;
 import static android.hardware.biometrics.BiometricAuthenticator.TYPE_NONE;
 
 import android.annotation.IntDef;
+import android.annotation.NonNull;
 import android.app.admin.DevicePolicyManager;
 import android.app.trust.ITrustManager;
 import android.hardware.biometrics.BiometricAuthenticator;
@@ -112,7 +113,8 @@ class PreAuthInfo {
 
                 @AuthenticatorStatus int status = getStatusForBiometricAuthenticator(
                         devicePolicyManager, settingObserver, sensor, userId, opPackageName,
-                        checkDevicePolicyManager, requestedStrength, promptInfo.getSensorId());
+                        checkDevicePolicyManager, requestedStrength,
+                        promptInfo.getAllowedSensorIds());
 
                 Slog.d(TAG, "Package: " + opPackageName
                         + " Sensor ID: " + sensor.id
@@ -142,9 +144,10 @@ class PreAuthInfo {
             DevicePolicyManager devicePolicyManager,
             BiometricService.SettingObserver settingObserver,
             BiometricSensor sensor, int userId, String opPackageName,
-            boolean checkDevicePolicyManager, int requestedStrength, int requestedSensorId) {
+            boolean checkDevicePolicyManager, int requestedStrength,
+            @NonNull List<Integer> requestedSensorIds) {
 
-        if (requestedSensorId != BiometricManager.SENSOR_ID_ANY && sensor.id != requestedSensorId) {
+        if (!requestedSensorIds.isEmpty() && !requestedSensorIds.contains(sensor.id)) {
             return BIOMETRIC_NO_HARDWARE;
         }
 
@@ -194,17 +197,7 @@ class PreAuthInfo {
 
     private static boolean isEnabledForApp(BiometricService.SettingObserver settingObserver,
             @BiometricAuthenticator.Modality int modality, int userId) {
-        switch (modality) {
-            case TYPE_FINGERPRINT:
-                return true;
-            case TYPE_IRIS:
-                return true;
-            case TYPE_FACE:
-                return settingObserver.getFaceEnabledForApps(userId);
-            default:
-                Slog.w(TAG, "Unsupported modality: " + modality);
-                return false;
-        }
+        return settingObserver.getEnabledForApps(userId);
     }
 
     private static boolean isBiometricDisabledByDevicePolicy(
@@ -256,6 +249,21 @@ class PreAuthInfo {
         this.confirmationRequested = confirmationRequested;
     }
 
+    private Pair<BiometricSensor, Integer> calculateErrorByPriority() {
+        // If the caller requested STRONG, and the device contains both STRONG and non-STRONG
+        // sensors, prioritize BIOMETRIC_NOT_ENROLLED over the weak sensor's
+        // BIOMETRIC_INSUFFICIENT_STRENGTH error. Pretty sure we can always prioritize
+        // BIOMETRIC_NOT_ENROLLED over any other error (unless of course its calculation is
+        // wrong, in which case we should fix that instead).
+        for (Pair<BiometricSensor, Integer> pair : ineligibleSensors) {
+            if (pair.second == BIOMETRIC_NOT_ENROLLED) {
+                return pair;
+            }
+        }
+
+        return ineligibleSensors.get(0);
+    }
+
     /**
      * With {@link PreAuthInfo} generated with the requested authenticators from the public API
      * surface, combined with the actual sensor/credential and user/system settings, calculate the
@@ -278,8 +286,9 @@ class PreAuthInfo {
             } else {
                 // Pick the first sensor error if it exists
                 if (!ineligibleSensors.isEmpty()) {
-                    modality |= ineligibleSensors.get(0).first.modality;
-                    status = ineligibleSensors.get(0).second;
+                    final Pair<BiometricSensor, Integer> pair = calculateErrorByPriority();
+                    modality |= pair.first.modality;
+                    status = pair.second;
                 } else {
                     modality |= TYPE_CREDENTIAL;
                     status = CREDENTIAL_NOT_ENROLLED;
@@ -294,8 +303,9 @@ class PreAuthInfo {
             } else {
                 // Pick the first sensor error if it exists
                 if (!ineligibleSensors.isEmpty()) {
-                    modality |= ineligibleSensors.get(0).first.modality;
-                    status = ineligibleSensors.get(0).second;
+                    final Pair<BiometricSensor, Integer> pair = calculateErrorByPriority();
+                    modality |= pair.first.modality;
+                    status = pair.second;
                 } else {
                     modality |= TYPE_NONE;
                     status = BIOMETRIC_NO_HARDWARE;

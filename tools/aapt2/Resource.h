@@ -57,6 +57,7 @@ enum class ResourceType {
   kInteger,
   kInterpolator,
   kLayout,
+  kMacro,
   kMenu,
   kMipmap,
   kNavigation,
@@ -138,7 +139,7 @@ struct ResourceId {
   uint32_t id;
 
   ResourceId();
-  ResourceId(const ResourceId& rhs);
+  ResourceId(const ResourceId& rhs) = default;
   ResourceId(uint32_t res_id);  // NOLINT(google-explicit-constructor)
   ResourceId(uint8_t p, uint8_t t, uint16_t e);
 
@@ -221,8 +222,6 @@ bool operator<(const ResourceKeyRef& a, const ResourceKeyRef& b);
 //
 
 inline ResourceId::ResourceId() : id(0) {}
-
-inline ResourceId::ResourceId(const ResourceId& rhs) : id(rhs.id) {}
 
 inline ResourceId::ResourceId(uint32_t res_id) : id(res_id) {}
 

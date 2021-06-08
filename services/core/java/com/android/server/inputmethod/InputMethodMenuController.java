@@ -100,7 +100,8 @@ public class InputMethodMenuController {
 
         synchronized (mMethodMap) {
             final List<ImeSubtypeListItem> imList = mSwitchingController
-                    .getSortedInputMethodAndSubtypeListLocked(showAuxSubtypes, isScreenLocked);
+                    .getSortedInputMethodAndSubtypeListForImeMenuLocked(
+                            showAuxSubtypes, isScreenLocked);
             if (imList.isEmpty()) {
                 return;
             }
@@ -220,7 +221,6 @@ public class InputMethodMenuController {
      */
     @VisibleForTesting
     public Context getSettingsContext(int displayId) {
-        // TODO(b/178462039): Cover the case when IME is moved to another ImeContainer.
         if (mSettingsContext == null || mSettingsContext.getDisplayId() != displayId) {
             final Context systemUiContext = ActivityThread.currentActivityThread()
                     .createSystemUiContext(displayId);

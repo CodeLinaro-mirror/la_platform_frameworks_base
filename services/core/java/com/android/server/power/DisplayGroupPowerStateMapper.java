@@ -125,6 +125,10 @@ public class DisplayGroupPowerStateMapper {
         return mDisplayGroupIds;
     }
 
+    int getDisplayGroupCountLocked() {
+        return mDisplayGroupIds.length;
+    }
+
     int getWakefulnessLocked(int groupId) {
         return mDisplayGroupInfos.get(groupId).wakefulness;
     }
@@ -135,6 +139,14 @@ public class DisplayGroupPowerStateMapper {
 
     long getLastPowerOnTimeLocked(int groupId) {
         return mDisplayGroupInfos.get(groupId).lastPowerOnTime;
+    }
+
+    void setPoweringOnLocked(int groupId, boolean poweringOn) {
+        mDisplayGroupInfos.get(groupId).poweringOn = poweringOn;
+    }
+
+    boolean isPoweringOnLocked(int groupId) {
+        return mDisplayGroupInfos.get(groupId).poweringOn;
     }
 
     /**
@@ -248,6 +260,38 @@ public class DisplayGroupPowerStateMapper {
         return false;
     }
 
+    long getLastUserActivityTimeLocked(int groupId) {
+        return mDisplayGroupInfos.get(groupId).lastUserActivityTime;
+    }
+
+    long getLastUserActivityTimeNoChangeLightsLocked(int groupId) {
+        return mDisplayGroupInfos.get(groupId).lastUserActivityTimeNoChangeLights;
+    }
+
+    int getUserActivitySummaryLocked(int groupId) {
+        return mDisplayGroupInfos.get(groupId).userActivitySummary;
+    }
+
+    void setLastUserActivityTimeLocked(int groupId, long time) {
+        mDisplayGroupInfos.get(groupId).lastUserActivityTime = time;
+    }
+
+    void setLastUserActivityTimeNoChangeLightsLocked(int groupId, long time) {
+        mDisplayGroupInfos.get(groupId).lastUserActivityTimeNoChangeLights = time;
+    }
+
+    void setUserActivitySummaryLocked(int groupId, int summary) {
+        mDisplayGroupInfos.get(groupId).userActivitySummary = summary;
+    }
+
+    int getWakeLockSummaryLocked(int groupId) {
+        return mDisplayGroupInfos.get(groupId).wakeLockSummary;
+    }
+
+    void setWakeLockSummaryLocked(int groupId, int summary) {
+        mDisplayGroupInfos.get(groupId).wakeLockSummary = summary;
+    }
+
     /**
      * Interface through which an interested party may be informed of {@link DisplayGroup} events.
      */
@@ -264,7 +308,12 @@ public class DisplayGroupPowerStateMapper {
         public int wakefulness;
         public boolean ready;
         public long lastPowerOnTime;
+        boolean poweringOn;
         public boolean sandmanSummoned;
+        public long lastUserActivityTime;
+        public long lastUserActivityTimeNoChangeLights;
+        public int userActivitySummary;
+        public int wakeLockSummary;
 
         /** {@code true} if this DisplayGroup supports dreaming; otherwise {@code false}. */
         public boolean supportsSandman;

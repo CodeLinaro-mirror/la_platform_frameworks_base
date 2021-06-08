@@ -20,7 +20,6 @@ import android.os.BatteryConsumer;
 import android.os.BatteryStats;
 import android.os.BatteryUsageStats;
 import android.os.BatteryUsageStatsQuery;
-import android.os.SystemBatteryConsumer;
 import android.os.UserHandle;
 import android.util.SparseArray;
 
@@ -44,15 +43,17 @@ public class AmbientDisplayPowerCalculator extends PowerCalculator {
     @Override
     public void calculate(BatteryUsageStats.Builder builder, BatteryStats batteryStats,
             long rawRealtimeUs, long rawUptimeUs, BatteryUsageStatsQuery query) {
+        final long measuredEnergyUC = batteryStats.getScreenDozeMeasuredBatteryConsumptionUC();
+        final int powerModel = getPowerModel(measuredEnergyUC, query);
         final long durationMs = calculateDuration(batteryStats, rawRealtimeUs,
                 BatteryStats.STATS_SINCE_CHARGED);
-        final double powerMah = getMeasuredOrEstimatedPower(
-                batteryStats.getScreenDozeMeasuredBatteryConsumptionUC(),
-                mPowerEstimator, durationMs, query.shouldForceUsePowerProfileModel());
-        builder.getOrCreateSystemBatteryConsumerBuilder(
-                        SystemBatteryConsumer.DRAIN_TYPE_AMBIENT_DISPLAY)
-                .setConsumedPower(BatteryConsumer.POWER_COMPONENT_USAGE, powerMah)
-                .setUsageDurationMillis(BatteryConsumer.TIME_COMPONENT_USAGE, durationMs);
+        final double powerMah = getMeasuredOrEstimatedPower(powerModel,
+                measuredEnergyUC, mPowerEstimator, durationMs);
+        builder.getAggregateBatteryConsumerBuilder(
+                BatteryUsageStats.AGGREGATE_BATTERY_CONSUMER_SCOPE_DEVICE)
+                .setUsageDurationMillis(BatteryConsumer.POWER_COMPONENT_AMBIENT_DISPLAY, durationMs)
+                .setConsumedPower(BatteryConsumer.POWER_COMPONENT_AMBIENT_DISPLAY,
+                        powerMah, powerModel);
     }
 
     /**
@@ -64,10 +65,12 @@ public class AmbientDisplayPowerCalculator extends PowerCalculator {
     @Override
     public void calculate(List<BatterySipper> sippers, BatteryStats batteryStats,
             long rawRealtimeUs, long rawUptimeUs, int statsType, SparseArray<UserHandle> asUsers) {
+        final long measuredEnergyUC = batteryStats.getScreenDozeMeasuredBatteryConsumptionUC();
         final long durationMs = calculateDuration(batteryStats, rawRealtimeUs, statsType);
-        final double powerMah = getMeasuredOrEstimatedPower(
+        final int powerModel = getPowerModel(measuredEnergyUC);
+        final double powerMah = getMeasuredOrEstimatedPower(powerModel,
                 batteryStats.getScreenDozeMeasuredBatteryConsumptionUC(),
-                mPowerEstimator, durationMs, false);
+                mPowerEstimator, durationMs);
         if (powerMah > 0) {
             BatterySipper bs = new BatterySipper(BatterySipper.DrainType.AMBIENT_DISPLAY, null, 0);
             bs.usagePowerMah = powerMah;

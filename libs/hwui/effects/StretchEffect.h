@@ -26,15 +26,15 @@
 
 namespace android::uirenderer {
 
-// TODO: Inherit from base RenderEffect type?
 class StretchEffect {
 public:
-    enum class StretchInterpolator {
-        SmoothStep,
-    };
 
-    StretchEffect(const SkRect& area, const SkVector& direction, float maxStretchAmount)
-            : stretchArea(area), maxStretchAmount(maxStretchAmount), mStretchDirection(direction) {}
+    StretchEffect(const SkVector& direction,
+                  float maxStretchAmountX,
+                  float maxStretchAmountY)
+            : maxStretchAmountX(maxStretchAmountX)
+            , maxStretchAmountY(maxStretchAmountY)
+            , mStretchDirection(direction) { }
 
     StretchEffect() {}
 
@@ -47,11 +47,16 @@ public:
     }
 
     StretchEffect& operator=(const StretchEffect& other) {
-        this->stretchArea = other.stretchArea;
         this->mStretchDirection = other.mStretchDirection;
-        this->mStretchFilter = nullptr;
-        this->maxStretchAmount = other.maxStretchAmount;
+        this->maxStretchAmountX = other.maxStretchAmountX;
+        this->maxStretchAmountY = other.maxStretchAmountY;
         return *this;
+    }
+
+    bool operator==(const StretchEffect& other) const {
+        return mStretchDirection == other.mStretchDirection &&
+                maxStretchAmountX == other.maxStretchAmountX &&
+                maxStretchAmountY == other.maxStretchAmountY;
     }
 
     void mergeWith(const StretchEffect& other) {
@@ -62,23 +67,19 @@ public:
             *this = other;
             return;
         }
-        setStretchDirection(mStretchDirection + other.mStretchDirection);
+        mStretchDirection += other.mStretchDirection;
         if (isEmpty()) {
             return setEmpty();
         }
-        stretchArea.join(other.stretchArea);
-        maxStretchAmount = std::max(maxStretchAmount, other.maxStretchAmount);
+        maxStretchAmountX = std::max(maxStretchAmountX, other.maxStretchAmountX);
+        maxStretchAmountY = std::max(maxStretchAmountY, other.maxStretchAmountY);
     }
 
-    sk_sp<SkImageFilter> getImageFilter(const sk_sp<SkImage>& snapshotImage) const;
+    sk_sp<SkShader> getShader(float width, float height,
+                              const sk_sp<SkImage>& snapshotImage) const;
 
-    SkRect stretchArea {0, 0, 0, 0};
-    float maxStretchAmount = 0;
-
-    void setStretchDirection(const SkVector& direction) {
-        mStretchFilter = nullptr;
-        mStretchDirection = direction;
-    }
+    float maxStretchAmountX = 0;
+    float maxStretchAmountY = 0;
 
     const SkVector getStretchDirection() const { return mStretchDirection; }
 
@@ -86,7 +87,6 @@ private:
     static sk_sp<SkRuntimeEffect> getStretchEffect();
     mutable SkVector mStretchDirection{0, 0};
     mutable std::unique_ptr<SkRuntimeShaderBuilder> mBuilder;
-    mutable sk_sp<SkImageFilter> mStretchFilter;
 };
 
 } // namespace android::uirenderer

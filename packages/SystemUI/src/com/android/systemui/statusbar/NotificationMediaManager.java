@@ -24,6 +24,7 @@ import android.annotation.MainThread;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.Notification;
+import android.app.smartspace.SmartspaceTarget;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
@@ -38,8 +39,6 @@ import android.media.session.PlaybackState;
 import android.os.AsyncTask;
 import android.os.Trace;
 import android.os.UserHandle;
-import android.provider.DeviceConfig;
-import android.provider.DeviceConfig.Properties;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.NotificationStats;
 import android.service.notification.StatusBarNotification;
@@ -48,11 +47,10 @@ import android.util.Log;
 import android.view.View;
 import android.widget.ImageView;
 
-import com.android.internal.config.sysui.SystemUiDeviceConfigFlags;
 import com.android.internal.statusbar.NotificationVisibility;
 import com.android.systemui.Dependency;
 import com.android.systemui.Dumpable;
-import com.android.systemui.Interpolators;
+import com.android.systemui.animation.Interpolators;
 import com.android.systemui.colorextraction.SysuiColorExtractor;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.media.MediaData;
@@ -147,23 +145,6 @@ public class NotificationMediaManager implements Dumpable {
     private ImageView mBackdropFront;
     private ImageView mBackdropBack;
 
-    private boolean mShowCompactMediaSeekbar;
-    private final DeviceConfig.OnPropertiesChangedListener mPropertiesChangedListener =
-            new DeviceConfig.OnPropertiesChangedListener() {
-        @Override
-        public void onPropertiesChanged(Properties properties) {
-            for (String name : properties.getKeyset()) {
-                if (SystemUiDeviceConfigFlags.COMPACT_MEDIA_SEEKBAR_ENABLED.equals(name)) {
-                    String value = properties.getString(name, null);
-                    if (DEBUG_MEDIA) {
-                        Log.v(TAG, "DEBUG_MEDIA: compact media seekbar flag updated: " + value);
-                    }
-                    mShowCompactMediaSeekbar = "true".equals(value);
-                }
-            }
-        }
-    };
-
     private final MediaController.Callback mMediaListener = new MediaController.Callback() {
         @Override
         public void onPlaybackStateChanged(PlaybackState state) {
@@ -231,14 +212,6 @@ public class NotificationMediaManager implements Dumpable {
             setupNotifPipeline();
             mUsingNotifPipeline = true;
         }
-
-        mShowCompactMediaSeekbar = "true".equals(
-                DeviceConfig.getProperty(DeviceConfig.NAMESPACE_SYSTEMUI,
-                    SystemUiDeviceConfigFlags.COMPACT_MEDIA_SEEKBAR_ENABLED));
-
-        deviceConfig.addOnPropertiesChangedListener(DeviceConfig.NAMESPACE_SYSTEMUI,
-                mContext.getMainExecutor(),
-                mPropertiesChangedListener);
     }
 
     private void setupNotifPipeline() {
@@ -276,6 +249,11 @@ public class NotificationMediaManager implements Dumpable {
             }
 
             @Override
+            public void onSmartspaceMediaDataLoaded(@NonNull String key,
+                    @NonNull SmartspaceTarget data) {
+            }
+
+            @Override
             public void onMediaDataRemoved(@NonNull String key) {
                 mNotifPipeline.getAllNotifs()
                         .stream()
@@ -288,6 +266,9 @@ public class NotificationMediaManager implements Dumpable {
                                     getDismissedByUserStats(entry));
                         });
             }
+
+            @Override
+            public void onSmartspaceMediaDataRemoved(@NonNull String key) {}
         });
     }
 
@@ -341,6 +322,11 @@ public class NotificationMediaManager implements Dumpable {
             }
 
             @Override
+            public void onSmartspaceMediaDataLoaded(@NonNull String key,
+                    @NonNull SmartspaceTarget data) {
+            }
+
+            @Override
             public void onMediaDataRemoved(@NonNull String key) {
                 NotificationEntry entry = mEntryManager.getPendingOrActiveNotif(key);
                 if (entry != null) {
@@ -351,6 +337,9 @@ public class NotificationMediaManager implements Dumpable {
                             NotificationListenerService.REASON_CANCEL);
                 }
             }
+
+            @Override
+            public void onSmartspaceMediaDataRemoved(@NonNull String key) {}
         });
     }
 
@@ -403,10 +392,6 @@ public class NotificationMediaManager implements Dumpable {
 
     public MediaMetadata getMediaMetadata() {
         return mMediaMetadata;
-    }
-
-    public boolean getShowCompactMediaSeekbar() {
-        return mShowCompactMediaSeekbar;
     }
 
     public Icon getMediaIcon() {

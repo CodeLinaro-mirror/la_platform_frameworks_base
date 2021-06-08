@@ -50,13 +50,6 @@ java_library {
     srcs: ["src/com/android/systemui/EventLogTags.logtags"],
 }
 
-java_library {
-    name: "SystemUI-sensors",
-    srcs: [
-        "src/com/android/systemui/util/sensors/ThresholdSensor.java",
-    ]
-}
-
 android_library {
     name: "SystemUI-core",
     srcs: [
@@ -71,6 +64,7 @@ android_library {
     ],
     static_libs: [
         "WindowManager-Shell",
+        "SystemUIAnimationLib",
         "SystemUIPluginLib",
         "SystemUISharedLib",
         "SystemUI-statsd",
@@ -99,7 +93,7 @@ android_library {
         "SystemUI-tags",
         "SystemUI-proto",
         "dagger2",
-        "jsr330"
+        "jsr330",
     ],
     manifest: "AndroidManifest.xml",
 
@@ -139,6 +133,7 @@ android_library {
         "src/**/I*.aidl",
     ],
     static_libs: [
+        "SystemUIAnimationLib",
         "SystemUIPluginLib",
         "SystemUISharedLib",
         "SystemUI-statsd",

@@ -34,7 +34,6 @@ import android.widget.RemoteViews;
 import android.widget.TextView;
 
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.widget.CachingIconView;
 import com.android.internal.widget.NotificationExpandButton;
 import com.android.systemui.R;
 import com.android.systemui.statusbar.CrossFadeHelper;
@@ -44,7 +43,6 @@ import com.android.systemui.statusbar.notification.collection.legacy.VisualStabi
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.HybridGroupManager;
 import com.android.systemui.statusbar.notification.row.HybridNotificationView;
-import com.android.systemui.statusbar.notification.row.wrapper.NotificationHeaderViewWrapper;
 import com.android.systemui.statusbar.notification.row.wrapper.NotificationViewWrapper;
 
 import java.util.ArrayList;
@@ -106,7 +104,6 @@ public class NotificationChildrenContainer extends ViewGroup {
     private ViewGroup mCurrentHeader;
     private boolean mIsConversation;
 
-    private boolean mTintWithThemeAccent;
     private boolean mShowGroupCountInExpander;
     private boolean mShowDividersWhenExpanded;
     private boolean mHideDividersDuringExpand;
@@ -150,8 +147,6 @@ public class NotificationChildrenContainer extends ViewGroup {
                 com.android.internal.R.dimen.notification_content_margin);
         mEnableShadowOnChildNotifications =
                 res.getBoolean(R.bool.config_enableShadowOnChildNotifications);
-        mTintWithThemeAccent =
-                res.getBoolean(com.android.internal.R.bool.config_tintNotificationsWithTheme);
         mShowGroupCountInExpander =
                 res.getBoolean(R.bool.config_showNotificationGroupCountInExpander);
         mShowDividersWhenExpanded =
@@ -325,7 +320,7 @@ public class NotificationChildrenContainer extends ViewGroup {
         StatusBarNotification notification = mContainingNotification.getEntry().getSbn();
         final Notification.Builder builder = Notification.Builder.recoverBuilder(getContext(),
                 notification.getNotification());
-        RemoteViews header = builder.makeNotificationHeader();
+        RemoteViews header = builder.makeNotificationGroupHeader();
         if (mNotificationHeader == null) {
             mNotificationHeader = (NotificationHeaderView) header.apply(getContext(), this);
             mNotificationHeader.findViewById(com.android.internal.R.id.expand_button)
@@ -338,16 +333,8 @@ public class NotificationChildrenContainer extends ViewGroup {
         } else {
             header.reapply(getContext(), mNotificationHeader);
         }
+        mNotificationHeaderWrapper.setExpanded(mChildrenExpanded);
         mNotificationHeaderWrapper.onContentUpdated(mContainingNotification);
-        if (mNotificationHeaderWrapper instanceof NotificationHeaderViewWrapper) {
-            NotificationHeaderViewWrapper headerWrapper =
-                    (NotificationHeaderViewWrapper) mNotificationHeaderWrapper;
-            if (isConversation) {
-                headerWrapper.applyConversationSkin();
-            } else {
-                headerWrapper.clearConversationSkin();
-            }
-        }
         recreateLowPriorityHeader(builder, isConversation);
         updateHeaderVisibility(false /* animate */);
         updateChildrenAppearance();
@@ -381,15 +368,6 @@ public class NotificationChildrenContainer extends ViewGroup {
                 header.reapply(getContext(), mNotificationHeaderLowPriority);
             }
             mNotificationHeaderWrapperLowPriority.onContentUpdated(mContainingNotification);
-            if (mNotificationHeaderWrapper instanceof NotificationHeaderViewWrapper) {
-                NotificationHeaderViewWrapper headerWrapper =
-                        (NotificationHeaderViewWrapper) mNotificationHeaderWrapper;
-                if (isConversation) {
-                    headerWrapper.applyConversationSkin();
-                } else {
-                    headerWrapper.clearConversationSkin();
-                }
-            }
             resetHeaderVisibilityIfNeeded(mNotificationHeaderLowPriority, calculateDesiredHeader());
         } else {
             removeView(mNotificationHeaderLowPriority);
@@ -638,10 +616,6 @@ public class NotificationChildrenContainer extends ViewGroup {
             childState.location = parentState.location;
             childState.inShelf = parentState.inShelf;
             yPosition += intrinsicHeight;
-            if (child.isExpandAnimationRunning()) {
-                launchTransitionCompensation = -ambientState.getExpandAnimationTopChange();
-            }
-
         }
         if (mOverflowNumber != null) {
             ExpandableNotificationRow overflowView = mAttachedChildren.get(Math.min(
@@ -1227,14 +1201,11 @@ public class NotificationChildrenContainer extends ViewGroup {
             return;
         }
         int color = mContainingNotification.getNotificationColor();
-        if (mTintWithThemeAccent) {
-            // We're using the theme accent, color with the accent color instead of the notif color
-            Resources.Theme theme = new ContextThemeWrapper(mContext,
-                    com.android.internal.R.style.Theme_DeviceDefault_DayNight).getTheme();
-            TypedArray ta = theme.obtainStyledAttributes(
-                    new int[]{com.android.internal.R.attr.colorAccent});
+        Resources.Theme theme = new ContextThemeWrapper(mContext,
+                com.android.internal.R.style.Theme_DeviceDefault_DayNight).getTheme();
+        try (TypedArray ta = theme.obtainStyledAttributes(
+                new int[]{com.android.internal.R.attr.colorAccent})) {
             color = ta.getColor(0, color);
-            ta.recycle();
         }
         mHybridGroupManager.setOverflowNumberColor(mOverflowNumber, color);
     }

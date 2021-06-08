@@ -28,6 +28,7 @@ import android.permission.PermissionManager
 import android.testing.AndroidTestingRunner
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.appops.AppOpsController
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.privacy.logging.PrivacyLogger
 import com.android.systemui.settings.UserTracker
@@ -43,6 +44,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.any
+import org.mockito.ArgumentMatchers.anyBoolean
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Captor
@@ -86,6 +88,8 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
     private lateinit var privacyLogger: PrivacyLogger
     @Mock
     private lateinit var keyguardStateController: KeyguardStateController
+    @Mock
+    private lateinit var appOpsController: AppOpsController
     @Captor
     private lateinit var dialogDismissedCaptor: ArgumentCaptor<PrivacyDialog.OnDialogDismissed>
     @Captor
@@ -131,6 +135,7 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
                 uiExecutor,
                 privacyLogger,
                 keyguardStateController,
+                appOpsController,
                 dialogProvider
         )
     }
@@ -143,18 +148,27 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
     }
 
     @Test
+    fun testMicMutedParameter() {
+        `when`(appOpsController.isMicMuted).thenReturn(true)
+        controller.showDialog(context)
+        backgroundExecutor.runAllReady()
+
+        verify(permissionManager).getIndicatorAppOpUsageData(true)
+    }
+
+    @Test
     fun testPermissionManagerOnlyCalledInBackgroundThread() {
         controller.showDialog(context)
-        verify(permissionManager, never()).indicatorAppOpUsageData
+        verify(permissionManager, never()).getIndicatorAppOpUsageData(anyBoolean())
         backgroundExecutor.runAllReady()
-        verify(permissionManager).indicatorAppOpUsageData
+        verify(permissionManager).getIndicatorAppOpUsageData(anyBoolean())
     }
 
     @Test
     fun testPackageManagerOnlyCalledInBackgroundThread() {
         val usage = createMockPermGroupUsage()
         `when`(usage.isPhoneCall).thenReturn(false)
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(listOf(usage))
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(listOf(usage))
 
         controller.showDialog(context)
         verify(packageManager, never()).getApplicationInfoAsUser(anyString(), anyInt(), anyInt())
@@ -165,6 +179,9 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
 
     @Test
     fun testShowDialogShowsDialog() {
+        val usage = createMockPermGroupUsage()
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(listOf(usage))
+
         controller.showDialog(context)
         exhaustExecutors()
 
@@ -172,7 +189,17 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
     }
 
     @Test
+    fun testDontShowEmptyDialog() {
+        controller.showDialog(context)
+        exhaustExecutors()
+
+        verify(dialog, never()).show()
+    }
+
+    @Test
     fun testHideDialogDismissesDialogIfShown() {
+        val usage = createMockPermGroupUsage()
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(listOf(usage))
         controller.showDialog(context)
         exhaustExecutors()
 
@@ -188,6 +215,8 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
 
     @Test
     fun testHideDialogNoopAfterDismissed() {
+        val usage = createMockPermGroupUsage()
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(listOf(usage))
         controller.showDialog(context)
         exhaustExecutors()
 
@@ -200,6 +229,8 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
 
     @Test
     fun testShowForAllUsers() {
+        val usage = createMockPermGroupUsage()
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(listOf(usage))
         controller.showDialog(context)
 
         exhaustExecutors()
@@ -217,7 +248,7 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
                 isPhoneCall = false,
                 attribution = TEST_ATTRIBUTION
         )
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(listOf(usage))
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(listOf(usage))
 
         controller.showDialog(context)
         exhaustExecutors()
@@ -246,7 +277,7 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
                 packageName = "${TEST_PACKAGE_NAME}_microphone",
                 permGroupName = PERM_MICROPHONE
         )
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(
                 listOf(usage_microphone, usage_camera)
         )
 
@@ -269,7 +300,7 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
                 packageName = "${TEST_PACKAGE_NAME}_recent",
                 isActive = false
         )
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(
                 listOf(usage_recent, usage_active)
         )
 
@@ -292,7 +323,7 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
                 isActive = true,
                 lastAccess = 1L
         )
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(
                 listOf(usage_active, usage_active_moreRecent)
         )
         controller.showDialog(context)
@@ -319,7 +350,7 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
                 isActive = false,
                 lastAccess = 2L
         )
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(
                 listOf(usage_recent, usage_mostRecent, usage_moreRecent)
         )
 
@@ -342,7 +373,7 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
                 permGroupName = PERM_LOCATION
         )
 
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(
                 listOf(usage_camera, usage_location, usage_microphone)
         )
         `when`(privacyItemController.micCameraAvailable).thenReturn(false)
@@ -366,7 +397,7 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
                 permGroupName = PERM_LOCATION
         )
 
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(
                 listOf(usage_camera, usage_location, usage_microphone)
         )
         `when`(privacyItemController.locationAvailable).thenReturn(false)
@@ -392,12 +423,11 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
                 permGroupName = PERM_LOCATION
         )
 
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(
                 listOf(usage_camera, usage_location, usage_microphone)
         )
-        `when`(privacyItemController.micCameraAvailable).thenReturn(false)
-        `when`(privacyItemController.locationAvailable).thenReturn(false)
-        `when`(privacyItemController.allIndicatorsAvailable).thenReturn(true)
+        `when`(privacyItemController.micCameraAvailable).thenReturn(true)
+        `when`(privacyItemController.locationAvailable).thenReturn(true)
 
         controller.showDialog(context)
         exhaustExecutors()
@@ -417,17 +447,16 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
                 permGroupName = PERM_LOCATION
         )
 
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(
                 listOf(usage_camera, usage_location, usage_microphone)
         )
         `when`(privacyItemController.micCameraAvailable).thenReturn(false)
         `when`(privacyItemController.locationAvailable).thenReturn(false)
-        `when`(privacyItemController.allIndicatorsAvailable).thenReturn(false)
 
         controller.showDialog(context)
         exhaustExecutors()
 
-        assertThat(dialogProvider.list).isEmpty()
+        verify(dialog, never()).show()
     }
 
     @Test
@@ -435,7 +464,8 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
         val usage_enterprise = createMockPermGroupUsage(
                 uid = generateUidForUser(ENT_USER_ID)
         )
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(listOf(usage_enterprise))
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean()))
+                .thenReturn(listOf(usage_enterprise))
 
         controller.showDialog(context)
         exhaustExecutors()
@@ -448,16 +478,19 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
         val usage_other = createMockPermGroupUsage(
                 uid = generateUidForUser(ENT_USER_ID + 1)
         )
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(listOf(usage_other))
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean()))
+                .thenReturn(listOf(usage_other))
 
         controller.showDialog(context)
         exhaustExecutors()
 
-        assertThat(dialogProvider.list).isEmpty()
+        verify(dialog, never()).show()
     }
 
     @Test
     fun testStartActivityCorrectIntent() {
+        val usage = createMockPermGroupUsage()
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(listOf(usage))
         controller.showDialog(context)
         exhaustExecutors()
 
@@ -474,6 +507,8 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
 
     @Test
     fun testStartActivityCorrectIntent_enterpriseUser() {
+        val usage = createMockPermGroupUsage()
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(listOf(usage))
         controller.showDialog(context)
         exhaustExecutors()
 
@@ -487,6 +522,8 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
 
     @Test
     fun testStartActivitySuccess() {
+        val usage = createMockPermGroupUsage()
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(listOf(usage))
         controller.showDialog(context)
         exhaustExecutors()
 
@@ -500,6 +537,8 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
 
     @Test
     fun testStartActivityFailure() {
+        val usage = createMockPermGroupUsage()
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(listOf(usage))
         controller.showDialog(context)
         exhaustExecutors()
 
@@ -516,7 +555,8 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
     }
 
     private fun setUpDefaultMockResponses() {
-        `when`(permissionManager.indicatorAppOpUsageData).thenReturn(emptyList())
+        `when`(permissionManager.getIndicatorAppOpUsageData(anyBoolean())).thenReturn(emptyList())
+        `when`(appOpsController.isMicMuted).thenReturn(false)
 
         `when`(packageManager.getApplicationInfoAsUser(anyString(), anyInt(), anyInt()))
                 .thenAnswer {
@@ -525,7 +565,6 @@ class PrivacyDialogControllerTest : SysuiTestCase() {
 
         `when`(privacyItemController.locationAvailable).thenReturn(true)
         `when`(privacyItemController.micCameraAvailable).thenReturn(true)
-        `when`(privacyItemController.allIndicatorsAvailable).thenReturn(false)
 
         `when`(userTracker.userProfiles).thenReturn(listOf(
                 UserInfo(USER_ID, "", 0),

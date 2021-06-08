@@ -31,11 +31,11 @@ import androidx.dynamicanimation.animation.FloatPropertyCompat
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
 import com.android.systemui.Dumpable
-import com.android.systemui.Interpolators
+import com.android.systemui.animation.Interpolators
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.plugins.statusbar.StatusBarStateController
-import com.android.systemui.statusbar.notification.ActivityLaunchAnimator
+import com.android.systemui.statusbar.notification.ExpandAnimationParameters
 import com.android.systemui.statusbar.phone.BiometricUnlockController
 import com.android.systemui.statusbar.phone.BiometricUnlockController.MODE_WAKE_AND_UNLOCK
 import com.android.systemui.statusbar.phone.DozeParameters
@@ -98,20 +98,18 @@ class NotificationShadeDepthController @Inject constructor(
     var globalActionsSpring = DepthAnimation()
     var showingHomeControls: Boolean = false
 
-    @VisibleForTesting
-    var brightnessMirrorSpring = DepthAnimation()
-    var brightnessMirrorVisible: Boolean = false
+    var qsPanelExpansion = 0f
         set(value) {
+            if (field == value) return
             field = value
-            brightnessMirrorSpring.animateTo(if (value) blurUtils.blurRadiusOfRatio(1f)
-                else 0)
+            scheduleUpdate()
         }
 
     /**
      * When launching an app from the shade, the animations progress should affect how blurry the
      * shade is, overriding the expansion amount.
      */
-    var notificationLaunchAnimationParams: ActivityLaunchAnimator.ExpandAnimationParameters? = null
+    var notificationLaunchAnimationParams: ExpandAnimationParameters? = null
         set(value) {
             field = value
             if (value != null) {
@@ -158,10 +156,10 @@ class NotificationShadeDepthController @Inject constructor(
         updateScheduled = false
         val normalizedBlurRadius = MathUtils.constrain(shadeAnimation.radius,
                 blurUtils.minBlurRadius, blurUtils.maxBlurRadius)
-        val combinedBlur = (shadeSpring.radius * INTERACTION_BLUR_FRACTION +
+        var combinedBlur = (shadeSpring.radius * INTERACTION_BLUR_FRACTION +
                 normalizedBlurRadius * ANIMATION_BLUR_FRACTION).toInt()
+        combinedBlur = max(combinedBlur, blurUtils.blurRadiusOfRatio(qsPanelExpansion))
         var shadeRadius = max(combinedBlur, wakeAndUnlockBlurRadius).toFloat()
-        shadeRadius *= 1f - brightnessMirrorSpring.ratio
         val launchProgress = notificationLaunchAnimationParams?.linearProgress ?: 0f
         shadeRadius *= (1f - launchProgress) * (1f - launchProgress)
 
@@ -189,7 +187,7 @@ class NotificationShadeDepthController @Inject constructor(
         blurUtils.applyBlur(blurRoot?.viewRootImpl ?: root.viewRootImpl, blur)
         val zoomOut = blurUtils.ratioOfBlurRadius(blur)
         try {
-            if (root.isAttachedToWindow) {
+            if (root.isAttachedToWindow && root.windowToken != null) {
                 wallpaperManager.setWallpaperZoomOut(root.windowToken, zoomOut)
             } else {
                 Log.i(TAG, "Won't set zoom. Window not attached $root")
@@ -255,7 +253,6 @@ class NotificationShadeDepthController @Inject constructor(
                 shadeSpring.finishIfRunning()
                 shadeAnimation.finishIfRunning()
                 globalActionsSpring.finishIfRunning()
-                brightnessMirrorSpring.finishIfRunning()
             }
         }
 
@@ -417,7 +414,6 @@ class NotificationShadeDepthController @Inject constructor(
             it.println("shadeRadius: ${shadeSpring.radius}")
             it.println("shadeAnimation: ${shadeAnimation.radius}")
             it.println("globalActionsRadius: ${globalActionsSpring.radius}")
-            it.println("brightnessMirrorRadius: ${brightnessMirrorSpring.radius}")
             it.println("wakeAndUnlockBlur: $wakeAndUnlockBlurRadius")
             it.println("notificationLaunchAnimationProgress: " +
                     "${notificationLaunchAnimationParams?.linearProgress}")

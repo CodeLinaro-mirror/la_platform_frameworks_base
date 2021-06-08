@@ -26,6 +26,7 @@ import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.annotation.TestApi;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.media.metrics.LogSessionId;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
@@ -44,7 +45,9 @@ import java.lang.ref.WeakReference;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.NioUtils;
+import java.util.HashMap;
 import java.util.LinkedList;
+import java.util.Objects;
 import java.util.concurrent.Executor;
 
 /**
@@ -567,9 +570,9 @@ public class AudioTrack extends PlayerBase
 
     /**
      * The log session id used for metrics.
-     * A null or empty string here means it is not set.
+     * {@link LogSessionId#LOG_SESSION_ID_NONE} here means it is not set.
      */
-    private String mLogSessionId;
+    @NonNull private LogSessionId mLogSessionId = LogSessionId.LOG_SESSION_ID_NONE;
 
     //--------------------------------
     // Used exclusively by native code
@@ -1593,9 +1596,24 @@ public class AudioTrack extends PlayerBase
             AudioFormat.CHANNEL_OUT_LOW_FREQUENCY |
             AudioFormat.CHANNEL_OUT_BACK_LEFT |
             AudioFormat.CHANNEL_OUT_BACK_RIGHT |
+            AudioFormat.CHANNEL_OUT_FRONT_LEFT_OF_CENTER |
+            AudioFormat.CHANNEL_OUT_FRONT_RIGHT_OF_CENTER |
             AudioFormat.CHANNEL_OUT_BACK_CENTER |
             AudioFormat.CHANNEL_OUT_SIDE_LEFT |
-            AudioFormat.CHANNEL_OUT_SIDE_RIGHT;
+            AudioFormat.CHANNEL_OUT_SIDE_RIGHT |
+            AudioFormat.CHANNEL_OUT_TOP_CENTER |
+            AudioFormat.CHANNEL_OUT_TOP_FRONT_LEFT |
+            AudioFormat.CHANNEL_OUT_TOP_FRONT_CENTER |
+            AudioFormat.CHANNEL_OUT_TOP_FRONT_RIGHT |
+            AudioFormat.CHANNEL_OUT_TOP_BACK_LEFT |
+            AudioFormat.CHANNEL_OUT_TOP_BACK_CENTER |
+            AudioFormat.CHANNEL_OUT_TOP_BACK_RIGHT |
+            AudioFormat.CHANNEL_OUT_TOP_SIDE_LEFT |
+            AudioFormat.CHANNEL_OUT_TOP_SIDE_RIGHT |
+            AudioFormat.CHANNEL_OUT_BOTTOM_FRONT_LEFT |
+            AudioFormat.CHANNEL_OUT_BOTTOM_FRONT_CENTER |
+            AudioFormat.CHANNEL_OUT_BOTTOM_FRONT_RIGHT |
+            AudioFormat.CHANNEL_OUT_LOW_FREQUENCY_2;
 
     // Returns a boolean whether the attributes, format, bufferSizeInBytes, mode allow
     // power saving to be automatically enabled for an AudioTrack. Returns false if
@@ -1674,13 +1692,11 @@ public class AudioTrack extends PlayerBase
         }
         mSampleRate = sampleRateInHz;
 
-        // IEC61937 is based on stereo. We could coerce it to stereo.
-        // But the application needs to know the stream is stereo so that
-        // it is encoded and played correctly. So better to just reject it.
         if (audioFormat == AudioFormat.ENCODING_IEC61937
-                && channelConfig != AudioFormat.CHANNEL_OUT_STEREO) {
-            throw new IllegalArgumentException(
-                    "ENCODING_IEC61937 must be configured as CHANNEL_OUT_STEREO");
+                && channelConfig != AudioFormat.CHANNEL_OUT_STEREO
+                && AudioFormat.channelCountFromOutChannelMask(channelConfig) != 8) {
+            Log.w(TAG, "ENCODING_IEC61937 is configured with channel mask as " + channelConfig
+                    + ", which is not 2 or 8 channels");
         }
 
         //--------------
@@ -1748,6 +1764,26 @@ public class AudioTrack extends PlayerBase
         mDataLoadMode = mode;
     }
 
+    // General pair map
+    private static final HashMap<String, Integer> CHANNEL_PAIR_MAP = new HashMap<>() {{
+        put("front", AudioFormat.CHANNEL_OUT_FRONT_LEFT
+                | AudioFormat.CHANNEL_OUT_FRONT_RIGHT);
+        put("back", AudioFormat.CHANNEL_OUT_BACK_LEFT
+                | AudioFormat.CHANNEL_OUT_BACK_RIGHT);
+        put("front of center", AudioFormat.CHANNEL_OUT_FRONT_LEFT_OF_CENTER
+                | AudioFormat.CHANNEL_OUT_FRONT_RIGHT_OF_CENTER);
+        put("side", AudioFormat.CHANNEL_OUT_SIDE_LEFT
+                | AudioFormat.CHANNEL_OUT_SIDE_RIGHT);
+        put("top front", AudioFormat.CHANNEL_OUT_TOP_FRONT_LEFT
+                | AudioFormat.CHANNEL_OUT_TOP_FRONT_RIGHT);
+        put("top back", AudioFormat.CHANNEL_OUT_TOP_BACK_LEFT
+                | AudioFormat.CHANNEL_OUT_TOP_BACK_RIGHT);
+        put("top side", AudioFormat.CHANNEL_OUT_TOP_SIDE_LEFT
+                | AudioFormat.CHANNEL_OUT_TOP_SIDE_RIGHT);
+        put("bottom front", AudioFormat.CHANNEL_OUT_BOTTOM_FRONT_LEFT
+                | AudioFormat.CHANNEL_OUT_BOTTOM_FRONT_RIGHT);
+    }};
+
     /**
      * Convenience method to check that the channel configuration (a.k.a channel mask) is supported
      * @param channelConfig the mask to validate
@@ -1774,20 +1810,14 @@ public class AudioTrack extends PlayerBase
                 loge("Front channels must be present in multichannel configurations");
                 return false;
         }
-        final int backPair =
-                AudioFormat.CHANNEL_OUT_BACK_LEFT | AudioFormat.CHANNEL_OUT_BACK_RIGHT;
-        if ((channelConfig & backPair) != 0) {
-            if ((channelConfig & backPair) != backPair) {
-                loge("Rear channels can't be used independently");
+        // Check all pairs to see that they are matched (front duplicated here).
+        for (HashMap.Entry<String, Integer> e : CHANNEL_PAIR_MAP.entrySet()) {
+            final int positionPair = e.getValue();
+            if ((channelConfig & positionPair) != 0
+                    && (channelConfig & positionPair) != positionPair) {
+                loge("Channel pair (" + e.getKey() + ") cannot be used independently");
                 return false;
             }
-        }
-        final int sidePair =
-                AudioFormat.CHANNEL_OUT_SIDE_LEFT | AudioFormat.CHANNEL_OUT_SIDE_RIGHT;
-        if ((channelConfig & sidePair) != 0
-                && (channelConfig & sidePair) != sidePair) {
-            loge("Side channels can't be used independently");
-            return false;
         }
         return true;
     }
@@ -2083,6 +2113,65 @@ public class AudioTrack extends PlayerBase
      */
     public @IntRange (from = 0) int getBufferCapacityInFrames() {
         return native_get_buffer_capacity_frames();
+    }
+
+    /**
+     * Sets the streaming start threshold for an <code>AudioTrack</code>.
+     * <p> The streaming start threshold is the buffer level that the written audio
+     * data must reach for audio streaming to start after {@link #play()} is called.
+     * <p> For compressed streams, the size of a frame is considered to be exactly one byte.
+     *
+     * @param startThresholdInFrames the desired start threshold.
+     * @return the actual start threshold in frames value. This is
+     *         an integer between 1 to the buffer capacity
+     *         (see {@link #getBufferCapacityInFrames()}),
+     *         and might change if the output sink changes after track creation.
+     * @throws IllegalStateException if the track is not initialized or the
+     *         track transfer mode is not {@link #MODE_STREAM}.
+     * @throws IllegalArgumentException if startThresholdInFrames is not positive.
+     * @see #getStartThresholdInFrames()
+     */
+    public @IntRange(from = 1) int setStartThresholdInFrames(
+            @IntRange (from = 1) int startThresholdInFrames) {
+        if (mState != STATE_INITIALIZED) {
+            throw new IllegalStateException("AudioTrack is not initialized");
+        }
+        if (mDataLoadMode != MODE_STREAM) {
+            throw new IllegalStateException("AudioTrack must be a streaming track");
+        }
+        if (startThresholdInFrames < 1) {
+            throw new IllegalArgumentException("startThresholdInFrames "
+                    + startThresholdInFrames + " must be positive");
+        }
+        return native_setStartThresholdInFrames(startThresholdInFrames);
+    }
+
+    /**
+     * Returns the streaming start threshold of the <code>AudioTrack</code>.
+     * <p> The streaming start threshold is the buffer level that the written audio
+     * data must reach for audio streaming to start after {@link #play()} is called.
+     * When an <code>AudioTrack</code> is created, the streaming start threshold
+     * is the buffer capacity in frames. If the buffer size in frames is reduced
+     * by {@link #setBufferSizeInFrames(int)} to a value smaller than the start threshold
+     * then that value will be used instead for the streaming start threshold.
+     * <p> For compressed streams, the size of a frame is considered to be exactly one byte.
+     *
+     * @return the current start threshold in frames value. This is
+     *         an integer between 1 to the buffer capacity
+     *         (see {@link #getBufferCapacityInFrames()}),
+     *         and might change if the  output sink changes after track creation.
+     * @throws IllegalStateException if the track is not initialized or the
+     *         track is not {@link #MODE_STREAM}.
+     * @see #setStartThresholdInFrames(int)
+     */
+    public @IntRange (from = 1) int getStartThresholdInFrames() {
+        if (mState != STATE_INITIALIZED) {
+            throw new IllegalStateException("AudioTrack is not initialized");
+        }
+        if (mDataLoadMode != MODE_STREAM) {
+            throw new IllegalStateException("AudioTrack must be a streaming track");
+        }
+        return native_getStartThresholdInFrames();
     }
 
     /**
@@ -3985,22 +4074,33 @@ public class AudioTrack extends PlayerBase
     }
 
     /**
-     * Sets a string handle to this AudioTrack for metrics collection.
+     * Sets a {@link LogSessionId} instance to this AudioTrack for metrics collection.
      *
-     * @param logSessionId a string which is used to identify this object
-     *        to the metrics service.  Proper generated Ids must be obtained
-     *        from the Java metrics service and should be considered opaque.
-     *        Use null to remove the logSessionId association.
+     * @param logSessionId a {@link LogSessionId} instance which is used to
+     *        identify this object to the metrics service. Proper generated
+     *        Ids must be obtained from the Java metrics service and should
+     *        be considered opaque. Use
+     *        {@link LogSessionId#LOG_SESSION_ID_NONE} to remove the
+     *        logSessionId association.
      * @throws IllegalStateException if AudioTrack not initialized.
      *
-     * @hide
      */
-    public void setLogSessionId(@Nullable String logSessionId) {
+    public void setLogSessionId(@NonNull LogSessionId logSessionId) {
+        Objects.requireNonNull(logSessionId);
         if (mState == STATE_UNINITIALIZED) {
             throw new IllegalStateException("track not initialized");
         }
-        native_setLogSessionId(logSessionId);
+        String stringId = logSessionId.getStringId();
+        native_setLogSessionId(stringId);
         mLogSessionId = logSessionId;
+    }
+
+    /**
+     * Returns the {@link LogSessionId}.
+     */
+    @NonNull
+    public LogSessionId getLogSessionId() {
+        return mLogSessionId;
     }
 
     //---------------------------------------------------------
@@ -4239,6 +4339,8 @@ public class AudioTrack extends PlayerBase
     private native int native_set_dual_mono_mode(int dualMonoMode);
     private native int native_get_dual_mono_mode(int[] dualMonoMode);
     private native void native_setLogSessionId(@Nullable String logSessionId);
+    private native int native_setStartThresholdInFrames(int startThresholdInFrames);
+    private native int native_getStartThresholdInFrames();
 
     /**
      * Sets the audio service Player Interface Id.

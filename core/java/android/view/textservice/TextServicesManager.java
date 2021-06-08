@@ -16,28 +16,35 @@
 
 package android.view.textservice;
 
+import android.annotation.CallbackExecutor;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.annotation.SuppressLint;
 import android.annotation.SystemService;
 import android.annotation.UserIdInt;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.HandlerExecutor;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.ServiceManager.ServiceNotFoundException;
 import android.os.UserHandle;
 import android.util.Log;
+import android.view.inputmethod.InputMethodManager;
 import android.view.textservice.SpellCheckerSession.SpellCheckerSessionListener;
+import android.view.textservice.SpellCheckerSession.SpellCheckerSessionParams;
 
 import com.android.internal.textservice.ISpellCheckerSessionListener;
 import com.android.internal.textservice.ITextServicesManager;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
+import java.util.concurrent.Executor;
 
 /**
  * System API to the overall text services, which arbitrates interaction between applications
@@ -88,10 +95,15 @@ public final class TextServicesManager {
     @UserIdInt
     private final int mUserId;
 
-    private TextServicesManager(@UserIdInt int userId) throws ServiceNotFoundException {
+    @Nullable
+    private final InputMethodManager mInputMethodManager;
+
+    private TextServicesManager(@UserIdInt int userId,
+            @Nullable InputMethodManager inputMethodManager) throws ServiceNotFoundException {
         mService = ITextServicesManager.Stub.asInterface(
                 ServiceManager.getServiceOrThrow(Context.TEXT_SERVICES_MANAGER_SERVICE));
         mUserId = userId;
+        mInputMethodManager = inputMethodManager;
     }
 
     /**
@@ -105,7 +117,8 @@ public final class TextServicesManager {
     @NonNull
     public static TextServicesManager createInstance(@NonNull Context context)
             throws ServiceNotFoundException {
-        return new TextServicesManager(context.getUserId());
+        return new TextServicesManager(context.getUserId(), context.getSystemService(
+                InputMethodManager.class));
     }
 
     /**
@@ -118,13 +131,19 @@ public final class TextServicesManager {
         synchronized (TextServicesManager.class) {
             if (sInstance == null) {
                 try {
-                    sInstance = new TextServicesManager(UserHandle.myUserId());
+                    sInstance = new TextServicesManager(UserHandle.myUserId(), null);
                 } catch (ServiceNotFoundException e) {
                     throw new IllegalStateException(e);
                 }
             }
             return sInstance;
         }
+    }
+
+    /** @hide */
+    @Nullable
+    public InputMethodManager getInputMethodManager() {
+        return mInputMethodManager;
     }
 
     /**
@@ -147,61 +166,62 @@ public final class TextServicesManager {
      * {@link SuggestionsInfo#RESULT_ATTR_HAS_RECOMMENDED_SUGGESTIONS} will be passed to the spell
      * checker as supported attributes.
      *
-     * @see #newSpellCheckerSession(Bundle, Locale, SpellCheckerSessionListener, boolean, int)
-     * @param bundle A bundle to pass to the spell checker.
-     * @param locale The locale for the spell checker.
-     * @param listener A spell checker session lister for getting results from the spell checker.
-     * @param referToSpellCheckerLanguageSettings If true, the session for one of enabled
-     *                                            languages in settings will be used.
-     * @return A spell checker session from the spell checker.
+     * @param locale the locale for the spell checker. If {@code locale} is null and
+     * referToSpellCheckerLanguageSettings is true, the locale specified in Settings will be
+     * returned. If {@code locale} is not null and referToSpellCheckerLanguageSettings is true,
+     * the locale specified in Settings will be returned only when it is same as {@code locale}.
+     * Exceptionally, when referToSpellCheckerLanguageSettings is true and {@code locale} is
+     * only language (e.g. "en"), the specified locale in Settings (e.g. "en_US") will be
+     * selected.
+     * @param listener a spell checker session lister for getting results from the spell checker.
+     * @param referToSpellCheckerLanguageSettings if true, the session for one of enabled
+     * languages in settings will be returned.
+     * @return a spell checker session of the spell checker
      */
     @Nullable
     public SpellCheckerSession newSpellCheckerSession(@Nullable Bundle bundle,
             @Nullable Locale locale,
             @NonNull SpellCheckerSessionListener listener,
             boolean referToSpellCheckerLanguageSettings) {
-        return newSpellCheckerSession(bundle, locale, listener, referToSpellCheckerLanguageSettings,
-                SuggestionsInfo.RESULT_ATTR_IN_THE_DICTIONARY
-                        | SuggestionsInfo.RESULT_ATTR_LOOKS_LIKE_TYPO
-                        | SuggestionsInfo.RESULT_ATTR_HAS_RECOMMENDED_SUGGESTIONS);
+        // Attributes existed before {@link #newSpellCheckerSession(Locale, boolean, int, Bundle,
+        // Executor, SpellCheckerSessionListener)} was introduced.
+        int supportedAttributes = SuggestionsInfo.RESULT_ATTR_IN_THE_DICTIONARY
+                | SuggestionsInfo.RESULT_ATTR_LOOKS_LIKE_TYPO
+                | SuggestionsInfo.RESULT_ATTR_HAS_RECOMMENDED_SUGGESTIONS;
+        SpellCheckerSessionParams.Builder paramsBuilder = new SpellCheckerSessionParams.Builder()
+                .setLocale(locale)
+                .setShouldReferToSpellCheckerLanguageSettings(referToSpellCheckerLanguageSettings)
+                .setSupportedAttributes(supportedAttributes);
+        if (bundle != null) {
+            paramsBuilder.setExtras(bundle);
+        }
+        // Using the implicit looper to preserve the old behavior.
+        Executor executor = new HandlerExecutor(new Handler());
+        return newSpellCheckerSession(paramsBuilder.build(), executor, listener);
     }
 
     /**
      * Get a spell checker session from the spell checker.
      *
-     * <p>If {@code locale} is null and {@code referToSpellCheckerLanguageSettings} is true, the
-     * locale specified in Settings will be used. If {@code locale} is not null and
-     * {@code referToSpellCheckerLanguageSettings} is true, the locale specified in Settings will be
-     * returned only when it is same as {@code locale}.
-     * Exceptionally, when {@code referToSpellCheckerLanguageSettings} is true and {@code locale} is
-     * language only (e.g. "en"), the specified locale in Settings (e.g. "en_US") will be
-     * selected.
-     *
-     * @param bundle A bundle to pass to the spell checker.
-     * @param locale The locale for the spell checker.
-     * @param listener A spell checker session lister for getting results from a spell checker.
-     * @param referToSpellCheckerLanguageSettings If true, the session for one of enabled
-     *                                            languages in settings will be used.
-     * @param supportedAttributes A union of {@link SuggestionsInfo} attributes that the spell
-     *                            checker can set in the spell checking results.
+     * @param params The parameters passed to the spell checker.
+     * @param executor The executor on which {@code listener} will be called back.
+     * @param listener a spell checker session lister for getting results from the spell checker.
      * @return The spell checker session of the spell checker.
      */
     @Nullable
     public SpellCheckerSession newSpellCheckerSession(
-            @SuppressLint("NullableCollection") @Nullable Bundle bundle,
-            @SuppressLint("UseIcu") @Nullable Locale locale,
-            @NonNull SpellCheckerSessionListener listener,
-            @SuppressLint("ListenerLast") boolean referToSpellCheckerLanguageSettings,
-            @SuppressLint("ListenerLast") @SuggestionsInfo.ResultAttrs int supportedAttributes) {
-        if (listener == null) {
-            throw new NullPointerException();
-        }
-        if (!referToSpellCheckerLanguageSettings && locale == null) {
+            @NonNull SpellCheckerSessionParams params,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull SpellCheckerSessionListener listener) {
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(listener);
+        Locale locale = params.getLocale();
+        if (!params.shouldReferToSpellCheckerLanguageSettings() && locale == null) {
             throw new IllegalArgumentException("Locale should not be null if you don't refer"
                     + " settings.");
         }
 
-        if (referToSpellCheckerLanguageSettings && !isSpellCheckerEnabled()) {
+        if (params.shouldReferToSpellCheckerLanguageSettings() && !isSpellCheckerEnabled()) {
             return null;
         }
 
@@ -215,7 +235,7 @@ public final class TextServicesManager {
             return null;
         }
         SpellCheckerSubtype subtypeInUse = null;
-        if (referToSpellCheckerLanguageSettings) {
+        if (params.shouldReferToSpellCheckerLanguageSettings()) {
             subtypeInUse = getCurrentSpellCheckerSubtype(true);
             if (subtypeInUse == null) {
                 return null;
@@ -245,11 +265,12 @@ public final class TextServicesManager {
         if (subtypeInUse == null) {
             return null;
         }
-        final SpellCheckerSession session = new SpellCheckerSession(sci, this, listener);
+        final SpellCheckerSession session = new SpellCheckerSession(sci, this, listener, executor);
         try {
             mService.getSpellCheckerService(mUserId, sci.getId(), subtypeInUse.getLocale(),
                     session.getTextServicesSessionListener(),
-                    session.getSpellCheckerSessionListener(), bundle, supportedAttributes);
+                    session.getSpellCheckerSessionListener(),
+                    params.getExtras(), params.getSupportedAttributes());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -275,15 +296,15 @@ public final class TextServicesManager {
     }
 
     /**
-     * Retrieve the list of currently enabled spell checkers, or null if there is none.
+     * Retrieve the list of currently enabled spell checkers.
      *
      * @return The list of currently enabled spell checkers.
      */
-    @Nullable
-    @SuppressLint("NullableCollection")
+    @NonNull
     public List<SpellCheckerInfo> getEnabledSpellCheckerInfos() {
         final SpellCheckerInfo[] enabledSpellCheckers = getEnabledSpellCheckers();
-        return enabledSpellCheckers != null ? Arrays.asList(enabledSpellCheckers) : null;
+        return enabledSpellCheckers != null
+                ? Arrays.asList(enabledSpellCheckers) : Collections.emptyList();
     }
 
     /**

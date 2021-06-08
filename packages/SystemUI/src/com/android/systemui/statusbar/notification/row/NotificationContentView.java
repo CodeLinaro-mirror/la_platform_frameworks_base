@@ -16,14 +16,11 @@
 
 package com.android.systemui.statusbar.notification.row;
 
-
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.Notification;
 import android.app.PendingIntent;
 import android.content.Context;
-import android.content.res.Resources;
-import android.content.res.TypedArray;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
@@ -32,7 +29,6 @@ import android.util.ArrayMap;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.Pair;
-import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.NotificationHeaderView;
@@ -44,7 +40,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.util.ContrastColorUtil;
 import com.android.systemui.Dependency;
 import com.android.systemui.R;
 import com.android.systemui.plugins.statusbar.NotificationMenuRowPlugin;
@@ -63,6 +58,7 @@ import com.android.systemui.statusbar.policy.RemoteInputView;
 import com.android.systemui.statusbar.policy.SmartReplyConstants;
 import com.android.systemui.statusbar.policy.SmartReplyStateInflaterKt;
 import com.android.systemui.statusbar.policy.SmartReplyView;
+import com.android.systemui.wmshell.BubblesManager;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -349,7 +345,9 @@ public class NotificationContentView extends FrameLayout {
         invalidateOutline();
         selectLayout(false /* animate */, mForceSelectNextLayout /* force */);
         mForceSelectNextLayout = false;
-        updateExpandButtons(mExpandable);
+        // TODO(b/182314698): move this to onMeasure.  This requires switching to getMeasuredHeight,
+        //  and also requires revisiting all of the logic called earlier in this method.
+        updateExpandButtonsDuringLayout(mExpandable, true /* duringLayout */);
     }
 
     @Override
@@ -695,7 +693,6 @@ public class NotificationContentView extends FrameLayout {
             endColor = NotificationUtils.interpolateColors(startColor, endColor,
                     transformationAmount);
         }
-        mContainingNotification.updateBackgroundAlpha(transformationAmount);
         mContainingNotification.setContentBackground(endColor, false, this);
     }
 
@@ -870,18 +867,22 @@ public class NotificationContentView extends FrameLayout {
 
     public void updateBackgroundColor(boolean animate) {
         int customBackgroundColor = getBackgroundColor(mVisibleType);
-        mContainingNotification.resetBackgroundAlpha();
         mContainingNotification.setContentBackground(customBackgroundColor, animate, this);
     }
 
     public void setBackgroundTintColor(int color) {
+        boolean colorized = mNotificationEntry.getSbn().getNotification().isColorized();
         if (mExpandedSmartReplyView != null) {
-            boolean colorized = mNotificationEntry.getSbn().getNotification().isColorized();
             mExpandedSmartReplyView.setBackgroundTintColor(color, colorized);
         }
         if (mHeadsUpSmartReplyView != null) {
-            boolean colorized = mNotificationEntry.getSbn().getNotification().isColorized();
             mHeadsUpSmartReplyView.setBackgroundTintColor(color, colorized);
+        }
+        if (mExpandedRemoteInput != null) {
+            mExpandedRemoteInput.setBackgroundTintColor(color, colorized);
+        }
+        if (mHeadsUpRemoteInput != null) {
+            mHeadsUpRemoteInput.setBackgroundTintColor(color, colorized);
         }
     }
 
@@ -1245,8 +1246,7 @@ public class NotificationContentView extends FrameLayout {
         View actionContainerCandidate = view.findViewById(
                 com.android.internal.R.id.actions_container);
         if (actionContainerCandidate instanceof FrameLayout) {
-            RemoteInputView existing = (RemoteInputView)
-                    view.findViewWithTag(RemoteInputView.VIEW_TAG);
+            RemoteInputView existing = view.findViewWithTag(RemoteInputView.VIEW_TAG);
 
             if (existing != null) {
                 existing.onNotificationUpdateOrReset();
@@ -1258,7 +1258,7 @@ public class NotificationContentView extends FrameLayout {
                     RemoteInputView riv = RemoteInputView.inflate(
                             mContext, actionContainer, entry, mRemoteInputController);
 
-                    riv.setVisibility(View.INVISIBLE);
+                    riv.setVisibility(View.GONE);
                     actionContainer.addView(riv, new LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT)
@@ -1272,23 +1272,6 @@ public class NotificationContentView extends FrameLayout {
                 }
             }
             if (hasRemoteInput) {
-                int color = entry.getSbn().getNotification().color;
-                if (color == Notification.COLOR_DEFAULT) {
-                    color = mContext.getColor(R.color.default_remote_input_background);
-                }
-                if (mContext.getResources().getBoolean(
-                        com.android.internal.R.bool.config_tintNotificationsWithTheme)) {
-                    Resources.Theme theme = new ContextThemeWrapper(mContext,
-                            com.android.internal.R.style.Theme_DeviceDefault_DayNight).getTheme();
-                    TypedArray ta = theme.obtainStyledAttributes(
-                            new int[]{com.android.internal.R.attr.colorAccent});
-                    color = ta.getColor(0, color);
-                    ta.recycle();
-                }
-                existing.setBackgroundColor(ContrastColorUtil.ensureTextBackgroundColor(color,
-                        mContext.getColor(R.color.remote_input_text_enabled),
-                        mContext.getColor(R.color.remote_input_hint)));
-
                 existing.setWrapper(wrapper);
                 existing.setOnVisibilityChangedListener(this::setRemoteInputVisible);
 
@@ -1310,6 +1293,11 @@ public class NotificationContentView extends FrameLayout {
                     }
                 }
             }
+            if (existing != null) {
+                int backgroundColor = entry.getRow().getCurrentBackgroundTint();
+                boolean colorized = mNotificationEntry.getSbn().getNotification().isColorized();
+                existing.setBackgroundTintColor(backgroundColor, colorized);
+            }
             return existing;
         }
         return null;
@@ -1323,11 +1311,6 @@ public class NotificationContentView extends FrameLayout {
      */
     public void updateBubbleButton(NotificationEntry entry) {
         applyBubbleAction(mExpandedChild, entry);
-    }
-
-    private boolean isBubblesEnabled() {
-        return Settings.Global.getInt(mContext.getContentResolver(),
-                Settings.Global.NOTIFICATION_BUBBLES, 0) == 1;
     }
 
     /**
@@ -1344,15 +1327,13 @@ public class NotificationContentView extends FrameLayout {
         }
         ImageView bubbleButton = layout.findViewById(com.android.internal.R.id.bubble_button);
         View actionContainer = layout.findViewById(com.android.internal.R.id.actions_container);
-        LinearLayout actionContainerLayout =
-                layout.findViewById(com.android.internal.R.id.actions_container_layout);
-        if (bubbleButton == null || actionContainer == null || actionContainerLayout == null) {
+        if (bubbleButton == null || actionContainer == null) {
             return;
         }
         boolean isPersonWithShortcut =
                 mPeopleIdentifier.getPeopleNotificationType(entry)
                         >= PeopleNotificationIdentifier.TYPE_FULL_PERSON;
-        boolean showButton = isBubblesEnabled()
+        boolean showButton = BubblesManager.areBubblesEnabled(mContext, entry.getSbn().getUser())
                 && isPersonWithShortcut
                 && entry.getBubbleMetadata() != null;
         if (showButton) {
@@ -1493,18 +1474,26 @@ public class NotificationContentView extends FrameLayout {
             return null;
         }
 
-        SmartReplyView smartReplyView = null;
-        if (smartReplyContainer.getChildCount() == 1
-                && smartReplyContainer.getChildAt(0) instanceof SmartReplyView) {
+        // Search for an existing SmartReplyView
+        int index = 0;
+        final int childCount = smartReplyContainer.getChildCount();
+        for (; index < childCount; index++) {
+            View child = smartReplyContainer.getChildAt(index);
+            if (child.getId() == R.id.smart_reply_view && child instanceof SmartReplyView) {
+                break;
+            }
+        }
+
+        if (index < childCount) {
             // If we already have a SmartReplyView - replace it with the newly inflated one. The
             // newly inflated one is connected to the new inflated smart reply/action buttons.
-            smartReplyContainer.removeAllViews();
+            smartReplyContainer.removeViewAt(index);
         }
-        if (smartReplyContainer.getChildCount() == 0
-                && inflatedSmartReplyViewHolder != null
+        SmartReplyView smartReplyView = null;
+        if (inflatedSmartReplyViewHolder != null
                 && inflatedSmartReplyViewHolder.getSmartReplyView() != null) {
             smartReplyView = inflatedSmartReplyViewHolder.getSmartReplyView();
-            smartReplyContainer.addView(smartReplyView);
+            smartReplyContainer.addView(smartReplyView, index);
         }
         if (smartReplyView != null) {
             smartReplyView.resetSmartSuggestions(smartReplyContainer);
@@ -1589,6 +1578,10 @@ public class NotificationContentView extends FrameLayout {
     }
 
     public void updateExpandButtons(boolean expandable) {
+        updateExpandButtonsDuringLayout(expandable, false /* duringLayout */);
+    }
+
+    private void updateExpandButtonsDuringLayout(boolean expandable, boolean duringLayout) {
         mExpandable = expandable;
         // if the expanded child has the same height as the collapsed one we hide it.
         if (mExpandedChild != null && mExpandedChild.getHeight() != 0) {
@@ -1602,14 +1595,15 @@ public class NotificationContentView extends FrameLayout {
                 expandable = false;
             }
         }
+        boolean requestLayout = duringLayout && mIsContentExpandable != expandable;
         if (mExpandedChild != null) {
-            mExpandedWrapper.updateExpandability(expandable, mExpandClickListener);
+            mExpandedWrapper.updateExpandability(expandable, mExpandClickListener, requestLayout);
         }
         if (mContractedChild != null) {
-            mContractedWrapper.updateExpandability(expandable, mExpandClickListener);
+            mContractedWrapper.updateExpandability(expandable, mExpandClickListener, requestLayout);
         }
         if (mHeadsUpChild != null) {
-            mHeadsUpWrapper.updateExpandability(expandable,  mExpandClickListener);
+            mHeadsUpWrapper.updateExpandability(expandable,  mExpandClickListener, requestLayout);
         }
         mIsContentExpandable = expandable;
     }

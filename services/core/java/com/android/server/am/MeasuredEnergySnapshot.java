@@ -41,7 +41,7 @@ public class MeasuredEnergySnapshot {
 
     private static final int MILLIVOLTS_PER_VOLT = 1000;
 
-    public static final long UNAVAILABLE = -1L;
+    public static final long UNAVAILABLE = android.os.BatteryStats.POWER_DATA_UNAVAILABLE;
 
     /** Map of {@link EnergyConsumer#id} to its corresponding {@link EnergyConsumer}. */
     private final SparseArray<EnergyConsumer> mEnergyConsumers;
@@ -99,21 +99,25 @@ public class MeasuredEnergySnapshot {
         mAttributionSnapshots = new SparseArray<>(mNumOtherOrdinals);
     }
 
-    /**
-     * Returns the number of ordinals for {@link EnergyConsumerType#OTHER}, i.e. the number of
-     * custom energy buckets supported by the device.
-     */
-    public int getNumOtherOrdinals() {
-        return mNumOtherOrdinals;
-    }
-
     /** Class for returning the relevant data calculated from the measured energy delta */
     static class MeasuredEnergyDeltaData {
-        /** The chargeUC for {@link EnergyConsumerType#DISPLAY}. */
-        public long displayChargeUC = UNAVAILABLE;
+        /** The chargeUC for {@link EnergyConsumerType#BLUETOOTH}. */
+        public long bluetoothChargeUC = UNAVAILABLE;
 
         /** The chargeUC for {@link EnergyConsumerType#CPU_CLUSTER}s. */
         public long[] cpuClusterChargeUC = null;
+
+        /** The chargeUC for {@link EnergyConsumerType#DISPLAY}. */
+        public long displayChargeUC = UNAVAILABLE;
+
+        /** The chargeUC for {@link EnergyConsumerType#GNSS}. */
+        public long gnssChargeUC = UNAVAILABLE;
+
+        /** The chargeUC for {@link EnergyConsumerType#MOBILE_RADIO}. */
+        public long mobileRadioChargeUC = UNAVAILABLE;
+
+        /** The chargeUC for {@link EnergyConsumerType#WIFI}. */
+        public long wifiChargeUC = UNAVAILABLE;
 
         /** Map of {@link EnergyConsumerType#OTHER} ordinals to their total chargeUC. */
         public @Nullable long[] otherTotalChargeUC = null;
@@ -135,7 +139,7 @@ public class MeasuredEnergySnapshot {
      *         Fields with no interesting data (consumers not present in ecrs or with no energy
      *         difference) will generally be left as their default values.
      *         otherTotalChargeUC and otherUidChargesUC are always either both null or both of
-     *         length {@link #getNumOtherOrdinals()}.
+     *         length {@link #getOtherOrdinalNames().length}.
      *         Returns null, if ecrs is null or empty.
      */
     public @Nullable MeasuredEnergyDeltaData updateAndGetDelta(EnergyConsumerResult[] ecrs,
@@ -196,8 +200,8 @@ public class MeasuredEnergySnapshot {
 
             final long deltaChargeUC = calculateChargeConsumedUC(deltaUJ, avgVoltageMV);
             switch (type) {
-                case EnergyConsumerType.DISPLAY:
-                    output.displayChargeUC = deltaChargeUC;
+                case EnergyConsumerType.BLUETOOTH:
+                    output.bluetoothChargeUC = deltaChargeUC;
                     break;
 
                 case EnergyConsumerType.CPU_CLUSTER:
@@ -207,14 +211,31 @@ public class MeasuredEnergySnapshot {
                     output.cpuClusterChargeUC[ordinal] = deltaChargeUC;
                     break;
 
+                case EnergyConsumerType.DISPLAY:
+                    output.displayChargeUC = deltaChargeUC;
+                    break;
+
+                case EnergyConsumerType.GNSS:
+                    output.gnssChargeUC = deltaChargeUC;
+                    break;
+
+                case EnergyConsumerType.MOBILE_RADIO:
+                    output.mobileRadioChargeUC = deltaChargeUC;
+                    break;
+
+                case EnergyConsumerType.WIFI:
+                    output.wifiChargeUC = deltaChargeUC;
+                    break;
+
                 case EnergyConsumerType.OTHER:
                     if (output.otherTotalChargeUC == null) {
-                        output.otherTotalChargeUC = new long[getNumOtherOrdinals()];
-                        output.otherUidChargesUC = new SparseLongArray[getNumOtherOrdinals()];
+                        output.otherTotalChargeUC = new long[mNumOtherOrdinals];
+                        output.otherUidChargesUC = new SparseLongArray[mNumOtherOrdinals];
                     }
                     output.otherTotalChargeUC[ordinal] = deltaChargeUC;
                     output.otherUidChargesUC[ordinal] = otherUidCharges;
                     break;
+
                 default:
                     Slog.w(TAG, "Ignoring consumer " + consumer.name + " of unknown type " + type);
 
@@ -226,7 +247,7 @@ public class MeasuredEnergySnapshot {
     /**
      * For a consumer of type {@link EnergyConsumerType#OTHER}, updates
      * {@link #mAttributionSnapshots} with freshly measured energies (per uid) and returns the
-     * charge consumed (in microcouloumbs) between the previously stored values and the passed-in
+     * charge consumed (in microcoulombs) between the previously stored values and the passed-in
      * values.
      *
      * @param consumerInfo a consumer of type {@link EnergyConsumerType#OTHER}.
@@ -313,6 +334,40 @@ public class MeasuredEnergySnapshot {
         pw.println();
     }
 
+    /**
+     * Returns the names of ordinals for {@link EnergyConsumerType#OTHER}, i.e. the names of
+     * custom energy buckets supported by the device.
+     */
+    public String[] getOtherOrdinalNames() {
+        final String[] names = new String[mNumOtherOrdinals];
+        int consumerIndex = 0;
+        final int size = mEnergyConsumers.size();
+        for (int idx = 0; idx < size; idx++) {
+            final EnergyConsumer consumer = mEnergyConsumers.valueAt(idx);
+            if (consumer.type == (int) EnergyConsumerType.OTHER) {
+                names[consumerIndex++] = sanitizeCustomBucketName(consumer.name);
+            }
+        }
+        return names;
+    }
+
+    private String sanitizeCustomBucketName(String bucketName) {
+        if (bucketName == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(bucketName.length());
+        for (char c : bucketName.toCharArray()) {
+            if (Character.isWhitespace(c)) {
+                sb.append(' ');
+            } else if (Character.isISOControl(c)) {
+                sb.append('_');
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
     /** Determines the number of ordinals for a given {@link EnergyConsumerType}. */
     private static int calculateNumOrdinals(@EnergyConsumerType int type,
             SparseArray<EnergyConsumer> idToConsumer) {
@@ -326,11 +381,10 @@ public class MeasuredEnergySnapshot {
         return numOrdinals;
     }
 
-    /** Calculate charge consumption (in microcouloumbs) from a given energy and voltage */
+    /** Calculate charge consumption (in microcoulombs) from a given energy and voltage */
     private long calculateChargeConsumedUC(long deltaEnergyUJ, int avgVoltageMV) {
         // To overflow, a 3.7V 10000mAh battery would need to completely drain 69244 times
-        // since the last snapshot. Round up to the nearest whole long.
-        return (deltaEnergyUJ * MILLIVOLTS_PER_VOLT + (avgVoltageMV + 1) / 2) / avgVoltageMV;
+        // since the last snapshot. Round off to the nearest whole long.
+        return (deltaEnergyUJ * MILLIVOLTS_PER_VOLT + (avgVoltageMV / 2)) / avgVoltageMV;
     }
-
 }

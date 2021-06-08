@@ -25,7 +25,6 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Environment;
 import android.os.UserHandle;
-import android.os.storage.StorageManager;
 import android.util.SparseArray;
 
 import com.android.internal.R;
@@ -74,6 +73,15 @@ public final class ImplInstanceManager {
     }
 
     /**
+     * Returns AppSearch directory in the credential encrypted system directory for the given user.
+     *
+     * <p>This folder should only be accessed after unlock.
+     */
+    public static File getAppSearchDir(@UserIdInt int userId) {
+        return new File(Environment.getDataSystemCeDirectory(userId), APP_SEARCH_DIR);
+    }
+
+    /**
      * Gets an instance of AppSearchImpl for the given user, or creates one if none exists.
      *
      * <p>If no AppSearchImpl instance exists for the unlocked user, Icing will be initialized and
@@ -96,6 +104,22 @@ public final class ImplInstanceManager {
         }
     }
 
+    /**
+     * Remove an instance of {@link AppSearchImpl} for the given user.
+     *
+     * <p>This method should only be called if {@link AppSearchManagerService} receives an
+     * ACTION_USER_REMOVED, which the instance of given user should be removed.
+     *
+     * <p>If the user is removed, the "credential encrypted" system directory where icing lives will
+     * be auto-deleted. So we shouldn't worry about persist data or close the AppSearchImpl.
+     *
+     * @param userId The multi-user userId of the user that need to be removed.
+     */
+    public void removeAppSearchImplForUser(@UserIdInt int userId) {
+        synchronized (mInstancesLocked) {
+            mInstancesLocked.remove(userId);
+        }
+    }
 
     /**
      * Gets an instance of AppSearchImpl for the given user.
@@ -124,17 +148,9 @@ public final class ImplInstanceManager {
 
     private AppSearchImpl createImpl(@NonNull Context context, @UserIdInt int userId)
             throws AppSearchException {
-        File appSearchDir = getAppSearchDir(context, userId);
-        return AppSearchImpl.create(appSearchDir, context, userId, mGlobalQuerierPackage);
-    }
-
-    private static File getAppSearchDir(@NonNull Context context, @UserIdInt int userId) {
-        // See com.android.internal.app.ChooserActivity::getPinnedSharedPrefs
-        //TODO(b/177685938):Switch from getDataUserCePackageDirectory to getDataSystemCeDirectory
-        File userCeDir =
-                Environment.getDataUserCePackageDirectory(
-                        StorageManager.UUID_PRIVATE_INTERNAL, userId, context.getPackageName());
-        return new File(userCeDir, APP_SEARCH_DIR);
+        File appSearchDir = getAppSearchDir(userId);
+        return AppSearchImpl.create(
+                appSearchDir, context, userId, mGlobalQuerierPackage, /*logger=*/ null);
     }
 
     /**

@@ -31,7 +31,6 @@ import com.android.systemui.plugins.FalsingPlugin;
 import com.android.systemui.plugins.PluginListener;
 import com.android.systemui.shared.plugins.PluginManager;
 import com.android.systemui.util.DeviceConfigProxy;
-import com.android.systemui.util.sensors.ThresholdSensor;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -131,8 +130,13 @@ public class FalsingManagerProxy implements FalsingManager, Dumpable {
     }
 
     @Override
-    public boolean isFalseTap(boolean robustCheck) {
-        return mInternalFalsingManager.isFalseTap(robustCheck);
+    public boolean isSimpleTap() {
+        return mInternalFalsingManager.isSimpleTap();
+    }
+
+    @Override
+    public boolean isFalseTap(@Penalty int penalty) {
+        return mInternalFalsingManager.isFalseTap(penalty);
     }
 
     @Override
@@ -161,7 +165,27 @@ public class FalsingManagerProxy implements FalsingManager, Dumpable {
     }
 
     @Override
-    public void onProximityEvent(ThresholdSensor.ThresholdSensorEvent proximityEvent) {
+    public void addFalsingBeliefListener(FalsingBeliefListener listener) {
+        mInternalFalsingManager.addFalsingBeliefListener(listener);
+    }
+
+    @Override
+    public void removeFalsingBeliefListener(FalsingBeliefListener listener) {
+        mInternalFalsingManager.removeFalsingBeliefListener(listener);
+    }
+
+    @Override
+    public void addTapListener(FalsingTapListener listener) {
+        mInternalFalsingManager.addTapListener(listener);
+    }
+
+    @Override
+    public void removeTapListener(FalsingTapListener listener) {
+        mInternalFalsingManager.removeTapListener(listener);
+    }
+
+    @Override
+    public void onProximityEvent(ProximityEvent proximityEvent) {
         mInternalFalsingManager.onProximityEvent(proximityEvent);
     }
 

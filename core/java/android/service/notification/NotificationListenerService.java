@@ -251,6 +251,10 @@ public abstract class NotificationListenerService extends Service {
     public static final int REASON_SNOOZED = 18;
     /** Notification was canceled due to timeout */
     public static final int REASON_TIMEOUT = 19;
+    /** Notification was canceled due to the backing channel being deleted */
+    public static final int REASON_CHANNEL_REMOVED = 20;
+    /** Notification was canceled due to the app's storage being cleared */
+    public static final int REASON_CLEAR_DATA = 21;
 
     /**
      * @hide
@@ -788,6 +792,29 @@ public abstract class NotificationListenerService extends Service {
         }
     }
 
+    /**
+     * Lets an app migrate notification filters from its app into the OS.
+     *
+     * <p>This call will be ignored if the app has already migrated these settings or the user
+     * has set filters in the UI. This method is intended for user specific settings; if an app has
+     * already specified defaults types in its manifest with
+     * {@link #META_DATA_DEFAULT_FILTER_TYPES}, the defaultTypes option will be ignored.</p>
+     * @param defaultTypes A value representing the types of notifications that this listener should
+     * receive by default
+     * @param disallowedPkgs A list of package names whose notifications should not be seen by this
+     * listener, by default, because the listener does not process or display them, or because a
+     * user had previously disallowed these packages in the listener app's UI
+     */
+    public final void migrateNotificationFilter(@NotificationFilterTypes int defaultTypes,
+            @Nullable List<String> disallowedPkgs) {
+        if (!isBound()) return;
+        try {
+            getNotificationInterface().migrateNotificationFilter(
+                    mWrapper, defaultTypes, disallowedPkgs);
+        } catch (android.os.RemoteException ex) {
+            Log.v(TAG, "Unable to contact notification manager", ex);
+        }
+    }
 
     /**
      * Inform the notification manager that these notifications have been viewed by the
@@ -1786,7 +1813,8 @@ public abstract class NotificationListenerService extends Service {
          * {@link NotificationListenerService.Ranking#VISIBILITY_NO_OVERRIDE} if
          * no such preference has been expressed.
          */
-        public int getLockscreenVisibilityOverride() {
+        public @Notification.NotificationVisibilityOverride
+        int getLockscreenVisibilityOverride() {
             return mVisibilityOverride;
         }
 

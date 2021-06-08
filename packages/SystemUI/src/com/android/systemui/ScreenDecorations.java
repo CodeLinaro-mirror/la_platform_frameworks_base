@@ -82,13 +82,16 @@ import androidx.annotation.VisibleForTesting;
 
 import com.android.internal.util.Preconditions;
 import com.android.systemui.RegionInterceptingFrameLayout.RegionInterceptableView;
+import com.android.systemui.animation.Interpolators;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.qs.SecureSetting;
 import com.android.systemui.settings.UserTracker;
+import com.android.systemui.statusbar.events.PrivacyDotViewController;
 import com.android.systemui.tuner.TunerService;
 import com.android.systemui.tuner.TunerService.Tunable;
+import com.android.systemui.util.concurrency.ThreadFactory;
 import com.android.systemui.util.settings.SecureSettings;
 
 import java.util.ArrayList;
@@ -125,6 +128,8 @@ public class ScreenDecorations extends SystemUI implements Tunable {
     private DisplayManager.DisplayListener mDisplayListener;
     private CameraAvailabilityListener mCameraListener;
     private final UserTracker mUserTracker;
+    private final PrivacyDotViewController mDotViewController;
+    private final ThreadFactory mThreadFactory;
 
     //TODO: These are piecemeal being updated to Points for now to support non-square rounded
     // corners. for now it is only supposed when reading the intrinsic size from the drawables with
@@ -139,6 +144,11 @@ public class ScreenDecorations extends SystemUI implements Tunable {
     protected View[] mOverlays;
     @Nullable
     private DisplayCutoutView[] mCutoutViews;
+    //TODO:
+    View mTopLeftDot;
+    View mTopRightDot;
+    View mBottomLeftDot;
+    View mBottomRightDot;
     private float mDensity;
     private WindowManager mWindowManager;
     private int mRotation;
@@ -146,6 +156,8 @@ public class ScreenDecorations extends SystemUI implements Tunable {
     private Handler mHandler;
     private boolean mPendingRotationChange;
     private boolean mIsRoundedCornerMultipleRadius;
+    private int mStatusBarHeightPortrait;
+    private int mStatusBarHeightLandscape;
 
     private CameraAvailabilityListener.CameraTransitionCallback mCameraTransitionCallback =
             new CameraAvailabilityListener.CameraTransitionCallback() {
@@ -204,13 +216,17 @@ public class ScreenDecorations extends SystemUI implements Tunable {
             SecureSettings secureSettings,
             BroadcastDispatcher broadcastDispatcher,
             TunerService tunerService,
-            UserTracker userTracker) {
+            UserTracker userTracker,
+            PrivacyDotViewController dotViewController,
+            ThreadFactory threadFactory) {
         super(context);
         mMainHandler = handler;
         mSecureSettings = secureSettings;
         mBroadcastDispatcher = broadcastDispatcher;
         mTunerService = tunerService;
         mUserTracker = userTracker;
+        mDotViewController = dotViewController;
+        mThreadFactory = threadFactory;
     }
 
     @Override
@@ -221,6 +237,8 @@ public class ScreenDecorations extends SystemUI implements Tunable {
         }
         mHandler = startHandlerThread();
         mHandler.post(this::startOnScreenDecorationsThread);
+        mDotViewController.setUiExecutor(
+                mThreadFactory.buildDelayableExecutorOnLooper(mHandler.getLooper()));
     }
 
     @VisibleForTesting
@@ -285,6 +303,7 @@ public class ScreenDecorations extends SystemUI implements Tunable {
 
     private void setupDecorations() {
         if (hasRoundedCorners() || shouldDrawCutout()) {
+            updateStatusBarHeight();
             final DisplayCutout cutout = getCutout();
             final Rect[] bounds = cutout == null ? null : cutout.getBoundingRectsAll();
             int rotatedPos;
@@ -297,6 +316,10 @@ public class ScreenDecorations extends SystemUI implements Tunable {
                     removeOverlay(i);
                 }
             }
+            // Overlays have been created, send the dots to the controller
+            //TODO: need a better way to do this
+            mDotViewController.initialize(
+                    mTopLeftDot, mTopRightDot, mBottomLeftDot, mBottomRightDot);
         } else {
             removeAllOverlays();
         }
@@ -430,14 +453,21 @@ public class ScreenDecorations extends SystemUI implements Tunable {
     private View overlayForPosition(@BoundsPosition int pos) {
         switch (pos) {
             case BOUNDS_POSITION_TOP:
-                return LayoutInflater.from(mContext)
+            case BOUNDS_POSITION_LEFT:
+                View top = LayoutInflater.from(mContext)
                         .inflate(R.layout.rounded_corners_top, null);
+                mTopLeftDot = top.findViewById(R.id.privacy_dot_left_container);
+                mTopRightDot = top.findViewById(R.id.privacy_dot_right_container);
+                return top;
             case BOUNDS_POSITION_BOTTOM:
-                return LayoutInflater.from(mContext)
+            case BOUNDS_POSITION_RIGHT:
+                View bottom =  LayoutInflater.from(mContext)
                         .inflate(R.layout.rounded_corners_bottom, null);
+                mBottomLeftDot = bottom.findViewById(R.id.privacy_dot_left_container);
+                mBottomRightDot = bottom.findViewById(R.id.privacy_dot_right_container);
+                return bottom;
             default:
-                return LayoutInflater.from(mContext)
-                        .inflate(R.layout.rounded_corners, null);
+                throw new IllegalArgumentException("Unknown bounds position");
         }
     }
 
@@ -574,6 +604,11 @@ public class ScreenDecorations extends SystemUI implements Tunable {
             View child;
             for (int j = 0; j < size; j++) {
                 child = ((ViewGroup) mOverlays[i]).getChildAt(j);
+                if (child.getId() == R.id.privacy_dot_left_container
+                        || child.getId() == R.id.privacy_dot_right_container) {
+                    // Exclude privacy dot from color inversion (for now?)
+                    continue;
+                }
                 if (child instanceof ImageView) {
                     ((ImageView) child).setImageTintList(tintList);
                 } else if (child instanceof DisplayCutoutView) {
@@ -610,10 +645,15 @@ public class ScreenDecorations extends SystemUI implements Tunable {
         Preconditions.checkState(mHandler.getLooper().getThread() == Thread.currentThread(),
                 "must call on " + mHandler.getLooper().getThread()
                         + ", but was " + Thread.currentThread());
+
+        int newRotation = mContext.getDisplay().getRotation();
+        if (mRotation != newRotation) {
+            mDotViewController.setNewRotation(newRotation);
+        }
+
         if (mPendingRotationChange) {
             return;
         }
-        int newRotation = mContext.getDisplay().getRotation();
         if (newRotation != mRotation) {
             mRotation = newRotation;
 
@@ -627,6 +667,14 @@ public class ScreenDecorations extends SystemUI implements Tunable {
                 }
             }
         }
+    }
+
+    private void updateStatusBarHeight() {
+        mStatusBarHeightLandscape = mContext.getResources().getDimensionPixelSize(
+                com.android.internal.R.dimen.status_bar_height_landscape);
+        mStatusBarHeightPortrait = mContext.getResources().getDimensionPixelSize(
+                com.android.internal.R.dimen.status_bar_height_portrait);
+        mDotViewController.setStatusBarHeights(mStatusBarHeightPortrait, mStatusBarHeightLandscape);
     }
 
     private void updateRoundedCornerRadii() {

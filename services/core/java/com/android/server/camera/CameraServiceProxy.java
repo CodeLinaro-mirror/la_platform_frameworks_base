@@ -15,19 +15,28 @@
  */
 package com.android.server.camera;
 
+import static android.os.Build.VERSION_CODES.M;
+
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.ActivityManager;
+import android.app.ActivityTaskManager;
+import android.app.TaskStackListener;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ActivityInfo;
+import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.hardware.CameraSessionStats;
 import android.hardware.CameraStreamStats;
 import android.hardware.ICameraService;
 import android.hardware.ICameraServiceProxy;
+import android.hardware.camera2.CameraMetadata;
+import android.hardware.display.DisplayManager;
 import android.media.AudioManager;
-import android.metrics.LogMaker;
 import android.nfc.INfcAdapter;
 import android.os.Binder;
 import android.os.Handler;
@@ -38,20 +47,22 @@ import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.UserManager;
-import android.stats.camera.nano.CameraStreamProto;
+import android.stats.camera.nano.CameraProtos.CameraStreamProto;
 import android.util.ArrayMap;
 import android.util.ArraySet;
+import android.util.Log;
 import android.util.Slog;
+import android.view.Display;
+import android.view.IDisplayWindowListener;
+import android.view.Surface;
+import android.view.WindowManagerGlobal;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.framework.protobuf.nano.MessageNano;
-import com.android.internal.logging.MetricsLogger;
-import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.server.LocalServices;
 import com.android.server.ServiceThread;
 import com.android.server.SystemService;
-import com.android.server.SystemService.TargetUser;
 import com.android.server.wm.WindowManagerInternal;
 
 import java.lang.annotation.Retention;
@@ -61,6 +72,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -203,6 +215,93 @@ public class CameraServiceProxy extends SystemService
         }
     }
 
+    private final class DisplayWindowListener extends IDisplayWindowListener.Stub {
+
+        @Override
+        public void onDisplayConfigurationChanged(int displayId, Configuration newConfig) {
+            ICameraService cs = getCameraServiceRawLocked();
+            if (cs == null) return;
+
+            try {
+                cs.notifyDisplayConfigurationChange();
+            } catch (RemoteException e) {
+                Slog.w(TAG, "Could not notify cameraserver, remote exception: " + e);
+                // Not much we can do if camera service is dead.
+            }
+        }
+
+        @Override
+        public void onDisplayAdded(int displayId) { }
+
+        @Override
+        public void onDisplayRemoved(int displayId) { }
+
+        @Override
+        public void onFixedRotationStarted(int displayId, int newRotation) { }
+
+        @Override
+        public void onFixedRotationFinished(int displayId) { }
+    }
+
+
+    private final DisplayWindowListener mDisplayWindowListener = new DisplayWindowListener();
+
+    private final TaskStateHandler mTaskStackListener = new TaskStateHandler();
+
+    private final class TaskInfo {
+        private int frontTaskId;
+        private boolean isResizeable;
+        private boolean isFixedOrientationLandscape;
+        private boolean isFixedOrientationPortrait;
+        private int displayId;
+    }
+
+    private final class TaskStateHandler extends TaskStackListener {
+        private final Object mMapLock = new Object();
+
+        // maps the package name to its corresponding current top level task id
+        @GuardedBy("mMapLock")
+        private final ArrayMap<String, TaskInfo> mTaskInfoMap = new ArrayMap<>();
+
+        @Override
+        public void onTaskMovedToFront(ActivityManager.RunningTaskInfo taskInfo) {
+            synchronized (mMapLock) {
+                TaskInfo info = new TaskInfo();
+                info.frontTaskId = taskInfo.taskId;
+                info.isResizeable = taskInfo.isResizeable;
+                info.displayId = taskInfo.displayId;
+                info.isFixedOrientationLandscape = ActivityInfo.isFixedOrientationLandscape(
+                        taskInfo.topActivityInfo.screenOrientation);
+                info.isFixedOrientationPortrait = ActivityInfo.isFixedOrientationPortrait(
+                        taskInfo.topActivityInfo.screenOrientation);
+                mTaskInfoMap.put(taskInfo.topActivityInfo.packageName, info);
+            }
+        }
+
+        @Override
+        public void onTaskRemoved(int taskId) {
+            synchronized (mMapLock) {
+                for (Map.Entry<String, TaskInfo> entry : mTaskInfoMap.entrySet()){
+                    if (entry.getValue().frontTaskId == taskId) {
+                        mTaskInfoMap.remove(entry.getKey());
+                        break;
+                    }
+                }
+            }
+        }
+
+        public @Nullable TaskInfo getFrontTaskInfo(String packageName) {
+            synchronized (mMapLock) {
+                if (mTaskInfoMap.containsKey(packageName)) {
+                    return mTaskInfoMap.get(packageName);
+                }
+            }
+
+            Log.e(TAG, "Top task with package name: " + packageName + " not found!");
+            return null;
+        }
+    };
+
     private final BroadcastReceiver mIntentReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -229,6 +328,94 @@ public class CameraServiceProxy extends SystemService
     };
 
     private final ICameraServiceProxy.Stub mCameraServiceProxy = new ICameraServiceProxy.Stub() {
+        private boolean isMOrBelow(Context ctx, String packageName) {
+            try {
+                return ctx.getPackageManager().getPackageInfo(
+                        packageName, 0).applicationInfo.targetSdkVersion <= M;
+            } catch (PackageManager.NameNotFoundException e) {
+                Slog.e(TAG,"Package name not found!");
+            }
+            return false;
+        }
+
+        /**
+         * Gets whether crop-rotate-scale is needed.
+         */
+        private boolean getNeedCropRotateScale(@NonNull Context ctx, @NonNull String packageName,
+                @Nullable TaskInfo taskInfo, int sensorOrientation, int lensFacing) {
+            if (taskInfo == null) {
+                return false;
+            }
+
+            // External cameras do not need crop-rotate-scale.
+            if (lensFacing != CameraMetadata.LENS_FACING_FRONT
+                    && lensFacing != CameraMetadata.LENS_FACING_BACK) {
+                Log.v(TAG, "lensFacing=" + lensFacing + ". Crop-rotate-scale is disabled.");
+                return false;
+            }
+
+            // Only enable the crop-rotate-scale workaround if the app targets M or below and is not
+            // resizeable.
+            if (!isMOrBelow(ctx, packageName) && taskInfo.isResizeable) {
+                Slog.v(TAG,
+                        "The activity is N or above and claims to support resizeable-activity. "
+                                + "Crop-rotate-scale is disabled.");
+                return false;
+            }
+
+            DisplayManager displayManager = ctx.getSystemService(DisplayManager.class);
+            Display display = displayManager.getDisplay(taskInfo.displayId);
+            int rotation = display.getRotation();
+            int rotationDegree = 0;
+            switch (rotation) {
+                case Surface.ROTATION_0:
+                    rotationDegree = 0;
+                    break;
+                case Surface.ROTATION_90:
+                    rotationDegree = 90;
+                    break;
+                case Surface.ROTATION_180:
+                    rotationDegree = 180;
+                    break;
+                case Surface.ROTATION_270:
+                    rotationDegree = 270;
+                    break;
+            }
+
+            // Here we only need to know whether the camera is landscape or portrait. Therefore we
+            // don't need to consider whether it is a front or back camera. The formula works for
+            // both.
+            boolean landscapeCamera = ((rotationDegree + sensorOrientation) % 180 == 0);
+            Slog.v(TAG,
+                    "Display.getRotation()=" + rotationDegree
+                            + " CameraCharacteristics.SENSOR_ORIENTATION=" + sensorOrientation
+                            + " isFixedOrientationPortrait=" + taskInfo.isFixedOrientationPortrait
+                            + " isFixedOrientationLandscape=" +
+                            taskInfo.isFixedOrientationLandscape);
+            // We need to do crop-rotate-scale when camera is landscape and activity is portrait or
+            // vice versa.
+            return (taskInfo.isFixedOrientationPortrait && landscapeCamera)
+                    || (taskInfo.isFixedOrientationLandscape && !landscapeCamera);
+        }
+
+        @Override
+        public boolean isRotateAndCropOverrideNeeded(String packageName, int sensorOrientation,
+                int lensFacing) {
+            if (Binder.getCallingUid() != Process.CAMERASERVER_UID) {
+                Slog.e(TAG, "Calling UID: " + Binder.getCallingUid() + " doesn't match expected " +
+                        " camera service UID!");
+                return false;
+            }
+
+            // TODO: Modify the sensor orientation in camera characteristics along with any 3A
+            //  regions in capture requests/results to account for thea physical rotation. The
+            //  former is somewhat tricky as it assumes that camera clients always check for the
+            //  current value by retrieving the camera characteristics from the camera device.
+            return getNeedCropRotateScale(mContext, packageName,
+                    mTaskStackListener.getFrontTaskInfo(packageName), sensorOrientation,
+                    lensFacing);
+        }
+
         @Override
         public void pingForUserUpdate() {
             if (Binder.getCallingUid() != Process.CAMERASERVER_UID) {
@@ -349,8 +536,26 @@ public class CameraServiceProxy extends SystemService
 
         publishBinderService(CAMERA_SERVICE_PROXY_BINDER_NAME, mCameraServiceProxy);
         publishLocalService(CameraServiceProxy.class, this);
+    }
 
-        CameraStatsJobService.schedule(mContext);
+    @Override
+    public void onBootPhase(int phase) {
+        if (phase == PHASE_BOOT_COMPLETED) {
+            CameraStatsJobService.schedule(mContext);
+
+            try {
+                ActivityTaskManager.getService().registerTaskStackListener(mTaskStackListener);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Failed to register task stack listener!");
+            }
+
+            try {
+                WindowManagerGlobal.getWindowManagerService().registerDisplayWindowListener(
+                        mDisplayWindowListener);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Failed to register display window listener!");
+            }
+        }
     }
 
     @Override

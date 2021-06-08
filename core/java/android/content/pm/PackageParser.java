@@ -214,7 +214,6 @@ public class PackageParser {
     public static final String METADATA_SUPPORTS_SIZE_CHANGES = "android.supports_size_changes";
     public static final String METADATA_ACTIVITY_WINDOW_LAYOUT_AFFINITY =
             "android.activity_window_layout_affinity";
-    public static final String METADATA_ACTIVITY_LAUNCH_MODE = "android.activity.launch_mode";
 
     /**
      * Bit mask of all the valid bits that can be set in recreateOnConfigChanges.
@@ -4890,8 +4889,8 @@ public class PackageParser {
         info.maxRecents = target.info.maxRecents;
         info.windowLayout = target.info.windowLayout;
         info.resizeMode = target.info.resizeMode;
-        info.maxAspectRatio = target.info.maxAspectRatio;
-        info.minAspectRatio = target.info.minAspectRatio;
+        info.setMaxAspectRatio(target.info.getMaxAspectRatio());
+        info.setMinAspectRatio(target.info.getManifestMinAspectRatio());
         info.supportsSizeChanges = target.info.supportsSizeChanges;
         info.requestedVrComponent = target.info.requestedVrComponent;
 
@@ -8157,7 +8156,7 @@ public class PackageParser {
                 return;
             }
 
-            info.maxAspectRatio = maxAspectRatio;
+            info.setMaxAspectRatio(maxAspectRatio);
             mHasMaxAspectRatio = true;
         }
 
@@ -8173,7 +8172,7 @@ public class PackageParser {
                 return;
             }
 
-            info.minAspectRatio = minAspectRatio;
+            info.setMinAspectRatio(minAspectRatio);
             mHasMinAspectRatio = true;
         }
 
@@ -8923,6 +8922,8 @@ public class PackageParser {
         private final @ParseFlags int mFlags;
         private AssetManager mCachedAssetManager;
 
+        private ApkAssets mBaseApkAssets;
+
         DefaultSplitAssetLoader(PackageLite pkg, @ParseFlags int flags) {
             mBaseCodePath = pkg.baseCodePath;
             mSplitCodePaths = pkg.splitCodePaths;
@@ -8953,9 +8954,11 @@ public class PackageParser {
             ApkAssets[] apkAssets = new ApkAssets[(mSplitCodePaths != null
                     ? mSplitCodePaths.length : 0) + 1];
 
+            mBaseApkAssets = loadApkAssets(mBaseCodePath, mFlags);
+
             // Load the base.
             int splitIdx = 0;
-            apkAssets[splitIdx++] = loadApkAssets(mBaseCodePath, mFlags);
+            apkAssets[splitIdx++] = mBaseApkAssets;
 
             // Load any splits.
             if (!ArrayUtils.isEmpty(mSplitCodePaths)) {
@@ -8981,6 +8984,11 @@ public class PackageParser {
         @Override
         public void close() throws Exception {
             IoUtils.closeQuietly(mCachedAssetManager);
+        }
+
+        @Override
+        public ApkAssets getBaseApkAssets() {
+            return mBaseApkAssets;
         }
     }
 
@@ -9084,6 +9092,11 @@ public class PackageParser {
             for (AssetManager assets : mCachedAssetManagers) {
                 IoUtils.closeQuietly(assets);
             }
+        }
+
+        @Override
+        public ApkAssets getBaseApkAssets() {
+            return mCachedSplitApks[0][0];
         }
     }
 }

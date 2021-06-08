@@ -16,10 +16,11 @@
 
 package com.android.internal.display;
 
-
 import android.content.ContentResolver;
 import android.content.Context;
 import android.database.ContentObserver;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.DisplayManager.DisplayListener;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,6 +29,7 @@ import android.os.PowerManager;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.MathUtils;
+import android.view.Display;
 
 import java.util.LinkedList;
 import java.util.Queue;
@@ -52,6 +54,7 @@ public class BrightnessSynchronizer {
     // This value is approximately 1/3 of the smallest possible brightness value.
     public static final float EPSILON = 0.001f;
 
+    private DisplayManager mDisplayManager;
     private final Context mContext;
 
     private final Queue<Object> mWriteHistory = new LinkedList<>();
@@ -87,11 +90,15 @@ public class BrightnessSynchronizer {
      * value, if float is invalid. If both are invalid, use default float value from config.
      */
     public void startSynchronizing() {
+        if (mDisplayManager == null) {
+            mDisplayManager = mContext.getSystemService(DisplayManager.class);
+        }
+
         final BrightnessSyncObserver brightnessSyncObserver;
-        brightnessSyncObserver = new BrightnessSyncObserver(mHandler);
+        brightnessSyncObserver = new BrightnessSyncObserver();
         brightnessSyncObserver.startObserving();
 
-        final float currentFloatBrightness = getScreenBrightnessFloat(mContext);
+        final float currentFloatBrightness = getScreenBrightnessFloat();
         final int currentIntBrightness = getScreenBrightnessInt(mContext);
 
         if (!Float.isNaN(currentFloatBrightness)) {
@@ -101,9 +108,7 @@ public class BrightnessSynchronizer {
         } else {
             final float defaultBrightness = mContext.getResources().getFloat(
                     com.android.internal.R.dimen.config_screenBrightnessSettingDefaultFloat);
-            Settings.System.putFloatForUser(mContext.getContentResolver(),
-                    Settings.System.SCREEN_BRIGHTNESS_FLOAT, defaultBrightness,
-                    UserHandle.USER_CURRENT);
+            mDisplayManager.setBrightness(Display.DEFAULT_DISPLAY, defaultBrightness);
 
         }
     }
@@ -135,7 +140,7 @@ public class BrightnessSynchronizer {
     /**
      * Translates specified value from the float brightness system to the int brightness system,
      * given the min/max of each range.  Accounts for special values such as OFF and invalid values.
-     * Value returned as a float privimite (to preserve precision), but is a value within the
+     * Value returned as a float primitive (to preserve precision), but is a value within the
      * int-system range.
      */
     public static float brightnessFloatToIntRange(float brightnessFloat) {
@@ -152,10 +157,8 @@ public class BrightnessSynchronizer {
         }
     }
 
-    private static float getScreenBrightnessFloat(Context context) {
-        return Settings.System.getFloatForUser(context.getContentResolver(),
-                Settings.System.SCREEN_BRIGHTNESS_FLOAT, PowerManager.BRIGHTNESS_INVALID_FLOAT,
-                UserHandle.USER_CURRENT);
+    private float getScreenBrightnessFloat() {
+        return mDisplayManager.getBrightness(Display.DEFAULT_DISPLAY);
     }
 
     private static int getScreenBrightnessInt(Context context) {
@@ -184,9 +187,7 @@ public class BrightnessSynchronizer {
             float newBrightnessFloat = brightnessIntToFloat(value);
             mWriteHistory.offer(newBrightnessFloat);
             mPreferredSettingValue = newBrightnessFloat;
-            Settings.System.putFloatForUser(mContext.getContentResolver(),
-                    Settings.System.SCREEN_BRIGHTNESS_FLOAT, newBrightnessFloat,
-                    UserHandle.USER_CURRENT);
+            mDisplayManager.setBrightness(Display.DEFAULT_DISPLAY, newBrightnessFloat);
         }
     }
 
@@ -231,47 +232,52 @@ public class BrightnessSynchronizer {
         }
     }
 
-    private class BrightnessSyncObserver extends ContentObserver {
-        /**
-         * Creates a content observer.
-         * @param handler The handler to run {@link #onChange} on, or null if none.
-         */
-        BrightnessSyncObserver(Handler handler) {
-            super(handler);
-        }
+    private class BrightnessSyncObserver {
+        private final DisplayListener mListener = new DisplayListener() {
+            @Override
+            public void onDisplayAdded(int displayId) {}
 
-        @Override
-        public void onChange(boolean selfChange) {
-            onChange(selfChange, null);
-        }
+            @Override
+            public void onDisplayRemoved(int displayId) {}
 
-        @Override
-        public void onChange(boolean selfChange, Uri uri) {
-            if (selfChange) {
-                return;
-            }
-            if (BRIGHTNESS_URI.equals(uri)) {
-                int currentBrightness = getScreenBrightnessInt(mContext);
-                mHandler.removeMessages(MSG_UPDATE_FLOAT);
-                mHandler.obtainMessage(MSG_UPDATE_FLOAT, currentBrightness, 0).sendToTarget();
-            } else if (BRIGHTNESS_FLOAT_URI.equals(uri)) {
-                float currentFloat = getScreenBrightnessFloat(mContext);
+            @Override
+            public void onDisplayChanged(int displayId) {
+                float currentFloat = getScreenBrightnessFloat();
                 int toSend = Float.floatToIntBits(currentFloat);
                 mHandler.removeMessages(MSG_UPDATE_INT);
                 mHandler.obtainMessage(MSG_UPDATE_INT, toSend, 0).sendToTarget();
             }
-        }
+        };
+
+        private final ContentObserver mContentObserver = new ContentObserver(mHandler) {
+            @Override
+            public void onChange(boolean selfChange, Uri uri) {
+                if (selfChange) {
+                    return;
+                }
+                if (BRIGHTNESS_URI.equals(uri)) {
+                    int currentBrightness = getScreenBrightnessInt(mContext);
+                    mHandler.removeMessages(MSG_UPDATE_FLOAT);
+                    mHandler.obtainMessage(MSG_UPDATE_FLOAT, currentBrightness, 0).sendToTarget();
+                }
+            }
+        };
 
         public void startObserving() {
             final ContentResolver cr = mContext.getContentResolver();
-            cr.unregisterContentObserver(this);
-            cr.registerContentObserver(BRIGHTNESS_URI, false, this, UserHandle.USER_ALL);
-            cr.registerContentObserver(BRIGHTNESS_FLOAT_URI, false, this, UserHandle.USER_ALL);
+            cr.unregisterContentObserver(mContentObserver);
+            cr.registerContentObserver(BRIGHTNESS_URI, false, mContentObserver,
+                    UserHandle.USER_ALL);
+
+            mDisplayManager.registerDisplayListener(mListener, mHandler,
+                    DisplayManager.EVENT_FLAG_DISPLAY_CHANGED
+                        | DisplayManager.EVENT_FLAG_DISPLAY_BRIGHTNESS);
         }
 
         public void stopObserving() {
             final ContentResolver cr = mContext.getContentResolver();
-            cr.unregisterContentObserver(this);
+            cr.unregisterContentObserver(mContentObserver);
+            mDisplayManager.unregisterDisplayListener(mListener);
         }
     }
 }

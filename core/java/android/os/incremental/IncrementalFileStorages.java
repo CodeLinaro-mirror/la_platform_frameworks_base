@@ -51,6 +51,8 @@ import java.util.UUID;
 public final class IncrementalFileStorages {
     private static final String TAG = "IncrementalFileStorages";
 
+    private static final String SYSTEM_DATA_LOADER_PACKAGE = "android";
+
     private @NonNull final IncrementalManager mIncrementalManager;
     private @NonNull final File mStageDir;
     private @Nullable IncrementalStorage mInheritedStorage;
@@ -116,7 +118,10 @@ public final class IncrementalFileStorages {
                 mInheritedStorage = mIncrementalManager.openStorage(
                         inheritedDir.getAbsolutePath());
                 if (mInheritedStorage != null) {
-                    if (!mInheritedStorage.isFullyLoaded()) {
+                    boolean systemDataLoader = SYSTEM_DATA_LOADER_PACKAGE.equals(
+                            dataLoaderParams.getComponentName().getPackageName());
+                    if (systemDataLoader && !mInheritedStorage.isFullyLoaded()) {
+                        // System data loader does not support incomplete storages.
                         throw new IOException("Inherited storage has missing pages.");
                     }
 
@@ -200,16 +205,26 @@ public final class IncrementalFileStorages {
     /**
      * Resets the states and unbinds storage instances for an installation session.
      */
-    public void cleanUp() {
-        if (mDefaultStorage == null) {
-            return;
+    public void cleanUpAndMarkComplete() {
+        IncrementalStorage defaultStorage = cleanUp();
+        if (defaultStorage != null) {
+            defaultStorage.onInstallationComplete();
+        }
+    }
+
+    private IncrementalStorage cleanUp() {
+        IncrementalStorage defaultStorage = mDefaultStorage;
+        mInheritedStorage = null;
+        mDefaultStorage = null;
+        if (defaultStorage == null) {
+            return null;
         }
 
         try {
             mIncrementalManager.unregisterLoadingProgressCallbacks(mStageDir.getAbsolutePath());
-            mDefaultStorage.unBind(mStageDir.getAbsolutePath());
+            defaultStorage.unBind(mStageDir.getAbsolutePath());
         } catch (IOException ignored) {
         }
-        mDefaultStorage = null;
+        return defaultStorage;
     }
 }

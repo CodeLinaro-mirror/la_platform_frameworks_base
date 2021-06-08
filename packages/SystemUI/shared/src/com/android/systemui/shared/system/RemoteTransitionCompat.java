@@ -24,7 +24,9 @@ import static android.view.WindowManager.TRANSIT_TO_FRONT;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.SuppressLint;
 import android.graphics.Rect;
+import android.os.IBinder;
 import android.os.Parcelable;
 import android.os.RemoteException;
 import android.util.Log;
@@ -32,6 +34,7 @@ import android.view.IRecentsAnimationController;
 import android.view.SurfaceControl;
 import android.window.IRemoteTransition;
 import android.window.IRemoteTransitionFinishedCallback;
+import android.window.PictureInPictureSurfaceTransaction;
 import android.window.TransitionFilter;
 import android.window.TransitionInfo;
 import android.window.WindowContainerToken;
@@ -41,6 +44,8 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.DataClass;
 import com.android.systemui.shared.recents.model.ThumbnailData;
 
+import java.util.concurrent.Executor;
+
 /**
  * Wrapper to expose RemoteTransition (shell transitions) to Launcher.
  *
@@ -49,6 +54,8 @@ import com.android.systemui.shared.recents.model.ThumbnailData;
  */
 @DataClass
 public class RemoteTransitionCompat implements Parcelable {
+    private static final String TAG = "RemoteTransitionCompat";
+
     @NonNull final IRemoteTransition mTransition;
     @Nullable TransitionFilter mFilter = null;
 
@@ -56,18 +63,57 @@ public class RemoteTransitionCompat implements Parcelable {
         mTransition = transition;
     }
 
+    public RemoteTransitionCompat(@NonNull RemoteTransitionRunner runner,
+            @NonNull Executor executor) {
+        mTransition = new IRemoteTransition.Stub() {
+            @Override
+            public void startAnimation(IBinder transition, TransitionInfo info,
+                    SurfaceControl.Transaction t,
+                    IRemoteTransitionFinishedCallback finishedCallback) {
+                final Runnable finishAdapter = () ->  {
+                    try {
+                        finishedCallback.onTransitionFinished(null /* wct */);
+                    } catch (RemoteException e) {
+                        Log.e(TAG, "Failed to call transition finished callback", e);
+                    }
+                };
+                executor.execute(() -> runner.startAnimation(transition, info, t, finishAdapter));
+            }
+
+            @Override
+            public void mergeAnimation(IBinder transition, TransitionInfo info,
+                    SurfaceControl.Transaction t, IBinder mergeTarget,
+                    IRemoteTransitionFinishedCallback finishedCallback) {
+                final Runnable finishAdapter = () ->  {
+                    try {
+                        finishedCallback.onTransitionFinished(null /* wct */);
+                    } catch (RemoteException e) {
+                        Log.e(TAG, "Failed to call transition finished callback", e);
+                    }
+                };
+                executor.execute(() -> runner.mergeAnimation(transition, info, t, mergeTarget,
+                        finishAdapter));
+            }
+        };
+    }
+
     /** Constructor specifically for recents animation */
     public RemoteTransitionCompat(RecentsAnimationListener recents,
             RecentsAnimationControllerCompat controller) {
         mTransition = new IRemoteTransition.Stub() {
+            final RecentsControllerWrap mRecentsSession = new RecentsControllerWrap();
+            IBinder mToken = null;
+
             @Override
-            public void startAnimation(TransitionInfo info, SurfaceControl.Transaction t,
+            public void startAnimation(IBinder transition, TransitionInfo info,
+                    SurfaceControl.Transaction t,
                     IRemoteTransitionFinishedCallback finishedCallback) {
                 final RemoteAnimationTargetCompat[] apps =
                         RemoteAnimationTargetCompat.wrap(info, false /* wallpapers */);
                 final RemoteAnimationTargetCompat[] wallpapers =
                         RemoteAnimationTargetCompat.wrap(info, true /* wallpapers */);
                 // TODO(b/177438007): Move this set-up logic into launcher's animation impl.
+                mToken = transition;
                 // This transition is for opening recents, so recents is on-top. We want to draw
                 // the current going-away task on top of recents, though, so move it to front
                 WindowContainerToken pausingTask = null;
@@ -85,10 +131,22 @@ public class RemoteTransitionCompat implements Parcelable {
                     t.setAlpha(wallpapers[i].leash.mSurfaceControl, 1);
                 }
                 t.apply();
-                final RecentsAnimationControllerCompat wrapControl =
-                        new RecentsControllerWrap(controller, finishedCallback, pausingTask);
-                recents.onAnimationStart(wrapControl, apps, wallpapers, new Rect(0, 0, 0, 0),
+                mRecentsSession.setup(controller, info, finishedCallback, pausingTask);
+                recents.onAnimationStart(mRecentsSession, apps, wallpapers, new Rect(0, 0, 0, 0),
                         new Rect());
+            }
+
+            @Override
+            public void mergeAnimation(IBinder transition, TransitionInfo info,
+                    SurfaceControl.Transaction t, IBinder mergeTarget,
+                    IRemoteTransitionFinishedCallback finishedCallback) {
+                if (!mergeTarget.equals(mToken)) return;
+                if (!mRecentsSession.merge(info, t, recents)) return;
+                try {
+                    finishedCallback.onTransitionFinished(null /* wct */);
+                } catch (RemoteException e) {
+                    Log.e(TAG, "Error merging transition.", e);
+                }
             }
         };
     }
@@ -110,15 +168,55 @@ public class RemoteTransitionCompat implements Parcelable {
      */
     @VisibleForTesting
     static class RecentsControllerWrap extends RecentsAnimationControllerCompat {
-        private final RecentsAnimationControllerCompat mWrapped;
-        private final IRemoteTransitionFinishedCallback mFinishCB;
-        private final WindowContainerToken mPausingTask;
+        private RecentsAnimationControllerCompat mWrapped = null;
+        private IRemoteTransitionFinishedCallback mFinishCB = null;
+        private WindowContainerToken mPausingTask = null;
+        private TransitionInfo mInfo = null;
+        private SurfaceControl mOpeningLeash = null;
 
-        RecentsControllerWrap(RecentsAnimationControllerCompat wrapped,
+        void setup(RecentsAnimationControllerCompat wrapped, TransitionInfo info,
                 IRemoteTransitionFinishedCallback finishCB, WindowContainerToken pausingTask) {
+            if (mInfo != null) {
+                throw new IllegalStateException("Trying to run a new recents animation while"
+                        + " recents is already active.");
+            }
             mWrapped = wrapped;
+            mInfo = info;
             mFinishCB = finishCB;
             mPausingTask = pausingTask;
+        }
+
+        @SuppressLint("NewApi")
+        boolean merge(TransitionInfo info, SurfaceControl.Transaction t,
+                RecentsAnimationListener recents) {
+            TransitionInfo.Change openingTask = null;
+            for (int i = info.getChanges().size() - 1; i >= 0; --i) {
+                final TransitionInfo.Change change = info.getChanges().get(i);
+                if (change.getMode() == TRANSIT_OPEN || change.getMode() == TRANSIT_TO_FRONT) {
+                    if (change.getTaskInfo() != null) {
+                        if (openingTask != null) {
+                            Log.w(TAG, " Expecting to merge a task-open, but got >1 opening "
+                                    + "tasks");
+                        }
+                        openingTask = change;
+                    }
+                }
+            }
+            if (openingTask == null) return false;
+            mOpeningLeash = openingTask.getLeash();
+            if (openingTask.getContainer().equals(mPausingTask)) {
+                // In this case, we are "returning" to the already running app, so just consume
+                // the merge and do nothing.
+                return true;
+            }
+            // We are receiving a new opening task, so convert to onTaskAppeared.
+            final int layer = mInfo.getChanges().size() * 3;
+            t.reparent(mOpeningLeash, mInfo.getRootLeash());
+            t.setLayer(mOpeningLeash, layer);
+            t.hide(mOpeningLeash);
+            t.apply();
+            recents.onTaskAppeared(new RemoteAnimationTargetCompat(openingTask, layer));
+            return true;
         }
 
         @Override public ThumbnailData screenshotTask(int taskId) {
@@ -137,25 +235,52 @@ public class RemoteTransitionCompat implements Parcelable {
             mWrapped.hideCurrentInputMethod();
         }
 
-        @Override public void setFinishTaskBounds(int taskId, Rect destinationBounds) {
-            if (mWrapped != null) mWrapped.setFinishTaskBounds(taskId, destinationBounds);
+        @Override public void setFinishTaskTransaction(int taskId,
+                PictureInPictureSurfaceTransaction finishTransaction) {
+            if (mWrapped != null) {
+                mWrapped.setFinishTaskTransaction(taskId, finishTransaction);
+            }
         }
 
-        @Override public void finish(boolean toHome, boolean sendUserLeaveHint) {
+        @Override
+        @SuppressLint("NewApi")
+        public void finish(boolean toHome, boolean sendUserLeaveHint) {
+            if (mFinishCB == null) {
+                Log.e(TAG, "Duplicate call to finish", new RuntimeException());
+                return;
+            }
+            if (mWrapped != null) mWrapped.finish(toHome, sendUserLeaveHint);
             try {
-                if (!toHome && mPausingTask != null) {
+                if (!toHome && mPausingTask != null && mOpeningLeash == null) {
                     // The gesture went back to opening the app rather than continuing with
                     // recents, so end the transition by moving the app back to the top.
                     final WindowContainerTransaction wct = new WindowContainerTransaction();
                     wct.reorder(mPausingTask, true /* onTop */);
                     mFinishCB.onTransitionFinished(wct);
                 } else {
+                    if (mOpeningLeash != null) {
+                        // TODO: the launcher animation should handle this
+                        final SurfaceControl.Transaction t = new SurfaceControl.Transaction();
+                        t.show(mOpeningLeash);
+                        t.setAlpha(mOpeningLeash, 1.f);
+                        t.apply();
+                    }
                     mFinishCB.onTransitionFinished(null /* wct */);
                 }
             } catch (RemoteException e) {
                 Log.e("RemoteTransitionCompat", "Failed to call animation finish callback", e);
             }
-            if (mWrapped != null) mWrapped.finish(toHome, sendUserLeaveHint);
+            // Release surface references now. This is apparently to free GPU
+            // memory while doing quick operations (eg. during CTS).
+            for (int i = 0; i < mInfo.getChanges().size(); ++i) {
+                mInfo.getChanges().get(i).getLeash().release();
+            }
+            // Reset all members.
+            mWrapped = null;
+            mFinishCB = null;
+            mPausingTask = null;
+            mInfo = null;
+            mOpeningLeash = null;
         }
 
         @Override public void setDeferCancelUntilNextTransition(boolean defer, boolean screenshot) {

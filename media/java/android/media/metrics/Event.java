@@ -17,6 +17,7 @@
 package android.media.metrics;
 
 import android.annotation.IntRange;
+import android.annotation.NonNull;
 import android.os.Bundle;
 
 /**
@@ -24,34 +25,36 @@ import android.os.Bundle;
  */
 public abstract class Event {
     final long mTimeSinceCreatedMillis;
-    Bundle mExtras;
+    Bundle mMetricsBundle = new Bundle();
 
     // hide default constructor
     /* package */ Event() {
         mTimeSinceCreatedMillis = MediaMetricsManager.INVALID_TIMESTAMP;
     }
 
-    // TODO: remove
-    protected Event(long timeSinceCreatedMillis) {
-        mTimeSinceCreatedMillis = timeSinceCreatedMillis;
-    }
-
     /* package */ Event(long timeSinceCreatedMillis, Bundle extras) {
         mTimeSinceCreatedMillis = timeSinceCreatedMillis;
-        mExtras = extras;
+        mMetricsBundle = extras;
     }
 
     /**
-     * Gets time since the corresponding instance is created in millisecond.
+     * Gets time since the corresponding log session is created in millisecond.
      * @return the timestamp since the instance is created, or -1 if unknown.
+     * @see LogSessionId
+     * @see PlaybackSession
+     * @see RecordingSession
      */
     @IntRange(from = -1)
     public long getTimeSinceCreatedMillis() {
         return mTimeSinceCreatedMillis;
     }
 
-    /** @hide */
-    public Bundle getExtras() {
-        return mExtras;
+    /**
+     * Gets metrics-related information that is not supported by dedicated methods.
+     * <p>It is intended to be used for backwards compatibility by the metrics infrastructure.
+     */
+    @NonNull
+    public Bundle getMetricsBundle() {
+        return mMetricsBundle;
     }
 }

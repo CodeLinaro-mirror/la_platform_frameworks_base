@@ -21,14 +21,13 @@ import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.StringDef;
-import android.annotation.TestApi;
 import android.app.ActivityThread;
 import android.app.Application;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
-import android.media.metrics.PlaybackComponent;
+import android.media.metrics.LogSessionId;
 import android.os.Handler;
 import android.os.HandlerExecutor;
 import android.os.Looper;
@@ -51,6 +50,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -1380,7 +1380,7 @@ public final class MediaDrm implements AutoCloseable {
     public byte[] openSession(@SecurityLevel int level) throws
             NotProvisionedException, ResourceBusyException {
         byte[] sessionId = openSessionNative(level);
-        mPlaybackComponentMap.put(ByteBuffer.wrap(sessionId), new PlaybackComponentImpl(sessionId));
+        mPlaybackComponentMap.put(ByteBuffer.wrap(sessionId), new PlaybackComponent(sessionId));
         return sessionId;
     }
 
@@ -2495,7 +2495,10 @@ public final class MediaDrm implements AutoCloseable {
      * The default security level is defined as the highest security level
      * supported on the device.
      *
-     * @param mime The mime type of the media data
+     * @param mime The mime type of the media data. Please use {@link
+     *             #isCryptoSchemeSupported(UUID, String)} to query mime type support separately;
+     *             for unsupported mime types the return value of {@link
+     *             #requiresSecureDecoder(String)} is crypto scheme dependent.
      */
     public boolean requiresSecureDecoder(@NonNull String mime) {
         return requiresSecureDecoder(mime, getMaxSecurityLevel());
@@ -2505,7 +2508,10 @@ public final class MediaDrm implements AutoCloseable {
      * Query if the crypto scheme requires the use of a secure decoder
      * to decode data of the given mime type at the given security level.
      *
-     * @param mime The mime type of the media data
+     * @param mime The mime type of the media data. Please use {@link
+     *             #isCryptoSchemeSupported(UUID, String, int)} to query mime type support
+     *             separately; for unsupported mime types the return value of {@link
+     *             #requiresSecureDecoder(String, int)} is crypto scheme dependent.
      * @param level a security level between {@link #SECURITY_LEVEL_SW_SECURE_CRYPTO}
      *              and {@link #SECURITY_LEVEL_HW_SECURE_ALL}. Otherwise the special value
      *              {@link #getMaxSecurityLevel()} is also permitted;
@@ -2930,16 +2936,14 @@ public final class MediaDrm implements AutoCloseable {
 
     /**
      * Obtain a {@link PlaybackComponent} associated with a DRM session.
-     * Call {@link PlaybackComponent#setPlaybackId(String)} on the returned object
-     * to associate a playback session with the DRM session.
+     * Call {@link PlaybackComponent#setLogSessionId(LogSessionId)} on
+     * the returned object to associate a playback session with the DRM session.
      *
      * @param sessionId a DRM session ID obtained from {@link #openSession()}
      * @return a {@link PlaybackComponent} associated with the session,
      * or {@code null} if the session is closed or does not exist.
      * @see PlaybackComponent
-     * @hide
      */
-    @TestApi
     @Nullable
     public PlaybackComponent getPlaybackComponent(@NonNull byte[] sessionId) {
         if (sessionId == null) {
@@ -2948,28 +2952,37 @@ public final class MediaDrm implements AutoCloseable {
         return mPlaybackComponentMap.get(ByteBuffer.wrap(sessionId));
     }
 
-    private native void setPlaybackId(byte[] sessionId, String playbackId);
+    private native void setPlaybackId(byte[] sessionId, String logSessionId);
 
-    private final class PlaybackComponentImpl implements PlaybackComponent {
+    /** This class contains the Drm session ID and log session ID */
+    public final class PlaybackComponent {
         private final byte[] mSessionId;
-        private String mPlaybackId = "";
+        @NonNull private LogSessionId mLogSessionId = LogSessionId.LOG_SESSION_ID_NONE;
 
-        public PlaybackComponentImpl(byte[] sessionId) {
+        /** @hide */
+        public PlaybackComponent(byte[] sessionId) {
             mSessionId = sessionId;
         }
 
-        @Override
-        public void setPlaybackId(@NonNull String playbackId) {
-            if (playbackId == null) {
+
+        /**
+         * Gets the {@link LogSessionId}.
+         */
+        public void setLogSessionId(@NonNull LogSessionId logSessionId) {
+            Objects.requireNonNull(logSessionId);
+            if (logSessionId.getStringId() == null) {
                 throw new IllegalArgumentException("playbackId is null");
             }
-            MediaDrm.this.setPlaybackId(mSessionId, playbackId);
-            mPlaybackId = playbackId;
+            MediaDrm.this.setPlaybackId(mSessionId, logSessionId.getStringId());
+            mLogSessionId = logSessionId;
         }
 
-        @Override
-        @NonNull public String getPlaybackId() {
-            return mPlaybackId;
+
+        /**
+         * Returns the {@link LogSessionId}.
+         */
+        @NonNull public LogSessionId getLogSessionId() {
+            return mLogSessionId;
         }
     }
 
@@ -2984,13 +2997,16 @@ public final class MediaDrm implements AutoCloseable {
      * A {@link LogMessage} records an event in the {@link MediaDrm} framework
      * or vendor plugin.
      */
-    public static class LogMessage {
+    public static final class LogMessage {
+        private final long timestampMillis;
+        private final int priority;
+        private final String message;
 
         /**
          * Timing of the recorded event measured in milliseconds since the Epoch,
          * 1970-01-01 00:00:00 +0000 (UTC).
          */
-        public final long timestampMillis;
+        public final long getTimestampMillis() { return timestampMillis; }
 
         /**
          * Priority of the recorded event.
@@ -3006,13 +3022,13 @@ public final class MediaDrm implements AutoCloseable {
          * </ul>
          */
         @Log.Level
-        public final int priority;
+        public final int getPriority() { return priority; }
 
         /**
          * Description of the recorded event.
          */
         @NonNull
-        public final String message;
+        public final String getMessage() { return message; }
 
         private LogMessage(long timestampMillis, int priority, String message) {
             this.timestampMillis = timestampMillis;

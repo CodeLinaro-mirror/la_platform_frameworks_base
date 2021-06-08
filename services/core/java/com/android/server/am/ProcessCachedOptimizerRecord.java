@@ -17,6 +17,7 @@
 package com.android.server.am;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.annotations.VisibleForTesting;
 
 import java.io.PrintWriter;
 
@@ -27,6 +28,9 @@ final class ProcessCachedOptimizerRecord {
     private final ProcessRecord mApp;
 
     private final ActivityManagerGlobalLock mProcLock;
+
+    @VisibleForTesting
+    static final String IS_FROZEN = "isFrozen";
 
     /**
      * The last time that this process was compacted.
@@ -45,6 +49,12 @@ final class ProcessCachedOptimizerRecord {
      */
     @GuardedBy("mProcLock")
     private int mLastCompactAction;
+
+    /**
+     * This process has been scheduled for a memory compaction.
+     */
+    @GuardedBy("mProcLock")
+    private boolean mPendingCompact;
 
     /**
      * True when the process is frozen.
@@ -69,6 +79,12 @@ final class ProcessCachedOptimizerRecord {
      */
     @GuardedBy("mProcLock")
     private boolean mShouldNotFreeze;
+
+    /**
+     * Exempt from freezer (now for system apps with INSTALL_PACKAGES permission)
+     */
+    @GuardedBy("mProcLock")
+    private boolean mFreezeExempt;
 
     @GuardedBy("mProcLock")
     long getLastCompactTime() {
@@ -98,6 +114,16 @@ final class ProcessCachedOptimizerRecord {
     @GuardedBy("mProcLock")
     void setLastCompactAction(int lastCompactAction) {
         mLastCompactAction = lastCompactAction;
+    }
+
+    @GuardedBy("mProcLock")
+    boolean hasPendingCompact() {
+        return mPendingCompact;
+    }
+
+    @GuardedBy("mProcLock")
+    void setHasPendingCompact(boolean pendingCompact) {
+        mPendingCompact = pendingCompact;
     }
 
     @GuardedBy("mProcLock")
@@ -140,6 +166,16 @@ final class ProcessCachedOptimizerRecord {
         mShouldNotFreeze = shouldNotFreeze;
     }
 
+    @GuardedBy("mProcLock")
+    boolean isFreezeExempt() {
+        return mFreezeExempt;
+    }
+
+    @GuardedBy("mPreLock")
+    void setFreezeExempt(boolean exempt) {
+        mFreezeExempt = exempt;
+    }
+
     ProcessCachedOptimizerRecord(ProcessRecord app) {
         mApp = app;
         mProcLock = app.mService.mProcLock;
@@ -153,5 +189,7 @@ final class ProcessCachedOptimizerRecord {
     void dump(PrintWriter pw, String prefix, long nowUptime) {
         pw.print(prefix); pw.print("lastCompactTime="); pw.print(mLastCompactTime);
         pw.print(" lastCompactAction="); pw.println(mLastCompactAction);
+        pw.print(prefix); pw.print("isFreezeExempt="); pw.print(mFreezeExempt);
+        pw.print(" " + IS_FROZEN + "="); pw.println(mFrozen);
     }
 }

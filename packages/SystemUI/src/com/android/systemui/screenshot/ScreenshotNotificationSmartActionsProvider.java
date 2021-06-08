@@ -21,6 +21,7 @@ import static com.android.systemui.screenshot.LogConfig.logTag;
 
 import android.app.Notification;
 import android.content.ComponentName;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.UserHandle;
@@ -57,6 +58,13 @@ public class ScreenshotNotificationSmartActionsProvider {
         ERROR,
         TIMEOUT
     }
+
+    /* Enum to define screenshot smart action types. */
+    public enum ScreenshotSmartActionType {
+        REGULAR_SMART_ACTIONS,
+        QUICK_SHARE_ACTION
+    }
+
     /**
      * Default implementation that returns an empty list.
      * This method is overridden in vendor-specific Sys UI implementation.
@@ -68,7 +76,8 @@ public class ScreenshotNotificationSmartActionsProvider {
      * @param userHandle         user handle of the foreground task owner
      */
     public CompletableFuture<List<Notification.Action>> getActions(String screenshotId,
-            Uri screenshotUri, Bitmap bitmap, ComponentName componentName, UserHandle userHandle) {
+            Uri screenshotUri, Bitmap bitmap, ComponentName componentName,
+            ScreenshotSmartActionType actionType, UserHandle userHandle) {
         if (DEBUG_ACTIONS) {
             Log.d(TAG, "Returning empty smart action list.");
         }
@@ -99,7 +108,8 @@ public class ScreenshotNotificationSmartActionsProvider {
      * @param action        type of notification action invoked.
      * @param isSmartAction whether action invoked was a smart action.
      */
-    public void notifyAction(String screenshotId, String action, boolean isSmartAction) {
+    public void notifyAction(String screenshotId, String action, boolean isSmartAction,
+            Intent intent) {
         if (DEBUG_ACTIONS) {
             Log.d(TAG, "SmartActions: notifyAction: return without notify");
         }

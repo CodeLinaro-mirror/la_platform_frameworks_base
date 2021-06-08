@@ -16,16 +16,13 @@
 
 package com.android.server.wm.flicker.rotation
 
-import android.platform.test.annotations.Presubmit
 import androidx.test.filters.FlakyTest
 import androidx.test.filters.RequiresDevice
 import com.android.server.wm.flicker.FlickerParametersRunnerFactory
 import com.android.server.wm.flicker.FlickerTestParameter
 import com.android.server.wm.flicker.FlickerTestParameterFactory
-import com.android.server.wm.flicker.appWindowAlwaysVisibleOnTop
 import com.android.server.wm.flicker.dsl.FlickerBuilder
 import com.android.server.wm.flicker.helpers.SeamlessRotationAppHelper
-import com.android.server.wm.flicker.layerAlwaysVisible
 import com.android.server.wm.flicker.testapp.ActivityOptions
 import org.junit.FixMethodOrder
 import org.junit.Test
@@ -61,29 +58,37 @@ class SeamlessAppRotationTest(
 
     @FlakyTest(bugId = 140855415)
     @Test
-    override fun navBarWindowIsAlwaysVisible() = super.navBarWindowIsAlwaysVisible()
+    override fun statusBarWindowIsAlwaysVisible() {
+        super.statusBarWindowIsAlwaysVisible()
+    }
 
     @FlakyTest(bugId = 140855415)
     @Test
-    override fun statusBarWindowIsAlwaysVisible() = super.statusBarWindowIsAlwaysVisible()
+    override fun statusBarLayerIsAlwaysVisible() {
+        super.statusBarLayerIsAlwaysVisible()
+    }
 
-    @FlakyTest(bugId = 147659548)
+    @FlakyTest(bugId = 185400889)
     @Test
-    override fun noUncoveredRegions() = super.noUncoveredRegions()
+    override fun noUncoveredRegions() {
+        super.noUncoveredRegions()
+    }
 
-    @Presubmit
+    @FlakyTest(bugId = 185400889)
     @Test
-    fun appWindowAlwaysVisibleOnTop() = testSpec.appWindowAlwaysVisibleOnTop(testApp.`package`)
+    fun appLayerAlwaysVisible() {
+        testSpec.assertLayers {
+            isVisible(testApp.`package`)
+        }
+    }
 
-    @Presubmit
-    @Test
-    fun layerAlwaysVisible() = testSpec.layerAlwaysVisible(testApp.`package`)
-
-    @FlakyTest(bugId = 147659548)
+    @FlakyTest(bugId = 185400889)
     @Test
     fun appLayerRotates() {
         testSpec.assertLayers {
             this.coversExactly(startingPos, testApp.`package`)
+                .then()
+                .coversExactly(endingPos, testApp.`package`)
         }
     }
 

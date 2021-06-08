@@ -16,7 +16,9 @@
 
 package android.service.translation;
 
-import android.view.translation.TranslationSpec;
+import android.os.IBinder;
+import android.os.ResultReceiver;
+import android.view.translation.TranslationContext;
 import com.android.internal.os.IResultReceiver;
 
 /**
@@ -29,8 +31,11 @@ import com.android.internal.os.IResultReceiver;
  * @hide
  */
 oneway interface ITranslationService {
-    void onConnected();
+    void onConnected(in IBinder callback);
     void onDisconnected();
-    void onCreateTranslationSession(in TranslationSpec sourceSpec, in TranslationSpec destSpec,
-         int sessionId, in IResultReceiver receiver);
+    void onCreateTranslationSession(in TranslationContext translationContext, int sessionId,
+         in IResultReceiver receiver);
+
+    void onTranslationCapabilitiesRequest(int sourceFormat, int targetFormat,
+         in ResultReceiver receiver);
 }

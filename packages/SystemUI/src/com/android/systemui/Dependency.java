@@ -28,12 +28,16 @@ import android.view.IWindowManager;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.logging.MetricsLogger;
+import com.android.internal.logging.UiEventLogger;
 import com.android.internal.statusbar.IStatusBarService;
 import com.android.internal.util.Preconditions;
 import com.android.keyguard.KeyguardSecurityModel;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.clock.ClockManager;
 import com.android.settingslib.bluetooth.LocalBluetoothManager;
+import com.android.systemui.accessibility.AccessibilityButtonModeObserver;
+import com.android.systemui.accessibility.AccessibilityButtonTargetsObserver;
+import com.android.systemui.accessibility.floatingmenu.AccessibilityFloatingMenuController;
 import com.android.systemui.appops.AppOpsController;
 import com.android.systemui.assist.AssistManager;
 import com.android.systemui.broadcast.BroadcastDispatcher;
@@ -51,6 +55,7 @@ import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.NavigationBarController;
 import com.android.systemui.navigationbar.NavigationBarOverlayController;
 import com.android.systemui.navigationbar.NavigationModeController;
+import com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.DarkIconDispatcher;
 import com.android.systemui.plugins.PluginDependencyProvider;
@@ -76,6 +81,8 @@ import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.NotificationViewHierarchyManager;
 import com.android.systemui.statusbar.SmartReplyController;
 import com.android.systemui.statusbar.VibratorHelper;
+import com.android.systemui.statusbar.events.PrivacyDotViewController;
+import com.android.systemui.statusbar.events.SystemStatusAnimationScheduler;
 import com.android.systemui.statusbar.notification.NotificationEntryManager;
 import com.android.systemui.statusbar.notification.NotificationEntryManager.KeyguardEnvironment;
 import com.android.systemui.statusbar.notification.NotificationFilter;
@@ -117,6 +124,7 @@ import com.android.systemui.statusbar.policy.SmartReplyConstants;
 import com.android.systemui.statusbar.policy.UserInfoController;
 import com.android.systemui.statusbar.policy.UserSwitcherController;
 import com.android.systemui.statusbar.policy.ZenModeController;
+import com.android.systemui.telephony.TelephonyListenerManager;
 import com.android.systemui.tracing.ProtoTracer;
 import com.android.systemui.tuner.TunablePadding.TunablePaddingService;
 import com.android.systemui.tuner.TunerService;
@@ -284,6 +292,8 @@ public class Dependency {
     @Inject Lazy<IWindowManager> mIWindowManager;
     @Inject Lazy<OverviewProxyService> mOverviewProxyService;
     @Inject Lazy<NavigationModeController> mNavBarModeController;
+    @Inject Lazy<AccessibilityButtonModeObserver> mAccessibilityButtonModeObserver;
+    @Inject Lazy<AccessibilityButtonTargetsObserver> mAccessibilityButtonListController;
     @Inject Lazy<EnhancedEstimates> mEnhancedEstimates;
     @Inject Lazy<VibratorHelper> mVibratorHelper;
     @Inject Lazy<IStatusBarService> mIStatusBarService;
@@ -294,6 +304,7 @@ public class Dependency {
     @Inject Lazy<NotificationRemoteInputManager.Callback> mNotificationRemoteInputManagerCallback;
     @Inject Lazy<AppOpsController> mAppOpsController;
     @Inject Lazy<NavigationBarController> mNavigationBarController;
+    @Inject Lazy<AccessibilityFloatingMenuController> mAccessibilityFloatingMenuController;
     @Inject Lazy<StatusBarStateController> mStatusBarStateController;
     @Inject Lazy<NotificationLockscreenUserManager> mNotificationLockscreenUserManager;
     @Inject Lazy<NotificationGroupAlertTransferHelper> mNotificationGroupAlertTransferHelper;
@@ -344,6 +355,11 @@ public class Dependency {
     @Inject Lazy<MediaOutputDialogFactory> mMediaOutputDialogFactory;
     @Inject Lazy<DeviceConfigProxy> mDeviceConfigProxy;
     @Inject Lazy<NavigationBarOverlayController> mNavbarButtonsControllerLazy;
+    @Inject Lazy<TelephonyListenerManager> mTelephonyListenerManager;
+    @Inject Lazy<SystemStatusAnimationScheduler> mSystemStatusAnimationSchedulerLazy;
+    @Inject Lazy<PrivacyDotViewController> mPrivacyDotViewControllerLazy;
+    @Inject Lazy<EdgeBackGestureHandler> mEdgeBackGestureHandler;
+    @Inject Lazy<UiEventLogger> mUiEventLogger;
 
     @Inject
     public Dependency() {
@@ -470,6 +486,11 @@ public class Dependency {
 
         mProviders.put(NavigationModeController.class, mNavBarModeController::get);
 
+        mProviders.put(AccessibilityButtonModeObserver.class,
+                mAccessibilityButtonModeObserver::get);
+        mProviders.put(AccessibilityButtonTargetsObserver.class,
+                mAccessibilityButtonListController::get);
+
         mProviders.put(EnhancedEstimates.class, mEnhancedEstimates::get);
 
         mProviders.put(VibratorHelper.class, mVibratorHelper::get);
@@ -488,6 +509,9 @@ public class Dependency {
         mProviders.put(AppOpsController.class, mAppOpsController::get);
 
         mProviders.put(NavigationBarController.class, mNavigationBarController::get);
+
+        mProviders.put(AccessibilityFloatingMenuController.class,
+                mAccessibilityFloatingMenuController::get);
 
         mProviders.put(StatusBarStateController.class, mStatusBarStateController::get);
         mProviders.put(NotificationLockscreenUserManager.class,
@@ -531,6 +555,7 @@ public class Dependency {
         mProviders.put(StatusBar.class, mStatusBar::get);
         mProviders.put(ProtoTracer.class, mProtoTracer::get);
         mProviders.put(DeviceConfigProxy.class, mDeviceConfigProxy::get);
+        mProviders.put(TelephonyListenerManager.class, mTelephonyListenerManager::get);
 
         // TODO(b/118592525): to support multi-display , we start to add something which is
         //                    per-display, while others may be global. I think it's time to add
@@ -543,6 +568,12 @@ public class Dependency {
         mProviders.put(MediaOutputDialogFactory.class, mMediaOutputDialogFactory::get);
 
         mProviders.put(NavigationBarOverlayController.class, mNavbarButtonsControllerLazy::get);
+
+        mProviders.put(SystemStatusAnimationScheduler.class,
+                mSystemStatusAnimationSchedulerLazy::get);
+        mProviders.put(PrivacyDotViewController.class, mPrivacyDotViewControllerLazy::get);
+        mProviders.put(EdgeBackGestureHandler.class, mEdgeBackGestureHandler::get);
+        mProviders.put(UiEventLogger.class, mUiEventLogger::get);
 
         Dependency.setInstance(this);
     }

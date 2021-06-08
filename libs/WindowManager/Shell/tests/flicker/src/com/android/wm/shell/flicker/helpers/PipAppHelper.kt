@@ -17,7 +17,6 @@
 package com.android.wm.shell.flicker.helpers
 
 import android.app.Instrumentation
-import android.graphics.Point
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.os.SystemClock
@@ -27,8 +26,6 @@ import com.android.server.wm.flicker.helpers.SYSTEMUI_PACKAGE
 import com.android.server.wm.traces.parser.windowmanager.WindowManagerStateHelper
 import com.android.wm.shell.flicker.pip.tv.closeTvPipWindow
 import com.android.wm.shell.flicker.pip.tv.isFocusedOrHasFocusedChild
-import com.android.wm.shell.flicker.pip.waitPipWindowGone
-import com.android.wm.shell.flicker.pip.waitPipWindowShown
 import com.android.wm.shell.flicker.testapp.Components
 
 class PipAppHelper(instrumentation: Instrumentation) : BaseAppHelper(
@@ -65,7 +62,7 @@ class PipAppHelper(instrumentation: Instrumentation) : BaseAppHelper(
         stringExtras: Map<String, String>
     ) {
         super.launchViaIntent(wmHelper, expectedWindowName, action, stringExtras)
-        wmHelper.waitPipWindowShown()
+        wmHelper.waitFor { it.wmState.hasPipWindow() }
     }
 
     private fun focusOnObject(selector: BySelector): Boolean {
@@ -87,7 +84,7 @@ class PipAppHelper(instrumentation: Instrumentation) : BaseAppHelper(
         clickObject(ENTER_PIP_BUTTON_ID)
 
         // Wait on WMHelper or simply wait for 3 seconds
-        wmHelper?.waitPipWindowShown() ?: SystemClock.sleep(3_000)
+        wmHelper?.waitFor { it.wmState.hasPipWindow() } ?: SystemClock.sleep(3_000)
     }
 
     fun clickStartMediaSessionButton() {
@@ -135,15 +132,12 @@ class PipAppHelper(instrumentation: Instrumentation) : BaseAppHelper(
             expandPipWindow(wmHelper)
             val exitPipObject = uiDevice.findObject(By.res(SYSTEMUI_PACKAGE, "dismiss"))
             requireNotNull(exitPipObject) { "PIP window dismiss button not found" }
-            val coordinatesInWindow = exitPipObject.visibleBounds
-            val windowOffset = wmHelper.getWindowRegion(component).bounds
-            val newCoordinates = Point(windowOffset.left + coordinatesInWindow.centerX(),
-                windowOffset.top + coordinatesInWindow.centerY())
-            uiDevice.click(newCoordinates.x, newCoordinates.y)
+            val dismissButtonBounds = exitPipObject.visibleBounds
+            uiDevice.click(dismissButtonBounds.centerX(), dismissButtonBounds.centerY())
         }
 
         // Wait for animation to complete.
-        wmHelper.waitPipWindowGone()
+        wmHelper.waitFor { !it.wmState.hasPipWindow() }
         wmHelper.waitForHomeActivityVisible()
     }
 
@@ -173,7 +167,7 @@ class PipAppHelper(instrumentation: Instrumentation) : BaseAppHelper(
         val windowRect = windowRegion.bounds
         uiDevice.click(windowRect.centerX(), windowRect.centerY())
         uiDevice.click(windowRect.centerX(), windowRect.centerY())
-        wmHelper.waitPipWindowGone()
+        wmHelper.waitFor { !it.wmState.hasPipWindow() }
         wmHelper.waitForAppTransitionIdle()
     }
 

@@ -31,6 +31,7 @@ import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
 import android.annotation.TestApi;
+import android.annotation.UserIdInt;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledSince;
 import android.compat.annotation.UnsupportedAppUsage;
@@ -793,6 +794,9 @@ public class ActivityManager {
     /** @hide Flag for registerUidObserver: report uid cached state has changed. */
     public static final int UID_OBSERVER_CACHED = 1<<4;
 
+    /** @hide Flag for registerUidObserver: report uid capability has changed. */
+    public static final int UID_OBSERVER_CAPABILITY = 1<<5;
+
     /** @hide Mode for {@link IActivityManager#isAppStartModeDisabled}: normal free-to-run operation. */
     public static final int APP_START_MODE_NORMAL = 0;
 
@@ -900,7 +904,6 @@ public class ActivityManager {
      *
      * @hide
      */
-    @TestApi
     @ChangeId
     public static final long DROP_CLOSE_SYSTEM_DIALOGS = 174664120L;
 
@@ -1944,8 +1947,9 @@ public class ActivityManager {
             pw.print(((baseIntent.getFlags() & FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS) != 0));
             pw.print(" activityType="); pw.print(activityTypeToString(getActivityType()));
             pw.print(" windowingMode="); pw.print(windowingModeToString(getWindowingMode()));
-            pw.print(" supportsSplitScreenMultiWindow=");
-            pw.println(supportsSplitScreenMultiWindow);
+            pw.print(" supportsSplitScreenMultiWindow="); pw.print(supportsSplitScreenMultiWindow);
+            pw.print(" supportsMultiWindow=");
+            pw.println(supportsMultiWindow);
             if (taskDescription != null) {
                 pw.print("   ");
                 final ActivityManager.TaskDescription td = taskDescription;
@@ -4048,7 +4052,8 @@ public class ActivityManager {
      * @hide
      */
     @SystemApi
-    @RequiresPermission(android.Manifest.permission.MANAGE_USERS)
+    @RequiresPermission(anyOf = {android.Manifest.permission.MANAGE_USERS,
+            android.Manifest.permission.CREATE_USERS})
     public boolean switchUser(@NonNull UserHandle user) {
         if (user == null) {
             throw new IllegalArgumentException("UserHandle cannot be null.");
@@ -4141,6 +4146,25 @@ public class ActivityManager {
             } catch (RemoteException e) {
                 e.rethrowFromSystemServer();
             }
+        }
+    }
+
+    /**
+     * Stops the given {@code userId}.
+     *
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL)
+    public boolean stopUser(@UserIdInt int userId, boolean force) {
+        if (userId == UserHandle.USER_SYSTEM) {
+            return false;
+        }
+        try {
+            return USER_OP_SUCCESS == getService().stopUser(
+                    userId, force, /* callback= */ null);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
         }
     }
 
@@ -4249,7 +4273,8 @@ public class ActivityManager {
         try {
             getService().broadcastIntentWithFeature(
                     null, null, intent, null, null, Activity.RESULT_OK, null, null,
-                    null /*permission*/, appOp, null, false, true, userId);
+                    null /*requiredPermissions*/, null /*excludedPermissions*/, appOp, null, false,
+                    true, userId);
         } catch (RemoteException ex) {
         }
     }
@@ -4807,6 +4832,21 @@ public class ActivityManager {
             getService().holdLock(token, durationMs);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Blocks until all broadcast queues become idle.
+     *
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(android.Manifest.permission.DUMP)
+    public void waitForBroadcastIdle() {
+        try {
+            getService().waitForBroadcastIdle();
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
         }
     }
 

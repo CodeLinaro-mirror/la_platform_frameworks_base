@@ -54,6 +54,8 @@ public abstract class InputEventReceiver {
             InputChannel inputChannel, MessageQueue messageQueue);
     private static native void nativeDispose(long receiverPtr);
     private static native void nativeFinishInputEvent(long receiverPtr, int seq, boolean handled);
+    private static native void nativeReportTimeline(long receiverPtr, int inputEventId,
+            long gpuCompletedTime, long presentTime);
     private static native boolean nativeConsumeBatchedInputEvents(long receiverPtr,
             long frameTimeNanos);
     private static native String nativeDump(long receiverPtr, String prefix);
@@ -159,6 +161,16 @@ public abstract class InputEventReceiver {
     }
 
     /**
+     * Called when a drag event is received, from native code.
+     *
+     * @param isExiting if false, the window associated with this input channel has just received
+     *                 drag
+     *                 if true, the window associated with this input channel has just lost drag
+     */
+    public void onDragEvent(boolean isExiting, float x, float y) {
+    }
+
+    /**
      * Called when a batched input event is pending.
      *
      * The batched input event will continue to accumulate additional movement
@@ -199,11 +211,11 @@ public abstract class InputEventReceiver {
     }
 
     /**
-     * Report the latency information for a specific input event.
+     * Report the timing / latency information for a specific input event.
      */
-    public final void reportLatencyInfo(int inputEventId, long gpuCompletedTime, long presentTime) {
-        Trace.traceBegin(Trace.TRACE_TAG_INPUT, "reportLatencyInfo");
-        // TODO(b/169866723) : send this data to InputDispatcher via InputChannel
+    public final void reportTimeline(int inputEventId, long gpuCompletedTime, long presentTime) {
+        Trace.traceBegin(Trace.TRACE_TAG_INPUT, "reportTimeline");
+        nativeReportTimeline(mReceiverPtr, inputEventId, gpuCompletedTime, presentTime);
         Trace.traceEnd(Trace.TRACE_TAG_INPUT);
     }
 

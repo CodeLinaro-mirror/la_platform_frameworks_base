@@ -20,7 +20,7 @@ import android.content.Context;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.TextUtils;
-import android.text.style.RelativeSizeSpan;
+import android.text.style.AbsoluteSizeSpan;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.FrameLayout;
@@ -40,10 +40,11 @@ import java.util.regex.Pattern;
  */
 public class UsageProgressBarPreference extends Preference {
 
-    private final Pattern mNumberPattern = Pattern.compile("[\\d]*\\.?[\\d]+");
+    private final Pattern mNumberPattern = Pattern.compile("[\\d]*[\\.,]?[\\d]+");
 
     private CharSequence mUsageSummary;
     private CharSequence mTotalSummary;
+    private CharSequence mBottomSummary;
     private ImageView mCustomImageView;
     private int mPercent = -1;
 
@@ -101,9 +102,25 @@ public class UsageProgressBarPreference extends Preference {
         notifyChanged();
     }
 
+    /** Set bottom summary. */
+    public void setBottomSummary(CharSequence bottomSummary) {
+        if (TextUtils.equals(mBottomSummary, bottomSummary)) {
+            return;
+        }
+        mBottomSummary = bottomSummary;
+        notifyChanged();
+    }
+
     /** Set percentage of the progress bar. */
     public void setPercent(long usage, long total) {
-        if (total == 0L || usage >  total) {
+        if (usage >  total) {
+            return;
+        }
+        if (total == 0L) {
+            if (mPercent != 0) {
+                mPercent = 0;
+                notifyChanged();
+            }
             return;
         }
         final int percent = (int) (usage / (double) total * 100);
@@ -147,6 +164,14 @@ public class UsageProgressBarPreference extends Preference {
             totalSummary.setText(mTotalSummary);
         }
 
+        final TextView bottomSummary = (TextView) holder.findViewById(R.id.bottom_summary);
+        if (TextUtils.isEmpty(mBottomSummary)) {
+            bottomSummary.setVisibility(View.GONE);
+        } else {
+            bottomSummary.setVisibility(View.VISIBLE);
+            bottomSummary.setText(mBottomSummary);
+        }
+
         final ProgressBar progressBar = (ProgressBar) holder.findViewById(android.R.id.progress);
         if (mPercent < 0) {
             progressBar.setIndeterminate(true);
@@ -174,7 +199,7 @@ public class UsageProgressBarPreference extends Preference {
         final Matcher matcher = mNumberPattern.matcher(summary);
         if (matcher.find()) {
             final SpannableString spannableSummary =  new SpannableString(summary);
-            spannableSummary.setSpan(new RelativeSizeSpan(2.4f), matcher.start(),
+            spannableSummary.setSpan(new AbsoluteSizeSpan(64, true /* dip */), matcher.start(),
                     matcher.end(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             return spannableSummary;
         }

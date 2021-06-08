@@ -34,8 +34,8 @@ import android.widget.TextView;
 import androidx.core.graphics.ColorUtils;
 
 import com.android.internal.widget.LockPatternUtils;
-import com.android.systemui.Dependency;
 import com.android.systemui.R;
+import com.android.systemui.statusbar.CrossFadeHelper;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -45,7 +45,7 @@ import java.io.PrintWriter;
  * - keyguard clock
  * - logout button (on certain managed devices)
  * - owner information (if set)
- * - notification icons (shown on AOD)
+ * - media player (split shade mode only)
  */
 public class KeyguardStatusView extends GridLayout {
     private static final boolean DEBUG = KeyguardConstants.DEBUG;
@@ -56,14 +56,13 @@ public class KeyguardStatusView extends GridLayout {
     private final IActivityManager mIActivityManager;
 
     private TextView mLogoutView;
-    private boolean mCanShowLogout = true; // by default, try to show the logout button here
     private KeyguardClockSwitch mClockView;
     private TextView mOwnerInfo;
     private boolean mCanShowOwnerInfo = true; // by default, try to show the owner information here
     private KeyguardSliceView mKeyguardSlice;
-    private View mNotificationIcons;
     private Runnable mPendingMarqueeStart;
     private Handler mHandler;
+    private View mMediaHostContainer;
 
     private float mDarkAmount = 0;
     private int mTextColor;
@@ -130,22 +129,15 @@ public class KeyguardStatusView extends GridLayout {
         }
     }
 
-    void setCanShowLogout(boolean canShowLogout) {
-        mCanShowLogout = canShowLogout;
-        updateLogoutView();
-    }
-
     @Override
     protected void onFinishInflate() {
         super.onFinishInflate();
         mLogoutView = findViewById(R.id.logout);
-        mNotificationIcons = findViewById(R.id.clock_notification_icon_container);
         if (mLogoutView != null) {
             mLogoutView.setOnClickListener(this::onLogoutClicked);
         }
 
         mClockView = findViewById(R.id.keyguard_clock_container);
-        mClockView.setShowCurrentUserTime(true);
         if (KeyguardClockAccessibilityDelegate.isNeeded(mContext)) {
             mClockView.setAccessibilityDelegate(new KeyguardClockAccessibilityDelegate(mContext));
         }
@@ -159,10 +151,9 @@ public class KeyguardStatusView extends GridLayout {
         mKeyguardSlice.setContentChangeListener(this::onSliceContentChanged);
         onSliceContentChanged();
 
-        boolean shouldMarquee = Dependency.get(KeyguardUpdateMonitor.class).isDeviceInteractive();
-        setEnableMarquee(shouldMarquee);
+        mMediaHostContainer = findViewById(R.id.status_view_media_container);
+
         updateOwnerInfo();
-        updateLogoutView();
         updateDark();
     }
 
@@ -171,22 +162,10 @@ public class KeyguardStatusView extends GridLayout {
      */
     private void onSliceContentChanged() {
         final boolean hasHeader = mKeyguardSlice.hasHeader();
-        mClockView.setKeyguardShowingHeader(hasHeader);
         if (mShowingHeader == hasHeader) {
             return;
         }
         mShowingHeader = hasHeader;
-        if (mNotificationIcons != null) {
-            // Update top margin since header has appeared/disappeared.
-            MarginLayoutParams params = (MarginLayoutParams) mNotificationIcons.getLayoutParams();
-            params.setMargins(params.leftMargin,
-                    hasHeader ? mIconTopMarginWithHeader : mIconTopMargin,
-                    params.rightMargin,
-                    params.bottomMargin);
-            mNotificationIcons.setLayoutParams(params);
-        }
-
-        mClockView.setKeyguardHidingBigClock(hasHeader);
     }
 
     @Override
@@ -209,11 +188,11 @@ public class KeyguardStatusView extends GridLayout {
         return mOwnerInfo.getVisibility() == VISIBLE ? mOwnerInfo.getHeight() : 0;
     }
 
-    void updateLogoutView() {
+    void updateLogoutView(boolean shouldShowLogout) {
         if (mLogoutView == null) {
             return;
         }
-        mLogoutView.setVisibility(mCanShowLogout && shouldShowLogout() ? VISIBLE : GONE);
+        mLogoutView.setVisibility(shouldShowLogout ? VISIBLE : GONE);
         // Logout button will stay in language of user 0 if we don't set that manually.
         mLogoutView.setText(mContext.getResources().getString(
                 com.android.internal.R.string.global_action_logout));
@@ -249,6 +228,9 @@ public class KeyguardStatusView extends GridLayout {
         }
         mDarkAmount = darkAmount;
         mClockView.setDarkAmount(darkAmount);
+        if (mMediaHostContainer.getVisibility() != View.GONE) {
+            CrossFadeHelper.fadeOut(mMediaHostContainer, darkAmount);
+        }
         updateDark();
     }
 
@@ -303,19 +285,7 @@ public class KeyguardStatusView extends GridLayout {
             int expanded = mOwnerInfo.getBottom() + mOwnerInfo.getPaddingBottom();
             int toRemove = (int) ((expanded - collapsed) * ratio);
             setBottom(getMeasuredHeight() - toRemove);
-            if (mNotificationIcons != null) {
-                // We're using scrolling in order not to overload the translation which is used
-                // when appearing the icons
-                mNotificationIcons.setScrollY(toRemove);
-            }
-        } else if (mNotificationIcons != null){
-            mNotificationIcons.setScrollY(0);
         }
-    }
-
-    private boolean shouldShowLogout() {
-        return Dependency.get(KeyguardUpdateMonitor.class).isLogoutEnabled()
-                && KeyguardUpdateMonitor.getCurrentUser() != UserHandle.USER_SYSTEM;
     }
 
     private void onLogoutClicked(View view) {

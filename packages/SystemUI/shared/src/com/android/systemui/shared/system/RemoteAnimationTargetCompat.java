@@ -16,7 +16,9 @@
 
 package com.android.systemui.shared.system;
 
-import android.app.PictureInPictureParams;
+import static android.view.WindowManager.LayoutParams.INVALID_WINDOW_TYPE;
+
+import android.app.ActivityManager;
 import android.app.WindowConfiguration;
 import android.graphics.Point;
 import android.graphics.Rect;
@@ -55,7 +57,9 @@ public class RemoteAnimationTargetCompat {
     public final Rect screenSpaceBounds;
     public final boolean isNotInRecents;
     public final Rect contentInsets;
-    public final PictureInPictureParams pictureInPictureParams;
+    public final ActivityManager.RunningTaskInfo taskInfo;
+    public final int rotationChange;
+    public final int windowType;
 
     private final SurfaceControl mStartLeash;
 
@@ -73,9 +77,11 @@ public class RemoteAnimationTargetCompat {
         isNotInRecents = app.isNotInRecents;
         contentInsets = app.contentInsets;
         activityType = app.windowConfiguration.getActivityType();
-        pictureInPictureParams = app.pictureInPictureParams;
+        taskInfo = app.taskInfo;
+        rotationChange = 0;
 
         mStartLeash = app.startLeash;
+        windowType = app.windowType;
     }
 
     private static int newModeToLegacyMode(int newMode) {
@@ -102,7 +108,7 @@ public class RemoteAnimationTargetCompat {
         localBounds = new Rect(change.getEndAbsBounds());
         localBounds.offsetTo(change.getEndRelOffset().x, change.getEndRelOffset().y);
         sourceContainerBounds = null;
-        screenSpaceBounds = change.getEndAbsBounds();
+        screenSpaceBounds = new Rect(change.getEndAbsBounds());
         prefixOrderIndex = order;
         // TODO(shell-transitions): I guess we need to send content insets? evaluate how its used.
         contentInsets = new Rect(0, 0, 0, 0);
@@ -113,8 +119,10 @@ public class RemoteAnimationTargetCompat {
             isNotInRecents = true;
             activityType = ACTIVITY_TYPE_UNDEFINED;
         }
-        pictureInPictureParams = null;
+        taskInfo = change.getTaskInfo();
         mStartLeash = null;
+        rotationChange = change.getEndRotation() - change.getStartRotation();
+        windowType = INVALID_WINDOW_TYPE;
     }
 
     public static RemoteAnimationTargetCompat[] wrap(RemoteAnimationTarget[] apps) {

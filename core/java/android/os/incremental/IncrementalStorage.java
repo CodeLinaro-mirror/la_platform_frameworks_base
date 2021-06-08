@@ -20,6 +20,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.pm.DataLoaderParams;
 import android.content.pm.IDataLoaderStatusListener;
+import android.os.PersistableBundle;
 import android.os.RemoteException;
 
 import java.io.File;
@@ -397,7 +398,7 @@ public final class IncrementalStorage {
     }
 
     /**
-     * Iinitializes and starts the DataLoader.
+     * Initializes and starts the DataLoader.
      * This makes sure all install-time parameters are applied.
      * Does not affect persistent DataLoader params.
      * @return True if start request was successfully queued.
@@ -417,6 +418,18 @@ public final class IncrementalStorage {
             return false;
         }
     }
+
+    /**
+     * Marks the completion of installation.
+     */
+    public void onInstallationComplete() {
+        try {
+            mService.onInstallationComplete(mId);
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+    }
+
 
     private static final int UUID_BYTE_SIZE = 16;
 
@@ -576,29 +589,15 @@ public final class IncrementalStorage {
     }
 
     /**
-     * Register to listen to the status changes of the storage health.
-     * @param healthCheckParams Params to specify status change timeouts.
-     * @param listener To report health status change from Incremental Service to the caller.
+     * Returns the metrics of the current storage.
+     * {@see IIncrementalService} for metrics keys.
      */
-    public boolean registerStorageHealthListener(StorageHealthCheckParams healthCheckParams,
-            IStorageHealthListener listener) {
+    public PersistableBundle getMetrics() {
         try {
-            return mService.registerStorageHealthListener(mId, healthCheckParams, listener);
+            return mService.getMetrics(mId);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
-            return false;
-        }
-    }
-
-    /**
-     * Stops listening to the status changes of the storage health.
-     */
-    public void unregisterStorageHealthListener() {
-        try {
-            mService.unregisterStorageHealthListener(mId);
-        } catch (RemoteException e) {
-            e.rethrowFromSystemServer();
-            return;
+            return null;
         }
     }
 }

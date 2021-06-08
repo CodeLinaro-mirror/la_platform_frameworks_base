@@ -35,14 +35,15 @@ enum class CanvasOpType : int8_t {
     ClipPath,
 
     // Drawing ops
-    DrawColor,
+    DRAW_OP_BEGIN,
+    DrawColor = DRAW_OP_BEGIN,
     DrawRect,
     DrawRegion,
     DrawRoundRect,
     DrawRoundRectProperty,
     DrawDoubleRoundRect,
     DrawCircleProperty,
-    DrawRippleProperty,
+    DrawRippleDrawable,
     DrawCircle,
     DrawOval,
     DrawArc,
@@ -59,10 +60,16 @@ enum class CanvasOpType : int8_t {
     DrawImageLattice,
     DrawPicture,
     DrawLayer,
+    DrawRenderNode,
+    DRAW_OP_END = DrawRenderNode,
 
     // TODO: Rest
 
     COUNT  // must be last
 };
+
+static constexpr bool IsDrawOp(CanvasOpType t) {
+    return CanvasOpType::DRAW_OP_BEGIN <= t && t <= CanvasOpType::DRAW_OP_END;
+}
 
 }  // namespace android::uirenderer

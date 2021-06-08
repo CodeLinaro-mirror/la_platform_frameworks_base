@@ -19,9 +19,12 @@ package android.app.appsearch;
 import android.annotation.CallbackExecutor;
 import android.annotation.NonNull;
 import android.annotation.UserIdInt;
+import android.app.appsearch.exceptions.AppSearchException;
+import android.app.appsearch.util.SchemaMigrationUtil;
+import android.compat.annotation.UnsupportedAppUsage;
 import android.os.Bundle;
-import android.os.ParcelableException;
 import android.os.RemoteException;
+import android.os.SystemClock;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Log;
@@ -34,25 +37,31 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
 /**
- * Represents a connection to an AppSearch storage system where {@link GenericDocument}s can be
- * placed and queried.
+ * Provides a connection to a single AppSearch database.
+ *
+ * <p>An {@link AppSearchSession} instance provides access to database operations such as
+ * setting a schema, adding documents, and searching.
  *
  * <p>This class is thread safe.
+ *
+ * @see GlobalSearchSession
  */
 public final class AppSearchSession implements Closeable {
     private static final String TAG = "AppSearchSession";
+
     private final String mPackageName;
     private final String mDatabaseName;
     @UserIdInt
     private final int mUserId;
     private final IAppSearchManager mService;
+
     private boolean mIsMutated = false;
     private boolean mIsClosed = false;
-
 
     /**
      * Creates a search session for the client, defined by the {@code userId} and
@@ -111,20 +120,22 @@ public final class AppSearchSession implements Closeable {
      * no-op call.
      *
      * @param request the schema to set or update the AppSearch database to.
-     * @param executor Executor on which to invoke the callback.
+     * @param workExecutor Executor on which to schedule heavy client-side background work such as
+     *                     transforming documents.
+     * @param callbackExecutor Executor on which to invoke the callback.
      * @param callback Callback to receive errors resulting from setting the schema. If the
      *                 operation succeeds, the callback will be invoked with {@code null}.
-     * @see android.app.appsearch.AppSearchSchema.Migrator
-     * @see android.app.appsearch.AppSearchMigrationHelper.Transformer
      */
     // TODO(b/169883602): Change @code references to @link when setPlatformSurfaceable APIs are
     //  exposed.
     public void setSchema(
             @NonNull SetSchemaRequest request,
-            @NonNull @CallbackExecutor Executor executor,
+            @NonNull Executor workExecutor,
+            @NonNull @CallbackExecutor Executor callbackExecutor,
             @NonNull Consumer<AppSearchResult<SetSchemaResponse>> callback) {
         Objects.requireNonNull(request);
-        Objects.requireNonNull(executor);
+        Objects.requireNonNull(workExecutor);
+        Objects.requireNonNull(callbackExecutor);
         Objects.requireNonNull(callback);
         Preconditions.checkState(!mIsClosed, "AppSearchSession has already been closed");
         List<Bundle> schemaBundles = new ArrayList<>(request.getSchemas().size());
@@ -141,33 +152,25 @@ public final class AppSearchSession implements Closeable {
             }
             schemasPackageAccessibleBundles.put(entry.getKey(), packageIdentifierBundles);
         }
-        try {
-            mService.setSchema(
-                    mPackageName,
-                    mDatabaseName,
+
+        // No need to trigger migration if user never set migrator
+        if (request.getMigrators().isEmpty()) {
+            setSchemaNoMigrations(
+                    request,
                     schemaBundles,
-                    new ArrayList<>(request.getSchemasNotDisplayedBySystem()),
                     schemasPackageAccessibleBundles,
-                    request.isForceOverride(),
-                    mUserId,
-                    new IAppSearchResultCallback.Stub() {
-                        public void onResult(AppSearchResult result) {
-                            executor.execute(() -> {
-                                if (result.isSuccess()) {
-                                    callback.accept(
-                                            // TODO(b/177266929) implement Migration in platform.
-                                            AppSearchResult.newSuccessfulResult(
-                                                    new SetSchemaResponse.Builder().build()));
-                                } else {
-                                    callback.accept(result);
-                                }
-                            });
-                        }
-                    });
-            mIsMutated = true;
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+                    callbackExecutor,
+                    callback);
+        } else {
+            setSchemaWithMigrations(
+                    request,
+                    schemaBundles,
+                    schemasPackageAccessibleBundles,
+                    workExecutor,
+                    callbackExecutor,
+                    callback);
         }
+        mIsMutated = true;
     }
 
     /**
@@ -178,7 +181,7 @@ public final class AppSearchSession implements Closeable {
      */
     public void getSchema(
             @NonNull @CallbackExecutor Executor executor,
-            @NonNull Consumer<AppSearchResult<Set<AppSearchSchema>>> callback) {
+            @NonNull Consumer<AppSearchResult<GetSchemaResponse>> callback) {
         Objects.requireNonNull(executor);
         Objects.requireNonNull(callback);
         Preconditions.checkState(!mIsClosed, "AppSearchSession has already been closed");
@@ -191,14 +194,46 @@ public final class AppSearchSession implements Closeable {
                         public void onResult(AppSearchResult result) {
                             executor.execute(() -> {
                                 if (result.isSuccess()) {
-                                    List<Bundle> schemaBundles =
-                                            (List<Bundle>) result.getResultValue();
-                                    Set<AppSearchSchema> schemas = new ArraySet<>(
-                                            schemaBundles.size());
-                                    for (int i = 0; i < schemaBundles.size(); i++) {
-                                        schemas.add(new AppSearchSchema(schemaBundles.get(i)));
-                                    }
-                                    callback.accept(AppSearchResult.newSuccessfulResult(schemas));
+                                    Bundle responseBundle = (Bundle) result.getResultValue();
+                                    GetSchemaResponse response =
+                                            new GetSchemaResponse(responseBundle);
+                                    callback.accept(AppSearchResult.newSuccessfulResult(response));
+                                } else {
+                                    callback.accept(result);
+                                }
+                            });
+                        }
+                    });
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Retrieves the set of all namespaces in the current database with at least one document.
+     *
+     * @param executor        Executor on which to invoke the callback.
+     * @param callback        Callback to receive the namespaces.
+     */
+    public void getNamespaces(
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull Consumer<AppSearchResult<Set<String>>> callback) {
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(callback);
+        Preconditions.checkState(!mIsClosed, "AppSearchSession has already been closed");
+        try {
+            mService.getNamespaces(
+                    mPackageName,
+                    mDatabaseName,
+                    mUserId,
+                    new IAppSearchResultCallback.Stub() {
+                        public void onResult(AppSearchResult result) {
+                            executor.execute(() -> {
+                                if (result.isSuccess()) {
+                                    Set<String> namespaces =
+                                            new ArraySet<>((List<String>) result.getResultValue());
+                                    callback.accept(
+                                            AppSearchResult.newSuccessfulResult(namespaces));
                                 } else {
                                     callback.accept(result);
                                 }
@@ -220,12 +255,12 @@ public final class AppSearchSession implements Closeable {
      * @param request containing documents to be indexed.
      * @param executor Executor on which to invoke the callback.
      * @param callback Callback to receive pending result of performing this operation. The keys
-     *                 of the returned {@link AppSearchBatchResult} are the URIs of the input
+     *                 of the returned {@link AppSearchBatchResult} are the IDs of the input
      *                 documents. The values are {@code null} if they were successfully indexed,
-     *                 or a failed {@link AppSearchResult} otherwise.
-     *                 Or {@link BatchResultCallback#onSystemError} will be invoked with a
-     *                 {@link Throwable} if an unexpected internal error occurred in AppSearch
-     *                 service.
+     *                 or a failed {@link AppSearchResult} otherwise. If an unexpected internal
+     *                 error occurs in the AppSearch service,
+     *                 {@link BatchResultCallback#onSystemError} will be invoked with a
+     *                 {@link Throwable}.
      */
     public void put(
             @NonNull PutDocumentsRequest request,
@@ -242,13 +277,16 @@ public final class AppSearchSession implements Closeable {
         }
         try {
             mService.putDocuments(mPackageName, mDatabaseName, documentBundles, mUserId,
+                    /*binderCallStartTimeMillis=*/ SystemClock.elapsedRealtime(),
                     new IAppSearchBatchResultCallback.Stub() {
+                        @Override
                         public void onResult(AppSearchBatchResult result) {
                             executor.execute(() -> callback.onResult(result));
                         }
 
-                        public void onSystemError(ParcelableException exception) {
-                            executor.execute(() -> callback.onSystemError(exception.getCause()));
+                        @Override
+                        public void onSystemError(AppSearchResult result) {
+                            executor.execute(() -> sendSystemErrorToCallback(result, callback));
                         }
                     });
             mIsMutated = true;
@@ -258,23 +296,35 @@ public final class AppSearchSession implements Closeable {
     }
 
     /**
-     * Gets {@link GenericDocument} objects by URIs and namespace from the {@link AppSearchSession}
-     * database.
-     *
-     * @param request a request containing URIs and namespace to get documents for.
-     * @param executor Executor on which to invoke the callback.
-     * @param callback Callback to receive the pending result of performing this operation. The keys
-     *                 of the returned {@link AppSearchBatchResult} are the input URIs. The values
-     *                 are the returned {@link GenericDocument}s on success, or a failed
-     *                 {@link AppSearchResult} otherwise. URIs that are not found will return a
-     *                 failed {@link AppSearchResult} with a result code of
-     *                 {@link AppSearchResult#RESULT_NOT_FOUND}.
-     *                 Or {@link BatchResultCallback#onSystemError} will be invoked with a
-     *                 {@link Throwable} if an unexpected internal error occurred in AppSearch
-     *                 service.
+     * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+     * @hide
      */
+    @Deprecated
+    @UnsupportedAppUsage
     public void getByUri(
             @NonNull GetByUriRequest request,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull BatchResultCallback<String, GenericDocument> callback) {
+        getByDocumentId(request.toGetByDocumentIdRequest(), executor, callback);
+    }
+
+    /**
+     * Gets {@link GenericDocument} objects by document IDs in a namespace from the {@link
+     * AppSearchSession} database.
+     *
+     * @param request a request containing a namespace and IDs to get documents for.
+     * @param executor Executor on which to invoke the callback.
+     * @param callback Callback to receive the pending result of performing this operation. The keys
+     *                 of the returned {@link AppSearchBatchResult} are the input IDs. The values
+     *                 are the returned {@link GenericDocument}s on success, or a failed
+     *                 {@link AppSearchResult} otherwise. IDs that are not found will return a
+     *                 failed {@link AppSearchResult} with a result code of
+     *                 {@link AppSearchResult#RESULT_NOT_FOUND}. If an unexpected internal error
+     *                 occurs in the AppSearch service, {@link BatchResultCallback#onSystemError}
+     *                 will be invoked with a {@link Throwable}.
+     */
+    public void getByDocumentId(
+            @NonNull GetByDocumentIdRequest request,
             @NonNull @CallbackExecutor Executor executor,
             @NonNull BatchResultCallback<String, GenericDocument> callback) {
         Objects.requireNonNull(request);
@@ -286,10 +336,11 @@ public final class AppSearchSession implements Closeable {
                     mPackageName,
                     mDatabaseName,
                     request.getNamespace(),
-                    new ArrayList<>(request.getUris()),
+                    new ArrayList<>(request.getIds()),
                     request.getProjectionsInternal(),
                     mUserId,
                     new IAppSearchBatchResultCallback.Stub() {
+                        @Override
                         public void onResult(AppSearchBatchResult result) {
                             executor.execute(() -> {
                                 AppSearchBatchResult.Builder<String, GenericDocument>
@@ -298,8 +349,7 @@ public final class AppSearchSession implements Closeable {
 
                                 // Translate successful results
                                 for (Map.Entry<String, Bundle> bundleEntry :
-                                        (Set<Map.Entry<String, Bundle>>)
-                                                result.getSuccesses().entrySet()) {
+                                        ((Map<String, Bundle>) result.getSuccesses()).entrySet()) {
                                     GenericDocument document;
                                     try {
                                         document = new GenericDocument(bundleEntry.getValue());
@@ -318,8 +368,8 @@ public final class AppSearchSession implements Closeable {
 
                                 // Translate failed results
                                 for (Map.Entry<String, AppSearchResult<Bundle>> bundleEntry :
-                                        (Set<Map.Entry<String, AppSearchResult<Bundle>>>)
-                                                result.getFailures().entrySet()) {
+                                        ((Map<String, AppSearchResult<Bundle>>)
+                                                result.getFailures()).entrySet()) {
                                     documentResultBuilder.setFailure(
                                             bundleEntry.getKey(),
                                             bundleEntry.getValue().getResultCode(),
@@ -329,8 +379,9 @@ public final class AppSearchSession implements Closeable {
                             });
                         }
 
-                        public void onSystemError(ParcelableException exception) {
-                            executor.execute(() -> callback.onSystemError(exception.getCause()));
+                        @Override
+                        public void onSystemError(AppSearchResult result) {
+                            executor.execute(() -> sendSystemErrorToCallback(result, callback));
                         }
                     });
         } catch (RemoteException e) {
@@ -339,8 +390,8 @@ public final class AppSearchSession implements Closeable {
     }
 
     /**
-     * Retrieves documents from the open {@link AppSearchSession} that match a given query string
-     * and type of search provided.
+     * Retrieves documents from the open {@link AppSearchSession} that match a given query
+     * string and type of search provided.
      *
      * <p>Query strings can be empty, contain one term with no operators, or contain multiple terms
      * and operators.
@@ -407,7 +458,7 @@ public final class AppSearchSession implements Closeable {
     }
 
     /**
-     * Reports usage of a particular document by URI and namespace.
+     * Reports usage of a particular document by namespace and ID.
      *
      * <p>A usage report represents an event in which a user interacted with or viewed a document.
      *
@@ -436,8 +487,9 @@ public final class AppSearchSession implements Closeable {
                     mPackageName,
                     mDatabaseName,
                     request.getNamespace(),
-                    request.getUri(),
-                    request.getUsageTimeMillis(),
+                    request.getDocumentId(),
+                    request.getUsageTimestampMillis(),
+                    /*systemUsage=*/ false,
                     mUserId,
                     new IAppSearchResultCallback.Stub() {
                         public void onResult(AppSearchResult result) {
@@ -451,29 +503,42 @@ public final class AppSearchSession implements Closeable {
     }
 
     /**
-     * Removes {@link GenericDocument} objects by URIs and namespace from the {@link
-     * AppSearchSession} database.
-     *
-     * <p>Removed documents will no longer be surfaced by {@link #search} or {@link #getByUri}
-     * calls.
-     *
-     * <p><b>NOTE:</b>By default, documents are removed via a soft delete operation. Once the
-     * document crosses the count threshold or byte usage threshold, the documents will be removed
-     * from disk.
-     *
-     * @param request {@link RemoveByUriRequest} with URIs and namespace to remove from the index.
-     * @param executor Executor on which to invoke the callback.
-     * @param callback Callback to receive the pending result of performing this operation. The keys
-     *                 of the returned {@link AppSearchBatchResult} are the input URIs. The values
-     *                 are {@code null} on success, or a failed {@link AppSearchResult} otherwise.
-     *                 URIs that are not found will return a failed {@link AppSearchResult} with a
-     *                 result code of {@link AppSearchResult#RESULT_NOT_FOUND}.
-     *                 Or {@link BatchResultCallback#onSystemError} will be invoked with a
-     *                 {@link Throwable} if an unexpected internal error occurred in AppSearch
-     *                 service.
+     * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+     * @hide
      */
+    @Deprecated
+    @UnsupportedAppUsage
     public void remove(
             @NonNull RemoveByUriRequest request,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull BatchResultCallback<String, Void> callback) {
+        remove(request.toRemoveByDocumentIdRequest(), executor, callback);
+    }
+
+    /**
+     * Removes {@link GenericDocument} objects by document IDs in a namespace from the {@link
+     * AppSearchSession} database.
+     *
+     * <p>Removed documents will no longer be surfaced by {@link #search} or {@link
+     * #getByDocumentId} calls.
+     *
+     * <p>Once the database crosses the document count or byte usage threshold, removed documents
+     * will be deleted from disk.
+     *
+     * @param request {@link RemoveByDocumentIdRequest} with IDs in a namespace to remove from the
+     *     index.
+     * @param executor Executor on which to invoke the callback.
+     * @param callback Callback to receive the pending result of performing this operation. The keys
+     *                 of the returned {@link AppSearchBatchResult} are the input document IDs. The
+     *                 values are {@code null} on success, or a failed {@link AppSearchResult}
+     *                 otherwise. IDs that are not found will return a failed
+     *                 {@link AppSearchResult} with a result code of
+     *                 {@link AppSearchResult#RESULT_NOT_FOUND}. If an unexpected internal error
+     *                 occurs in the AppSearch service, {@link BatchResultCallback#onSystemError}
+     *                 will be invoked with a {@link Throwable}.
+     */
+    public void remove(
+            @NonNull RemoveByDocumentIdRequest request,
             @NonNull @CallbackExecutor Executor executor,
             @NonNull BatchResultCallback<String, Void> callback) {
         Objects.requireNonNull(request);
@@ -481,15 +546,17 @@ public final class AppSearchSession implements Closeable {
         Objects.requireNonNull(callback);
         Preconditions.checkState(!mIsClosed, "AppSearchSession has already been closed");
         try {
-            mService.removeByUri(mPackageName, mDatabaseName, request.getNamespace(),
-                    new ArrayList<>(request.getUris()), mUserId,
+            mService.removeByDocumentId(mPackageName, mDatabaseName, request.getNamespace(),
+                    new ArrayList<>(request.getIds()), mUserId,
                     new IAppSearchBatchResultCallback.Stub() {
+                        @Override
                         public void onResult(AppSearchBatchResult result) {
                             executor.execute(() -> callback.onResult(result));
                         }
 
-                        public void onSystemError(ParcelableException exception) {
-                            executor.execute(() -> callback.onSystemError(exception.getCause()));
+                        @Override
+                        public void onSystemError(AppSearchResult result) {
+                            executor.execute(() -> sendSystemErrorToCallback(result, callback));
                         }
                     });
             mIsMutated = true;
@@ -542,8 +609,47 @@ public final class AppSearchSession implements Closeable {
     }
 
     /**
-     * Closes the {@link AppSearchSession} to persist all schema and document updates, additions,
-     * and deletes to disk.
+     * Gets the storage info for this {@link AppSearchSession} database.
+     *
+     * <p>This may take time proportional to the number of documents and may be inefficient to call
+     * repeatedly.
+     *
+     * @param executor        Executor on which to invoke the callback.
+     * @param callback        Callback to receive the storage info.
+     */
+    public void getStorageInfo(
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull Consumer<AppSearchResult<StorageInfo>> callback) {
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(callback);
+        Preconditions.checkState(!mIsClosed, "AppSearchSession has already been closed");
+        try {
+            mService.getStorageInfo(
+                    mPackageName,
+                    mDatabaseName,
+                    mUserId,
+                    new IAppSearchResultCallback.Stub() {
+                        public void onResult(AppSearchResult result) {
+                            executor.execute(() -> {
+                                if (result.isSuccess()) {
+                                    Bundle responseBundle = (Bundle) result.getResultValue();
+                                    StorageInfo response =
+                                            new StorageInfo(responseBundle);
+                                    callback.accept(AppSearchResult.newSuccessfulResult(response));
+                                } else {
+                                    callback.accept(result);
+                                }
+                            });
+                        }
+                    });
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Closes the {@link AppSearchSession} to persist all schema and document updates,
+     * additions, and deletes to disk.
      */
     @Override
     public void close() {
@@ -555,5 +661,214 @@ public final class AppSearchSession implements Closeable {
                 Log.e(TAG, "Unable to close the AppSearchSession", e);
             }
         }
+    }
+
+    /**
+     * Set schema to Icing for no-migration scenario.
+     *
+     * <p>We only need one time {@link #setSchema} call for no-migration scenario by using the
+     * forceoverride in the request.
+     */
+    private void setSchemaNoMigrations(
+            @NonNull SetSchemaRequest request,
+            @NonNull List<Bundle> schemaBundles,
+            @NonNull Map<String, List<Bundle>> schemasPackageAccessibleBundles,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull Consumer<AppSearchResult<SetSchemaResponse>> callback) {
+        try {
+            mService.setSchema(
+                    mPackageName,
+                    mDatabaseName,
+                    schemaBundles,
+                    new ArrayList<>(request.getSchemasNotDisplayedBySystem()),
+                    schemasPackageAccessibleBundles,
+                    request.isForceOverride(),
+                    request.getVersion(),
+                    mUserId,
+                    new IAppSearchResultCallback.Stub() {
+                        public void onResult(AppSearchResult result) {
+                            executor.execute(() -> {
+                                if (result.isSuccess()) {
+                                    try {
+                                        SetSchemaResponse setSchemaResponse =
+                                                new SetSchemaResponse(
+                                                        (Bundle) result.getResultValue());
+                                        if (!request.isForceOverride()) {
+                                            // Throw exception if there is any deleted types or
+                                            // incompatible types. That's the only case we swallowed
+                                            // in the AppSearchImpl#setSchema().
+                                            SchemaMigrationUtil.checkDeletedAndIncompatible(
+                                                    setSchemaResponse.getDeletedTypes(),
+                                                    setSchemaResponse.getIncompatibleTypes());
+                                        }
+                                        callback.accept(AppSearchResult
+                                                .newSuccessfulResult(setSchemaResponse));
+                                    } catch (Throwable t) {
+                                        callback.accept(AppSearchResult.throwableToFailedResult(t));
+                                    }
+                                } else {
+                                    callback.accept(result);
+                                }
+                            });
+                        }
+                    });
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Set schema to Icing for migration scenario.
+     *
+     * <p>First time {@link #setSchema} call with forceOverride is false gives us all incompatible
+     * changes. After trigger migrations, the second time call {@link #setSchema} will actually
+     * apply the changes.
+     */
+    private void setSchemaWithMigrations(
+            @NonNull SetSchemaRequest request,
+            @NonNull List<Bundle> schemaBundles,
+            @NonNull Map<String, List<Bundle>> schemasPackageAccessibleBundles,
+            @NonNull Executor workExecutor,
+            @NonNull @CallbackExecutor Executor callbackExecutor,
+            @NonNull Consumer<AppSearchResult<SetSchemaResponse>> callback) {
+        workExecutor.execute(() -> {
+            try {
+                // Migration process
+                // 1. Validate and retrieve all active migrators.
+                CompletableFuture<AppSearchResult<GetSchemaResponse>> getSchemaFuture =
+                        new CompletableFuture<>();
+                getSchema(callbackExecutor, getSchemaFuture::complete);
+                AppSearchResult<GetSchemaResponse> getSchemaResult = getSchemaFuture.get();
+                if (!getSchemaResult.isSuccess()) {
+                    callbackExecutor.execute(() ->
+                            callback.accept(AppSearchResult.newFailedResult(getSchemaResult)));
+                    return;
+                }
+                GetSchemaResponse getSchemaResponse = getSchemaResult.getResultValue();
+                int currentVersion = getSchemaResponse.getVersion();
+                int finalVersion = request.getVersion();
+                Map<String, Migrator> activeMigrators = SchemaMigrationUtil.getActiveMigrators(
+                        getSchemaResponse.getSchemas(), request.getMigrators(), currentVersion,
+                        finalVersion);
+
+                // No need to trigger migration if no migrator is active.
+                if (activeMigrators.isEmpty()) {
+                    setSchemaNoMigrations(request, schemaBundles, schemasPackageAccessibleBundles,
+                            callbackExecutor, callback);
+                    return;
+                }
+
+                // 2. SetSchema with forceOverride=false, to retrieve the list of
+                // incompatible/deleted types.
+                CompletableFuture<AppSearchResult<Bundle>> setSchemaFuture =
+                        new CompletableFuture<>();
+                mService.setSchema(
+                        mPackageName,
+                        mDatabaseName,
+                        schemaBundles,
+                        new ArrayList<>(request.getSchemasNotDisplayedBySystem()),
+                        schemasPackageAccessibleBundles,
+                        /*forceOverride=*/ false,
+                        request.getVersion(),
+                        mUserId,
+                        new IAppSearchResultCallback.Stub() {
+                            public void onResult(AppSearchResult result) {
+                                setSchemaFuture.complete(result);
+                            }
+                        });
+                AppSearchResult<Bundle> setSchemaResult = setSchemaFuture.get();
+                if (!setSchemaResult.isSuccess()) {
+                    callbackExecutor.execute(() ->
+                            callback.accept(AppSearchResult.newFailedResult(setSchemaResult)));
+                    return;
+                }
+                SetSchemaResponse setSchemaResponse =
+                        new SetSchemaResponse(setSchemaResult.getResultValue());
+
+                // 3. If forceOverride is false, check that all incompatible types will be migrated.
+                // If some aren't we must throw an error, rather than proceeding and deleting those
+                // types.
+                if (!request.isForceOverride()) {
+                    SchemaMigrationUtil.checkDeletedAndIncompatibleAfterMigration(setSchemaResponse,
+                            activeMigrators.keySet());
+                }
+
+                try (AppSearchMigrationHelper migrationHelper = new AppSearchMigrationHelper(
+                        mService, mUserId, mPackageName, mDatabaseName, request.getSchemas())) {
+
+                    // 4. Trigger migration for all migrators.
+                    // TODO(b/177266929) trigger migration for all types together rather than
+                    //  separately.
+                    for (Map.Entry<String, Migrator> entry : activeMigrators.entrySet()) {
+                        migrationHelper.queryAndTransform(/*schemaType=*/ entry.getKey(),
+                                /*migrator=*/ entry.getValue(), currentVersion,
+                                finalVersion);
+                    }
+
+                    // 5. SetSchema a second time with forceOverride=true if the first attempted
+                    // failed.
+                    if (!setSchemaResponse.getIncompatibleTypes().isEmpty()
+                            || !setSchemaResponse.getDeletedTypes().isEmpty()) {
+                        CompletableFuture<AppSearchResult<Bundle>> setSchema2Future =
+                                new CompletableFuture<>();
+                        // only trigger second setSchema() call if the first one is fail.
+                        mService.setSchema(
+                                mPackageName,
+                                mDatabaseName,
+                                schemaBundles,
+                                new ArrayList<>(request.getSchemasNotDisplayedBySystem()),
+                                schemasPackageAccessibleBundles,
+                                /*forceOverride=*/ true,
+                                request.getVersion(),
+                                mUserId,
+                                new IAppSearchResultCallback.Stub() {
+                                    @Override
+                                    public void onResult(AppSearchResult result) {
+                                        setSchema2Future.complete(result);
+                                    }
+                                });
+                        AppSearchResult<Bundle> setSchema2Result = setSchema2Future.get();
+                        if (!setSchema2Result.isSuccess()) {
+                            // we failed to set the schema in second time with forceOverride = true,
+                            // which is an impossible case. Since we only swallow the incompatible
+                            // error in the first setSchema call, all other errors will be thrown at
+                            // the first time.
+                            callbackExecutor.execute(() -> callback.accept(
+                                    AppSearchResult.newFailedResult(setSchema2Result)));
+                            return;
+                        }
+                    }
+
+                    SetSchemaResponse.Builder responseBuilder = setSchemaResponse.toBuilder()
+                            .addMigratedTypes(activeMigrators.keySet());
+
+                    // 6. Put all the migrated documents into the index, now that the new schema is
+                    // set.
+                    AppSearchResult<SetSchemaResponse> putResult =
+                            migrationHelper.putMigratedDocuments(responseBuilder);
+                    callbackExecutor.execute(() -> callback.accept(putResult));
+                }
+            } catch (Throwable t) {
+                callbackExecutor.execute(() -> callback.accept(
+                        AppSearchResult.throwableToFailedResult(t)));
+            }
+        });
+    }
+
+    /**
+     * Calls {@link BatchResultCallback#onSystemError} with a throwable derived from the given
+     * failed {@link AppSearchResult}.
+     *
+     * <p>The {@link AppSearchResult} generally comes from
+     * {@link IAppSearchBatchResultCallback#onSystemError}.
+     *
+     * <p>This method should be called from the callback executor thread.
+     */
+    private void sendSystemErrorToCallback(
+            @NonNull AppSearchResult<?> failedResult, @NonNull BatchResultCallback<?, ?> callback) {
+        Preconditions.checkArgument(!failedResult.isSuccess());
+        Throwable throwable = new AppSearchException(
+                failedResult.getResultCode(), failedResult.getErrorMessage());
+        callback.onSystemError(throwable);
     }
 }

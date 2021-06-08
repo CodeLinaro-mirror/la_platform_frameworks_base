@@ -29,7 +29,7 @@ import android.content.pm.PackageManagerInternal;
 import android.hardware.vibrator.IVibrator;
 import android.os.BatteryStats;
 import android.os.Binder;
-import android.os.CombinedVibrationEffect;
+import android.os.CombinedVibration;
 import android.os.ExternalVibration;
 import android.os.Handler;
 import android.os.IBinder;
@@ -48,6 +48,8 @@ import android.os.VibrationAttributes;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorInfo;
+import android.os.vibrator.PrebakedSegment;
+import android.os.vibrator.VibrationEffectSegment;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.proto.ProtoOutputStream;
@@ -289,7 +291,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
 
     @Override // Binder call
     public boolean setAlwaysOnEffect(int uid, String opPkg, int alwaysOnId,
-            @Nullable CombinedVibrationEffect effect, @Nullable VibrationAttributes attrs) {
+            @Nullable CombinedVibration effect, @Nullable VibrationAttributes attrs) {
         Trace.traceBegin(Trace.TRACE_TAG_VIBRATOR, "setAlwaysOnEffect");
         try {
             mContext.enforceCallingOrSelfPermission(
@@ -312,7 +314,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
             }
             attrs = fixupVibrationAttributes(attrs);
             synchronized (mLock) {
-                SparseArray<VibrationEffect.Prebaked> effects = fixupAlwaysOnEffectsLocked(effect);
+                SparseArray<PrebakedSegment> effects = fixupAlwaysOnEffectsLocked(effect);
                 if (effects == null) {
                     // Invalid effects set in CombinedVibrationEffect, or always-on capability is
                     // missing on individual vibrators.
@@ -330,7 +332,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
     }
 
     @Override // Binder call
-    public void vibrate(int uid, String opPkg, @NonNull CombinedVibrationEffect effect,
+    public void vibrate(int uid, String opPkg, @NonNull CombinedVibration effect,
             @Nullable VibrationAttributes attrs, String reason, IBinder token) {
         Trace.traceBegin(Trace.TRACE_TAG_VIBRATOR, "vibrate, reason = " + reason);
         try {
@@ -347,8 +349,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
             attrs = fixupVibrationAttributes(attrs);
             Vibration vib = new Vibration(token, mNextVibrationId.getAndIncrement(), effect, attrs,
                     uid, opPkg, reason);
-            // Update with fixed up effect to keep the original effect in Vibration for debugging.
-            vib.updateEffect(fixupVibrationEffect(effect));
+            fillVibrationFallbacks(vib, effect);
 
             synchronized (mLock) {
                 Vibration.Status ignoreStatus = shouldIgnoreVibrationLocked(vib);
@@ -382,7 +383,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
     }
 
     @Override // Binder call
-    public void cancelVibrate(IBinder token) {
+    public void cancelVibrate(int usageFilter, IBinder token) {
         Trace.traceBegin(Trace.TRACE_TAG_VIBRATOR, "cancelVibrate");
         try {
             mContext.enforceCallingOrSelfPermission(
@@ -391,16 +392,24 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
 
             synchronized (mLock) {
                 if (DEBUG) {
-                    Slog.d(TAG, "Canceling vibration.");
+                    Slog.d(TAG, "Canceling vibration");
                 }
                 final long ident = Binder.clearCallingIdentity();
                 try {
-                    mNextVibration = null;
+                    if (mNextVibration != null
+                            && shouldCancelVibration(mNextVibration.getVibration(),
+                            usageFilter, token)) {
+                        mNextVibration = null;
+                    }
                     if (mCurrentVibration != null
-                            && mCurrentVibration.getVibration().token == token) {
+                            && shouldCancelVibration(mCurrentVibration.getVibration(),
+                            usageFilter, token)) {
                         mCurrentVibration.cancel();
                     }
-                    if (mCurrentExternalVibration != null) {
+                    if (mCurrentExternalVibration != null
+                            && shouldCancelVibration(
+                            mCurrentExternalVibration.externalVibration.getVibrationAttributes(),
+                            usageFilter)) {
                         mCurrentExternalVibration.end(Vibration.Status.CANCELLED);
                         mVibratorManagerRecords.record(mCurrentExternalVibration);
                         mCurrentExternalVibration.externalVibration.mute();
@@ -476,7 +485,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
     private void updateAlwaysOnLocked(AlwaysOnVibration vib) {
         for (int i = 0; i < vib.effects.size(); i++) {
             VibratorController vibrator = mVibrators.get(vib.effects.keyAt(i));
-            VibrationEffect.Prebaked effect = vib.effects.valueAt(i);
+            PrebakedSegment effect = vib.effects.valueAt(i);
             if (vibrator == null) {
                 continue;
             }
@@ -496,7 +505,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
     private Vibration.Status startVibrationLocked(Vibration vib) {
         Trace.traceBegin(Trace.TRACE_TAG_VIBRATOR, "startVibrationLocked");
         try {
-            vib.updateEffect(mVibrationScaler.scale(vib.getEffect(), vib.attrs.getUsage()));
+            vib.updateEffects(effect -> mVibrationScaler.scale(effect, vib.attrs.getUsage()));
             boolean inputDevicesAvailable = mInputDeviceDelegate.vibrateIfAvailable(
                     vib.uid, vib.opPkg, vib.getEffect(), vib.reason, vib.attrs);
             if (inputDevicesAvailable) {
@@ -602,11 +611,20 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
             // Repeating vibrations always take precedence.
             return null;
         }
-        if (mCurrentVibration != null && mCurrentVibration.getVibration().isRepeating()) {
-            if (DEBUG) {
-                Slog.d(TAG, "Ignoring incoming vibration in favor of previous alarm vibration");
+        if (mCurrentVibration != null) {
+            if (mCurrentVibration.getVibration().attrs.getUsage()
+                    == VibrationAttributes.USAGE_ALARM) {
+                if (DEBUG) {
+                    Slog.d(TAG, "Ignoring incoming vibration in favor of alarm vibration");
+                }
+                return Vibration.Status.IGNORED_FOR_ALARM;
             }
-            return Vibration.Status.IGNORED_FOR_ALARM;
+            if (mCurrentVibration.getVibration().isRepeating()) {
+                if (DEBUG) {
+                    Slog.d(TAG, "Ignoring incoming vibration in favor of repeating vibration");
+                }
+                return Vibration.Status.IGNORED_FOR_ONGOING;
+            }
         }
         return null;
     }
@@ -683,6 +701,30 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
     }
 
     /**
+     * Return true if the vibration has the same token and usage belongs to given usage class.
+     *
+     * @param vib         The ongoing or pending vibration to be cancelled.
+     * @param usageFilter The vibration usages to be cancelled, any bitwise combination of
+     *                    VibrationAttributes.USAGE_* values.
+     * @param token       The binder token to identify the vibration origin. Only vibrations
+     *                    started with the same token can be cancelled with it.
+     */
+    private boolean shouldCancelVibration(Vibration vib, int usageFilter, IBinder token) {
+        return (vib.token == token) && shouldCancelVibration(vib.attrs, usageFilter);
+    }
+
+    /**
+     * Return true if the external vibration usage belongs to given usage class.
+     *
+     * @param attrs       The attributes of an ongoing or pending vibration to be cancelled.
+     * @param usageFilter The vibration usages to be cancelled, any bitwise combination of
+     *                    VibrationAttributes.USAGE_* values.
+     */
+    private boolean shouldCancelVibration(VibrationAttributes attrs, int usageFilter) {
+        return (usageFilter & attrs.getUsage()) == attrs.getUsage();
+    }
+
+    /**
      * Check which mode should be set for a vibration with given {@code uid}, {@code opPkg} and
      * {@code attrs}. This will return one of the AppOpsManager.MODE_*.
      */
@@ -732,14 +774,14 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
     }
 
     /**
-     * Validate the incoming {@link CombinedVibrationEffect}.
+     * Validate the incoming {@link CombinedVibration}.
      *
      * We can't throw exceptions here since we might be called from some system_server component,
      * which would bring the whole system down.
      *
      * @return whether the CombinedVibrationEffect is non-null and valid
      */
-    private static boolean isEffectValid(@Nullable CombinedVibrationEffect effect) {
+    private static boolean isEffectValid(@Nullable CombinedVibration effect) {
         if (effect == null) {
             Slog.wtf(TAG, "effect must not be null");
             return false;
@@ -757,43 +799,38 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
      * Sets fallback effects to all prebaked ones in given combination of effects, based on {@link
      * VibrationSettings#getFallbackEffect}.
      */
-    private CombinedVibrationEffect fixupVibrationEffect(CombinedVibrationEffect effect) {
-        if (effect instanceof CombinedVibrationEffect.Mono) {
-            return CombinedVibrationEffect.createSynced(
-                    fixupVibrationEffect(((CombinedVibrationEffect.Mono) effect).getEffect()));
-        } else if (effect instanceof CombinedVibrationEffect.Stereo) {
-            CombinedVibrationEffect.SyncedCombination combination =
-                    CombinedVibrationEffect.startSynced();
+    private void fillVibrationFallbacks(Vibration vib, CombinedVibration effect) {
+        if (effect instanceof CombinedVibration.Mono) {
+            fillVibrationFallbacks(vib, ((CombinedVibration.Mono) effect).getEffect());
+        } else if (effect instanceof CombinedVibration.Stereo) {
             SparseArray<VibrationEffect> effects =
-                    ((CombinedVibrationEffect.Stereo) effect).getEffects();
+                    ((CombinedVibration.Stereo) effect).getEffects();
             for (int i = 0; i < effects.size(); i++) {
-                combination.addVibrator(effects.keyAt(i), fixupVibrationEffect(effects.valueAt(i)));
+                fillVibrationFallbacks(vib, effects.valueAt(i));
             }
-            return combination.combine();
-        } else if (effect instanceof CombinedVibrationEffect.Sequential) {
-            CombinedVibrationEffect.SequentialCombination combination =
-                    CombinedVibrationEffect.startSequential();
-            List<CombinedVibrationEffect> effects =
-                    ((CombinedVibrationEffect.Sequential) effect).getEffects();
-            for (CombinedVibrationEffect e : effects) {
-                combination.addNext(fixupVibrationEffect(e));
+        } else if (effect instanceof CombinedVibration.Sequential) {
+            List<CombinedVibration> effects =
+                    ((CombinedVibration.Sequential) effect).getEffects();
+            for (int i = 0; i < effects.size(); i++) {
+                fillVibrationFallbacks(vib, effects.get(i));
             }
-            return combination.combine();
         }
-        return effect;
     }
 
-    private VibrationEffect fixupVibrationEffect(VibrationEffect effect) {
-        if (effect instanceof VibrationEffect.Prebaked
-                && ((VibrationEffect.Prebaked) effect).shouldFallback()) {
-            VibrationEffect.Prebaked prebaked = (VibrationEffect.Prebaked) effect;
-            VibrationEffect fallback = mVibrationSettings.getFallbackEffect(prebaked.getId());
-            if (fallback != null) {
-                return new VibrationEffect.Prebaked(prebaked.getId(), prebaked.getEffectStrength(),
-                        fallback);
+    private void fillVibrationFallbacks(Vibration vib, VibrationEffect effect) {
+        VibrationEffect.Composed composed = (VibrationEffect.Composed) effect;
+        int segmentCount = composed.getSegments().size();
+        for (int i = 0; i < segmentCount; i++) {
+            VibrationEffectSegment segment = composed.getSegments().get(i);
+            if (segment instanceof PrebakedSegment) {
+                PrebakedSegment prebaked = (PrebakedSegment) segment;
+                VibrationEffect fallback = mVibrationSettings.getFallbackEffect(
+                        prebaked.getEffectId());
+                if (prebaked.shouldFallback() && fallback != null) {
+                    vib.addFallback(prebaked.getEffectId(), fallback);
+                }
             }
         }
-        return effect;
     }
 
     /**
@@ -819,31 +856,31 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
 
     @GuardedBy("mLock")
     @Nullable
-    private SparseArray<VibrationEffect.Prebaked> fixupAlwaysOnEffectsLocked(
-            CombinedVibrationEffect effect) {
+    private SparseArray<PrebakedSegment> fixupAlwaysOnEffectsLocked(
+            CombinedVibration effect) {
         Trace.traceBegin(Trace.TRACE_TAG_VIBRATOR, "fixupAlwaysOnEffectsLocked");
         try {
             SparseArray<VibrationEffect> effects;
-            if (effect instanceof CombinedVibrationEffect.Mono) {
-                VibrationEffect syncedEffect = ((CombinedVibrationEffect.Mono) effect).getEffect();
+            if (effect instanceof CombinedVibration.Mono) {
+                VibrationEffect syncedEffect = ((CombinedVibration.Mono) effect).getEffect();
                 effects = transformAllVibratorsLocked(unused -> syncedEffect);
-            } else if (effect instanceof CombinedVibrationEffect.Stereo) {
-                effects = ((CombinedVibrationEffect.Stereo) effect).getEffects();
+            } else if (effect instanceof CombinedVibration.Stereo) {
+                effects = ((CombinedVibration.Stereo) effect).getEffects();
             } else {
                 // Only synced combinations can be used for always-on effects.
                 return null;
             }
-            SparseArray<VibrationEffect.Prebaked> result = new SparseArray<>();
+            SparseArray<PrebakedSegment> result = new SparseArray<>();
             for (int i = 0; i < effects.size(); i++) {
-                VibrationEffect prebaked = effects.valueAt(i);
-                if (!(prebaked instanceof VibrationEffect.Prebaked)) {
+                PrebakedSegment prebaked = extractPrebakedSegment(effects.valueAt(i));
+                if (prebaked == null) {
                     Slog.e(TAG, "Only prebaked effects supported for always-on.");
                     return null;
                 }
                 int vibratorId = effects.keyAt(i);
                 VibratorController vibrator = mVibrators.get(vibratorId);
                 if (vibrator != null && vibrator.hasCapability(IVibrator.CAP_ALWAYS_ON_CONTROL)) {
-                    result.put(vibratorId, (VibrationEffect.Prebaked) prebaked);
+                    result.put(vibratorId, prebaked);
                 }
             }
             if (result.size() == 0) {
@@ -853,6 +890,20 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
         } finally {
             Trace.traceEnd(Trace.TRACE_TAG_VIBRATOR);
         }
+    }
+
+    @Nullable
+    private static PrebakedSegment extractPrebakedSegment(VibrationEffect effect) {
+        if (effect instanceof VibrationEffect.Composed) {
+            VibrationEffect.Composed composed = (VibrationEffect.Composed) effect;
+            if (composed.getSegments().size() == 1) {
+                VibrationEffectSegment segment = composed.getSegments().get(0);
+                if (segment instanceof PrebakedSegment) {
+                    return (PrebakedSegment) segment;
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -1008,10 +1059,10 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
         public final int uid;
         public final String opPkg;
         public final VibrationAttributes attrs;
-        public final SparseArray<VibrationEffect.Prebaked> effects;
+        public final SparseArray<PrebakedSegment> effects;
 
         AlwaysOnVibration(int alwaysOnId, int uid, String opPkg, VibrationAttributes attrs,
-                SparseArray<VibrationEffect.Prebaked> effects) {
+                SparseArray<PrebakedSegment> effects) {
             this.alwaysOnId = alwaysOnId;
             this.uid = uid;
             this.opPkg = opPkg;
@@ -1384,15 +1435,15 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
                 while ((nextArg = peekNextArg()) != null) {
                     switch (nextArg) {
                         case "-f":
-                            getNextArgRequired(); // consume the -f argument;
+                            getNextArgRequired(); // consume "-f"
                             force = true;
                             break;
                         case "-d":
-                            getNextArgRequired(); // consume the -d argument;
+                            getNextArgRequired(); // consume "-d"
                             description = getNextArgRequired();
                             break;
                         default:
-                            // Not a common option, finish reading.
+                            // nextArg is not a common option, finish reading.
                             return;
                     }
                 }
@@ -1446,28 +1497,20 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
 
         private int runMono() {
             CommonOptions commonOptions = new CommonOptions();
-            VibrationEffect effect = nextEffect();
-            if (effect == null) {
-                return 0;
-            }
-
-            CombinedVibrationEffect combinedEffect = CombinedVibrationEffect.createSynced(effect);
+            CombinedVibration effect = CombinedVibration.createParallel(nextEffect());
             VibrationAttributes attrs = createVibrationAttributes(commonOptions);
-            vibrate(Binder.getCallingUid(), SHELL_PACKAGE_NAME, combinedEffect, attrs,
+            vibrate(Binder.getCallingUid(), SHELL_PACKAGE_NAME, effect, attrs,
                     commonOptions.description, mToken);
             return 0;
         }
 
         private int runStereo() {
             CommonOptions commonOptions = new CommonOptions();
-            CombinedVibrationEffect.SyncedCombination combination =
-                    CombinedVibrationEffect.startSynced();
+            CombinedVibration.ParallelCombination combination =
+                    CombinedVibration.startParallel();
             while ("-v".equals(getNextOption())) {
                 int vibratorId = Integer.parseInt(getNextArgRequired());
-                VibrationEffect effect = nextEffect();
-                if (effect != null) {
-                    combination.addVibrator(vibratorId, effect);
-                }
+                combination.addVibrator(vibratorId, nextEffect());
             }
             VibrationAttributes attrs = createVibrationAttributes(commonOptions);
             vibrate(Binder.getCallingUid(), SHELL_PACKAGE_NAME, combination.combine(), attrs,
@@ -1477,19 +1520,11 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
 
         private int runSequential() {
             CommonOptions commonOptions = new CommonOptions();
-
-            CombinedVibrationEffect.SequentialCombination combination =
-                    CombinedVibrationEffect.startSequential();
+            CombinedVibration.SequentialCombination combination =
+                    CombinedVibration.startSequential();
             while ("-v".equals(getNextOption())) {
                 int vibratorId = Integer.parseInt(getNextArgRequired());
-                int delay = 0;
-                if ("-w".equals(getNextOption())) {
-                    delay = Integer.parseInt(getNextArgRequired());
-                }
-                VibrationEffect effect = nextEffect();
-                if (effect != null) {
-                    combination.addNext(vibratorId, effect, delay);
-                }
+                combination.addNext(vibratorId, nextEffect());
             }
             VibrationAttributes attrs = createVibrationAttributes(commonOptions);
             vibrate(Binder.getCallingUid(), SHELL_PACKAGE_NAME, combination.combine(), attrs,
@@ -1498,91 +1533,149 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
         }
 
         private int runCancel() {
-            cancelVibrate(mToken);
+            cancelVibrate(/* usageFilter= */ -1, mToken);
             return 0;
         }
 
-        @Nullable
         private VibrationEffect nextEffect() {
-            String effectType = getNextArgRequired();
-            if ("oneshot".equals(effectType)) {
-                return nextOneShot();
+            VibrationEffect.Composition composition = VibrationEffect.startComposition();
+            String nextArg;
+
+            while ((nextArg = peekNextArg()) != null) {
+                if ("oneshot".equals(nextArg)) {
+                    addOneShotToComposition(composition);
+                } else if ("waveform".equals(nextArg)) {
+                    addWaveformToComposition(composition);
+                } else if ("prebaked".equals(nextArg)) {
+                    addPrebakedToComposition(composition);
+                } else if ("primitives".equals(nextArg)) {
+                    addPrimitivesToComposition(composition);
+                } else {
+                    // nextArg is not an effect, finish reading.
+                    break;
+                }
             }
-            if ("waveform".equals(effectType)) {
-                return nextWaveform();
-            }
-            if ("prebaked".equals(effectType)) {
-                return nextPrebaked();
-            }
-            if ("composed".equals(effectType)) {
-                return nextComposed();
-            }
-            return null;
+
+            return composition.compose();
         }
 
-        private VibrationEffect nextOneShot() {
-            boolean hasAmplitude = "-a".equals(getNextOption());
+        private void addOneShotToComposition(VibrationEffect.Composition composition) {
+            boolean hasAmplitude = false;
+            int delay = 0;
+
+            getNextArgRequired(); // consume "oneshot"
+            String nextOption;
+            while ((nextOption = getNextOption()) != null) {
+                if ("-a".equals(nextOption)) {
+                    hasAmplitude = true;
+                } else if ("-w".equals(nextOption)) {
+                    delay = Integer.parseInt(getNextArgRequired());
+                }
+            }
+
             long duration = Long.parseLong(getNextArgRequired());
             int amplitude = hasAmplitude ? Integer.parseInt(getNextArgRequired())
                     : VibrationEffect.DEFAULT_AMPLITUDE;
-            return VibrationEffect.createOneShot(duration, amplitude);
+            composition.addEffect(VibrationEffect.createOneShot(duration, amplitude), delay);
         }
 
-        private VibrationEffect nextWaveform() {
+        private void addWaveformToComposition(VibrationEffect.Composition composition) {
             boolean hasAmplitudes = false;
+            boolean hasFrequencies = false;
+            boolean isContinuous = false;
             int repeat = -1;
+            int delay = 0;
 
-            String nextOption = getNextOption();
-            while (nextOption != null) {
+            getNextArgRequired(); // consume "waveform"
+            String nextOption;
+            while ((nextOption = getNextOption()) != null) {
                 if ("-a".equals(nextOption)) {
                     hasAmplitudes = true;
                 } else if ("-r".equals(nextOption)) {
                     repeat = Integer.parseInt(getNextArgRequired());
+                } else if ("-w".equals(nextOption)) {
+                    delay = Integer.parseInt(getNextArgRequired());
+                } else if ("-f".equals(nextOption)) {
+                    hasFrequencies = true;
+                } else if ("-c".equals(nextOption)) {
+                    isContinuous = true;
                 }
-                nextOption = getNextOption();
             }
-            List<Long> durations = new ArrayList<>();
-            List<Integer> amplitudes = new ArrayList<>();
+            List<Integer> durations = new ArrayList<>();
+            List<Float> amplitudes = new ArrayList<>();
+            List<Float> frequencies = new ArrayList<>();
 
+            float nextAmplitude = 0;
             String nextArg;
-            while ((nextArg = peekNextArg()) != null && !"-v".equals(nextArg)) {
-                durations.add(Long.parseLong(getNextArgRequired()));
+            while ((nextArg = peekNextArg()) != null) {
+                try {
+                    durations.add(Integer.parseInt(nextArg));
+                    getNextArgRequired(); // consume the duration
+                } catch (NumberFormatException e) {
+                    // nextArg is not a duration, finish reading.
+                    break;
+                }
                 if (hasAmplitudes) {
-                    amplitudes.add(Integer.parseInt(getNextArgRequired()));
+                    amplitudes.add(
+                            Float.parseFloat(getNextArgRequired()) / VibrationEffect.MAX_AMPLITUDE);
+                } else {
+                    amplitudes.add(nextAmplitude);
+                    nextAmplitude = 1 - nextAmplitude;
+                }
+                if (hasFrequencies) {
+                    frequencies.add(Float.parseFloat(getNextArgRequired()));
+                } else {
+                    frequencies.add(0f);
                 }
             }
 
-            long[] durationArray = durations.stream().mapToLong(Long::longValue).toArray();
-            if (!hasAmplitudes) {
-                return VibrationEffect.createWaveform(durationArray, repeat);
+            VibrationEffect.WaveformBuilder waveform = VibrationEffect.startWaveform();
+            for (int i = 0; i < durations.size(); i++) {
+                if (isContinuous) {
+                    waveform.addRamp(amplitudes.get(i), frequencies.get(i), durations.get(i));
+                } else {
+                    waveform.addStep(amplitudes.get(i), frequencies.get(i), durations.get(i));
+                }
+            }
+            composition.addEffect(waveform.build(repeat), delay);
+        }
+
+        private void addPrebakedToComposition(VibrationEffect.Composition composition) {
+            boolean shouldFallback = false;
+            int delay = 0;
+
+            getNextArgRequired(); // consume "prebaked"
+            String nextOption;
+            while ((nextOption = getNextOption()) != null) {
+                if ("-b".equals(nextOption)) {
+                    shouldFallback = true;
+                } else if ("-w".equals(nextOption)) {
+                    delay = Integer.parseInt(getNextArgRequired());
+                }
             }
 
-            int[] amplitudeArray = amplitudes.stream().mapToInt(Integer::intValue).toArray();
-            return VibrationEffect.createWaveform(durationArray, amplitudeArray, repeat);
-        }
-
-        private VibrationEffect nextPrebaked() {
-            boolean shouldFallback = "-b".equals(getNextOption());
             int effectId = Integer.parseInt(getNextArgRequired());
-            return VibrationEffect.get(effectId, shouldFallback);
+            composition.addEffect(VibrationEffect.get(effectId, shouldFallback), delay);
         }
 
-        private VibrationEffect nextComposed() {
-            VibrationEffect.Composition composition = VibrationEffect.startComposition();
+        private void addPrimitivesToComposition(VibrationEffect.Composition composition) {
+            getNextArgRequired(); // consume "primitives"
             String nextArg;
             while ((nextArg = peekNextArg()) != null) {
                 int delay = 0;
                 if ("-w".equals(nextArg)) {
-                    getNextArgRequired(); // consume the -w option
+                    getNextArgRequired(); // consume "-w"
                     delay = Integer.parseInt(getNextArgRequired());
-                } else if ("-v".equals(nextArg)) {
-                    // Starting next vibrator, this composed effect if finished.
+                    nextArg = peekNextArg();
+                }
+                try {
+                    composition.addPrimitive(Integer.parseInt(nextArg), /* scale= */ 1, delay);
+                    getNextArgRequired(); // consume the primitive id
+                } catch (NumberFormatException | NullPointerException e) {
+                    // nextArg is not describing a primitive, leave it to be consumed by outer loops
                     break;
                 }
-                int primitiveId = Integer.parseInt(getNextArgRequired());
-                composition.addPrimitive(primitiveId, /* scale= */ 1f, delay);
             }
-            return composition.compose();
         }
 
         private VibrationAttributes createVibrationAttributes(CommonOptions commonOptions) {
@@ -1605,38 +1698,51 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
                 pw.println("  list");
                 pw.println("    Prints the id of device vibrators. This does not include any ");
                 pw.println("    connected input device.");
-                pw.println("  synced [options] <effect>");
+                pw.println("  synced [options] <effect>...");
                 pw.println("    Vibrates effect on all vibrators in sync.");
-                pw.println("  combined [options] (-v <vibrator-id> <effect>)...");
+                pw.println("  combined [options] (-v <vibrator-id> <effect>...)...");
                 pw.println("    Vibrates different effects on each vibrator in sync.");
-                pw.println("  sequential [options] (-v <vibrator-id> [-w <delay>] <effect>)...");
+                pw.println("  sequential [options] (-v <vibrator-id> <effect>...)...");
                 pw.println("    Vibrates different effects on each vibrator in sequence.");
                 pw.println("  cancel");
                 pw.println("    Cancels any active vibration");
                 pw.println("");
                 pw.println("Effect commands:");
-                pw.println("  oneshot [-a] <duration> [<amplitude>]");
+                pw.println("  oneshot [-w delay] [-a] <duration> [<amplitude>]");
                 pw.println("    Vibrates for duration milliseconds; ignored when device is on ");
                 pw.println("    DND (Do Not Disturb) mode; touch feedback strength user setting ");
                 pw.println("    will be used to scale amplitude.");
+                pw.println("    If -w is provided, the effect will be played after the specified");
+                pw.println("    wait time in milliseconds.");
                 pw.println("    If -a is provided, the command accepts a second argument for ");
                 pw.println("    amplitude, in a scale of 1-255.");
-                pw.println("  waveform [-r <index>] [-a] (<duration> [<amplitude>])...");
+                pw.print("    waveform [-w delay] [-r index] [-a] [-f] [-c] ");
+                pw.println("(<duration> [<amplitude>] [<frequency>])...");
                 pw.println("    Vibrates for durations and amplitudes in list; ignored when ");
                 pw.println("    device is on DND (Do Not Disturb) mode; touch feedback strength ");
                 pw.println("    user setting will be used to scale amplitude.");
+                pw.println("    If -w is provided, the effect will be played after the specified");
+                pw.println("    wait time in milliseconds.");
                 pw.println("    If -r is provided, the waveform loops back to the specified");
                 pw.println("    index (e.g. 0 loops from the beginning)");
-                pw.println("    If -a is provided, the command accepts duration-amplitude pairs;");
-                pw.println("    otherwise, it accepts durations only and alternates off/on");
-                pw.println("    Duration is in milliseconds; amplitude is a scale of 1-255.");
-                pw.println("  prebaked [-b] <effect-id>");
+                pw.println("    If -a is provided, the command expects amplitude to follow each");
+                pw.println("    duration; otherwise, it accepts durations only and alternates");
+                pw.println("    off/on");
+                pw.println("    If -f is provided, the command expects frequency to follow each");
+                pw.println("    amplitude or duration; otherwise, it uses resonant frequency");
+                pw.println("    If -c is provided, the waveform is continuous and will ramp");
+                pw.println("    between values; otherwise each entry is a fixed step.");
+                pw.println("    Duration is in milliseconds; amplitude is a scale of 1-255;");
+                pw.println("    frequency is a relative value around resonant frequency 0;");
+                pw.println("  prebaked [-w delay] [-b] <effect-id>");
                 pw.println("    Vibrates with prebaked effect; ignored when device is on DND ");
                 pw.println("    (Do Not Disturb) mode; touch feedback strength user setting ");
                 pw.println("    will be used to scale amplitude.");
+                pw.println("    If -w is provided, the effect will be played after the specified");
+                pw.println("    wait time in milliseconds.");
                 pw.println("    If -b is provided, the prebaked fallback effect will be played if");
                 pw.println("    the device doesn't support the given effect-id.");
-                pw.println("  composed [-w <delay>] <primitive-id>...");
+                pw.println("  primitives ([-w delay] <primitive-id>)...");
                 pw.println("    Vibrates with a composed effect; ignored when device is on DND ");
                 pw.println("    (Do Not Disturb) mode; touch feedback strength user setting ");
                 pw.println("    will be used to scale primitive intensities.");

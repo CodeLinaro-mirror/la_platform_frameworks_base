@@ -33,8 +33,7 @@ TableMerger::TableMerger(IAaptContext* context, ResourceTable* out_table,
                          const TableMergerOptions& options)
     : context_(context), main_table_(out_table), options_(options) {
   // Create the desired package that all tables will be merged into.
-  main_package_ =
-      main_table_->CreatePackage(context_->GetCompilationPackage(), context_->GetPackageId());
+  main_package_ = main_table_->FindOrCreatePackage(context_->GetCompilationPackage());
   CHECK(main_package_ != nullptr) << "package name or ID already taken";
 }
 
@@ -85,20 +84,9 @@ bool TableMerger::MergeAndMangle(const Source& src, const StringPiece& package_n
 
 static bool MergeType(IAaptContext* context, const Source& src, ResourceTableType* dst_type,
                       ResourceTableType* src_type) {
-  if (src_type->visibility_level > dst_type->visibility_level) {
+  if (src_type->visibility_level >= dst_type->visibility_level) {
     // The incoming type's visibility is stronger, so we should override the visibility.
-    if (src_type->visibility_level == Visibility::Level::kPublic) {
-      // Only copy the ID if the source is public, or else the ID is meaningless.
-      dst_type->id = src_type->id;
-    }
     dst_type->visibility_level = src_type->visibility_level;
-  } else if (dst_type->visibility_level == Visibility::Level::kPublic &&
-             src_type->visibility_level == Visibility::Level::kPublic && dst_type->id &&
-             src_type->id && dst_type->id.value() != src_type->id.value()) {
-    // Both types are public and have different IDs.
-    context->GetDiagnostics()->Error(DiagMessage(src) << "cannot merge type '" << src_type->type
-                                                      << "': conflicting public IDs");
-    return false;
   }
   return true;
 }
@@ -292,13 +280,13 @@ bool TableMerger::DoMerge(const Source& src, ResourceTablePackage* src_package, 
         }
 
         // Continue if we're taking the new resource.
-
+        CloningValueTransformer cloner(&main_table_->string_pool);
         if (FileReference* f = ValueCast<FileReference>(src_config_value->value.get())) {
           std::unique_ptr<FileReference> new_file_ref;
           if (mangle_package) {
             new_file_ref = CloneAndMangleFile(src_package->name, *f);
           } else {
-            new_file_ref = std::unique_ptr<FileReference>(f->Clone(&main_table_->string_pool));
+            new_file_ref = std::unique_ptr<FileReference>(f->Transform(cloner));
           }
           dst_config_value->value = std::move(new_file_ref);
 
@@ -306,8 +294,7 @@ bool TableMerger::DoMerge(const Source& src, ResourceTablePackage* src_package, 
           Maybe<std::string> original_comment = (dst_config_value->value)
               ? dst_config_value->value->GetComment() : Maybe<std::string>();
 
-          dst_config_value->value = std::unique_ptr<Value>(
-              src_config_value->value->Clone(&main_table_->string_pool));
+          dst_config_value->value = src_config_value->value->Transform(cloner);
 
           // Keep the comment from the original resource and ignore all comments from overlaying
           // resources
@@ -335,7 +322,9 @@ std::unique_ptr<FileReference> TableMerger::CloneAndMangleFile(
     new_file_ref->file = file_ref.file;
     return new_file_ref;
   }
-  return std::unique_ptr<FileReference>(file_ref.Clone(&main_table_->string_pool));
+
+  CloningValueTransformer cloner(&main_table_->string_pool);
+  return std::unique_ptr<FileReference>(file_ref.Transform(cloner));
 }
 
 bool TableMerger::MergeFile(const ResourceFile& file_desc, bool overlay, io::IFile* file) {
@@ -347,7 +336,7 @@ bool TableMerger::MergeFile(const ResourceFile& file_desc, bool overlay, io::IFi
   file_ref->type = file_desc.type;
   file_ref->file = file;
 
-  ResourceTablePackage* pkg = table.CreatePackage(file_desc.name.package, 0x0);
+  ResourceTablePackage* pkg = table.FindOrCreatePackage(file_desc.name.package);
   pkg->FindOrCreateType(file_desc.name.type)
       ->FindOrCreateEntry(file_desc.name.entry)
       ->FindOrCreateValue(file_desc.config, {})

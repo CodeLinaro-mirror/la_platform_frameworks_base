@@ -37,8 +37,9 @@ import java.util.Locale;
  * Apache HTTP stack. So {@link URLConnection} and Apache's {@code HttpClient} will use
  * them automatically.
  *
- * Other HTTP stacks will need to obtain the proxy info from
- * {@link Proxy#PROXY_CHANGE_ACTION} broadcast as the extra {@link Proxy#EXTRA_PROXY_INFO}.
+ * Other HTTP stacks will need to obtain the proxy info by watching for the
+ * {@link Proxy#PROXY_CHANGE_ACTION} broadcast and calling methods such as
+ * {@link android.net.ConnectivityManager#getDefaultProxy}.
  */
 public class ProxyInfo implements Parcelable {
 
@@ -129,7 +130,7 @@ public class ProxyInfo implements Parcelable {
     }
 
     /**
-     * Only used in PacProxyInstaller after Local Proxy is bound.
+     * Only used in PacProxyService after Local Proxy is bound.
      * @hide
      */
     public ProxyInfo(@NonNull Uri pacFileUrl, int localProxyPort) {

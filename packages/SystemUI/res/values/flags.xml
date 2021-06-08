@@ -20,32 +20,33 @@
 
     <bool name="flag_notification_pipeline2">true</bool>
     <bool name="flag_notification_pipeline2_rendering">false</bool>
-    <bool name="flag_notif_updates">false</bool>
+    <bool name="flag_notif_updates">true</bool>
 
-    <bool name="flag_shade_is_opaque">false</bool>
     <bool name="flag_monet">false</bool>
 
     <!-- b/171917882 -->
     <bool name="flag_notification_twocolumn">false</bool>
 
-    <bool name="flag_qs_labels">false</bool>
-
     <!-- AOD/Lockscreen alternate layout -->
     <bool name="flag_keyguard_layout">false</bool>
 
-    <bool name="flag_brightness_slider">false</bool>
-
     <!-- People Tile flag -->
     <bool name="flag_conversations">false</bool>
+
+    <bool name="flag_wallet">false</bool>
 
     <!-- The new animations to/from lockscreen and AOD! -->
     <bool name="flag_lockscreen_animations">false</bool>
 
     <bool name="flag_toast_style">false</bool>
 
-    <bool name="flag_navigation_bar_overlay">false</bool>
-
     <bool name="flag_pm_lite">false</bool>
 
     <bool name="flag_alarm_tile">false</bool>
+
+    <bool name="flag_charging_ripple">false</bool>
+
+    <bool name="flag_ongoing_call_status_bar_chip">true</bool>
+
+    <bool name="flag_smartspace">false</bool>
 </resources>

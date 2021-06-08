@@ -29,6 +29,7 @@ import android.util.Log
 import androidx.annotation.MainThread
 import androidx.annotation.VisibleForTesting
 import androidx.annotation.WorkerThread
+import com.android.systemui.appops.AppOpsController
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.dagger.qualifiers.Main
@@ -48,7 +49,6 @@ private val defaultDialogProvider = object : PrivacyDialogController.DialogProvi
         return PrivacyDialog(context, list, starter)
     }
 }
-
 /**
  * Controller for [PrivacyDialog].
  *
@@ -66,6 +66,7 @@ class PrivacyDialogController(
     private val uiExecutor: Executor,
     private val privacyLogger: PrivacyLogger,
     private val keyguardStateController: KeyguardStateController,
+    private val appOpsController: AppOpsController,
     @VisibleForTesting private val dialogProvider: DialogProvider
 ) {
 
@@ -79,7 +80,8 @@ class PrivacyDialogController(
         @Background backgroundExecutor: Executor,
         @Main uiExecutor: Executor,
         privacyLogger: PrivacyLogger,
-        keyguardStateController: KeyguardStateController
+        keyguardStateController: KeyguardStateController,
+        appOpsController: AppOpsController
     ) : this(
             permissionManager,
             packageManager,
@@ -90,6 +92,7 @@ class PrivacyDialogController(
             uiExecutor,
             privacyLogger,
             keyguardStateController,
+            appOpsController,
             defaultDialogProvider
     )
 
@@ -127,7 +130,9 @@ class PrivacyDialogController(
     }
 
     @WorkerThread
-    private fun permGroupUsage(): List<PermGroupUsage> = permissionManager.indicatorAppOpUsageData
+    private fun permGroupUsage(): List<PermGroupUsage> {
+        return permissionManager.getIndicatorAppOpUsageData(appOpsController.isMicMuted)
+    }
 
     /**
      * Show the [PrivacyDialog]
@@ -174,12 +179,16 @@ class PrivacyDialogController(
             }
             uiExecutor.execute {
                 val elements = filterAndSelect(items)
-                val d = dialogProvider.makeDialog(context, elements, this::startActivity)
-                d.setShowForAllUsers(true)
-                d.addOnDismissListener(onDialogDismissed)
-                d.show()
-                privacyLogger.logShowDialogContents(elements)
-                dialog = d
+                if (elements.isNotEmpty()) {
+                    val d = dialogProvider.makeDialog(context, elements, this::startActivity)
+                    d.setShowForAllUsers(true)
+                    d.addOnDismissListener(onDialogDismissed)
+                    d.show()
+                    privacyLogger.logShowDialogContents(elements)
+                    dialog = d
+                } else {
+                    Log.w(TAG, "Trying to show empty dialog")
+                }
             }
         }
     }
@@ -214,9 +223,7 @@ class PrivacyDialogController(
 
     private fun filterType(type: PrivacyType?): PrivacyType? {
         return type?.let {
-            if (privacyItemController.allIndicatorsAvailable) {
-                it
-            } else if ((it == PrivacyType.TYPE_CAMERA || it == PrivacyType.TYPE_MICROPHONE) &&
+            if ((it == PrivacyType.TYPE_CAMERA || it == PrivacyType.TYPE_MICROPHONE) &&
                     privacyItemController.micCameraAvailable) {
                 it
             } else if (it == PrivacyType.TYPE_LOCATION && privacyItemController.locationAvailable) {

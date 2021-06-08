@@ -325,6 +325,15 @@ public final class ApplicationExitInfo implements Parcelable {
      */
     public static final int SUBREASON_ISOLATED_NOT_NEEDED = 17;
 
+    /**
+     * The process was killed because it's in forced-app-standby state, and it's cached and
+     * its uid state is idle; this would be set only when the reason is {@link #REASON_OTHER}.
+     *
+     * For internal use only.
+     * @hide
+     */
+    public static final int SUBREASON_CACHED_IDLE_FORCED_APP_STANDBY = 18;
+
     // If there is any OEM code which involves additional app kill reasons, it should
     // be categorized in {@link #REASON_OTHER}, with subreason code starting from 1000.
 
@@ -614,7 +623,7 @@ public final class ApplicationExitInfo implements Parcelable {
      * tombstone traces will be returned for
      * {@link #REASON_CRASH_NATIVE}, with an InputStream containing a protobuf with
      * <a href="https://android.googlesource.com/platform/system/core/+/refs/heads/master/debuggerd/proto/tombstone.proto">this schema</a>.
-     * Note thatbecause these traces are kept in a separate global circular buffer, crashes may be
+     * Note that because these traces are kept in a separate global circular buffer, crashes may be
      * overwritten by newer crashes (including from other applications), so this may still return
      * null.
      *

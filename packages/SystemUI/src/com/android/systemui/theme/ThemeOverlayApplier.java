@@ -15,6 +15,7 @@
  */
 package com.android.systemui.theme;
 
+import android.annotation.AnyThread;
 import android.content.om.FabricatedOverlay;
 import android.content.om.OverlayIdentifier;
 import android.content.om.OverlayInfo;
@@ -65,8 +66,6 @@ public class ThemeOverlayApplier implements Dumpable {
             "android.theme.customization.accent_color";
     static final String OVERLAY_CATEGORY_SYSTEM_PALETTE =
             "android.theme.customization.system_palette";
-    static final String OVERLAY_CATEGORY_NEUTRAL_PALETTE =
-            "android.theme.customization.neutral_palette";
     @VisibleForTesting
     static final String OVERLAY_CATEGORY_FONT = "android.theme.customization.font";
     @VisibleForTesting
@@ -94,7 +93,6 @@ public class ThemeOverlayApplier implements Dumpable {
      */
     static final List<String> THEME_CATEGORIES = Lists.newArrayList(
             OVERLAY_CATEGORY_SYSTEM_PALETTE,
-            OVERLAY_CATEGORY_NEUTRAL_PALETTE,
             OVERLAY_CATEGORY_ICON_LAUNCHER,
             OVERLAY_CATEGORY_SHAPE,
             OVERLAY_CATEGORY_FONT,
@@ -108,7 +106,6 @@ public class ThemeOverlayApplier implements Dumpable {
     @VisibleForTesting
     static final Set<String> SYSTEM_USER_CATEGORIES = Sets.newHashSet(
             OVERLAY_CATEGORY_SYSTEM_PALETTE,
-            OVERLAY_CATEGORY_NEUTRAL_PALETTE,
             OVERLAY_CATEGORY_ACCENT_COLOR,
             OVERLAY_CATEGORY_FONT,
             OVERLAY_CATEGORY_SHAPE,
@@ -131,8 +128,8 @@ public class ThemeOverlayApplier implements Dumpable {
         mLauncherPackage = launcherPackage;
         mThemePickerPackage = themePickerPackage;
         mTargetPackageToCategories.put(ANDROID_PACKAGE, Sets.newHashSet(
-                OVERLAY_CATEGORY_SYSTEM_PALETTE, OVERLAY_CATEGORY_NEUTRAL_PALETTE,
-                OVERLAY_CATEGORY_ACCENT_COLOR, OVERLAY_CATEGORY_FONT, OVERLAY_CATEGORY_SHAPE,
+                OVERLAY_CATEGORY_SYSTEM_PALETTE, OVERLAY_CATEGORY_ACCENT_COLOR,
+                OVERLAY_CATEGORY_FONT, OVERLAY_CATEGORY_SHAPE,
                 OVERLAY_CATEGORY_ICON_ANDROID));
         mTargetPackageToCategories.put(SYSUI_PACKAGE,
                 Sets.newHashSet(OVERLAY_CATEGORY_ICON_SYSUI));
@@ -163,44 +160,48 @@ public class ThemeOverlayApplier implements Dumpable {
             FabricatedOverlay[] pendingCreation,
             int currentUser,
             Set<UserHandle> managedProfiles) {
-        // Disable all overlays that have not been specified in the user setting.
-        final Set<String> overlayCategoriesToDisable = new HashSet<>(THEME_CATEGORIES);
-        final Set<String> targetPackagesToQuery = overlayCategoriesToDisable.stream()
-                .map(category -> mCategoryToTargetPackage.get(category))
-                .collect(Collectors.toSet());
-        final List<OverlayInfo> overlays = new ArrayList<>();
-        targetPackagesToQuery.forEach(targetPackage -> overlays.addAll(mOverlayManager
-                .getOverlayInfosForTarget(targetPackage, UserHandle.SYSTEM)));
-        final List<Pair<String, String>> overlaysToDisable = overlays.stream()
-                .filter(o ->
-                        mTargetPackageToCategories.get(o.targetPackageName).contains(o.category))
-                .filter(o -> overlayCategoriesToDisable.contains(o.category))
-                .filter(o -> !categoryToPackage.containsValue(new OverlayIdentifier(o.packageName)))
-                .filter(o -> o.isEnabled())
-                .map(o -> new Pair<>(o.category, o.packageName))
-                .collect(Collectors.toList());
-
-        OverlayManagerTransaction.Builder transaction = getTransactionBuilder();
-        if (pendingCreation != null) {
-            for (FabricatedOverlay overlay : pendingCreation) {
-                transaction.registerFabricatedOverlay(overlay);
-            }
-        }
-
-        for (Pair<String, String> packageToDisable : overlaysToDisable) {
-            OverlayIdentifier overlayInfo = new OverlayIdentifier(packageToDisable.second);
-            setEnabled(transaction, overlayInfo, packageToDisable.first, currentUser,
-                    managedProfiles, false);
-        }
-
-        for (String category : THEME_CATEGORIES) {
-            if (categoryToPackage.containsKey(category)) {
-                OverlayIdentifier overlayInfo = categoryToPackage.get(category);
-                setEnabled(transaction, overlayInfo, category, currentUser, managedProfiles, true);
-            }
-        }
-
         mExecutor.execute(() -> {
+
+            // Disable all overlays that have not been specified in the user setting.
+            final Set<String> overlayCategoriesToDisable = new HashSet<>(THEME_CATEGORIES);
+            final Set<String> targetPackagesToQuery = overlayCategoriesToDisable.stream()
+                    .map(category -> mCategoryToTargetPackage.get(category))
+                    .collect(Collectors.toSet());
+            final List<OverlayInfo> overlays = new ArrayList<>();
+            targetPackagesToQuery.forEach(targetPackage -> overlays.addAll(mOverlayManager
+                    .getOverlayInfosForTarget(targetPackage, UserHandle.SYSTEM)));
+            final List<Pair<String, String>> overlaysToDisable = overlays.stream()
+                    .filter(o ->
+                            mTargetPackageToCategories.get(o.targetPackageName).contains(
+                                    o.category))
+                    .filter(o -> overlayCategoriesToDisable.contains(o.category))
+                    .filter(o -> !categoryToPackage.containsValue(
+                            new OverlayIdentifier(o.packageName)))
+                    .filter(o -> o.isEnabled())
+                    .map(o -> new Pair<>(o.category, o.packageName))
+                    .collect(Collectors.toList());
+
+            OverlayManagerTransaction.Builder transaction = getTransactionBuilder();
+            if (pendingCreation != null) {
+                for (FabricatedOverlay overlay : pendingCreation) {
+                    transaction.registerFabricatedOverlay(overlay);
+                }
+            }
+
+            for (Pair<String, String> packageToDisable : overlaysToDisable) {
+                OverlayIdentifier overlayInfo = new OverlayIdentifier(packageToDisable.second);
+                setEnabled(transaction, overlayInfo, packageToDisable.first, currentUser,
+                        managedProfiles, false);
+            }
+
+            for (String category : THEME_CATEGORIES) {
+                if (categoryToPackage.containsKey(category)) {
+                    OverlayIdentifier overlayInfo = categoryToPackage.get(category);
+                    setEnabled(transaction, overlayInfo, category, currentUser, managedProfiles,
+                            true);
+                }
+            }
+
             try {
                 mOverlayManager.commit(transaction.build());
             } catch (SecurityException | IllegalStateException e) {
@@ -214,6 +215,7 @@ public class ThemeOverlayApplier implements Dumpable {
         return new OverlayManagerTransaction.Builder();
     }
 
+    @AnyThread
     private void setEnabled(OverlayManagerTransaction.Builder transaction,
             OverlayIdentifier identifier, String category, int currentUser,
             Set<UserHandle> managedProfiles, boolean enabled) {

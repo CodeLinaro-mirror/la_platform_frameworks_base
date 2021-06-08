@@ -32,6 +32,7 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.res.Resources;
 import android.net.ConnectivityManager;
+import android.net.ConnectivityResources;
 import android.net.IDnsResolver;
 import android.net.INetd;
 import android.net.LinkProperties;
@@ -40,16 +41,18 @@ import android.net.NetworkAgentConfig;
 import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
 import android.net.NetworkProvider;
+import android.net.NetworkScore;
 import android.os.Binder;
 import android.text.format.DateUtils;
 
 import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
-import com.android.internal.R;
+import com.android.connectivity.resources.R;
 import com.android.server.ConnectivityService;
 import com.android.server.connectivity.NetworkNotificationManager.NotificationType;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -68,6 +71,8 @@ public class LingerMonitorTest {
     static final int LOW_DAILY_LIMIT = 2;
     static final int HIGH_DAILY_LIMIT = 1000;
 
+    private static final int TEST_LINGER_DELAY_MS = 400;
+
     LingerMonitor mMonitor;
 
     @Mock ConnectivityService mConnService;
@@ -83,8 +88,14 @@ public class LingerMonitorTest {
         MockitoAnnotations.initMocks(this);
         when(mCtx.getResources()).thenReturn(mResources);
         when(mCtx.getPackageName()).thenReturn("com.android.server.connectivity");
+        ConnectivityResources.setResourcesContextForTest(mCtx);
 
         mMonitor = new TestableLingerMonitor(mCtx, mNotifier, HIGH_DAILY_LIMIT, HIGH_RATE_LIMIT);
+    }
+
+    @After
+    public void tearDown() {
+        ConnectivityResources.setResourcesContextForTest(null);
     }
 
     @Test
@@ -355,9 +366,10 @@ public class LingerMonitorTest {
         caps.addCapability(0);
         caps.addTransportType(transport);
         NetworkAgentInfo nai = new NetworkAgentInfo(null, new Network(netId), info,
-                new LinkProperties(), caps, 50, mCtx, null, new NetworkAgentConfig() /* config */,
-                mConnService, mNetd, mDnsResolver, NetworkProvider.ID_NONE, Binder.getCallingUid(),
-                mQosCallbackTracker);
+                new LinkProperties(), caps, new NetworkScore.Builder().setLegacyInt(50).build(),
+                mCtx, null, new NetworkAgentConfig.Builder().build(), mConnService, mNetd,
+                mDnsResolver, NetworkProvider.ID_NONE, Binder.getCallingUid(), TEST_LINGER_DELAY_MS,
+                mQosCallbackTracker, new ConnectivityService.Dependencies());
         nai.everValidated = true;
         return nai;
     }

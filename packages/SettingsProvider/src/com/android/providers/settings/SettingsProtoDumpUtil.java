@@ -242,15 +242,6 @@ class SettingsProtoDumpUtil {
                 Settings.Global.AUDIO_SAFE_VOLUME_STATE,
                 GlobalSettingsProto.AUDIO_SAFE_VOLUME_STATE);
 
-        final long autoToken = p.start(GlobalSettingsProto.AUTO);
-        dumpSetting(s, p,
-                Settings.Global.AUTO_TIME,
-                GlobalSettingsProto.Auto.TIME);
-        dumpSetting(s, p,
-                Settings.Global.AUTO_TIME_ZONE,
-                GlobalSettingsProto.Auto.TIME_ZONE);
-        p.end(autoToken);
-
         final long autofillToken = p.start(GlobalSettingsProto.AUTOFILL);
         dumpSetting(s, p,
                 Settings.Global.AUTOFILL_COMPAT_MODE_ALLOWED_PACKAGES,
@@ -509,6 +500,15 @@ class SettingsProtoDumpUtil {
                 GlobalSettingsProto.Database.CREATION_BUILDID);
         p.end(databaseToken);
 
+        final long dateTimeToken = p.start(GlobalSettingsProto.DATE_TIME);
+        dumpSetting(s, p,
+                Settings.Global.AUTO_TIME,
+                GlobalSettingsProto.DateTime.AUTO_TIME);
+        dumpSetting(s, p,
+                Settings.Global.AUTO_TIME_ZONE,
+                GlobalSettingsProto.DateTime.AUTO_TIME_ZONE);
+        p.end(dateTimeToken);
+
         final long debugToken = p.start(GlobalSettingsProto.DEBUG);
         dumpSetting(s, p,
                 Settings.Global.DEBUG_APP,
@@ -553,6 +553,9 @@ class SettingsProtoDumpUtil {
         dumpSetting(s, p,
                 Settings.Global.DEVELOPMENT_ENABLE_NON_RESIZABLE_MULTI_WINDOW,
                 GlobalSettingsProto.Development.ENABLE_NON_RESIZABLE_MULTI_WINDOW);
+        dumpSetting(s, p,
+                Settings.Global.DISABLE_WINDOW_BLURS,
+                GlobalSettingsProto.Development.DISABLE_WINDOW_BLURS);
         p.end(developmentToken);
 
         final long deviceToken = p.start(GlobalSettingsProto.DEVICE);
@@ -1106,9 +1109,6 @@ class SettingsProtoDumpUtil {
         dumpSetting(s, p,
                 Settings.Global.NOTIFICATION_SNOOZE_OPTIONS,
                 GlobalSettingsProto.Notification.SNOOZE_OPTIONS);
-        dumpSetting(s, p,
-                Settings.Global.NOTIFICATION_BUBBLES,
-                GlobalSettingsProto.Notification.BUBBLES);
         dumpSetting(s, p,
                 Settings.Global.SMART_REPLIES_IN_NOTIFICATIONS_FLAGS,
                 GlobalSettingsProto.Notification.SMART_REPLIES_IN_NOTIFICATIONS_FLAGS);
@@ -1881,6 +1881,12 @@ class SettingsProtoDumpUtil {
         dumpSetting(s, p,
                 Settings.Secure.ASSIST_GESTURE_SETUP_COMPLETE,
                 SecureSettingsProto.Assist.GESTURE_SETUP_COMPLETE);
+        dumpSetting(s, p,
+                Settings.Secure.ASSIST_TOUCH_GESTURE_ENABLED,
+                SecureSettingsProto.Assist.TOUCH_GESTURE_ENABLED);
+        dumpSetting(s, p,
+                Settings.Secure.ASSIST_LONG_PRESS_HOME_ENABLED,
+                SecureSettingsProto.Assist.LONG_PRESS_HOME_ENABLED);
         p.end(assistToken);
 
         final long assistHandlesToken = p.start(SecureSettingsProto.ASSIST_HANDLES);
@@ -1990,6 +1996,13 @@ class SettingsProtoDumpUtil {
         dumpSetting(s, p,
                 Settings.Secure.CARRIER_APPS_HANDLED,
                 SecureSettingsProto.CARRIER_APPS_HANDLED);
+
+        final long clipboardToken = p.start(SecureSettingsProto.CLIPBOARD);
+        dumpSetting(s, p,
+                Settings.Secure.CLIPBOARD_SHOW_ACCESS_NOTIFICATIONS,
+                SecureSettingsProto.Clipboard.SHOW_ACCESS_NOTIFICATIONS);
+        p.end(clipboardToken);
+
         dumpSetting(s, p,
                 Settings.Secure.CMAS_ADDITIONAL_BROADCAST_PKG,
                 SecureSettingsProto.CMAS_ADDITIONAL_BROADCAST_PKG);
@@ -2008,6 +2021,12 @@ class SettingsProtoDumpUtil {
                 Settings.Secure.CONTROLS_ENABLED,
                 SecureSettingsProto.Controls.ENABLED);
         p.end(controlsToken);
+
+        final long dateTimeToken = p.start(SecureSettingsProto.DATE_TIME);
+        dumpSetting(s, p,
+                Settings.Secure.LOCATION_TIME_ZONE_DETECTION_ENABLED,
+                SecureSettingsProto.DateTime.LOCATION_TIME_ZONE_DETECTION_ENABLED);
+        p.end(dateTimeToken);
 
         dumpSetting(s, p,
                 Settings.Secure.DEVICE_PAIRED,
@@ -2143,6 +2162,9 @@ class SettingsProtoDumpUtil {
         dumpSetting(s, p,
                 Settings.Secure.SHOW_IME_WITH_HARD_KEYBOARD,
                 SecureSettingsProto.InputMethods.SHOW_IME_WITH_HARD_KEYBOARD);
+        dumpSetting(s, p,
+                Settings.Secure.DEFAULT_VOICE_INPUT_METHOD,
+                SecureSettingsProto.InputMethods.DEFAULT_VOICE_INPUT_METHOD);
         p.end(inputMethodsToken);
 
         dumpSetting(s, p,
@@ -2296,7 +2318,7 @@ class SettingsProtoDumpUtil {
                 Settings.Secure.NOTIFICATION_BADGING,
                 SecureSettingsProto.Notification.BADGING);
         dumpSetting(s, p,
-                Settings.Global.NOTIFICATION_BUBBLES,
+                Settings.Secure.NOTIFICATION_BUBBLES,
                 SecureSettingsProto.Notification.BUBBLES);
         dumpSetting(s, p,
                 Settings.Secure.SHOW_NOTE_ABOUT_NOTIFICATION_HIDING,
@@ -2691,9 +2713,6 @@ class SettingsProtoDumpUtil {
                 SystemSettingsProto.Bluetooth.DISCOVERABILITY_TIMEOUT_SECS);
         p.end(bluetoothToken);
 
-        dumpSetting(s, p,
-                Settings.System.DATE_FORMAT,
-                SystemSettingsProto.DATE_FORMAT);
         dumpSetting(s, p,
                 Settings.System.DISPLAY_COLOR_MODE,
                 SystemSettingsProto.DISPLAY_COLOR_MODE);

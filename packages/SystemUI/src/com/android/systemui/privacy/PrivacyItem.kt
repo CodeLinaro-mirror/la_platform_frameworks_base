@@ -50,8 +50,15 @@ enum class PrivacyType(
     fun getIcon(context: Context) = context.resources.getDrawable(iconId, context.theme)
 }
 
-data class PrivacyItem(val privacyType: PrivacyType, val application: PrivacyApplication) {
-    fun toLog(): String = "(${privacyType.logName}, ${application.packageName}(${application.uid}))"
+private const val UNKNOWN_TIMESTAMP = -1L
+data class PrivacyItem(
+    val privacyType: PrivacyType,
+    val application: PrivacyApplication,
+    val timeStampElapsed: Long = UNKNOWN_TIMESTAMP,
+    val paused: Boolean = false
+) {
+    val log = "(${privacyType.logName}, ${application.packageName}(${application.uid}), " +
+            "$timeStampElapsed, paused=$paused)"
 }
 
 data class PrivacyApplication(val packageName: String, val uid: Int)

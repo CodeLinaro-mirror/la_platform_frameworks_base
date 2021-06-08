@@ -42,8 +42,7 @@ import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Settings;
-import android.telephony.PhoneStateListener;
-import android.telephony.TelephonyManager;
+import android.telephony.TelephonyCallback;
 import android.util.Log;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
@@ -69,6 +68,7 @@ import com.android.systemui.plugins.qs.DetailAdapter;
 import com.android.systemui.qs.QSUserSwitcherEvent;
 import com.android.systemui.qs.tiles.UserDetailView;
 import com.android.systemui.statusbar.phone.SystemUIDialog;
+import com.android.systemui.telephony.TelephonyListenerManager;
 import com.android.systemui.user.CreateUserActivity;
 
 import java.io.FileDescriptor;
@@ -78,6 +78,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import javax.inject.Inject;
+import javax.inject.Provider;
 
 /**
  * Keeps a list of all users on the device for user switching.
@@ -99,12 +100,12 @@ public class UserSwitcherController implements Dumpable {
     protected final Context mContext;
     protected final UserManager mUserManager;
     private final ArrayList<WeakReference<BaseUserAdapter>> mAdapters = new ArrayList<>();
-    private final GuestResumeSessionReceiver mGuestResumeSessionReceiver
-            = new GuestResumeSessionReceiver();
+    private final GuestResumeSessionReceiver mGuestResumeSessionReceiver;
     private final KeyguardStateController mKeyguardStateController;
     protected final Handler mHandler;
     private final ActivityStarter mActivityStarter;
     private final BroadcastDispatcher mBroadcastDispatcher;
+    private final TelephonyListenerManager mTelephonyListenerManager;
     private final IActivityTaskManager mActivityTaskManager;
 
     private ArrayList<UserRecord> mUsers = new ArrayList<>();
@@ -127,12 +128,15 @@ public class UserSwitcherController implements Dumpable {
     public UserSwitcherController(Context context, KeyguardStateController keyguardStateController,
             @Main Handler handler, ActivityStarter activityStarter,
             BroadcastDispatcher broadcastDispatcher, UiEventLogger uiEventLogger,
-            IActivityTaskManager activityTaskManager) {
+            TelephonyListenerManager telephonyListenerManager,
+            IActivityTaskManager activityTaskManager, UserDetailAdapter userDetailAdapter) {
         mContext = context;
         mBroadcastDispatcher = broadcastDispatcher;
+        mTelephonyListenerManager = telephonyListenerManager;
         mActivityTaskManager = activityTaskManager;
         mUiEventLogger = uiEventLogger;
-        mUserDetailAdapter = new UserDetailAdapter(this, mContext, mUiEventLogger);
+        mGuestResumeSessionReceiver = new GuestResumeSessionReceiver(mUiEventLogger);
+        mUserDetailAdapter = userDetailAdapter;
         if (!UserManager.isGuestUserEphemeral()) {
             mGuestResumeSessionReceiver.register(mBroadcastDispatcher);
         }
@@ -388,6 +392,7 @@ public class UserSwitcherController implements Dumpable {
                 // haven't reloaded the user list yet.
                 return;
             }
+            mUiEventLogger.log(QSUserSwitcherEvent.QS_USER_GUEST_ADD);
             id = guest.id;
         } else if (record.isAddUser) {
             showAddUserDialog();
@@ -458,18 +463,15 @@ public class UserSwitcherController implements Dumpable {
     }
 
     private void listenForCallState() {
-        final TelephonyManager tele =
-            (TelephonyManager) mContext.getSystemService(Context.TELEPHONY_SERVICE);
-        if (tele != null) {
-            tele.listen(mPhoneStateListener, PhoneStateListener.LISTEN_CALL_STATE);
-        }
+        mTelephonyListenerManager.addCallStateListener(mPhoneStateListener);
     }
 
-    private final PhoneStateListener mPhoneStateListener = new PhoneStateListener() {
+    private final TelephonyCallback.CallStateListener mPhoneStateListener =
+            new TelephonyCallback.CallStateListener() {
         private int mCallState;
 
         @Override
-        public void onCallStateChanged(int state, String incomingNumber) {
+        public void onCallStateChanged(int state) {
             if (mCallState == state) return;
             if (DEBUG) Log.v(TAG, "Call state changed: " + state);
             mCallState = state;
@@ -576,11 +578,13 @@ public class UserSwitcherController implements Dumpable {
         pw.println("mSimpleUserSwitcher=" + mSimpleUserSwitcher);
     }
 
-    public String getCurrentUserName(Context context) {
+    /** Returns the name of the current user of the phone. */
+    public String getCurrentUserName() {
         if (mUsers.isEmpty()) return null;
         UserRecord item = mUsers.get(0);
         if (item == null || item.info == null) return null;
-        if (item.isGuest) return context.getString(com.android.settingslib.R.string.guest_nickname);
+        if (item.isGuest) return mContext.getString(
+                com.android.settingslib.R.string.guest_nickname);
         return item.info.name;
     }
 
@@ -786,15 +790,14 @@ public class UserSwitcherController implements Dumpable {
     public static class UserDetailAdapter implements DetailAdapter {
         private final Intent USER_SETTINGS_INTENT = new Intent(Settings.ACTION_USER_SETTINGS);
 
-        private final UserSwitcherController mUserSwitcherController;
         private final Context mContext;
-        private final UiEventLogger mUiEventLogger;
+        private final Provider<UserDetailView.Adapter> mUserDetailViewAdapterProvider;
 
-        UserDetailAdapter(UserSwitcherController userSwitcherController, Context context,
-                UiEventLogger uiEventLogger) {
-            mUserSwitcherController = userSwitcherController;
+        @Inject
+        UserDetailAdapter(Context context,
+                Provider<UserDetailView.Adapter> userDetailViewAdapterProvider) {
             mContext = context;
-            mUiEventLogger = uiEventLogger;
+            mUserDetailViewAdapterProvider = userDetailViewAdapterProvider;
         }
 
         @Override
@@ -807,7 +810,7 @@ public class UserSwitcherController implements Dumpable {
             UserDetailView v;
             if (!(convertView instanceof UserDetailView)) {
                 v = UserDetailView.inflate(context, parent, false);
-                v.createAndSetAdapter(mUserSwitcherController, mUiEventLogger);
+                v.setAdapter(mUserDetailViewAdapterProvider.get());
             } else {
                 v = (UserDetailView) convertView;
             }
@@ -818,6 +821,11 @@ public class UserSwitcherController implements Dumpable {
         @Override
         public Intent getSettingsIntent() {
             return USER_SETTINGS_INTENT;
+        }
+
+        @Override
+        public int getSettingsText() {
+            return R.string.quick_settings_more_user_settings;
         }
 
         @Override
@@ -891,6 +899,7 @@ public class UserSwitcherController implements Dumpable {
             if (which == BUTTON_NEGATIVE) {
                 cancel();
             } else {
+                mUiEventLogger.log(QSUserSwitcherEvent.QS_USER_GUEST_REMOVE);
                 dismiss();
                 exitGuest(mGuestId, mTargetId);
             }

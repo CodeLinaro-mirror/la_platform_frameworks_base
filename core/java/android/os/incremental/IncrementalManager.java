@@ -25,11 +25,13 @@ import android.content.pm.DataLoaderParams;
 import android.content.pm.IPackageLoadingProgressCallback;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
+import android.util.Slog;
 import android.util.SparseArray;
 
 import com.android.internal.annotations.GuardedBy;
 
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -265,6 +267,13 @@ public final class IncrementalManager {
     }
 
     /**
+     * Checks if an fd corresponds to a file on a mounted Incremental File System.
+     */
+    public static boolean isIncrementalFileFd(@NonNull FileDescriptor fd) {
+        return nativeIsIncrementalFd(fd.getInt$());
+    }
+
+    /**
      * Returns raw signature for file if it's on Incremental File System.
      * Unsafe, use only if you are sure what you are doing.
      */
@@ -277,7 +286,7 @@ public final class IncrementalManager {
      * Unbinds the target dir and deletes the corresponding storage instance.
      * Deletes the package name and associated storage id from maps.
      */
-    public void onPackageRemoved(@NonNull File codeFile) {
+    public void rmPackageDir(@NonNull File codeFile) {
         try {
             final String codePath = codeFile.getAbsolutePath();
             final IncrementalStorage storage = openStorage(codePath);
@@ -285,12 +294,9 @@ public final class IncrementalManager {
                 return;
             }
             mLoadingProgressCallbacks.cleanUpCallbacks(storage);
-            unregisterHealthListener(codePath);
-
-            // Parent since we bind-mount a folder one level above.
-            mService.deleteBindMount(storage.getId(), codeFile.getParent());
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+            storage.unBind(codePath);
+        } catch (IOException e) {
+            Slog.w(TAG, "Failed to remove code path", e);
         }
     }
 
@@ -390,40 +396,21 @@ public final class IncrementalManager {
     }
 
     /**
-     * Specify the health check params and listener for listening to Incremental Storage health
-     * status changes. Notice that this will overwrite the previously registered listener.
-     * @param codePath Path of the installed package. This path is on an Incremental Storage.
-     * @param healthCheckParams The params for health state change timeouts.
-     * @param listener To report health status change.
-     * @return True if listener was successfully registered.
+     * Returns the metrics of an Incremental Storage.
      */
-    public boolean registerHealthListener(@NonNull String codePath,
-            @NonNull StorageHealthCheckParams healthCheckParams,
-            @NonNull IStorageHealthListener.Stub listener) {
+    public IncrementalMetrics getMetrics(@NonNull String codePath) {
         final IncrementalStorage storage = openStorage(codePath);
         if (storage == null) {
             // storage does not exist, package not installed
-            return false;
+            return null;
         }
-        return storage.registerStorageHealthListener(healthCheckParams, listener);
-    }
-
-    /**
-     * Stop listening to health status changes on an Incremental Storage.
-     * @param codePath Path of the installed package. This path is on an Incremental Storage.
-     */
-    public void unregisterHealthListener(@NonNull String codePath) {
-        final IncrementalStorage storage = openStorage(codePath);
-        if (storage == null) {
-            // storage does not exist, package not installed
-            return;
-        }
-        storage.unregisterStorageHealthListener();
+        return new IncrementalMetrics(storage.getMetrics());
     }
 
     /* Native methods */
     private static native boolean nativeIsEnabled();
     private static native boolean nativeIsV2Available();
     private static native boolean nativeIsIncrementalPath(@NonNull String path);
+    private static native boolean nativeIsIncrementalFd(@NonNull int fd);
     private static native byte[] nativeUnsafeGetFileSignature(@NonNull String path);
 }

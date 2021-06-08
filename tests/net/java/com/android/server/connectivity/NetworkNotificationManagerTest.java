@@ -16,8 +16,16 @@
 
 package com.android.server.connectivity;
 
-import static com.android.server.connectivity.NetworkNotificationManager.NotificationType.*;
+import static android.app.Notification.FLAG_ONGOING_EVENT;
 
+import static com.android.server.connectivity.NetworkNotificationManager.NotificationType.LOST_INTERNET;
+import static com.android.server.connectivity.NetworkNotificationManager.NotificationType.NETWORK_SWITCH;
+import static com.android.server.connectivity.NetworkNotificationManager.NotificationType.NO_INTERNET;
+import static com.android.server.connectivity.NetworkNotificationManager.NotificationType.PARTIAL_CONNECTIVITY;
+import static com.android.server.connectivity.NetworkNotificationManager.NotificationType.PRIVATE_DNS_BROKEN;
+import static com.android.server.connectivity.NetworkNotificationManager.NotificationType.SIGN_IN;
+
+import static org.junit.Assert.assertEquals;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.clearInvocations;
@@ -36,6 +44,7 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
+import android.net.ConnectivityResources;
 import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
 import android.os.UserHandle;
@@ -45,12 +54,11 @@ import android.util.DisplayMetrics;
 import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
-import com.android.internal.R;
+import com.android.connectivity.resources.R;
 import com.android.server.connectivity.NetworkNotificationManager.NotificationType;
 
-import org.junit.AfterClass;
+import org.junit.After;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -102,17 +110,6 @@ public class NetworkNotificationManagerTest {
 
     NetworkNotificationManager mManager;
 
-
-    @BeforeClass
-    public static void setUpClass() {
-        Notification.DevFlags.sForceDefaults = true;
-    }
-
-    @AfterClass
-    public static void tearDownClass() {
-        Notification.DevFlags.sForceDefaults = false;
-    }
-
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
@@ -134,10 +131,24 @@ public class NetworkNotificationManagerTest {
         when(mCtx.getSystemService(eq(Context.NOTIFICATION_SERVICE)))
                 .thenReturn(mNotificationManager);
         when(mNetworkInfo.getExtraInfo()).thenReturn(TEST_EXTRA_INFO);
+        ConnectivityResources.setResourcesContextForTest(mCtx);
         when(mResources.getColor(anyInt(), any())).thenReturn(0xFF607D8B);
         when(mResources.getDisplayMetrics()).thenReturn(mDisplayMetrics);
 
+        // Come up with some credible-looking transport names. The actual values do not matter.
+        String[] transportNames = new String[NetworkCapabilities.MAX_TRANSPORT + 1];
+        for (int transport = 0; transport <= NetworkCapabilities.MAX_TRANSPORT; transport++) {
+            transportNames[transport] = NetworkCapabilities.transportNameOf(transport);
+        }
+        when(mResources.getStringArray(R.array.network_switch_type_name))
+            .thenReturn(transportNames);
+
         mManager = new NetworkNotificationManager(mCtx, mTelephonyManager);
+    }
+
+    @After
+    public void tearDown() {
+        ConnectivityResources.setResourcesContextForTest(null);
     }
 
     private void verifyTitleByNetwork(final int id, final NetworkAgentInfo nai, final int title) {
@@ -227,19 +238,47 @@ public class NetworkNotificationManagerTest {
         verify(mNotificationManager, never()).notify(any(), anyInt(), any());
     }
 
+    private void assertNotification(NotificationType type, boolean ongoing) {
+        final int id = 101;
+        final String tag = NetworkNotificationManager.tagFor(id);
+        final ArgumentCaptor<Notification> noteCaptor = ArgumentCaptor.forClass(Notification.class);
+        mManager.showNotification(id, type, mWifiNai, mCellNai, null, false);
+        verify(mNotificationManager, times(1)).notify(eq(tag), eq(type.eventId),
+                noteCaptor.capture());
+
+        assertEquals("Notification ongoing flag should be " + (ongoing ? "set" : "unset"),
+                ongoing, (noteCaptor.getValue().flags & FLAG_ONGOING_EVENT) != 0);
+    }
+
     @Test
     public void testDuplicatedNotificationsNoInternetThenSignIn() {
         final int id = 101;
         final String tag = NetworkNotificationManager.tagFor(id);
 
         // Show first NO_INTERNET
-        mManager.showNotification(id, NO_INTERNET, mWifiNai, mCellNai, null, false);
-        verify(mNotificationManager, times(1)).notify(eq(tag), eq(NO_INTERNET.eventId), any());
+        assertNotification(NO_INTERNET, false /* ongoing */);
 
         // Captive portal detection triggers SIGN_IN a bit later, clearing the previous NO_INTERNET
-        mManager.showNotification(id, SIGN_IN, mWifiNai, mCellNai, null, false);
+        assertNotification(SIGN_IN, false /* ongoing */);
         verify(mNotificationManager, times(1)).cancel(eq(tag), eq(NO_INTERNET.eventId));
-        verify(mNotificationManager, times(1)).notify(eq(tag), eq(SIGN_IN.eventId), any());
+
+        // Network disconnects
+        mManager.clearNotification(id);
+        verify(mNotificationManager, times(1)).cancel(eq(tag), eq(SIGN_IN.eventId));
+    }
+
+    @Test
+    public void testOngoingSignInNotification() {
+        doReturn(true).when(mResources).getBoolean(R.bool.config_ongoingSignInNotification);
+        final int id = 101;
+        final String tag = NetworkNotificationManager.tagFor(id);
+
+        // Show first NO_INTERNET
+        assertNotification(NO_INTERNET, false /* ongoing */);
+
+        // Captive portal detection triggers SIGN_IN a bit later, clearing the previous NO_INTERNET
+        assertNotification(SIGN_IN, true /* ongoing */);
+        verify(mNotificationManager, times(1)).cancel(eq(tag), eq(NO_INTERNET.eventId));
 
         // Network disconnects
         mManager.clearNotification(id);

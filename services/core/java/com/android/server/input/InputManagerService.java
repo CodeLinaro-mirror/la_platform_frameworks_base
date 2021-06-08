@@ -16,6 +16,8 @@
 
 package com.android.server.input;
 
+import static android.view.Surface.ROTATION_0;
+
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.Notification;
@@ -38,6 +40,7 @@ import android.content.res.Resources.NotFoundException;
 import android.content.res.TypedArray;
 import android.content.res.XmlResourceParser;
 import android.database.ContentObserver;
+import android.graphics.Point;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.DisplayViewport;
@@ -57,7 +60,7 @@ import android.hardware.lights.LightState;
 import android.media.AudioManager;
 import android.os.Binder;
 import android.os.Bundle;
-import android.os.CombinedVibrationEffect;
+import android.os.CombinedVibration;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
@@ -76,6 +79,8 @@ import android.os.ShellCallback;
 import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.VibrationEffect;
+import android.os.vibrator.StepSegment;
+import android.os.vibrator.VibrationEffectSegment;
 import android.provider.DeviceConfig;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
@@ -95,6 +100,7 @@ import android.view.InputDevice;
 import android.view.InputEvent;
 import android.view.InputMonitor;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.PointerIcon;
 import android.view.Surface;
 import android.view.VerifiedInputEvent;
@@ -268,6 +274,8 @@ public class InputManagerService extends IInputManager.Stub
     private final Object mAssociationsLock = new Object();
     @GuardedBy("mAssociationLock")
     private final Map<String, Integer> mRuntimeAssociations = new ArrayMap<String, Integer>();
+    @GuardedBy("mAssociationLock")
+    private final Map<String, String> mUniqueIdAssociations = new ArrayMap<>();
 
     private static native long nativeInit(InputManagerService service,
             Context context, MessageQueue messageQueue);
@@ -304,7 +312,7 @@ public class InputManagerService extends IInputManager.Stub
             int displayId, InputApplicationHandle application);
     private static native void nativeSetFocusedDisplay(long ptr, int displayId);
     private static native boolean nativeTransferTouchFocus(long ptr,
-            IBinder fromChannelToken, IBinder toChannelToken);
+            IBinder fromChannelToken, IBinder toChannelToken, boolean isDragDrop);
     private static native void nativeSetPointerSpeed(long ptr, int speed);
     private static native void nativeSetShowTouches(long ptr, boolean enabled);
     private static native void nativeSetInteractive(long ptr, boolean interactive);
@@ -338,6 +346,7 @@ public class InputManagerService extends IInputManager.Stub
             boolean enabled);
     private static native boolean nativeCanDispatchToDisplay(long ptr, int deviceId, int displayId);
     private static native void nativeNotifyPortAssociationsChanged(long ptr);
+    private static native void nativeChangeUniqueIdAssociation(long ptr);
     private static native void nativeSetMotionClassifierEnabled(long ptr, boolean enabled);
     private static native InputSensorInfo[] nativeGetSensorList(long ptr, int deviceId);
     private static native boolean nativeFlushSensor(long ptr, int deviceId, int sensorType);
@@ -586,18 +595,13 @@ public class InputManagerService extends IInputManager.Stub
     private void setDisplayViewportsInternal(List<DisplayViewport> viewports) {
         final DisplayViewport[] vArray = new DisplayViewport[viewports.size()];
         if (ENABLE_PER_WINDOW_INPUT_ROTATION) {
-            // Remove all viewport operations. They will be built-into the window transforms.
+            // Remove display projection information from DisplayViewport, leaving only the
+            // orientation. The display projection will be built-into the window transforms.
             for (int i = viewports.size() - 1; i >= 0; --i) {
                 final DisplayViewport v = vArray[i] = viewports.get(i).makeCopy();
-                // deviceWidth/Height are apparently in "rotated" space, so flip them if needed.
-                if (v.orientation % 2 != 0) {
-                    final int dw = v.deviceWidth;
-                    v.deviceWidth = v.deviceHeight;
-                    v.deviceHeight = dw;
-                }
+                // Note: the deviceWidth/Height are in rotated with the orientation.
                 v.logicalFrame.set(0, 0, v.deviceWidth, v.deviceHeight);
                 v.physicalFrame.set(0, 0, v.deviceWidth, v.deviceHeight);
-                v.orientation = 0;
             }
         } else {
             for (int i = viewports.size() - 1; i >= 0; --i) {
@@ -819,6 +823,28 @@ public class InputManagerService extends IInputManager.Stub
                 && mode != InputEventInjectionSync.WAIT_FOR_FINISHED
                 && mode != InputEventInjectionSync.WAIT_FOR_RESULT) {
             throw new IllegalArgumentException("mode is invalid");
+        }
+        if (ENABLE_PER_WINDOW_INPUT_ROTATION) {
+            if (event instanceof MotionEvent) {
+                final Context dispCtx = getContextForDisplay(event.getDisplayId());
+                final Display display = dispCtx.getDisplay();
+                final int rotation = display.getRotation();
+                if (rotation != ROTATION_0) {
+                    final MotionEvent motion = (MotionEvent) event;
+                    // Injections are currently expected to be in the space of the injector (ie.
+                    // usually assumed to be post-rotated). Thus we need to unrotate into raw
+                    // input coordinates for dispatch.
+                    final Point sz = new Point();
+                    display.getRealSize(sz);
+                    if ((rotation % 2) != 0) {
+                        final int tmpX = sz.x;
+                        sz.x = sz.y;
+                        sz.y = tmpX;
+                    }
+                    motion.applyTransform(MotionEvent.createRotateMatrix(
+                            (4 - rotation), sz.x, sz.y));
+                }
+            }
         }
 
         final int pid = Binder.getCallingPid();
@@ -1732,12 +1758,14 @@ public class InputManagerService extends IInputManager.Stub
      * @param fromChannel The channel of a window that currently has touch focus.
      * @param toChannel The channel of the window that should receive touch focus in
      * place of the first.
+     * @param isDragDrop True if transfer touch focus for drag and drop.
      * @return True if the transfer was successful.  False if the window with the
      * specified channel did not actually have touch focus at the time of the request.
      */
     public boolean transferTouchFocus(@NonNull InputChannel fromChannel,
-            @NonNull InputChannel toChannel) {
-        return nativeTransferTouchFocus(mPtr, fromChannel.getToken(), toChannel.getToken());
+            @NonNull InputChannel toChannel, boolean isDragDrop) {
+        return nativeTransferTouchFocus(mPtr, fromChannel.getToken(), toChannel.getToken(),
+                isDragDrop);
     }
 
     /**
@@ -1757,7 +1785,8 @@ public class InputManagerService extends IInputManager.Stub
             @NonNull IBinder toChannelToken) {
         Objects.nonNull(fromChannelToken);
         Objects.nonNull(toChannelToken);
-        return nativeTransferTouchFocus(mPtr, fromChannelToken, toChannelToken);
+        return nativeTransferTouchFocus(mPtr, fromChannelToken, toChannelToken,
+                false /* isDragDrop */);
     }
 
     @Override // Binder call
@@ -1919,9 +1948,9 @@ public class InputManagerService extends IInputManager.Stub
     }
 
     private static class VibrationInfo {
-        private long[] mPattern = new long[0];
-        private int[] mAmplitudes = new int[0];
-        private int mRepeat = -1;
+        private final long[] mPattern;
+        private final int[] mAmplitudes;
+        private final int mRepeat;
 
         public long[] getPattern() {
             return mPattern;
@@ -1936,40 +1965,55 @@ public class InputManagerService extends IInputManager.Stub
         }
 
         VibrationInfo(VibrationEffect effect) {
-            // First replace prebaked effects with its fallback, if any available.
-            if (effect instanceof VibrationEffect.Prebaked) {
-                VibrationEffect fallback = ((VibrationEffect.Prebaked) effect).getFallbackEffect();
-                if (fallback != null) {
-                    effect = fallback;
+            long[] pattern = null;
+            int[] amplitudes = null;
+            int patternRepeatIndex = -1;
+            int amplitudeCount = -1;
+
+            if (effect instanceof VibrationEffect.Composed) {
+                VibrationEffect.Composed composed = (VibrationEffect.Composed) effect;
+                int segmentCount = composed.getSegments().size();
+                pattern = new long[segmentCount];
+                amplitudes = new int[segmentCount];
+                patternRepeatIndex = composed.getRepeatIndex();
+                amplitudeCount = 0;
+                for (int i = 0; i < segmentCount; i++) {
+                    VibrationEffectSegment segment = composed.getSegments().get(i);
+                    if (composed.getRepeatIndex() == i) {
+                        patternRepeatIndex = amplitudeCount;
+                    }
+                    if (!(segment instanceof StepSegment)) {
+                        Slog.w(TAG, "Input devices don't support segment " + segment);
+                        amplitudeCount = -1;
+                        break;
+                    }
+                    float amplitude = ((StepSegment) segment).getAmplitude();
+                    if (Float.compare(amplitude, VibrationEffect.DEFAULT_AMPLITUDE) == 0) {
+                        amplitudes[amplitudeCount] = DEFAULT_VIBRATION_MAGNITUDE;
+                    } else {
+                        amplitudes[amplitudeCount] =
+                                (int) (amplitude * VibrationEffect.MAX_AMPLITUDE);
+                    }
+                    pattern[amplitudeCount++] = segment.getDuration();
                 }
             }
-            if (effect instanceof VibrationEffect.OneShot) {
-                VibrationEffect.OneShot oneShot = (VibrationEffect.OneShot) effect;
-                mPattern = new long[] { 0, oneShot.getDuration() };
-                int amplitude = oneShot.getAmplitude();
-                // android framework uses DEFAULT_AMPLITUDE to signal that the vibration
-                // should use some built-in default value, denoted here as
-                // DEFAULT_VIBRATION_MAGNITUDE
-                if (amplitude == VibrationEffect.DEFAULT_AMPLITUDE) {
-                    amplitude = DEFAULT_VIBRATION_MAGNITUDE;
-                }
-                mAmplitudes = new int[] { 0, amplitude };
+
+            if (amplitudeCount < 0) {
+                Slog.w(TAG, "Only oneshot and step waveforms are supported on input devices");
+                mPattern = new long[0];
+                mAmplitudes = new int[0];
                 mRepeat = -1;
-            } else if (effect instanceof VibrationEffect.Waveform) {
-                VibrationEffect.Waveform waveform = (VibrationEffect.Waveform) effect;
-                mPattern = waveform.getTimings();
-                mAmplitudes = waveform.getAmplitudes();
-                for (int i = 0; i < mAmplitudes.length; i++) {
-                    if (mAmplitudes[i] == VibrationEffect.DEFAULT_AMPLITUDE) {
-                        mAmplitudes[i] = DEFAULT_VIBRATION_MAGNITUDE;
-                    }
-                }
-                mRepeat = waveform.getRepeatIndex();
-                if (mRepeat >= mPattern.length) {
-                    throw new ArrayIndexOutOfBoundsException();
-                }
             } else {
-                Slog.w(TAG, "Pre-baked and composed effects aren't supported on input devices");
+                mRepeat = patternRepeatIndex;
+                mPattern = new long[amplitudeCount];
+                mAmplitudes = new int[amplitudeCount];
+                System.arraycopy(pattern, 0, mPattern, 0, amplitudeCount);
+                System.arraycopy(amplitudes, 0, mAmplitudes, 0, amplitudeCount);
+                if (mRepeat >= mPattern.length) {
+                    throw new ArrayIndexOutOfBoundsException("Repeat index " + mRepeat
+                            + " must be within the bounds of the pattern.length "
+                            + mPattern.length);
+                }
             }
         }
     }
@@ -2018,23 +2062,23 @@ public class InputManagerService extends IInputManager.Stub
 
     // Binder call
     @Override
-    public void vibrateCombined(int deviceId, CombinedVibrationEffect effect, IBinder token) {
+    public void vibrateCombined(int deviceId, CombinedVibration effect, IBinder token) {
         VibratorToken v = getVibratorToken(deviceId, token);
         synchronized (v) {
-            if (!(effect instanceof CombinedVibrationEffect.Mono)
-                    && !(effect instanceof CombinedVibrationEffect.Stereo)) {
+            if (!(effect instanceof CombinedVibration.Mono)
+                    && !(effect instanceof CombinedVibration.Stereo)) {
                 Slog.e(TAG, "Only Mono and Stereo effects are supported");
                 return;
             }
 
             v.mVibrating = true;
-            if (effect instanceof CombinedVibrationEffect.Mono) {
-                CombinedVibrationEffect.Mono mono = (CombinedVibrationEffect.Mono) effect;
+            if (effect instanceof CombinedVibration.Mono) {
+                CombinedVibration.Mono mono = (CombinedVibration.Mono) effect;
                 VibrationInfo info = new VibrationInfo(mono.getEffect());
                 nativeVibrate(mPtr, deviceId, info.getPattern(), info.getAmplitudes(),
                         info.getRepeatIndex(), v.mTokenValue);
-            } else if (effect instanceof CombinedVibrationEffect.Stereo) {
-                CombinedVibrationEffect.Stereo stereo = (CombinedVibrationEffect.Stereo) effect;
+            } else if (effect instanceof CombinedVibration.Stereo) {
+                CombinedVibration.Stereo stereo = (CombinedVibration.Stereo) effect;
                 SparseArray<VibrationEffect> effects = stereo.getEffects();
                 long[] pattern = new long[0];
                 int repeat = Integer.MIN_VALUE;
@@ -2207,10 +2251,10 @@ public class InputManagerService extends IInputManager.Stub
     @Override // Binder call
     public void addPortAssociation(@NonNull String inputPort, int displayPort) {
         if (!checkCallingPermission(
-                android.Manifest.permission.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY_BY_PORT,
+                android.Manifest.permission.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY,
                 "addPortAssociation()")) {
             throw new SecurityException(
-                    "Requires ASSOCIATE_INPUT_DEVICE_TO_DISPLAY_BY_PORT permission");
+                    "Requires ASSOCIATE_INPUT_DEVICE_TO_DISPLAY permission");
         }
 
         Objects.requireNonNull(inputPort);
@@ -2228,10 +2272,10 @@ public class InputManagerService extends IInputManager.Stub
     @Override // Binder call
     public void removePortAssociation(@NonNull String inputPort) {
         if (!checkCallingPermission(
-                android.Manifest.permission.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY_BY_PORT,
+                android.Manifest.permission.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY,
                 "clearPortAssociations()")) {
             throw new SecurityException(
-                    "Requires ASSOCIATE_INPUT_DEVICE_TO_DISPLAY_BY_PORT permission");
+                    "Requires ASSOCIATE_INPUT_DEVICE_TO_DISPLAY permission");
         }
 
         Objects.requireNonNull(inputPort);
@@ -2239,6 +2283,49 @@ public class InputManagerService extends IInputManager.Stub
             mRuntimeAssociations.remove(inputPort);
         }
         nativeNotifyPortAssociationsChanged(mPtr);
+    }
+
+    /**
+     * Add a runtime association between the input device name and the display unique id.
+     * @param inputDeviceName The name of the input device.
+     * @param displayUniqueId The unique id of the associated display.
+     */
+    @Override // Binder call
+    public void addUniqueIdAssociation(@NonNull String inputDeviceName,
+            @NonNull String displayUniqueId) {
+        if (!checkCallingPermission(
+                android.Manifest.permission.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY,
+                "addNameAssociation()")) {
+            throw new SecurityException(
+                    "Requires ASSOCIATE_INPUT_DEVICE_TO_DISPLAY permission");
+        }
+
+        Objects.requireNonNull(inputDeviceName);
+        Objects.requireNonNull(displayUniqueId);
+        synchronized (mAssociationsLock) {
+            mUniqueIdAssociations.put(inputDeviceName, displayUniqueId);
+        }
+        nativeChangeUniqueIdAssociation(mPtr);
+    }
+
+    /**
+     * Remove the runtime association between the input device and the display.
+     * @param inputDeviceName The port of the input device to be cleared.
+     */
+    @Override // Binder call
+    public void removeUniqueIdAssociation(@NonNull String inputDeviceName) {
+        if (!checkCallingPermission(
+                android.Manifest.permission.ASSOCIATE_INPUT_DEVICE_TO_DISPLAY,
+                "removeUniqueIdAssociation()")) {
+            throw new SecurityException(
+                    "Requires ASSOCIATE_INPUT_DEVICE_TO_DISPLAY permission");
+        }
+
+        Objects.requireNonNull(inputDeviceName);
+        synchronized (mAssociationsLock) {
+            mUniqueIdAssociations.remove(inputDeviceName);
+        }
+        nativeChangeUniqueIdAssociation(mPtr);
     }
 
     @Override // Binder call
@@ -2608,6 +2695,11 @@ public class InputManagerService extends IInputManager.Stub
     }
 
     // Native callback
+    private void notifyDropWindow(IBinder token, float x, float y) {
+        mWindowManagerCallbacks.notifyDropWindow(token, x, y);
+    }
+
+    // Native callback
     private void notifyUntrustedTouch(String packageName) {
         // TODO(b/169067926): Remove toast after gathering feedback on dogfood.
         if (!UNTRUSTED_TOUCHES_TOAST || ArrayUtils.contains(
@@ -2770,13 +2862,13 @@ public class InputManagerService extends IInputManager.Stub
      * key.
      * @return Flattened list
      */
-    private static List<String> flatten(@NonNull Map<String, Integer> map) {
+    private static <T> String[] flatten(@NonNull Map<String, T> map) {
         final List<String> list = new ArrayList<>(map.size() * 2);
         map.forEach((k, v)-> {
             list.add(k);
             list.add(v.toString());
         });
-        return list;
+        return list.toArray(new String[0]);
     }
 
     /**
@@ -2808,8 +2900,17 @@ public class InputManagerService extends IInputManager.Stub
             associations.putAll(mRuntimeAssociations);
         }
 
-        final List<String> associationList = flatten(associations);
-        return associationList.toArray(new String[0]);
+        return flatten(associations);
+    }
+
+    // Native callback
+    private String[] getInputUniqueIdAssociations() {
+        final Map<String, String> associations;
+        synchronized (mAssociationsLock) {
+            associations = new HashMap<>(mUniqueIdAssociations);
+        }
+
+        return flatten(associations);
     }
 
     /**
@@ -3037,6 +3138,11 @@ public class InputManagerService extends IInputManager.Stub
          * Called when the focused window has changed.
          */
         void notifyFocusChanged(IBinder oldToken, IBinder newToken);
+
+        /**
+         * Called when the drag over window has changed.
+         */
+        void notifyDropWindow(IBinder token, float x, float y);
     }
 
     /**

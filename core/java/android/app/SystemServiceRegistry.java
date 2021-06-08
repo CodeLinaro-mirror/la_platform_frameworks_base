@@ -129,11 +129,13 @@ import android.net.EthernetManager;
 import android.net.IEthernetManager;
 import android.net.IIpSecService;
 import android.net.INetworkPolicyManager;
+import android.net.IPacProxyManager;
 import android.net.IVpnManager;
 import android.net.IpSecManager;
 import android.net.NetworkPolicyManager;
 import android.net.NetworkScoreManager;
 import android.net.NetworkWatchlistManager;
+import android.net.PacProxyManager;
 import android.net.TetheringManager;
 import android.net.VpnManager;
 import android.net.lowpan.ILowpanManager;
@@ -156,12 +158,14 @@ import android.os.IBatteryPropertiesRegistrar;
 import android.os.IBinder;
 import android.os.IDumpstate;
 import android.os.IHardwarePropertiesManager;
+import android.os.IHintManager;
 import android.os.IPowerManager;
 import android.os.IRecoverySystem;
 import android.os.ISystemUpdateManager;
 import android.os.IThermalService;
 import android.os.IUserManager;
 import android.os.IncidentManager;
+import android.os.PerformanceHintManager;
 import android.os.PowerManager;
 import android.os.RecoverySystem;
 import android.os.ServiceManager;
@@ -374,6 +378,15 @@ public final class SystemServiceRegistry {
         // (which extends it).
         SYSTEM_SERVICE_NAMES.put(android.text.ClipboardManager.class, Context.CLIPBOARD_SERVICE);
 
+        registerService(Context.PAC_PROXY_SERVICE, PacProxyManager.class,
+                new CachedServiceFetcher<PacProxyManager>() {
+            @Override
+            public PacProxyManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                IBinder b = ServiceManager.getServiceOrThrow(Context.PAC_PROXY_SERVICE);
+                IPacProxyManager service = IPacProxyManager.Stub.asInterface(b);
+                return new PacProxyManager(ctx.getOuterContext(), service);
+            }});
+
         registerService(Context.NETD_SERVICE, IBinder.class, new StaticServiceFetcher<IBinder>() {
             @Override
             public IBinder createService() throws ServiceNotFoundException {
@@ -581,6 +594,17 @@ public final class SystemServiceRegistry {
                         ctx.mMainThread.getHandler());
             }});
 
+        registerService(Context.PERFORMANCE_HINT_SERVICE, PerformanceHintManager.class,
+                new CachedServiceFetcher<PerformanceHintManager>() {
+            @Override
+            public PerformanceHintManager createService(ContextImpl ctx)
+                    throws ServiceNotFoundException {
+                IBinder hintBinder = ServiceManager.getServiceOrThrow(
+                        Context.PERFORMANCE_HINT_SERVICE);
+                IHintManager hintService = IHintManager.Stub.asInterface(hintBinder);
+                return new PerformanceHintManager(hintService);
+            }});
+
         registerService(Context.RECOVERY_SERVICE, RecoverySystem.class,
                 new CachedServiceFetcher<RecoverySystem>() {
             @Override
@@ -711,7 +735,7 @@ public final class SystemServiceRegistry {
                 new CachedServiceFetcher<UwbManager>() {
                     @Override
                     public UwbManager createService(ContextImpl ctx) {
-                        return UwbManager.getInstance();
+                        return UwbManager.getInstance(ctx);
                     }
                 });
 

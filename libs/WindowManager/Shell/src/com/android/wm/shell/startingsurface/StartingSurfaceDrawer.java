@@ -18,8 +18,10 @@ package com.android.wm.shell.startingsurface;
 
 import static android.content.Context.CONTEXT_RESTRICTED;
 import static android.content.res.Configuration.EMPTY;
+import static android.view.Choreographer.CALLBACK_INSETS_ANIMATION;
 import static android.view.Display.DEFAULT_DISPLAY;
 
+import android.annotation.Nullable;
 import android.app.ActivityManager.RunningTaskInfo;
 import android.app.ActivityTaskManager;
 import android.content.Context;
@@ -29,14 +31,18 @@ import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
+import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.os.IBinder;
+import android.os.SystemProperties;
+import android.os.UserHandle;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.view.Choreographer;
 import android.view.Display;
+import android.view.SurfaceControl;
 import android.view.View;
-import android.view.Window;
 import android.view.WindowManager;
 import android.window.SplashScreenView;
 import android.window.SplashScreenView.SplashScreenViewParcelable;
@@ -46,11 +52,47 @@ import android.window.TaskSnapshot;
 import com.android.internal.R;
 import com.android.internal.policy.PhoneWindow;
 import com.android.wm.shell.common.ShellExecutor;
+import com.android.wm.shell.common.TransactionPool;
 
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * A class which able to draw splash screen or snapshot as the starting window for a task.
+ *
+ * In order to speed up, there will use two threads to creating a splash screen in parallel.
+ * Right now we are still using PhoneWindow to create splash screen window, so the view is added to
+ * the ViewRootImpl, and those view won't be draw immediately because the ViewRootImpl will call
+ * scheduleTraversal to register a callback from Choreographer, so the drawing result of the view
+ * can synchronize on each frame.
+ *
+ * The bad thing is that we cannot decide when would Choreographer#doFrame happen, and drawing
+ * the AdaptiveIconDrawable object can be time consuming, so we use the splash-screen background
+ * thread to draw the AdaptiveIconDrawable object to a Bitmap and cache it to a BitmapShader after
+ * the SplashScreenView just created, once we get the BitmapShader then the #draw call can be very
+ * quickly.
+ *
+ * So basically we are using the spare time to prepare the SplashScreenView while splash screen
+ * thread is waiting for
+ * 1. WindowManager#addView(binder call to WM),
+ * 2. Choreographer#doFrame happen(uncertain time for next frame, depends on device),
+ * 3. Session#relayout(another binder call to WM which under Choreographer#doFrame, but will
+ * always happen before #draw).
+ * Because above steps are running on splash-screen thread, so pre-draw the BitmapShader on
+ * splash-screen background tread can make they execute in parallel, which ensure it is faster then
+ * to draw the AdaptiveIconDrawable when receive callback from Choreographer#doFrame.
+ *
+ * Here is the sequence to compare the difference between using single and two thread.
+ *
+ * Single thread:
+ * => makeSplashScreenContentView -> WM#addView .. waiting for Choreographer#doFrame -> relayout
+ * -> draw -> AdaptiveIconDrawable#draw
+ *
+ * Two threads:
+ * => makeSplashScreenContentView -> cachePaint(=AdaptiveIconDrawable#draw)
+ * => WM#addView -> .. waiting for Choreographer#doFrame -> relayout -> draw -> (draw the Paint
+ * directly).
+ *
  * @hide
  */
 public class StartingSurfaceDrawer {
@@ -62,23 +104,23 @@ public class StartingSurfaceDrawer {
     private final DisplayManager mDisplayManager;
     private final ShellExecutor mSplashScreenExecutor;
     private final SplashscreenContentDrawer mSplashscreenContentDrawer;
-    protected Choreographer mChoreographer;
+    private Choreographer mChoreographer;
 
-    // TODO(b/131727939) remove this when clearing ActivityRecord
-    private static final int REMOVE_WHEN_TIMEOUT = 2000;
-
-    public StartingSurfaceDrawer(Context context, ShellExecutor splashScreenExecutor) {
+    private static final boolean DEBUG_ENABLE_REVEAL_ANIMATION =
+            SystemProperties.getBoolean("persist.debug.enable_reveal_animation", false);
+    /**
+     * @param splashScreenExecutor The thread used to control add and remove starting window.
+     */
+    public StartingSurfaceDrawer(Context context, ShellExecutor splashScreenExecutor,
+            TransactionPool pool) {
         mContext = context;
         mDisplayManager = mContext.getSystemService(DisplayManager.class);
         mSplashScreenExecutor = splashScreenExecutor;
-        final int maxIconAnimDuration = context.getResources().getInteger(
-                com.android.wm.shell.R.integer.max_starting_window_intro_icon_anim_duration);
-        mSplashscreenContentDrawer = new SplashscreenContentDrawer(mContext, maxIconAnimDuration);
-        mSplashScreenExecutor.execute(this::initChoreographer);
-    }
-
-    protected void initChoreographer() {
-        mChoreographer = Choreographer.getInstance();
+        final int appRevealAnimDuration = context.getResources().getInteger(
+                com.android.wm.shell.R.integer.starting_window_app_reveal_anim_duration);
+        mSplashscreenContentDrawer = new SplashscreenContentDrawer(mContext, appRevealAnimDuration,
+                pool);
+        mSplashScreenExecutor.execute(() -> mChoreographer = Choreographer.getInstance());
     }
 
     private final SparseArray<StartingWindowRecord> mStartingWindowRecords = new SparseArray<>();
@@ -102,8 +144,10 @@ public class StartingSurfaceDrawer {
 
     /**
      * Called when a task need a splash screen starting window.
+     * @param emptyView Whether drawing an empty frame without anything on it.
      */
-    public void addSplashScreenStartingWindow(StartingWindowInfo windowInfo, IBinder appToken) {
+    void addSplashScreenStartingWindow(StartingWindowInfo windowInfo, IBinder appToken,
+            boolean emptyView) {
         final RunningTaskInfo taskInfo = windowInfo.taskInfo;
         final ActivityInfo activityInfo = taskInfo.topActivityInfo;
         if (activityInfo == null) {
@@ -123,6 +167,7 @@ public class StartingSurfaceDrawer {
             labelRes = app.labelRes;
         }
 
+        final int taskId = taskInfo.taskId;
         Context context = mContext;
         // replace with the default theme if the application didn't set
         final int theme = windowInfo.splashScreenThemeResId != 0
@@ -144,11 +189,13 @@ public class StartingSurfaceDrawer {
         context = displayContext;
         if (theme != context.getThemeResId() || labelRes != 0) {
             try {
-                context = context.createPackageContext(
-                        activityInfo.packageName, CONTEXT_RESTRICTED);
+                context = context.createPackageContextAsUser(activityInfo.packageName,
+                        CONTEXT_RESTRICTED, UserHandle.of(taskInfo.userId));
                 context.setTheme(theme);
             } catch (PackageManager.NameNotFoundException e) {
-                // Ignore
+                Slog.w(TAG, "Failed creating package context with package name "
+                        + activityInfo.packageName + " for user " + taskInfo.userId, e);
+                return;
             }
         }
 
@@ -163,33 +210,31 @@ public class StartingSurfaceDrawer {
             final TypedArray typedArray = overrideContext.obtainStyledAttributes(
                     com.android.internal.R.styleable.Window);
             final int resId = typedArray.getResourceId(R.styleable.Window_windowBackground, 0);
-            if (resId != 0 && overrideContext.getDrawable(resId) != null) {
-                // We want to use the windowBackground for the override context if it is
-                // available, otherwise we use the default one to make sure a themed starting
-                // window is displayed for the app.
-                if (DEBUG_SPLASH_SCREEN) {
-                    Slog.d(TAG, "addSplashScreen: apply overrideConfig"
-                            + taskConfig + " to starting window resId=" + resId);
+            try {
+                if (resId != 0 && overrideContext.getDrawable(resId) != null) {
+                    // We want to use the windowBackground for the override context if it is
+                    // available, otherwise we use the default one to make sure a themed starting
+                    // window is displayed for the app.
+                    if (DEBUG_SPLASH_SCREEN) {
+                        Slog.d(TAG, "addSplashScreen: apply overrideConfig"
+                                + taskConfig + " to starting window resId=" + resId);
+                    }
+                    context = overrideContext;
                 }
-                context = overrideContext;
+            } catch (Resources.NotFoundException e) {
+                Slog.w(TAG, "failed creating starting window for overrideConfig at taskId: "
+                        + taskId, e);
+                return;
             }
             typedArray.recycle();
         }
 
         int windowFlags = 0;
-        final boolean enableHardAccelerated =
-                (activityInfo.flags & ActivityInfo.FLAG_HARDWARE_ACCELERATED) != 0;
-        if (enableHardAccelerated) {
-            windowFlags |= WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
-        }
+        windowFlags |= WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
 
         final boolean[] showWallpaper = new boolean[1];
-        final int[] splashscreenContentResId = new int[1];
-        getWindowResFromContext(context, a -> {
-            splashscreenContentResId[0] =
-                    a.getResourceId(R.styleable.Window_windowSplashscreenContent, 0);
-            showWallpaper[0] = a.getBoolean(R.styleable.Window_windowShowWallpaper, false);
-        });
+        getWindowResFromContext(context, a ->
+                showWallpaper[0] = a.getBoolean(R.styleable.Window_windowShowWallpaper, false));
         if (showWallpaper[0]) {
             windowFlags |= WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER;
         }
@@ -211,7 +256,7 @@ public class StartingSurfaceDrawer {
         // the keyguard is being hidden. This is okay because starting windows never show
         // secret information.
         // TODO(b/113840485): Occluded may not only happen on default display
-        if (displayId == DEFAULT_DISPLAY) {
+        if (displayId == DEFAULT_DISPLAY && windowInfo.isKeyguardOccluded) {
             windowFlags |= WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED;
         }
 
@@ -241,12 +286,11 @@ public class StartingSurfaceDrawer {
         params.packageName = activityInfo.packageName;
         params.windowAnimations = win.getWindowStyle().getResourceId(
                 com.android.internal.R.styleable.Window_windowAnimationStyle, 0);
-        params.privateFlags |=
-                WindowManager.LayoutParams.PRIVATE_FLAG_FAKE_HARDWARE_ACCELERATED;
         params.privateFlags |= WindowManager.LayoutParams.SYSTEM_FLAG_SHOW_FOR_ALL_USERS;
         // Setting as trusted overlay to let touches pass through. This is safe because this
         // window is controlled by the system.
         params.privateFlags |= WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY;
+        params.format = PixelFormat.RGBA_8888;
 
         final Resources res = context.getResources();
         final boolean supportsScreen = res != null && (res.getCompatibilityInfo() != null
@@ -257,97 +301,84 @@ public class StartingSurfaceDrawer {
 
         params.setTitle("Splash Screen " + activityInfo.packageName);
 
-        // TODO(b/173975965) If the target activity doesn't request FLAG_HARDWARE_ACCELERATED, we
-        // cannot replace the content view after first view was drawn, sounds like an issue.
-        new AddSplashScreenViewRunnable(taskInfo.taskId, win, context, appToken, params, iconRes,
-                        splashscreenContentResId[0], enableHardAccelerated).run();
+        // TODO(b/173975965) tracking performance
+        // Prepare the splash screen content view on splash screen worker thread in parallel, so the
+        // content view won't be blocked by binder call like addWindow and relayout.
+        // 1. Trigger splash screen worker thread to create SplashScreenView before/while
+        // Session#addWindow.
+        // 2. Synchronize the SplashscreenView to splash screen thread before Choreographer start
+        // traversal, which will call Session#relayout on splash screen thread.
+        // 3. Pre-draw the BitmapShader if the icon is immobile on splash screen worker thread, at
+        // the same time the splash screen thread should be executing Session#relayout. Blocking the
+        // traversal -> draw on splash screen thread until the BitmapShader of the icon is ready.
+
+        // Record whether create splash screen view success, notify to current thread after
+        // create splash screen view finished.
+        final SplashScreenViewSupplier viewSupplier = new SplashScreenViewSupplier();
+        final Runnable setViewSynchronized = () -> {
+            // waiting for setContentView before relayoutWindow
+            SplashScreenView contentView = viewSupplier.get();
+            final StartingWindowRecord record = mStartingWindowRecords.get(taskId);
+            // if record == null, either the starting window added fail or removed already.
+            if (record != null) {
+                // if view == null then creation of content view was failed.
+                if (contentView != null) {
+                    try {
+                        win.setContentView(contentView);
+                        contentView.cacheRootWindow(win);
+                    } catch (RuntimeException e) {
+                        Slog.w(TAG, "failed set content view to starting window "
+                                + "at taskId: " + taskId, e);
+                        contentView = null;
+                    }
+                }
+                record.setSplashScreenView(contentView);
+            }
+        };
+        mSplashscreenContentDrawer.createContentView(context, emptyView, activityInfo, taskId,
+                viewSupplier::setView);
+
+        try {
+            final View view = win.getDecorView();
+            final WindowManager wm = mContext.getSystemService(WindowManager.class);
+            postAddWindow(taskId, appToken, view, wm, params);
+
+            // We use the splash screen worker thread to create SplashScreenView while adding the
+            // window, as otherwise Choreographer#doFrame might be delayed on this thread.
+            // And since Choreographer#doFrame won't happen immediately after adding the window, if
+            // the view is not added to the PhoneWindow on the first #doFrame, the view will not be
+            // rendered on the first frame. So here we need to synchronize the view on the window
+            // before first round relayoutWindow, which will happen after insets animation.
+            mChoreographer.postCallback(CALLBACK_INSETS_ANIMATION, setViewSynchronized, null);
+        } catch (RuntimeException e) {
+            // don't crash if something else bad happens, for example a
+            // failure loading resources because we are loading from an app
+            // on external storage that has been unmounted.
+            Slog.w(TAG, "failed creating starting window at taskId: " + taskId, e);
+        }
     }
 
-    private class AddSplashScreenViewRunnable implements Runnable {
-        private final int mTaskId;
-        private final Window mWin;
-        private final IBinder mAppToken;
-        private final WindowManager.LayoutParams mLayoutParams;
-        private final Context mContext;
-        private final int mIconRes;
-        private final int mSplashscreenContentResId;
-        private final boolean mReplaceSplashScreenView;
-        private int mSequence;
-
-        AddSplashScreenViewRunnable(int taskId, Window window, Context context,
-                IBinder appToken, WindowManager.LayoutParams params, int iconRes,
-                int splashscreenContentResId, boolean replaceSplashScreenView) {
-            mTaskId = taskId;
-            mWin = window;
-            mAppToken = appToken;
-            mContext = context;
-            mLayoutParams = params;
-            mIconRes = iconRes;
-            mSplashscreenContentResId = splashscreenContentResId;
-            mReplaceSplashScreenView = replaceSplashScreenView;
-        }
-
-        private void createInitialView() {
-            View tempView = new View(mContext);
-            mWin.setContentView(tempView);
-            mSequence++;
-            final View view = mWin.getDecorView();
-            final WindowManager wm = mContext.getSystemService(WindowManager.class);
-            if (postAddWindow(mTaskId, mAppToken, view, wm, mLayoutParams)) {
-                mChoreographer.postCallback(Choreographer.CALLBACK_COMMIT, this, null);
+    private static class SplashScreenViewSupplier implements Supplier<SplashScreenView> {
+        private SplashScreenView mView;
+        private boolean mIsViewSet;
+        void setView(SplashScreenView view) {
+            synchronized (this) {
+                mView = view;
+                mIsViewSet = true;
+                notify();
             }
-        }
-
-        private SplashScreenView replaceRealView() {
-            final SplashScreenView sView =
-                    mSplashscreenContentDrawer.makeSplashScreenContentView(mContext,
-                            mIconRes, mSplashscreenContentResId);
-            mWin.setContentView(sView);
-            sView.cacheRootWindow(mWin);
-            return sView;
-        }
-
-        private SplashScreenView initiateOnce() {
-            final SplashScreenView sView =
-                    mSplashscreenContentDrawer.makeSplashScreenContentView(mContext, mIconRes,
-                            mSplashscreenContentResId);
-            final View view = mWin.getDecorView();
-            final WindowManager wm = mContext.getSystemService(WindowManager.class);
-            if (postAddWindow(mTaskId, mAppToken, view, wm, mLayoutParams)) {
-                mWin.setContentView(sView);
-                sView.cacheRootWindow(mWin);
-            }
-            return sView;
         }
 
         @Override
-        public void run() {
-            SplashScreenView view = null;
-            boolean setRecord = false;
-            try {
-                if (mReplaceSplashScreenView) {
-                    // Tricky way to make animation start faster... create the real content after
-                    // first window drawn. The first empty window won't been see because wm will
-                    // still need to wait for transition ready.
-                    if (mSequence == 0) {
-                        createInitialView();
-                    } else if (mSequence == 1) {
-                        setRecord = true;
-                        view = replaceRealView();
+        public @Nullable SplashScreenView get() {
+            synchronized (this) {
+                while (!mIsViewSet) {
+                    try {
+                        wait();
+                    } catch (InterruptedException ignored) {
                     }
-                } else {
-                    setRecord = true;
-                    view = initiateOnce();
                 }
-            } catch (RuntimeException e) {
-                // don't crash if something else bad happens, for example a
-                // failure loading resources because we are loading from an app
-                // on external storage that has been unmounted.
-                Slog.w(TAG, " failed creating starting window", e);
-            } finally {
-                if (setRecord) {
-                    setSplashScreenRecord(mTaskId, view);
-                }
+                return mView;
             }
         }
     }
@@ -359,21 +390,20 @@ public class StartingSurfaceDrawer {
             TaskSnapshot snapshot) {
         final int taskId = startingWindowInfo.taskInfo.taskId;
         final TaskSnapshotWindow surface = TaskSnapshotWindow.create(startingWindowInfo, appToken,
-                snapshot, mSplashScreenExecutor, () -> removeWindowSynced(taskId));
-        mSplashScreenExecutor.executeDelayed(() -> removeWindowSynced(taskId), REMOVE_WHEN_TIMEOUT);
-        final StartingWindowRecord tView =
-                new StartingWindowRecord(null/* decorView */, surface);
+                snapshot, mSplashScreenExecutor, () -> removeWindowNoAnimate(taskId));
+        final StartingWindowRecord tView = new StartingWindowRecord(null/* decorView */, surface);
         mStartingWindowRecords.put(taskId, tView);
     }
 
     /**
      * Called when the content of a task is ready to show, starting window can be removed.
      */
-    public void removeStartingWindow(int taskId) {
+    public void removeStartingWindow(int taskId, SurfaceControl leash, Rect frame,
+            boolean playRevealAnimation) {
         if (DEBUG_SPLASH_SCREEN || DEBUG_TASK_SNAPSHOT) {
             Slog.d(TAG, "Task start finish, remove starting surface for task " + taskId);
         }
-        removeWindowSynced(taskId);
+        removeWindowSynced(taskId, leash, frame, playRevealAnimation);
     }
 
     /**
@@ -383,13 +413,6 @@ public class StartingSurfaceDrawer {
     public void copySplashScreenView(int taskId) {
         final StartingWindowRecord preView = mStartingWindowRecords.get(taskId);
         SplashScreenViewParcelable parcelable;
-        if (preView != null) {
-            if (preView.isWaitForContent()) {
-                mChoreographer.postCallback(Choreographer.CALLBACK_COMMIT,
-                        () -> copySplashScreenView(taskId), null);
-                return;
-            }
-        }
         if (preView != null && preView.mContentView != null
                 && preView.mContentView.isCopyable()) {
             parcelable = new SplashScreenViewParcelable(preView.mContentView);
@@ -403,7 +426,7 @@ public class StartingSurfaceDrawer {
         ActivityTaskManager.getInstance().onSplashScreenViewCopyFinished(taskId, parcelable);
     }
 
-    protected boolean postAddWindow(int taskId, IBinder appToken, View view, WindowManager wm,
+    protected void postAddWindow(int taskId, IBinder appToken, View view, WindowManager wm,
             WindowManager.LayoutParams params) {
         boolean shouldSaveView = true;
         try {
@@ -413,12 +436,6 @@ public class StartingSurfaceDrawer {
             Slog.w(TAG, appToken + " already running, starting window not displayed. "
                     + e.getMessage());
             shouldSaveView = false;
-        } catch (RuntimeException e) {
-            // don't crash if something else bad happens, for example a
-            // failure loading resources because we are loading from an app
-            // on external storage that has been unmounted.
-            Slog.w(TAG, appToken + " failed creating starting window", e);
-            shouldSaveView = false;
         } finally {
             if (view != null && view.getParent() == null) {
                 Slog.w(TAG, "view not successfully added to wm, removing view");
@@ -427,12 +444,9 @@ public class StartingSurfaceDrawer {
             }
         }
         if (shouldSaveView) {
-            removeWindowSynced(taskId);
-            mSplashScreenExecutor.executeDelayed(() -> removeWindowSynced(taskId),
-                    REMOVE_WHEN_TIMEOUT);
+            removeWindowNoAnimate(taskId);
             saveSplashScreenRecord(taskId, view);
         }
-        return shouldSaveView;
     }
 
     private void saveSplashScreenRecord(int taskId, View view) {
@@ -441,32 +455,38 @@ public class StartingSurfaceDrawer {
         mStartingWindowRecords.put(taskId, tView);
     }
 
-    private void setSplashScreenRecord(int taskId, SplashScreenView splashScreenView) {
-        final StartingWindowRecord record = mStartingWindowRecords.get(taskId);
-        if (record != null) {
-            record.setSplashScreenView(splashScreenView);
-            splashScreenView.startIntroAnimation();
-        }
+    private void removeWindowNoAnimate(int taskId) {
+        removeWindowSynced(taskId, null, null, false);
     }
 
-    protected void removeWindowSynced(int taskId) {
+    protected void removeWindowSynced(int taskId, SurfaceControl leash, Rect frame,
+            boolean playRevealAnimation) {
         final StartingWindowRecord record = mStartingWindowRecords.get(taskId);
         if (record != null) {
-            if (record.isWaitForContent()) {
-                if (DEBUG_SPLASH_SCREEN) {
-                    Slog.v(TAG, "splash screen window haven't been draw yet");
-                }
-                mChoreographer.postCallback(Choreographer.CALLBACK_COMMIT,
-                        () -> removeWindowSynced(taskId), null);
-                return;
-            }
             if (record.mDecorView != null) {
                 if (DEBUG_SPLASH_SCREEN) {
                     Slog.v(TAG, "Removing splash screen window for task: " + taskId);
                 }
-                final WindowManager wm = record.mDecorView.getContext()
-                        .getSystemService(WindowManager.class);
-                wm.removeView(record.mDecorView);
+                if (record.mContentView != null
+                        && record.mContentView.isRevealAnimationSupported()) {
+                    if (playRevealAnimation) {
+                        if (DEBUG_ENABLE_REVEAL_ANIMATION) {
+                            mSplashscreenContentDrawer.applyExitAnimation(record.mContentView,
+                                    leash, frame,
+                                    () -> removeWindowInner(record.mDecorView, true));
+                        } else {
+                            // using the default exit animation from framework
+                            removeWindowInner(record.mDecorView, false);
+                        }
+                    } else {
+                        // the SplashScreenView has been copied to client, hide the view to skip
+                        // default exit animation
+                        removeWindowInner(record.mDecorView, true);
+                    }
+                } else {
+                    // this is a blank splash screen, don't apply reveal animation
+                    removeWindowInner(record.mDecorView, false);
+                }
             }
             if (record.mTaskSnapshotWindow != null) {
                 if (DEBUG_TASK_SNAPSHOT) {
@@ -475,6 +495,16 @@ public class StartingSurfaceDrawer {
                 record.mTaskSnapshotWindow.remove();
             }
             mStartingWindowRecords.remove(taskId);
+        }
+    }
+
+    private void removeWindowInner(View decorView, boolean hideView) {
+        if (hideView) {
+            decorView.setVisibility(View.GONE);
+        }
+        final WindowManager wm = decorView.getContext().getSystemService(WindowManager.class);
+        if (wm != null) {
+            wm.removeView(decorView);
         }
     }
 
@@ -504,10 +534,6 @@ public class StartingSurfaceDrawer {
             }
             mContentView = splashScreenView;
             mSetSplashScreen = true;
-        }
-
-        private boolean isWaitForContent() {
-            return mDecorView != null && !mSetSplashScreen;
         }
     }
 }

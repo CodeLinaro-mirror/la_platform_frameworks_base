@@ -15,6 +15,8 @@
  */
 package com.android.server.blob;
 
+import static android.Manifest.permission.ACCESS_COARSE_LOCATION;
+import static android.Manifest.permission.ACCESS_FINE_LOCATION;
 import static android.app.blob.BlobStoreManager.COMMIT_RESULT_ERROR;
 import static android.app.blob.XmlTags.ATTR_CREATION_TIME_MS;
 import static android.app.blob.XmlTags.ATTR_ID;
@@ -54,12 +56,12 @@ import android.os.storage.StorageManager;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.util.ExceptionUtils;
+import android.util.IndentingPrintWriter;
 import android.util.Slog;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.FrameworkStatsLog;
-import com.android.internal.util.IndentingPrintWriter;
 import com.android.internal.util.Preconditions;
 import com.android.internal.util.XmlUtils;
 import com.android.server.blob.BlobStoreManagerService.DumpArgs;
@@ -366,6 +368,21 @@ class BlobStoreSession extends IBlobStoreSession.Stub {
     }
 
     @Override
+    public void allowPackagesWithLocationPermission(@NonNull String permissionName) {
+        assertCallerIsOwner();
+        Preconditions.checkArgument(ACCESS_FINE_LOCATION.equals(permissionName)
+                        || ACCESS_COARSE_LOCATION.equals(permissionName),
+                "permissionName is unknown: " + permissionName);
+        synchronized (mSessionLock) {
+            if (mState != STATE_OPENED) {
+                throw new IllegalStateException("Not allowed to change access type in state: "
+                        + stateToString(mState));
+            }
+            mBlobAccessMode.allowPackagesWithLocationPermission(permissionName);
+        }
+    }
+
+    @Override
     public boolean isPackageAccessAllowed(@NonNull String packageName,
             @NonNull byte[] certificate) {
         assertCallerIsOwner();
@@ -402,6 +419,21 @@ class BlobStoreSession extends IBlobStoreSession.Stub {
                         + stateToString(mState));
             }
             return mBlobAccessMode.isPublicAccessAllowed();
+        }
+    }
+
+    @Override
+    public boolean arePackagesWithLocationPermissionAllowed(@NonNull String permissionName) {
+        assertCallerIsOwner();
+        Preconditions.checkArgument(ACCESS_FINE_LOCATION.equals(permissionName)
+                        || ACCESS_COARSE_LOCATION.equals(permissionName),
+                "permissionName is unknown: " + permissionName);
+        synchronized (mSessionLock) {
+            if (mState != STATE_OPENED) {
+                throw new IllegalStateException("Not allowed to change access type in state: "
+                        + stateToString(mState));
+            }
+            return mBlobAccessMode.arePackagesWithLocationPermissionAllowed(permissionName);
         }
     }
 

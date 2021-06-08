@@ -29,7 +29,6 @@ import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
@@ -45,6 +44,7 @@ import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.UiEventLogger;
 import com.android.systemui.Dependency;
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.accessibility.AccessibilityButtonModeObserver;
 import com.android.systemui.accessibility.SystemActions;
 import com.android.systemui.assist.AssistManager;
 import com.android.systemui.broadcast.BroadcastDispatcher;
@@ -93,6 +93,7 @@ public class NavigationBarControllerTest extends SysuiTestCase {
                         mock(MetricsLogger.class),
                         mock(OverviewProxyService.class),
                         mock(NavigationModeController.class),
+                        mock(AccessibilityButtonModeObserver.class),
                         mock(StatusBarStateController.class),
                         mock(SysUiState.class),
                         mock(BroadcastDispatcher.class),
@@ -269,11 +270,5 @@ public class NavigationBarControllerTest extends SysuiTestCase {
         mNavigationBarController.disableAnimationsDuringHide(SECONDARY_DISPLAY, 500L);
 
         verify(mSecondaryNavBar).disableAnimationsDuringHide(eq(500L));
-    }
-
-    @Test
-    public void testGetAssistHandlerViewController_noCrash() {
-        reset(mNavigationBarController.mNavigationBars);
-        mNavigationBarController.getAssistHandlerViewController();
     }
 }

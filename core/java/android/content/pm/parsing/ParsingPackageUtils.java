@@ -34,6 +34,8 @@ import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.StyleableRes;
+import android.app.ActivityThread;
+import android.app.ResourcesManager;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
@@ -67,6 +69,7 @@ import android.content.pm.parsing.component.ParsedProvider;
 import android.content.pm.parsing.component.ParsedProviderUtils;
 import android.content.pm.parsing.component.ParsedService;
 import android.content.pm.parsing.component.ParsedServiceUtils;
+import android.content.pm.parsing.component.ParsedUsesPermission;
 import android.content.pm.parsing.result.ParseInput;
 import android.content.pm.parsing.result.ParseInput.DeferredError;
 import android.content.pm.parsing.result.ParseResult;
@@ -84,7 +87,9 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.FileUtils;
+import android.os.RemoteException;
 import android.os.Trace;
+import android.os.UserHandle;
 import android.os.ext.SdkExtensions;
 import android.permission.PermissionManager;
 import android.text.TextUtils;
@@ -119,6 +124,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.StringTokenizer;
 
@@ -177,6 +183,7 @@ public class ParsingPackageUtils {
     public static final String METADATA_SUPPORTS_SIZE_CHANGES = "android.supports_size_changes";
     public static final String METADATA_ACTIVITY_WINDOW_LAYOUT_AFFINITY =
             "android.activity_window_layout_affinity";
+    public static final String METADATA_ACTIVITY_LAUNCH_MODE = "android.activity.launch_mode";
 
     public static final int SDK_VERSION = Build.VERSION.SDK_INT;
     public static final String[] SDK_CODENAMES = Build.VERSION.ACTIVE_CODENAMES;
@@ -377,10 +384,9 @@ public class ParsingPackageUtils {
         }
 
         try {
-            final AssetManager assets = assetLoader.getBaseAssetManager();
             final File baseApk = new File(lite.getBaseApkPath());
             final ParseResult<ParsingPackage> result = parseBaseApk(input, baseApk,
-                    lite.getPath(), assets, flags);
+                    lite.getPath(), assetLoader, flags);
             if (result.isError()) {
                 return input.error(result);
             }
@@ -436,7 +442,7 @@ public class ParsingPackageUtils {
             final ParseResult<ParsingPackage> result = parseBaseApk(input,
                     apkFile,
                     apkFile.getCanonicalPath(),
-                    assetLoader.getBaseAssetManager(), flags);
+                    assetLoader, flags);
             if (result.isError()) {
                 return input.error(result);
             }
@@ -452,7 +458,8 @@ public class ParsingPackageUtils {
     }
 
     private ParseResult<ParsingPackage> parseBaseApk(ParseInput input, File apkFile,
-            String codePath, AssetManager assets, int flags) {
+            String codePath, SplitAssetLoader assetLoader, int flags)
+            throws PackageParserException {
         final String apkPath = apkFile.getAbsolutePath();
 
         String volumeUuid = null;
@@ -463,6 +470,7 @@ public class ParsingPackageUtils {
 
         if (DEBUG_JAR) Slog.d(TAG, "Scanning base APK: " + apkPath);
 
+        final AssetManager assets = assetLoader.getBaseAssetManager();
         final int cookie = assets.findCookieForPath(apkPath);
         if (cookie == 0) {
             return input.error(INSTALL_PARSE_FAILED_BAD_MANIFEST,
@@ -494,12 +502,19 @@ public class ParsingPackageUtils {
                 }
             }
 
-            ApkAssets apkAssets = assets.getApkAssets()[0];
-            if (apkAssets.definesOverlayable()) {
+            ApkAssets apkAssets = assetLoader.getBaseApkAssets();
+            boolean definesOverlayable = false;
+            try {
+                definesOverlayable = apkAssets.definesOverlayable();
+            } catch (IOException ignored) {
+                // Will fail if there's no packages in the ApkAssets, which can be treated as false
+            }
+
+            if (definesOverlayable) {
                 SparseArray<String> packageNames = assets.getAssignedPackageIdentifiers();
                 int size = packageNames.size();
                 for (int index = 0; index < size; index++) {
-                    String packageName = packageNames.get(index);
+                    String packageName = packageNames.valueAt(index);
                     Map<String, String> overlayableToActor = assets.getOverlayableMap(packageName);
                     if (overlayableToActor != null && !overlayableToActor.isEmpty()) {
                         for (String overlayable : overlayableToActor.keySet()) {
@@ -1206,6 +1221,10 @@ public class ParsingPackageUtils {
                 requiredNotFeatures.add(feature);
             }
 
+            final int usesPermissionFlags = sa.getInt(
+                com.android.internal.R.styleable.AndroidManifestUsesPermission_usesPermissionFlags,
+                0);
+
             final int outerDepth = parser.getDepth();
             int type;
             while ((type = parser.next()) != XmlPullParser.END_DOCUMENT
@@ -1270,14 +1289,31 @@ public class ParsingPackageUtils {
                 }
             }
 
-            if (!pkg.getRequestedPermissions().contains(name)) {
-                pkg.addRequestedPermission(name.intern());
-            } else {
-                Slog.w(TAG, "Ignoring duplicate uses-permissions/uses-permissions-sdk-m: "
-                        + name + " in package: " + pkg.getPackageName() + " at: "
-                        + parser.getPositionDescription());
+            // Quietly ignore duplicate permission requests, but fail loudly if
+            // the two requests have conflicting flags
+            boolean found = false;
+            final List<ParsedUsesPermission> usesPermissions = pkg.getUsesPermissions();
+            final int size = usesPermissions.size();
+            for (int i = 0; i < size; i++) {
+                final ParsedUsesPermission usesPermission = usesPermissions.get(i);
+                if (Objects.equals(usesPermission.name, name)) {
+                    if (usesPermission.usesPermissionFlags != usesPermissionFlags) {
+                        return input.error("Conflicting uses-permissions flags: "
+                                + name + " in package: " + pkg.getPackageName() + " at: "
+                                + parser.getPositionDescription());
+                    } else {
+                        Slog.w(TAG, "Ignoring duplicate uses-permissions/uses-permissions-sdk-m: "
+                                + name + " in package: " + pkg.getPackageName() + " at: "
+                                + parser.getPositionDescription());
+                    }
+                    found = true;
+                    break;
+                }
             }
 
+            if (!found) {
+                pkg.addUsesPermission(new ParsedUsesPermission(name, usesPermissionFlags));
+            }
             return success;
         } finally {
             sa.recycle();
@@ -1985,9 +2021,17 @@ public class ParsingPackageUtils {
 
             pkg.setGwpAsanMode(sa.getInt(R.styleable.AndroidManifestApplication_gwpAsanMode, -1));
             pkg.setMemtagMode(sa.getInt(R.styleable.AndroidManifestApplication_memtagMode, -1));
-            if (sa.hasValue(R.styleable.AndroidManifestApplication_nativeHeapZeroInit)) {
-                pkg.setNativeHeapZeroInit(sa.getBoolean(
-                        R.styleable.AndroidManifestApplication_nativeHeapZeroInit, false));
+            if (sa.hasValue(R.styleable.AndroidManifestApplication_nativeHeapZeroInitialized)) {
+                Boolean v = sa.getBoolean(
+                        R.styleable.AndroidManifestApplication_nativeHeapZeroInitialized, false);
+                pkg.setNativeHeapZeroInitialized(
+                        v ? ApplicationInfo.ZEROINIT_ENABLED : ApplicationInfo.ZEROINIT_DISABLED);
+            }
+            if (sa.hasValue(
+                    R.styleable.AndroidManifestApplication_requestRawExternalStorageAccess)) {
+                pkg.setRequestRawExternalStorageAccess(sa.getBoolean(R.styleable
+                                .AndroidManifestApplication_requestRawExternalStorageAccess,
+                        false));
             }
         } finally {
             sa.recycle();
@@ -2428,8 +2472,10 @@ public class ParsingPackageUtils {
             ParsingPackage pkg, Resources res, XmlResourceParser parser) {
         TypedArray sa = res.obtainAttributes(parser, R.styleable.AndroidManifestProfileable);
         try {
-            return input.success(pkg.setProfileableByShell(pkg.isProfileableByShell()
-                    || bool(false, R.styleable.AndroidManifestProfileable_shell, sa)));
+            ParsingPackage newPkg = pkg.setProfileableByShell(pkg.isProfileableByShell()
+                    || bool(false, R.styleable.AndroidManifestProfileable_shell, sa));
+            return input.success(newPkg.setProfileable(newPkg.isProfileable()
+                    && bool(true, R.styleable.AndroidManifestProfileable_enabled, sa)));
         } finally {
             sa.recycle();
         }
@@ -2755,7 +2801,7 @@ public class ParsingPackageUtils {
                     newPermsMsg.append(' ');
                 }
                 newPermsMsg.append(npi.name);
-                pkg.addRequestedPermission(npi.name)
+                pkg.addUsesPermission(new ParsedUsesPermission(npi.name, 0))
                         .addImplicitPermission(npi.name);
             }
         }
@@ -2764,7 +2810,15 @@ public class ParsingPackageUtils {
         }
     }
 
+    @SuppressWarnings("AndroidFrameworkCompatChange")
     private void convertSplitPermissions(ParsingPackage pkg) {
+        // STOPSHIP(b/183905675): REMOVE THIS TERRIBLE, HORRIBLE, NO GOOD, VERY BAD HACK
+        if ("com.android.chrome".equals(pkg.getPackageName())
+                && pkg.getVersionCode() <= 445500399
+                && pkg.getTargetSdkVersion() > Build.VERSION_CODES.R) {
+            pkg.setTargetSdkVersion(Build.VERSION_CODES.R);
+        }
+
         final int listSize = mSplitPermissionInfos.size();
         for (int is = 0; is < listSize; is++) {
             final PermissionManager.SplitPermissionInfo spi = mSplitPermissionInfos.get(is);
@@ -2777,7 +2831,7 @@ public class ParsingPackageUtils {
             for (int in = 0; in < newPerms.size(); in++) {
                 final String perm = newPerms.get(in);
                 if (!requestedPermissions.contains(perm)) {
-                    pkg.addRequestedPermission(perm)
+                    pkg.addUsesPermission(new ParsedUsesPermission(perm, 0))
                             .addImplicitPermission(perm);
                 }
             }
@@ -3010,6 +3064,42 @@ public class ParsingPackageUtils {
 
             return input.success(existingSigningDetails);
         }
+    }
+
+    /**
+     * @hide
+     */
+    public static void readConfigUseRoundIcon(Resources r) {
+        if (r != null) {
+            sUseRoundIcon = r.getBoolean(com.android.internal.R.bool.config_useRoundIcon);
+            return;
+        }
+
+        final ApplicationInfo androidAppInfo;
+        try {
+            androidAppInfo = ActivityThread.getPackageManager().getApplicationInfo(
+                    "android", 0 /* flags */,
+                    UserHandle.myUserId());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+        final Resources systemResources = Resources.getSystem();
+
+        // Create in-flight as this overlayable resource is only used when config changes
+        final Resources overlayableRes = ResourcesManager.getInstance().getResources(
+                null /* activityToken */,
+                null /* resDir */,
+                null /* splitResDirs */,
+                androidAppInfo.resourceDirs,
+                androidAppInfo.overlayPaths,
+                androidAppInfo.sharedLibraryFiles,
+                null /* overrideDisplayId */,
+                null /* overrideConfig */,
+                systemResources.getCompatibilityInfo(),
+                systemResources.getClassLoader(),
+                null /* loaders */);
+
+        sUseRoundIcon = overlayableRes.getBoolean(com.android.internal.R.bool.config_useRoundIcon);
     }
 
     /*

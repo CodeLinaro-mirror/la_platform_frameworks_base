@@ -30,6 +30,7 @@ import com.android.keyguard.KeyguardDisplayManager;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.KeyguardViewController;
 import com.android.keyguard.dagger.KeyguardQsUserSwitchComponent;
+import com.android.keyguard.dagger.KeyguardStatusBarViewComponent;
 import com.android.keyguard.dagger.KeyguardStatusViewComponent;
 import com.android.keyguard.dagger.KeyguardUserSwitcherComponent;
 import com.android.systemui.broadcast.BroadcastDispatcher;
@@ -41,6 +42,7 @@ import com.android.systemui.dagger.qualifiers.UiBackground;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.keyguard.DismissCallbackRegistry;
 import com.android.systemui.keyguard.FaceAuthScreenBrightnessController;
+import com.android.systemui.keyguard.KeyguardUnlockAnimationController;
 import com.android.systemui.keyguard.KeyguardViewMediator;
 import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
@@ -48,6 +50,7 @@ import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.phone.DozeParameters;
 import com.android.systemui.statusbar.phone.KeyguardLiftController;
 import com.android.systemui.statusbar.phone.StatusBar;
+import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.util.DeviceConfigProxy;
 import com.android.systemui.util.sensors.AsyncSensorManager;
 import com.android.systemui.util.settings.GlobalSettings;
@@ -63,8 +66,11 @@ import dagger.Provides;
 /**
  * Dagger Module providing {@link StatusBar}.
  */
-@Module(subcomponents = {KeyguardStatusViewComponent.class,
-        KeyguardQsUserSwitchComponent.class, KeyguardUserSwitcherComponent.class},
+@Module(subcomponents = {
+        KeyguardQsUserSwitchComponent.class,
+        KeyguardStatusBarViewComponent.class,
+        KeyguardStatusViewComponent.class,
+        KeyguardUserSwitcherComponent.class},
         includes = {FalsingModule.class})
 public class KeyguardModule {
     /**
@@ -88,7 +94,9 @@ public class KeyguardModule {
             NavigationModeController navigationModeController,
             KeyguardDisplayManager keyguardDisplayManager,
             DozeParameters dozeParameters,
-            StatusBarStateController statusBarStateController) {
+            StatusBarStateController statusBarStateController,
+            KeyguardStateController keyguardStateController,
+            Lazy<KeyguardUnlockAnimationController> keyguardUnlockAnimationController) {
         return new KeyguardViewMediator(
                 context,
                 falsingCollector,
@@ -105,7 +113,9 @@ public class KeyguardModule {
                 navigationModeController,
                 keyguardDisplayManager,
                 dozeParameters,
-                statusBarStateController
+                statusBarStateController,
+                keyguardStateController,
+                keyguardUnlockAnimationController
         );
     }
 

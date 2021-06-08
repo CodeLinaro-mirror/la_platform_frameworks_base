@@ -403,8 +403,8 @@ public class TaskLaunchParamsModifierTests extends WindowTestsBase {
     public void testOverridesDisplayAreaWithStandardTypeAndFullscreenMode() {
         final TaskDisplayArea secondaryDisplayArea = createTaskDisplayArea(mDefaultDisplay,
                 mWm, "SecondaryDisplayArea", FEATURE_RUNTIME_TASK_CONTAINER_FIRST);
-        final Task launchRoot = createTaskStackOnTaskDisplayArea(WINDOWING_MODE_FULLSCREEN,
-                ACTIVITY_TYPE_STANDARD, secondaryDisplayArea);
+        final Task launchRoot = createTask(secondaryDisplayArea, WINDOWING_MODE_FULLSCREEN,
+                ACTIVITY_TYPE_STANDARD);
         launchRoot.mCreatedByOrganizer = true;
 
         secondaryDisplayArea.setLaunchRootTask(launchRoot, new int[] { WINDOWING_MODE_FULLSCREEN },
@@ -419,8 +419,8 @@ public class TaskLaunchParamsModifierTests extends WindowTestsBase {
     public void testOverridesDisplayAreaWithHomeTypeAndFullscreenMode() {
         final TaskDisplayArea secondaryDisplayArea = createTaskDisplayArea(mDefaultDisplay,
                 mWm, "SecondaryDisplayArea", FEATURE_RUNTIME_TASK_CONTAINER_FIRST);
-        final Task launchRoot = createTaskStackOnTaskDisplayArea(WINDOWING_MODE_FULLSCREEN,
-                ACTIVITY_TYPE_STANDARD, secondaryDisplayArea);
+        final Task launchRoot = createTask(secondaryDisplayArea, WINDOWING_MODE_FULLSCREEN,
+                ACTIVITY_TYPE_STANDARD);
         launchRoot.mCreatedByOrganizer = true;
 
         mActivity.setActivityType(ACTIVITY_TYPE_HOME);
@@ -438,8 +438,8 @@ public class TaskLaunchParamsModifierTests extends WindowTestsBase {
                 WINDOWING_MODE_FREEFORM);
         final TaskDisplayArea secondaryDisplayArea = createTaskDisplayArea(freeformDisplay,
                 mWm, "SecondaryDisplayArea", FEATURE_RUNTIME_TASK_CONTAINER_FIRST);
-        final Task launchRoot = createTaskStackOnTaskDisplayArea(WINDOWING_MODE_FULLSCREEN,
-                ACTIVITY_TYPE_STANDARD, secondaryDisplayArea);
+        final Task launchRoot = createTask(secondaryDisplayArea, WINDOWING_MODE_FULLSCREEN,
+                ACTIVITY_TYPE_STANDARD);
         launchRoot.mCreatedByOrganizer = true;
 
         secondaryDisplayArea.setLaunchRootTask(launchRoot, new int[] { WINDOWING_MODE_FREEFORM },
@@ -455,8 +455,8 @@ public class TaskLaunchParamsModifierTests extends WindowTestsBase {
     public void testNotOverrideDisplayAreaWhenActivityOptionsHasDisplayArea() {
         final TaskDisplayArea secondaryDisplayArea = createTaskDisplayArea(mDefaultDisplay,
                 mWm, "SecondaryDisplayArea", FEATURE_RUNTIME_TASK_CONTAINER_FIRST);
-        final Task launchRoot = createTaskStackOnTaskDisplayArea(WINDOWING_MODE_FULLSCREEN,
-                ACTIVITY_TYPE_STANDARD, secondaryDisplayArea);
+        final Task launchRoot = createTask(secondaryDisplayArea, WINDOWING_MODE_FULLSCREEN,
+                ACTIVITY_TYPE_STANDARD);
         launchRoot.mCreatedByOrganizer = true;
 
         secondaryDisplayArea.setLaunchRootTask(launchRoot, new int[] { WINDOWING_MODE_FULLSCREEN },
@@ -481,8 +481,8 @@ public class TaskLaunchParamsModifierTests extends WindowTestsBase {
                 mWm, "SecondaryDisplayArea", FEATURE_RUNTIME_TASK_CONTAINER_FIRST);
         secondaryDisplayArea.setBounds(DISPLAY_BOUNDS.width() / 2, 0,
                         DISPLAY_BOUNDS.width(), DISPLAY_BOUNDS.height());
-        final Task launchRoot = createTaskStackOnTaskDisplayArea(WINDOWING_MODE_FULLSCREEN,
-                ACTIVITY_TYPE_STANDARD, secondaryDisplayArea);
+        final Task launchRoot = createTask(secondaryDisplayArea, WINDOWING_MODE_FULLSCREEN,
+                ACTIVITY_TYPE_STANDARD);
         launchRoot.mCreatedByOrganizer = true;
         secondaryDisplayArea.setLaunchRootTask(launchRoot, new int[] { WINDOWING_MODE_FREEFORM },
                 new int[] { ACTIVITY_TYPE_STANDARD });
@@ -504,7 +504,7 @@ public class TaskLaunchParamsModifierTests extends WindowTestsBase {
 
     @Test
     public void testRecalculateFreeformInitialBoundsWithOverrideDisplayArea_unresizableApp() {
-        mAtm.mSupportsNonResizableMultiWindow = true;
+        mAtm.mDevEnableNonResizableMultiWindow = true;
 
         final TestDisplayContent freeformDisplay = createNewDisplayContent(
                 WINDOWING_MODE_FREEFORM);
@@ -512,8 +512,8 @@ public class TaskLaunchParamsModifierTests extends WindowTestsBase {
                 mWm, "SecondaryDisplayArea", FEATURE_RUNTIME_TASK_CONTAINER_FIRST);
         secondaryDisplayArea.setBounds(DISPLAY_BOUNDS.width() / 2, 0,
                 DISPLAY_BOUNDS.width(), DISPLAY_BOUNDS.height());
-        final Task launchRoot = createTaskStackOnTaskDisplayArea(WINDOWING_MODE_FULLSCREEN,
-                ACTIVITY_TYPE_STANDARD, secondaryDisplayArea);
+        final Task launchRoot = createTask(secondaryDisplayArea, WINDOWING_MODE_FULLSCREEN,
+                ACTIVITY_TYPE_STANDARD);
         launchRoot.mCreatedByOrganizer = true;
         secondaryDisplayArea.setLaunchRootTask(launchRoot, new int[] { WINDOWING_MODE_FREEFORM },
                 new int[] { ACTIVITY_TYPE_STANDARD });
@@ -730,7 +730,7 @@ public class TaskLaunchParamsModifierTests extends WindowTestsBase {
 
     @Test
     public void testForceMaximizesUnresizeableApp() {
-        mAtm.mSupportsNonResizableMultiWindow = false;
+        mAtm.mDevEnableNonResizableMultiWindow = false;
         final TestDisplayContent freeformDisplay = createNewDisplayContent(
                 WINDOWING_MODE_FREEFORM);
 
@@ -753,7 +753,7 @@ public class TaskLaunchParamsModifierTests extends WindowTestsBase {
 
     @Test
     public void testLaunchesPortraitSizeCompatOnFreeformLandscapeDisplayWithFreeformSizeCompat() {
-        mAtm.mSupportsNonResizableMultiWindow = true;
+        mAtm.mDevEnableNonResizableMultiWindow = true;
         final TestDisplayContent freeformDisplay = createNewDisplayContent(
                 WINDOWING_MODE_FREEFORM);
 
@@ -781,7 +781,7 @@ public class TaskLaunchParamsModifierTests extends WindowTestsBase {
 
     @Test
     public void testLaunchesLandscapeSizeCompatOnFreeformLandscapeDisplayWithFreeformSizeCompat() {
-        mAtm.mSupportsNonResizableMultiWindow = true;
+        mAtm.mDevEnableNonResizableMultiWindow = true;
         final TestDisplayContent freeformDisplay = createNewDisplayContent(
                 WINDOWING_MODE_FREEFORM);
         final ActivityOptions options = ActivityOptions.makeBasic();
@@ -797,7 +797,7 @@ public class TaskLaunchParamsModifierTests extends WindowTestsBase {
 
     @Test
     public void testLaunchesPortraitUnresizableOnFreeformDisplayWithFreeformSizeCompat() {
-        mAtm.mSupportsNonResizableMultiWindow = true;
+        mAtm.mDevEnableNonResizableMultiWindow = true;
         final TestDisplayContent freeformDisplay = createNewDisplayContent(
                 WINDOWING_MODE_FREEFORM);
         final ActivityOptions options = ActivityOptions.makeBasic();
@@ -1687,16 +1687,16 @@ public class TaskLaunchParamsModifierTests extends WindowTestsBase {
     }
 
     private ActivityRecord createSourceActivity(TestDisplayContent display) {
-        final Task stack = display.getDefaultTaskDisplayArea()
+        final Task rootTask = display.getDefaultTaskDisplayArea()
                 .createRootTask(display.getWindowingMode(), ACTIVITY_TYPE_STANDARD, true);
-        return new ActivityBuilder(mAtm).setTask(stack).build();
+        return new ActivityBuilder(mAtm).setTask(rootTask).build();
     }
 
     private void addFreeformTaskTo(TestDisplayContent display, Rect bounds) {
-        final Task stack = display.getDefaultTaskDisplayArea()
+        final Task rootTask = display.getDefaultTaskDisplayArea()
                 .createRootTask(display.getWindowingMode(), ACTIVITY_TYPE_STANDARD, true);
-        stack.setWindowingMode(WINDOWING_MODE_FREEFORM);
-        final Task task = new TaskBuilder(mSupervisor).setParentTask(stack).build();
+        rootTask.setWindowingMode(WINDOWING_MODE_FREEFORM);
+        final Task task = new TaskBuilder(mSupervisor).setParentTask(rootTask).build();
         // Just work around the unnecessary adjustments for bounds.
         task.getWindowConfiguration().setBounds(bounds);
     }

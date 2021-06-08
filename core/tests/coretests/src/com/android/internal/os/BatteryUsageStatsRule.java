@@ -23,22 +23,32 @@ import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import android.net.NetworkStats;
+import android.os.BatteryConsumer;
 import android.os.BatteryStats;
 import android.os.BatteryUsageStats;
 import android.os.BatteryUsageStatsQuery;
-import android.os.SystemBatteryConsumer;
 import android.os.UidBatteryConsumer;
 import android.os.UserBatteryConsumer;
 import android.util.SparseArray;
 
 import androidx.test.InstrumentationRegistry;
 
+import com.android.internal.power.MeasuredEnergyStats;
+
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
 import org.mockito.stubbing.Answer;
 
+import java.util.Arrays;
+
 public class BatteryUsageStatsRule implements TestRule {
+    public static final BatteryUsageStatsQuery POWER_PROFILE_MODEL_ONLY =
+            new BatteryUsageStatsQuery.Builder()
+                    .powerProfileModeledOnly()
+                    .includePowerModels()
+                    .build();
+
     private final PowerProfile mPowerProfile;
     private final MockClocks mMockClocks = new MockClocks();
     private final MockBatteryStatsImpl mBatteryStats = new MockBatteryStatsImpl(mMockClocks) {
@@ -98,6 +108,16 @@ public class BatteryUsageStatsRule implements TestRule {
         return this;
     }
 
+    /** Call only after setting the power profile information. */
+    public BatteryUsageStatsRule initMeasuredEnergyStatsLocked() {
+        final boolean[] supportedStandardBuckets =
+                new boolean[MeasuredEnergyStats.NUMBER_STANDARD_POWER_BUCKETS];
+        Arrays.fill(supportedStandardBuckets, true);
+        mBatteryStats.initMeasuredEnergyStatsLocked(supportedStandardBuckets, new String[0]);
+        mBatteryStats.informThatAllExternalStatsAreFlushed();
+        return this;
+    }
+
     public BatteryUsageStatsRule startWithScreenOn(boolean screenOn) {
         mScreenOn = screenOn;
         return this;
@@ -142,17 +162,16 @@ public class BatteryUsageStatsRule implements TestRule {
     }
 
     BatteryUsageStats apply(PowerCalculator... calculators) {
-        return apply(BatteryUsageStatsQuery.DEFAULT, calculators);
+        return apply(new BatteryUsageStatsQuery.Builder().includePowerModels().build(),
+                calculators);
     }
 
     BatteryUsageStats apply(BatteryUsageStatsQuery query, PowerCalculator... calculators) {
-        final long[] customMeasuredEnergiesMicroJoules =
-                mBatteryStats.getCustomConsumerMeasuredBatteryConsumptionUC();
-        final int customMeasuredEnergiesCount = customMeasuredEnergiesMicroJoules != null
-                ? customMeasuredEnergiesMicroJoules.length
-                : 0;
+        final String[] customPowerComponentNames = mBatteryStats.getCustomEnergyConsumerNames();
+        final boolean includePowerModels = (query.getFlags()
+                & BatteryUsageStatsQuery.FLAG_BATTERY_USAGE_STATS_INCLUDE_POWER_MODELS) != 0;
         BatteryUsageStats.Builder builder = new BatteryUsageStats.Builder(
-                customMeasuredEnergiesCount, 0);
+                customPowerComponentNames, includePowerModels);
         SparseArray<? extends BatteryStats.Uid> uidStats = mBatteryStats.getUidStats();
         for (int i = 0; i < uidStats.size(); i++) {
             builder.getOrCreateUidBatteryConsumerBuilder(uidStats.valueAt(i));
@@ -167,20 +186,20 @@ public class BatteryUsageStatsRule implements TestRule {
         return mBatteryUsageStats;
     }
 
+    public BatteryConsumer getDeviceBatteryConsumer() {
+        return mBatteryUsageStats.getAggregateBatteryConsumer(
+                BatteryUsageStats.AGGREGATE_BATTERY_CONSUMER_SCOPE_DEVICE);
+    }
+
+    public BatteryConsumer getAppsBatteryConsumer() {
+        return mBatteryUsageStats.getAggregateBatteryConsumer(
+                BatteryUsageStats.AGGREGATE_BATTERY_CONSUMER_SCOPE_ALL_APPS);
+    }
+
     public UidBatteryConsumer getUidBatteryConsumer(int uid) {
         for (UidBatteryConsumer ubc : mBatteryUsageStats.getUidBatteryConsumers()) {
             if (ubc.getUid() == uid) {
                 return ubc;
-            }
-        }
-        return null;
-    }
-
-    public SystemBatteryConsumer getSystemBatteryConsumer(
-            @SystemBatteryConsumer.DrainType int drainType) {
-        for (SystemBatteryConsumer sbc : mBatteryUsageStats.getSystemBatteryConsumers()) {
-            if (sbc.getDrainType() == drainType) {
-                return sbc;
             }
         }
         return null;

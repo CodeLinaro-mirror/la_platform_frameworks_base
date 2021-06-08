@@ -38,7 +38,6 @@ import android.app.ActivityOptions;
 import android.app.ExitTransitionCoordinator;
 import android.app.ExitTransitionCoordinator.ExitTransitionCallbacks;
 import android.app.Notification;
-import android.app.WindowContext;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -55,7 +54,6 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
-import android.provider.DeviceConfig;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -65,6 +63,7 @@ import android.view.DisplayAddress;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
+import android.view.ScrollCaptureResponse;
 import android.view.SurfaceControl;
 import android.view.View;
 import android.view.ViewTreeObserver;
@@ -74,9 +73,9 @@ import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityManager;
 import android.widget.Toast;
+import android.window.WindowContext;
 
 import com.android.internal.app.ChooserActivity;
-import com.android.internal.config.sysui.SystemUiDeviceConfigFlags;
 import com.android.internal.logging.UiEventLogger;
 import com.android.internal.policy.PhoneWindow;
 import com.android.settingslib.applications.InterestingConfigChanges;
@@ -84,12 +83,16 @@ import com.android.systemui.R;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.screenshot.ScreenshotController.SavedImageData.ActionTransition;
 import com.android.systemui.screenshot.TakeScreenshotService.RequestCallback;
-import com.android.systemui.util.DeviceConfigProxy;
+
+import com.google.common.util.concurrent.ListenableFuture;
 
 import java.util.List;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -101,7 +104,8 @@ import javax.inject.Inject;
 public class ScreenshotController {
     private static final String TAG = logTag(ScreenshotController.class);
 
-    private static ScrollCaptureClient.Connection sScrollConnection;
+    private ScrollCaptureResponse mLastScrollCaptureResponse;
+    private ListenableFuture<ScrollCaptureResponse> mLastScrollCaptureRequest;
 
     /**
      * POD used in the AsyncTask which saves an image in the background.
@@ -110,6 +114,7 @@ public class ScreenshotController {
         public Bitmap image;
         public Consumer<Uri> finisher;
         public ScreenshotController.ActionsReadyListener mActionsReadyListener;
+        public ScreenshotController.QuickShareActionReadyListener mQuickShareActionsReadyListener;
 
         void clearImage() {
             image = null;
@@ -125,6 +130,7 @@ public class ScreenshotController {
         public Supplier<ActionTransition> editTransition;
         public Notification.Action deleteAction;
         public List<Notification.Action> smartActions;
+        public Notification.Action quickShareAction;
 
         /**
          * POD for shared element transition.
@@ -144,11 +150,30 @@ public class ScreenshotController {
             editTransition = null;
             deleteAction = null;
             smartActions = null;
+            quickShareAction = null;
+        }
+    }
+
+    /**
+     * Structure returned by the QueryQuickShareInBackgroundTask
+     */
+    static class QuickShareData {
+        public Notification.Action quickShareAction;
+
+        /**
+         * Used to reset the return data on error
+         */
+        public void reset() {
+            quickShareAction = null;
         }
     }
 
     interface ActionsReadyListener {
         void onActionsReady(ScreenshotController.SavedImageData imageData);
+    }
+
+    interface QuickShareActionReadyListener {
+        void onActionsReady(ScreenshotController.QuickShareData quickShareData);
     }
 
     // These strings are used for communicating the action invoked to
@@ -185,9 +210,10 @@ public class ScreenshotController {
     private final AccessibilityManager mAccessibilityManager;
     private final MediaActionSound mCameraSound;
     private final ScrollCaptureClient mScrollCaptureClient;
-    private final DeviceConfigProxy mConfigProxy;
     private final PhoneWindow mWindow;
     private final DisplayManager mDisplayManager;
+    private final ScrollCaptureController mScrollCaptureController;
+    private final LongScreenshotHolder mLongScreenshotHolder;
 
     private ScreenshotView mScreenshotView;
     private Bitmap mScreenBitmap;
@@ -222,12 +248,6 @@ public class ScreenshotController {
                     | ActivityInfo.CONFIG_SCREEN_LAYOUT
                     | ActivityInfo.CONFIG_ASSETS_PATHS);
 
-    public static @Nullable ScrollCaptureClient.Connection takeScrollCaptureConnection() {
-        ScrollCaptureClient.Connection connection = sScrollConnection;
-        sScrollConnection = null;
-        return connection;
-    }
-
     @Inject
     ScreenshotController(
             Context context,
@@ -235,15 +255,18 @@ public class ScreenshotController {
             ScreenshotNotificationsController screenshotNotificationsController,
             ScrollCaptureClient scrollCaptureClient,
             UiEventLogger uiEventLogger,
-            DeviceConfigProxy configProxy,
             ImageExporter imageExporter,
-            @Main Executor mainExecutor) {
+            @Main Executor mainExecutor,
+            ScrollCaptureController scrollCaptureController,
+            LongScreenshotHolder longScreenshotHolder) {
         mScreenshotSmartActions = screenshotSmartActions;
         mNotificationsController = screenshotNotificationsController;
         mScrollCaptureClient = scrollCaptureClient;
         mUiEventLogger = uiEventLogger;
         mImageExporter = imageExporter;
         mMainExecutor = mainExecutor;
+        mScrollCaptureController = scrollCaptureController;
+        mLongScreenshotHolder = longScreenshotHolder;
         mBgExecutor = Executors.newSingleThreadExecutor();
 
         mDisplayManager = requireNonNull(context.getSystemService(DisplayManager.class));
@@ -252,7 +275,6 @@ public class ScreenshotController {
         mWindowManager = mContext.getSystemService(WindowManager.class);
 
         mAccessibilityManager = AccessibilityManager.getInstance(mContext);
-        mConfigProxy = configProxy;
 
         // Setup the window that we are going to use
         mWindowLayoutParams = new WindowManager.LayoutParams(
@@ -351,6 +373,11 @@ public class ScreenshotController {
             finishDismiss();
         } else {
             mScreenshotView.animateDismissal();
+        }
+
+        if (mLastScrollCaptureResponse != null) {
+            mLastScrollCaptureResponse.close();
+            mLastScrollCaptureResponse = null;
         }
     }
 
@@ -513,28 +540,23 @@ public class ScreenshotController {
         mScreenBitmap.setHasAlpha(false);
         mScreenBitmap.prepareToDraw();
 
-        saveScreenshotInWorkerThread(finisher, this::showUiOnActionsReady);
+        saveScreenshotInWorkerThread(finisher, this::showUiOnActionsReady,
+                this::showUiOnQuickShareActionReady);
 
         // The window is focusable by default
         setWindowFocusable(true);
 
-        if (mConfigProxy.getBoolean(DeviceConfig.NAMESPACE_SYSTEMUI,
-                SystemUiDeviceConfigFlags.SCREENSHOT_SCROLLING_ENABLED, true)) {
-            View decorView = mWindow.getDecorView();
-
-            // Wait until this window is attached to request because it is
-            // the reference used to locate the target window (below).
-            withWindowAttached(() -> {
-                mScrollCaptureClient.setHostWindowToken(decorView.getWindowToken());
-                mScrollCaptureClient.request(DEFAULT_DISPLAY,
-                        /* onConnection */
-                        (connection) -> mScreenshotHandler.post(() ->
-                                mScreenshotView.showScrollChip(() ->
-                                        /* onClick */
-                                        runScrollCapture(connection))));
-            });
-        }
-
+        // Wait until this window is attached to request because it is
+        // the reference used to locate the target window (below).
+        withWindowAttached(() -> {
+            mScrollCaptureClient.setHostWindowToken(mWindow.getDecorView().getWindowToken());
+            if (mLastScrollCaptureRequest != null) {
+                mLastScrollCaptureRequest.cancel(true);
+            }
+            mLastScrollCaptureRequest = mScrollCaptureClient.request(DEFAULT_DISPLAY);
+            mLastScrollCaptureRequest.addListener(() ->
+                    onScrollCaptureResponseReady(mLastScrollCaptureRequest), mMainExecutor);
+        });
 
         attachWindow();
         mScreenshotView.getViewTreeObserver().addOnPreDrawListener(
@@ -558,6 +580,53 @@ public class ScreenshotController {
         mWindow.getDecorView().setOnApplyWindowInsetsListener(
                 (v, insets) -> WindowInsets.CONSUMED);
         cancelTimeout(); // restarted after animation
+    }
+
+    private void onScrollCaptureResponseReady(Future<ScrollCaptureResponse> responseFuture) {
+        try {
+            if (mLastScrollCaptureResponse != null) {
+                mLastScrollCaptureResponse.close();
+            }
+            mLastScrollCaptureResponse = responseFuture.get();
+            if (!mLastScrollCaptureResponse.isConnected()) {
+                // No connection means that the target window wasn't found
+                // or that it cannot support scroll capture.
+                Log.d(TAG, "ScrollCapture: " + mLastScrollCaptureResponse.getDescription() + " ["
+                 + mLastScrollCaptureResponse.getWindowTitle() + "]");
+                return;
+            }
+            Log.d(TAG, "ScrollCapture: connected to window ["
+                    + mLastScrollCaptureResponse.getWindowTitle() + "]");
+
+            final ScrollCaptureResponse response = mLastScrollCaptureResponse;
+            mScreenshotView.showScrollChip(/* onClick */ () -> {
+                // Clear the reference to prevent close() in dismissScreenshot
+                mLastScrollCaptureResponse = null;
+                final ListenableFuture<ScrollCaptureController.LongScreenshot> future =
+                        mScrollCaptureController.run(response);
+                future.addListener(() -> {
+                    ScrollCaptureController.LongScreenshot longScreenshot;
+                    try {
+                        longScreenshot = future.get();
+                    } catch (CancellationException | InterruptedException | ExecutionException e) {
+                        Log.e(TAG, "Exception", e);
+                        return;
+                    }
+
+                    mLongScreenshotHolder.setLongScreenshot(longScreenshot);
+
+                    final Intent intent = new Intent(mContext, LongScreenshotActivity.class);
+                    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    mContext.startActivity(intent);
+
+                    dismissScreenshot(false);
+                }, mMainExecutor);
+            });
+        } catch (CancellationException e) {
+            // Ignore
+        } catch (InterruptedException | ExecutionException e) {
+            Log.e(TAG, "requestScrollCapture failed", e);
+        }
     }
 
     private void withWindowAttached(Runnable action) {
@@ -606,15 +675,6 @@ public class ScreenshotController {
         }
     }
 
-    private void runScrollCapture(ScrollCaptureClient.Connection connection) {
-        sScrollConnection = connection;  // For LongScreenshotActivity to pick up.
-
-        Intent intent = new Intent(mContext, LongScreenshotActivity.class);
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        mContext.startActivity(intent);
-        dismissScreenshot(false);
-    }
-
     /**
      * Save the bitmap but don't show the normal screenshot UI.. just a toast (or notification on
      * failure).
@@ -626,20 +686,21 @@ public class ScreenshotController {
         saveScreenshotInWorkerThread(
                 /* onComplete */ finisher,
                 /* actionsReadyListener */ imageData -> {
-            if (DEBUG_CALLBACK) {
-                Log.d(TAG, "returning URI to finisher (Consumer<URI>): " + imageData.uri);
-            }
-            finisher.accept(imageData.uri);
-            if (imageData.uri == null) {
-                mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_NOT_SAVED);
-                mNotificationsController.notifyScreenshotError(
-                        R.string.screenshot_failed_to_save_text);
-            } else {
-                mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_SAVED);
-                mScreenshotHandler.post(() -> Toast.makeText(mContext,
-                        R.string.screenshot_saved_title, Toast.LENGTH_SHORT).show());
-            }
-        });
+                    if (DEBUG_CALLBACK) {
+                        Log.d(TAG, "returning URI to finisher (Consumer<URI>): " + imageData.uri);
+                    }
+                    finisher.accept(imageData.uri);
+                    if (imageData.uri == null) {
+                        mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_NOT_SAVED);
+                        mNotificationsController.notifyScreenshotError(
+                                R.string.screenshot_failed_to_save_text);
+                    } else {
+                        mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_SAVED);
+                        mScreenshotHandler.post(() -> Toast.makeText(mContext,
+                                R.string.screenshot_saved_title, Toast.LENGTH_SHORT).show());
+                    }
+                },
+                null);
     }
 
     /**
@@ -680,12 +741,15 @@ public class ScreenshotController {
      * Creates a new worker thread and saves the screenshot to the media store.
      */
     private void saveScreenshotInWorkerThread(Consumer<Uri> finisher,
-            @Nullable ScreenshotController.ActionsReadyListener actionsReadyListener) {
+            @Nullable ScreenshotController.ActionsReadyListener actionsReadyListener,
+            @Nullable ScreenshotController.QuickShareActionReadyListener
+                    quickShareActionsReadyListener) {
         ScreenshotController.SaveImageInBackgroundData
                 data = new ScreenshotController.SaveImageInBackgroundData();
         data.image = mScreenBitmap;
         data.finisher = finisher;
         data.mActionsReadyListener = actionsReadyListener;
+        data.mQuickShareActionsReadyListener = quickShareActionsReadyListener;
 
         if (mSaveInBgTask != null) {
             // just log success/failure for the pre-existing screenshot
@@ -742,6 +806,30 @@ public class ScreenshotController {
                     });
                 } else {
                     mScreenshotView.setChipIntents(imageData);
+                }
+            });
+        }
+    }
+
+    /**
+     * Sets up the action shade and its entrance animation, once we get the Quick Share action data.
+     */
+    private void showUiOnQuickShareActionReady(ScreenshotController.QuickShareData quickShareData) {
+        if (DEBUG_UI) {
+            Log.d(TAG, "Showing UI for Quick Share action");
+        }
+        if (quickShareData.quickShareAction != null) {
+            mScreenshotHandler.post(() -> {
+                if (mScreenshotAnimation != null && mScreenshotAnimation.isRunning()) {
+                    mScreenshotAnimation.addListener(new AnimatorListenerAdapter() {
+                        @Override
+                        public void onAnimationEnd(Animator animation) {
+                            super.onAnimationEnd(animation);
+                            mScreenshotView.addQuickShareChip(quickShareData.quickShareAction);
+                        }
+                    });
+                } else {
+                    mScreenshotView.addQuickShareChip(quickShareData.quickShareAction);
                 }
             });
         }

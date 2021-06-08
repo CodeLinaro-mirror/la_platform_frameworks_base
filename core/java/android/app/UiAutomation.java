@@ -43,12 +43,17 @@ import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.UserHandle;
+import android.util.ArraySet;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.Display;
 import android.view.InputEvent;
 import android.view.KeyEvent;
 import android.view.Surface;
+import android.view.SurfaceControl;
+import android.view.View;
+import android.view.ViewRootImpl;
+import android.view.Window;
 import android.view.WindowAnimationFrameStats;
 import android.view.WindowContentFrameStats;
 import android.view.accessibility.AccessibilityEvent;
@@ -66,7 +71,9 @@ import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -159,6 +166,16 @@ public final class UiAutomation {
      * {@link Instrumentation#getUiAutomation(int)}.
      */
     public static final int FLAG_DONT_USE_ACCESSIBILITY = 0x00000002;
+
+    /**
+     * Returned by {@link #getAdoptedShellPermissions} to indicate that all permissions have been
+     * adopted using {@link #adoptShellPermissionIdentity}.
+     *
+     * @hide
+     */
+    @TestApi
+    @NonNull
+    public static final Set<String> ALL_PERMISSIONS = Set.of("_ALL_PERMISSIONS_");
 
     private final Object mLock = new Object();
 
@@ -495,6 +512,25 @@ public final class UiAutomation {
             mUiAutomationConnection.dropShellPermissionIdentity();
         } catch (RemoteException re) {
             Log.e(LOG_TAG, "Error executing dropping shell permission identity!", re);
+        }
+    }
+
+    /**
+     * Returns a list of adopted shell permissions using {@link #adoptShellPermissionIdentity},
+     * returns and empty set if no permissions are adopted and {@link #ALL_PERMISSIONS} if all
+     * permissions are adopted.
+     *
+     * @hide
+     */
+    @TestApi
+    @NonNull
+    public Set<String> getAdoptedShellPermissions() {
+        try {
+            final List<String> permissions = mUiAutomationConnection.getAdoptedShellPermissions();
+            return permissions == null ? ALL_PERMISSIONS : new ArraySet<>(permissions);
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error getting adopted shell permissions", re);
+            return Collections.emptySet();
         }
     }
 
@@ -980,7 +1016,7 @@ public final class UiAutomation {
                 return null;
             }
         } catch (RemoteException re) {
-            Log.e(LOG_TAG, "Error while taking screnshot!", re);
+            Log.e(LOG_TAG, "Error while taking screenshot!", re);
             return null;
         }
 
@@ -988,6 +1024,51 @@ public final class UiAutomation {
         screenShot.setHasAlpha(false);
 
         return screenShot;
+    }
+
+    /**
+     * Used to capture a screenshot of a Window. This can return null in the following cases:
+     * 1. Window content hasn't been layed out.
+     * 2. Window doesn't have a valid SurfaceControl
+     * 3. An error occurred in SurfaceFlinger when trying to take the screenshot.
+     *
+     * @param window Window to take a screenshot of
+     *
+     * @return The screenshot bitmap on success, null otherwise.
+     *
+     * @hide
+     */
+    @TestApi
+    @Nullable
+    public Bitmap takeScreenshot(@NonNull Window window) {
+        if (window == null) {
+            return null;
+        }
+
+        View decorView = window.peekDecorView();
+        if (decorView == null) {
+            return null;
+        }
+
+        ViewRootImpl viewRoot = decorView.getViewRootImpl();
+        if (viewRoot == null) {
+            return null;
+        }
+
+        SurfaceControl sc = viewRoot.getSurfaceControl();
+        if (!sc.isValid()) {
+            return null;
+        }
+
+        // Apply a sync transaction to ensure SurfaceFlinger is flushed before capturing a
+        // screenshot.
+        new SurfaceControl.Transaction().apply(true);
+        try {
+            return mUiAutomationConnection.takeSurfaceControlScreenshot(sc);
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while taking screenshot!", re);
+            return null;
+        }
     }
 
     /**

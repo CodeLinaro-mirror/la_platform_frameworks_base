@@ -25,14 +25,18 @@ import android.app.ActivityManager;
 import android.app.Notification;
 import android.app.PendingIntent;
 import android.app.RemoteInput;
-import android.content.ClipData;
-import android.content.ClipDescription;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ShortcutManager;
+import android.content.res.ColorStateList;
+import android.content.res.TypedArray;
+import android.graphics.BlendMode;
+import android.graphics.Color;
+import android.graphics.PorterDuff;
 import android.graphics.Rect;
-import android.graphics.drawable.Drawable;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.ServiceManager;
@@ -40,7 +44,9 @@ import android.os.SystemClock;
 import android.os.UserHandle;
 import android.text.Editable;
 import android.text.SpannedString;
+import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.util.ArraySet;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.Pair;
@@ -61,17 +67,21 @@ import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
+import com.android.internal.graphics.ColorUtils;
 import com.android.internal.logging.MetricsLogger;
+import com.android.internal.logging.UiEvent;
+import com.android.internal.logging.UiEventLogger;
 import com.android.internal.logging.nano.MetricsProto;
 import com.android.internal.statusbar.IStatusBarService;
+import com.android.internal.util.ContrastColorUtil;
 import com.android.systemui.Dependency;
-import com.android.systemui.Interpolators;
 import com.android.systemui.R;
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
 import com.android.systemui.statusbar.RemoteInputController;
@@ -80,6 +90,7 @@ import com.android.systemui.statusbar.notification.collection.NotificationEntry.
 import com.android.systemui.statusbar.notification.row.wrapper.NotificationViewWrapper;
 import com.android.systemui.statusbar.notification.stack.StackStateAnimator;
 import com.android.systemui.statusbar.phone.LightBarController;
+import com.android.wm.shell.animation.Interpolators;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -102,9 +113,12 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
     private final SendButtonTextWatcher mTextWatcher;
     private final TextView.OnEditorActionListener mEditorActionHandler;
     private final NotificationRemoteInputManager mRemoteInputManager;
+    private final UiEventLogger mUiEventLogger;
     private final List<OnFocusChangeListener> mEditTextFocusChangeListeners = new ArrayList<>();
+    private final List<OnSendRemoteInputListener> mOnSendListeners = new ArrayList<>();
     private RemoteEditText mEditText;
     private ImageButton mSendButton;
+    private GradientDrawable mContentBackground;
     private ProgressBar mProgressBar;
     private PendingIntent mPendingIntent;
     private RemoteInput[] mRemoteInputs;
@@ -121,11 +135,40 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
     private int mRevealCx;
     private int mRevealCy;
     private int mRevealR;
+    private ContentInfo mAttachment;
+
+    private boolean mColorized;
+    private int mTint;
 
     private boolean mResetting;
     private NotificationViewWrapper mWrapper;
     private Consumer<Boolean> mOnVisibilityChangedListener;
     private NotificationRemoteInputManager.BouncerChecker mBouncerChecker;
+    private LinearLayout mContentView;
+    private ImageView mDelete;
+    private ImageView mDeleteBg;
+
+    /**
+     * Enum for logged notification remote input UiEvents.
+     */
+    enum NotificationRemoteInputEvent implements UiEventLogger.UiEventEnum {
+        @UiEvent(doc = "Notification remote input view was displayed")
+        NOTIFICATION_REMOTE_INPUT_OPEN(795),
+        @UiEvent(doc = "Notification remote input view was closed")
+        NOTIFICATION_REMOTE_INPUT_CLOSE(796),
+        @UiEvent(doc = "User sent data through the notification remote input view")
+        NOTIFICATION_REMOTE_INPUT_SEND(797),
+        @UiEvent(doc = "Failed attempt to send data through the notification remote input view")
+        NOTIFICATION_REMOTE_INPUT_FAILURE(798);
+
+        private final int mId;
+        NotificationRemoteInputEvent(int id) {
+            mId = id;
+        }
+        @Override public int getId() {
+            return mId;
+        }
+    }
 
     public RemoteInputView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -133,8 +176,76 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
         mEditorActionHandler = new EditorActionHandler();
         mRemoteInputQuickSettingsDisabler = Dependency.get(RemoteInputQuickSettingsDisabler.class);
         mRemoteInputManager = Dependency.get(NotificationRemoteInputManager.class);
+        mUiEventLogger = Dependency.get(UiEventLogger.class);
         mStatusBarManagerService = IStatusBarService.Stub.asInterface(
                 ServiceManager.getService(Context.STATUS_BAR_SERVICE));
+        TypedArray ta = getContext().getTheme().obtainStyledAttributes(new int[]{
+                com.android.internal.R.attr.colorAccent,
+                com.android.internal.R.attr.colorSurface,
+        });
+        mTint = ta.getColor(0, 0);
+        ta.recycle();
+    }
+
+    /**
+     * The remote view needs to adapt to colorized notifications when set
+     * It overrides the background of itself as well as all of its childern
+     * @param backgroundColor colorized notification color
+     */
+    public void setBackgroundTintColor(final int backgroundColor, boolean colorized) {
+        if (colorized == mColorized && backgroundColor == mTint) return;
+        mColorized = colorized;
+        mTint = backgroundColor;
+        final int editBgColor;
+        final int alternateBgColor;
+        final int alternateTextColor;
+        final int accentColor;
+        final int textColor;
+        final int hintTextColor;
+        final int stroke = mContext.getResources().getDimensionPixelSize(
+                R.dimen.remote_input_view_text_stroke);
+        if (colorized) {
+            final boolean dark = !ContrastColorUtil.isColorLight(backgroundColor);
+            final int foregroundColor = dark ? Color.WHITE : Color.BLACK;
+            editBgColor = backgroundColor;
+            accentColor = foregroundColor;
+            alternateBgColor = foregroundColor;
+            alternateTextColor = backgroundColor;
+            textColor = foregroundColor;
+            hintTextColor = ColorUtils.setAlphaComponent(foregroundColor, 0x99);
+        } else {
+            textColor = mContext.getColor(R.color.remote_input_text);
+            hintTextColor = mContext.getColor(R.color.remote_input_hint);
+            try (TypedArray ta = getContext().getTheme().obtainStyledAttributes(new int[]{
+                    com.android.internal.R.attr.colorAccent,
+                    com.android.internal.R.attr.colorSurface,
+                    com.android.internal.R.attr.colorSurfaceVariant,
+                    com.android.internal.R.attr.textColorPrimary
+            })) {
+                accentColor = ta.getColor(0, textColor);
+                editBgColor = ta.getColor(1, backgroundColor);
+                alternateBgColor = ta.getColor(2, textColor);
+                alternateTextColor = ta.getColor(3, backgroundColor);
+            }
+        }
+        mEditText.setAllColors(backgroundColor, editBgColor,
+                accentColor, textColor, hintTextColor);
+        final ColorStateList accentTint = new ColorStateList(new int[][]{
+                new int[]{com.android.internal.R.attr.state_enabled},
+                new int[]{},
+        }, new int[]{
+                accentColor,
+                accentColor & 0x4DFFFFFF // %30 opacity
+        });
+        mContentBackground.setColor(editBgColor);
+        mContentBackground.setStroke(stroke, accentTint);
+        mDelete.setImageTintList(ColorStateList.valueOf(alternateTextColor));
+        mDeleteBg.setImageTintList(ColorStateList.valueOf(alternateBgColor));
+        mSendButton.setImageTintList(accentTint);
+        mProgressBar.setProgressTintList(accentTint);
+        mProgressBar.setIndeterminateTintList(accentTint);
+        mProgressBar.setSecondaryProgressTintList(accentTint);
+        setBackgroundColor(editBgColor);
     }
 
     @Override
@@ -142,11 +253,18 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
         super.onFinishInflate();
 
         mProgressBar = findViewById(R.id.remote_input_progress);
-
         mSendButton = findViewById(R.id.remote_input_send);
         mSendButton.setOnClickListener(this);
-
-        mEditText = (RemoteEditText) getChildAt(0);
+        mContentBackground = (GradientDrawable)
+                mContext.getDrawable(R.drawable.remote_input_view_text_bg).mutate();
+        mDelete = findViewById(R.id.remote_input_delete);
+        mDeleteBg = findViewById(R.id.remote_input_delete_bg);
+        mDeleteBg.setImageTintBlendMode(BlendMode.SRC_IN);
+        mDelete.setImageTintBlendMode(BlendMode.SRC_IN);
+        mDelete.setOnClickListener(v -> setAttachment(null));
+        mContentView = findViewById(R.id.remote_input_content);
+        mContentView.setBackground(mContentBackground);
+        mEditText = findViewById(R.id.remote_input_text);
         mEditText.setInnerFocusable(false);
         mEditText.setWindowInsetsAnimationCallback(
                 new WindowInsetsAnimation.Callback(DISPATCH_MODE_STOP) {
@@ -156,7 +274,6 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
                     @NonNull List<WindowInsetsAnimation> runningAnimations) {
                 return insets;
             }
-
             @Override
             public void onEnd(@NonNull WindowInsetsAnimation animation) {
                 super.onEnd(animation);
@@ -171,7 +288,43 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
         });
     }
 
-    protected Intent prepareRemoteInputFromText() {
+    private void setAttachment(ContentInfo item) {
+        if (mAttachment != null) {
+            // We need to release permissions when sending the attachment to the target
+            // app or if it is deleted by the user. When sending to the target app, we
+            // can safely release permissions as soon as the call to
+            // `mController.grantInlineReplyUriPermission` is made (ie, after the grant
+            // to the target app has been created).
+            mAttachment.releasePermissions();
+        }
+        mAttachment = item;
+        View attachment = findViewById(R.id.remote_input_content_container);
+        ImageView iconView = findViewById(R.id.remote_input_attachment_image);
+        iconView.setImageDrawable(null);
+        if (item == null) {
+            attachment.setVisibility(GONE);
+            return;
+        }
+        iconView.setImageURI(item.getClip().getItemAt(0).getUri());
+        if (iconView.getDrawable() == null) {
+            attachment.setVisibility(GONE);
+        } else {
+            attachment.setVisibility(VISIBLE);
+        }
+    }
+
+    /**
+     * Reply intent
+     * @return returns intent with granted URI permissions that should be used immediately
+     */
+    private Intent prepareRemoteInput() {
+        if (mAttachment == null) return prepareRemoteInputFromText();
+        return prepareRemoteInputFromData(
+                mAttachment.getClip().getDescription().getMimeType(0),
+                mAttachment.getClip().getItemAt(0).getUri());
+    }
+
+    private Intent prepareRemoteInputFromText() {
         Bundle results = new Bundle();
         results.putString(mRemoteInput.getResultKey(), mEditText.getText().toString());
         Intent fillInIntent = new Intent().addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
@@ -191,16 +344,39 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
         return fillInIntent;
     }
 
-    protected Intent prepareRemoteInputFromData(String contentType, Uri data) {
+    private Intent prepareRemoteInputFromData(String contentType, Uri data) {
         HashMap<String, Uri> results = new HashMap<>();
         results.put(contentType, data);
+        // grant for the target app.
         mController.grantInlineReplyUriPermission(mEntry.getSbn(), data);
         Intent fillInIntent = new Intent().addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
         RemoteInput.addDataResultToIntent(mRemoteInput, fillInIntent, results);
 
-        mEntry.remoteInputText = mContext.getString(R.string.remote_input_image_insertion_text);
+        Bundle bundle = new Bundle();
+        bundle.putString(mRemoteInput.getResultKey(), mEditText.getText().toString());
+        RemoteInput.addResultsToIntent(mRemoteInputs, fillInIntent,
+                bundle);
+
+        CharSequence attachmentText = mAttachment.getClip().getDescription().getLabel();
+
+        CharSequence attachmentLabel = TextUtils.isEmpty(attachmentText)
+                ? mContext.getString(R.string.remote_input_image_insertion_text)
+                : attachmentText;
+        // add content description to reply text for context
+        CharSequence fullText = TextUtils.isEmpty(mEditText.getText())
+                ? attachmentLabel
+                : "\"" + attachmentLabel + "\" " + mEditText.getText();
+
+        mEntry.remoteInputText = fullText;
         mEntry.remoteInputMimeType = contentType;
         mEntry.remoteInputUri = data;
+
+        // mirror prepareRemoteInputFromText for text input
+        if (mEntry.editedSuggestionInfo == null) {
+            RemoteInput.setResultsSource(fillInIntent, RemoteInput.SOURCE_FREE_FORM_INPUT);
+        } else if (mAttachment == null) {
+            RemoteInput.setResultsSource(fillInIntent, RemoteInput.SOURCE_CHOICE);
+        }
 
         return fillInIntent;
     }
@@ -208,6 +384,9 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
     private void sendRemoteInput(Intent intent) {
         if (mBouncerChecker != null && mBouncerChecker.showBouncerIfNecessary()) {
             mEditText.hideIme();
+            for (OnSendRemoteInputListener listener : mOnSendListeners) {
+                listener.onSendRequestBounced();
+            }
             return;
         }
 
@@ -221,6 +400,10 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
         mController.remoteInputSent(mEntry);
         mEntry.setHasSentReply();
 
+        for (OnSendRemoteInputListener listener : mOnSendListeners) {
+            listener.onSendRemoteInput();
+        }
+
         // Tell ShortcutManager that this package has been "activated".  ShortcutManager
         // will reset the throttling for this package.
         // Strictly speaking, the intent receiver may be different from the notification publisher,
@@ -232,13 +415,22 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
 
         MetricsLogger.action(mContext, MetricsProto.MetricsEvent.ACTION_REMOTE_INPUT_SEND,
                 mEntry.getSbn().getPackageName());
+        mUiEventLogger.logWithInstanceId(
+                NotificationRemoteInputEvent.NOTIFICATION_REMOTE_INPUT_SEND,
+                mEntry.getSbn().getUid(), mEntry.getSbn().getPackageName(),
+                mEntry.getSbn().getInstanceId());
         try {
             mPendingIntent.send(mContext, 0, intent);
         } catch (PendingIntent.CanceledException e) {
             Log.i(TAG, "Unable to send remote input result", e);
             MetricsLogger.action(mContext, MetricsProto.MetricsEvent.ACTION_REMOTE_INPUT_FAIL,
                     mEntry.getSbn().getPackageName());
+            mUiEventLogger.logWithInstanceId(
+                    NotificationRemoteInputEvent.NOTIFICATION_REMOTE_INPUT_FAILURE,
+                    mEntry.getSbn().getUid(), mEntry.getSbn().getPackageName(),
+                    mEntry.getSbn().getInstanceId());
         }
+        setAttachment(null);
     }
 
     public CharSequence getText() {
@@ -263,7 +455,7 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
     @Override
     public void onClick(View v) {
         if (v == mSendButton) {
-            sendRemoteInput(prepareRemoteInputFromText());
+            sendRemoteInput(prepareRemoteInput());
         }
     }
 
@@ -275,7 +467,7 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
         return true;
     }
 
-    private void onDefocus(boolean animate) {
+    private void onDefocus(boolean animate, boolean logClose) {
         mController.removeRemoteInput(mEntry, mToken);
         mEntry.remoteInputText = mEditText.getText();
 
@@ -290,7 +482,7 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
                 reveal.addListener(new AnimatorListenerAdapter() {
                     @Override
                     public void onAnimationEnd(Animator animation) {
-                        setVisibility(INVISIBLE);
+                        setVisibility(GONE);
                         if (mWrapper != null) {
                             mWrapper.setRemoteInputVisible(false);
                         }
@@ -298,7 +490,7 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
                 });
                 reveal.start();
             } else {
-                setVisibility(INVISIBLE);
+                setVisibility(GONE);
                 if (mWrapper != null) {
                     mWrapper.setRemoteInputVisible(false);
                 }
@@ -307,8 +499,14 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
 
         mRemoteInputQuickSettingsDisabler.setRemoteInputActive(false);
 
-        MetricsLogger.action(mContext, MetricsProto.MetricsEvent.ACTION_REMOTE_INPUT_CLOSE,
-                mEntry.getSbn().getPackageName());
+        if (logClose) {
+            MetricsLogger.action(mContext, MetricsProto.MetricsEvent.ACTION_REMOTE_INPUT_CLOSE,
+                    mEntry.getSbn().getPackageName());
+            mUiEventLogger.logWithInstanceId(
+                    NotificationRemoteInputEvent.NOTIFICATION_REMOTE_INPUT_CLOSE,
+                    mEntry.getSbn().getUid(), mEntry.getSbn().getPackageName(),
+                    mEntry.getSbn().getInstanceId());
+        }
     }
 
     @Override
@@ -386,6 +584,10 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
     public void focus() {
         MetricsLogger.action(mContext, MetricsProto.MetricsEvent.ACTION_REMOTE_INPUT_OPEN,
                 mEntry.getSbn().getPackageName());
+        mUiEventLogger.logWithInstanceId(
+                NotificationRemoteInputEvent.NOTIFICATION_REMOTE_INPUT_OPEN,
+                mEntry.getSbn().getUid(), mEntry.getSbn().getPackageName(),
+                mEntry.getSbn().getInstanceId());
 
         setVisibility(VISIBLE);
         if (mWrapper != null) {
@@ -426,7 +628,7 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
         mProgressBar.setVisibility(INVISIBLE);
         mController.removeSpinning(mEntry.getKey(), mToken);
         updateSendButton();
-        onDefocus(false /* animate */);
+        onDefocus(false /* animate */, false /* logClose */);
 
         mResetting = false;
     }
@@ -604,6 +806,27 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
         }
     }
 
+    /** Registers a listener for send events on this RemoteInputView */
+    public void addOnSendRemoteInputListener(OnSendRemoteInputListener listener) {
+        mOnSendListeners.add(listener);
+    }
+
+    /** Removes a previously-added listener for send events on this RemoteInputView */
+    public void removeOnSendRemoteInputListener(OnSendRemoteInputListener listener) {
+        mOnSendListeners.remove(listener);
+    }
+
+    /** Listener for send events */
+    public interface OnSendRemoteInputListener {
+        /** Invoked when the remote input has been sent successfully. */
+        void onSendRemoteInput();
+        /**
+         * Invoked when the user had requested to send the remote input, but authentication was
+         * required and the bouncer was shown instead.
+         */
+        void onSendRequestBounced();
+    }
+
     /** Handler for button click on send action in IME. */
     private class EditorActionHandler implements TextView.OnEditorActionListener {
 
@@ -618,8 +841,8 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
                     && event.getAction() == KeyEvent.ACTION_DOWN;
 
             if (isSoftImeEvent || isKeyboardEnterKey) {
-                if (mEditText.length() > 0) {
-                    sendRemoteInput(prepareRemoteInputFromText());
+                if (mEditText.length() > 0 || mAttachment != null) {
+                    sendRemoteInput(prepareRemoteInput());
                 }
                 // Consume action to prevent IME from closing.
                 return true;
@@ -651,17 +874,19 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
 
         private final OnReceiveContentListener mOnReceiveContentListener = this::onReceiveContent;
 
-        private final Drawable mBackground;
         private RemoteInputView mRemoteInputView;
+        private ColorDrawable mBackground;
         boolean mShowImeOnInputConnection;
         private LightBarController mLightBarController;
         private InputMethodManager mInputMethodManager;
+        private ArraySet<String> mSupportedMimes = new ArraySet<>();
         UserHandle mUser;
 
         public RemoteEditText(Context context, AttributeSet attrs) {
             super(context, attrs);
-            mBackground = getBackground();
             mLightBarController = Dependency.get(LightBarController.class);
+
+            mBackground = new ColorDrawable();
         }
 
         void setSupportedMimeTypes(@Nullable Collection<String> mimeTypes) {
@@ -672,6 +897,8 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
                 listener = mOnReceiveContentListener;
             }
             setOnReceiveContentListener(types, listener);
+            mSupportedMimes.clear();
+            mSupportedMimes.addAll(mimeTypes);
         }
 
         private void hideIme() {
@@ -695,7 +922,7 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
             if (isFocusable() && isEnabled()) {
                 setInnerFocusable(false);
                 if (mRemoteInputView != null) {
-                    mRemoteInputView.onDefocus(animate);
+                    mRemoteInputView.onDefocus(animate, true /* logClose */);
                 }
                 mShowImeOnInputConnection = false;
             }
@@ -830,21 +1057,18 @@ public class RemoteInputView extends LinearLayout implements View.OnClickListene
             ContentInfo uriItems = split.first;
             ContentInfo remainingItems = split.second;
             if (uriItems != null) {
-                ClipData clip = uriItems.getClip();
-                ClipDescription description = clip.getDescription();
-                if (clip.getItemCount() > 1
-                        || description.getMimeTypeCount() < 1
-                        || remainingItems != null) {
-                    // TODO(b/172363500): Update to loop over all the items
-                    return payload;
-                }
-                Uri contentUri = clip.getItemAt(0).getUri();
-                String mimeType = description.getMimeType(0);
-                Intent dataIntent =
-                        mRemoteInputView.prepareRemoteInputFromData(mimeType, contentUri);
-                mRemoteInputView.sendRemoteInput(dataIntent);
+                mRemoteInputView.setAttachment(uriItems);
             }
             return remainingItems;
+        }
+
+        protected void setAllColors(int backgroundColor, int editBackgroundColor,
+                int accentColor, int textColor, int hintTextColor) {
+            setBackgroundColor(editBackgroundColor);
+            mBackground.setColor(editBackgroundColor);
+            setTextColor(textColor);
+            setHintTextColor(hintTextColor);
+            getTextCursorDrawable().setColorFilter(accentColor, PorterDuff.Mode.SRC_IN);
         }
     }
 }

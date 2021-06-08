@@ -16,6 +16,7 @@
 
 package android.app.appsearch;
 
+import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.annotation.SuppressLint;
 import android.util.ArrayMap;
@@ -27,6 +28,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -63,46 +65,48 @@ import java.util.Set;
  * android.app.appsearch.exceptions.AppSearchException}, with a message describing the
  * incompatibility. As a result, the previously set schema will remain unchanged.
  *
- * <p>Backward incompatible changes can be made by setting {@link
- * SetSchemaRequest.Builder#setForceOverride} method to {@code true}. This deletes all documents
- * that are incompatible with the new schema. The new schema is then saved and persisted to disk.
+ * <p>Backward incompatible changes can be made by :
+ *
+ * <ul>
+ *   <li>setting {@link SetSchemaRequest.Builder#setForceOverride} method to {@code true}. This
+ *       deletes all documents that are incompatible with the new schema. The new schema is then
+ *       saved and persisted to disk.
+ *   <li>Add a {@link Migrator} for each incompatible type and make no deletion. The migrator will
+ *       migrate documents from it's old schema version to the new version. Migrated types will be
+ *       set into both {@link SetSchemaResponse#getIncompatibleTypes()} and {@link
+ *       SetSchemaResponse#getMigratedTypes()}. See the migration section below.
+ * </ul>
  *
  * @see AppSearchSession#setSchema
+ * @see Migrator
  */
 public final class SetSchemaRequest {
     private final Set<AppSearchSchema> mSchemas;
     private final Set<String> mSchemasNotDisplayedBySystem;
     private final Map<String, Set<PackageIdentifier>> mSchemasVisibleToPackages;
-    private final Map<String, AppSearchSchema.Migrator> mMigrators;
+    private final Map<String, Migrator> mMigrators;
     private final boolean mForceOverride;
+    private final int mVersion;
 
     SetSchemaRequest(
             @NonNull Set<AppSearchSchema> schemas,
             @NonNull Set<String> schemasNotDisplayedBySystem,
             @NonNull Map<String, Set<PackageIdentifier>> schemasVisibleToPackages,
-            @NonNull Map<String, AppSearchSchema.Migrator> migrators,
-            boolean forceOverride) {
-        mSchemas = Preconditions.checkNotNull(schemas);
-        mSchemasNotDisplayedBySystem = Preconditions.checkNotNull(schemasNotDisplayedBySystem);
-        mSchemasVisibleToPackages = Preconditions.checkNotNull(schemasVisibleToPackages);
-        mMigrators = Preconditions.checkNotNull(migrators);
+            @NonNull Map<String, Migrator> migrators,
+            boolean forceOverride,
+            int version) {
+        mSchemas = Objects.requireNonNull(schemas);
+        mSchemasNotDisplayedBySystem = Objects.requireNonNull(schemasNotDisplayedBySystem);
+        mSchemasVisibleToPackages = Objects.requireNonNull(schemasVisibleToPackages);
+        mMigrators = Objects.requireNonNull(migrators);
         mForceOverride = forceOverride;
+        mVersion = version;
     }
 
     /** Returns the {@link AppSearchSchema} types that are part of this request. */
     @NonNull
     public Set<AppSearchSchema> getSchemas() {
         return Collections.unmodifiableSet(mSchemas);
-    }
-
-    /**
-     * TODO(b/181887768): This method exists only for dogfooder transition and must be removed.
-     * @deprecated This method exists only for dogfooder transition and must be removed.
-     */
-    @Deprecated
-    @NonNull
-    public Set<String> getSchemasNotVisibleToSystemUi() {
-        return getSchemasNotDisplayedBySystem();
     }
 
     /**
@@ -129,9 +133,12 @@ public final class SetSchemaRequest {
         return copy;
     }
 
-    /** Returns the map of {@link android.app.appsearch.AppSearchSchema.Migrator}. */
+    /**
+     * Returns the map of {@link Migrator}, the key will be the schema type of the {@link Migrator}
+     * associated with.
+     */
     @NonNull
-    public Map<String, AppSearchSchema.Migrator> getMigrators() {
+    public Map<String, Migrator> getMigrators() {
         return Collections.unmodifiableMap(mMigrators);
     }
 
@@ -154,6 +161,12 @@ public final class SetSchemaRequest {
         return mForceOverride;
     }
 
+    /** Returns the database overall schema version. */
+    @IntRange(from = 1)
+    public int getVersion() {
+        return mVersion;
+    }
+
     /**
      * Builder for {@link SetSchemaRequest} objects.
      *
@@ -164,8 +177,9 @@ public final class SetSchemaRequest {
         private final Set<String> mSchemasNotDisplayedBySystem = new ArraySet<>();
         private final Map<String, Set<PackageIdentifier>> mSchemasVisibleToPackages =
                 new ArrayMap<>();
-        private final Map<String, AppSearchSchema.Migrator> mMigrators = new ArrayMap<>();
+        private final Map<String, Migrator> mMigrators = new ArrayMap<>();
         private boolean mForceOverride = false;
+        private int mVersion = 1;
         private boolean mBuilt = false;
 
         /**
@@ -179,7 +193,7 @@ public final class SetSchemaRequest {
          */
         @NonNull
         public Builder addSchemas(@NonNull AppSearchSchema... schemas) {
-            Preconditions.checkNotNull(schemas);
+            Objects.requireNonNull(schemas);
             return addSchemas(Arrays.asList(schemas));
         }
 
@@ -193,20 +207,9 @@ public final class SetSchemaRequest {
         @NonNull
         public Builder addSchemas(@NonNull Collection<AppSearchSchema> schemas) {
             Preconditions.checkState(!mBuilt, "Builder has already been used");
-            Preconditions.checkNotNull(schemas);
+            Objects.requireNonNull(schemas);
             mSchemas.addAll(schemas);
             return this;
-        }
-
-        /**
-         * TODO(b/181887768): This method exists only for dogfooder transition and must be removed.
-         * @deprecated This method exists only for dogfooder transition and must be removed.
-         */
-        @Deprecated
-        @NonNull
-        public Builder setSchemaTypeVisibilityForSystemUi(
-                @NonNull String schemaType, boolean displayed) {
-            return setSchemaTypeDisplayedBySystem(schemaType, displayed);
         }
 
         /**
@@ -229,7 +232,7 @@ public final class SetSchemaRequest {
         @NonNull
         public Builder setSchemaTypeDisplayedBySystem(
                 @NonNull String schemaType, boolean displayed) {
-            Preconditions.checkNotNull(schemaType);
+            Objects.requireNonNull(schemaType);
             Preconditions.checkState(!mBuilt, "Builder has already been used");
 
             if (displayed) {
@@ -268,8 +271,8 @@ public final class SetSchemaRequest {
                 @NonNull String schemaType,
                 boolean visible,
                 @NonNull PackageIdentifier packageIdentifier) {
-            Preconditions.checkNotNull(schemaType);
-            Preconditions.checkNotNull(packageIdentifier);
+            Objects.requireNonNull(schemaType);
+            Objects.requireNonNull(packageIdentifier);
             Preconditions.checkState(!mBuilt, "Builder has already been used");
 
             Set<PackageIdentifier> packageIdentifiers = mSchemasVisibleToPackages.get(schemaType);
@@ -295,19 +298,61 @@ public final class SetSchemaRequest {
         }
 
         /**
-         * Sets the {@link android.app.appsearch.AppSearchSchema.Migrator}.
+         * Sets the {@link Migrator} associated with the given SchemaType.
+         *
+         * <p>The {@link Migrator} migrates all {@link GenericDocument}s under given schema type
+         * from the current version number stored in AppSearch to the final version set via {@link
+         * #setVersion}.
+         *
+         * <p>A {@link Migrator} will be invoked if the current version number stored in AppSearch
+         * is different from the final version set via {@link #setVersion} and {@link
+         * Migrator#shouldMigrate} returns {@code true}.
+         *
+         * <p>The target schema type of the output {@link GenericDocument} of {@link
+         * Migrator#onUpgrade} or {@link Migrator#onDowngrade} must exist in this {@link
+         * SetSchemaRequest}.
          *
          * @param schemaType The schema type to set migrator on.
-         * @param migrator The migrator translate a document from it's old version to a new
-         *     incompatible version.
+         * @param migrator The migrator translates a document from its current version to the final
+         *     version set via {@link #setVersion}.
+         * @see SetSchemaRequest.Builder#setVersion
+         * @see SetSchemaRequest.Builder#addSchemas
+         * @see AppSearchSession#setSchema
          */
         @NonNull
         @SuppressLint("MissingGetterMatchingBuilder") // Getter return plural objects.
-        public Builder setMigrator(
-                @NonNull String schemaType, @NonNull AppSearchSchema.Migrator migrator) {
-            Preconditions.checkNotNull(schemaType);
-            Preconditions.checkNotNull(migrator);
+        public Builder setMigrator(@NonNull String schemaType, @NonNull Migrator migrator) {
+            Objects.requireNonNull(schemaType);
+            Objects.requireNonNull(migrator);
             mMigrators.put(schemaType, migrator);
+            return this;
+        }
+
+        /**
+         * Sets a Map of {@link Migrator}s.
+         *
+         * <p>The {@link Migrator} migrates all {@link GenericDocument}s under given schema type
+         * from the current version number stored in AppSearch to the final version set via {@link
+         * #setVersion}.
+         *
+         * <p>A {@link Migrator} will be invoked if the current version number stored in AppSearch
+         * is different from the final version set via {@link #setVersion} and {@link
+         * Migrator#shouldMigrate} returns {@code true}.
+         *
+         * <p>The target schema type of the output {@link GenericDocument} of {@link
+         * Migrator#onUpgrade} or {@link Migrator#onDowngrade} must exist in this {@link
+         * SetSchemaRequest}.
+         *
+         * @param migrators A {@link Map} of migrators that translate a document from it's current
+         *     version to the final version set via {@link #setVersion}.
+         * @see SetSchemaRequest.Builder#setVersion
+         * @see SetSchemaRequest.Builder#addSchemas
+         * @see AppSearchSession#setSchema
+         */
+        @NonNull
+        public Builder setMigrators(@NonNull Map<String, Migrator> migrators) {
+            Objects.requireNonNull(migrators);
+            mMigrators.putAll(migrators);
             return this;
         }
 
@@ -329,6 +374,37 @@ public final class SetSchemaRequest {
         }
 
         /**
+         * Sets the version number of the overall {@link AppSearchSchema} in the database.
+         *
+         * <p>The {@link AppSearchSession} database can only ever hold documents for one version at
+         * a time.
+         *
+         * <p>Setting a version number that is different from the version number currently stored in
+         * AppSearch will result in AppSearch calling the {@link Migrator}s provided to {@link
+         * AppSearchSession#setSchema} to migrate the documents already in AppSearch from the
+         * previous version to the one set in this request. The version number can be updated
+         * without any other changes to the set of schemas.
+         *
+         * <p>The version number can stay the same, increase, or decrease relative to the current
+         * version number that is already stored in the {@link AppSearchSession} database.
+         *
+         * @param version A positive integer representing the version of the entire set of schemas
+         *     represents the version of the whole schema in the {@link AppSearchSession} database,
+         *     default version is 1.
+         * @throws IllegalStateException if the version is negative or the builder has already been
+         *     used.
+         * @see AppSearchSession#setSchema
+         * @see Migrator
+         * @see SetSchemaRequest.Builder#setMigrator
+         */
+        @NonNull
+        public Builder setVersion(@IntRange(from = 1) int version) {
+            Preconditions.checkArgument(version >= 1, "Version must be a positive number.");
+            mVersion = version;
+            return this;
+        }
+
+        /**
          * Builds a new {@link SetSchemaRequest} object.
          *
          * @throws IllegalArgumentException if schema types were referenced, but the corresponding
@@ -338,7 +414,6 @@ public final class SetSchemaRequest {
         @NonNull
         public SetSchemaRequest build() {
             Preconditions.checkState(!mBuilt, "Builder has already been used");
-            mBuilt = true;
 
             // Verify that any schema types with display or visibility settings refer to a real
             // schema.
@@ -356,12 +431,14 @@ public final class SetSchemaRequest {
                         "Schema types " + referencedSchemas + " referenced, but were not added.");
             }
 
+            mBuilt = true;
             return new SetSchemaRequest(
                     mSchemas,
                     mSchemasNotDisplayedBySystem,
                     mSchemasVisibleToPackages,
                     mMigrators,
-                    mForceOverride);
+                    mForceOverride,
+                    mVersion);
         }
     }
 }

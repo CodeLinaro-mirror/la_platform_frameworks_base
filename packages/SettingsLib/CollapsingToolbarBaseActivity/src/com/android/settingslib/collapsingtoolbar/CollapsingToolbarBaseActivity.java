@@ -24,35 +24,29 @@ import android.view.ViewGroup;
 import android.widget.Toolbar;
 
 import androidx.annotation.Nullable;
-import androidx.core.os.BuildCompat;
-import androidx.fragment.app.FragmentActivity;
 
 import com.google.android.material.appbar.CollapsingToolbarLayout;
+import com.google.android.material.resources.TextAppearanceConfig;
 
 /**
  * A base Activity that has a collapsing toolbar layout is used for the activities intending to
  * enable the collapsing toolbar function.
  */
-public class CollapsingToolbarBaseActivity extends FragmentActivity {
+public class CollapsingToolbarBaseActivity extends SettingsTransitionActivity {
 
     private CollapsingToolbarLayout mCollapsingToolbarLayout;
+    private Toolbar mToolbar;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Force loading font synchronously for collapsing toolbar layout
+        TextAppearanceConfig.setShouldLoadFontSynchronously(true);
+        super.setContentView(R.layout.collapsing_toolbar_base_layout);
+        mCollapsingToolbarLayout = findViewById(R.id.collapsing_toolbar);
 
-        // TODO(b/181723278): Update the version check after SDK for S is finalized
-        // The collapsing toolbar is only supported if the android platform version is S or higher.
-        // Otherwise the regular action bar will be shown.
-        if (BuildCompat.isAtLeastS()) {
-            super.setContentView(R.layout.collapsing_toolbar_base_layout);
-            mCollapsingToolbarLayout = findViewById(R.id.collapsing_toolbar);
-        } else {
-            super.setContentView(R.layout.toolbar_base_layout);
-        }
-
-        final Toolbar toolbar = findViewById(R.id.action_bar);
-        setActionBar(toolbar);
+        mToolbar = findViewById(R.id.action_bar);
+        setActionBar(mToolbar);
 
         // Enable title and home button by default
         final ActionBar actionBar = getActionBar();
@@ -86,16 +80,18 @@ public class CollapsingToolbarBaseActivity extends FragmentActivity {
     public void setTitle(CharSequence title) {
         if (mCollapsingToolbarLayout != null) {
             mCollapsingToolbarLayout.setTitle(title);
+        } else {
+            super.setTitle(title);
         }
-        super.setTitle(title);
     }
 
     @Override
     public void setTitle(int titleId) {
         if (mCollapsingToolbarLayout != null) {
             mCollapsingToolbarLayout.setTitle(getText(titleId));
+        } else {
+            super.setTitle(titleId);
         }
-        super.setTitle(titleId);
     }
 
     @Override
@@ -104,6 +100,11 @@ public class CollapsingToolbarBaseActivity extends FragmentActivity {
             finish();
         }
         return true;
+    }
+
+    @Override
+    public Toolbar getToolbar() {
+        return mToolbar;
     }
 
     /**

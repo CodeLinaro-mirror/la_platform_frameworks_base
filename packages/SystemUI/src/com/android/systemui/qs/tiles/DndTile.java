@@ -45,6 +45,8 @@ import android.view.WindowManager;
 import android.widget.Switch;
 import android.widget.Toast;
 
+import androidx.annotation.Nullable;
+
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.settingslib.notification.EnableZenModeDialog;
@@ -54,6 +56,7 @@ import com.android.systemui.SysUIToast;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.ActivityStarter;
+import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.qs.DetailAdapter;
 import com.android.systemui.plugins.qs.QSTile.BooleanState;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
@@ -87,6 +90,7 @@ public class DndTile extends QSTileImpl<BooleanState> {
             QSHost host,
             @Background Looper backgroundLooper,
             @Main Handler mainHandler,
+            FalsingManager falsingManager,
             MetricsLogger metricsLogger,
             StatusBarStateController statusBarStateController,
             ActivityStarter activityStarter,
@@ -94,8 +98,8 @@ public class DndTile extends QSTileImpl<BooleanState> {
             ZenModeController zenModeController,
             @Main SharedPreferences sharedPreferences
     ) {
-        super(host, backgroundLooper, mainHandler, metricsLogger, statusBarStateController,
-                activityStarter, qsLogger);
+        super(host, backgroundLooper, mainHandler, falsingManager, metricsLogger,
+                statusBarStateController, activityStarter, qsLogger);
         mController = zenModeController;
         mSharedPreferences = sharedPreferences;
         mDetailAdapter = new DndDetailAdapter();
@@ -135,7 +139,7 @@ public class DndTile extends QSTileImpl<BooleanState> {
     }
 
     @Override
-    protected void handleClick() {
+    protected void handleClick(@Nullable View view) {
         // Zen is currently on
         if (mState.value) {
             mController.setZen(ZEN_MODE_OFF, null, TAG);
@@ -189,7 +193,7 @@ public class DndTile extends QSTileImpl<BooleanState> {
     }
 
     @Override
-    protected void handleSecondaryClick() {
+    protected void handleSecondaryClick(@Nullable View view) {
         if (mController.isVolumeRestricted()) {
             // Collapse the panels, so the user can see the toast.
             mHost.collapsePanels();

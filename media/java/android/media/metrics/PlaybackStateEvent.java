@@ -132,33 +132,44 @@ public final class PlaybackStateEvent extends Event implements Parcelable {
 
     /**
      * Creates a new PlaybackStateEvent.
-     *
-     * @hide
      */
-    public PlaybackStateEvent(
+    private PlaybackStateEvent(
             int state,
             long timeSinceCreatedMillis,
-            Bundle extras) {
+            @NonNull Bundle extras) {
         this.mTimeSinceCreatedMillis = timeSinceCreatedMillis;
         this.mState = state;
-        this.mExtras = extras.deepCopy();
+        this.mMetricsBundle = extras.deepCopy();
     }
 
     /**
      * Gets playback state.
      */
+    @State
     public int getState() {
         return mState;
     }
 
     /**
-     * Gets time since the corresponding playback is created in millisecond.
+     * Gets time since the corresponding playback session is created in millisecond.
      * @return the timestamp since the playback is created, or -1 if unknown.
+     * @see LogSessionId
+     * @see PlaybackSession
      */
     @Override
     @IntRange(from = -1)
     public long getTimeSinceCreatedMillis() {
         return mTimeSinceCreatedMillis;
+    }
+
+    /**
+     * Gets metrics-related information that is not supported by dedicated methods.
+     * <p>It is intended to be used for backwards compatibility by the metrics infrastructure.
+     */
+    @Override
+    @NonNull
+    public Bundle getMetricsBundle() {
+        return mMetricsBundle;
     }
 
     @Override
@@ -177,12 +188,9 @@ public final class PlaybackStateEvent extends Event implements Parcelable {
 
     @Override
     public void writeToParcel(@NonNull Parcel dest, int flags) {
-        byte flg = 0;
-        if (mExtras != null) flg |= 0x1;
-        dest.writeByte(flg);
         dest.writeInt(mState);
         dest.writeLong(mTimeSinceCreatedMillis);
-        if (mExtras != null) dest.writeBundle(mExtras);
+        dest.writeBundle(mMetricsBundle);
     }
 
     @Override
@@ -190,16 +198,14 @@ public final class PlaybackStateEvent extends Event implements Parcelable {
         return 0;
     }
 
-    /** @hide */
-    /* package-private */ PlaybackStateEvent(@NonNull Parcel in) {
-        byte flg = in.readByte();
+    private PlaybackStateEvent(@NonNull Parcel in) {
         int state = in.readInt();
         long timeSinceCreatedMillis = in.readLong();
-        Bundle extras = (flg & 0x1) == 0 ? null : in.readBundle();
+        Bundle extras = in.readBundle();
 
         this.mState = state;
         this.mTimeSinceCreatedMillis = timeSinceCreatedMillis;
-        this.mExtras = extras;
+        this.mMetricsBundle = extras;
     }
 
     public static final @NonNull Parcelable.Creator<PlaybackStateEvent> CREATOR =
@@ -221,7 +227,7 @@ public final class PlaybackStateEvent extends Event implements Parcelable {
     public static final class Builder {
         private int mState = STATE_NOT_STARTED;
         private long mTimeSinceCreatedMillis = -1;
-        private Bundle mExtras;
+        private Bundle mMetricsBundle = new Bundle();
 
         /**
          * Creates a new Builder.
@@ -241,6 +247,7 @@ public final class PlaybackStateEvent extends Event implements Parcelable {
          * Sets timestamp since the creation in milliseconds.
          * @param value the timestamp since the creation in milliseconds.
          *              -1 indicates the value is unknown.
+         * @see #getTimeSinceCreatedMillis()
          */
         public @NonNull Builder setTimeSinceCreatedMillis(@IntRange(from = -1) long value) {
             mTimeSinceCreatedMillis = value;
@@ -248,12 +255,13 @@ public final class PlaybackStateEvent extends Event implements Parcelable {
         }
 
         /**
-         * Set extras for compatibility.
-         * <p>Should be used by support library only.
-         * @hide
+         * Sets metrics-related information that is not supported by dedicated
+         * methods.
+         * <p>It is intended to be used for backwards compatibility by the
+         * metrics infrastructure.
          */
-        public @NonNull Builder setExtras(@NonNull Bundle extras) {
-            mExtras = extras;
+        public @NonNull Builder setMetricsBundle(@NonNull Bundle metricsBundle) {
+            mMetricsBundle = metricsBundle;
             return this;
         }
 
@@ -262,7 +270,7 @@ public final class PlaybackStateEvent extends Event implements Parcelable {
             PlaybackStateEvent o = new PlaybackStateEvent(
                     mState,
                     mTimeSinceCreatedMillis,
-                    mExtras);
+                    mMetricsBundle);
             return o;
         }
     }

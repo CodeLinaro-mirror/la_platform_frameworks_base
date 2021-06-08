@@ -26,6 +26,14 @@ import com.android.wm.shell.onehanded.OneHandedGestureHandler.OneHandedGestureEv
  */
 @ExternalThread
 public interface OneHanded {
+
+    /**
+     * Returns a binder that can be passed to an external process to manipulate OneHanded.
+     */
+    default IOneHanded createExternalInterface() {
+        return null;
+    }
+
     /**
      * Return one handed settings enabled or not.
      */
@@ -81,4 +89,9 @@ public interface OneHanded {
      * Receive onConfigurationChanged() events
      */
     void onConfigChanged(Configuration newConfig);
+
+    /**
+     * Notifies when user switch complete
+     */
+    void onUserSwitch(int userId);
 }

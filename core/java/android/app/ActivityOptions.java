@@ -323,6 +323,9 @@ public class ActivityOptions {
     /** See {@link #setRemoveWithTaskOrganizer(boolean)}. */
     private static final String KEY_REMOVE_WITH_TASK_ORGANIZER =
             "android.activity.removeWithTaskOrganizer";
+    /** See {@link #setLaunchedFromBubble(boolean)}. */
+    private static final String KEY_LAUNCHED_FROM_BUBBLE =
+            "android.activity.launchTypeBubble";
 
     /**
      * @see #setLaunchCookie
@@ -410,6 +413,7 @@ public class ActivityOptions {
     private boolean mOverrideTaskTransition;
     private int mSplashScreenThemeResId;
     private boolean mRemoveWithTaskOrganizer;
+    private boolean mLaunchedFromBubble;
 
     /**
      * Create an ActivityOptions specifying a custom animation to run when
@@ -1161,6 +1165,7 @@ public class ActivityOptions {
         mOverrideTaskTransition = opts.getBoolean(KEY_OVERRIDE_TASK_TRANSITION);
         mSplashScreenThemeResId = opts.getInt(KEY_SPLASH_SCREEN_THEME);
         mRemoveWithTaskOrganizer = opts.getBoolean(KEY_REMOVE_WITH_TASK_ORGANIZER);
+        mLaunchedFromBubble = opts.getBoolean(KEY_LAUNCHED_FROM_BUBBLE);
     }
 
     /**
@@ -1442,13 +1447,7 @@ public class ActivityOptions {
     }
 
     /**
-     * Sets the windowing mode the activity should launch into. If the input windowing mode is
-     * {@link android.app.WindowConfiguration#WINDOWING_MODE_SPLIT_SCREEN_SECONDARY} and the device
-     * isn't currently in split-screen windowing mode, then the activity will be launched in
-     * {@link android.app.WindowConfiguration#WINDOWING_MODE_FULLSCREEN} windowing mode. For clarity
-     * on this you can use
-     * {@link android.app.WindowConfiguration#WINDOWING_MODE_FULLSCREEN_OR_SPLIT_SCREEN_SECONDARY}
-     *
+     * Sets the windowing mode the activity should launch into.
      * @hide
      */
     @TestApi
@@ -1606,7 +1605,8 @@ public class ActivityOptions {
 
     /**
      * Sets a launch cookie that can be used to track the activity and task that are launch as a
-     * result of this option.
+     * result of this option. If the launched activity is a trampoline that starts another activity
+     * immediately, the cookie will be transferred to the next activity.
      *
      * @hide
      */
@@ -1643,6 +1643,23 @@ public class ActivityOptions {
      */
     public boolean getRemoveWithTaskOranizer() {
         return mRemoveWithTaskOrganizer;
+    }
+
+    /**
+     * Sets whether this activity is launched from a bubble.
+     * @hide
+     */
+    @TestApi
+    public void setLaunchedFromBubble(boolean fromBubble) {
+        mLaunchedFromBubble = fromBubble;
+    }
+
+    /**
+     * @return whether the activity was launched from a bubble.
+     * @hide
+     */
+    public boolean getLaunchedFromBubble() {
+        return mLaunchedFromBubble;
     }
 
     /**
@@ -1881,6 +1898,9 @@ public class ActivityOptions {
         }
         if (mRemoveWithTaskOrganizer) {
             b.putBoolean(KEY_REMOVE_WITH_TASK_ORGANIZER, mRemoveWithTaskOrganizer);
+        }
+        if (mLaunchedFromBubble) {
+            b.putBoolean(KEY_LAUNCHED_FROM_BUBBLE, mLaunchedFromBubble);
         }
         return b;
     }

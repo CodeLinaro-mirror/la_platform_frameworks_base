@@ -241,6 +241,10 @@ public final class MultiClientInputMethodManagerService {
                         public void removeImeSurface() {
                             reportNotSupported();
                         }
+
+                        @Override
+                        public void updateImeWindowStatus() {
+                        }
                     });
         }
 
@@ -1510,17 +1514,15 @@ public final class MultiClientInputMethodManagerService {
 
         @BinderThread
         @Override
-        public void removeImeSurfaceFromWindow(IBinder windowToken,
-                IVoidResultCallback resultCallback) {
+        public void removeImeSurfaceFromWindowAsync(IBinder windowToken) {
             reportNotSupported();
-            CallbackUtils.onResult(resultCallback, () -> { });
         }
 
         @BinderThread
         @Override
         public void showSoftInput(
-                IInputMethodClient client, IBinder token, int flags,
-                ResultReceiver resultReceiver, IBooleanResultCallback resultCallback) {
+                IInputMethodClient client, IBinder token, int flags, ResultReceiver resultReceiver,
+                @SoftInputShowHideReason int reason, IBooleanResultCallback resultCallback) {
             CallbackUtils.onResult(resultCallback,
                     () -> showSoftInputInternal(client, token, flags, resultReceiver));
         }
@@ -1575,7 +1577,8 @@ public final class MultiClientInputMethodManagerService {
         @Override
         public void hideSoftInput(
                 IInputMethodClient client, IBinder windowToken, int flags,
-                ResultReceiver resultReceiver, IBooleanResultCallback resultCallback) {
+                ResultReceiver resultReceiver, @SoftInputShowHideReason int reason,
+                IBooleanResultCallback resultCallback) {
             CallbackUtils.onResult(resultCallback,
                     () -> hideSoftInputInternal(client, windowToken, flags, resultReceiver));
 
@@ -1625,6 +1628,33 @@ public final class MultiClientInputMethodManagerService {
 
         @BinderThread
         @Override
+        public void reportWindowGainedFocusAsync(
+                boolean nextFocusHasConnection,
+                @Nullable IInputMethodClient client,
+                @Nullable IBinder windowToken,
+                @StartInputFlags int startInputFlags,
+                @SoftInputModeFlags int softInputMode,
+                int windowFlags,
+                int unverifiedTargetSdkVersion) {
+            final int startInputReason = nextFocusHasConnection
+                    ? StartInputReason.WINDOW_FOCUS_GAIN_REPORT_WITH_CONNECTION
+                    : StartInputReason.WINDOW_FOCUS_GAIN_REPORT_WITHOUT_CONNECTION;
+            try {
+                startInputOrWindowGainedFocusInternal(startInputReason, client, windowToken,
+                        startInputFlags, softInputMode, windowFlags, null /* editorInfo */,
+                        null /* inputContext */, 0 /* missingMethods */,
+                        unverifiedTargetSdkVersion);
+            } catch (Throwable t) {
+                if (client != null) {
+                    try {
+                        client.throwExceptionFromSystem(t.getMessage());
+                    } catch (RemoteException ignore) { }
+                }
+            }
+        }
+
+        @BinderThread
+        @Override
         public void startInputOrWindowGainedFocus(
                 @StartInputReason int startInputReason,
                 @Nullable IInputMethodClient client,
@@ -1639,8 +1669,8 @@ public final class MultiClientInputMethodManagerService {
                 IInputBindResultResultCallback resultCallback) {
             CallbackUtils.onResult(resultCallback, (Supplier<InputBindResult>) () ->
                     startInputOrWindowGainedFocusInternal(startInputReason, client, windowToken,
-                            startInputFlags, softInputMode, windowFlags, editorInfo, inputContext,
-                            missingMethods, unverifiedTargetSdkVersion));
+                    startInputFlags, softInputMode, windowFlags, editorInfo, inputContext,
+                    missingMethods, unverifiedTargetSdkVersion));
         }
 
         @BinderThread
@@ -1748,7 +1778,7 @@ public final class MultiClientInputMethodManagerService {
                         return new InputBindResult(
                                 InputBindResult.ResultCode.SUCCESS_WAITING_IME_SESSION,
                                 null, null, data.mCurrentInputMethodInfo.getId(),
-                                clientInfo.mBindingSequence, null);
+                                clientInfo.mBindingSequence, null, false);
                     case InputMethodClientState.READY_TO_SEND_FIRST_BIND_RESULT:
                     case InputMethodClientState.ALREADY_SENT_BIND_RESULT:
                         clientInfo.mBindingSequence++;
@@ -1770,7 +1800,7 @@ public final class MultiClientInputMethodManagerService {
                                 clientInfo.mInputMethodSession,
                                 clientInfo.mWriteChannel.dup(),
                                 data.mCurrentInputMethodInfo.getId(),
-                                clientInfo.mBindingSequence, null);
+                                clientInfo.mBindingSequence, null, false);
                     case InputMethodClientState.UNREGISTERED:
                         Slog.e(TAG, "The client is already unregistered.");
                         return InputBindResult.INVALID_CLIENT;
@@ -1834,15 +1864,14 @@ public final class MultiClientInputMethodManagerService {
 
         @BinderThread
         @Override
-        public void reportActivityView(IInputMethodClient parentClient, int childDisplayId,
-                float[] matrixValues, IVoidResultCallback resultCallback) {
+        public void reportActivityViewAsync(IInputMethodClient parentClient, int childDisplayId,
+                float[] matrixValues) {
             reportNotSupported();
-            CallbackUtils.onResult(resultCallback, () -> { });
         }
 
         @BinderThread
         @Override
-        public void reportPerceptible(IBinder windowClient, boolean perceptible) {
+        public void reportPerceptibleAsync(IBinder windowClient, boolean perceptible) {
             reportNotSupported();
         }
 

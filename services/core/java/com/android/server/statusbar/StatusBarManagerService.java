@@ -36,6 +36,7 @@ import android.hardware.biometrics.IBiometricSysuiReceiver;
 import android.hardware.biometrics.PromptInfo;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.DisplayManager.DisplayListener;
+import android.hardware.fingerprint.IUdfpsHbmListener;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Build;
@@ -106,15 +107,15 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
 
     private final Context mContext;
 
-    private Handler mHandler = new Handler();
+    private final Handler mHandler = new Handler();
     private NotificationDelegate mNotificationDelegate;
     private volatile IStatusBar mBar;
-    private ArrayMap<String, StatusBarIcon> mIcons = new ArrayMap<>();
+    private final ArrayMap<String, StatusBarIcon> mIcons = new ArrayMap<>();
 
     // for disabling the status bar
     private final ArrayList<DisableRecord> mDisableRecords = new ArrayList<DisableRecord>();
     private GlobalActionsProvider.GlobalActionsListener mGlobalActionListener;
-    private IBinder mSysUiVisToken = new Binder();
+    private final IBinder mSysUiVisToken = new Binder();
 
     private final Object mLock = new Object();
     private final DeathRecipient mDeathRecipient = new DeathRecipient();
@@ -122,7 +123,9 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     private int mCurrentUserId;
     private boolean mTracingEnabled;
 
-    private SparseArray<UiState> mDisplayUiState = new SparseArray<>();
+    private final SparseArray<UiState> mDisplayUiState = new SparseArray<>();
+    @GuardedBy("mLock")
+    private IUdfpsHbmListener mUdfpsHbmListener;
 
     private class DeathRecipient implements IBinder.DeathRecipient {
         public void binderDied() {
@@ -588,6 +591,27 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 } catch (RemoteException ex) { }
             }
         }
+
+        @Override
+        public void setNavigationBarLumaSamplingEnabled(int displayId, boolean enable) {
+            if (mBar != null) {
+                try {
+                    mBar.setNavigationBarLumaSamplingEnabled(displayId, enable);
+                } catch (RemoteException ex) { }
+            }
+        }
+
+        @Override
+        public void setUdfpsHbmListener(IUdfpsHbmListener listener) {
+            synchronized (mLock) {
+                mUdfpsHbmListener = listener;
+            }
+            if (mBar != null) {
+                try {
+                    mBar.setUdfpsHbmListener(listener);
+                } catch (RemoteException ex) { }
+            }
+        }
     };
 
     private final GlobalActionsProvider mGlobalActionsProvider = new GlobalActionsProvider() {
@@ -819,12 +843,24 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     }
 
     @Override
+    public void setUdfpsHbmListener(IUdfpsHbmListener listener) {
+        enforceStatusBarService();
+        if (mBar != null) {
+            try {
+                mBar.setUdfpsHbmListener(listener);
+            } catch (RemoteException ex) {
+            }
+        }
+    }
+
+    @Override
     public void startTracing() {
         if (mBar != null) {
             try {
                 mBar.startTracing();
                 mTracingEnabled = true;
-            } catch (RemoteException ex) {}
+            } catch (RemoteException ex) {
+            }
         }
     }
 
@@ -1181,6 +1217,14 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         UiThread.getHandler().post(() -> {
             if (mGlobalActionListener == null) return;
             mGlobalActionListener.onGlobalActionsAvailableChanged(mBar != null);
+        });
+        // If StatusBarService dies, system_server doesn't get killed with it, so we need to make
+        // sure the UDFPS listener is refreshed as well. Deferring to the handler just so to avoid
+        // making registerStatusBar re-entrant.
+        mHandler.post(() -> {
+            synchronized (mLock) {
+                setUdfpsHbmListener(mUdfpsHbmListener);
+            }
         });
     }
 

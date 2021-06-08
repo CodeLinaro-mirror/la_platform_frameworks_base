@@ -54,11 +54,8 @@
         <activity android:name="com.android.server.wm.TaskStackChangedListenerTest$ActivityRequestedOrientationChange" />
         <activity android:name="com.android.server.wm.TaskStackChangedListenerTest$ActivityTaskChangeCallbacks" />
         <activity android:name="com.android.server.wm.TaskStackChangedListenerTest$ActivityTaskDescriptionChange" />
-        <activity android:name="com.android.server.wm.TaskStackChangedListenerTest$ActivityViewTestActivity" />
-        <activity android:name="com.android.server.wm.TaskStackChangedListenerTest$ActivityInActivityView"
+        <activity android:name="com.android.server.wm.TaskStackChangedListenerTest$ActivityInVirtualDisplay"
                   android:resizeableActivity="true" />
-        <activity android:name="com.android.server.wm.TaskStackChangedListenerTest$ActivityLaunchesNewActivityInActivityView"
-            android:resizeableActivity="true" />
         <activity android:name="com.android.server.wm.TaskStackChangedListenerTest$LandscapeActivity"
                   android:screenOrientation="sensorLandscape"
                   android:showWhenLocked="true"
@@ -66,6 +63,18 @@
         <activity android:name="com.android.server.wm.TaskStackChangedListenerTest$ResumeWhilePausingActivity"
                   android:resumeWhilePausing="true"/>
         <activity android:name="com.android.server.wm.ActivityLeakTests$DetectLeakActivity" />
+        <!--
+            Simulate the common trampoline task that uses floating/translucent theme to avoid double
+            starting windows and animations of task open.
+        -->
+        <activity android:name="com.android.server.wm.ActivityOptionsTest$TrampolineActivity"
+                  android:taskAffinity="com.android.frameworks.wmtests.trampoline"
+                  android:theme="@android:style/Theme.Translucent.NoTitleBar"
+                  android:turnScreenOn="true"
+                  android:showWhenLocked="true" />
+        <activity android:name="com.android.server.wm.ActivityOptionsTest$MainActivity"
+                  android:turnScreenOn="true"
+                  android:showWhenLocked="true" />
     </application>
 
     <instrumentation

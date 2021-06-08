@@ -816,6 +816,11 @@ private:
     uint32_t                    mSourceResourceId;
 };
 
+static inline bool operator==(const android::ResXMLParser::ResXMLPosition& lhs,
+                              const android::ResXMLParser::ResXMLPosition& rhs) {
+  return lhs.curNode == rhs.curNode;
+}
+
 class DynamicRefTable;
 
 /**
@@ -1379,6 +1384,11 @@ struct ResTable_typeSpec
     enum : uint32_t {
         // Additional flag indicating an entry is public.
         SPEC_PUBLIC = 0x40000000u,
+
+        // Additional flag indicating the resource id for this resource may change in a future
+        // build. If this flag is set, the SPEC_PUBLIC flag is also set since the resource must be
+        // public to be exposed as an API to other applications.
+        SPEC_STAGED_API = 0x20000000u,
     };
 };
 
