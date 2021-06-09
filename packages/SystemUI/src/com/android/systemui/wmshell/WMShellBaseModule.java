@@ -73,6 +73,8 @@ import com.android.wm.shell.splitscreen.SplitScreenController;
 import com.android.wm.shell.startingsurface.StartingSurface;
 import com.android.wm.shell.startingsurface.StartingWindowController;
 import com.android.wm.shell.startingsurface.StartingWindowTypeAlgorithm;
+import com.android.wm.shell.tasksurfacehelper.TaskSurfaceHelper;
+import com.android.wm.shell.tasksurfacehelper.TaskSurfaceHelperController;
 import com.android.wm.shell.transition.ShellTransitions;
 import com.android.wm.shell.transition.Transitions;
 
@@ -253,6 +255,24 @@ public abstract class WMShellBaseModule {
     }
 
     //
+    // Task to Surface communication
+    //
+
+    @WMSingleton
+    @Provides
+    static Optional<TaskSurfaceHelper> provideTaskSurfaceHelper(
+            Optional<TaskSurfaceHelperController> taskSurfaceController) {
+        return taskSurfaceController.map((controller) -> controller.asTaskSurfaceHelper());
+    }
+
+    @WMSingleton
+    @Provides
+    static Optional<TaskSurfaceHelperController> provideTaskSurfaceHelperController(
+            ShellTaskOrganizer taskOrganizer, @ShellMainThread ShellExecutor mainExecutor) {
+        return Optional.ofNullable(new TaskSurfaceHelperController(taskOrganizer, mainExecutor));
+    }
+
+    //
     // Pip (optional feature)
     //
 
@@ -280,8 +300,8 @@ public abstract class WMShellBaseModule {
 
     @WMSingleton
     @Provides
-    static PipSurfaceTransactionHelper providePipSurfaceTransactionHelper(Context context) {
-        return new PipSurfaceTransactionHelper(context);
+    static PipSurfaceTransactionHelper providePipSurfaceTransactionHelper() {
+        return new PipSurfaceTransactionHelper();
     }
 
     @WMSingleton

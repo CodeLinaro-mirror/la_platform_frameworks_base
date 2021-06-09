@@ -30,6 +30,7 @@ import static android.app.AlarmManager.INTERVAL_HOUR;
 import static android.app.AlarmManager.RTC;
 import static android.app.AlarmManager.RTC_WAKEUP;
 import static android.content.pm.PackageManager.MATCH_SYSTEM_ONLY;
+import static android.os.PowerExemptionManager.REASON_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED;
 import static android.os.PowerExemptionManager.TEMPORARY_ALLOW_LIST_TYPE_FOREGROUND_SERVICE_ALLOWED;
 import static android.os.PowerWhitelistManager.REASON_ALARM_MANAGER_WHILE_IDLE;
 import static android.os.PowerWhitelistManager.TEMPORARY_ALLOWLIST_TYPE_FOREGROUND_SERVICE_ALLOWED;
@@ -120,7 +121,6 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.app.IAppOpsCallback;
 import com.android.internal.app.IAppOpsService;
-import com.android.internal.os.BinderDeathDispatcher;
 import com.android.internal.util.DumpUtils;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.LocalLog;
@@ -183,8 +183,7 @@ public class AlarmManagerService extends SystemService {
     static final boolean DEBUG_BG_LIMIT = localLOGV || false;
     static final boolean DEBUG_STANDBY = localLOGV || false;
     static final boolean RECORD_ALARMS_IN_HISTORY = true;
-    // TODO(b/178484639) : Turn off once alarms and reminders work is complete.
-    static final boolean RECORD_DEVICE_IDLE_ALARMS = true;
+    static final boolean RECORD_DEVICE_IDLE_ALARMS = false;
     static final String TIMEZONE_PROPERTY = "persist.sys.timezone";
 
     static final int TICK_HISTORY_DEPTH = 10;
@@ -205,8 +204,6 @@ public class AlarmManagerService extends SystemService {
                     .addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING
                             | Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
 
-    private static final BinderDeathDispatcher<IAlarmListener> sListenerDeathDispatcher =
-            new BinderDeathDispatcher<>();
     final LocalLog mLog = new LocalLog(TAG);
 
     AppOpsManager mAppOps;
@@ -529,8 +526,7 @@ public class AlarmManagerService extends SystemService {
         private static final long DEFAULT_MIN_FUTURITY = 5 * 1000;
         private static final long DEFAULT_MIN_INTERVAL = 60 * 1000;
         private static final long DEFAULT_MAX_INTERVAL = 365 * INTERVAL_DAY;
-        // TODO (b/185199076): Tune based on breakage reports.
-        private static final long DEFAULT_MIN_WINDOW = 30 * 60 * 1000;
+        private static final long DEFAULT_MIN_WINDOW = 10 * 60 * 1000;
         private static final long DEFAULT_ALLOW_WHILE_IDLE_WHITELIST_DURATION = 10 * 1000;
         private static final long DEFAULT_LISTENER_TIMEOUT = 5 * 1000;
         private static final int DEFAULT_MAX_ALARMS_PER_UID = 500;
@@ -1146,6 +1142,18 @@ public class AlarmManagerService extends SystemService {
         return when;
     }
 
+    /**
+     * This is the minimum window that can be requested for the given alarm. Windows smaller than
+     * this value will be elongated to match it.
+     * Current heuristic is similar to {@link #maxTriggerTime(long, long, long)}, the minimum
+     * allowed window is either {@link Constants#MIN_WINDOW} or 75% of the alarm's futurity,
+     * whichever is smaller.
+     */
+    long getMinimumAllowedWindow(long nowElapsed, long triggerElapsed) {
+        final long futurity = triggerElapsed - nowElapsed;
+        return Math.min((long) (futurity * 0.75), mConstants.MIN_WINDOW);
+    }
+
     // Apply a heuristic to { recurrence interval, futurity of the trigger time } to
     // calculate the end of our nominal delivery window for the alarm.
     static long maxTriggerTime(long now, long triggerAtTime, long interval) {
@@ -1704,6 +1712,11 @@ public class AlarmManagerService extends SystemService {
                                 if (!hasScheduleExactAlarmInternal(packageName, uid)) {
                                     mHandler.obtainMessage(AlarmHandler.REMOVE_EXACT_ALARMS,
                                             uid, 0, packageName).sendToTarget();
+                                } else {
+                                    // TODO(b/187206399) Make sure this won't be sent, if the app
+                                    // already had the appop previously.
+                                    sendScheduleExactAlarmPermissionStateChangedBroadcast(
+                                            packageName, UserHandle.getUserId(uid));
                                 }
                             }
                         });
@@ -1820,29 +1833,11 @@ public class AlarmManagerService extends SystemService {
         }
 
         if (directReceiver != null) {
-            if (sListenerDeathDispatcher.linkToDeath(directReceiver, mListenerDeathRecipient)
-                    <= 0) {
+            try {
+                directReceiver.asBinder().linkToDeath(mListenerDeathRecipient, 0);
+            } catch (RemoteException e) {
                 Slog.w(TAG, "Dropping unreachable alarm listener " + listenerTag);
                 return;
-            }
-        }
-
-        // Snap the window to reasonable limits.
-        if (windowLength > INTERVAL_DAY) {
-            Slog.w(TAG, "Window length " + windowLength
-                    + "ms suspiciously long; limiting to 1 day");
-            windowLength = INTERVAL_DAY;
-        } else if (windowLength > 0 && windowLength < mConstants.MIN_WINDOW
-                && (flags & FLAG_PRIORITIZE) == 0) {
-            if (CompatChanges.isChangeEnabled(AlarmManager.ENFORCE_MINIMUM_WINDOW_ON_INEXACT_ALARMS,
-                    callingPackage, UserHandle.getUserHandleForUid(callingUid))) {
-                Slog.w(TAG, "Window length " + windowLength + "ms too short; expanding to "
-                        + mConstants.MIN_WINDOW + "ms.");
-                windowLength = mConstants.MIN_WINDOW;
-            } else {
-                // TODO (b/185199076): Remove log once we have some data about what apps will break
-                Slog.wtf(TAG, "Short window " + windowLength + "ms specified by "
-                        + callingPackage);
             }
         }
 
@@ -1877,7 +1872,7 @@ public class AlarmManagerService extends SystemService {
         // Try to prevent spamming by making sure apps aren't firing alarms in the immediate future
         final long minTrigger = nowElapsed
                 + (UserHandle.isCore(callingUid) ? 0L : mConstants.MIN_FUTURITY);
-        final long triggerElapsed = (nominalTrigger > minTrigger) ? nominalTrigger : minTrigger;
+        final long triggerElapsed = Math.max(minTrigger, nominalTrigger);
 
         final long maxElapsed;
         if (windowLength == 0) {
@@ -1887,6 +1882,25 @@ public class AlarmManagerService extends SystemService {
             // Fix this window in place, so that as time approaches we don't collapse it.
             windowLength = maxElapsed - triggerElapsed;
         } else {
+            // The window was explicitly requested. Snap it to allowable limits.
+            final long minAllowedWindow = getMinimumAllowedWindow(nowElapsed, triggerElapsed);
+            if (windowLength > INTERVAL_DAY) {
+                Slog.w(TAG, "Window length " + windowLength + "ms too long; limiting to 1 day");
+                windowLength = INTERVAL_DAY;
+            } else if ((flags & FLAG_PRIORITIZE) == 0 && windowLength < minAllowedWindow) {
+                // Prioritized alarms are exempt from minimum window limits.
+                if (CompatChanges.isChangeEnabled(
+                        AlarmManager.ENFORCE_MINIMUM_WINDOW_ON_INEXACT_ALARMS, callingPackage,
+                        UserHandle.getUserHandleForUid(callingUid))) {
+                    Slog.w(TAG, "Window length " + windowLength + "ms too short; expanding to "
+                            + minAllowedWindow + "ms.");
+                    windowLength = minAllowedWindow;
+                } else {
+                    // TODO (b/185199076): Remove temporary log to catch breaking apps.
+                    Slog.wtf(TAG, "Short window " + windowLength + "ms specified by "
+                            + callingPackage);
+                }
+            }
             maxElapsed = triggerElapsed + windowLength;
         }
         synchronized (mLock) {
@@ -2834,12 +2848,6 @@ public class AlarmManagerService extends SystemService {
                 pw.println();
             }
 
-            pw.println("Listener death dispatcher state:");
-            pw.increaseIndent();
-            sListenerDeathDispatcher.dump(pw);
-            pw.println();
-            pw.decreaseIndent();
-
             if (mLog.dump(pw, "Recent problems:")) {
                 pw.println();
             }
@@ -3431,6 +3439,9 @@ public class AlarmManagerService extends SystemService {
 
         for (final Alarm removed : removedAlarms) {
             decrementAlarmCount(removed.uid, 1);
+            if (removed.listener != null) {
+                removed.listener.asBinder().unlinkToDeath(mListenerDeathRecipient, 0);
+            }
             if (!RemovedAlarm.isLoggable(reason)) {
                 continue;
             }
@@ -4684,6 +4695,8 @@ public class AlarmManagerService extends SystemService {
                     // Direct listener callback alarm
                     mListenerCount++;
 
+                    alarm.listener.asBinder().unlinkToDeath(mListenerDeathRecipient, 0);
+
                     if (RECORD_ALARMS_IN_HISTORY) {
                         if (alarm.listener == mTimeTickTrigger) {
                             mTickHistory[mNextTickHistory++] = nowELAPSED;
@@ -4814,6 +4827,30 @@ public class AlarmManagerService extends SystemService {
         } else {
             mAlarmsPerUid.put(uid, 1);
         }
+    }
+
+    /**
+     * Send {@link AlarmManager#ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED} to
+     * the app that is just granted the permission.
+     */
+    private void sendScheduleExactAlarmPermissionStateChangedBroadcast(
+            String packageName, int userId) {
+        final Intent i = new Intent(
+                AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED);
+        i.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING
+                | Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT
+                | Intent.FLAG_RECEIVER_FOREGROUND);
+        i.setPackage(packageName);
+
+        // We need to allow the app to start a foreground service.
+        // This broadcast is very rare, so we do not cache the BroadcastOptions.
+        final BroadcastOptions opts = BroadcastOptions.makeBasic();
+        opts.setTemporaryAppAllowlist(
+                mActivityManagerInternal.getBootTimeTempAllowListDuration(),
+                TEMPORARY_ALLOWLIST_TYPE_FOREGROUND_SERVICE_ALLOWED,
+                REASON_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED, "");
+        getContext().sendBroadcastAsUser(i, UserHandle.of(userId), /*permission*/ null,
+                opts.toBundle());
     }
 
     private void decrementAlarmCount(int uid, int decrement) {

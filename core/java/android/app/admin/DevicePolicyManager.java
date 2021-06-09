@@ -505,6 +505,13 @@ public class DevicePolicyManager {
             "android.app.extra.bugreport_notification_type";
 
     /**
+     * Default value for preferential network service enabling.
+     *
+     * @hide
+     */
+    public static final boolean PREFERENTIAL_NETWORK_SERVICE_ENABLED_DEFAULT = false;
+
+    /**
      * Notification type for a started remote bugreport flow.
      *
      * @hide
@@ -10369,11 +10376,11 @@ public class DevicePolicyManager {
     /**
      * Called by device owners to set the user's global location setting.
      *
-     * <p><b>Note: </b> this call is ignored on
-     * {@link android.content.pm.PackageManager#FEATURE_AUTOMOTIVE automotive builds}.
      *
      * @param admin Which {@link DeviceAdminReceiver} this request is associated with
-     * @param locationEnabled whether location should be enabled or disabled
+     * @param locationEnabled whether location should be enabled or disabled. <b>Note: </b> on
+     * {@link android.content.pm.PackageManager#FEATURE_AUTOMOTIVE automotive builds}, calls to
+     * disable will be ignored.
      * @throws SecurityException if {@code admin} is not a device owner.
      */
     public void setLocationEnabled(@NonNull ComponentName admin, boolean locationEnabled) {
@@ -11974,15 +11981,14 @@ public class DevicePolicyManager {
 
     /**
      * @hide
-     * Force update user setup completed status.
+     * Force update user setup completed status for the given {@code userId}.
      * @throws {@link SecurityException} if the caller has no
-     *         {@code android.Manifest.permission.MANAGE_PROFILE_AND_DEVICE_OWNERS} or the caller is
-     *         not {@link UserHandle#SYSTEM_USER}
+     *         {@code android.Manifest.permission.MANAGE_PROFILE_AND_DEVICE_OWNERS}.
      */
     @TestApi
-    public void forceUpdateUserSetupComplete() {
+    public void forceUpdateUserSetupComplete(@UserIdInt int userId) {
         try {
-            mService.forceUpdateUserSetupComplete();
+            mService.forceUpdateUserSetupComplete(userId);
         } catch (RemoteException re) {
             throw re.rethrowFromSystemServer();
         }

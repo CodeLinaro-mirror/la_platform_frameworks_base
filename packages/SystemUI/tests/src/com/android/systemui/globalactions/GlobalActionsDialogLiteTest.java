@@ -39,6 +39,7 @@ import android.service.dreams.IDreamManager;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.view.IWindowManager;
+import android.view.View;
 import android.view.WindowManagerPolicyConstants;
 
 import androidx.test.filters.SmallTest;
@@ -102,6 +103,7 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
     @Mock private IWindowManager mWindowManager;
     @Mock private Executor mBackgroundExecutor;
     @Mock private UiEventLogger mUiEventLogger;
+    @Mock private GlobalActionsInfoProvider mInfoProvider;
     @Mock private RingerModeTracker mRingerModeTracker;
     @Mock private RingerModeLiveData mRingerModeLiveData;
     @Mock private SysUiState mSysUiState;
@@ -145,6 +147,7 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
                 mWindowManager,
                 mBackgroundExecutor,
                 mUiEventLogger,
+                mInfoProvider,
                 mRingerModeTracker,
                 mSysUiState,
                 mHandler
@@ -169,6 +172,44 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
         mGlobalActionsDialogLite.onDismiss(mGlobalActionsDialogLite.mDialog);
         mTestableLooper.processAllMessages();
         verifyLogPosted(GlobalActionsDialog.GlobalActionsEvent.GA_POWER_MENU_CLOSE);
+    }
+
+    @Test
+    public void testShouldLogClose_backButton() {
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(4).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        doReturn(true).when(mGlobalActionsDialogLite).shouldDisplayLockdown(any());
+        doReturn(true).when(mGlobalActionsDialogLite).shouldShowAction(any());
+        String[] actions = {
+                GlobalActionsDialog.GLOBAL_ACTION_KEY_EMERGENCY,
+                GlobalActionsDialog.GLOBAL_ACTION_KEY_LOCKDOWN,
+                GlobalActionsDialog.GLOBAL_ACTION_KEY_POWER,
+                GlobalActionsDialog.GLOBAL_ACTION_KEY_RESTART,
+        };
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+        GlobalActionsDialogLite.ActionsDialogLite dialog = mGlobalActionsDialogLite.createDialog();
+        dialog.onBackPressed();
+        mTestableLooper.processAllMessages();
+        verifyLogPosted(GlobalActionsDialog.GlobalActionsEvent.GA_CLOSE_BACK);
+    }
+
+    @Test
+    public void testShouldLogOnTapOutside() {
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(4).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        doReturn(true).when(mGlobalActionsDialogLite).shouldDisplayLockdown(any());
+        doReturn(true).when(mGlobalActionsDialogLite).shouldShowAction(any());
+        String[] actions = {
+                GlobalActionsDialog.GLOBAL_ACTION_KEY_EMERGENCY,
+                GlobalActionsDialog.GLOBAL_ACTION_KEY_LOCKDOWN,
+                GlobalActionsDialog.GLOBAL_ACTION_KEY_POWER,
+                GlobalActionsDialog.GLOBAL_ACTION_KEY_RESTART,
+        };
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+        GlobalActionsDialogLite.ActionsDialogLite dialog = mGlobalActionsDialogLite.createDialog();
+        View container = dialog.findViewById(com.android.systemui.R.id.global_actions_container);
+        container.callOnClick();
+        verifyLogPosted(GlobalActionsDialog.GlobalActionsEvent.GA_CLOSE_TAP_OUTSIDE);
     }
 
     @Test
@@ -285,5 +326,45 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
                 GlobalActionsDialog.RestartAction.class);
         assertThat(mGlobalActionsDialogLite.mOverflowItems).isEmpty();
         assertThat(mGlobalActionsDialogLite.mPowerItems).isEmpty();
+    }
+
+    @Test
+    public void testShouldLogLockdownPress() {
+        GlobalActionsDialogLite.LockDownAction lockDownAction =
+                mGlobalActionsDialogLite.new LockDownAction();
+        lockDownAction.onPress();
+        verifyLogPosted(GlobalActionsDialog.GlobalActionsEvent.GA_LOCKDOWN_PRESS);
+    }
+
+    @Test
+    public void testShouldLogShutdownPress() {
+        GlobalActionsDialogLite.ShutDownAction shutDownAction =
+                mGlobalActionsDialogLite.new ShutDownAction();
+        shutDownAction.onPress();
+        verifyLogPosted(GlobalActionsDialog.GlobalActionsEvent.GA_SHUTDOWN_PRESS);
+    }
+
+    @Test
+    public void testShouldLogShutdownLongPress() {
+        GlobalActionsDialogLite.ShutDownAction shutDownAction =
+                mGlobalActionsDialogLite.new ShutDownAction();
+        shutDownAction.onLongPress();
+        verifyLogPosted(GlobalActionsDialog.GlobalActionsEvent.GA_SHUTDOWN_LONG_PRESS);
+    }
+
+    @Test
+    public void testShouldLogRebootPress() {
+        GlobalActionsDialogLite.RestartAction restartAction =
+                mGlobalActionsDialogLite.new RestartAction();
+        restartAction.onPress();
+        verifyLogPosted(GlobalActionsDialog.GlobalActionsEvent.GA_REBOOT_PRESS);
+    }
+
+    @Test
+    public void testShouldLogRebootLongPress() {
+        GlobalActionsDialogLite.RestartAction restartAction =
+                mGlobalActionsDialogLite.new RestartAction();
+        restartAction.onLongPress();
+        verifyLogPosted(GlobalActionsDialog.GlobalActionsEvent.GA_REBOOT_LONG_PRESS);
     }
 }

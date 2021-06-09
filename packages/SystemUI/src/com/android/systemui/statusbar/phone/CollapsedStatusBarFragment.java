@@ -23,13 +23,13 @@ import static android.app.StatusBarManager.DISABLE_SYSTEM_INFO;
 import static com.android.systemui.statusbar.events.SystemStatusAnimationSchedulerKt.ANIMATING_IN;
 import static com.android.systemui.statusbar.events.SystemStatusAnimationSchedulerKt.ANIMATING_OUT;
 import static com.android.systemui.statusbar.events.SystemStatusAnimationSchedulerKt.IDLE;
+import static com.android.systemui.statusbar.events.SystemStatusAnimationSchedulerKt.SHOWING_PERSISTENT_DOT;
 
 import android.animation.ValueAnimator;
 import android.annotation.Nullable;
 import android.app.Fragment;
 import android.os.Bundle;
 import android.os.Parcelable;
-import android.util.Log;
 import android.util.SparseArray;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -80,7 +80,7 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
     private NetworkController mNetworkController;
     private LinearLayout mSystemIconArea;
     private View mClockView;
-    private ViewGroup mOngoingCallChip;
+    private View mOngoingCallChip;
     private View mNotificationIconAreaInner;
     private View mCenteredIconArea;
     private int mDisabled1;
@@ -229,7 +229,6 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
         if (displayId != getContext().getDisplayId()) {
             return;
         }
-        Log.d(TAG, "disable: ");
         state1 = adjustDisableFlags(state1);
         final int old1 = mDisabled1;
         final int diff1 = state1 ^ old1;
@@ -325,11 +324,13 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
         // Show the ongoing call chip only if there is an ongoing call *and* notification icons
         // are allowed. (The ongoing call chip occupies the same area as the notification icons,
         // so if the icons are disabled then the call chip should be, too.)
-        if (hasOngoingCall && !disableNotifications) {
+        boolean showOngoingCallChip = hasOngoingCall && !disableNotifications;
+        if (showOngoingCallChip) {
             showOngoingCallChip(animate);
         } else {
             hideOngoingCallChip(animate);
         }
+        mOngoingCallController.notifyChipVisibilityChanged(showOngoingCallChip);
     }
 
     private boolean shouldHideNotificationIcons() {
@@ -348,7 +349,8 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
 
     private void showSystemIconArea(boolean animate) {
         // Only show the system icon area if we are not currently animating
-        if (mAnimationScheduler.getAnimationState() == IDLE) {
+        int state = mAnimationScheduler.getAnimationState();
+        if (state == IDLE || state == SHOWING_PERSISTENT_DOT) {
             animateShow(mSystemIconArea, animate);
         }
     }

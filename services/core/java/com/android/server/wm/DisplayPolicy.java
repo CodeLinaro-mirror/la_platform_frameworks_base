@@ -92,6 +92,7 @@ import static android.view.WindowManagerPolicyConstants.NAV_BAR_BOTTOM;
 import static android.view.WindowManagerPolicyConstants.NAV_BAR_INVALID;
 import static android.view.WindowManagerPolicyConstants.NAV_BAR_LEFT;
 import static android.view.WindowManagerPolicyConstants.NAV_BAR_RIGHT;
+import static android.window.DisplayAreaOrganizer.FEATURE_UNDEFINED;
 
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_SCREEN_ON;
 import static com.android.server.policy.PhoneWindowManager.TOAST_WINDOW_TIMEOUT;
@@ -372,7 +373,6 @@ public class DisplayPolicy {
      * when the navigation bar mode is changed.
      */
     private boolean mShouldAttachNavBarToAppDuringTransition;
-    private NavBarFadeAnimationController mNavBarFadeAnimationController;
 
     // -------- PolicyHandler --------
     private static final int MSG_REQUEST_TRANSIENT_BARS = 2;
@@ -1087,7 +1087,6 @@ public class DisplayPolicy {
                 break;
             case TYPE_NAVIGATION_BAR:
                 mNavigationBar = win;
-                updateNavBarFadeController();
                 mDisplayContent.setInsetProvider(ITYPE_NAVIGATION_BAR, win,
                         (displayFrames, windowState, inOutFrame) -> {
 
@@ -1233,7 +1232,6 @@ public class DisplayPolicy {
             mDisplayContent.setInsetProvider(ITYPE_STATUS_BAR, null, null);
         } else if (mNavigationBar == win || mNavigationBarAlt == win) {
             mNavigationBar = null;
-            updateNavBarFadeController();
             mNavigationBarAlt = null;
             mDisplayContent.setInsetProvider(ITYPE_NAVIGATION_BAR, null, null);
         } else if (mNotificationShade == win) {
@@ -1455,8 +1453,7 @@ public class DisplayPolicy {
     }
 
     void onDisplayInfoChanged(DisplayInfo info) {
-        mSystemGestures.screenWidth = info.logicalWidth;
-        mSystemGestures.screenHeight = info.logicalHeight;
+        mSystemGestures.onDisplayInfoChanged(info);
     }
 
     private void layoutStatusBar(DisplayFrames displayFrames, Rect contentFrame) {
@@ -2059,7 +2056,6 @@ public class DisplayPolicy {
                 res.getBoolean(R.bool.config_attachNavBarToAppDuringTransition);
         if (mShouldAttachNavBarToAppDuringTransition != shouldAttach) {
             mShouldAttachNavBarToAppDuringTransition = shouldAttach;
-            updateNavBarFadeController();
         }
     }
 
@@ -2423,6 +2419,15 @@ public class DisplayPolicy {
         } else {
             // Restore visibilities and positions of system bars.
             controlTarget.showInsets(Type.statusBars() | Type.navigationBars(), false);
+            // To further allow the pull-down-from-the-top gesture to pull down the notification
+            // shade as a consistent motion, we reroute the touch events here from the currently
+            // touched window to the status bar after making it visible.
+            if (swipeTarget == mStatusBar) {
+                final boolean transferred = mStatusBar.transferTouch();
+                if (!transferred) {
+                    Slog.i(TAG, "Could not transfer touch to the status bar");
+                }
+            }
         }
         mImmersiveModeConfirmation.confirmCurrentPrompt();
     }
@@ -2667,7 +2672,8 @@ public class DisplayPolicy {
         if (oldImmersiveMode != newImmersiveMode) {
             mLastImmersiveMode = newImmersiveMode;
             // The immersive confirmation window should be attached to the immersive window root.
-            final int rootDisplayAreaId = win.getRootDisplayArea().mFeatureId;
+            final RootDisplayArea root = win.getRootDisplayArea();
+            final int rootDisplayAreaId = root == null ? FEATURE_UNDEFINED : root.mFeatureId;
             mImmersiveModeConfirmation.immersiveModeChangedLw(rootDisplayAreaId, newImmersiveMode,
                     mService.mPolicy.isUserSetupComplete(),
                     isNavBarEmpty(disableFlags));
@@ -3059,20 +3065,5 @@ public class DisplayPolicy {
      */
     boolean shouldAttachNavBarToAppDuringTransition() {
         return mShouldAttachNavBarToAppDuringTransition && mNavigationBar != null;
-    }
-
-    @Nullable NavBarFadeAnimationController getNavBarFadeAnimationController() {
-        return mNavBarFadeAnimationController;
-    }
-
-    private void updateNavBarFadeController() {
-        if (shouldAttachNavBarToAppDuringTransition()) {
-            if (mNavBarFadeAnimationController == null) {
-                mNavBarFadeAnimationController =
-                        new NavBarFadeAnimationController(mDisplayContent);
-            }
-        } else {
-            mNavBarFadeAnimationController = null;
-        }
     }
 }

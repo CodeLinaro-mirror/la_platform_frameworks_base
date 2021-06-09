@@ -178,7 +178,7 @@ enum DebugLevel {
 
 /**
  * Turns on the Skia GPU option "reduceOpsTaskSplitting" which improves GPU
- * efficiency but may increase VRAM consumption. Default is "false".
+ * efficiency but may increase VRAM consumption. Default is "true".
  */
 #define PROPERTY_REDUCE_OPS_TASK_SPLITTING "renderthread.skia.reduceopstasksplitting"
 
@@ -196,6 +196,12 @@ enum class ProfileType { None, Console, Bars };
 enum class OverdrawColorSet { Default = 0, Deuteranomaly };
 
 enum class RenderPipelineType { SkiaGL, SkiaVulkan, NotInitialized = 128 };
+
+enum class StretchEffectBehavior {
+    ShaderHWUI,   // Stretch shader in HWUI only, matrix scale in SF
+    Shader,       // Stretch shader in both HWUI and SF
+    UniformScale  // Uniform scale stretch everywhere
+};
 
 /**
  * Renderthread-only singleton which manages several static rendering properties. Most of these
@@ -270,7 +276,26 @@ public:
     static bool useHintManager;
     static int targetCpuTimePercentage;
 
+    static StretchEffectBehavior getStretchEffectBehavior() {
+        return stretchEffectBehavior;
+    }
+
+    static void setIsHighEndGfx(bool isHighEndGfx) {
+        stretchEffectBehavior = isHighEndGfx ?
+            StretchEffectBehavior::ShaderHWUI :
+            StretchEffectBehavior::UniformScale;
+    }
+
+    /**
+     * Used for testing. Typical configuration of stretch behavior is done
+     * through setIsHighEndGfx
+     */
+    static void setStretchEffectBehavior(StretchEffectBehavior behavior) {
+        stretchEffectBehavior = behavior;
+    }
+
 private:
+    static StretchEffectBehavior stretchEffectBehavior;
     static ProfileType sProfileType;
     static bool sDisableProfileBars;
     static RenderPipelineType sRenderPipelineType;

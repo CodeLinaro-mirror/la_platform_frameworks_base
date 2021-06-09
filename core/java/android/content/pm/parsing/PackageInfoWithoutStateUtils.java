@@ -298,6 +298,16 @@ public class PackageInfoWithoutStateUtils {
                     pi.attributions[i] = generateAttribution(pkg.getAttributions().get(i));
                 }
             }
+            if (pkg.areAttributionsUserVisible()) {
+                pi.applicationInfo.privateFlagsExt
+                        |= ApplicationInfo.PRIVATE_FLAG_EXT_ATTRIBUTIONS_ARE_USER_VISIBLE;
+            } else {
+                pi.applicationInfo.privateFlagsExt
+                        &= ~ApplicationInfo.PRIVATE_FLAG_EXT_ATTRIBUTIONS_ARE_USER_VISIBLE;
+            }
+        } else {
+            pi.applicationInfo.privateFlagsExt
+                    &= ~ApplicationInfo.PRIVATE_FLAG_EXT_ATTRIBUTIONS_ARE_USER_VISIBLE;
         }
 
         if (apexInfo != null) {
@@ -397,7 +407,7 @@ public class PackageInfoWithoutStateUtils {
         }
 
         // CompatibilityMode is global state.
-        if (!ParsingPackageUtils.sCompatibilityModeEnabled) {
+        if (!android.content.pm.PackageParser.sCompatibilityModeEnabled) {
             ai.disableCompatibilityMode();
         }
 
@@ -713,6 +723,7 @@ public class PackageInfoWithoutStateUtils {
         componentInfo.directBootAware = mainComponent.isDirectBootAware();
         componentInfo.enabled = mainComponent.isEnabled();
         componentInfo.splitName = mainComponent.getSplitName();
+        componentInfo.attributionTags = mainComponent.getAttributionTags();
     }
 
     private static void assignSharedFieldsForPackageItemInfo(
@@ -806,7 +817,11 @@ public class PackageInfoWithoutStateUtils {
     public static int appInfoPrivateFlagsExt(ParsingPackageRead pkg) {
         // @formatter:off
         int privateFlagsExt =
-                flag(pkg.isProfileable(), ApplicationInfo.PRIVATE_FLAG_EXT_PROFILEABLE);
+                flag(pkg.isProfileable(), ApplicationInfo.PRIVATE_FLAG_EXT_PROFILEABLE)
+                | flag(pkg.hasRequestForegroundServiceExemption(),
+                        ApplicationInfo.PRIVATE_FLAG_EXT_REQUEST_FOREGROUND_SERVICE_EXEMPTION)
+                | flag(pkg.areAttributionsUserVisible(),
+                        ApplicationInfo.PRIVATE_FLAG_EXT_ATTRIBUTIONS_ARE_USER_VISIBLE);
         // @formatter:on
         return privateFlagsExt;
     }

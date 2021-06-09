@@ -7067,16 +7067,15 @@ public class AudioManager {
     }
 
     /**
-     * Set a certain surround format as enabled or not.
-     * @param audioFormat a surround format, the value is one of
-     *        {@link AudioFormat#ENCODING_AC3}, {@link AudioFormat#ENCODING_E_AC3},
-     *        {@link AudioFormat#ENCODING_DTS}, {@link AudioFormat#ENCODING_DTS_HD},
-     *        {@link AudioFormat#ENCODING_AAC_LC}, {@link AudioFormat#ENCODING_DOLBY_TRUEHD},
-     *        {@link AudioFormat#ENCODING_E_AC3_JOC}. Once {@link AudioFormat#ENCODING_AAC_LC} is
-     *        set as enabled, {@link AudioFormat#ENCODING_AAC_LC},
-     *        {@link AudioFormat#ENCODING_AAC_HE_V1}, {@link AudioFormat#ENCODING_AAC_HE_V2},
-     *        {@link AudioFormat#ENCODING_AAC_ELD}, {@link AudioFormat#ENCODING_AAC_XHE} are
-     *        all enabled.
+     * Sets and persists a certain surround format as enabled or not.
+     * <p>
+     * This API is called by TvSettings surround sound menu when user enables or disables a
+     * surround sound format. This setting is persisted as global user setting.
+     * Applications should revert their changes to surround sound settings unless they intend to
+     * modify the global user settings across all apps. The framework does not auto-revert an
+     * application's settings after a lifecycle event. Audio focus is not required to apply these
+     * settings.
+     *
      * @param enabled the required surround format state, true for enabled, false for disabled
      * @return true if successful, otherwise false
      */

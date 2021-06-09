@@ -20,12 +20,15 @@ import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
 
 import static com.android.systemui.statusbar.StatusBarState.KEYGUARD;
 import static com.android.systemui.statusbar.StatusBarState.SHADE;
+import static com.android.systemui.statusbar.StatusBarState.SHADE_LOCKED;
+import static com.android.systemui.statusbar.notification.ViewGroupFadeHelper.reset;
 
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -39,7 +42,6 @@ import android.content.res.Resources;
 import android.hardware.biometrics.BiometricSourceType;
 import android.os.PowerManager;
 import android.os.UserManager;
-import android.service.quickaccesswallet.QuickAccessWalletClient;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.util.DisplayMetrics;
@@ -75,13 +77,18 @@ import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.classifier.FalsingCollectorFake;
 import com.android.systemui.classifier.FalsingManagerFake;
 import com.android.systemui.doze.DozeLog;
+import com.android.systemui.fragments.FragmentHostManager;
+import com.android.systemui.fragments.FragmentService;
 import com.android.systemui.media.KeyguardMediaController;
 import com.android.systemui.media.MediaDataManager;
 import com.android.systemui.media.MediaHierarchyManager;
+import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.qs.QSDetailDisplayer;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.FeatureFlags;
 import com.android.systemui.statusbar.KeyguardAffordanceView;
+import com.android.systemui.statusbar.KeyguardIndicationController;
+import com.android.systemui.statusbar.LockscreenShadeTransitionController;
 import com.android.systemui.statusbar.NotificationLockscreenUserManager;
 import com.android.systemui.statusbar.NotificationShadeDepthController;
 import com.android.systemui.statusbar.NotificationShelfController;
@@ -89,6 +96,7 @@ import com.android.systemui.statusbar.PulseExpansionHandler;
 import com.android.systemui.statusbar.StatusBarStateControllerImpl;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.VibratorHelper;
+import com.android.systemui.statusbar.events.PrivacyDotViewController;
 import com.android.systemui.statusbar.notification.ConversationNotificationManager;
 import com.android.systemui.statusbar.notification.DynamicPrivacyController;
 import com.android.systemui.statusbar.notification.NotificationEntryManager;
@@ -101,7 +109,9 @@ import com.android.systemui.statusbar.notification.stack.NotificationStackScroll
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.util.concurrency.FakeExecutor;
+import com.android.systemui.util.settings.SecureSettings;
 import com.android.systemui.util.time.FakeSystemClock;
+import com.android.systemui.wallet.controller.QuickAccessWalletController;
 import com.android.wm.shell.animation.FlingAnimationUtils;
 
 import org.junit.Before;
@@ -149,6 +159,8 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     private KeyguardBypassController mKeyguardBypassController;
     @Mock
     private DozeParameters mDozeParameters;
+    @Mock
+    private UnlockedScreenOffAnimationController mUnlockedScreenOffAnimationController;
     @Mock
     private NotificationPanelView mView;
     @Mock
@@ -224,6 +236,8 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     @Mock
     private NotificationShadeDepthController mNotificationShadeDepthController;
     @Mock
+    private LockscreenShadeTransitionController mLockscreenShadeTransitionController;
+    @Mock
     private AuthController mAuthController;
     @Mock
     private ScrimController mScrimController;
@@ -240,14 +254,28 @@ public class NotificationPanelViewTest extends SysuiTestCase {
     @Mock
     private LockIconViewController mLockIconViewController;
     @Mock
-    private QuickAccessWalletClient mQuickAccessWalletClient;
-    @Mock
     private KeyguardMediaController mKeyguardMediaController;
+    @Mock
+    private PrivacyDotViewController mPrivacyDotViewController;
+    @Mock
+    private SecureSettings mSecureSettings;
+    @Mock
+    private TapAgainViewController mTapAgainViewController;
+    @Mock
+    private KeyguardIndicationController mKeyguardIndicationController;
+    @Mock
+    private FragmentService mFragmentService;
+    @Mock
+    private FragmentHostManager mFragmentHostManager;
+    @Mock
+    private QuickAccessWalletController mQuickAccessWalletController;
 
     private SysuiStatusBarStateController mStatusBarStateController;
     private NotificationPanelViewController mNotificationPanelViewController;
     private View.AccessibilityDelegate mAccessibiltyDelegate;
     private NotificationsQuickSettingsContainer mNotificationContainerParent;
+    private List<View.OnAttachStateChangeListener> mOnAttachStateChangeListeners;
+    private FalsingManagerFake mFalsingManager = new FalsingManagerFake();
 
     @Before
     public void setup() {
@@ -288,6 +316,7 @@ public class NotificationPanelViewTest extends SysuiTestCase {
         mNotificationContainerParent.addView(newViewWithId(R.id.keyguard_status_view));
         when(mView.findViewById(R.id.notification_container_parent))
                 .thenReturn(mNotificationContainerParent);
+        when(mFragmentService.getFragmentHostManager(mView)).thenReturn(mFragmentHostManager);
         FlingAnimationUtils.Builder flingAnimationUtilsBuilder = new FlingAnimationUtils.Builder(
                 mDisplayMetrics);
 
@@ -301,14 +330,17 @@ public class NotificationPanelViewTest extends SysuiTestCase {
                         mock(HeadsUpManagerPhone.class),
                         new StatusBarStateControllerImpl(new UiEventLoggerFake()),
                         mKeyguardBypassController,
-                        mDozeParameters);
+                        mDozeParameters,
+                        mUnlockedScreenOffAnimationController);
         PulseExpansionHandler expansionHandler = new PulseExpansionHandler(
                 mContext,
                 coordinator,
                 mKeyguardBypassController, mHeadsUpManager,
                 mock(NotificationRoundnessManager.class),
                 mStatusBarStateController,
-                new FalsingManagerFake(), new FalsingCollectorFake());
+                mFalsingManager,
+                mLockscreenShadeTransitionController,
+                new FalsingCollectorFake());
         when(mKeyguardStatusViewComponentFactory.build(any()))
                 .thenReturn(mKeyguardStatusViewComponent);
         when(mKeyguardStatusViewComponent.getKeyguardClockSwitchController())
@@ -320,11 +352,12 @@ public class NotificationPanelViewTest extends SysuiTestCase {
         when(mKeyguardStatusBarViewComponent.getKeyguardStatusBarViewController())
                 .thenReturn(mKeyguardStatusBarViewController);
 
+        reset(mView);
         mNotificationPanelViewController = new NotificationPanelViewController(mView,
                 mResources,
                 mLayoutInflater,
                 coordinator, expansionHandler, mDynamicPrivacyController, mKeyguardBypassController,
-                new FalsingManagerFake(), new FalsingCollectorFake(), mShadeController,
+                mFalsingManager, new FalsingCollectorFake(),
                 mNotificationLockscreenUserManager, mNotificationEntryManager,
                 mKeyguardStateController, mStatusBarStateController, mDozeLog,
                 mDozeParameters, mCommandQueue, mVibratorHelper,
@@ -338,6 +371,7 @@ public class NotificationPanelViewTest extends SysuiTestCase {
                 mKeyguardQsUserSwitchComponentFactory,
                 mKeyguardUserSwitcherComponentFactory,
                 mKeyguardStatusBarViewComponentFactory,
+                mLockscreenShadeTransitionController,
                 mQSDetailDisplayer,
                 mGroupManager,
                 mNotificationAreaController,
@@ -349,14 +383,26 @@ public class NotificationPanelViewTest extends SysuiTestCase {
                 mAmbientState,
                 mLockIconViewController,
                 mFeatureFlags,
-                mQuickAccessWalletClient,
                 mKeyguardMediaController,
-                new FakeExecutor(new FakeSystemClock()));
+                mPrivacyDotViewController,
+                mTapAgainViewController,
+                mFragmentService,
+                mQuickAccessWalletController,
+                new FakeExecutor(new FakeSystemClock()),
+                mSecureSettings,
+                mUnlockedScreenOffAnimationController);
         mNotificationPanelViewController.initDependencies(
                 mStatusBar,
                 mNotificationShelfController);
         mNotificationPanelViewController.setHeadsUpManager(mHeadsUpManager);
         mNotificationPanelViewController.setBar(mPanelBar);
+        mNotificationPanelViewController.setKeyguardIndicationController(
+                mKeyguardIndicationController);
+        ArgumentCaptor<View.OnAttachStateChangeListener> onAttachStateChangeListenerArgumentCaptor =
+                ArgumentCaptor.forClass(View.OnAttachStateChangeListener.class);
+        verify(mView, atLeast(1)).addOnAttachStateChangeListener(
+                onAttachStateChangeListenerArgumentCaptor.capture());
+        mOnAttachStateChangeListeners = onAttachStateChangeListenerArgumentCaptor.getAllValues();
 
         ArgumentCaptor<View.AccessibilityDelegate> accessibilityDelegateArgumentCaptor =
                 ArgumentCaptor.forClass(View.AccessibilityDelegate.class);
@@ -600,6 +646,34 @@ public class NotificationPanelViewTest extends SysuiTestCase {
                 0f, true /* expand */, 1000f, 1f, false);
         mNotificationPanelViewController.cancelHeightAnimator();
         verify(mKeyguardStateController).notifyPanelFlingEnd();
+    }
+
+    @Test
+    public void testDoubleTapRequired_Keyguard() {
+        FalsingManager.FalsingTapListener listener = getFalsingTapListener();
+        mStatusBarStateController.setState(KEYGUARD);
+
+        listener.onDoubleTapRequired();
+
+        verify(mKeyguardIndicationController).showTransientIndication(anyInt());
+    }
+
+    @Test
+    public void testDoubleTapRequired_ShadeLocked() {
+        FalsingManager.FalsingTapListener listener = getFalsingTapListener();
+        mStatusBarStateController.setState(SHADE_LOCKED);
+
+        listener.onDoubleTapRequired();
+
+        verify(mTapAgainViewController).show();
+    }
+
+    private FalsingManager.FalsingTapListener getFalsingTapListener() {
+        for (View.OnAttachStateChangeListener listener : mOnAttachStateChangeListeners) {
+            listener.onViewAttachedToWindow(mView);
+        }
+        assertThat(mFalsingManager.getTapListeners().size()).isEqualTo(1);
+        return mFalsingManager.getTapListeners().get(0);
     }
 
     private View newViewWithId(int id) {

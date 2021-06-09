@@ -101,14 +101,15 @@ import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.Preconditions;
 import com.android.internal.util.XmlUtils;
 import com.android.internal.util.function.pooled.PooledLambda;
+import com.android.server.LocalManagerRegistry;
 import com.android.server.LocalServices;
 import com.android.server.ServiceThread;
 import com.android.server.SystemService;
 import com.android.server.Watchdog;
 import com.android.server.blob.BlobMetadata.Committer;
 import com.android.server.pm.UserManagerInternal;
-import com.android.server.usage.StorageStatsManagerInternal;
-import com.android.server.usage.StorageStatsManagerInternal.StorageStatsAugmenter;
+import com.android.server.usage.StorageStatsManagerLocal;
+import com.android.server.usage.StorageStatsManagerLocal.StorageStatsAugmenter;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlSerializer;
@@ -208,7 +209,7 @@ public class BlobStoreManagerService extends SystemService {
         mPackageManagerInternal = LocalServices.getService(PackageManagerInternal.class);
         mStatsManager = getContext().getSystemService(StatsManager.class);
         registerReceivers();
-        LocalServices.getService(StorageStatsManagerInternal.class)
+        LocalManagerRegistry.getManager(StorageStatsManagerLocal.class)
                 .registerStorageStatsAugmenter(new BlobStorageStatsAugmenter(), TAG);
     }
 
@@ -396,11 +397,11 @@ public class BlobStoreManagerService extends SystemService {
     }
 
     private ParcelFileDescriptor openBlobInternal(BlobHandle blobHandle, int callingUid,
-            String callingPackage, String attributionTag) throws IOException {
+            String callingPackage) throws IOException {
         synchronized (mBlobsLock) {
             final BlobMetadata blobMetadata = mBlobsMap.get(blobHandle);
             if (blobMetadata == null || !blobMetadata.isAccessAllowedForCaller(
-                    callingPackage, callingUid, attributionTag)) {
+                    callingPackage, callingUid)) {
                 if (blobMetadata == null) {
                     FrameworkStatsLog.write(FrameworkStatsLog.BLOB_OPENED, callingUid,
                             INVALID_BLOB_ID, INVALID_BLOB_SIZE,
@@ -448,7 +449,7 @@ public class BlobStoreManagerService extends SystemService {
 
     private void acquireLeaseInternal(BlobHandle blobHandle, int descriptionResId,
             CharSequence description, long leaseExpiryTimeMillis,
-            int callingUid, String callingPackage, String attributionTag) {
+            int callingUid, String callingPackage) {
         synchronized (mBlobsLock) {
             final int leasesCount = getLeasedBlobsCountLocked(callingUid, callingPackage);
             if (leasesCount >= getMaxLeasedBlobs()) {
@@ -469,7 +470,7 @@ public class BlobStoreManagerService extends SystemService {
 
             final BlobMetadata blobMetadata = mBlobsMap.get(blobHandle);
             if (blobMetadata == null || !blobMetadata.isAccessAllowedForCaller(
-                    callingPackage, callingUid, attributionTag)) {
+                    callingPackage, callingUid)) {
                 if (blobMetadata == null) {
                     FrameworkStatsLog.write(FrameworkStatsLog.BLOB_LEASED, callingUid,
                             INVALID_BLOB_ID, INVALID_BLOB_SIZE,
@@ -520,11 +521,11 @@ public class BlobStoreManagerService extends SystemService {
     }
 
     private void releaseLeaseInternal(BlobHandle blobHandle, int callingUid,
-            String callingPackage, String attributionTag) {
+            String callingPackage) {
         synchronized (mBlobsLock) {
             final BlobMetadata blobMetadata = mBlobsMap.get(blobHandle);
             if (blobMetadata == null || !blobMetadata.isAccessAllowedForCaller(
-                    callingPackage, callingUid, attributionTag)) {
+                    callingPackage, callingUid)) {
                 throw new SecurityException("Caller not allowed to access " + blobHandle
                         + "; callingUid=" + callingUid + ", callingPackage=" + callingPackage);
             }
@@ -631,11 +632,11 @@ public class BlobStoreManagerService extends SystemService {
     }
 
     private LeaseInfo getLeaseInfoInternal(BlobHandle blobHandle,
-            int callingUid, @NonNull String callingPackage, String attributionTag) {
+            int callingUid, @NonNull String callingPackage) {
         synchronized (mBlobsLock) {
             final BlobMetadata blobMetadata = mBlobsMap.get(blobHandle);
             if (blobMetadata == null || !blobMetadata.isAccessAllowedForCaller(
-                    callingPackage, callingUid, attributionTag)) {
+                    callingPackage, callingUid)) {
                 throw new SecurityException("Caller not allowed to access " + blobHandle
                         + "; callingUid=" + callingUid + ", callingPackage=" + callingPackage);
             }
@@ -1281,17 +1282,20 @@ public class BlobStoreManagerService extends SystemService {
 
     private class BlobStorageStatsAugmenter implements StorageStatsAugmenter {
         @Override
-        public void augmentStatsForPackage(@NonNull PackageStats stats, @NonNull String packageName,
-                @UserIdInt int userId, boolean callerHasStatsPermission) {
+        public void augmentStatsForPackageForUser(
+                @NonNull PackageStats stats,
+                @NonNull String packageName,
+                @NonNull UserHandle userHandle,
+                boolean callerHasStatsPermission) {
             final AtomicLong blobsDataSize = new AtomicLong(0);
             forEachSessionInUser(session -> {
                 if (session.getOwnerPackageName().equals(packageName)) {
                     blobsDataSize.getAndAdd(session.getSize());
                 }
-            }, userId);
+            }, userHandle.getIdentifier());
 
             forEachBlob(blobMetadata -> {
-                if (blobMetadata.shouldAttributeToLeasee(packageName, userId,
+                if (blobMetadata.shouldAttributeToLeasee(packageName, userHandle.getIdentifier(),
                         callerHasStatsPermission)) {
                     blobsDataSize.getAndAdd(blobMetadata.getSize());
                 }
@@ -1316,6 +1320,22 @@ public class BlobStoreManagerService extends SystemService {
                         callerHasStatsPermission)) {
                     blobsDataSize.getAndAdd(blobMetadata.getSize());
                 }
+            });
+
+            stats.dataSize += blobsDataSize.get();
+        }
+
+        @Override
+        public void augmentStatsForUser(
+                @NonNull PackageStats stats, @NonNull UserHandle userHandle) {
+            final AtomicLong blobsDataSize = new AtomicLong(0);
+            forEachSessionInUser(session -> {
+                blobsDataSize.getAndAdd(session.getSize());
+            }, userHandle.getIdentifier());
+
+            // TODO(http://b/187460239): Update this to only include blobs available to userId.
+            forEachBlob(blobMetadata -> {
+                blobsDataSize.getAndAdd(blobMetadata.getSize());
             });
 
             stats.dataSize += blobsDataSize.get();
@@ -1458,7 +1478,7 @@ public class BlobStoreManagerService extends SystemService {
 
         @Override
         public ParcelFileDescriptor openBlob(@NonNull BlobHandle blobHandle,
-                @NonNull String packageName, @Nullable String attributionTag) {
+                @NonNull String packageName) {
             Objects.requireNonNull(blobHandle, "blobHandle must not be null");
             blobHandle.assertIsValid();
             Objects.requireNonNull(packageName, "packageName must not be null");
@@ -1473,7 +1493,7 @@ public class BlobStoreManagerService extends SystemService {
             }
 
             try {
-                return openBlobInternal(blobHandle, callingUid, packageName, attributionTag);
+                return openBlobInternal(blobHandle, callingUid, packageName);
             } catch (IOException e) {
                 throw ExceptionUtils.wrap(e);
             }
@@ -1482,8 +1502,7 @@ public class BlobStoreManagerService extends SystemService {
         @Override
         public void acquireLease(@NonNull BlobHandle blobHandle, @IdRes int descriptionResId,
                 @Nullable CharSequence description,
-                @CurrentTimeSecondsLong long leaseExpiryTimeMillis, @NonNull String packageName,
-                @Nullable String attributionTag) {
+                @CurrentTimeSecondsLong long leaseExpiryTimeMillis, @NonNull String packageName) {
             Objects.requireNonNull(blobHandle, "blobHandle must not be null");
             blobHandle.assertIsValid();
             Preconditions.checkArgument(
@@ -1507,7 +1526,7 @@ public class BlobStoreManagerService extends SystemService {
 
             try {
                 acquireLeaseInternal(blobHandle, descriptionResId, description,
-                        leaseExpiryTimeMillis, callingUid, packageName, attributionTag);
+                        leaseExpiryTimeMillis, callingUid, packageName);
             } catch (Resources.NotFoundException e) {
                 throw new IllegalArgumentException(e);
             } catch (LimitExceededException e) {
@@ -1516,8 +1535,7 @@ public class BlobStoreManagerService extends SystemService {
         }
 
         @Override
-        public void releaseLease(@NonNull BlobHandle blobHandle, @NonNull String packageName,
-                @Nullable String attributionTag) {
+        public void releaseLease(@NonNull BlobHandle blobHandle, @NonNull String packageName) {
             Objects.requireNonNull(blobHandle, "blobHandle must not be null");
             blobHandle.assertIsValid();
             Objects.requireNonNull(packageName, "packageName must not be null");
@@ -1531,7 +1549,7 @@ public class BlobStoreManagerService extends SystemService {
                         + "callingUid=" + callingUid + ", callingPackage=" + packageName);
             }
 
-            releaseLeaseInternal(blobHandle, callingUid, packageName, attributionTag);
+            releaseLeaseInternal(blobHandle, callingUid, packageName);
         }
 
         @Override
@@ -1601,8 +1619,7 @@ public class BlobStoreManagerService extends SystemService {
 
         @Override
         @Nullable
-        public LeaseInfo getLeaseInfo(@NonNull BlobHandle blobHandle, @NonNull String packageName,
-                @Nullable String attributionTag) {
+        public LeaseInfo getLeaseInfo(@NonNull BlobHandle blobHandle, @NonNull String packageName) {
             Objects.requireNonNull(blobHandle, "blobHandle must not be null");
             blobHandle.assertIsValid();
             Objects.requireNonNull(packageName, "packageName must not be null");
@@ -1616,7 +1633,7 @@ public class BlobStoreManagerService extends SystemService {
                         + "callingUid=" + callingUid + ", callingPackage=" + packageName);
             }
 
-            return getLeaseInfoInternal(blobHandle, callingUid, packageName, attributionTag);
+            return getLeaseInfoInternal(blobHandle, callingUid, packageName);
         }
 
         @Override

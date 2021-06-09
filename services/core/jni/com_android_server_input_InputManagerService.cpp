@@ -160,9 +160,10 @@ static struct {
 static struct {
     jclass clazz;
     jmethodID constructor;
-    jfieldID lightTypeSingle;
+    jfieldID lightTypeInput;
     jfieldID lightTypePlayerId;
-    jfieldID lightTypeRgb;
+    jfieldID lightCapabilityBrightness;
+    jfieldID lightCapabilityRgb;
 } gLightClassInfo;
 
 static struct {
@@ -999,6 +1000,7 @@ void NativeInputManager::displayRemoved(JNIEnv* env, int32_t displayId) {
     // Set an empty list to remove all handles from the specific display.
     std::vector<sp<InputWindowHandle>> windowHandles;
     mInputManager->getDispatcher()->setInputWindows({{displayId, windowHandles}});
+    mInputManager->getDispatcher()->setFocusedApplication(displayId, nullptr);
 }
 
 void NativeInputManager::setFocusedApplication(JNIEnv* env, int32_t displayId,
@@ -1834,8 +1836,19 @@ static jboolean nativeTransferTouchFocus(JNIEnv* env, jclass /* clazz */, jlong 
     }
 }
 
-static void nativeSetPointerSpeed(JNIEnv* /* env */,
-        jclass /* clazz */, jlong ptr, jint speed) {
+static jboolean nativeTransferTouch(JNIEnv* env, jclass /* clazz */, jlong ptr,
+                                    jobject destChannelTokenObj) {
+    sp<IBinder> destChannelToken = ibinderForJavaObject(env, destChannelTokenObj);
+
+    NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
+    if (im->getInputManager()->getDispatcher()->transferTouch(destChannelToken)) {
+        return JNI_TRUE;
+    } else {
+        return JNI_FALSE;
+    }
+}
+
+static void nativeSetPointerSpeed(JNIEnv* /* env */, jclass /* clazz */, jlong ptr, jint speed) {
     NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
 
     im->setPointerSpeed(speed);
@@ -1984,25 +1997,34 @@ static jobject nativeGetLights(JNIEnv* env, jclass clazz, jlong ptr, jint device
             continue;
         }
 
-        jint jTypeId = 0;
-        if (lightInfo->type == InputDeviceLightType::SINGLE) {
-            jTypeId =
-                    env->GetStaticIntField(gLightClassInfo.clazz, gLightClassInfo.lightTypeSingle);
-        } else if (lightInfo->type == InputDeviceLightType::PLAYER_ID) {
-            jTypeId = env->GetStaticIntField(gLightClassInfo.clazz,
-                                             gLightClassInfo.lightTypePlayerId);
+        jint jTypeId =
+                env->GetStaticIntField(gLightClassInfo.clazz, gLightClassInfo.lightTypeInput);
+        jint jCapability = 0;
+
+        if (lightInfo->type == InputDeviceLightType::MONO) {
+            jCapability = env->GetStaticIntField(gLightClassInfo.clazz,
+                                                 gLightClassInfo.lightCapabilityBrightness);
         } else if (lightInfo->type == InputDeviceLightType::RGB ||
                    lightInfo->type == InputDeviceLightType::MULTI_COLOR) {
-            jTypeId = env->GetStaticIntField(gLightClassInfo.clazz, gLightClassInfo.lightTypeRgb);
+            jCapability =
+                env->GetStaticIntField(gLightClassInfo.clazz,
+                                                 gLightClassInfo.lightCapabilityBrightness) |
+                env->GetStaticIntField(gLightClassInfo.clazz,
+                                                 gLightClassInfo.lightCapabilityRgb);
+        } else if (lightInfo->type == InputDeviceLightType::PLAYER_ID) {
+            jTypeId = env->GetStaticIntField(gLightClassInfo.clazz,
+                                                 gLightClassInfo.lightTypePlayerId);
         } else {
             ALOGW("Unknown light type %d", lightInfo->type);
             continue;
         }
-        ScopedLocalRef<jobject>
-                lightObj(env,
-                         env->NewObject(gLightClassInfo.clazz, gLightClassInfo.constructor,
-                                        (jint)lightInfo->id, (jint)lightInfo->ordinal, jTypeId,
-                                        env->NewStringUTF(lightInfo->name.c_str())));
+        ScopedLocalRef<jobject> lightObj(env,
+                                         env->NewObject(gLightClassInfo.clazz,
+                                                        gLightClassInfo.constructor,
+                                                        static_cast<jint>(lightInfo->id),
+                                                        env->NewStringUTF(lightInfo->name.c_str()),
+                                                        static_cast<jint>(lightInfo->ordinal),
+                                                        jTypeId, jCapability));
         // Add light object to list
         env->CallBooleanMethod(jLights, gArrayListClassInfo.add, lightObj.get());
     }
@@ -2308,6 +2330,7 @@ static const JNINativeMethod gInputManagerMethods[] = {
         {"nativeSetSystemUiLightsOut", "(JZ)V", (void*)nativeSetSystemUiLightsOut},
         {"nativeTransferTouchFocus", "(JLandroid/os/IBinder;Landroid/os/IBinder;Z)Z",
          (void*)nativeTransferTouchFocus},
+        {"nativeTransferTouch", "(JLandroid/os/IBinder;)Z", (void*)nativeTransferTouch},
         {"nativeSetPointerSpeed", "(JI)V", (void*)nativeSetPointerSpeed},
         {"nativeSetShowTouches", "(JZ)V", (void*)nativeSetShowTouches},
         {"nativeSetInteractive", "(JZ)V", (void*)nativeSetInteractive},
@@ -2527,15 +2550,17 @@ int register_android_server_InputManager(JNIEnv* env) {
     FIND_CLASS(gLightClassInfo.clazz, "android/hardware/lights/Light");
     gLightClassInfo.clazz = jclass(env->NewGlobalRef(gLightClassInfo.clazz));
     GET_METHOD_ID(gLightClassInfo.constructor, gLightClassInfo.clazz, "<init>",
-                  "(IIILjava/lang/String;)V");
+                  "(ILjava/lang/String;III)V");
 
     gLightClassInfo.clazz = jclass(env->NewGlobalRef(gLightClassInfo.clazz));
-    gLightClassInfo.lightTypeSingle =
-            env->GetStaticFieldID(gLightClassInfo.clazz, "LIGHT_TYPE_INPUT_SINGLE", "I");
+    gLightClassInfo.lightTypeInput =
+            env->GetStaticFieldID(gLightClassInfo.clazz, "LIGHT_TYPE_INPUT", "I");
     gLightClassInfo.lightTypePlayerId =
-            env->GetStaticFieldID(gLightClassInfo.clazz, "LIGHT_TYPE_INPUT_PLAYER_ID", "I");
-    gLightClassInfo.lightTypeRgb =
-            env->GetStaticFieldID(gLightClassInfo.clazz, "LIGHT_TYPE_INPUT_RGB", "I");
+            env->GetStaticFieldID(gLightClassInfo.clazz, "LIGHT_TYPE_PLAYER_ID", "I");
+    gLightClassInfo.lightCapabilityBrightness =
+            env->GetStaticFieldID(gLightClassInfo.clazz, "LIGHT_CAPABILITY_BRIGHTNESS", "I");
+    gLightClassInfo.lightCapabilityRgb =
+            env->GetStaticFieldID(gLightClassInfo.clazz, "LIGHT_CAPABILITY_RGB", "I");
 
     // ArrayList
     FIND_CLASS(gArrayListClassInfo.clazz, "java/util/ArrayList");

@@ -16,8 +16,8 @@
 
 package com.android.systemui.navigationbar;
 
-import android.annotation.ColorInt;
 import android.content.Context;
+import android.graphics.Rect;
 import android.view.View;
 
 import com.android.systemui.dagger.SysUISingleton;
@@ -46,10 +46,10 @@ public class NavigationBarOverlayController {
     }
 
     /**
-     * Initialize the controller with visibility change callback and light/dark icon color.
+     * Initialize the controller with visibility change callback.
      */
-    public void init(Consumer<Boolean> visibilityChangeCallback, @ColorInt int lightIconColor,
-            @ColorInt int darkIconColor) {}
+    public void init(Consumer<Boolean> visibilityChangeCallback,
+            Consumer<Rect> excludeBackRegionCallback) {}
 
     /**
      * Set whether the view can be shown.
@@ -70,11 +70,6 @@ public class NavigationBarOverlayController {
      * Unregister listeners, called when navigationBarView is detached from window.
      */
     public void unregisterListeners() {}
-
-    /**
-     * Set the dark intensity for all drawables.
-     */
-    public void setDarkIntensity(float darkIntensity) {}
 
     /**
      * Return the current view.

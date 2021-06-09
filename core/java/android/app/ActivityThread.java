@@ -36,6 +36,7 @@ import static com.android.internal.annotations.VisibleForTesting.Visibility.PACK
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.UserIdInt;
 import android.app.assist.AssistContent;
 import android.app.assist.AssistStructure;
 import android.app.backup.BackupAgent;
@@ -61,6 +62,7 @@ import android.content.ContentCaptureOptions;
 import android.content.ContentProvider;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.Context.CreatePackageOptions;
 import android.content.IContentProvider;
 import android.content.IIntentReceiver;
 import android.content.Intent;
@@ -71,6 +73,7 @@ import android.content.pm.IPackageManager;
 import android.content.pm.InstrumentationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.PackageManager.ApplicationInfoFlags;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.ParceledListSlice;
 import android.content.pm.PermissionInfo;
@@ -178,6 +181,7 @@ import android.view.autofill.AutofillId;
 import android.view.contentcapture.IContentCaptureManager;
 import android.view.contentcapture.IContentCaptureOptionsCallback;
 import android.view.translation.TranslationSpec;
+import android.view.translation.UiTranslationSpec;
 import android.webkit.WebView;
 import android.window.SizeConfigurationBuckets;
 import android.window.SplashScreen;
@@ -233,7 +237,6 @@ import java.util.Objects;
 import java.util.TimeZone;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -334,6 +337,11 @@ public final class ActivityThread extends ClientTransactionHandler
      */
     @UnsupportedAppUsage
     final ArrayMap<IBinder, ActivityClientRecord> mActivities = new ArrayMap<>();
+    /**
+     * Maps from activity token to local record of the activities that are preparing to be launched.
+     */
+    final Map<IBinder, ActivityClientRecord> mLaunchingActivities =
+            Collections.synchronizedMap(new ArrayMap<IBinder, ActivityClientRecord>());
     /** The activities to be truly destroyed (not include relaunch). */
     final Map<IBinder, ClientTransactionItem> mActivitiesToBeDestroyed =
             Collections.synchronizedMap(new ArrayMap<IBinder, ClientTransactionItem>());
@@ -343,7 +351,6 @@ public final class ActivityThread extends ClientTransactionHandler
     // Number of activities that are currently visible on-screen.
     @UnsupportedAppUsage
     int mNumVisibleActivities = 0;
-    private final AtomicInteger mNumLaunchingActivities = new AtomicInteger();
     @GuardedBy("mAppThread")
     private int mLastProcessState = PROCESS_STATE_UNKNOWN;
     @GuardedBy("mAppThread")
@@ -1178,7 +1185,7 @@ public final class ActivityThread extends ClientTransactionHandler
             InetAddress.clearDnsCache();
             // Allow libcore to perform the necessary actions as it sees fit upon a network
             // configuration change.
-            NetworkEventDispatcher.getInstance().onNetworkConfigurationChanged();
+            NetworkEventDispatcher.getInstance().dispatchNetworkConfigurationChange();
         }
 
         public void updateHttpProxy() {
@@ -1843,13 +1850,15 @@ public final class ActivityThread extends ClientTransactionHandler
 
         @Override
         public void updateUiTranslationState(IBinder activityToken, int state,
-                TranslationSpec sourceSpec, TranslationSpec targetSpec, List<AutofillId> viewIds) {
+                TranslationSpec sourceSpec, TranslationSpec targetSpec, List<AutofillId> viewIds,
+                UiTranslationSpec uiTranslationSpec) {
             SomeArgs args = SomeArgs.obtain();
             args.arg1 = activityToken;
             args.arg2 = state;
             args.arg3 = sourceSpec;
             args.arg4 = targetSpec;
             args.arg5 = viewIds;
+            args.arg6 = uiTranslationSpec;
             sendMessage(H.UPDATE_UI_TRANSLATION_STATE, args);
         }
     }
@@ -2212,7 +2221,7 @@ public final class ActivityThread extends ClientTransactionHandler
                     final SomeArgs args = (SomeArgs) msg.obj;
                     updateUiTranslationState((IBinder) args.arg1, (int) args.arg2,
                             (TranslationSpec) args.arg3, (TranslationSpec) args.arg4,
-                            (List<AutofillId>) args.arg5);
+                            (List<AutofillId>) args.arg5, (UiTranslationSpec) args.arg6);
                     break;
                 case SET_CONTENT_CAPTURE_OPTIONS_CALLBACK:
                     handleSetContentCaptureOptionsCallback((String) msg.obj);
@@ -2364,16 +2373,22 @@ public final class ActivityThread extends ClientTransactionHandler
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
     public final LoadedApk getPackageInfo(String packageName, CompatibilityInfo compatInfo,
-            int flags) {
+            @CreatePackageOptions int flags) {
         return getPackageInfo(packageName, compatInfo, flags, UserHandle.myUserId());
     }
 
     public final LoadedApk getPackageInfo(String packageName, CompatibilityInfo compatInfo,
-            int flags, int userId) {
+            @CreatePackageOptions int flags, @UserIdInt int userId) {
+        return getPackageInfo(packageName, compatInfo, flags, userId, 0 /* packageFlags */);
+    }
+
+    public final LoadedApk getPackageInfo(String packageName, CompatibilityInfo compatInfo,
+            @CreatePackageOptions int flags, @UserIdInt int userId,
+            @ApplicationInfoFlags int packageFlags) {
         final boolean differentUser = (UserHandle.myUserId() != userId);
         ApplicationInfo ai = PackageManager.getApplicationInfoAsUserCached(
                 packageName,
-                PackageManager.GET_SHARED_LIBRARY_FILES
+                packageFlags | PackageManager.GET_SHARED_LIBRARY_FILES
                 | PackageManager.MATCH_DEBUG_TRIAGED_MISSING,
                 (userId < 0) ? UserHandle.myUserId() : userId);
         synchronized (mResourcesManager) {
@@ -2416,7 +2431,7 @@ public final class ActivityThread extends ClientTransactionHandler
 
     @UnsupportedAppUsage(trackingBug = 171933273)
     public final LoadedApk getPackageInfo(ApplicationInfo ai, CompatibilityInfo compatInfo,
-            int flags) {
+            @CreatePackageOptions int flags) {
         boolean includeCode = (flags&Context.CONTEXT_INCLUDE_CODE) != 0;
         boolean securityViolation = includeCode && ai.uid != 0
                 && ai.uid != Process.SYSTEM_UID && (mBoundApplication != null
@@ -3244,6 +3259,21 @@ public final class ActivityThread extends ClientTransactionHandler
     }
 
     @Override
+    public void addLaunchingActivity(IBinder token, ActivityClientRecord activity) {
+        mLaunchingActivities.put(token, activity);
+    }
+
+    @Override
+    public ActivityClientRecord getLaunchingActivity(IBinder token) {
+        return mLaunchingActivities.get(token);
+    }
+
+    @Override
+    public void removeLaunchingActivity(IBinder token) {
+        mLaunchingActivities.remove(token);
+    }
+
+    @Override
     public ActivityClientRecord getActivityClient(IBinder token) {
         return mActivities.get(token);
     }
@@ -3287,7 +3317,7 @@ public final class ActivityThread extends ClientTransactionHandler
             // Defer the top state for VM to avoid aggressive JIT compilation affecting activity
             // launch time.
             if (processState == ActivityManager.PROCESS_STATE_TOP
-                    && mNumLaunchingActivities.get() > 0) {
+                    && !mLaunchingActivities.isEmpty()) {
                 mPendingProcessState = processState;
                 mH.postDelayed(this::applyPendingProcessState, PENDING_TOP_PROCESS_STATE_TIMEOUT);
             } else {
@@ -3303,7 +3333,7 @@ public final class ActivityThread extends ClientTransactionHandler
         // Handle the pending configuration if the process state is changed from cached to
         // non-cached. Except the case where there is a launching activity because the
         // LaunchActivityItem will handle it.
-        if (wasCached && !isCachedProcessState() && mNumLaunchingActivities.get() == 0) {
+        if (wasCached && !isCachedProcessState() && mLaunchingActivities.isEmpty()) {
             final Configuration pendingConfig =
                     mConfigurationController.getPendingConfiguration(false /* clearPending */);
             if (pendingConfig == null) {
@@ -3339,11 +3369,6 @@ public final class ActivityThread extends ClientTransactionHandler
                 updateVmProcessState(pendingState);
             }
         }
-    }
-
-    @Override
-    public void countLaunchingActivities(int num) {
-        mNumLaunchingActivities.getAndAdd(num);
     }
 
     @UnsupportedAppUsage
@@ -3506,7 +3531,8 @@ public final class ActivityThread extends ClientTransactionHandler
                     cl, component.getClassName(), r.intent);
             StrictMode.incrementExpectedActivityCount(activity.getClass());
             r.intent.setExtrasClassLoader(cl);
-            r.intent.prepareToEnterProcess(isProtectedComponent(r.activityInfo));
+            r.intent.prepareToEnterProcess(isProtectedComponent(r.activityInfo),
+                    appContext.getAttributionSource());
             if (r.state != null) {
                 r.state.setClassLoader(cl);
             }
@@ -3798,7 +3824,8 @@ public final class ActivityThread extends ClientTransactionHandler
         for (int i=0; i<N; i++) {
             ReferrerIntent intent = intents.get(i);
             intent.setExtrasClassLoader(r.activity.getClassLoader());
-            intent.prepareToEnterProcess(isProtectedComponent(r.activityInfo));
+            intent.prepareToEnterProcess(isProtectedComponent(r.activityInfo),
+                    r.activity.getAttributionSource());
             r.activity.mFragments.noteStateNotSaved();
             mInstrumentation.callActivityOnNewIntent(r.activity, intent);
         }
@@ -3816,6 +3843,8 @@ public final class ActivityThread extends ClientTransactionHandler
         // - it does not call onProvideAssistData()
         // - it needs an IAutoFillCallback
         boolean forAutofill = cmd.requestType == ActivityManager.ASSIST_CONTEXT_AUTOFILL;
+        // When only the AssistContent is requested, omit the AsssistStructure
+        boolean requestedOnlyContent = cmd.requestType == ActivityManager.ASSIST_CONTEXT_CONTENT;
 
         // TODO: decide if lastSessionId logic applies to autofill sessions
         if (mLastSessionId != cmd.sessionId) {
@@ -3842,8 +3871,11 @@ public final class ActivityThread extends ClientTransactionHandler
                 r.activity.onProvideAssistData(data);
                 referrer = r.activity.onProvideReferrer();
             }
-            if (cmd.requestType == ActivityManager.ASSIST_CONTEXT_FULL || forAutofill) {
-                structure = new AssistStructure(r.activity, forAutofill, cmd.flags);
+            if (cmd.requestType == ActivityManager.ASSIST_CONTEXT_FULL || forAutofill
+                    || requestedOnlyContent) {
+                if (!requestedOnlyContent) {
+                    structure = new AssistStructure(r.activity, forAutofill, cmd.flags);
+                }
                 Intent activityIntent = r.activity.getIntent();
                 boolean notSecure = r.window == null ||
                         (r.window.getAttributes().flags
@@ -3865,18 +3897,21 @@ public final class ActivityThread extends ClientTransactionHandler
                     r.activity.onProvideAssistContent(content);
                 }
             }
-
-        }
-        if (structure == null) {
-            structure = new AssistStructure();
         }
 
-        // TODO: decide if lastSessionId logic applies to autofill sessions
+        if (!requestedOnlyContent) {
+            if (structure == null) {
+                structure = new AssistStructure();
+            }
 
-        structure.setAcquisitionStartTime(startTime);
-        structure.setAcquisitionEndTime(SystemClock.uptimeMillis());
+            // TODO: decide if lastSessionId logic applies to autofill sessions
 
-        mLastAssistStructures.add(new WeakReference<>(structure));
+            structure.setAcquisitionStartTime(startTime);
+            structure.setAcquisitionEndTime(SystemClock.uptimeMillis());
+
+            mLastAssistStructures.add(new WeakReference<>(structure));
+        }
+
         IActivityTaskManager mgr = ActivityTaskManager.getService();
         try {
             mgr.reportAssistContextExtras(cmd.requestToken, data, structure, content, referrer);
@@ -4046,10 +4081,7 @@ public final class ActivityThread extends ClientTransactionHandler
         final SplashScreenView.Builder builder = new SplashScreenView.Builder(r.activity);
         final SplashScreenView view = builder.createFromParcel(parcelable).build();
         decorView.addView(view);
-        view.cacheRootWindow(r.window);
-        view.makeSystemUIColorsTransparent();
-        r.activity.mSplashScreenView = view;
-        view.attachHostActivity(r.activity);
+        view.attachHostActivityAndSetSystemUIColors(r.activity, r.window);
         view.requestLayout();
         // Ensure splash screen view is shown before remove the splash screen window.
         final ViewRootImpl impl = decorView.getViewRootImpl();
@@ -4091,12 +4123,13 @@ public final class ActivityThread extends ClientTransactionHandler
 
     @Override
     public void handOverSplashScreenView(@NonNull ActivityClientRecord r) {
-        if (r.activity.mSplashScreenView != null) {
-            synchronized (this) {
-                if (mSplashScreenGlobal != null) {
-                    mSplashScreenGlobal.dispatchOnExitAnimation(r.token,
-                            r.activity.mSplashScreenView);
-                }
+        final SplashScreenView v = r.activity.getSplashScreenView();
+        if (v == null) {
+            return;
+        }
+        synchronized (this) {
+            if (mSplashScreenGlobal != null) {
+                mSplashScreenGlobal.handOverSplashScreenView(r.token, v);
             }
         }
     }
@@ -4194,13 +4227,15 @@ public final class ActivityThread extends ClientTransactionHandler
     }
 
     private void updateUiTranslationState(IBinder activityToken, int state,
-            TranslationSpec sourceSpec, TranslationSpec targetSpec, List<AutofillId> viewIds) {
+            TranslationSpec sourceSpec, TranslationSpec targetSpec, List<AutofillId> viewIds,
+            UiTranslationSpec uiTranslationSpec) {
         final ActivityClientRecord r = mActivities.get(activityToken);
         if (r == null) {
             Log.w(TAG, "updateUiTranslationState(): no activity for " + activityToken);
             return;
         }
-        r.activity.updateUiTranslationState(state, sourceSpec, targetSpec, viewIds);
+        r.activity.updateUiTranslationState(
+                state, sourceSpec, targetSpec, viewIds, uiTranslationSpec);
     }
 
     private static final ThreadLocal<Intent> sCurrentBroadcastIntent = new ThreadLocal<Intent>();
@@ -4236,10 +4271,15 @@ public final class ActivityThread extends ClientTransactionHandler
             if (data.info.splitName != null) {
                 context = (ContextImpl) context.createContextForSplit(data.info.splitName);
             }
+            if (data.info.attributionTags != null && data.info.attributionTags.length > 0) {
+                final String attributionTag = data.info.attributionTags[0];
+                context = (ContextImpl) context.createAttributionContext(attributionTag);
+            }
             java.lang.ClassLoader cl = context.getClassLoader();
             data.intent.setExtrasClassLoader(cl);
             data.intent.prepareToEnterProcess(
-                    isProtectedComponent(data.info) || isProtectedBroadcast(data.intent));
+                    isProtectedComponent(data.info) || isProtectedBroadcast(data.intent),
+                    context.getAttributionSource());
             data.setExtrasClassLoader(cl);
             receiver = packageInfo.getAppFactory()
                     .instantiateReceiver(cl, data.info.name, data.intent);
@@ -4430,6 +4470,10 @@ public final class ActivityThread extends ClientTransactionHandler
             if (data.info.splitName != null) {
                 context = (ContextImpl) context.createContextForSplit(data.info.splitName);
             }
+            if (data.info.attributionTags != null && data.info.attributionTags.length > 0) {
+                final String attributionTag = data.info.attributionTags[0];
+                context = (ContextImpl) context.createAttributionContext(attributionTag);
+            }
             // Service resources must be initialized with the same loaders as the application
             // context.
             context.getResources().addLoaders(
@@ -4464,7 +4508,8 @@ public final class ActivityThread extends ClientTransactionHandler
         if (s != null) {
             try {
                 data.intent.setExtrasClassLoader(s.getClassLoader());
-                data.intent.prepareToEnterProcess(isProtectedComponent(createData.info));
+                data.intent.prepareToEnterProcess(isProtectedComponent(createData.info),
+                        s.getAttributionSource());
                 try {
                     if (!data.rebind) {
                         IBinder binder = s.onBind(data.intent);
@@ -4494,7 +4539,8 @@ public final class ActivityThread extends ClientTransactionHandler
         if (s != null) {
             try {
                 data.intent.setExtrasClassLoader(s.getClassLoader());
-                data.intent.prepareToEnterProcess(isProtectedComponent(createData.info));
+                data.intent.prepareToEnterProcess(isProtectedComponent(createData.info),
+                        s.getAttributionSource());
                 boolean doRebind = s.onUnbind(data.intent);
                 try {
                     if (doRebind) {
@@ -4583,7 +4629,8 @@ public final class ActivityThread extends ClientTransactionHandler
             try {
                 if (data.args != null) {
                     data.args.setExtrasClassLoader(s.getClassLoader());
-                    data.args.prepareToEnterProcess(isProtectedComponent(createData.info));
+                    data.args.prepareToEnterProcess(isProtectedComponent(createData.info),
+                            s.getAttributionSource());
                 }
                 int res;
                 if (!data.taskRemoved) {
@@ -5236,7 +5283,8 @@ public final class ActivityThread extends ClientTransactionHandler
             try {
                 if (ri.mData != null) {
                     ri.mData.setExtrasClassLoader(r.activity.getClassLoader());
-                    ri.mData.prepareToEnterProcess(isProtectedComponent(r.activityInfo));
+                    ri.mData.prepareToEnterProcess(isProtectedComponent(r.activityInfo),
+                            r.activity.getAttributionSource());
                 }
                 if (DEBUG_RESULTS) Slog.v(TAG,
                         "Delivering result to activity " + r + " : " + ri);
@@ -5887,7 +5935,7 @@ public final class ActivityThread extends ClientTransactionHandler
 
     public final void applyConfigurationToResources(Configuration config) {
         synchronized (mResourcesManager) {
-            mResourcesManager.applyConfigurationToResourcesLocked(config, null);
+            mResourcesManager.applyConfigurationToResources(config, null);
         }
     }
 
@@ -5975,7 +6023,7 @@ public final class ActivityThread extends ClientTransactionHandler
 
         synchronized (mResourcesManager) {
             // Update all affected Resources objects to use new ResourcesImpl
-            mResourcesManager.applyNewResourceDirsLocked(ai, oldResDirs);
+            mResourcesManager.applyNewResourceDirs(ai, oldResDirs);
         }
     }
 
@@ -6231,7 +6279,7 @@ public final class ActivityThread extends ClientTransactionHandler
 
                                 synchronized (mResourcesManager) {
                                     // Update affected Resources objects to use new ResourcesImpl
-                                    mResourcesManager.applyNewResourceDirsLocked(aInfo, oldResDirs);
+                                    mResourcesManager.applyNewResourceDirs(aInfo, oldResDirs);
                                 }
                             } catch (RemoteException e) {
                             }
@@ -6386,7 +6434,7 @@ public final class ActivityThread extends ClientTransactionHandler
             VMDebug.setAllocTrackerStackDepth(Integer.parseInt(property));
         }
         if (data.trackAllocation) {
-            DdmVmInternal.enableRecentAllocations(true);
+            DdmVmInternal.setRecentAllocationsTrackingEnabled(true);
         }
         // Note when this process has started.
         Process.setStartTimes(SystemClock.elapsedRealtime(), SystemClock.uptimeMillis());
@@ -6474,7 +6522,7 @@ public final class ActivityThread extends ClientTransactionHandler
              * reflect configuration changes. The configuration object passed
              * in AppBindData can be safely assumed to be up to date
              */
-            mResourcesManager.applyConfigurationToResourcesLocked(data.config, data.compatInfo);
+            mResourcesManager.applyConfigurationToResources(data.config, data.compatInfo);
             mCurDefaultDisplayDpi = data.config.densityDpi;
 
             // This calls mResourcesManager so keep it within the synchronized block.
@@ -7337,6 +7385,10 @@ public final class ActivityThread extends ClientTransactionHandler
                     throw new RuntimeException(e);
                 }
             }
+            if (info.attributionTags != null && info.attributionTags.length > 0) {
+                final String attributionTag = info.attributionTags[0];
+                c = c.createAttributionContext(attributionTag);
+            }
 
             try {
                 final java.lang.ClassLoader cl = c.getClassLoader();
@@ -7509,7 +7561,7 @@ public final class ActivityThread extends ClientTransactionHandler
 
                 // We need to apply this change to the resources immediately, because upon returning
                 // the view hierarchy will be informed about it.
-                if (mResourcesManager.applyConfigurationToResourcesLocked(globalConfig,
+                if (mResourcesManager.applyConfigurationToResources(globalConfig,
                         null /* compat */,
                         mInitialApplication.getResources().getDisplayAdjustments())) {
                     mConfigurationController.updateLocaleListFromAppContext(
