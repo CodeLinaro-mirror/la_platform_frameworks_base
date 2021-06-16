@@ -42,6 +42,8 @@ interface ISessionManager {
     ParceledListSlice getSession2Tokens(int userId);
     void dispatchMediaKeyEvent(String packageName, boolean asSystemService, in KeyEvent keyEvent,
             boolean needWakeLock);
+    void dispatchMediaKeyEventToMediaPlayer(String packageName, boolean asSystemService, in KeyEvent keyEvent,
+            boolean needWakeLock, String mediaPlayerPackagename);
     boolean dispatchMediaKeyEventToSessionAsSystemService(String packageName,
             in MediaSession.Token sessionToken, in KeyEvent keyEvent);
     void dispatchVolumeKeyEvent(String packageName, String opPackageName, boolean asSystemService,
