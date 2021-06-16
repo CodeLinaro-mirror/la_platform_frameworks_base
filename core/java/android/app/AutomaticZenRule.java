@@ -45,6 +45,7 @@ public final class AutomaticZenRule implements Parcelable {
     private long creationTime;
     private ZenPolicy mZenPolicy;
     private boolean mModified = false;
+    private String mPkg;
 
     /**
      * The maximum string length for any string contained in this automatic zen rule. This pertains
@@ -130,6 +131,7 @@ public final class AutomaticZenRule implements Parcelable {
         creationTime = source.readLong();
         mZenPolicy = source.readParcelable(null);
         mModified = source.readInt() == ENABLED;
+        mPkg = source.readString();
     }
 
     /**
@@ -251,6 +253,20 @@ public final class AutomaticZenRule implements Parcelable {
         this.configurationActivity = getTrimmedComponentName(componentName);
     }
 
+    /**
+     * @hide
+     */
+    public void setPackageName(String pkgName) {
+        mPkg = pkgName;
+    }
+
+    /**
+     * @hide
+     */
+    public String getPackageName() {
+        return mPkg;
+    }
+
     @Override
     public int describeContents() {
         return 0;
@@ -272,6 +288,7 @@ public final class AutomaticZenRule implements Parcelable {
         dest.writeLong(creationTime);
         dest.writeParcelable(mZenPolicy, 0);
         dest.writeInt(mModified ? ENABLED : DISABLED);
+        dest.writeString(mPkg);
     }
 
     @Override
@@ -280,6 +297,7 @@ public final class AutomaticZenRule implements Parcelable {
                 .append("enabled=").append(enabled)
                 .append(",name=").append(name)
                 .append(",interruptionFilter=").append(interruptionFilter)
+                .append(",pkg=").append(mPkg)
                 .append(",conditionId=").append(conditionId)
                 .append(",owner=").append(owner)
                 .append(",configActivity=").append(configurationActivity)
@@ -301,13 +319,14 @@ public final class AutomaticZenRule implements Parcelable {
                 && Objects.equals(other.owner, owner)
                 && Objects.equals(other.mZenPolicy, mZenPolicy)
                 && Objects.equals(other.configurationActivity, configurationActivity)
+                && Objects.equals(other.mPkg, mPkg)
                 && other.creationTime == creationTime;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(enabled, name, interruptionFilter, conditionId, owner,
-                configurationActivity, mZenPolicy, mModified, creationTime);
+                configurationActivity, mZenPolicy, mModified, creationTime, mPkg);
     }
 
     public static final @android.annotation.NonNull Parcelable.Creator<AutomaticZenRule> CREATOR
