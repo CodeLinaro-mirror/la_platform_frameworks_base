@@ -1544,7 +1544,7 @@ public class ZenModeHelperTest extends UiServiceTestCase {
                 new ComponentName("android", "ScheduleConditionProvider"),
                 ZenModeConfig.toScheduleConditionId(new ScheduleInfo()),
                 NotificationManager.INTERRUPTION_FILTER_PRIORITY, true);
-        String id = mZenModeHelperSpy.addAutomaticZenRule(zenRule, "test");
+        String id = mZenModeHelperSpy.addAutomaticZenRule("android", zenRule, "test");
 
         assertTrue(id != null);
         ZenModeConfig.ZenRule ruleInConfig = mZenModeHelperSpy.mConfig.automaticRules.get(id);
@@ -1568,7 +1568,7 @@ public class ZenModeHelperTest extends UiServiceTestCase {
                     ZenModeConfig.toScheduleConditionId(si),
                     new ZenPolicy.Builder().build(),
                     NotificationManager.INTERRUPTION_FILTER_PRIORITY, true);
-            String id = mZenModeHelperSpy.addAutomaticZenRule(zenRule, "test");
+            String id = mZenModeHelperSpy.addAutomaticZenRule("android", zenRule, "test");
             assertNotNull(id);
         }
         try {
@@ -1578,7 +1578,7 @@ public class ZenModeHelperTest extends UiServiceTestCase {
                     ZenModeConfig.toScheduleConditionId(new ScheduleInfo()),
                     new ZenPolicy.Builder().build(),
                     NotificationManager.INTERRUPTION_FILTER_PRIORITY, true);
-            String id = mZenModeHelperSpy.addAutomaticZenRule(zenRule, "test");
+            String id = mZenModeHelperSpy.addAutomaticZenRule("android", zenRule, "test");
             fail("allowed too many rules to be created");
         } catch (IllegalArgumentException e) {
             // yay
