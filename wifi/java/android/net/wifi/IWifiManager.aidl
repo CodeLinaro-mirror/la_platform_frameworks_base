@@ -41,6 +41,8 @@ import android.net.wifi.SoftApConfiguration;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiNetworkSuggestion;
+import android.net.wifi.ThermalData;
+import android.net.wifi.IWifiNativeEventCallback;
 
 import android.os.Messenger;
 import android.os.ResultReceiver;
@@ -294,5 +296,15 @@ interface IWifiManager
     void registerForWifiNotification(int staId, in IBinder binder, in IWifiNotificationCallback callback, int callbackIdentifier);
 
     void unregisterForWifiNotification(int staId, int callbackIdentifier);
+
+    List<String> getAvailableInterfaces();
+
+    boolean setCongestionReport(String ifname, boolean enable, int threshold, int interval);
+
+    ThermalData getThermalInfo(String ifname);
+
+    void registerWifiNativeEventCallback(in IWifiNativeEventCallback callback);
+
+    void unregisterWifiNativeEventCallback(in IWifiNativeEventCallback callback);
 
 }

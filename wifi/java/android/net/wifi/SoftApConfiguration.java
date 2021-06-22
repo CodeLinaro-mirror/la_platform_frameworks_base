@@ -842,25 +842,36 @@ public final class SoftApConfiguration implements Parcelable {
          * Derived MAC address 1: e2:c7:60:c4:0e:b7
          * Derived MAC address 2: e2:38:9f:c4:0e:b7
          *
+         * To force channel used in bands, extend definition for combined_band
+         * - Byte0: band
+         * - Byte1: channel
+         * - Other: reserved
+         *
          * @param bands List of one or combination of the band types from {@link @BandType}.
          * @return Builder for chaining.
          */
         @NonNull
-        public Builder setBands(@NonNull List<Integer> bands) {
-            if (bands != null && bands.size() > 2) {
+        public Builder setBands(@NonNull List<Integer> combined_bands) {
+            if (combined_bands != null && combined_bands.size() > 2) {
                 throw new IllegalArgumentException("Max 2 concurrent BSSes supported");
             }
 
-            for(int band : bands) {
-                if (!isBandValid(band)) {
-                    throw new IllegalArgumentException("Invalid band type");
+            for(int combined : combined_bands) {
+                int band = combined & 0xff;
+                int channel = (combined >> 8) & 0xff;
+
+                if (channel == 0) {
+                    if (!isBandValid(band)) {
+                        throw new IllegalArgumentException("Invalid band: " + band);
+                    }
+                } else {
+                    if (!isChannelBandPairValid(channel, band)) {
+                        throw new IllegalArgumentException(
+                                "Invalid band & channel: " + band + " & " + channel);
+                    }
                 }
             }
-            mBands = new ArrayList<>(bands);
-            if (mBands.size() > 0) {
-                // Since band preference is specified, no specific channel is selected.
-                mChannel = 0;
-            }
+            mBands = new ArrayList<>(combined_bands);
             return this;
         }
 
