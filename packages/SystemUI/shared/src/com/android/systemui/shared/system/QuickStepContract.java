@@ -36,6 +36,9 @@ import java.util.StringJoiner;
  * Various shared constants between Launcher and SysUI as part of quickstep
  */
 public class QuickStepContract {
+    // Fully qualified name of the Launcher activity.
+    public static final String LAUNCHER_ACTIVITY_CLASS_NAME =
+            "com.google.android.apps.nexuslauncher.NexusLauncherActivity";
 
     public static final String KEY_EXTRA_SYSUI_PROXY = "extra_sysui_proxy";
     public static final String KEY_EXTRA_WINDOW_CORNER_RADIUS = "extra_window_corner_radius";
@@ -52,6 +55,8 @@ public class QuickStepContract {
     // See IStartingWindow.aidl
     public static final String KEY_EXTRA_SHELL_STARTING_WINDOW =
             "extra_shell_starting_window";
+    // See ISmartspaceTransitionController.aidl
+    public static final String KEY_EXTRA_SMARTSPACE_TRANSITION_CONTROLLER = "smartspace_transition";
 
     public static final String NAV_BAR_MODE_2BUTTON_OVERLAY =
             WindowManagerPolicyConstants.NAV_BAR_MODE_2BUTTON_OVERLAY;
@@ -105,6 +110,8 @@ public class QuickStepContract {
     public static final int SYSUI_STATE_ALLOW_GESTURE_IGNORING_BAR_VISIBILITY = 1 << 17;
     // The IME is showing
     public static final int SYSUI_STATE_IME_SHOWING = 1 << 18;
+    // The window magnification is overlapped with system gesture insets at the bottom.
+    public static final int SYSUI_STATE_MAGNIFICATION_OVERLAP = 1 << 19;
 
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({SYSUI_STATE_SCREEN_PINNING,
@@ -125,7 +132,8 @@ public class QuickStepContract {
             SYSUI_STATE_GLOBAL_ACTIONS_SHOWING,
             SYSUI_STATE_ONE_HANDED_ACTIVE,
             SYSUI_STATE_ALLOW_GESTURE_IGNORING_BAR_VISIBILITY,
-            SYSUI_STATE_IME_SHOWING
+            SYSUI_STATE_IME_SHOWING,
+            SYSUI_STATE_MAGNIFICATION_OVERLAP
     })
     public @interface SystemUiStateFlags {}
 
@@ -153,6 +161,7 @@ public class QuickStepContract {
         str.add((flags & SYSUI_STATE_ALLOW_GESTURE_IGNORING_BAR_VISIBILITY) != 0
                 ? "allow_gesture" : "");
         str.add((flags & SYSUI_STATE_IME_SHOWING) != 0 ? "ime_visible" : "");
+        str.add((flags & SYSUI_STATE_MAGNIFICATION_OVERLAP) != 0 ? "magnification_overlap" : "");
         return str.toString();
     }
 

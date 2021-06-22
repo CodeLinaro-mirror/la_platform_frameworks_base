@@ -120,7 +120,7 @@ public final class AppSearchSchema {
     /** Builder for {@link AppSearchSchema objects}. */
     public static final class Builder {
         private final String mSchemaType;
-        private final ArrayList<Bundle> mPropertyBundles = new ArrayList<>();
+        private ArrayList<Bundle> mPropertyBundles = new ArrayList<>();
         private final Set<String> mPropertyNames = new ArraySet<>();
         private boolean mBuilt = false;
 
@@ -133,8 +133,8 @@ public final class AppSearchSchema {
         /** Adds a property to the given type. */
         @NonNull
         public AppSearchSchema.Builder addProperty(@NonNull PropertyConfig propertyConfig) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             Objects.requireNonNull(propertyConfig);
+            resetIfBuilt();
             String name = propertyConfig.getName();
             if (!mPropertyNames.add(name)) {
                 throw new IllegalSchemaException("Property defined more than once: " + name);
@@ -143,19 +143,21 @@ public final class AppSearchSchema {
             return this;
         }
 
-        /**
-         * Constructs a new {@link AppSearchSchema} from the contents of this builder.
-         *
-         * <p>After calling this method, the builder must no longer be used.
-         */
+        /** Constructs a new {@link AppSearchSchema} from the contents of this builder. */
         @NonNull
         public AppSearchSchema build() {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             Bundle bundle = new Bundle();
             bundle.putString(AppSearchSchema.SCHEMA_TYPE_FIELD, mSchemaType);
             bundle.putParcelableArrayList(AppSearchSchema.PROPERTIES_FIELD, mPropertyBundles);
             mBuilt = true;
             return new AppSearchSchema(bundle);
+        }
+
+        private void resetIfBuilt() {
+            if (mBuilt) {
+                mPropertyBundles = new ArrayList<>(mPropertyBundles);
+                mBuilt = false;
+            }
         }
     }
 
@@ -180,7 +182,7 @@ public final class AppSearchSchema {
         @IntDef(
                 value = {
                     DATA_TYPE_STRING,
-                    DATA_TYPE_INT64,
+                    DATA_TYPE_LONG,
                     DATA_TYPE_DOUBLE,
                     DATA_TYPE_BOOLEAN,
                     DATA_TYPE_BYTES,
@@ -193,7 +195,7 @@ public final class AppSearchSchema {
         public static final int DATA_TYPE_STRING = 1;
 
         /** @hide */
-        public static final int DATA_TYPE_INT64 = 2;
+        public static final int DATA_TYPE_LONG = 2;
 
         /** @hide */
         public static final int DATA_TYPE_DOUBLE = 3;
@@ -251,6 +253,7 @@ public final class AppSearchSchema {
         }
 
         @Override
+        @NonNull
         public String toString() {
             return mBundle.toString();
         }
@@ -312,8 +315,8 @@ public final class AppSearchSchema {
             switch (propertyBundle.getInt(PropertyConfig.DATA_TYPE_FIELD)) {
                 case PropertyConfig.DATA_TYPE_STRING:
                     return new StringPropertyConfig(propertyBundle);
-                case PropertyConfig.DATA_TYPE_INT64:
-                    return new Int64PropertyConfig(propertyBundle);
+                case PropertyConfig.DATA_TYPE_LONG:
+                    return new LongPropertyConfig(propertyBundle);
                 case PropertyConfig.DATA_TYPE_DOUBLE:
                     return new DoublePropertyConfig(propertyBundle);
                 case PropertyConfig.DATA_TYPE_BOOLEAN:
@@ -386,12 +389,24 @@ public final class AppSearchSchema {
         public @interface TokenizerType {}
 
         /**
-         * It is only valid for tokenizer_type to be 'NONE' if {@link #getIndexingType} is {@link
+         * This value indicates that no tokens should be extracted from this property.
+         *
+         * <p>It is only valid for tokenizer_type to be 'NONE' if {@link #getIndexingType} is {@link
          * #INDEXING_TYPE_NONE}.
          */
         public static final int TOKENIZER_TYPE_NONE = 0;
 
-        /** Tokenization for plain text. */
+        /**
+         * Tokenization for plain text. This value indicates that tokens should be extracted from
+         * this property based on word breaks. Segments of whitespace and punctuation are not
+         * considered tokens.
+         *
+         * <p>Ex. A property with "foo bar. baz." will produce tokens for "foo", "bar" and "baz".
+         * The segments " " and "." will not be considered tokens.
+         *
+         * <p>It is only valid for tokenizer_type to be 'PLAIN' if {@link #getIndexingType} is
+         * {@link #INDEXING_TYPE_EXACT_TERMS} or {@link #INDEXING_TYPE_PREFIXES}.
+         */
         public static final int TOKENIZER_TYPE_PLAIN = 1;
 
         StringPropertyConfig(@NonNull Bundle bundle) {
@@ -410,16 +425,14 @@ public final class AppSearchSchema {
 
         /** Builder for {@link StringPropertyConfig}. */
         public static final class Builder {
-            private final Bundle mBundle = new Bundle();
-            private boolean mBuilt = false;
+            private final String mPropertyName;
+            private @Cardinality int mCardinality = CARDINALITY_OPTIONAL;
+            private @IndexingType int mIndexingType = INDEXING_TYPE_NONE;
+            private @TokenizerType int mTokenizerType = TOKENIZER_TYPE_NONE;
 
             /** Creates a new {@link StringPropertyConfig.Builder}. */
             public Builder(@NonNull String propertyName) {
-                mBundle.putString(NAME_FIELD, propertyName);
-                mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_STRING);
-                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
-                mBundle.putInt(INDEXING_TYPE_FIELD, INDEXING_TYPE_NONE);
-                mBundle.putInt(TOKENIZER_TYPE_FIELD, TOKENIZER_TYPE_NONE);
+                mPropertyName = Objects.requireNonNull(propertyName);
             }
 
             /**
@@ -431,10 +444,9 @@ public final class AppSearchSchema {
             @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
             @NonNull
             public StringPropertyConfig.Builder setCardinality(@Cardinality int cardinality) {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
                 Preconditions.checkArgumentInRange(
                         cardinality, CARDINALITY_REPEATED, CARDINALITY_REQUIRED, "cardinality");
-                mBundle.putInt(CARDINALITY_FIELD, cardinality);
+                mCardinality = cardinality;
                 return this;
             }
 
@@ -446,10 +458,9 @@ public final class AppSearchSchema {
              */
             @NonNull
             public StringPropertyConfig.Builder setIndexingType(@IndexingType int indexingType) {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
                 Preconditions.checkArgumentInRange(
                         indexingType, INDEXING_TYPE_NONE, INDEXING_TYPE_PREFIXES, "indexingType");
-                mBundle.putInt(INDEXING_TYPE_FIELD, indexingType);
+                mIndexingType = indexingType;
                 return this;
             }
 
@@ -466,45 +477,57 @@ public final class AppSearchSchema {
              */
             @NonNull
             public StringPropertyConfig.Builder setTokenizerType(@TokenizerType int tokenizerType) {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
                 Preconditions.checkArgumentInRange(
                         tokenizerType, TOKENIZER_TYPE_NONE, TOKENIZER_TYPE_PLAIN, "tokenizerType");
-                mBundle.putInt(TOKENIZER_TYPE_FIELD, tokenizerType);
+                mTokenizerType = tokenizerType;
                 return this;
             }
 
-            /**
-             * Constructs a new {@link StringPropertyConfig} from the contents of this builder.
-             *
-             * <p>After calling this method, the builder must no longer be used.
-             *
-             * @throws IllegalStateException if the builder has already been used
-             */
+            /** Constructs a new {@link StringPropertyConfig} from the contents of this builder. */
             @NonNull
             public StringPropertyConfig build() {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
-                mBuilt = true;
-                return new StringPropertyConfig(mBundle);
+                if (mTokenizerType == TOKENIZER_TYPE_NONE) {
+                    Preconditions.checkState(
+                            mIndexingType == INDEXING_TYPE_NONE,
+                            "Cannot set "
+                                    + "TOKENIZER_TYPE_NONE with an indexing type other than "
+                                    + "INDEXING_TYPE_NONE.");
+                } else {
+                    Preconditions.checkState(
+                            mIndexingType != INDEXING_TYPE_NONE,
+                            "Cannot set " + "TOKENIZER_TYPE_PLAIN  with INDEXING_TYPE_NONE.");
+                }
+                Bundle bundle = new Bundle();
+                bundle.putString(NAME_FIELD, mPropertyName);
+                bundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_STRING);
+                bundle.putInt(CARDINALITY_FIELD, mCardinality);
+                bundle.putInt(INDEXING_TYPE_FIELD, mIndexingType);
+                bundle.putInt(TOKENIZER_TYPE_FIELD, mTokenizerType);
+                return new StringPropertyConfig(bundle);
             }
         }
     }
 
-    /** Configuration for a property containing a 64-bit integer. */
-    public static final class Int64PropertyConfig extends PropertyConfig {
+    /**
+     * @deprecated TODO(b/181887768): Exists for dogfood transition; must be removed.
+     * @hide
+     */
+    @Deprecated
+    public static class Int64PropertyConfig extends PropertyConfig {
+        @UnsupportedAppUsage
         Int64PropertyConfig(@NonNull Bundle bundle) {
             super(bundle);
         }
 
         /** Builder for {@link Int64PropertyConfig}. */
         public static final class Builder {
-            private final Bundle mBundle = new Bundle();
-            private boolean mBuilt = false;
+            private final String mPropertyName;
+            private @Cardinality int mCardinality = CARDINALITY_OPTIONAL;
 
             /** Creates a new {@link Int64PropertyConfig.Builder}. */
+            @UnsupportedAppUsage
             public Builder(@NonNull String propertyName) {
-                mBundle.putString(NAME_FIELD, propertyName);
-                mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_INT64);
-                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
+                mPropertyName = Objects.requireNonNull(propertyName);
             }
 
             /**
@@ -515,26 +538,67 @@ public final class AppSearchSchema {
              */
             @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
             @NonNull
+            @UnsupportedAppUsage
             public Int64PropertyConfig.Builder setCardinality(@Cardinality int cardinality) {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
                 Preconditions.checkArgumentInRange(
                         cardinality, CARDINALITY_REPEATED, CARDINALITY_REQUIRED, "cardinality");
-                mBundle.putInt(CARDINALITY_FIELD, cardinality);
+                mCardinality = cardinality;
                 return this;
             }
 
-            /**
-             * Constructs a new {@link Int64PropertyConfig} from the contents of this builder.
-             *
-             * <p>After calling this method, the builder must no longer be used.
-             *
-             * @throws IllegalStateException if the builder has already been used
-             */
+            /** Constructs a new {@link Int64PropertyConfig} from the contents of this builder. */
             @NonNull
+            @UnsupportedAppUsage
             public Int64PropertyConfig build() {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
-                mBuilt = true;
-                return new Int64PropertyConfig(mBundle);
+                Bundle bundle = new Bundle();
+                bundle.putString(NAME_FIELD, mPropertyName);
+                bundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_LONG);
+                bundle.putInt(CARDINALITY_FIELD, mCardinality);
+                return new Int64PropertyConfig(bundle);
+            }
+        }
+    }
+
+    /** Configuration for a property containing a 64-bit integer. */
+    // TODO(b/181887768): This should extend directly from PropertyConfig
+    public static final class LongPropertyConfig extends Int64PropertyConfig {
+        LongPropertyConfig(@NonNull Bundle bundle) {
+            super(bundle);
+        }
+
+        /** Builder for {@link LongPropertyConfig}. */
+        public static final class Builder {
+            private final String mPropertyName;
+            private @Cardinality int mCardinality = CARDINALITY_OPTIONAL;
+
+            /** Creates a new {@link LongPropertyConfig.Builder}. */
+            public Builder(@NonNull String propertyName) {
+                mPropertyName = Objects.requireNonNull(propertyName);
+            }
+
+            /**
+             * The cardinality of the property (whether it is optional, required or repeated).
+             *
+             * <p>If this method is not called, the default cardinality is {@link
+             * PropertyConfig#CARDINALITY_OPTIONAL}.
+             */
+            @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
+            @NonNull
+            public LongPropertyConfig.Builder setCardinality(@Cardinality int cardinality) {
+                Preconditions.checkArgumentInRange(
+                        cardinality, CARDINALITY_REPEATED, CARDINALITY_REQUIRED, "cardinality");
+                mCardinality = cardinality;
+                return this;
+            }
+
+            /** Constructs a new {@link LongPropertyConfig} from the contents of this builder. */
+            @NonNull
+            public LongPropertyConfig build() {
+                Bundle bundle = new Bundle();
+                bundle.putString(NAME_FIELD, mPropertyName);
+                bundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_LONG);
+                bundle.putInt(CARDINALITY_FIELD, mCardinality);
+                return new LongPropertyConfig(bundle);
             }
         }
     }
@@ -547,14 +611,12 @@ public final class AppSearchSchema {
 
         /** Builder for {@link DoublePropertyConfig}. */
         public static final class Builder {
-            private final Bundle mBundle = new Bundle();
-            private boolean mBuilt = false;
+            private final String mPropertyName;
+            private @Cardinality int mCardinality = CARDINALITY_OPTIONAL;
 
             /** Creates a new {@link DoublePropertyConfig.Builder}. */
             public Builder(@NonNull String propertyName) {
-                mBundle.putString(NAME_FIELD, propertyName);
-                mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_DOUBLE);
-                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
+                mPropertyName = Objects.requireNonNull(propertyName);
             }
 
             /**
@@ -566,25 +628,20 @@ public final class AppSearchSchema {
             @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
             @NonNull
             public DoublePropertyConfig.Builder setCardinality(@Cardinality int cardinality) {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
                 Preconditions.checkArgumentInRange(
                         cardinality, CARDINALITY_REPEATED, CARDINALITY_REQUIRED, "cardinality");
-                mBundle.putInt(CARDINALITY_FIELD, cardinality);
+                mCardinality = cardinality;
                 return this;
             }
 
-            /**
-             * Constructs a new {@link DoublePropertyConfig} from the contents of this builder.
-             *
-             * <p>After calling this method, the builder must no longer be used.
-             *
-             * @throws IllegalStateException if the builder has already been used
-             */
+            /** Constructs a new {@link DoublePropertyConfig} from the contents of this builder. */
             @NonNull
             public DoublePropertyConfig build() {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
-                mBuilt = true;
-                return new DoublePropertyConfig(mBundle);
+                Bundle bundle = new Bundle();
+                bundle.putString(NAME_FIELD, mPropertyName);
+                bundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_DOUBLE);
+                bundle.putInt(CARDINALITY_FIELD, mCardinality);
+                return new DoublePropertyConfig(bundle);
             }
         }
     }
@@ -597,14 +654,12 @@ public final class AppSearchSchema {
 
         /** Builder for {@link BooleanPropertyConfig}. */
         public static final class Builder {
-            private final Bundle mBundle = new Bundle();
-            private boolean mBuilt = false;
+            private final String mPropertyName;
+            private @Cardinality int mCardinality = CARDINALITY_OPTIONAL;
 
             /** Creates a new {@link BooleanPropertyConfig.Builder}. */
             public Builder(@NonNull String propertyName) {
-                mBundle.putString(NAME_FIELD, propertyName);
-                mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_BOOLEAN);
-                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
+                mPropertyName = Objects.requireNonNull(propertyName);
             }
 
             /**
@@ -616,25 +671,20 @@ public final class AppSearchSchema {
             @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
             @NonNull
             public BooleanPropertyConfig.Builder setCardinality(@Cardinality int cardinality) {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
                 Preconditions.checkArgumentInRange(
                         cardinality, CARDINALITY_REPEATED, CARDINALITY_REQUIRED, "cardinality");
-                mBundle.putInt(CARDINALITY_FIELD, cardinality);
+                mCardinality = cardinality;
                 return this;
             }
 
-            /**
-             * Constructs a new {@link BooleanPropertyConfig} from the contents of this builder.
-             *
-             * <p>After calling this method, the builder must no longer be used.
-             *
-             * @throws IllegalStateException if the builder has already been used
-             */
+            /** Constructs a new {@link BooleanPropertyConfig} from the contents of this builder. */
             @NonNull
             public BooleanPropertyConfig build() {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
-                mBuilt = true;
-                return new BooleanPropertyConfig(mBundle);
+                Bundle bundle = new Bundle();
+                bundle.putString(NAME_FIELD, mPropertyName);
+                bundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_BOOLEAN);
+                bundle.putInt(CARDINALITY_FIELD, mCardinality);
+                return new BooleanPropertyConfig(bundle);
             }
         }
     }
@@ -647,14 +697,12 @@ public final class AppSearchSchema {
 
         /** Builder for {@link BytesPropertyConfig}. */
         public static final class Builder {
-            private final Bundle mBundle = new Bundle();
-            private boolean mBuilt = false;
+            private final String mPropertyName;
+            private @Cardinality int mCardinality = CARDINALITY_OPTIONAL;
 
             /** Creates a new {@link BytesPropertyConfig.Builder}. */
             public Builder(@NonNull String propertyName) {
-                mBundle.putString(NAME_FIELD, propertyName);
-                mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_BYTES);
-                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
+                mPropertyName = Objects.requireNonNull(propertyName);
             }
 
             /**
@@ -666,25 +714,20 @@ public final class AppSearchSchema {
             @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
             @NonNull
             public BytesPropertyConfig.Builder setCardinality(@Cardinality int cardinality) {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
                 Preconditions.checkArgumentInRange(
                         cardinality, CARDINALITY_REPEATED, CARDINALITY_REQUIRED, "cardinality");
-                mBundle.putInt(CARDINALITY_FIELD, cardinality);
+                mCardinality = cardinality;
                 return this;
             }
 
-            /**
-             * Constructs a new {@link BytesPropertyConfig} from the contents of this builder.
-             *
-             * <p>After calling this method, the builder must no longer be used.
-             *
-             * @throws IllegalStateException if the builder has already been used
-             */
+            /** Constructs a new {@link BytesPropertyConfig} from the contents of this builder. */
             @NonNull
             public BytesPropertyConfig build() {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
-                mBuilt = true;
-                return new BytesPropertyConfig(mBundle);
+                Bundle bundle = new Bundle();
+                bundle.putString(NAME_FIELD, mPropertyName);
+                bundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_BYTES);
+                bundle.putInt(CARDINALITY_FIELD, mCardinality);
+                return new BytesPropertyConfig(bundle);
             }
         }
     }
@@ -715,20 +758,13 @@ public final class AppSearchSchema {
             return mBundle.getBoolean(INDEX_NESTED_PROPERTIES_FIELD);
         }
 
-        /**
-         * Builder for {@link DocumentPropertyConfig}.
-         *
-         * <p>The following properties must be set, or {@link DocumentPropertyConfig} construction
-         * will fail:
-         *
-         * <ul>
-         *   <li>cardinality
-         *   <li>schemaType
-         * </ul>
-         */
+        /** Builder for {@link DocumentPropertyConfig}. */
         public static final class Builder {
-            private final Bundle mBundle = new Bundle();
-            private boolean mBuilt = false;
+            private final String mPropertyName;
+            // TODO(b/181887768): This should be final
+            private String mSchemaType;
+            private @Cardinality int mCardinality = CARDINALITY_OPTIONAL;
+            private boolean mShouldIndexNestedProperties = false;
 
             /**
              * Creates a new {@link DocumentPropertyConfig.Builder}.
@@ -740,11 +776,8 @@ public final class AppSearchSchema {
              *     Documents of different types cannot be mixed into a single property.
              */
             public Builder(@NonNull String propertyName, @NonNull String schemaType) {
-                mBundle.putString(NAME_FIELD, propertyName);
-                mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_DOCUMENT);
-                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
-                mBundle.putBoolean(INDEX_NESTED_PROPERTIES_FIELD, false);
-                mBundle.putString(SCHEMA_TYPE_FIELD, schemaType);
+                mPropertyName = Objects.requireNonNull(propertyName);
+                mSchemaType = Objects.requireNonNull(schemaType);
             }
 
             /**
@@ -754,10 +787,8 @@ public final class AppSearchSchema {
             @Deprecated
             @UnsupportedAppUsage
             public Builder(@NonNull String propertyName) {
-                mBundle.putString(NAME_FIELD, propertyName);
-                mBundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_DOCUMENT);
-                mBundle.putInt(CARDINALITY_FIELD, CARDINALITY_OPTIONAL);
-                mBundle.putBoolean(INDEX_NESTED_PROPERTIES_FIELD, false);
+                mPropertyName = Objects.requireNonNull(propertyName);
+                mSchemaType = null;
             }
 
             /**
@@ -768,7 +799,7 @@ public final class AppSearchSchema {
             @UnsupportedAppUsage
             @NonNull
             public Builder setSchemaType(@NonNull String schemaType) {
-                mBundle.putString(SCHEMA_TYPE_FIELD, schemaType);
+                mSchemaType = Objects.requireNonNull(schemaType);
                 return this;
             }
 
@@ -781,10 +812,9 @@ public final class AppSearchSchema {
             @SuppressWarnings("MissingGetterMatchingBuilder") // getter defined in superclass
             @NonNull
             public DocumentPropertyConfig.Builder setCardinality(@Cardinality int cardinality) {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
                 Preconditions.checkArgumentInRange(
                         cardinality, CARDINALITY_REPEATED, CARDINALITY_REQUIRED, "cardinality");
-                mBundle.putInt(CARDINALITY_FIELD, cardinality);
+                mCardinality = cardinality;
                 return this;
             }
 
@@ -798,8 +828,7 @@ public final class AppSearchSchema {
             @NonNull
             public DocumentPropertyConfig.Builder setShouldIndexNestedProperties(
                     boolean indexNestedProperties) {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
-                mBundle.putBoolean(INDEX_NESTED_PROPERTIES_FIELD, indexNestedProperties);
+                mShouldIndexNestedProperties = indexNestedProperties;
                 return this;
             }
 
@@ -815,19 +844,18 @@ public final class AppSearchSchema {
                 return setShouldIndexNestedProperties(indexNestedProperties);
             }
 
-            /**
-             * Constructs a new {@link PropertyConfig} from the contents of this builder.
-             *
-             * <p>After calling this method, the builder must no longer be used.
-             *
-             * @throws IllegalStateException if the builder has already been used (e.g. missing
-             *     {@code dataType}).
-             */
+            /** Constructs a new {@link PropertyConfig} from the contents of this builder. */
             @NonNull
             public DocumentPropertyConfig build() {
-                Preconditions.checkState(!mBuilt, "Builder has already been used");
-                mBuilt = true;
-                return new DocumentPropertyConfig(mBundle);
+                Bundle bundle = new Bundle();
+                bundle.putString(NAME_FIELD, mPropertyName);
+                bundle.putInt(DATA_TYPE_FIELD, DATA_TYPE_DOCUMENT);
+                bundle.putInt(CARDINALITY_FIELD, mCardinality);
+                bundle.putBoolean(INDEX_NESTED_PROPERTIES_FIELD, mShouldIndexNestedProperties);
+                // TODO(b/181887768): Remove checkNotNull after the deprecated constructor (which
+                //  is the only way to get null here) is removed
+                bundle.putString(SCHEMA_TYPE_FIELD, Objects.requireNonNull(mSchemaType));
+                return new DocumentPropertyConfig(bundle);
             }
         }
     }

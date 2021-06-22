@@ -24,10 +24,8 @@ package {
 apex {
     name: "com.android.appsearch",
     manifest: "apex_manifest.json",
-    java_libs: [
-        "framework-appsearch",
-        "service-appsearch",
-    ],
+    bootclasspath_fragments: ["com.android.appsearch-bootclasspath-fragment"],
+    systemserverclasspath_fragments: ["com.android.appsearch-systemserverclasspath-fragment"],
     key: "com.android.appsearch.key",
     certificate: ":com.android.appsearch.certificate",
     updatable: false,
@@ -44,4 +42,18 @@ android_app_certificate {
     // This will use com.android.appsearch.x509.pem (the cert) and
     // com.android.appsearch.pk8 (the private key)
     certificate: "com.android.appsearch",
+}
+
+// Encapsulate the contributions made by the com.android.appsearch to the bootclasspath.
+bootclasspath_fragment {
+    name: "com.android.appsearch-bootclasspath-fragment",
+    contents: ["framework-appsearch"],
+    apex_available: ["com.android.appsearch"],
+}
+
+// Encapsulate the contributions made by the com.android.appsearch to the systemserverclasspath.
+systemserverclasspath_fragment {
+    name: "com.android.appsearch-systemserverclasspath-fragment",
+    contents: ["service-appsearch"],
+    apex_available: ["com.android.appsearch"],
 }

@@ -140,6 +140,7 @@ import com.android.server.wm.WindowProcessController;
 
 import dalvik.system.VMRuntime;
 
+import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.IOException;
@@ -335,18 +336,25 @@ public final class ProcessList {
     // LMK_GETKILLCNT
     // LMK_SUBSCRIBE
     // LMK_PROCKILL
+    // LMK_UPDATE_PROPS
+    // LMK_KILL_OCCURRED
+    // LMK_STATE_CHANGED
     static final byte LMK_TARGET = 0;
     static final byte LMK_PROCPRIO = 1;
     static final byte LMK_PROCREMOVE = 2;
     static final byte LMK_PROCPURGE = 3;
     static final byte LMK_GETKILLCNT = 4;
     static final byte LMK_SUBSCRIBE = 5;
-    static final byte LMK_PROCKILL = 6; // Note: this is an unsolicated command
+    static final byte LMK_PROCKILL = 6; // Note: this is an unsolicited command
+    static final byte LMK_UPDATE_PROPS = 7;
+    static final byte LMK_KILL_OCCURRED = 8; // Msg to subscribed clients on kill occurred event
+    static final byte LMK_STATE_CHANGED = 9; // Msg to subscribed clients on state changed
 
     // Low Memory Killer Daemon command codes.
     // These must be kept in sync with async_event_type definitions in lmkd.h
     //
     static final int LMK_ASYNC_EVENT_KILL = 0;
+    static final int LMK_ASYNC_EVENT_STAT = 1;
 
     // lmkd reconnect delay in msecs
     private static final long LMKD_RECONNECT_DELAY_MS = 1000;
@@ -794,7 +802,7 @@ public final class ProcessList {
         mAppDataIsolationEnabled =
                 SystemProperties.getBoolean(ANDROID_APP_DATA_ISOLATION_ENABLED_PROPERTY, true);
         mVoldAppDataIsolationEnabled = SystemProperties.getBoolean(
-                ANDROID_VOLD_APP_DATA_ISOLATION_ENABLED_PROPERTY, true);
+                ANDROID_VOLD_APP_DATA_ISOLATION_ENABLED_PROPERTY, false);
         mAppDataIsolationAllowlistedApps = new ArrayList<>(
                 SystemConfig.getInstance().getAppDataIsolationWhitelistedApps());
 
@@ -829,22 +837,44 @@ public final class ProcessList {
                         }
 
                         @Override
-                        public boolean handleUnsolicitedMessage(ByteBuffer dataReceived,
+                        public boolean handleUnsolicitedMessage(DataInputStream inputData,
                                 int receivedLen) {
                             if (receivedLen < 4) {
                                 return false;
                             }
-                            switch (dataReceived.getInt(0)) {
-                                case LMK_PROCKILL:
-                                    if (receivedLen != 12) {
+
+                            try {
+                                switch (inputData.readInt()) {
+                                    case LMK_PROCKILL:
+                                        if (receivedLen != 12) {
+                                            return false;
+                                        }
+                                        final int pid = inputData.readInt();
+                                        final int uid = inputData.readInt();
+                                        mAppExitInfoTracker.scheduleNoteLmkdProcKilled(pid, uid);
+                                        return true;
+                                    case LMK_KILL_OCCURRED:
+                                        if (receivedLen
+                                                < LmkdStatsReporter.KILL_OCCURRED_MSG_SIZE) {
+                                            return false;
+                                        }
+                                        LmkdStatsReporter.logKillOccurred(inputData);
+                                        return true;
+                                    case LMK_STATE_CHANGED:
+                                        if (receivedLen
+                                                != LmkdStatsReporter.STATE_CHANGED_MSG_SIZE) {
+                                            return false;
+                                        }
+                                        final int state = inputData.readInt();
+                                        LmkdStatsReporter.logStateChanged(state);
+                                        return true;
+                                    default:
                                         return false;
-                                    }
-                                    mAppExitInfoTracker.scheduleNoteLmkdProcKilled(
-                                            dataReceived.getInt(4), dataReceived.getInt(8));
-                                    return true;
-                                default:
-                                    return false;
+                                }
+                            } catch (IOException e) {
+                                Slog.e(TAG, "Invalid buffer data. Failed to log LMK_KILL_OCCURRED");
                             }
+                            return false;
                         }
                     }
             );
@@ -1475,6 +1505,12 @@ public final class ProcessList {
             buf = ByteBuffer.allocate(4 * 2);
             buf.putInt(LMK_SUBSCRIBE);
             buf.putInt(LMK_ASYNC_EVENT_KILL);
+            ostream.write(buf.array(), 0, buf.position());
+
+            // Subscribe for stats event notifications
+            buf = ByteBuffer.allocate(4 * 2);
+            buf.putInt(LMK_SUBSCRIBE);
+            buf.putInt(LMK_ASYNC_EVENT_STAT);
             ostream.write(buf.array(), 0, buf.position());
         } catch (IOException ex) {
             return false;
@@ -2341,6 +2377,7 @@ public final class ProcessList {
             }
 
             final Process.ProcessStartResult startResult;
+            boolean regularZygote = false;
             if (hostingRecord.usesWebviewZygote()) {
                 startResult = startWebView(entryPoint,
                         app.processName, uid, uid, gids, runtimeFlags, mountExternal,
@@ -2360,12 +2397,8 @@ public final class ProcessList {
                         app.getDisabledCompatChanges(), pkgDataInfoMap, allowlistedAppDataInfoMap,
                         false, false,
                         new String[]{PROC_START_SEQ_IDENT + app.getStartSeq()});
-
-                if (Process.createProcessGroup(uid, startResult.pid) < 0) {
-                    Slog.e(ActivityManagerService.TAG, "Unable to create process group for "
-                            + app.processName + " (" + startResult.pid + ")");
-                }
             } else {
+                regularZygote = true;
                 startResult = Process.start(entryPoint,
                         app.processName, uid, uid, gids, runtimeFlags, mountExternal,
                         app.info.targetSdkVersion, seInfo, requiredAbi, instructionSet,
@@ -2374,6 +2407,15 @@ public final class ProcessList {
                         allowlistedAppDataInfoMap, bindMountAppsData, bindMountAppStorageDirs,
                         new String[]{PROC_START_SEQ_IDENT + app.getStartSeq()});
             }
+
+            if (!regularZygote) {
+                // webview and app zygote don't have the permission to create the nodes
+                if (Process.createProcessGroup(uid, startResult.pid) < 0) {
+                    Slog.e(ActivityManagerService.TAG, "Unable to create process group for "
+                            + app.processName + " (" + startResult.pid + ")");
+                }
+            }
+
             // This runs after Process.start() as this method may block app process starting time
             // if dir is not cached. Running this method after Process.start() can make it
             // cache the dir asynchronously, so zygote can use it without waiting for it.
@@ -3038,7 +3080,7 @@ public final class ProcessList {
                                 UidRecord.CHANGE_GONE);
                         EventLogTags.writeAmUidStopped(uid);
                         mActiveUids.remove(uid);
-                        mService.mFgsStartTempAllowList.remove(record.info.uid);
+                        mService.mFgsStartTempAllowList.removeUid(record.info.uid);
                         mService.noteUidProcessState(uid, ActivityManager.PROCESS_STATE_NONEXISTENT,
                                 ActivityManager.PROCESS_CAPABILITY_NONE);
                     }
@@ -5001,6 +5043,7 @@ public final class ProcessList {
         final UidRecord uidRec = app.getUidRecord();
         if (mService.mConstants.mKillForceAppStandByAndCachedIdle
                 && uidRec != null && uidRec.isIdle()
+                && !app.mState.shouldNotKillOnForcedAppStandbyAndIdle()
                 && app.isCached() && app.mState.isForcedAppStandby()) {
             app.killLocked("cached idle & forced-app-standby",
                     ApplicationExitInfo.REASON_OTHER,

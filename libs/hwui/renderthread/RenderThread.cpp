@@ -16,6 +16,7 @@
 
 #include "RenderThread.h"
 
+#include <gui/TraceUtils.h>
 #include "../HardwareBitmapUploader.h"
 #include "CanvasContext.h"
 #include "DeviceInfo.h"
@@ -29,7 +30,6 @@
 #include "pipeline/skia/SkiaVulkanPipeline.h"
 #include "renderstate/RenderState.h"
 #include "utils/TimeUtils.h"
-#include "utils/TraceUtils.h"
 
 #include <GrContextOptions.h>
 #include <gl/GrGLInterface.h>
@@ -275,7 +275,7 @@ void RenderThread::requireVkContext() {
 void RenderThread::initGrContextOptions(GrContextOptions& options) {
     options.fPreferExternalImagesOverES3 = true;
     options.fDisableDistanceFieldPaths = true;
-    if (android::base::GetBoolProperty(PROPERTY_REDUCE_OPS_TASK_SPLITTING, false)) {
+    if (android::base::GetBoolProperty(PROPERTY_REDUCE_OPS_TASK_SPLITTING, true)) {
         options.fReduceOpsTaskSplitting = GrContextOptions::Enable::kYes;
     } else {
         options.fReduceOpsTaskSplitting = GrContextOptions::Enable::kNo;
@@ -302,30 +302,29 @@ VulkanManager& RenderThread::vulkanManager() {
     return *mVkManager.get();
 }
 
-void RenderThread::dumpGraphicsMemory(int fd) {
-    globalProfileData()->dump(fd);
-
-    String8 cachesOutput;
-    String8 pipeline;
-    auto renderType = Properties::getRenderPipelineType();
-    switch (renderType) {
-        case RenderPipelineType::SkiaGL: {
-            mCacheManager->dumpMemoryUsage(cachesOutput, mRenderState);
-            pipeline.appendFormat("Skia (OpenGL)");
-            break;
-        }
-        case RenderPipelineType::SkiaVulkan: {
-            mCacheManager->dumpMemoryUsage(cachesOutput, mRenderState);
-            pipeline.appendFormat("Skia (Vulkan)");
-            break;
-        }
+static const char* pipelineToString() {
+    switch (auto renderType = Properties::getRenderPipelineType()) {
+        case RenderPipelineType::SkiaGL:
+            return "Skia (OpenGL)";
+        case RenderPipelineType::SkiaVulkan:
+            return "Skia (Vulkan)";
         default:
             LOG_ALWAYS_FATAL("canvas context type %d not supported", (int32_t)renderType);
-            break;
+    }
+}
+
+void RenderThread::dumpGraphicsMemory(int fd, bool includeProfileData) {
+    if (includeProfileData) {
+        globalProfileData()->dump(fd);
     }
 
-    dprintf(fd, "\n%s\n", cachesOutput.string());
-    dprintf(fd, "\nPipeline=%s\n", pipeline.string());
+    String8 cachesOutput;
+    mCacheManager->dumpMemoryUsage(cachesOutput, mRenderState);
+    dprintf(fd, "\nPipeline=%s\n%s\n", pipelineToString(), cachesOutput.string());
+}
+
+void RenderThread::getMemoryUsage(size_t* cpuUsage, size_t* gpuUsage) {
+    mCacheManager->getMemoryUsage(cpuUsage, gpuUsage);
 }
 
 Readback& RenderThread::readback() {
@@ -346,6 +345,15 @@ void RenderThread::setGrContext(sk_sp<GrDirectContext> context) {
     if (mGrContext) {
         DeviceInfo::setMaxTextureSize(mGrContext->maxRenderTargetSize());
     }
+}
+
+sk_sp<GrDirectContext> RenderThread::requireGrContext() {
+    if (Properties::getRenderPipelineType() == RenderPipelineType::SkiaGL) {
+        requireGlContext();
+    } else {
+        requireVkContext();
+    }
+    return mGrContext;
 }
 
 int RenderThread::choreographerCallback(int fd, int events, void* data) {

@@ -252,7 +252,6 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
         @Override
         public void onStateChanged(int newState) {
             mStatusBarState = newState;
-            updateBiometricListeningState();
         }
 
         @Override
@@ -276,6 +275,8 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
     private boolean mHasLockscreenWallpaper;
     private boolean mAssistantVisible;
     private boolean mKeyguardOccluded;
+    private boolean mOccludingAppRequestingFp;
+    private boolean mOccludingAppRequestingFace;
     private boolean mSecureCameraLaunched;
     @VisibleForTesting
     protected boolean mTelephonyCapable;
@@ -585,6 +586,29 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
     public void setKeyguardOccluded(boolean occluded) {
         mKeyguardOccluded = occluded;
         updateBiometricListeningState();
+    }
+
+
+    /**
+     * Request to listen for face authentication when an app is occluding keyguard.
+     * @param request if true and mKeyguardOccluded, request face auth listening, else default
+     *                to normal behavior.
+     *                See {@link KeyguardUpdateMonitor#shouldListenForFace()}
+     */
+    public void requestFaceAuthOnOccludingApp(boolean request) {
+        mOccludingAppRequestingFace = request;
+        updateFaceListeningState();
+    }
+
+    /**
+     * Request to listen for fingerprint when an app is occluding keyguard.
+     * @param request if true and mKeyguardOccluded, request fingerprint listening, else default
+     *                to normal behavior.
+     *                See {@link KeyguardUpdateMonitor#shouldListenForFingerprint(boolean)}
+     */
+    public void requestFingerprintAuthOnOccludingApp(boolean request) {
+        mOccludingAppRequestingFp = request;
+        updateFingerprintListeningState();
     }
 
     /**
@@ -2093,14 +2117,16 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
 
     @VisibleForTesting
     protected boolean shouldListenForFingerprint(boolean isUdfps) {
+        final boolean userDoesNotHaveTrust = !getUserHasTrust(getCurrentUser());
         final boolean shouldListenKeyguardState =
-                 mKeyguardIsVisible
-                     || !mDeviceInteractive
-                     || (mBouncer && !mKeyguardGoingAway)
-                     || mGoingToSleep
-                     || shouldListenForFingerprintAssistant()
-                     || (mKeyguardOccluded && mIsDreaming)
-                     || (isUdfps && mKeyguardOccluded);
+                mKeyguardIsVisible
+                        || !mDeviceInteractive
+                        || (mBouncer && !mKeyguardGoingAway)
+                        || mGoingToSleep
+                        || shouldListenForFingerprintAssistant()
+                        || (mKeyguardOccluded && mIsDreaming)
+                        || (mKeyguardOccluded && userDoesNotHaveTrust
+                            && (mOccludingAppRequestingFp || isUdfps));
 
         // Only listen if this KeyguardUpdateMonitor belongs to the primary user. There is an
         // instance of KeyguardUpdateMonitor for each user but KeyguardUpdateMonitor is user-aware.
@@ -2116,9 +2142,9 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
 
         final boolean shouldListenUdfpsState = !isUdfps
                 || (!getUserCanSkipBouncer(getCurrentUser())
-                && !isEncryptedOrLockdown(getCurrentUser())
-                && mStrongAuthTracker.hasUserAuthenticatedSinceBoot());
-
+                    && !isEncryptedOrLockdown(getCurrentUser())
+                    && !userNeedsStrongAuth()
+                    && userDoesNotHaveTrust);
         return shouldListenKeyguardState && shouldListenUserState && shouldListenBouncerState
                 && shouldListenUdfpsState;
     }
@@ -2166,12 +2192,12 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
         // Only listen if this KeyguardUpdateMonitor belongs to the primary user. There is an
         // instance of KeyguardUpdateMonitor for each user but KeyguardUpdateMonitor is user-aware.
         final boolean shouldListen =
-                (mBouncer || mAuthInterruptActive || awakeKeyguard
+                (mBouncer || mAuthInterruptActive || mOccludingAppRequestingFace || awakeKeyguard
                         || shouldListenForFaceAssistant())
                 && !mSwitchingUser && !isFaceDisabled(user) && becauseCannotSkipBouncer
                 && !mKeyguardGoingAway && mBiometricEnabledForUser.get(user) && !mLockIconPressed
                 && strongAuthAllowsScanning && mIsPrimaryUser
-                && !mSecureCameraLaunched;
+                && (!mSecureCameraLaunched || mOccludingAppRequestingFace);
 
         // Aggregate relevant fields for debug logging.
         if (DEBUG_FACE || DEBUG_SPEW) {
@@ -2181,6 +2207,7 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
                     shouldListen,
                     mBouncer,
                     mAuthInterruptActive,
+                    mOccludingAppRequestingFace,
                     awakeKeyguard,
                     shouldListenForFaceAssistant(),
                     mSwitchingUser,
@@ -3242,7 +3269,7 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
             pw.println("    disabled(DPM)=" + isFingerprintDisabled(userId));
             pw.println("    possible=" + isUnlockWithFingerprintPossible(userId));
             pw.println("    listening: actual=" + mFingerprintRunningState
-                    + " expected=" + (shouldListenForFingerprint(false) ? 1 : 0));
+                    + " expected=" + (shouldListenForFingerprint(isUdfpsEnrolled()) ? 1 : 0));
             pw.println("    strongAuthFlags=" + Integer.toHexString(strongAuthFlags));
             pw.println("    trustManaged=" + getUserTrustIsManaged(userId));
             pw.println("    udfpsEnrolled=" + isUdfpsEnrolled());

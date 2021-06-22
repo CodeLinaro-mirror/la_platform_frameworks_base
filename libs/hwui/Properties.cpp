@@ -84,6 +84,8 @@ float Properties::defaultSdrWhitePoint = 200.f;
 bool Properties::useHintManager = true;
 int Properties::targetCpuTimePercentage = 70;
 
+StretchEffectBehavior Properties::stretchEffectBehavior = StretchEffectBehavior::ShaderHWUI;
+
 bool Properties::load() {
     bool prevDebugLayersUpdates = debugLayersUpdates;
     bool prevDebugOverdraw = debugOverdraw;

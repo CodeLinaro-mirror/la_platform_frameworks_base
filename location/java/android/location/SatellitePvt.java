@@ -28,12 +28,58 @@ import android.os.Parcelable;
  * same signal transmission time {@link GnssMeasurement#getReceivedSvTimeNanos()}.
  *
  * <p>The position and velocity must be in ECEF coordinates.
+ *
+ * <p>If {@link GnssMeasurement#getSatellitePvt()} is derived from Broadcast ephemeris, then the
+ * position is already w.r.t. the antenna phase center. However, if
+ * {@link GnssMeasurement#getSatellitePvt()} is derived from other modeled orbits, such as
+ * long-term orbits, or precise orbits, then the orbits may have been computed w.r.t.
+ * the satellite center of mass, and then GNSS vendors are expected to correct for the effect
+ * on different phase centers (can differ by meters) of different GNSS signals (e.g. L1, L5)
+ * on the reported satellite position. Accordingly, we might observe a different satellite
+ * position reported for L1 GnssMeasurement struct compared to L5 GnssMeasurement struct.
+ *
+ * <p>If {@link GnssMeasurement#getReceivedSvTimeNanos()} is not fully decoded,
+ * {@link GnssMeasurement#getSatellitePvt()} could still be reported and
+ * {@link GnssMeasurement#getReceivedSvTimeUncertaintyNanos()} would be used to provide confidence.
  * @hide
  */
 @SystemApi
 public final class SatellitePvt implements Parcelable {
+    /**
+     * Bit mask for {@link #mFlags} indicating valid satellite position, velocity and clock info
+     * fields are stored in the SatellitePvt.
+     */
+    private static final int HAS_POSITION_VELOCITY_CLOCK_INFO = 1 << 0;
+
+    /**
+     * Bit mask for {@link #mFlags} indicating a valid iono delay field is stored in the
+     * SatellitePvt.
+     */
+    private static final int HAS_IONO = 1 << 1;
+
+    /**
+     * Bit mask for {@link #mFlags} indicating a valid tropo delay field is stored in the
+     * SatellitePvt.
+     */
+    private static final int HAS_TROPO = 1 << 2;
+
+    /**
+     * A bitfield of flags indicating the validity of the fields in this SatellitePvt.
+     * The bit masks are defined in the constants with prefix HAS_*
+     *
+     * <p>Fields for which there is no corresponding flag must be filled in with a valid value.
+     * For convenience, these are marked as mandatory.
+     *
+     * <p>Others fields may have invalid information in them, if not marked as valid by the
+     * corresponding bit in flags.
+     */
+    private final int mFlags;
+
+    @Nullable
     private final PositionEcef mPositionEcef;
+    @Nullable
     private final VelocityEcef mVelocityEcef;
+    @Nullable
     private final ClockInfo mClockInfo;
     private final double mIonoDelayMeters;
     private final double mTropoDelayMeters;
@@ -203,7 +249,7 @@ public final class SatellitePvt implements Parcelable {
         /**
          * Returns the signal in Space User Range Error Rate (URE Rate) (meters per second).
          *
-         * It covers satellite velocity error and Satellite clock drift
+         * <p>It covers satellite velocity error and Satellite clock drift
          * projected to the pseudorange rate measurements.
          */
         @FloatRange(from = 0.0f, fromInclusive = false)
@@ -272,6 +318,14 @@ public final class SatellitePvt implements Parcelable {
         /**
          * Returns the satellite hardware code bias of the reported code type w.r.t
          * ionosphere-free measurement in meters.
+         *
+         * <p>When broadcast ephemeris is used, this is the offset caused
+         * by the satellite hardware delays at different frequencies;
+         * e.g. in IS-GPS-705D, this term is described in Section
+         * 20.3.3.3.1.2.1.
+         *
+         * <p>For GPS this term is ~10ns, and affects the satellite position
+         * computation by less than a millimeter.
          */
         @FloatRange()
         public double getHardwareCodeBiasMeters() {
@@ -282,6 +336,17 @@ public final class SatellitePvt implements Parcelable {
          * Returns the satellite time correction for ionospheric-free signal measurement
          * (meters). The satellite clock correction for the given signal type
          * = satTimeCorrectionMeters - satHardwareCodeBiasMeters.
+         *
+         * <p>When broadcast ephemeris is used, this is the offset modeled in the
+         * clock terms broadcast over the air by the satellites;
+         * e.g. in IS-GPS-200H, Section 20.3.3.3.3.1, this term is
+         * ∆tsv = af0 + af1(t - toc) + af2(t - toc)^2 + ∆tr.
+         *
+         * <p>If another source of ephemeris is used for SatellitePvt, then the
+         * equivalent value of satTimeCorrection must be provided.
+         *
+         * <p>For GPS this term is ~1ms, and affects the satellite position
+         * computation by ~1m.
          */
         @FloatRange()
         public double getTimeCorrectionMeters() {
@@ -319,20 +384,13 @@ public final class SatellitePvt implements Parcelable {
     }
 
     private SatellitePvt(
-            @NonNull PositionEcef positionEcef,
-            @NonNull VelocityEcef velocityEcef,
-            @NonNull ClockInfo clockInfo,
+            int flags,
+            @Nullable PositionEcef positionEcef,
+            @Nullable VelocityEcef velocityEcef,
+            @Nullable ClockInfo clockInfo,
             double ionoDelayMeters,
             double tropoDelayMeters) {
-        if (positionEcef == null) {
-            throw new IllegalArgumentException("Position Ecef cannot be null.");
-        }
-        if (velocityEcef == null) {
-            throw new IllegalArgumentException("Velocity Ecef cannot be null.");
-        }
-        if (clockInfo == null) {
-            throw new IllegalArgumentException("Clock Info cannot be null.");
-        }
+        mFlags = flags;
         mPositionEcef = positionEcef;
         mVelocityEcef = velocityEcef;
         mClockInfo = clockInfo;
@@ -344,7 +402,7 @@ public final class SatellitePvt implements Parcelable {
      * Returns a {@link PositionEcef} object that contains estimates of the satellite
      * position fields in ECEF coordinate frame.
      */
-    @NonNull
+    @Nullable
     public PositionEcef getPositionEcef() {
         return mPositionEcef;
     }
@@ -353,7 +411,7 @@ public final class SatellitePvt implements Parcelable {
      * Returns a {@link VelocityEcef} object that contains estimates of the satellite
      * velocity fields in the ECEF coordinate frame.
      */
-    @NonNull
+    @Nullable
     public VelocityEcef getVelocityEcef() {
         return mVelocityEcef;
     }
@@ -362,7 +420,7 @@ public final class SatellitePvt implements Parcelable {
      * Returns a {@link ClockInfo} object that contains estimates of the satellite
      * clock info.
      */
-    @NonNull
+    @Nullable
     public ClockInfo getClockInfo() {
         return mClockInfo;
     }
@@ -383,11 +441,29 @@ public final class SatellitePvt implements Parcelable {
         return mTropoDelayMeters;
     }
 
+    /** Returns {@code true} if {@link #getPositionEcef()}, {@link #getVelocityEcef()},
+     * and {@link #getClockInfo()} are valid.
+     */
+    public boolean hasPositionVelocityClockInfo() {
+        return (mFlags & HAS_POSITION_VELOCITY_CLOCK_INFO) != 0;
+    }
+
+    /** Returns {@code true} if {@link #getIonoDelayMeters()} is valid. */
+    public boolean hasIono() {
+        return (mFlags & HAS_IONO) != 0;
+    }
+
+    /** Returns {@code true} if {@link #getTropoDelayMeters()} is valid. */
+    public boolean hasTropo() {
+        return (mFlags & HAS_TROPO) != 0;
+    }
+
     public static final @android.annotation.NonNull Creator<SatellitePvt> CREATOR =
             new Creator<SatellitePvt>() {
                 @Override
                 @Nullable
                 public SatellitePvt createFromParcel(Parcel in) {
+                    int flags = in.readInt();
                     ClassLoader classLoader = getClass().getClassLoader();
                     PositionEcef positionEcef = in.readParcelable(classLoader);
                     VelocityEcef velocityEcef = in.readParcelable(classLoader);
@@ -396,6 +472,7 @@ public final class SatellitePvt implements Parcelable {
                     double tropoDelayMeters = in.readDouble();
 
                     return new SatellitePvt(
+                            flags,
                             positionEcef,
                             velocityEcef,
                             clockInfo,
@@ -416,6 +493,7 @@ public final class SatellitePvt implements Parcelable {
 
     @Override
     public void writeToParcel(@NonNull Parcel parcel, int flags) {
+        parcel.writeInt(mFlags);
         parcel.writeParcelable(mPositionEcef, flags);
         parcel.writeParcelable(mVelocityEcef, flags);
         parcel.writeParcelable(mClockInfo, flags);
@@ -426,7 +504,8 @@ public final class SatellitePvt implements Parcelable {
     @Override
     public String toString() {
         return "SatellitePvt{"
-                + "PositionEcef=" + mPositionEcef
+                + "Flags=" + mFlags
+                + ", PositionEcef=" + mPositionEcef
                 + ", VelocityEcef=" + mVelocityEcef
                 + ", ClockInfo=" + mClockInfo
                 + ", IonoDelayMeters=" + mIonoDelayMeters
@@ -438,9 +517,14 @@ public final class SatellitePvt implements Parcelable {
      * Builder class for SatellitePvt.
      */
     public static final class Builder {
-        private PositionEcef mPositionEcef;
-        private VelocityEcef mVelocityEcef;
-        private ClockInfo mClockInfo;
+        /**
+         * For documentation of below fields, see corresponding fields in {@link
+         * SatellitePvt}.
+         */
+        private int mFlags;
+        @Nullable private PositionEcef mPositionEcef;
+        @Nullable private VelocityEcef mVelocityEcef;
+        @Nullable private ClockInfo mClockInfo;
         private double mIonoDelayMeters;
         private double mTropoDelayMeters;
 
@@ -454,6 +538,7 @@ public final class SatellitePvt implements Parcelable {
         public Builder setPositionEcef(
                 @NonNull PositionEcef positionEcef) {
             mPositionEcef = positionEcef;
+            updateFlags();
             return this;
         }
 
@@ -467,6 +552,7 @@ public final class SatellitePvt implements Parcelable {
         public Builder setVelocityEcef(
                 @NonNull VelocityEcef velocityEcef) {
             mVelocityEcef = velocityEcef;
+            updateFlags();
             return this;
         }
 
@@ -480,7 +566,14 @@ public final class SatellitePvt implements Parcelable {
         public Builder setClockInfo(
                 @NonNull ClockInfo clockInfo) {
             mClockInfo = clockInfo;
+            updateFlags();
             return this;
+        }
+
+        private void updateFlags() {
+            if (mPositionEcef != null && mVelocityEcef != null && mClockInfo != null) {
+                mFlags = (byte) (mFlags | HAS_POSITION_VELOCITY_CLOCK_INFO);
+            }
         }
 
         /**
@@ -490,8 +583,10 @@ public final class SatellitePvt implements Parcelable {
          * @return Builder builder object
          */
         @NonNull
-        public Builder setIonoDelayMeters(@FloatRange() double ionoDelayMeters) {
+        public Builder setIonoDelayMeters(
+                @FloatRange(from = 0.0f, to = 100.0f) double ionoDelayMeters) {
             mIonoDelayMeters = ionoDelayMeters;
+            mFlags = (byte) (mFlags | HAS_IONO);
             return this;
         }
 
@@ -502,8 +597,10 @@ public final class SatellitePvt implements Parcelable {
          * @return Builder builder object
          */
         @NonNull
-        public Builder setTropoDelayMeters(@FloatRange() double tropoDelayMeters) {
+        public Builder setTropoDelayMeters(
+                @FloatRange(from = 0.0f, to = 100.0f) double tropoDelayMeters) {
             mTropoDelayMeters = tropoDelayMeters;
+            mFlags = (byte) (mFlags | HAS_TROPO);
             return this;
         }
 
@@ -514,7 +611,7 @@ public final class SatellitePvt implements Parcelable {
          */
         @NonNull
         public SatellitePvt build() {
-            return new SatellitePvt(mPositionEcef, mVelocityEcef, mClockInfo,
+            return new SatellitePvt(mFlags, mPositionEcef, mVelocityEcef, mClockInfo,
                     mIonoDelayMeters, mTropoDelayMeters);
         }
     }

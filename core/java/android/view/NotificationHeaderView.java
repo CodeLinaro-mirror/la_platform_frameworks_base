@@ -29,6 +29,7 @@ import android.os.Build;
 import android.util.AttributeSet;
 import android.widget.RelativeLayout;
 import android.widget.RemoteViews;
+import android.widget.TextView;
 
 import com.android.internal.R;
 import com.android.internal.widget.CachingIconView;
@@ -43,7 +44,6 @@ import java.util.ArrayList;
  */
 @RemoteViews.RemoteView
 public class NotificationHeaderView extends RelativeLayout {
-    private final int mHeadingEndMargin;
     private final int mTouchableHeight;
     private OnClickListener mExpandClickListener;
     private HeaderTouchListener mTouchListener = new HeaderTouchListener();
@@ -83,7 +83,6 @@ public class NotificationHeaderView extends RelativeLayout {
             int defStyleRes) {
         super(context, attrs, defStyleAttr, defStyleRes);
         Resources res = getResources();
-        mHeadingEndMargin = res.getDimensionPixelSize(R.dimen.notification_heading_margin_end);
         mTouchableHeight = res.getDimensionPixelSize(R.dimen.notification_header_touchable_height);
         mEntireHeaderClickable = res.getBoolean(R.bool.config_notificationHeaderClickableForExpand);
     }
@@ -175,26 +174,25 @@ public class NotificationHeaderView extends RelativeLayout {
     }
 
     /**
-     * Get the current margin end value for the header text.
-     * Add this to {@link #getTopLineBaseMarginEnd()} to get the total margin of the top line.
+     * This is used to make the low-priority header show the bolded text of a title.
      *
-     * @return extra margin
+     * @param styleTextAsTitle true if this header's text is to have the style of a title
      */
-    public int getTopLineExtraMarginEnd() {
-        return mTopLineView.getHeaderTextMarginEnd();
-    }
-
-    /**
-     * Get the base margin at the end of the top line view.
-     * Add this to {@link #getTopLineExtraMarginEnd()} to get the total margin of the top line.
-     * <p>
-     * NOTE: This method's result is only valid if the expander does not have a number. Currently
-     * only groups headers and conversations have numbers, so this is safe to use by MediaStyle.
-     *
-     * @return base margin
-     */
-    public int getTopLineBaseMarginEnd() {
-        return mHeadingEndMargin;
+    @RemotableViewMethod
+    public void styleTextAsTitle(boolean styleTextAsTitle) {
+        int styleResId = styleTextAsTitle
+                ? R.style.TextAppearance_DeviceDefault_Notification_Title
+                : R.style.TextAppearance_DeviceDefault_Notification_Info;
+        // Most of the time, we're showing text in the minimized state
+        View headerText = findViewById(R.id.header_text);
+        if (headerText instanceof TextView) {
+            ((TextView) headerText).setTextAppearance(styleResId);
+        }
+        // If there's no summary or text, we show the app name instead of nothing
+        View appNameText = findViewById(R.id.app_name_text);
+        if (appNameText instanceof TextView) {
+            ((TextView) appNameText).setTextAppearance(styleResId);
+        }
     }
 
     /**

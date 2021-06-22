@@ -129,6 +129,12 @@ public class QSContainerImpl extends FrameLayout {
     @Override
     public WindowInsets onApplyWindowInsets(WindowInsets insets) {
         mNavBarInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom;
+        mQSPanelContainer.setPaddingRelative(
+                mQSPanelContainer.getPaddingStart(),
+                mQSPanelContainer.getPaddingTop(),
+                mQSPanelContainer.getPaddingEnd(),
+                mNavBarInset
+        );
         return super.onApplyWindowInsets(insets);
     }
 
@@ -138,8 +144,7 @@ public class QSContainerImpl extends FrameLayout {
         // bottom and footer are inside the screen.
         MarginLayoutParams layoutParams = (MarginLayoutParams) mQSPanelContainer.getLayoutParams();
 
-        int availableScreenHeight = getDisplayHeight() - mNavBarInset;
-        int maxQs = availableScreenHeight - layoutParams.topMargin - layoutParams.bottomMargin
+        int maxQs = getDisplayHeight() - layoutParams.topMargin - layoutParams.bottomMargin
                 - getPaddingBottom();
         int padding = mPaddingLeft + mPaddingRight + layoutParams.leftMargin
                 + layoutParams.rightMargin;
@@ -148,10 +153,8 @@ public class QSContainerImpl extends FrameLayout {
         mQSPanelContainer.measure(qsPanelWidthSpec,
                 MeasureSpec.makeMeasureSpec(maxQs, MeasureSpec.AT_MOST));
         int width = mQSPanelContainer.getMeasuredWidth() + padding;
-        int height = layoutParams.topMargin + layoutParams.bottomMargin
-                + mQSPanelContainer.getMeasuredHeight() + getPaddingBottom();
         super.onMeasure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(availableScreenHeight, MeasureSpec.EXACTLY));
+                MeasureSpec.makeMeasureSpec(getDisplayHeight(), MeasureSpec.EXACTLY));
         // QSCustomizer will always be the height of the screen, but do this after
         // other measuring to avoid changing the height of the QS.
         mQSCustomizer.measure(widthMeasureSpec,
@@ -196,15 +199,12 @@ public class QSContainerImpl extends FrameLayout {
 
     void updateResources(QSPanelController qsPanelController,
             QuickStatusBarHeaderController quickStatusBarHeaderController) {
-        LayoutParams layoutParams = (LayoutParams) mQSPanelContainer.getLayoutParams();
-        layoutParams.topMargin = mContext.getResources().getDimensionPixelSize(
-                com.android.internal.R.dimen.quick_qs_offset_height);
-        mQSPanelContainer.setLayoutParams(layoutParams);
         mQSPanelContainer.setPaddingRelative(
-                mQSPanelContainer.getPaddingStart(),
-                mQSPanelContainer.getPaddingTop(),
-                mQSPanelContainer.getPaddingEnd(),
-                mContext.getResources().getDimensionPixelSize(R.dimen.qs_container_bottom_padding)
+                getPaddingStart(),
+                mContext.getResources().getDimensionPixelSize(
+                com.android.internal.R.dimen.quick_qs_offset_height),
+                getPaddingEnd(),
+                getPaddingBottom()
         );
 
         int sideMargins = getResources().getDimensionPixelSize(R.dimen.notification_side_paddings);
@@ -295,7 +295,7 @@ public class QSContainerImpl extends FrameLayout {
                 qsPanelController.setContentMargins(mContentPadding, mContentPadding);
                 // Set it as double the side margin (to simulate end margin of current page +
                 // start margin of next page).
-                qsPanelController.setPageMargin(2 * mSideMargins);
+                qsPanelController.setPageMargin(mSideMargins);
             } else if (view == mHeader) {
                 // No content padding for the header.
             } else {

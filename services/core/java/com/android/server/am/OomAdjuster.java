@@ -42,7 +42,6 @@ import static android.app.ActivityManager.PROCESS_STATE_TRANSIENT_BACKGROUND;
 import static android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
 import static android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
 import static android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
-import static android.os.PowerWhitelistManager.REASON_DENIED;
 import static android.os.Process.SCHED_OTHER;
 import static android.os.Process.THREAD_GROUP_BACKGROUND;
 import static android.os.Process.THREAD_GROUP_DEFAULT;
@@ -394,6 +393,10 @@ public class OomAdjuster {
         mProcessGroupHandler = new Handler(adjusterThread.getLooper(), msg -> {
             final int pid = msg.arg1;
             final int group = msg.arg2;
+            if (pid == ActivityManagerService.MY_PID) {
+                // Skip setting the process group for system_server, keep it as default.
+                return true;
+            }
             if (Trace.isTagEnabled(Trace.TRACE_TAG_ACTIVITY_MANAGER)) {
                 Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "setProcessGroup "
                         + msg.obj + " to " + group);
@@ -507,6 +510,7 @@ public class OomAdjuster {
         final ProcessRecord topApp = mService.getTopApp();
         final ProcessStateRecord state = app.mState;
         final boolean wasCached = state.isCached();
+        final int oldCap = state.getSetCapability();
 
         mAdjSeq++;
 
@@ -522,6 +526,7 @@ public class OomAdjuster {
                 SystemClock.uptimeMillis());
         if (oomAdjAll
                 && (wasCached != state.isCached()
+                    || oldCap != state.getSetCapability()
                     || state.getCurRawAdj() == ProcessList.UNKNOWN_ADJ)) {
             // Changed to/from cached state, so apps after it in the LRU
             // list may also be changed.
@@ -659,6 +664,7 @@ public class OomAdjuster {
                 ? oldAdj : ProcessList.UNKNOWN_ADJ;
         final boolean wasBackground = ActivityManager.isProcStateBackground(
                 state.getSetProcState());
+        final int oldCap = state.getSetCapability();
         state.setContainsCycle(false);
         state.setProcStateChanged(false);
         state.resetCachedInfo();
@@ -667,6 +673,7 @@ public class OomAdjuster {
         boolean success = performUpdateOomAdjLSP(app, cachedAdj, topApp, false,
                 SystemClock.uptimeMillis());
         if (!success || (wasCached == state.isCached() && oldAdj != ProcessList.INVALID_ADJ
+                && oldCap == state.getCurCapability()
                 && wasBackground == ActivityManager.isProcStateBackground(
                         state.getSetProcState()))) {
             // Okay, it's unchanged, it won't impact any service it binds to, we're done here.
@@ -681,20 +688,62 @@ public class OomAdjuster {
         // Next to find out all its reachable processes
         ArrayList<ProcessRecord> processes = mTmpProcessList;
         ActiveUids uids = mTmpUidRecords;
-        ArrayDeque<ProcessRecord> queue = mTmpQueue;
+        mPendingProcessSet.add(app);
 
+        boolean containsCycle = collectReachableProcessesLocked(mPendingProcessSet,
+                processes, uids);
+
+        // Clear the pending set as they should've been included in 'processes'.
+        mPendingProcessSet.clear();
+        // Reset the flag
+        state.setReachable(false);
+        // Remove this app from the return list because we've done the computation on it.
+        processes.remove(app);
+
+        int size = processes.size();
+        if (size > 0) {
+            mAdjSeq--;
+            // Update these reachable processes
+            updateOomAdjInnerLSP(oomAdjReason, topApp, processes, uids, containsCycle, false);
+        } else if (state.getCurRawAdj() == ProcessList.UNKNOWN_ADJ) {
+            // In case the app goes from non-cached to cached but it doesn't have other reachable
+            // processes, its adj could be still unknown as of now, assign one.
+            processes.add(app);
+            assignCachedAdjIfNecessary(processes);
+            applyOomAdjLSP(app, false, SystemClock.uptimeMillis(),
+                    SystemClock.elapsedRealtime());
+        }
+        mTmpProcessList.clear();
+        mService.mOomAdjProfiler.oomAdjEnded();
+        Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
+        return true;
+    }
+
+    @GuardedBy("mService")
+    private boolean collectReachableProcessesLocked(ArraySet<ProcessRecord> apps,
+            ArrayList<ProcessRecord> processes, ActiveUids uids) {
+        final ArrayDeque<ProcessRecord> queue = mTmpQueue;
+        queue.clear();
+        for (int i = 0, size = apps.size(); i < size; i++) {
+            final ProcessRecord app = apps.valueAt(i);
+            app.mState.setReachable(true);
+            queue.offer(app);
+        }
+
+        return collectReachableProcessesLocked(queue, processes, uids);
+    }
+
+    @GuardedBy("mService")
+    private boolean collectReachableProcessesLocked(ArrayDeque<ProcessRecord> queue,
+            ArrayList<ProcessRecord> processes, ActiveUids uids) {
         processes.clear();
         uids.clear();
-        queue.clear();
 
         // Track if any of them reachables could include a cycle
         boolean containsCycle = false;
         // Scan downstreams of the process record
-        state.setReachable(true);
-        for (ProcessRecord pr = app; pr != null; pr = queue.poll()) {
-            if (pr != app) {
-                processes.add(pr);
-            }
+        for (ProcessRecord pr = queue.poll(); pr != null; pr = queue.poll()) {
+            processes.add(pr);
             final UidRecord uidRec = pr.getUidRecord();
             if (uidRec != null) {
                 uids.put(uidRec.getUid(), uidRec);
@@ -719,10 +768,6 @@ public class OomAdjuster {
                 }
                 queue.offer(service);
                 service.mState.setReachable(true);
-                // During scanning the reachable dependants, remove them from the pending oomadj
-                // targets list if it's possible, as they've been added into the immediate
-                // oomadj targets list 'processes' above.
-                mPendingProcessSet.remove(service);
             }
             final ProcessProviderRecord ppr = pr.mProviders;
             for (int i = ppr.numberOfProviderConnections() - 1; i >= 0; i--) {
@@ -738,15 +783,9 @@ public class OomAdjuster {
                 }
                 queue.offer(provider);
                 provider.mState.setReachable(true);
-                // During scanning the reachable dependants, remove them from the pending oomadj
-                // targets list if it's possible, as they've been added into the immediate
-                // oomadj targets list 'processes' above.
-                mPendingProcessSet.remove(provider);
             }
         }
 
-        // Reset the flag
-        state.setReachable(false);
         int size = processes.size();
         if (size > 0) {
             // Reverse the process list, since the updateOomAdjInnerLSP scans from the end of it.
@@ -755,21 +794,8 @@ public class OomAdjuster {
                 processes.set(l, processes.get(r));
                 processes.set(r, t);
             }
-            mAdjSeq--;
-            // Update these reachable processes
-            updateOomAdjInnerLSP(oomAdjReason, topApp, processes, uids, containsCycle, false);
-        } else if (state.getCurRawAdj() == ProcessList.UNKNOWN_ADJ) {
-            // In case the app goes from non-cached to cached but it doesn't have other reachable
-            // processes, its adj could be still unknown as of now, assign one.
-            processes.add(app);
-            assignCachedAdjIfNecessary(processes);
-            applyOomAdjLSP(app, false, SystemClock.uptimeMillis(),
-                    SystemClock.elapsedRealtime());
         }
-        mTmpProcessList.clear();
-        mService.mOomAdjProfiler.oomAdjEnded();
-        Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
-        return true;
+        return containsCycle;
     }
 
     /**
@@ -853,22 +879,12 @@ public class OomAdjuster {
 
         final ArrayList<ProcessRecord> processes = mTmpProcessList;
         final ActiveUids uids = mTmpUidRecords;
+        collectReachableProcessesLocked(mPendingProcessSet, processes, uids);
+        mPendingProcessSet.clear();
         synchronized (mProcLock) {
-            uids.clear();
-            processes.clear();
-            for (int i = mPendingProcessSet.size() - 1; i >= 0; i--) {
-                final ProcessRecord app = mPendingProcessSet.valueAt(i);
-                final UidRecord uidRec = app.getUidRecord();
-                if (uidRec != null) {
-                    uids.put(uidRec.getUid(), uidRec);
-                }
-                processes.add(app);
-            }
-
             updateOomAdjInnerLSP(oomAdjReason, topApp, processes, uids, true, false);
         }
         processes.clear();
-        mPendingProcessSet.clear();
 
         mService.mOomAdjProfiler.oomAdjEnded();
         Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
@@ -1557,8 +1573,8 @@ public class OomAdjuster {
         state.setAdjTarget(null);
         state.setEmpty(false);
         state.setCached(false);
-        state.setAllowStartFgsState(PROCESS_STATE_NONEXISTENT);
-        state.resetAllowStartFgs();
+        state.setNoKillOnForcedAppStandbyAndIdle(false);
+        state.resetAllowStartFgsState();
         app.mOptRecord.setShouldNotFreeze(false);
 
         final int appUid = app.info.uid;
@@ -1613,7 +1629,6 @@ public class OomAdjuster {
             state.setCurAdj(state.getMaxAdj());
             state.setCompletedAdjSeq(state.getAdjSeq());
             state.bumpAllowStartFgsState(state.getCurProcState());
-            state.setAllowStartFgs();
             // if curAdj is less than prevAppAdj, then this process was promoted
             return state.getCurAdj() < prevAppAdj || state.getCurProcState() < prevProcState;
         }
@@ -2011,12 +2026,6 @@ public class OomAdjuster {
 
                     final boolean clientIsSystem = clientProcState < PROCESS_STATE_TOP;
 
-                    // pass client's mAllowStartFgs to the app if client is not persistent process.
-                    if (cstate.getAllowedStartFgs() != REASON_DENIED
-                            && cstate.getMaxAdj() >= ProcessList.FOREGROUND_APP_ADJ) {
-                        state.setAllowStartFgs(cstate.getAllowedStartFgs());
-                    }
-
                     if ((cr.flags & Context.BIND_WAIVE_PRIORITY) == 0) {
                         if (shouldSkipDueToCycle(state, cstate, procState, adj, cycleReEval)) {
                             continue;
@@ -2053,6 +2062,9 @@ public class OomAdjuster {
                             // Similar to BIND_WAIVE_PRIORITY, keep it unfrozen.
                             if (clientAdj < ProcessList.CACHED_APP_MIN_ADJ) {
                                 app.mOptRecord.setShouldNotFreeze(true);
+                                // Similarly, we shouldn't kill it when it's in forced-app-standby
+                                // mode and cached & idle state.
+                                app.mState.setNoKillOnForcedAppStandbyAndIdle(true);
                             }
                             // Not doing bind OOM management, so treat
                             // this guy more like a started service.
@@ -2257,6 +2269,9 @@ public class OomAdjuster {
                         // unfrozen.
                         if (clientAdj < ProcessList.CACHED_APP_MIN_ADJ) {
                             app.mOptRecord.setShouldNotFreeze(true);
+                            // Similarly, we shouldn't kill it when it's in forced-app-standby
+                            // mode and cached & idle state.
+                            app.mState.setNoKillOnForcedAppStandbyAndIdle(true);
                         }
                     }
                     if ((cr.flags&Context.BIND_TREAT_LIKE_ACTIVITY) != 0) {
@@ -2507,7 +2522,6 @@ public class OomAdjuster {
         state.updateLastInvisibleTime(hasVisibleActivities);
         state.setHasForegroundActivities(foregroundActivities);
         state.setCompletedAdjSeq(mAdjSeq);
-        state.setAllowStartFgs();
 
         // if curAdj or curProcState improved, then this process was promoted
         return state.getCurAdj() < prevAppAdj || state.getCurProcState() < prevProcState
@@ -3095,6 +3109,7 @@ public class OomAdjuster {
         // if an app is already frozen and shouldNotFreeze becomes true, immediately unfreeze
         if (opt.isFrozen() && opt.shouldNotFreeze()) {
             mCachedAppOptimizer.unfreezeAppLSP(app);
+            return;
         }
 
         final ProcessStateRecord state = app.mState;
@@ -3102,7 +3117,7 @@ public class OomAdjuster {
         if (state.getCurAdj() >= ProcessList.CACHED_APP_MIN_ADJ && !opt.isFrozen()
                 && !opt.shouldNotFreeze()) {
             mCachedAppOptimizer.freezeAppAsyncLSP(app);
-        } else if (state.getSetAdj() < ProcessList.CACHED_APP_MIN_ADJ && opt.isFrozen()) {
+        } else if (state.getSetAdj() < ProcessList.CACHED_APP_MIN_ADJ) {
             mCachedAppOptimizer.unfreezeAppLSP(app);
         }
     }

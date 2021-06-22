@@ -338,6 +338,8 @@ public interface ParsingPackage extends ParsingPackageRead {
 
     ParsingPackage setTheme(int theme);
 
+    ParsingPackage setRequestForegroundServiceExemption(boolean requestForegroundServiceExemption);
+
     ParsingPackage setUpgradeKeySets(@NonNull Set<String> upgradeKeySets);
 
     ParsingPackage setUse32BitAbi(boolean use32BitAbi);
@@ -359,6 +361,8 @@ public interface ParsingPackage extends ParsingPackageRead {
     ParsingPackage setCompileSdkVersion(int compileSdkVersion);
 
     ParsingPackage setCompileSdkVersionCodename(String compileSdkVersionCodename);
+
+    ParsingPackage setAttributionsAreUserVisible(boolean attributionsAreUserVisible);
 
     // TODO(b/135203078): This class no longer has access to ParsedPackage, find a replacement
     //  for moving to the next step

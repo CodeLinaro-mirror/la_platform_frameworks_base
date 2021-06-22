@@ -29,6 +29,7 @@ import android.app.StatsManager;
 import android.app.WallpaperManager;
 import android.app.admin.DevicePolicyManager;
 import android.app.role.RoleManager;
+import android.app.smartspace.SmartspaceManager;
 import android.app.trust.TrustManager;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -45,6 +46,7 @@ import android.hardware.display.DisplayManager;
 import android.hardware.face.FaceManager;
 import android.hardware.fingerprint.FingerprintManager;
 import android.media.AudioManager;
+import android.media.IAudioService;
 import android.media.MediaRouter2Manager;
 import android.media.session.MediaSessionManager;
 import android.net.ConnectivityManager;
@@ -75,6 +77,8 @@ import com.android.internal.util.LatencyTracker;
 import com.android.systemui.dagger.qualifiers.DisplayId;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.shared.system.PackageManagerWrapper;
+
+import java.util.Optional;
 
 import javax.inject.Singleton;
 
@@ -163,6 +167,13 @@ public class FrameworkServicesModule {
     static IActivityTaskManager provideIActivityTaskManager() {
         return ActivityTaskManager.getService();
     }
+
+    @Provides
+    @Singleton
+    static IAudioService provideIAudioService() {
+        return IAudioService.Stub.asInterface(ServiceManager.getService(Context.AUDIO_SERVICE));
+    }
+
 
     @Provides
     @Singleton
@@ -361,6 +372,12 @@ public class FrameworkServicesModule {
 
     @Provides
     @Singleton
+    static Optional<Vibrator> provideOptionalVibrator(Context context) {
+        return Optional.ofNullable(context.getSystemService(Vibrator.class));
+    }
+
+    @Provides
+    @Singleton
     static ViewConfiguration provideViewConfiguration(Context context) {
         return ViewConfiguration.get(context);
     }
@@ -399,5 +416,11 @@ public class FrameworkServicesModule {
     @Singleton
     static PermissionManager providePermissionManager(Context context) {
         return context.getSystemService(PermissionManager.class);
+    }
+
+    @Provides
+    @Singleton
+    static SmartspaceManager provideSmartspaceManager(Context context) {
+        return context.getSystemService(SmartspaceManager.class);
     }
 }

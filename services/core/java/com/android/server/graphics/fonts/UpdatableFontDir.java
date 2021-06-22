@@ -59,8 +59,6 @@ final class UpdatableFontDir {
     private static final String TAG = "UpdatableFontDir";
     private static final String RANDOM_DIR_PREFIX = "~~";
 
-    private static final String CONFIG_XML_FILE = "/data/fonts/config/config.xml";
-
     /** Interface to mock font file access in tests. */
     interface FontFileParser {
         String getPostScriptName(File file) throws IOException;
@@ -68,6 +66,8 @@ final class UpdatableFontDir {
         String buildFontFileName(File file) throws IOException;
 
         long getRevision(File file) throws IOException;
+
+        void tryToCreateTypeface(File file) throws Throwable;
     }
 
     /** Interface to mock fs-verity in tests. */
@@ -137,8 +137,9 @@ final class UpdatableFontDir {
      */
     private final ArrayMap<String, FontFileInfo> mFontFileInfoMap = new ArrayMap<>();
 
-    UpdatableFontDir(File filesDir, FontFileParser parser, FsverityUtil fsverityUtil) {
-        this(filesDir, parser, fsverityUtil, new File(CONFIG_XML_FILE),
+    UpdatableFontDir(File filesDir, FontFileParser parser, FsverityUtil fsverityUtil,
+            File configFile) {
+        this(filesDir, parser, fsverityUtil, configFile,
                 System::currentTimeMillis,
                 (map) -> SystemFonts.getSystemFontConfig(map, 0, 0)
         );
@@ -211,17 +212,6 @@ final class UpdatableFontDir {
                 FileUtils.deleteContents(mFilesDir);
             }
         }
-    }
-
-    /* package */ void clearUpdates() throws SystemFontException {
-        mFontFileInfoMap.clear();
-        FileUtils.deleteContents(mFilesDir);
-
-        mLastModifiedMillis = mCurrentTimeSupplier.get();
-        PersistentSystemFontConfig.Config config = new PersistentSystemFontConfig.Config();
-        config.lastModifiedMillis = mLastModifiedMillis;
-        writePersistentConfig(config);
-        mConfigVersion++;
     }
 
     /**
@@ -372,6 +362,16 @@ final class UpdatableFontDir {
                         "Failed to change mode to 711", e);
             }
             FontFileInfo fontFileInfo = validateFontFile(newFontFile);
+
+            // Try to create Typeface and treat as failure something goes wrong.
+            try {
+                mParser.tryToCreateTypeface(fontFileInfo.getFile());
+            } catch (Throwable t) {
+                throw new SystemFontException(
+                        FontManager.RESULT_ERROR_INVALID_FONT_FILE,
+                        "Failed to create Typeface from file", t);
+            }
+
             FontConfig fontConfig = getSystemFontConfig();
             if (!addFileToMapIfSameOrNewer(fontFileInfo, fontConfig, false)) {
                 throw new SystemFontException(
@@ -603,5 +603,20 @@ final class UpdatableFontDir {
             }
         }
         return familyMap;
+    }
+
+    /* package */ static void deleteAllFiles(File filesDir, File configFile) {
+        // As this method is called in safe mode, try to delete all files even though an exception
+        // is thrown.
+        try {
+            new AtomicFile(configFile).delete();
+        } catch (Throwable t) {
+            Slog.w(TAG, "Failed to delete " + configFile);
+        }
+        try {
+            FileUtils.deleteContents(filesDir);
+        } catch (Throwable t) {
+            Slog.w(TAG, "Failed to delete " + filesDir);
+        }
     }
 }

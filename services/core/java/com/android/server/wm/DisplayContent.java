@@ -200,6 +200,7 @@ import android.view.InsetsSource;
 import android.view.InsetsState;
 import android.view.InsetsState.InternalInsetsType;
 import android.view.MagnificationSpec;
+import android.view.PrivacyIndicatorBounds;
 import android.view.RemoteAnimationDefinition;
 import android.view.RoundedCorners;
 import android.view.Surface;
@@ -341,6 +342,11 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
     RoundedCorners mInitialRoundedCorners;
     private final RotationCache<RoundedCorners, RoundedCorners> mRoundedCornerCache =
             new RotationCache<>(this::calculateRoundedCornersForRotationUncached);
+
+    PrivacyIndicatorBounds mCurrentPrivacyIndicatorBounds = new PrivacyIndicatorBounds();
+    private final RotationCache<PrivacyIndicatorBounds, PrivacyIndicatorBounds>
+            mPrivacyIndicatorBoundsCache = new
+            RotationCache<>(this::calculatePrivacyIndicatorBoundsForRotationUncached);
 
     /**
      * Overridden display size. Initialized with {@link #mInitialDisplayWidth}
@@ -724,6 +730,16 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
             return false;
         }
 
+        // When switching the app task, we keep the IME window visibility for better
+        // transitioning experiences.
+        // However, in case IME created a child window without dismissing during the task
+        // switching to keep the window focus because IME window has higher window hierarchy,
+        // we don't give it focus if the next IME layering target doesn't request IME visible.
+        if (w.mIsImWindow && w.isChildWindow() && (mImeLayeringTarget == null
+                || !mImeLayeringTarget.getRequestedVisibility(ITYPE_IME))) {
+            return false;
+        }
+
         final ActivityRecord activity = w.mActivityRecord;
 
         if (focusedApp == null) {
@@ -901,6 +917,14 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
                         && preferredModeId != 0) {
                     mTmpApplySurfaceChangesTransactionState.preferredModeId = preferredModeId;
                 }
+
+                final float preferredMaxRefreshRate = getDisplayPolicy().getRefreshRatePolicy()
+                        .getPreferredMaxRefreshRate(w);
+                if (mTmpApplySurfaceChangesTransactionState.preferredMaxRefreshRate == 0
+                        && preferredMaxRefreshRate != 0) {
+                    mTmpApplySurfaceChangesTransactionState.preferredMaxRefreshRate =
+                            preferredMaxRefreshRate;
+                }
             }
         }
 
@@ -978,7 +1002,8 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         mInsetsStateController = new InsetsStateController(this);
         mDisplayFrames = new DisplayFrames(mDisplayId, mInsetsStateController.getRawInsetsState(),
                 mDisplayInfo, calculateDisplayCutoutForRotation(mDisplayInfo.rotation),
-                calculateRoundedCornersForRotation(mDisplayInfo.rotation));
+                calculateRoundedCornersForRotation(mDisplayInfo.rotation),
+                calculatePrivacyIndicatorBoundsForRotation(mDisplayInfo.rotation));
         initializeDisplayBaseInfo();
 
         mAppTransition = new AppTransition(mWmService.mContext, mWmService, this);
@@ -1123,15 +1148,8 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
             token.mDisplayContent = this;
             // Add non-app token to container hierarchy on the display. App tokens are added through
             // the parent container managing them (e.g. Tasks).
-            switch (token.windowType) {
-                case TYPE_INPUT_METHOD:
-                case TYPE_INPUT_METHOD_DIALOG:
-                    mImeWindowsContainer.addChild(token);
-                    break;
-                default:
-                    mDisplayAreaPolicy.addWindow(token);
-                    break;
-            }
+            final DisplayArea.Tokens da = findAreaForToken(token).asTokens();
+            da.addChild(token);
         }
     }
 
@@ -1538,7 +1556,9 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
             // to cover the activity configuration change.
             return false;
         }
-        if (r.mStartingData != null && r.mStartingData.hasImeSurface()) {
+        if ((r.mStartingData != null && r.mStartingData.hasImeSurface())
+                || (mInsetsStateController.getImeSourceProvider()
+                        .getSource().getVisibleFrame() != null)) {
             // Currently it is unknown that when will IME window be ready. Reject the case to
             // avoid flickering by showing IME in inconsistent orientation.
             return false;
@@ -1567,6 +1587,10 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
             }
         } else if (r != topRunningActivity()) {
             // If the transition has not started yet, the activity must be the top.
+            return false;
+        }
+        if (mLastWallpaperVisible && r.windowsCanBeWallpaperTarget()) {
+            // Use normal rotation animation for orientation change of visible wallpaper.
             return false;
         }
         final int rotation = rotationForActivityInDifferentOrientation(r);
@@ -1706,8 +1730,10 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         final DisplayInfo info = computeScreenConfiguration(mTmpConfiguration, rotation);
         final WmDisplayCutout cutout = calculateDisplayCutoutForRotation(rotation);
         final RoundedCorners roundedCorners = calculateRoundedCornersForRotation(rotation);
+        final PrivacyIndicatorBounds indicatorBounds =
+                calculatePrivacyIndicatorBoundsForRotation(rotation);
         final DisplayFrames displayFrames = new DisplayFrames(mDisplayId, new InsetsState(), info,
-                cutout, roundedCorners);
+                cutout, roundedCorners, indicatorBounds);
         token.applyFixedRotationTransform(info, displayFrames, mTmpConfiguration);
     }
 
@@ -1775,7 +1801,7 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
             return false;
         }
         final FadeRotationAnimationController controller = mFadeRotationAnimationController;
-        return controller == null || !controller.isTargetToken(w.mToken);
+        return controller == null || !controller.isHandledToken(w.mToken);
     }
 
     void notifyInsetsChanged(Consumer<WindowState> dispatchInsetsChanged) {
@@ -2003,6 +2029,19 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         }
 
         return roundedCorners.rotate(rotation, mInitialDisplayWidth, mInitialDisplayHeight);
+    }
+
+    PrivacyIndicatorBounds calculatePrivacyIndicatorBoundsForRotation(int rotation) {
+        return mPrivacyIndicatorBoundsCache.getOrCompute(mCurrentPrivacyIndicatorBounds, rotation);
+    }
+
+    private PrivacyIndicatorBounds calculatePrivacyIndicatorBoundsForRotationUncached(
+            PrivacyIndicatorBounds bounds, int rotation) {
+        if (bounds == null) {
+            return new PrivacyIndicatorBounds(new Rect[4], rotation);
+        }
+
+        return bounds.rotate(rotation);
     }
 
     /**
@@ -2404,6 +2443,8 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
             mDisplayPolicy.onConfigurationChanged();
             mPinnedTaskController.onPostDisplayConfigurationChanged();
         }
+        // Update IME parent if needed.
+        updateImeParent();
 
         if (lastOrientation != getConfiguration().orientation) {
             getMetricsLogger().write(
@@ -2456,6 +2497,10 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         setWindowingMode(windowingMode);
     }
 
+    /**
+     * See {@code WindowState#applyImeWindowsIfNeeded} for the details that we won't traverse the
+     * IME window in some cases.
+     */
     boolean forAllImeWindows(ToBooleanFunction<WindowState> callback, boolean traverseTopToBottom) {
         return mImeWindowsContainer.forAllWindowForce(callback, traverseTopToBottom);
     }
@@ -2514,14 +2559,30 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         onDisplayChanged(this);
     }
 
+    void updatePrivacyIndicatorBounds(Rect[] staticBounds) {
+        PrivacyIndicatorBounds oldBounds = mCurrentPrivacyIndicatorBounds;
+        mCurrentPrivacyIndicatorBounds =
+                mCurrentPrivacyIndicatorBounds.updateStaticBounds(staticBounds);
+        if (!Objects.equals(oldBounds, mCurrentPrivacyIndicatorBounds)) {
+            final DisplayInfo info = mDisplayInfo;
+            if (mDisplayFrames.onDisplayInfoUpdated(info,
+                    calculateDisplayCutoutForRotation(info.rotation),
+                    calculateRoundedCornersForRotation(info.rotation),
+                    calculatePrivacyIndicatorBoundsForRotation(info.rotation))) {
+                mInsetsStateController.onDisplayInfoUpdated(true);
+            }
+        }
+    }
+
     void onDisplayInfoChanged() {
         final DisplayInfo info = mDisplayInfo;
         if (mDisplayFrames.onDisplayInfoUpdated(info,
                 calculateDisplayCutoutForRotation(info.rotation),
-                calculateRoundedCornersForRotation(info.rotation))) {
+                calculateRoundedCornersForRotation(info.rotation),
+                calculatePrivacyIndicatorBoundsForRotation(info.rotation))) {
             // TODO(b/161810301): Set notifyInsetsChange to true while the server no longer performs
             //                    layout.
-            mInsetsStateController.onDisplayInfoUpdated(false /* notifyInsetsChange */);
+            mInsetsStateController.onDisplayInfoUpdated(false /* notifyInsetsChanged */);
         }
         mInputMonitor.layoutInputConsumers(info.logicalWidth, info.logicalHeight);
         mDisplayPolicy.onDisplayInfoChanged(info);
@@ -2556,6 +2617,8 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         mInitialDisplayDensity = mDisplayInfo.logicalDensityDpi;
         mInitialDisplayCutout = mDisplayInfo.displayCutout;
         mInitialRoundedCorners = mDisplayInfo.roundedCorners;
+        mCurrentPrivacyIndicatorBounds = new PrivacyIndicatorBounds(new Rect[4],
+                mDisplayInfo.rotation);
     }
 
     /**
@@ -2987,6 +3050,8 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         // Hide the windows which are not significant in rotation animation. So that the windows
         // don't need to block the unfreeze time.
         if (screenRotationAnimation != null && screenRotationAnimation.hasScreenshot()
+                // Do not fade for freezing without rotation change.
+                && mDisplayRotation.getRotation() != getWindowConfiguration().getRotation()
                 && mFadeRotationAnimationController == null) {
             startFadeRotationAnimation(false /* shouldDebounce */);
         }
@@ -3624,17 +3689,28 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         return mImeInputTarget != null && !mImeInputTarget.inMultiWindowMode();
     }
 
-    boolean isImeAttachedToApp() {
+    boolean shouldImeAttachedToApp() {
         return isImeControlledByApp()
                 && mImeLayeringTarget != null
                 && mImeLayeringTarget.mActivityRecord != null
                 && mImeLayeringTarget.getWindowingMode() == WINDOWING_MODE_FULLSCREEN
-                // An activity with override bounds should be letterboxed inside its parent bounds,
-                // so it doesn't fill the screen.
-                && mImeLayeringTarget.mActivityRecord.matchParentBounds()
-                // IME is attached to non-Letterboxed app windows, other than windows with
-                // LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER flag. (Refer to WS.isLetterboxedAppWindow())
+                // IME is attached to app windows that fill display area. This excludes
+                // letterboxed windows.
                 && mImeLayeringTarget.matchesDisplayAreaBounds();
+    }
+
+    /**
+     * Unlike {@link #shouldImeAttachedToApp()}, this method returns {@code @true} only when both
+     * the IME layering target is valid to attach the IME surface to the app, and the
+     * {@link #mInputMethodSurfaceParent} of the {@link ImeContainer} has actually attached to
+     * the app. (i.e. Even if {@link #shouldImeAttachedToApp()} returns {@code true}, calling this
+     * method will return {@code false} if the IME surface doesn't actually attach to the app.)
+     */
+    boolean isImeAttachedToApp() {
+        return shouldImeAttachedToApp()
+                && mInputMethodSurfaceParent != null
+                && mInputMethodSurfaceParent.isSameSurface(
+                        mImeLayeringTarget.mActivityRecord.getSurfaceControl());
     }
 
     /**
@@ -3765,7 +3841,7 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
     @VisibleForTesting
     void attachAndShowImeScreenshotOnTarget() {
         // No need to attach screenshot if the IME target not exists or screen is off.
-        if (!isImeAttachedToApp() || !mWmService.mPolicy.isScreenOn()) {
+        if (!shouldImeAttachedToApp() || !mWmService.mPolicy.isScreenOn()) {
             return;
         }
 
@@ -3933,12 +4009,17 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         // Attach it to app if the target is part of an app and such app is covering the entire
         // screen. If it's not covering the entire screen the IME might extend beyond the apps
         // bounds.
-        if (allowAttachToApp && isImeAttachedToApp()) {
+        if (allowAttachToApp && shouldImeAttachedToApp()) {
+            if (mImeLayeringTarget.mActivityRecord != mImeInputTarget.mActivityRecord) {
+                // Do not change parent if the window hasn't requested IME.
+                return null;
+            }
             return mImeLayeringTarget.mActivityRecord.getSurfaceControl();
         }
 
         // Otherwise, we just attach it to where the display area policy put it.
-        return mImeWindowsContainer.getParent().getSurfaceControl();
+        return mImeWindowsContainer.getParent() != null
+                ? mImeWindowsContainer.getParent().getSurfaceControl() : null;
     }
 
     void setLayoutNeeded() {
@@ -4229,6 +4310,7 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
                     mLastHasContent,
                     mTmpApplySurfaceChangesTransactionState.preferredRefreshRate,
                     mTmpApplySurfaceChangesTransactionState.preferredModeId,
+                    mTmpApplySurfaceChangesTransactionState.preferredMaxRefreshRate,
                     mTmpApplySurfaceChangesTransactionState.preferMinimalPostProcessing,
                     true /* inTraversal, must call performTraversalInTrans... below */);
         }
@@ -4512,12 +4594,13 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
     }
 
     private static final class ApplySurfaceChangesTransactionState {
-        boolean displayHasContent;
-        boolean obscured;
-        boolean syswin;
-        boolean preferMinimalPostProcessing;
-        float preferredRefreshRate;
-        int preferredModeId;
+        public boolean displayHasContent;
+        public boolean obscured;
+        public boolean syswin;
+        public boolean preferMinimalPostProcessing;
+        public float preferredRefreshRate;
+        public int preferredModeId;
+        public float preferredMaxRefreshRate;
 
         void reset() {
             displayHasContent = false;
@@ -4526,6 +4609,7 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
             preferMinimalPostProcessing = false;
             preferredRefreshRate = 0;
             preferredModeId = 0;
+            preferredMaxRefreshRate = 0;
         }
     }
 
@@ -4570,11 +4654,14 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
             return super.forAllWindows(callback, traverseTopToBottom);
         }
 
-        private boolean skipImeWindowsDuringTraversal(DisplayContent dc) {
+        private static boolean skipImeWindowsDuringTraversal(DisplayContent dc) {
             // We skip IME windows so they're processed just above their target, except
             // in split-screen mode where we process the IME containers above the docked divider.
-            return dc.getImeTarget(IME_TARGET_LAYERING) != null
-                    && !dc.getDefaultTaskDisplayArea().isSplitScreenModeActivated();
+            // Note that this method check should align with {@link
+            // WindowState#applyImeWindowsIfNeeded} in case of any state mismatch.
+            return dc.mImeLayeringTarget != null
+                    && (!dc.getDefaultTaskDisplayArea().isSplitScreenModeActivated()
+                             || dc.mImeLayeringTarget.getTask() == null);
         }
 
         /** Like {@link #forAllWindows}, but ignores {@link #skipImeWindowsDuringTraversal} */
@@ -4923,28 +5010,6 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
                 && mDisplayId != mWmService.mVr2dDisplayId
                 // Do not show system decorations on untrusted virtual display.
                 && isTrusted();
-    }
-
-    /**
-     * Re-parent the DisplayContent's top surface, {@link #mSurfaceControl} to the specified
-     * SurfaceControl.
-     *
-     * @param win The window which owns the SurfaceControl. This indicates the z-order of the
-     *            windows of this display against the windows on the parent display.
-     * @param sc The new SurfaceControl, where the DisplayContent's surfaces will be re-parented to.
-     */
-    void reparentDisplayContent(WindowState win, SurfaceControl sc) {
-        if (mParentWindow != null) {
-            mParentWindow.removeEmbeddedDisplayContent(this);
-        }
-        mParentWindow = win;
-        mParentWindow.addEmbeddedDisplayContent(this);
-        mParentSurfaceControl = sc;
-        if (mPortalWindowHandle == null) {
-            mPortalWindowHandle = createPortalWindowHandle(sc.toString());
-        }
-        getPendingTransaction().setInputWindowInfo(sc, mPortalWindowHandle)
-                .reparent(mSurfaceControl, sc);
     }
 
     /**
@@ -5982,7 +6047,7 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         return mMagnificationSpec;
     }
 
-    DisplayArea getAreaForWindowToken(int windowType, Bundle options,
+    DisplayArea findAreaForWindowType(int windowType, Bundle options,
             boolean ownerCanManageAppToken, boolean roundedCornerOverlay) {
         // TODO(b/159767464): figure out how to find an appropriate TDA.
         if (windowType >= FIRST_APPLICATION_WINDOW && windowType <= LAST_APPLICATION_WINDOW) {
@@ -5994,8 +6059,26 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         if (windowType == TYPE_INPUT_METHOD || windowType == TYPE_INPUT_METHOD_DIALOG) {
             return getImeContainer();
         }
-        return mDisplayAreaPolicy.getDisplayAreaForWindowToken(windowType, options,
+        return mDisplayAreaPolicy.findAreaForWindowType(windowType, options,
                 ownerCanManageAppToken, roundedCornerOverlay);
+    }
+
+    /**
+     * Finds the {@link DisplayArea} for the {@link WindowToken} to attach to.
+     * <p>
+     * Note that the differences between this API and
+     * {@link RootDisplayArea#findAreaForTokenInLayer(WindowToken)} is that this API finds a
+     * {@link DisplayArea} in {@link DisplayContent} level, which may find a {@link DisplayArea}
+     * from multiple {@link RootDisplayArea RootDisplayAreas} under this {@link DisplayContent}'s
+     * hierarchy, while {@link RootDisplayArea#findAreaForTokenInLayer(WindowToken)} finds a
+     * {@link DisplayArea.Tokens} from a {@link DisplayArea.Tokens} list mapped to window layers.
+     * </p>
+     *
+     * @see DisplayContent#findAreaForTokenInLayer(WindowToken)
+     */
+    DisplayArea findAreaForToken(WindowToken windowToken) {
+        return findAreaForWindowType(windowToken.getWindowType(), windowToken.mOptions,
+                windowToken.mOwnerCanManageAppTokens, windowToken.mRoundedCornerOverlay);
     }
 
     @Override

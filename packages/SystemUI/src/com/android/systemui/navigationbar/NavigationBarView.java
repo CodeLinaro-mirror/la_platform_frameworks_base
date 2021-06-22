@@ -61,7 +61,6 @@ import android.view.WindowInsetsController.Behavior;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction;
-import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -324,11 +323,6 @@ public class NavigationBarView extends FrameLayout implements
 
         mOverviewProxyService = Dependency.get(OverviewProxyService.class);
         mRecentsOnboarding = new RecentsOnboarding(context, mOverviewProxyService);
-        mNavBarOverlayController = Dependency.get(NavigationBarOverlayController.class);
-        if (mNavBarOverlayController.isNavigationBarOverlayEnabled()) {
-            mNavBarOverlayController.init(
-                    mNavbarOverlayVisibilityChangeCallback, mLightIconColor, mDarkIconColor);
-        }
 
         mConfiguration = new Configuration();
         mTmpLastConfiguration = new Configuration();
@@ -373,6 +367,12 @@ public class NavigationBarView extends FrameLayout implements
                         return isGesturalModeOnDefaultDisplay(getContext(), mNavBarMode);
                     }
                 });
+
+        mNavBarOverlayController = Dependency.get(NavigationBarOverlayController.class);
+        if (mNavBarOverlayController.isNavigationBarOverlayEnabled()) {
+            mNavBarOverlayController.init(mNavbarOverlayVisibilityChangeCallback,
+                    mEdgeBackGestureHandler::updateNavigationBarOverlayExcludeRegion);
+        }
     }
 
     public void setAutoHideController(AutoHideController autoHideController) {

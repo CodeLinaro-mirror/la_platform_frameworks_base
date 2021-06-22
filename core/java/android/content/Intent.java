@@ -31,6 +31,7 @@ import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
 import android.annotation.TestApi;
 import android.app.AppGlobals;
+import android.bluetooth.BluetoothDevice;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
@@ -1982,7 +1983,7 @@ public class Intent implements Parcelable, Cloneable {
      * activities that are not properly protected.
      *
      * <p>
-     * Input: {@link android.Manifest.permission_group} specifies the permission group
+     * Input: {@link #EXTRA_PERMISSION_GROUP_NAME} specifies the permission group
      * for which the launched UI would be targeted.
      * </p>
      * <p>
@@ -2012,22 +2013,19 @@ public class Intent implements Parcelable, Cloneable {
      * Input: {@link #EXTRA_ATTRIBUTION_TAGS} specifies the attribution tags for the usage entry.
      * </p>
      * <p>
-     * Input: {@link #EXTRA_START_TIME} specifies the start time of the period. Both start time and
-     * end time are needed and start time must be <= end time.
+     * Input: {@link #EXTRA_START_TIME} specifies the start time of the period (epoch time in
+     * millis). Both start time and end time are needed and start time must be <= end time.
      * </p>
      * <p>
-     * Input: {@link #EXTRA_END_TIME} specifies the end time of the period. Both start time and end
-     * time are needed and start time must be <= end time.
+     * Input: {@link #EXTRA_END_TIME} specifies the end time of the period (epoch time in
+     * millis). Both start time and end time are needed and start time must be <= end time.
      * </p>
      * <p>
      * Output: Nothing.
      * </p>
-     *
-     * @hide
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     @RequiresPermission(android.Manifest.permission.START_VIEW_PERMISSION_USAGE)
-    @SystemApi
     public static final String ACTION_VIEW_PERMISSION_USAGE_FOR_PERIOD =
             "android.intent.action.VIEW_PERMISSION_USAGE_FOR_PERIOD";
 
@@ -2188,12 +2186,7 @@ public class Intent implements Parcelable, Cloneable {
      * <p>
      * Type: String
      * </p>
-     *
-     * E.g. {@link android.Manifest.permission_group.CONTACTS}
-     *
-     * @hide
      */
-    @SystemApi
     public static final String EXTRA_PERMISSION_GROUP_NAME =
             "android.intent.extra.PERMISSION_GROUP_NAME";
 
@@ -5342,28 +5335,19 @@ public class Intent implements Parcelable, Cloneable {
      * {@link #ACTION_VIEW_PERMISSION_USAGE_FOR_PERIOD}
      *
      * E.g. an attribution tag could be location_provider, com.google.android.gms.*, etc.
-     *
-     * @hide
      */
-    @SystemApi
     public static final String EXTRA_ATTRIBUTION_TAGS = "android.intent.extra.ATTRIBUTION_TAGS";
 
     /**
      * A long representing the start timestamp (epoch time in millis) of the permission usage
      * when used with {@link #ACTION_VIEW_PERMISSION_USAGE_FOR_PERIOD}
-     *
-     * @hide
      */
-    @SystemApi
     public static final String EXTRA_START_TIME = "android.intent.extra.START_TIME";
 
     /**
      * A long representing the end timestamp (epoch time in millis) of the permission usage when
      * used with {@link #ACTION_VIEW_PERMISSION_USAGE_FOR_PERIOD}
-     *
-     * @hide
      */
-    @SystemApi
     public static final String EXTRA_END_TIME = "android.intent.extra.END_TIME";
 
     /**
@@ -11456,7 +11440,7 @@ public class Intent implements Parcelable, Cloneable {
     /**
      * @hide
      */
-    public void prepareToEnterProcess(boolean fromProtectedComponent) {
+    public void prepareToEnterProcess(boolean fromProtectedComponent, AttributionSource source) {
         // We just entered destination process, so we should be able to read all
         // parcelables inside.
         setDefusable(true);
@@ -11464,10 +11448,10 @@ public class Intent implements Parcelable, Cloneable {
         if (mSelector != null) {
             // We can't recursively claim that this data is from a protected
             // component, since it may have been filled in by a malicious app
-            mSelector.prepareToEnterProcess(false);
+            mSelector.prepareToEnterProcess(false, source);
         }
         if (mClipData != null) {
-            mClipData.prepareToEnterProcess();
+            mClipData.prepareToEnterProcess(source);
         }
 
         if (mContentUserHint != UserHandle.USER_CURRENT) {
@@ -11479,6 +11463,16 @@ public class Intent implements Parcelable, Cloneable {
 
         if (fromProtectedComponent) {
             mLocalFlags |= LOCAL_FLAG_FROM_PROTECTED_COMPONENT;
+        }
+
+        // Special attribution fix-up logic for any BluetoothDevice extras
+        // passed via Bluetooth intents
+        if (mAction != null && mAction.startsWith("android.bluetooth.")
+                && hasExtra(BluetoothDevice.EXTRA_DEVICE)) {
+            final BluetoothDevice device = getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+            if (device != null) {
+                device.prepareToEnterProcess(source);
+            }
         }
     }
 

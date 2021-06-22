@@ -313,6 +313,7 @@ public class InputManagerService extends IInputManager.Stub
     private static native void nativeSetFocusedDisplay(long ptr, int displayId);
     private static native boolean nativeTransferTouchFocus(long ptr,
             IBinder fromChannelToken, IBinder toChannelToken, boolean isDragDrop);
+    private static native boolean nativeTransferTouch(long ptr, IBinder destChannelToken);
     private static native void nativeSetPointerSpeed(long ptr, int speed);
     private static native void nativeSetShowTouches(long ptr, boolean enabled);
     private static native void nativeSetInteractive(long ptr, boolean interactive);
@@ -673,6 +674,19 @@ public class InputManagerService extends IInputManager.Stub
         }
 
         return nativeHasKeys(mPtr, deviceId, sourceMask, keyCodes, keyExists);
+    }
+
+    /**
+     * Transfer the current touch gesture to the provided window.
+     *
+     * @param destChannelToken The token of the window or input channel that should receive the
+     * gesture
+     * @return True if the transfer succeeded, false if there was no active touch gesture happening
+     */
+    public boolean transferTouch(IBinder destChannelToken) {
+        // TODO(b/162194035): Replace this with a SPY window
+        Objects.requireNonNull(destChannelToken, "destChannelToken must not be null.");
+        return nativeTransferTouch(mPtr, destChannelToken);
     }
 
     /**
@@ -2465,15 +2479,12 @@ public class InputManagerService extends IInputManager.Stub
             Slog.d(TAG, "setLightStateInternal device " + deviceId + " light " + light
                     + "lightState " + lightState);
         }
-        if (light.getType() == Light.LIGHT_TYPE_INPUT_PLAYER_ID) {
+        if (light.getType() == Light.LIGHT_TYPE_PLAYER_ID) {
             nativeSetLightPlayerId(mPtr, deviceId, light.getId(), lightState.getPlayerId());
-        } else if (light.getType() == Light.LIGHT_TYPE_INPUT_SINGLE
-                || light.getType() == Light.LIGHT_TYPE_INPUT_RGB) {
+        } else {
             // Set ARGB format color to input device light
             // Refer to https://developer.android.com/reference/kotlin/android/graphics/Color
             nativeSetLightColor(mPtr, deviceId, light.getId(), lightState.getColor());
-        } else {
-            Slog.e(TAG, "setLightStates for unsupported light type " + light.getType());
         }
     }
 

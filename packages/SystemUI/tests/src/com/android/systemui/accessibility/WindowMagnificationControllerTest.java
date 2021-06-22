@@ -17,12 +17,14 @@
 package com.android.systemui.accessibility;
 
 import static android.view.Choreographer.FrameCallback;
-import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_GESTURAL;
 import static android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction;
+
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_MAGNIFICATION_OVERLAP;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItems;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
@@ -33,6 +35,9 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -40,10 +45,12 @@ import android.app.Instrumentation;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.res.Resources;
+import android.graphics.Rect;
 import android.os.Handler;
 import android.os.SystemClock;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableResources;
+import android.text.TextUtils;
 import android.view.Display;
 import android.view.Surface;
 import android.view.SurfaceControl;
@@ -52,78 +59,74 @@ import android.view.WindowManager;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 import androidx.test.InstrumentationRegistry;
-import androidx.test.filters.SmallTest;
+import androidx.test.filters.FlakyTest;
+import androidx.test.filters.LargeTest;
 
 import com.android.internal.graphics.SfVsyncFrameCallbackProvider;
 import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
+import com.android.systemui.model.SysUiState;
+import com.android.systemui.util.leak.ReferenceTestUtils;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.ArgumentCaptor;
+import org.mockito.Answers;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 
-@SmallTest
+@LargeTest
 @RunWith(AndroidTestingRunner.class)
 public class WindowMagnificationControllerTest extends SysuiTestCase {
 
+    private static final int LAYOUT_CHANGE_TIMEOUT_MS = 5000;
     @Mock
-    Handler mHandler;
+    private Handler mHandler;
     @Mock
-    SfVsyncFrameCallbackProvider mSfVsyncFrameProvider;
+    private SfVsyncFrameCallbackProvider mSfVsyncFrameProvider;
     @Mock
-    MirrorWindowControl mMirrorWindowControl;
+    private MirrorWindowControl mMirrorWindowControl;
     @Mock
-    WindowMagnifierCallback mWindowMagnifierCallback;
-    @Mock
-    SurfaceControl.Transaction mTransaction;
-    @Mock
-    private WindowManager mWindowManager;
+    private WindowMagnifierCallback mWindowMagnifierCallback;
+    @Mock(answer = Answers.RETURNS_DEEP_STUBS)
+    private SurfaceControl.Transaction mTransaction = new SurfaceControl.Transaction();
+    private TestableWindowManager mWindowManager;
+    private SysUiState mSysUiState = new SysUiState();
     private Resources mResources;
     private WindowMagnificationController mWindowMagnificationController;
     private Instrumentation mInstrumentation;
-    private View mMirrorView;
 
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
         mContext = Mockito.spy(getContext());
         mInstrumentation = InstrumentationRegistry.getInstrumentation();
-        WindowManager wm = mContext.getSystemService(WindowManager.class);
-        doAnswer(invocation ->
-                wm.getMaximumWindowMetrics()
-        ).when(mWindowManager).getMaximumWindowMetrics();
-        doAnswer(invocation ->
-                wm.getCurrentWindowMetrics()
-        ).when(mWindowManager).getCurrentWindowMetrics();
+        final WindowManager wm = mContext.getSystemService(WindowManager.class);
+        mWindowManager = spy(new TestableWindowManager(wm));
+
         mContext.addMockSystemService(Context.WINDOW_SERVICE, mWindowManager);
-        doAnswer(invocation -> {
-            mMirrorView = invocation.getArgument(0);
-            WindowManager.LayoutParams lp = invocation.getArgument(1);
-            mMirrorView.setLayoutParams(lp);
-            return null;
-        }).when(mWindowManager).addView(any(View.class), any(WindowManager.LayoutParams.class));
-        doAnswer(invocation -> {
-            mMirrorView = null;
-            return null;
-        }).when(mWindowManager).removeView(any(View.class));
         doAnswer(invocation -> {
             FrameCallback callback = invocation.getArgument(0);
             callback.doFrame(0);
             return null;
         }).when(mSfVsyncFrameProvider).postFrameCallback(
                 any(FrameCallback.class));
-        when(mTransaction.remove(any())).thenReturn(mTransaction);
-        when(mTransaction.setGeometry(any(), any(), any(),
-                anyInt())).thenReturn(mTransaction);
+        doAnswer(invocation -> {
+            final Runnable runnable = invocation.getArgument(0);
+            runnable.run();
+            return null;
+        }).when(mHandler).post(
+                any(Runnable.class));
+
+        mSysUiState.addCallback(Mockito.mock(SysUiState.SysUiStateCallback.class));
+
         mResources = getContext().getOrCreateTestableResources().getResources();
         mWindowMagnificationController = new WindowMagnificationController(mContext,
                 mHandler, mSfVsyncFrameProvider,
-                mMirrorWindowControl, mTransaction, mWindowMagnifierCallback);
+                mMirrorWindowControl, mTransaction, mWindowMagnifierCallback, mSysUiState);
+
         verify(mMirrorWindowControl).setWindowDelegate(
                 any(MirrorWindowControl.MirrorWindowDelegate.class));
     }
@@ -135,12 +138,17 @@ public class WindowMagnificationControllerTest extends SysuiTestCase {
     }
 
     @Test
-    public void enableWindowMagnification_showControl() {
+    @FlakyTest(bugId = 188889181)
+    public void enableWindowMagnification_showControlAndNotifyBoundsChanged() {
         mInstrumentation.runOnMainSync(() -> {
             mWindowMagnificationController.enableWindowMagnification(Float.NaN, Float.NaN,
                     Float.NaN);
         });
+
         verify(mMirrorWindowControl).showControl();
+        verify(mWindowMagnifierCallback,
+                timeout(LAYOUT_CHANGE_TIMEOUT_MS).atLeastOnce()).onWindowMagnifierBoundsChanged(
+                eq(mContext.getDisplayId()), any(Rect.class));
     }
 
     @Test
@@ -158,6 +166,25 @@ public class WindowMagnificationControllerTest extends SysuiTestCase {
     }
 
     @Test
+    public void deleteWindowMagnification_enableAtTheBottom_overlapFlagIsFalse() {
+        final WindowManager wm = mContext.getSystemService(WindowManager.class);
+        final Rect bounds = wm.getCurrentWindowMetrics().getBounds();
+
+        mInstrumentation.runOnMainSync(() -> {
+            mWindowMagnificationController.enableWindowMagnification(Float.NaN, Float.NaN,
+                    bounds.bottom);
+        });
+        ReferenceTestUtils.waitForCondition(this::hasMagnificationOverlapFlag);
+
+        mInstrumentation.runOnMainSync(() -> {
+            mWindowMagnificationController.deleteWindowMagnification();
+        });
+
+        verify(mMirrorWindowControl).destroyControl();
+        assertFalse(hasMagnificationOverlapFlag());
+    }
+
+    @Test
     public void moveMagnifier_schedulesFrame() {
         mInstrumentation.runOnMainSync(() -> {
             mWindowMagnificationController.enableWindowMagnification(Float.NaN, Float.NaN,
@@ -170,6 +197,12 @@ public class WindowMagnificationControllerTest extends SysuiTestCase {
 
     @Test
     public void setScale_enabled_expectedValueAndUpdateStateDescription() {
+        doAnswer(invocation -> {
+            final Runnable runnable = invocation.getArgument(0);
+            runnable.run();
+            return null;
+        }).when(mHandler).postDelayed(any(Runnable.class), anyLong());
+
         mInstrumentation.runOnMainSync(
                 () -> mWindowMagnificationController.enableWindowMagnification(2.0f, Float.NaN,
                         Float.NaN));
@@ -177,10 +210,9 @@ public class WindowMagnificationControllerTest extends SysuiTestCase {
         mInstrumentation.runOnMainSync(() -> mWindowMagnificationController.setScale(3.0f));
 
         assertEquals(3.0f, mWindowMagnificationController.getScale(), 0);
-        ArgumentCaptor<Runnable> runnableArgumentCaptor = ArgumentCaptor.forClass(Runnable.class);
-        verify(mHandler).postDelayed(runnableArgumentCaptor.capture(), anyLong());
-        runnableArgumentCaptor.getValue().run();
-        assertThat(mMirrorView.getStateDescription().toString(), containsString("300"));
+        final View mirrorView = mWindowManager.getAttachedView();
+        assertNotNull(mirrorView);
+        assertThat(mirrorView.getStateDescription().toString(), containsString("300"));
     }
 
     @Test
@@ -210,7 +242,8 @@ public class WindowMagnificationControllerTest extends SysuiTestCase {
         });
 
         assertEquals(Surface.ROTATION_90, mWindowMagnificationController.mRotation);
-        verify(mWindowManager).updateViewLayout(any(), any());
+        // The first invocation is called when the surface is created.
+        verify(mWindowManager, times(2)).updateViewLayout(any(), any());
     }
 
     @Test
@@ -261,10 +294,11 @@ public class WindowMagnificationControllerTest extends SysuiTestCase {
             mWindowMagnificationController.enableWindowMagnification(2.5f, Float.NaN,
                     Float.NaN);
         });
-        assertNotNull(mMirrorView);
+        final View mirrorView = mWindowManager.getAttachedView();
+        assertNotNull(mirrorView);
         final AccessibilityNodeInfo nodeInfo = new AccessibilityNodeInfo();
 
-        mMirrorView.onInitializeAccessibilityNodeInfo(nodeInfo);
+        mirrorView.onInitializeAccessibilityNodeInfo(nodeInfo);
 
         assertNotNull(nodeInfo.getContentDescription());
         assertThat(nodeInfo.getStateDescription().toString(), containsString("250"));
@@ -284,24 +318,24 @@ public class WindowMagnificationControllerTest extends SysuiTestCase {
             mWindowMagnificationController.enableWindowMagnification(2.5f, Float.NaN,
                     Float.NaN);
         });
-        assertNotNull(mMirrorView);
 
+        final View mirrorView = mWindowManager.getAttachedView();
         assertTrue(
-                mMirrorView.performAccessibilityAction(R.id.accessibility_action_zoom_out, null));
+                mirrorView.performAccessibilityAction(R.id.accessibility_action_zoom_out, null));
         // Minimum scale is 2.0.
         verify(mWindowMagnifierCallback).onPerformScaleAction(eq(displayId), eq(2.0f));
 
-        assertTrue(mMirrorView.performAccessibilityAction(R.id.accessibility_action_zoom_in, null));
+        assertTrue(mirrorView.performAccessibilityAction(R.id.accessibility_action_zoom_in, null));
         verify(mWindowMagnifierCallback).onPerformScaleAction(eq(displayId), eq(3.5f));
 
         // TODO: Verify the final state when the mirror surface is visible.
-        assertTrue(mMirrorView.performAccessibilityAction(R.id.accessibility_action_move_up, null));
+        assertTrue(mirrorView.performAccessibilityAction(R.id.accessibility_action_move_up, null));
         assertTrue(
-                mMirrorView.performAccessibilityAction(R.id.accessibility_action_move_down, null));
+                mirrorView.performAccessibilityAction(R.id.accessibility_action_move_down, null));
         assertTrue(
-                mMirrorView.performAccessibilityAction(R.id.accessibility_action_move_right, null));
+                mirrorView.performAccessibilityAction(R.id.accessibility_action_move_right, null));
         assertTrue(
-                mMirrorView.performAccessibilityAction(R.id.accessibility_action_move_left, null));
+                mirrorView.performAccessibilityAction(R.id.accessibility_action_move_left, null));
     }
 
     @Test
@@ -312,20 +346,10 @@ public class WindowMagnificationControllerTest extends SysuiTestCase {
                     Float.NaN);
         });
 
-        mMirrorView.performAccessibilityAction(R.id.accessibility_action_move_up, null);
+        final View mirrorView = mWindowManager.getAttachedView();
+        mirrorView.performAccessibilityAction(R.id.accessibility_action_move_up, null);
 
         verify(mWindowMagnifierCallback).onAccessibilityActionPerformed(eq(displayId));
-    }
-
-    @Test
-    public void onNavigationModeChanged_updateMirrorViewLayout() {
-        mInstrumentation.runOnMainSync(() -> {
-            mWindowMagnificationController.enableWindowMagnification(Float.NaN, Float.NaN,
-                    Float.NaN);
-            mWindowMagnificationController.onNavigationModeChanged(NAV_BAR_MODE_GESTURAL);
-        });
-
-        verify(mWindowManager).updateViewLayout(eq(mMirrorView), any());
     }
 
     @Test
@@ -335,12 +359,8 @@ public class WindowMagnificationControllerTest extends SysuiTestCase {
                     Float.NaN);
         });
 
-        ArgumentCaptor<WindowManager.LayoutParams> paramsArgumentCaptor = ArgumentCaptor.forClass(
-                WindowManager.LayoutParams.class);
-        verify(mWindowManager).addView(eq(mMirrorView), paramsArgumentCaptor.capture());
         assertEquals(getContext().getResources().getString(
-                com.android.internal.R.string.android_system_label),
-                paramsArgumentCaptor.getValue().accessibilityTitle);
+                com.android.internal.R.string.android_system_label), getAccessibilityWindowTitle());
     }
 
     @Test
@@ -353,16 +373,12 @@ public class WindowMagnificationControllerTest extends SysuiTestCase {
         final TestableResources testableResources = getContext().getOrCreateTestableResources();
         testableResources.addOverride(com.android.internal.R.string.android_system_label,
                 newA11yWindowTitle);
-        when(mContext.getResources()).thenReturn(testableResources.getResources());
 
         mInstrumentation.runOnMainSync(() -> {
             mWindowMagnificationController.onConfigurationChanged(ActivityInfo.CONFIG_LOCALE);
         });
 
-        ArgumentCaptor<WindowManager.LayoutParams> paramsArgumentCaptor = ArgumentCaptor.forClass(
-                WindowManager.LayoutParams.class);
-        verify(mWindowManager).updateViewLayout(eq(mMirrorView), paramsArgumentCaptor.capture());
-        assertEquals(newA11yWindowTitle, paramsArgumentCaptor.getValue().accessibilityTitle);
+        assertTrue(TextUtils.equals(newA11yWindowTitle, getAccessibilityWindowTitle()));
     }
 
     @Test
@@ -376,14 +392,44 @@ public class WindowMagnificationControllerTest extends SysuiTestCase {
             mWindowMagnificationController.onSingleTap();
         });
 
+        final View mirrorView = mWindowManager.getAttachedView();
         final long timeout = SystemClock.uptimeMillis() + 1000;
         while (SystemClock.uptimeMillis() < timeout) {
             SystemClock.sleep(10);
-
-            if (Float.compare(1.0f, mMirrorView.getScaleX()) < 0) {
+            if (Float.compare(1.0f, mirrorView.getScaleX()) < 0) {
                 return;
             }
         }
-        fail("mMirrorView scale is not changed");
+        fail("MirrorView scale is not changed");
+    }
+
+    @Test
+    public void moveWindowMagnificationToTheBottom_enabled_overlapFlagIsTrue() {
+        final WindowManager wm = mContext.getSystemService(WindowManager.class);
+        final Rect bounds = wm.getCurrentWindowMetrics().getBounds();
+        mInstrumentation.runOnMainSync(() -> {
+            mWindowMagnificationController.enableWindowMagnification(Float.NaN, Float.NaN,
+                    Float.NaN);
+        });
+
+        mInstrumentation.runOnMainSync(() -> {
+            mWindowMagnificationController.moveWindowMagnifier(0, bounds.height());
+        });
+
+        ReferenceTestUtils.waitForCondition(() -> hasMagnificationOverlapFlag());
+    }
+
+    private CharSequence getAccessibilityWindowTitle() {
+        final View mirrorView = mWindowManager.getAttachedView();
+        if (mirrorView == null) {
+            return null;
+        }
+        WindowManager.LayoutParams layoutParams =
+                (WindowManager.LayoutParams) mirrorView.getLayoutParams();
+        return layoutParams.accessibilityTitle;
+    }
+
+    private boolean hasMagnificationOverlapFlag() {
+        return (mSysUiState.getFlags() & SYSUI_STATE_MAGNIFICATION_OVERLAP) != 0;
     }
 }

@@ -27,9 +27,9 @@
 #include "DamageAccumulator.h"
 #include "pipeline/skia/SkiaDisplayList.h"
 #endif
+#include <gui/TraceUtils.h>
 #include "utils/MathUtils.h"
 #include "utils/StringUtils.h"
-#include "utils/TraceUtils.h"
 
 #include <SkPathOps.h>
 #include <algorithm>
@@ -475,6 +475,14 @@ void RenderNode::applyViewPropertyTransforms(mat4& matrix, bool true3dTransform)
 
                 matrix.multiply(true3dMat);
             }
+        }
+    }
+
+    if (Properties::getStretchEffectBehavior() == StretchEffectBehavior::UniformScale) {
+        const StretchEffect& stretch = properties().layerProperties().getStretchEffect();
+        if (!stretch.isEmpty()) {
+            matrix.multiply(
+                    stretch.makeLinearStretch(properties().getWidth(), properties().getHeight()));
         }
     }
 }

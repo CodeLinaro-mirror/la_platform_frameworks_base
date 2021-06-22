@@ -1213,7 +1213,9 @@ public class ShortcutService extends IShortcutService.Stub {
         final String pkg = shortcutInfo.getPackage();
         final int userId = shortcutInfo.getUserId();
         final String id = shortcutInfo.getId();
-        getPackageShortcutsLocked(pkg, userId).mutateShortcut(id, shortcutInfo, cb);
+        synchronized (mLock) {
+            getPackageShortcutsLocked(pkg, userId).mutateShortcut(id, shortcutInfo, cb);
+        }
     }
 
     /** Return the last reset time. */
@@ -2245,24 +2247,6 @@ public class ShortcutService extends IShortcutService.Stub {
 
                 verifyStates();
 
-                ret.complete(null);
-            } catch (Exception e) {
-                ret.completeExceptionally(e);
-            }
-        });
-        return ret;
-    }
-
-    @Override
-    public AndroidFuture updateShortcutVisibility(String callingPkg, String packageName,
-            byte[] certificate, boolean visible, int userId) {
-        final AndroidFuture<Void> ret = new AndroidFuture<>();
-        injectPostToHandlerIfAppSearch(() -> {
-            try {
-                synchronized (mLock) {
-                    getPackageShortcutsForPublisherLocked(callingPkg, userId)
-                            .updateVisibility(packageName, certificate, visible);
-                }
                 ret.complete(null);
             } catch (Exception e) {
                 ret.completeExceptionally(e);
