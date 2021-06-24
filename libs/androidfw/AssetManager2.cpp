@@ -71,10 +71,10 @@ AssetManager2::AssetManager2() {
 }
 
 bool AssetManager2::SetApkAssets(const std::vector<const ApkAssets*>& apk_assets,
-                                 bool invalidate_caches, bool filter_incompatible_configs) {
+                                 bool invalidate_caches) {
   apk_assets_ = apk_assets;
   BuildDynamicRefTable();
-  RebuildFilterList(filter_incompatible_configs);
+  RebuildFilterList();
   if (invalidate_caches) {
     InvalidateCaches(static_cast<uint32_t>(-1));
   }
@@ -586,7 +586,8 @@ ApkAssetsCookie AssetManager2::FindEntry(uint32_t resid, uint16_t density_overri
       if (resource_resolution_logging_enabled_) {
         last_resolution_.steps.push_back(
             Resolution::Step{Resolution::Step::Type::OVERLAID, overlay_result.config.toString(),
-                             overlay_result.package_name});
+                             overlay_result.package_name,
+                             overlay_cookie});
       }
     }
   }
@@ -603,29 +604,27 @@ ApkAssetsCookie AssetManager2::FindEntry(uint32_t resid, uint16_t density_overri
 ApkAssetsCookie AssetManager2::FindEntryInternal(const PackageGroup& package_group,
                                                  uint8_t type_idx, uint16_t entry_idx,
                                                  const ResTable_config& desired_config,
-                                                 bool /*stop_at_first_match*/,
+                                                 bool stop_at_first_match,
                                                  bool ignore_configuration,
                                                  FindEntryResult* out_entry) const {
   ApkAssetsCookie best_cookie = kInvalidCookie;
   const LoadedPackage* best_package = nullptr;
   const ResTable_type* best_type = nullptr;
   const ResTable_config* best_config = nullptr;
-  ResTable_config best_config_copy;
-  uint32_t best_offset = 0u;
-  uint32_t type_flags = 0u;
-
-  Resolution::Step::Type resolution_type = Resolution::Step::Type::NO_ENTRY;
+  uint32_t best_offset = 0U;
+  uint32_t type_flags = 0U;
   std::vector<Resolution::Step> resolution_steps;
 
-  // If desired_config is the same as the set configuration, then we can use our filtered list
-  // and we don't need to match the configurations, since they already matched.
-  const bool use_fast_path = !ignore_configuration && &desired_config == &configuration_;
+  // If `desired_config` is not the same as the set configuration or the caller will accept a value
+  // from any configuration, then we cannot use our filtered list of types since it only it contains
+  // types matched to the set configuration.
+  const bool use_filtered = !ignore_configuration && &desired_config == &configuration_;
 
   const size_t package_count = package_group.packages_.size();
   for (size_t pi = 0; pi < package_count; pi++) {
     const ConfiguredPackage& loaded_package_impl = package_group.packages_[pi];
     const LoadedPackage* loaded_package = loaded_package_impl.loaded_package_;
-    ApkAssetsCookie cookie = package_group.cookies_[pi];
+    const ApkAssetsCookie cookie = package_group.cookies_[pi];
 
     // If the type IDs are offset in this package, we need to take that into account when searching
     // for a type.
@@ -634,120 +633,74 @@ ApkAssetsCookie AssetManager2::FindEntryInternal(const PackageGroup& package_gro
       continue;
     }
 
-    // If the package is an overlay or custom loader,
-    // then even configurations that are the same MUST be chosen.
+    // Allow custom loader packages to overlay resource values with configurations equivalent to the
+    // current best configuration.
     const bool package_is_loader = loaded_package->IsCustomLoader();
-    type_flags |= type_spec->GetFlagsForEntryIndex(entry_idx);
 
-    if (use_fast_path) {
-      const FilteredConfigGroup& filtered_group = loaded_package_impl.filtered_configs_[type_idx];
-      const std::vector<ResTable_config>& candidate_configs = filtered_group.configurations;
-      const size_t type_count = candidate_configs.size();
-      for (uint32_t i = 0; i < type_count; i++) {
-        const ResTable_config& this_config = candidate_configs[i];
+   type_flags |= type_spec->GetFlagsForEntryIndex(entry_idx);
 
-        // We can skip calling ResTable_config::match() because we know that all candidate
-        // configurations that do NOT match have been filtered-out.
-        if (best_config == nullptr) {
-          resolution_type = Resolution::Step::Type::INITIAL;
-        } else if (this_config.isBetterThan(*best_config, &desired_config)) {
-          resolution_type = (package_is_loader) ? Resolution::Step::Type::BETTER_MATCH_LOADER
-                                                : Resolution::Step::Type::BETTER_MATCH;
-        } else if (package_is_loader && this_config.compare(*best_config) == 0) {
-          resolution_type = Resolution::Step::Type::OVERLAID_LOADER;
-        } else {
-          if (resource_resolution_logging_enabled_) {
-            resolution_type = (package_is_loader) ? Resolution::Step::Type::SKIPPED_LOADER
-                                                  : Resolution::Step::Type::SKIPPED;
-            resolution_steps.push_back(Resolution::Step{resolution_type,
-                                                        this_config.toString(),
-                                                        &loaded_package->GetPackageName()});
-          }
-          continue;
-        }
+    const FilteredConfigGroup& filtered_group = loaded_package_impl.filtered_configs_[type_idx];
+    const size_t type_entry_count = (use_filtered) ? filtered_group.type_entries.size()
+                                                   : type_spec->type_entries.size();
+    for (size_t i = 0; i < type_entry_count; i++) {
+      const TypeSpec::TypeEntry* type_entry = (use_filtered) ? filtered_group.type_entries[i]
+                                                             : &type_spec->type_entries[i];
 
-        // The configuration matches and is better than the previous selection.
-        // Find the entry value if it exists for this configuration.
-        const ResTable_type* type = filtered_group.types[i];
-        const uint32_t offset = LoadedPackage::GetEntryOffset(type, entry_idx);
-        if (offset == ResTable_type::NO_ENTRY) {
-          if (resource_resolution_logging_enabled_) {
-            if (package_is_loader) {
-              resolution_type = Resolution::Step::Type::NO_ENTRY_LOADER;
-            } else {
-              resolution_type = Resolution::Step::Type::NO_ENTRY;
-            }
-            resolution_steps.push_back(Resolution::Step{resolution_type,
-                                                        this_config.toString(),
-                                                        &loaded_package->GetPackageName()});
-          }
-          continue;
-        }
-
-        best_cookie = cookie;
-        best_package = loaded_package;
-        best_type = type;
-        best_config = &this_config;
-        best_offset = offset;
-
-        if (resource_resolution_logging_enabled_) {
-          last_resolution_.steps.push_back(Resolution::Step{resolution_type,
-                                                            this_config.toString(),
-                                                            &loaded_package->GetPackageName()});
-        }
+      // We can skip calling ResTable_config::match() if the caller does not care for the
+      // configuration to match or if we're using the list of types that have already had their
+      // configuration matched.
+      const ResTable_config& this_config = type_entry->config;
+      if (!(use_filtered || ignore_configuration || this_config.match(desired_config))) {
+        continue;
       }
-    } else {
-      // This is the slower path, which doesn't use the filtered list of configurations.
-      // Here we must read the ResTable_config from the mmapped APK, convert it to host endianness
-      // and fill in any new fields that did not exist when the APK was compiled.
-      // Furthermore when selecting configurations we can't just record the pointer to the
-      // ResTable_config, we must copy it.
-      const auto iter_end = type_spec->types + type_spec->type_count;
-      for (auto iter = type_spec->types; iter != iter_end; ++iter) {
-        ResTable_config this_config{};
 
-        if (!ignore_configuration) {
-          this_config.copyFromDtoH((*iter)->config);
-          if (!this_config.match(desired_config)) {
-            continue;
-          }
-
-          if (best_config == nullptr) {
-            resolution_type = Resolution::Step::Type::INITIAL;
-          } else if (this_config.isBetterThan(*best_config, &desired_config)) {
-            resolution_type = (package_is_loader) ? Resolution::Step::Type::BETTER_MATCH_LOADER
-                                                  : Resolution::Step::Type::BETTER_MATCH;
-          } else if (package_is_loader && this_config.compare(*best_config) == 0) {
-            resolution_type = Resolution::Step::Type::OVERLAID_LOADER;
-          } else {
-            continue;
-          }
-        }
-
-        // The configuration matches and is better than the previous selection.
-        // Find the entry value if it exists for this configuration.
-        const uint32_t offset = LoadedPackage::GetEntryOffset(*iter, entry_idx);
-        if (offset == ResTable_type::NO_ENTRY) {
-          continue;
-        }
-
-        best_cookie = cookie;
-        best_package = loaded_package;
-        best_type = *iter;
-        best_config_copy = this_config;
-        best_config = &best_config_copy;
-        best_offset = offset;
-
-        if (ignore_configuration) {
-          // Any configuration will suffice, so break.
-          break;
-        }
-
+      Resolution::Step::Type resolution_type;
+      if (best_config == nullptr) {
+        resolution_type = Resolution::Step::Type::INITIAL;
+      } else if (this_config.isBetterThan(*best_config, &desired_config)) {
+        resolution_type = Resolution::Step::Type::BETTER_MATCH;
+      } else if (package_is_loader && this_config.compare(*best_config) == 0) {
+        resolution_type = Resolution::Step::Type::OVERLAID;
+      } else {
         if (resource_resolution_logging_enabled_) {
-          last_resolution_.steps.push_back(Resolution::Step{resolution_type,
-                                                            this_config.toString(),
-                                                            &loaded_package->GetPackageName()});
+          resolution_steps.push_back(Resolution::Step{Resolution::Step::Type::SKIPPED,
+                                                      this_config.toString(),
+                                                      &loaded_package->GetPackageName(),
+                                                      cookie});
         }
+        continue;
+      }
+
+      // The configuration matches and is better than the previous selection.
+      // Find the entry value if it exists for this configuration.
+      const ResTable_type* type = type_entry->type;
+      const uint32_t offset = LoadedPackage::GetEntryOffset(type, entry_idx);
+      if (offset == ResTable_type::NO_ENTRY) {
+        if (resource_resolution_logging_enabled_) {
+          resolution_steps.push_back(Resolution::Step{Resolution::Step::Type::NO_ENTRY,
+                                                        this_config.toString(),
+                                                        &loaded_package->GetPackageName(),
+                                                        cookie});
+        }
+        continue;
+      }
+
+      best_cookie = cookie;
+      best_package = loaded_package;
+      best_type = type;
+      best_config = &this_config;
+      best_offset = offset;
+
+      if (resource_resolution_logging_enabled_) {
+        last_resolution_.steps.push_back(Resolution::Step{resolution_type,
+                                                          this_config.toString(),
+                                                          &loaded_package->GetPackageName(),
+                                                          cookie});
+      }
+
+      // Any configuration will suffice, so break.
+      if (stop_at_first_match) {
+        break;
       }
     }
   }
@@ -794,21 +747,17 @@ std::string AssetManager2::GetLastResourceResolution() const {
     return std::string();
   }
 
-  auto cookie = last_resolution_.cookie;
+  const ApkAssetsCookie cookie = last_resolution_.cookie;
   if (cookie == kInvalidCookie) {
     LOG(ERROR) << "AssetManager hasn't resolved a resource to read resolution path.";
     return std::string();
   }
 
-  uint32_t resid = last_resolution_.resid;
-  std::vector<Resolution::Step>& steps = last_resolution_.steps;
+  const uint32_t resid = last_resolution_.resid;
+  const auto package = apk_assets_[cookie]->GetLoadedArsc()->GetPackageById(get_package_id(resid));
 
   ResourceName resource_name;
   std::string resource_name_string;
-
-  const LoadedPackage* package =
-          apk_assets_[cookie]->GetLoadedArsc()->GetPackageById(get_package_id(resid));
-
   if (package != nullptr) {
     ToResourceName(last_resolution_.type_string_ref,
                    last_resolution_.entry_string_ref,
@@ -823,44 +772,24 @@ std::string AssetManager2::GetLastResourceResolution() const {
             << "\n\tFor config -"
             << configuration_.toString();
 
-  std::string prefix;
-  for (Resolution::Step step : steps) {
-    switch (step.type) {
-      case Resolution::Step::Type::INITIAL:
-        prefix = "Found initial";
-        break;
-      case Resolution::Step::Type::BETTER_MATCH:
-        prefix = "Found better";
-        break;
-      case Resolution::Step::Type::BETTER_MATCH_LOADER:
-        prefix = "Found better in loader";
-        break;
-      case Resolution::Step::Type::OVERLAID:
-        prefix = "Overlaid";
-        break;
-      case Resolution::Step::Type::OVERLAID_LOADER:
-        prefix = "Overlaid by loader";
-        break;
-      case Resolution::Step::Type::SKIPPED:
-        prefix = "Skipped";
-        break;
-      case Resolution::Step::Type::SKIPPED_LOADER:
-        prefix = "Skipped loader";
-        break;
-      case Resolution::Step::Type::NO_ENTRY:
-        prefix = "No entry";
-        break;
-      case Resolution::Step::Type::NO_ENTRY_LOADER:
-        prefix = "No entry for loader";
-        break;
+  for (const Resolution::Step& step : last_resolution_.steps) {
+    const static std::unordered_map<Resolution::Step::Type, const char*> kStepStrings = {
+        {Resolution::Step::Type::INITIAL, "Found initial"},
+        {Resolution::Step::Type::BETTER_MATCH, "Found better"},
+        {Resolution::Step::Type::OVERLAID, "Overlaid"},
+        {Resolution::Step::Type::SKIPPED, "Skipped"},
+        {Resolution::Step::Type::NO_ENTRY, "No entry"}
+    };
+
+    const auto prefix = kStepStrings.find(step.type);
+    if (prefix == kStepStrings.end()) {
+      continue;
     }
 
-    if (!prefix.empty()) {
-      log_stream << "\n\t" << prefix << ": " << *step.package_name;
-
-      if (!step.config_name.isEmpty()) {
-        log_stream << " -" << step.config_name;
-      }
+    log_stream << "\n\t" << prefix->second << ": " << *step.package_name << " ("
+               << apk_assets_[step.cookie]->GetPath() << ")";
+    if (!step.config_name.isEmpty()) {
+      log_stream << " -" << step.config_name;
     }
   }
 
@@ -1264,7 +1193,7 @@ uint32_t AssetManager2::GetResourceId(const std::string& resource_name,
   return 0u;
 }
 
-void AssetManager2::RebuildFilterList(bool filter_incompatible_configs) {
+void AssetManager2::RebuildFilterList() {
   for (PackageGroup& group : package_groups_) {
     for (ConfiguredPackage& impl : group.packages_) {
       // Destroy it.
@@ -1274,15 +1203,11 @@ void AssetManager2::RebuildFilterList(bool filter_incompatible_configs) {
       new (&impl.filtered_configs_) ByteBucketArray<FilteredConfigGroup>();
 
       // Create the filters here.
-      impl.loaded_package_->ForEachTypeSpec([&](const TypeSpec* spec, uint8_t type_index) {
-        FilteredConfigGroup& group = impl.filtered_configs_.editItemAt(type_index);
-        const auto iter_end = spec->types + spec->type_count;
-        for (auto iter = spec->types; iter != iter_end; ++iter) {
-          ResTable_config this_config;
-          this_config.copyFromDtoH((*iter)->config);
-          if (!filter_incompatible_configs || this_config.match(configuration_)) {
-            group.configurations.push_back(this_config);
-            group.types.push_back(*iter);
+      impl.loaded_package_->ForEachTypeSpec([&](const TypeSpec& type_spec, uint8_t type_id) {
+        FilteredConfigGroup& group = impl.filtered_configs_.editItemAt(type_id - 1);
+        for (const auto& type_entry : type_spec.type_entries) {
+          if (type_entry.config.match(configuration_)) {
+            group.type_entries.push_back(&type_entry);
           }
         }
       });

@@ -33,7 +33,6 @@
 #endif
 #endif
 
-#include "androidfw/ByteBucketArray.h"
 #include "androidfw/Chunk.h"
 #include "androidfw/ResourceUtils.h"
 #include "androidfw/Util.h"
@@ -49,36 +48,24 @@ namespace {
 // Builder that helps accumulate Type structs and then create a single
 // contiguous block of memory to store both the TypeSpec struct and
 // the Type structs.
-class TypeSpecPtrBuilder {
- public:
-  explicit TypeSpecPtrBuilder(const ResTable_typeSpec* header)
-      : header_(header) {
-  }
+struct TypeSpecBuilder {
+  explicit TypeSpecBuilder(const ResTable_typeSpec* header) : header_(header) {}
 
   void AddType(const ResTable_type* type) {
-    types_.push_back(type);
+    TypeSpec::TypeEntry& entry = type_entries.emplace_back();
+    entry.config.copyFromDtoH(type->config);
+    entry.type = type;
   }
 
-  TypeSpecPtr Build() {
-    // Check for overflow.
-    using ElementType = const ResTable_type*;
-    if ((std::numeric_limits<size_t>::max() - sizeof(TypeSpec)) / sizeof(ElementType) <
-        types_.size()) {
-      return {};
-    }
-    TypeSpec* type_spec =
-        (TypeSpec*)::malloc(sizeof(TypeSpec) + (types_.size() * sizeof(ElementType)));
-    type_spec->type_spec = header_;
-    type_spec->type_count = types_.size();
-    memcpy(type_spec + 1, types_.data(), types_.size() * sizeof(ElementType));
-    return TypeSpecPtr(type_spec);
+  TypeSpec Build() {
+    return {header_, std::move(type_entries)};
   }
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(TypeSpecPtrBuilder);
+  DISALLOW_COPY_AND_ASSIGN(TypeSpecBuilder);
 
   const ResTable_typeSpec* header_;
-  std::vector<const ResTable_type*> types_;
+  std::vector<TypeSpec::TypeEntry> type_entries;
 };
 
 }  // namespace
@@ -295,54 +282,40 @@ const ResTable_entry* LoadedPackage::GetEntryFromOffset(const ResTable_type* typ
 void LoadedPackage::CollectConfigurations(bool exclude_mipmap,
                                           std::set<ResTable_config>* out_configs) const {
   const static std::u16string kMipMap = u"mipmap";
-  const size_t type_count = type_specs_.size();
-  for (size_t i = 0; i < type_count; i++) {
-    const TypeSpecPtr& type_spec = type_specs_[i];
-    if (type_spec != nullptr) {
-      if (exclude_mipmap) {
-        const int type_idx = type_spec->type_spec->id - 1;
-        size_t type_name_len;
-        const char16_t* type_name16 = type_string_pool_.stringAt(type_idx, &type_name_len);
-        if (type_name16 != nullptr) {
-          if (kMipMap.compare(0, std::u16string::npos, type_name16, type_name_len) == 0) {
-            // This is a mipmap type, skip collection.
-            continue;
-          }
-        }
-        const char* type_name = type_string_pool_.string8At(type_idx, &type_name_len);
-        if (type_name != nullptr) {
-          if (strncmp(type_name, "mipmap", type_name_len) == 0) {
-            // This is a mipmap type, skip collection.
-            continue;
-          }
+  for (const auto& type_spec : type_specs_) {
+    if (exclude_mipmap) {
+      const int type_idx = type_spec.first - 1;
+      size_t type_name_len;
+      const char16_t* type_name16 = type_string_pool_.stringAt(type_idx, &type_name_len);
+      if (type_name16 != nullptr) {
+        if (kMipMap.compare(0, std::u16string::npos, type_name16, type_name_len) == 0) {
+          // This is a mipmap type, skip collection.
+          continue;
         }
       }
+      const char* type_name = type_string_pool_.string8At(type_idx, &type_name_len);
+      if (type_name != nullptr) {
+        if (strncmp(type_name, "mipmap", type_name_len) == 0) {
+          // This is a mipmap type, skip collection.
+          continue;
+        }
+      }
+    }
 
-      const auto iter_end = type_spec->types + type_spec->type_count;
-      for (auto iter = type_spec->types; iter != iter_end; ++iter) {
-        ResTable_config config;
-        config.copyFromDtoH((*iter)->config);
-        out_configs->insert(config);
-      }
+    for (const auto& type_entry : type_spec.second.type_entries) {
+      out_configs->insert(type_entry.config);
     }
   }
 }
 
 void LoadedPackage::CollectLocales(bool canonicalize, std::set<std::string>* out_locales) const {
   char temp_locale[RESTABLE_MAX_LOCALE_LEN];
-  const size_t type_count = type_specs_.size();
-  for (size_t i = 0; i < type_count; i++) {
-    const TypeSpecPtr& type_spec = type_specs_[i];
-    if (type_spec != nullptr) {
-      const auto iter_end = type_spec->types + type_spec->type_count;
-      for (auto iter = type_spec->types; iter != iter_end; ++iter) {
-        ResTable_config configuration;
-        configuration.copyFromDtoH((*iter)->config);
-        if (configuration.locale != 0) {
-          configuration.getBcp47Locale(temp_locale, canonicalize);
-          std::string locale(temp_locale);
-          out_locales->insert(std::move(locale));
-        }
+  for (const auto& type_spec : type_specs_) {
+    for (const auto& type_entry : type_spec.second.type_entries) {
+      if (type_entry.config.locale != 0) {
+        type_entry.config.getBcp47Locale(temp_locale, canonicalize);
+        std::string locale(temp_locale);
+        out_locales->insert(std::move(locale));
       }
     }
   }
@@ -360,14 +333,13 @@ uint32_t LoadedPackage::FindEntryByName(const std::u16string& type_name,
     return 0u;
   }
 
-  const TypeSpec* type_spec = type_specs_[type_idx].get();
+  const TypeSpec* type_spec = GetTypeSpecByTypeIndex(type_idx);
   if (type_spec == nullptr) {
     return 0u;
   }
 
-  const auto iter_end = type_spec->types + type_spec->type_count;
-  for (auto iter = type_spec->types; iter != iter_end; ++iter) {
-    const ResTable_type* type = *iter;
+  for (const auto& type_entry : type_spec->type_entries) {
+    const ResTable_type* type = type_entry.type;
     size_t entry_count = dtohl(type->entryCount);
     for (size_t entry_idx = 0; entry_idx < entry_count; entry_idx++) {
       const uint32_t* entry_offsets = reinterpret_cast<const uint32_t*>(
@@ -446,7 +418,7 @@ std::unique_ptr<const LoadedPackage> LoadedPackage::Load(const Chunk& chunk,
   // A map of TypeSpec builders, each associated with an type index.
   // We use these to accumulate the set of Types available for a TypeSpec, and later build a single,
   // contiguous block of memory that holds all the Types together with the TypeSpec.
-  std::unordered_map<int, std::unique_ptr<TypeSpecPtrBuilder>> type_builder_map;
+  std::unordered_map<int, std::unique_ptr<TypeSpecBuilder>> type_builder_map;
 
   ChunkIterator iter(chunk.data_ptr(), chunk.data_size());
   while (iter.HasNext()) {
@@ -512,9 +484,9 @@ std::unique_ptr<const LoadedPackage> LoadedPackage::Load(const Chunk& chunk,
           return {};
         }
 
-        std::unique_ptr<TypeSpecPtrBuilder>& builder_ptr = type_builder_map[type_spec->id - 1];
+        std::unique_ptr<TypeSpecBuilder>& builder_ptr = type_builder_map[type_spec->id];
         if (builder_ptr == nullptr) {
-          builder_ptr = util::make_unique<TypeSpecPtrBuilder>(type_spec);
+          builder_ptr = util::make_unique<TypeSpecBuilder>(type_spec);
           loaded_package->resource_ids_.set(type_spec->id, entry_count);
         } else {
           LOG(WARNING) << StringPrintf("RES_TABLE_TYPE_SPEC_TYPE already defined for ID %02x",
@@ -534,7 +506,7 @@ std::unique_ptr<const LoadedPackage> LoadedPackage::Load(const Chunk& chunk,
         }
 
         // Type chunks must be preceded by their TypeSpec chunks.
-        std::unique_ptr<TypeSpecPtrBuilder>& builder_ptr = type_builder_map[type->id - 1];
+        std::unique_ptr<TypeSpecBuilder>& builder_ptr = type_builder_map[type->id];
         if (builder_ptr != nullptr) {
           builder_ptr->AddType(type);
         } else {
@@ -668,14 +640,9 @@ std::unique_ptr<const LoadedPackage> LoadedPackage::Load(const Chunk& chunk,
 
   // Flatten and construct the TypeSpecs.
   for (auto& entry : type_builder_map) {
-    uint8_t type_idx = static_cast<uint8_t>(entry.first);
-    TypeSpecPtr type_spec_ptr = entry.second->Build();
-    if (type_spec_ptr == nullptr) {
-      LOG(ERROR) << "Too many type configurations, overflow detected.";
-      return {};
-    }
-
-    loaded_package->type_specs_.editItemAt(type_idx) = std::move(type_spec_ptr);
+    TypeSpec type_spec = entry.second->Build();
+    uint8_t type_id = static_cast<uint8_t>(entry.first);
+    loaded_package->type_specs_[type_id] = std::move(type_spec);
   }
 
   return std::move(loaded_package);

@@ -46,18 +46,19 @@ class DynamicPackageEntry {
 // TypeSpec is going to be immediately proceeded by
 // an array of Type structs, all in the same block of memory.
 struct TypeSpec {
-  // Pointer to the mmapped data where flags are kept.
-  // Flags denote whether the resource entry is public
-  // and under which configurations it varies.
+  struct TypeEntry {
+    const ResTable_type*  type;
+
+    // Type configurations are accessed frequently when setting up an AssetManager and querying
+    // resources. Access this cached configuration to minimize page faults.
+    ResTable_config config;
+  };
+
+  // Pointer to the mmapped data where flags are kept. Flags denote whether the resource entry is
+  // public and under which configurations it varies.
   const ResTable_typeSpec* type_spec;
 
-  // The number of types that follow this struct.
-  // There is a type for each configuration that entries are defined for.
-  size_t type_count;
-
-  // Trick to easily access a variable number of Type structs
-  // proceeding this struct, and to ensure their alignment.
-  const ResTable_type* types[0];
+  std::vector<TypeEntry> type_entries;
 
   inline uint32_t GetFlagsForEntryIndex(uint16_t entry_index) const {
     if (entry_index >= dtohl(type_spec->entryCount)) {
@@ -88,11 +89,6 @@ enum : package_property_t {
   // The package is a RRO.
   PROPERTY_OVERLAY = 1U << 3U,
 };
-
-// TypeSpecPtr points to a block of memory that holds a TypeSpec struct, followed by an array of
-// ResTable_type pointers.
-// TypeSpecPtr is a managed pointer that knows how to delete itself.
-using TypeSpecPtr = util::unique_cptr<TypeSpec>;
 
 struct OverlayableInfo {
   std::string name;
@@ -231,17 +227,17 @@ class LoadedPackage {
   inline const TypeSpec* GetTypeSpecByTypeIndex(uint8_t type_index) const {
     // If the type IDs are offset in this package, we need to take that into account when searching
     // for a type.
-    return type_specs_[type_index - type_id_offset_].get();
+    const auto& type_spec = type_specs_.find(type_index + 1 - type_id_offset_);
+    if (type_spec == type_specs_.end()) {
+      return nullptr;
+    }
+    return &type_spec->second;
   }
 
   template <typename Func>
   void ForEachTypeSpec(Func f) const {
-    for (size_t i = 0; i < type_specs_.size(); i++) {
-      const TypeSpecPtr& ptr = type_specs_[i];
-      if (ptr != nullptr) {
-        uint8_t type_id = ptr->type_spec->id;
-        f(ptr.get(), type_id - 1);
-      }
+    for (const auto& type_spec : type_specs_) {
+      f(type_spec.second, type_spec.first);
     }
   }
 
@@ -281,7 +277,7 @@ class LoadedPackage {
   int type_id_offset_ = 0;
   package_property_t property_flags_ = 0U;
 
-  ByteBucketArray<TypeSpecPtr> type_specs_;
+  std::unordered_map<uint8_t, TypeSpec> type_specs_;
   ByteBucketArray<uint32_t> resource_ids_;
   std::vector<DynamicPackageEntry> dynamic_package_map_;
   std::vector<const std::pair<OverlayableInfo, std::unordered_set<uint32_t>>> overlayable_infos_;
