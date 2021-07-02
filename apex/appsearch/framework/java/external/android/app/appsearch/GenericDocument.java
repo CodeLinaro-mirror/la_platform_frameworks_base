@@ -27,8 +27,6 @@ import android.os.Bundle;
 import android.os.Parcelable;
 import android.util.Log;
 
-import com.android.internal.util.Preconditions;
-
 import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -892,64 +890,121 @@ public class GenericDocument {
     @Override
     @NonNull
     public String toString() {
-        return bundleToString(mBundle).toString();
+        StringBuilder stringBuilder = new StringBuilder();
+        appendGenericDocumentString(this, /*indentLevel=*/ 0, stringBuilder);
+        return stringBuilder.toString();
     }
 
-    private static StringBuilder bundleToString(Bundle bundle) {
-        StringBuilder stringBuilder = new StringBuilder();
-        try {
-            String[] names = bundle.keySet().toArray(new String[0]);
-            // Sort names to make output deterministic. We need a custom comparator to handle
-            // nulls (arbitrarily putting them first, similar to Comparator.nullsFirst, which is
-            // only available since N).
-            Arrays.sort(
-                    names,
-                    (@Nullable String s1, @Nullable String s2) -> {
-                        if (s1 == null) {
-                            return s2 == null ? 0 : -1;
-                        } else if (s2 == null) {
-                            return 1;
-                        } else {
-                            return s1.compareTo(s2);
-                        }
-                    });
-            for (String name : names) {
-                stringBuilder.append("{ name: '").append(name).append("' value: ");
-                Object valueObject = bundle.get(name);
-                if (valueObject == null) {
-                    stringBuilder.append("<null>");
-                } else if (valueObject instanceof Bundle) {
-                    stringBuilder.append(bundleToString((Bundle) valueObject));
-                } else if (valueObject.getClass().isArray()) {
-                    stringBuilder.append("[ ");
-                    for (int i = 0; i < Array.getLength(valueObject); i++) {
-                        Object element = Array.get(valueObject, i);
-                        stringBuilder.append("'");
-                        if (element instanceof Bundle) {
-                            stringBuilder.append(bundleToString((Bundle) element));
-                        } else {
-                            stringBuilder.append(Array.get(valueObject, i));
-                        }
-                        stringBuilder.append("' ");
-                    }
-                    stringBuilder.append("]");
-                } else if (valueObject instanceof List) {
-                    @SuppressWarnings("unchecked")
-                    List<Bundle> bundles = (List<Bundle>) valueObject;
-                    for (int i = 0; i < bundles.size(); i++) {
-                        stringBuilder.append(bundleToString(bundles.get(i)));
-                    }
-                } else {
-                    stringBuilder.append(valueObject.toString());
-                }
-                stringBuilder.append(" } ");
+    private static void appendGenericDocumentString(
+            @NonNull GenericDocument document, int indentLevel, @NonNull StringBuilder builder) {
+        Objects.requireNonNull(document);
+        Objects.requireNonNull(builder);
+
+        builder.append(getIndent(indentLevel)).append("{\n");
+
+        String indent1 = getIndent(indentLevel + 1);
+
+        builder.append(indent1)
+                .append("namespace: \"")
+                .append(document.getNamespace())
+                .append("\",\n");
+
+        builder.append(indent1).append("id: \"").append(document.getId()).append("\",\n");
+
+        builder.append(indent1).append("score: ").append(document.getScore()).append(",\n");
+
+        builder.append(indent1)
+                .append("schemaType: \"")
+                .append(document.getSchemaType())
+                .append("\",\n");
+
+        builder.append(indent1)
+                .append("creationTimestampMillis: ")
+                .append(document.getCreationTimestampMillis())
+                .append(",\n");
+
+        builder.append(indent1)
+                .append("timeToLiveMillis: ")
+                .append(document.getTtlMillis())
+                .append(",\n");
+
+        builder.append(indent1).append("properties: {\n");
+
+        String[] sortedProperties = document.getPropertyNames().toArray(new String[0]);
+        Arrays.sort(sortedProperties);
+
+        for (int i = 0; i < sortedProperties.length; i++) {
+            Object property = document.getProperty(sortedProperties[i]);
+            builder.append(getIndent(indentLevel + 2))
+                    .append("\"")
+                    .append(sortedProperties[i])
+                    .append("\"")
+                    .append(": ");
+            appendPropertyString(property, indentLevel + 2, builder);
+            if (i != sortedProperties.length - 1) {
+                builder.append(",\n");
             }
-        } catch (RuntimeException e) {
-            // Catch any exceptions here since corrupt Bundles can throw different types of
-            // exceptions (e.g. b/38445840 & b/68937025).
-            stringBuilder.append("<error>");
         }
-        return stringBuilder;
+
+        builder.append("\n");
+        builder.append(indent1).append("}");
+
+        builder.append("\n");
+        builder.append(getIndent(indentLevel)).append("}");
+    }
+
+    /**
+     * Appends a string for the given property to the given builder.
+     *
+     * @param property property object to create string for.
+     * @param indentLevel base indent level for property.
+     * @param builder the builder to append to.
+     */
+    private static void appendPropertyString(
+            @NonNull Object property, int indentLevel, @NonNull StringBuilder builder) {
+        Objects.requireNonNull(property);
+        Objects.requireNonNull(builder);
+
+        builder.append("[");
+        if (property instanceof GenericDocument[]) {
+            GenericDocument[] documentValues = (GenericDocument[]) property;
+            for (int i = 0; i < documentValues.length; ++i) {
+                builder.append("\n");
+                appendGenericDocumentString(documentValues[i], indentLevel + 1, builder);
+                if (i != documentValues.length - 1) {
+                    builder.append(", ");
+                }
+                builder.append("\n");
+            }
+            builder.append(getIndent(indentLevel));
+        } else {
+            int propertyArrLength = Array.getLength(property);
+            for (int i = 0; i < propertyArrLength; i++) {
+                Object propertyElement = Array.get(property, i);
+                if (propertyElement instanceof String) {
+                    builder.append("\"").append(propertyElement).append("\"");
+                } else if (propertyElement instanceof byte[]) {
+                    builder.append(Arrays.toString((byte[]) propertyElement));
+                } else {
+                    builder.append(propertyElement);
+                }
+                if (i != propertyArrLength - 1) {
+                    builder.append(", ");
+                }
+            }
+        }
+
+        builder.append("]");
+    }
+
+    /** Appends a string for given indent level to the given builder. */
+    @NonNull
+    private static String getIndent(int indentLevel) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < indentLevel; ++i) {
+            builder.append("  ");
+        }
+        return builder.toString();
     }
 
     /**
@@ -961,16 +1016,13 @@ public class GenericDocument {
     // GenericDocument.
     @SuppressLint("StaticFinalBuilder")
     public static class Builder<BuilderType extends Builder> {
-
-        private final Bundle mBundle;
-        private final Bundle mProperties;
+        private Bundle mBundle;
+        private Bundle mProperties;
         private final BuilderType mBuilderTypeInstance;
         private boolean mBuilt = false;
 
         /**
          * Creates a new {@link GenericDocument.Builder}.
-         *
-         * <p>Once {@link #build} is called, the instance can no longer be used.
          *
          * <p>Document IDs are unique within a namespace.
          *
@@ -996,9 +1048,6 @@ public class GenericDocument {
             mBundle.putString(GenericDocument.NAMESPACE_FIELD, namespace);
             mBundle.putString(GenericDocument.ID_FIELD, id);
             mBundle.putString(GenericDocument.SCHEMA_TYPE_FIELD, schemaType);
-            // Set current timestamp for creation timestamp by default.
-            mBundle.putLong(
-                    GenericDocument.CREATION_TIMESTAMP_MILLIS_FIELD, System.currentTimeMillis());
             mBundle.putLong(GenericDocument.TTL_MILLIS_FIELD, DEFAULT_TTL_MILLIS);
             mBundle.putInt(GenericDocument.SCORE_FIELD, DEFAULT_SCORE);
 
@@ -1006,7 +1055,11 @@ public class GenericDocument {
             mBundle.putBundle(PROPERTIES_FIELD, mProperties);
         }
 
-        /** Creates a new {@link GenericDocument.Builder} from the given Bundle. */
+        /**
+         * Creates a new {@link GenericDocument.Builder} from the given Bundle.
+         *
+         * <p>The bundle is NOT copied.
+         */
         @SuppressWarnings("unchecked")
         Builder(@NonNull Bundle bundle) {
             mBundle = Objects.requireNonNull(bundle);
@@ -1022,13 +1075,12 @@ public class GenericDocument {
          *
          * <p>The number of namespaces per app should be kept small for efficiency reasons.
          *
-         * @throws IllegalStateException if the builder has already been used.
          * @hide
          */
         @NonNull
         public BuilderType setNamespace(@NonNull String namespace) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             Objects.requireNonNull(namespace);
+            resetIfBuilt();
             mBundle.putString(GenericDocument.NAMESPACE_FIELD, namespace);
             return mBuilderTypeInstance;
         }
@@ -1039,13 +1091,12 @@ public class GenericDocument {
          *
          * <p>Document IDs are unique within a namespace.
          *
-         * @throws IllegalStateException if the builder has already been used.
          * @hide
          */
         @NonNull
         public BuilderType setId(@NonNull String id) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             Objects.requireNonNull(id);
+            resetIfBuilt();
             mBundle.putString(GenericDocument.ID_FIELD, id);
             return mBuilderTypeInstance;
         }
@@ -1056,13 +1107,12 @@ public class GenericDocument {
          * <p>To successfully index a document, the schema type must match the name of an {@link
          * AppSearchSchema} object previously provided to {@link AppSearchSession#setSchema}.
          *
-         * @throws IllegalStateException if the builder has already been used.
          * @hide
          */
         @NonNull
         public BuilderType setSchemaType(@NonNull String schemaType) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             Objects.requireNonNull(schemaType);
+            resetIfBuilt();
             mBundle.putString(GenericDocument.SCHEMA_TYPE_FIELD, schemaType);
             return mBuilderTypeInstance;
         }
@@ -1079,14 +1129,13 @@ public class GenericDocument {
          * <p>Any non-negative integer can be used a score. By default, scores are set to 0.
          *
          * @param score any non-negative {@code int} representing the document's score.
-         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setScore(@IntRange(from = 0, to = Integer.MAX_VALUE) int score) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             if (score < 0) {
                 throw new IllegalArgumentException("Document score cannot be negative.");
             }
+            resetIfBuilt();
             mBundle.putInt(GenericDocument.SCORE_FIELD, score);
             return mBuilderTypeInstance;
         }
@@ -1097,13 +1146,14 @@ public class GenericDocument {
          * <p>This should be set using a value obtained from the {@link System#currentTimeMillis}
          * time base.
          *
+         * <p>If this method is not called, this will be set to the time the object is built.
+         *
          * @param creationTimestampMillis a creation timestamp in milliseconds.
-         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setCreationTimestampMillis(
                 @CurrentTimeMillisLong long creationTimestampMillis) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
+            resetIfBuilt();
             mBundle.putLong(
                     GenericDocument.CREATION_TIMESTAMP_MILLIS_FIELD, creationTimestampMillis);
             return mBuilderTypeInstance;
@@ -1120,14 +1170,13 @@ public class GenericDocument {
          * auto-deleted until the app is uninstalled or {@link AppSearchSession#remove} is called.
          *
          * @param ttlMillis a non-negative duration in milliseconds.
-         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setTtlMillis(long ttlMillis) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             if (ttlMillis < 0) {
                 throw new IllegalArgumentException("Document ttlMillis cannot be negative.");
             }
+            resetIfBuilt();
             mBundle.putLong(GenericDocument.TTL_MILLIS_FIELD, ttlMillis);
             return mBuilderTypeInstance;
         }
@@ -1140,13 +1189,12 @@ public class GenericDocument {
          * @param values the {@code String} values of the property.
          * @throws IllegalArgumentException if no values are provided, if provided values exceed
          *     maximum repeated property length, or if a passed in {@code String} is {@code null}.
-         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setPropertyString(@NonNull String name, @NonNull String... values) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             Objects.requireNonNull(name);
             Objects.requireNonNull(values);
+            resetIfBuilt();
             putInPropertyBundle(name, values);
             return mBuilderTypeInstance;
         }
@@ -1159,13 +1207,12 @@ public class GenericDocument {
          *     property as given in {@link AppSearchSchema.PropertyConfig#getName}.
          * @param values the {@code boolean} values of the property.
          * @throws IllegalArgumentException if values exceed maximum repeated property length.
-         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setPropertyBoolean(@NonNull String name, @NonNull boolean... values) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             Objects.requireNonNull(name);
             Objects.requireNonNull(values);
+            resetIfBuilt();
             putInPropertyBundle(name, values);
             return mBuilderTypeInstance;
         }
@@ -1177,13 +1224,12 @@ public class GenericDocument {
          *     property as given in {@link AppSearchSchema.PropertyConfig#getName}.
          * @param values the {@code long} values of the property.
          * @throws IllegalArgumentException if values exceed maximum repeated property length.
-         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setPropertyLong(@NonNull String name, @NonNull long... values) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             Objects.requireNonNull(name);
             Objects.requireNonNull(values);
+            resetIfBuilt();
             putInPropertyBundle(name, values);
             return mBuilderTypeInstance;
         }
@@ -1195,13 +1241,12 @@ public class GenericDocument {
          *     property as given in {@link AppSearchSchema.PropertyConfig#getName}.
          * @param values the {@code double} values of the property.
          * @throws IllegalArgumentException if values exceed maximum repeated property length.
-         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setPropertyDouble(@NonNull String name, @NonNull double... values) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             Objects.requireNonNull(name);
             Objects.requireNonNull(values);
+            resetIfBuilt();
             putInPropertyBundle(name, values);
             return mBuilderTypeInstance;
         }
@@ -1214,13 +1259,12 @@ public class GenericDocument {
          * @param values the {@code byte[]} of the property.
          * @throws IllegalArgumentException if no values are provided, if provided values exceed
          *     maximum repeated property length, or if a passed in {@code byte[]} is {@code null}.
-         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setPropertyBytes(@NonNull String name, @NonNull byte[]... values) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             Objects.requireNonNull(name);
             Objects.requireNonNull(values);
+            resetIfBuilt();
             putInPropertyBundle(name, values);
             return mBuilderTypeInstance;
         }
@@ -1235,14 +1279,13 @@ public class GenericDocument {
          * @throws IllegalArgumentException if no values are provided, if provided values exceed if
          *     provided values exceed maximum repeated property length, or if a passed in {@link
          *     GenericDocument} is {@code null}.
-         * @throws IllegalStateException if the builder has already been used.
          */
         @NonNull
         public BuilderType setPropertyDocument(
                 @NonNull String name, @NonNull GenericDocument... values) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             Objects.requireNonNull(name);
             Objects.requireNonNull(values);
+            resetIfBuilt();
             putInPropertyBundle(name, values);
             return mBuilderTypeInstance;
         }
@@ -1257,8 +1300,8 @@ public class GenericDocument {
          */
         @NonNull
         public BuilderType clearProperty(@NonNull String name) {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             Objects.requireNonNull(name);
+            resetIfBuilt();
             mProperties.remove(name);
             return mBuilderTypeInstance;
         }
@@ -1342,16 +1385,25 @@ public class GenericDocument {
             }
         }
 
-        /**
-         * Builds the {@link GenericDocument} object.
-         *
-         * @throws IllegalStateException if the builder has already been used.
-         */
+        /** Builds the {@link GenericDocument} object. */
         @NonNull
         public GenericDocument build() {
-            Preconditions.checkState(!mBuilt, "Builder has already been used");
             mBuilt = true;
+            // Set current timestamp for creation timestamp by default.
+            if (mBundle.getLong(GenericDocument.CREATION_TIMESTAMP_MILLIS_FIELD, -1) == -1) {
+                mBundle.putLong(
+                        GenericDocument.CREATION_TIMESTAMP_MILLIS_FIELD,
+                        System.currentTimeMillis());
+            }
             return new GenericDocument(mBundle);
+        }
+
+        private void resetIfBuilt() {
+            if (mBuilt) {
+                mBundle = BundleUtil.deepCopy(mBundle);
+                mProperties = mBundle.getBundle(PROPERTIES_FIELD);
+                mBuilt = false;
+            }
         }
     }
 }

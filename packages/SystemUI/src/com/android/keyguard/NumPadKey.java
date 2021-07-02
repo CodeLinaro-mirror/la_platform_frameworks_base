@@ -19,11 +19,10 @@ package com.android.keyguard;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
-import android.graphics.drawable.LayerDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.AttributeSet;
-import android.view.ContextThemeWrapper;
 import android.view.HapticFeedbackConstants;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -132,24 +131,11 @@ public class NumPadKey extends ViewGroup {
         setContentDescription(mDigitText.getText().toString());
 
         Drawable background = getBackground();
-        if (background instanceof LayerDrawable) {
-            mAnimator = new NumPadAnimator(context, (LayerDrawable) background,
+        if (background instanceof RippleDrawable) {
+            mAnimator = new NumPadAnimator(context, (RippleDrawable) background,
                     R.style.NumPadKey);
         } else {
             mAnimator = null;
-        }
-    }
-
-    /**
-     * By default, the new layout will be enabled. Invoking will revert to the old style
-     */
-    public void disableNewLayout() {
-        findViewById(R.id.klondike_text).setVisibility(View.VISIBLE);
-        if (mAnimator != null) {
-            mAnimator = null;
-            ContextThemeWrapper ctw = new ContextThemeWrapper(getContext(), R.style.NumPadKey);
-            setBackground(getContext().getResources().getDrawable(
-                    R.drawable.ripple_drawable_pin, ctw.getTheme()));
         }
     }
 

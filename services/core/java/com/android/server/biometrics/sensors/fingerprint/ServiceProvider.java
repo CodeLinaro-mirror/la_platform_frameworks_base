@@ -25,6 +25,7 @@ import android.hardware.fingerprint.Fingerprint;
 import android.hardware.fingerprint.FingerprintManager;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
 import android.hardware.fingerprint.IFingerprintServiceReceiver;
+import android.hardware.fingerprint.ISidefpsController;
 import android.hardware.fingerprint.IUdfpsOverlayController;
 import android.os.IBinder;
 import android.util.proto.ProtoOutputStream;
@@ -140,7 +141,15 @@ public interface ServiceProvider {
 
     void onPointerUp(int sensorId);
 
+    void onUiReady(int sensorId);
+
     void setUdfpsOverlayController(@NonNull IUdfpsOverlayController controller);
+
+    /**
+     * Sets side-fps controller
+     * @param controller side-fps controller
+     */
+    void setSidefpsController(@NonNull ISidefpsController controller);
 
     void dumpProtoState(int sensorId, @NonNull ProtoOutputStream proto,
             boolean clearSchedulerBuffer);

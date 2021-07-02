@@ -18,6 +18,7 @@ package com.android.systemui.statusbar;
 
 import static android.app.StatusBarManager.DISABLE2_NONE;
 import static android.app.StatusBarManager.DISABLE_NONE;
+import static android.hardware.biometrics.BiometricManager.BiometricMultiSensorMode;
 import static android.inputmethodservice.InputMethodService.BACK_DISPOSITION_DEFAULT;
 import static android.inputmethodservice.InputMethodService.IME_INVISIBLE;
 import static android.view.Display.DEFAULT_DISPLAY;
@@ -57,6 +58,7 @@ import androidx.annotation.NonNull;
 import com.android.internal.os.SomeArgs;
 import com.android.internal.statusbar.IStatusBar;
 import com.android.internal.statusbar.StatusBarIcon;
+import com.android.internal.util.GcUtils;
 import com.android.internal.view.AppearanceRegion;
 import com.android.systemui.statusbar.CommandQueue.Callbacks;
 import com.android.systemui.statusbar.commandline.CommandRegistry;
@@ -288,7 +290,7 @@ public class CommandQueue extends IStatusBar.Stub implements CallbackController<
                 IBiometricSysuiReceiver receiver,
                 int[] sensorIds, boolean credentialAllowed,
                 boolean requireConfirmation, int userId, String opPackageName,
-                long operationId) {
+                long operationId, @BiometricMultiSensorMode int multiSensorConfig) {
         }
 
         default void onBiometricAuthenticated() {
@@ -837,17 +839,19 @@ public class CommandQueue extends IStatusBar.Stub implements CallbackController<
     @Override
     public void showAuthenticationDialog(PromptInfo promptInfo, IBiometricSysuiReceiver receiver,
             int[] sensorIds, boolean credentialAllowed, boolean requireConfirmation,
-            int userId, String opPackageName, long operationId) {
+            int userId, String opPackageName, long operationId,
+            @BiometricMultiSensorMode int multiSensorConfig) {
         synchronized (mLock) {
             SomeArgs args = SomeArgs.obtain();
             args.arg1 = promptInfo;
             args.arg2 = receiver;
-            args.arg3 = sensorIds; //
-            args.arg4 = credentialAllowed; //
+            args.arg3 = sensorIds;
+            args.arg4 = credentialAllowed;
             args.arg5 = requireConfirmation;
             args.argi1 = userId;
             args.arg6 = opPackageName;
             args.arg7 = operationId;
+            args.argi2 = multiSensorConfig;
             mHandler.obtainMessage(MSG_BIOMETRIC_SHOW, args)
                     .sendToTarget();
         }
@@ -1086,6 +1090,12 @@ public class CommandQueue extends IStatusBar.Stub implements CallbackController<
         thr.start();
     }
 
+    @Override
+    public void runGcForTest() {
+        // Gc sysui
+        GcUtils.runGcAndFinalizersSync();
+    }
+
     private final class H extends Handler {
         private H(Looper l) {
             super(l);
@@ -1296,7 +1306,8 @@ public class CommandQueue extends IStatusBar.Stub implements CallbackController<
                                 (boolean) someArgs.arg5 /* requireConfirmation */,
                                 someArgs.argi1 /* userId */,
                                 (String) someArgs.arg6 /* opPackageName */,
-                                (long) someArgs.arg7 /* operationId */);
+                                (long) someArgs.arg7 /* operationId */,
+                                someArgs.argi2 /* multiSensorConfig */);
                     }
                     someArgs.recycle();
                     break;

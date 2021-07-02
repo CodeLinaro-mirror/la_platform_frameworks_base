@@ -364,11 +364,11 @@ public class NetworkControllerImpl extends BroadcastReceiver
                 if (network.equals(mLastNetwork) && validated == lastValidated) {
                     // Should not rely on getTransportTypes() returning the same order of transport
                     // types. So sort the array before comparing.
-                    int[] newTypes = networkCapabilities.getTransportTypes();
+                    int[] newTypes = getProcessedTransportTypes(networkCapabilities);
                     Arrays.sort(newTypes);
 
                     int[] lastTypes = (mLastNetworkCapabilities != null)
-                            ? mLastNetworkCapabilities.getTransportTypes() : null;
+                            ? getProcessedTransportTypes(mLastNetworkCapabilities) : null;
                     if (lastTypes != null) Arrays.sort(lastTypes);
 
                     if (Arrays.equals(newTypes, lastTypes)) {
@@ -531,6 +531,21 @@ public class NetworkControllerImpl extends BroadcastReceiver
 
     public boolean hasVoiceCallingFeature() {
         return mPhone.getPhoneType() != TelephonyManager.PHONE_TYPE_NONE;
+    }
+
+    private int[] getProcessedTransportTypes(NetworkCapabilities networkCapabilities) {
+        int[] transportTypes = networkCapabilities.getTransportTypes();
+        for (int i = 0; i < transportTypes.length; i++) {
+            // For VCN over WiFi, the transportType is set to be TRANSPORT_CELLULAR in the
+            // NetworkCapabilities, but we need to convert it into TRANSPORT_WIFI in order to
+            // distinguish it from VCN over Cellular.
+            if (transportTypes[i] == NetworkCapabilities.TRANSPORT_CELLULAR
+                    && Utils.tryGetWifiInfoForVcn(networkCapabilities) != null) {
+                transportTypes[i] = NetworkCapabilities.TRANSPORT_WIFI;
+                break;
+            }
+        }
+        return transportTypes;
     }
 
     private MobileSignalController getDataController() {
@@ -1008,6 +1023,11 @@ public class NetworkControllerImpl extends BroadcastReceiver
         mValidatedTransports.clear();
         if (mLastDefaultNetworkCapabilities != null) {
             for (int transportType : mLastDefaultNetworkCapabilities.getTransportTypes()) {
+                if (transportType != NetworkCapabilities.TRANSPORT_CELLULAR
+                        && transportType != NetworkCapabilities.TRANSPORT_WIFI
+                        && transportType != NetworkCapabilities.TRANSPORT_ETHERNET) {
+                    continue;
+                }
                 if (transportType == NetworkCapabilities.TRANSPORT_CELLULAR
                         && Utils.tryGetWifiInfoForVcn(mLastDefaultNetworkCapabilities) != null) {
                     mConnectedTransports.set(NetworkCapabilities.TRANSPORT_WIFI);
@@ -1030,11 +1050,15 @@ public class NetworkControllerImpl extends BroadcastReceiver
             Log.d(TAG, "updateConnectivity: mValidatedTransports=" + mValidatedTransports);
         }
 
-        mInetCondition = !mValidatedTransports.isEmpty();
+        mInetCondition = mValidatedTransports.get(NetworkCapabilities.TRANSPORT_CELLULAR)
+                || mValidatedTransports.get(NetworkCapabilities.TRANSPORT_WIFI)
+                || mValidatedTransports.get(NetworkCapabilities.TRANSPORT_ETHERNET);
 
         pushConnectivityToSignals();
         if (mProviderModel) {
-            mNoDefaultNetwork = mConnectedTransports.isEmpty();
+            mNoDefaultNetwork = !mConnectedTransports.get(NetworkCapabilities.TRANSPORT_CELLULAR)
+                && !mConnectedTransports.get(NetworkCapabilities.TRANSPORT_WIFI)
+                && !mConnectedTransports.get(NetworkCapabilities.TRANSPORT_ETHERNET);
             mCallbackHandler.setConnectivityStatus(mNoDefaultNetwork, !mInetCondition,
                     mNoNetworksAvailable);
             for (int i = 0; i < mMobileSignalControllers.size(); i++) {

@@ -62,9 +62,10 @@ public abstract class KeyguardPinBasedInputView extends KeyguardAbsKeyInputView 
 
     @Override
     protected void setPasswordEntryEnabled(boolean enabled) {
+        boolean wasEnabled = mPasswordEntry.isEnabled();
         mPasswordEntry.setEnabled(enabled);
         mOkButton.setEnabled(enabled);
-        if (enabled && !mPasswordEntry.hasFocus()) {
+        if (enabled && !wasEnabled && !mPasswordEntry.hasFocus()) {
             mPasswordEntry.requestFocus();
         }
     }
@@ -166,20 +167,6 @@ public abstract class KeyguardPinBasedInputView extends KeyguardAbsKeyInputView 
 
     NumPadKey[] getButtons() {
         return mButtons;
-    }
-
-    /**
-     * By default, the new layout will be enabled. When false, revert to the old style.
-     */
-    public void setIsNewLayoutEnabled(boolean isEnabled) {
-        if (!isEnabled) {
-            for (int i = 0; i < mButtons.length; i++) {
-                mButtons[i].disableNewLayout();
-            }
-            mDeleteButton.disableNewLayout();
-            mOkButton.disableNewLayout();
-            reloadColors();
-        }
     }
 
     /**

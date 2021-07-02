@@ -583,6 +583,7 @@ cc_library {
         "libhwui_defaults",
         "android_graphics_apex",
         "android_graphics_jni",
+        "linker_hugepage_aligned",
     ],
     export_header_lib_headers: ["android_graphics_apex_headers"],
     target: {
@@ -670,6 +671,7 @@ cc_test {
         "tests/unit/SkiaPipelineTests.cpp",
         "tests/unit/SkiaRenderPropertiesTests.cpp",
         "tests/unit/SkiaCanvasTests.cpp",
+        "tests/unit/StretchEffectTests.cpp",
         "tests/unit/StringUtilsTests.cpp",
         "tests/unit/TestUtilsTests.cpp",
         "tests/unit/ThreadBaseTests.cpp",

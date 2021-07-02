@@ -175,6 +175,7 @@ import org.mockito.stubbing.Answer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Random;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongConsumer;
@@ -2269,17 +2270,46 @@ public class AlarmManagerServiceTest {
                 () -> CompatChanges.isChangeEnabled(
                         eq(AlarmManager.ENFORCE_MINIMUM_WINDOW_ON_INEXACT_ALARMS),
                         anyString(), any(UserHandle.class)));
-        final long minWindow = 73;
+        final int minWindow = 73;
         setDeviceConfigLong(KEY_MIN_WINDOW, minWindow);
+
+        final Random random = new Random(42);
 
         // 0 is WINDOW_EXACT and < 0 is WINDOW_HEURISTIC.
         for (int window = 1; window <= minWindow; window++) {
+            final PendingIntent pi = getNewMockPendingIntent();
+            final long futurity = random.nextInt(minWindow);
+
+            setTestAlarm(ELAPSED_REALTIME, mNowElapsedTest + futurity, window, pi, 0, 0,
+                    TEST_CALLING_UID, null);
+
+            final long minAllowed = (long) (futurity * 0.75); // This will always be <= minWindow.
+
+            assertEquals(1, mService.mAlarmStore.size());
+            final Alarm a = mService.mAlarmStore.remove(unused -> true).get(0);
+            assertEquals(Math.max(minAllowed, window), a.windowLength);
+        }
+
+        for (int window = 1; window <= minWindow; window++) {
+            final PendingIntent pi = getNewMockPendingIntent();
+            final long futurity = 2 * minWindow + window;  // implies (0.75 * futurity) > minWindow
+
+            setTestAlarm(ELAPSED_REALTIME, mNowElapsedTest + futurity, window, pi, 0, 0,
+                    TEST_CALLING_UID, null);
+
+            assertEquals(1, mService.mAlarmStore.size());
+            final Alarm a = mService.mAlarmStore.remove(unused -> true).get(0);
+            assertEquals(minWindow, a.windowLength);
+        }
+
+        for (int i = 0; i < 20; i++) {
+            final long window = minWindow + random.nextInt(100);
             final PendingIntent pi = getNewMockPendingIntent();
             setTestAlarm(ELAPSED_REALTIME, 0, window, pi, 0, 0, TEST_CALLING_UID, null);
 
             assertEquals(1, mService.mAlarmStore.size());
             final Alarm a = mService.mAlarmStore.remove(unused -> true).get(0);
-            assertEquals(minWindow, a.windowLength);
+            assertEquals(window, a.windowLength);
         }
     }
 
@@ -2400,6 +2430,34 @@ public class AlarmManagerServiceTest {
         assertAndHandleMessageSync(REMOVE_EXACT_ALARMS);
         verify(mService).removeExactAlarmsOnPermissionRevokedLocked(TEST_CALLING_UID,
                 TEST_CALLING_PACKAGE);
+    }
+
+    @Test
+    public void opScheduleExactAlarmGranted() throws Exception {
+        final long durationMs = 20000L;
+        when(mActivityManagerInternal.getBootTimeTempAllowListDuration()).thenReturn(durationMs);
+
+        mockExactAlarmPermissionGrant(true, false, MODE_ALLOWED);
+        mIAppOpsCallback.opChanged(OP_SCHEDULE_EXACT_ALARM, TEST_CALLING_UID, TEST_CALLING_PACKAGE);
+
+        final ArgumentCaptor<Intent> intentCaptor = ArgumentCaptor.forClass(Intent.class);
+        final ArgumentCaptor<Bundle> bundleCaptor = ArgumentCaptor.forClass(Bundle.class);
+
+        verify(mMockContext).sendBroadcastAsUser(intentCaptor.capture(), eq(UserHandle.SYSTEM),
+                isNull(), bundleCaptor.capture());
+
+        // Validate the intent.
+        assertEquals(AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED,
+                intentCaptor.getValue().getAction());
+        assertEquals(TEST_CALLING_PACKAGE, intentCaptor.getValue().getPackage());
+
+        // Validate the options.
+        final BroadcastOptions bOptions = new BroadcastOptions(bundleCaptor.getValue());
+        assertEquals(TEMPORARY_ALLOWLIST_TYPE_FOREGROUND_SERVICE_ALLOWED,
+                bOptions.getTemporaryAppAllowlistType());
+        assertEquals(durationMs, bOptions.getTemporaryAppAllowlistDuration());
+        assertEquals(PowerExemptionManager.REASON_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED,
+                bOptions.getTemporaryAppAllowlistReasonCode());
     }
 
     @Test

@@ -18,30 +18,28 @@ package com.android.server.rotationresolver;
 
 import static android.service.rotationresolver.RotationResolverService.ROTATION_RESULT_FAILURE_CANCELLED;
 
+import static com.android.internal.util.LatencyTracker.ACTION_ROTATE_SCREEN_CAMERA_CHECK;
 import static com.android.server.rotationresolver.RotationResolverManagerService.RESOLUTION_UNAVAILABLE;
-import static com.android.server.rotationresolver.RotationResolverManagerService.getServiceConfigPackage;
 import static com.android.server.rotationresolver.RotationResolverManagerService.logRotationStats;
 
 import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
+import android.app.AppGlobals;
 import android.content.ComponentName;
-import android.content.Context;
-import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.os.CancellationSignal;
+import android.os.RemoteException;
 import android.rotationresolver.RotationResolverInternal;
 import android.service.rotationresolver.RotationResolutionRequest;
-import android.service.rotationresolver.RotationResolverService;
-import android.text.TextUtils;
 import android.util.IndentingPrintWriter;
 import android.util.Slog;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.util.LatencyTracker;
 import com.android.server.infra.AbstractPerUserSystemService;
 
 /**
@@ -65,12 +63,14 @@ final class RotationResolverManagerPerUserService extends
     @GuardedBy("mLock")
     RemoteRotationResolverService mRemoteService;
 
-    private static String sTestingPackage;
     private ComponentName mComponentName;
+    @GuardedBy("mLock")
+    private LatencyTracker mLatencyTracker;
 
     RotationResolverManagerPerUserService(@NonNull RotationResolverManagerService main,
             @NonNull Object lock, @UserIdInt int userId) {
         super(main, lock, userId);
+        mLatencyTracker = LatencyTracker.getInstance(getContext());
     }
 
     @GuardedBy("mLock")
@@ -113,7 +113,33 @@ final class RotationResolverManagerPerUserService extends
             cancelLocked();
         }
 
-        mCurrentRequest = new RemoteRotationResolverService.RotationRequest(callbackInternal,
+        synchronized (mLock) {
+            mLatencyTracker.onActionStart(ACTION_ROTATE_SCREEN_CAMERA_CHECK);
+        }
+        /** Need to wrap RotationResolverCallbackInternal since there was no other way to hook
+         into the success/failure callback **/
+        final RotationResolverInternal.RotationResolverCallbackInternal wrapper =
+                new RotationResolverInternal.RotationResolverCallbackInternal() {
+
+            @Override
+            public void onSuccess(int result) {
+                synchronized (mLock) {
+                    mLatencyTracker
+                            .onActionEnd(ACTION_ROTATE_SCREEN_CAMERA_CHECK);
+                }
+                callbackInternal.onSuccess(result);
+            }
+
+            @Override
+            public void onFailure(int error) {
+                synchronized (mLock) {
+                    mLatencyTracker
+                            .onActionEnd(ACTION_ROTATE_SCREEN_CAMERA_CHECK);
+                }
+                callbackInternal.onFailure(error);
+            }
+        };
+        mCurrentRequest = new RemoteRotationResolverService.RotationRequest(wrapper,
                 request, cancellationSignalInternal);
 
         cancellationSignalInternal.setOnCancelListener(() -> {
@@ -139,69 +165,11 @@ final class RotationResolverManagerPerUserService extends
     }
 
     /**
-     * Set the testing package name.
-     *
-     * @param packageName the name of the package that implements {@link RotationResolverService}
-     *                    and is used for testing only.
-     */
-    @VisibleForTesting
-    void setTestingPackage(String packageName) {
-        sTestingPackage = packageName;
-        mComponentName = resolveRotationResolverService(getContext());
-    }
-
-    /**
      * get the currently bound component name.
      */
     @VisibleForTesting
     ComponentName getComponentName() {
         return mComponentName;
-    }
-
-    /**
-     * Provides rotation resolver service component name at runtime, making sure it's provided
-     * by the system.
-     */
-    static ComponentName resolveRotationResolverService(Context context) {
-        String resolvedPackage;
-        int flags = PackageManager.MATCH_SYSTEM_ONLY;
-        if (!TextUtils.isEmpty(sTestingPackage)) {
-            // Testing Package is set.
-            resolvedPackage = sTestingPackage;
-            flags = PackageManager.GET_META_DATA;
-        } else {
-            final String serviceConfigPackage = getServiceConfigPackage(context);
-            if (!TextUtils.isEmpty(serviceConfigPackage)) {
-                resolvedPackage = serviceConfigPackage;
-            } else {
-                return null;
-            }
-        }
-
-        final Intent intent = new Intent(
-                RotationResolverService.SERVICE_INTERFACE).setPackage(resolvedPackage);
-
-        final ResolveInfo resolveInfo = context.getPackageManager().resolveServiceAsUser(intent,
-                flags, context.getUserId());
-        if (resolveInfo == null || resolveInfo.serviceInfo == null) {
-            Slog.wtf(TAG, String.format("Service %s not found in package %s",
-                    RotationResolverService.SERVICE_INTERFACE, resolvedPackage));
-            return null;
-        }
-
-        final ServiceInfo serviceInfo = resolveInfo.serviceInfo;
-        final String permission = serviceInfo.permission;
-        if (Manifest.permission.BIND_ROTATION_RESOLVER_SERVICE.equals(permission)) {
-            Slog.i(TAG, String.format("Successfully bound the service from package: %s",
-                    resolvedPackage));
-            return serviceInfo.getComponentName();
-        }
-        Slog.e(TAG, String.format(
-                "Service %s should require %s permission. Found %s permission",
-                serviceInfo.getComponentName(),
-                Manifest.permission.BIND_ROTATION_RESOLVER_SERVICE,
-                serviceInfo.permission));
-        return null;
     }
 
 
@@ -210,11 +178,34 @@ final class RotationResolverManagerPerUserService extends
     @VisibleForTesting
     boolean isServiceAvailableLocked() {
         if (mComponentName == null) {
-            mComponentName = resolveRotationResolverService(getContext());
+            mComponentName = updateServiceInfoLocked();
         }
         return mComponentName != null;
     }
 
+    @Override // from PerUserSystemService
+    protected ServiceInfo newServiceInfoLocked(@NonNull ComponentName serviceComponent)
+            throws PackageManager.NameNotFoundException {
+        ServiceInfo serviceInfo;
+        try {
+            serviceInfo = AppGlobals.getPackageManager().getServiceInfo(serviceComponent,
+                    PackageManager.GET_META_DATA, mUserId);
+            if (serviceInfo != null) {
+                final String permission = serviceInfo.permission;
+                if (!Manifest.permission.BIND_ROTATION_RESOLVER_SERVICE.equals(permission)) {
+                    throw new SecurityException(String.format(
+                            "Service %s requires %s permission. Found %s permission",
+                            serviceInfo.getComponentName(),
+                            Manifest.permission.BIND_ROTATION_RESOLVER_SERVICE,
+                            serviceInfo.permission));
+                }
+            }
+        } catch (RemoteException e) {
+            throw new PackageManager.NameNotFoundException(
+                    "Could not get service for " + serviceComponent);
+        }
+        return serviceInfo;
+    }
 
     @GuardedBy("mLock")
     private void cancelLocked() {

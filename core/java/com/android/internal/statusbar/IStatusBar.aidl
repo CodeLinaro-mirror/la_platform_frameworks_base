@@ -146,7 +146,7 @@ oneway interface IStatusBar
     // Used to show the authentication dialog (Biometrics, Device Credential)
     void showAuthenticationDialog(in PromptInfo promptInfo, IBiometricSysuiReceiver sysuiReceiver,
             in int[] sensorIds, boolean credentialAllowed, boolean requireConfirmation, int userId,
-            String opPackageName, long operationId);
+            String opPackageName, long operationId, int multiSensorConfig);
     // Used to notify the authentication dialog that a biometric has been authenticated
     void onBiometricAuthenticated();
     // Used to set a temporary message, e.g. fingerprint not recognized, finger moved too fast, etc
@@ -271,4 +271,9 @@ oneway interface IStatusBar
      * @param enable {@code true} if enable, otherwise set to {@code false}.
      */
     void setNavigationBarLumaSamplingEnabled(int displayId, boolean enable);
+
+    /**
+     * Triggers a GC in the system and status bar.
+     */
+    void runGcForTest();
 }

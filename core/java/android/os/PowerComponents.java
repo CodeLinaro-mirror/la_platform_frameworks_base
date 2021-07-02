@@ -15,7 +15,15 @@
  */
 package android.os;
 
+import static android.os.BatteryConsumer.convertMahToDeciCoulombs;
+
 import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.util.proto.ProtoOutputStream;
+
+import com.android.internal.os.PowerCalculator;
+
+import java.io.PrintWriter;
 
 /**
  * Contains details of battery attribution data broken down to individual power drain types
@@ -200,6 +208,90 @@ class PowerComponents {
             }
         }
         return max;
+    }
+
+    public void dump(PrintWriter pw, boolean skipEmptyComponents) {
+        String separator = "";
+        for (int componentId = 0; componentId < BatteryConsumer.POWER_COMPONENT_COUNT;
+                componentId++) {
+            final double componentPower = getConsumedPower(componentId);
+            if (skipEmptyComponents && componentPower == 0) {
+                continue;
+            }
+            pw.print(separator); separator = " ";
+            pw.print(BatteryConsumer.powerComponentIdToString(componentId));
+            pw.print("=");
+            PowerCalculator.printPowerMah(pw, componentPower);
+        }
+
+        final int customComponentCount = getCustomPowerComponentCount();
+        for (int customComponentId = BatteryConsumer.FIRST_CUSTOM_POWER_COMPONENT_ID;
+                customComponentId < BatteryConsumer.FIRST_CUSTOM_POWER_COMPONENT_ID
+                        + customComponentCount;
+                customComponentId++) {
+            final double customComponentPower =
+                    getConsumedPowerForCustomComponent(customComponentId);
+            if (skipEmptyComponents && customComponentPower == 0) {
+                continue;
+            }
+            pw.print(separator); separator = " ";
+            pw.print(getCustomPowerComponentName(customComponentId));
+            pw.print("=");
+            PowerCalculator.printPowerMah(pw, customComponentPower);
+        }
+    }
+
+    /** Returns whether there are any atoms.proto POWER_COMPONENTS data to write to a proto. */
+    boolean hasStatsProtoData() {
+        return writeStatsProtoImpl(null);
+    }
+
+    /** Writes all atoms.proto POWER_COMPONENTS for this PowerComponents to the given proto. */
+    void writeStatsProto(@NonNull ProtoOutputStream proto) {
+        writeStatsProtoImpl(proto);
+    }
+
+    /**
+     * Returns whether there are any atoms.proto POWER_COMPONENTS data to write to a proto,
+     * and writes it to the given proto if it is non-null.
+     */
+    private boolean writeStatsProtoImpl(@Nullable ProtoOutputStream proto) {
+        boolean interestingData = false;
+
+        for (int idx = 0; idx < mPowerComponentsMah.length; idx++) {
+            final int componentId = idx < BatteryConsumer.POWER_COMPONENT_COUNT ?
+                    idx : idx - CUSTOM_POWER_COMPONENT_OFFSET;
+            final long powerDeciCoulombs = convertMahToDeciCoulombs(mPowerComponentsMah[idx]);
+            final long durationMs = mUsageDurationsMs[idx];
+
+            if (powerDeciCoulombs == 0 && durationMs == 0) {
+                // No interesting data. Make sure not to even write the COMPONENT int.
+                continue;
+            }
+
+            interestingData = true;
+            if (proto == null) {
+                // We're just asked whether there is data, not to actually write it. And there is.
+                return true;
+            }
+
+            final long token =
+                    proto.start(BatteryUsageStatsAtomsProto.BatteryConsumerData.POWER_COMPONENTS);
+            proto.write(
+                    BatteryUsageStatsAtomsProto.BatteryConsumerData.PowerComponentUsage
+                            .COMPONENT,
+                    componentId);
+            proto.write(
+                    BatteryUsageStatsAtomsProto.BatteryConsumerData.PowerComponentUsage
+                            .POWER_DECI_COULOMBS,
+                    powerDeciCoulombs);
+            proto.write(
+                    BatteryUsageStatsAtomsProto.BatteryConsumerData.PowerComponentUsage
+                            .DURATION_MILLIS,
+                    durationMs);
+            proto.end(token);
+        }
+        return interestingData;
     }
 
     /**

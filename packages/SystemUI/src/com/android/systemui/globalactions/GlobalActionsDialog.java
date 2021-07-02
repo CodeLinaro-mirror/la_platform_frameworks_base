@@ -151,6 +151,7 @@ public class GlobalActionsDialog extends GlobalActionsDialogLite
                 iWindowManager,
                 backgroundExecutor,
                 uiEventLogger,
+                null,
                 ringerModeTracker, sysUiState, handler);
 
         mLockPatternUtils = lockPatternUtils;
@@ -226,7 +227,7 @@ public class GlobalActionsDialog extends GlobalActionsDialogLite
         ActionsDialog dialog = new ActionsDialog(getContext(), mAdapter, mOverflowAdapter,
                 this::getWalletViewController, mDepthController, mSysuiColorExtractor,
                 mStatusBarService, mNotificationShadeWindowController,
-                mSysUiState, this::onRotate, isKeyguardShowing(), mPowerAdapter);
+                mSysUiState, this::onRotate, isKeyguardShowing(), mPowerAdapter, getEventLogger());
 
         if (shouldShowLockMessage(dialog)) {
             dialog.showLockMessage();
@@ -294,11 +295,11 @@ public class GlobalActionsDialog extends GlobalActionsDialogLite
                 SysuiColorExtractor sysuiColorExtractor, IStatusBarService statusBarService,
                 NotificationShadeWindowController notificationShadeWindowController,
                 SysUiState sysuiState, Runnable onRotateCallback, boolean keyguardShowing,
-                MyPowerOptionsAdapter powerAdapter) {
+                MyPowerOptionsAdapter powerAdapter, UiEventLogger uiEventLogger) {
             super(context, com.android.systemui.R.style.Theme_SystemUI_Dialog_GlobalActions,
                     adapter, overflowAdapter, depthController, sysuiColorExtractor,
                     statusBarService, notificationShadeWindowController, sysuiState,
-                    onRotateCallback, keyguardShowing, powerAdapter);
+                    onRotateCallback, keyguardShowing, powerAdapter, uiEventLogger, null);
             mWalletFactory = walletFactory;
 
             // Update window attributes

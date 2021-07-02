@@ -22,6 +22,7 @@ import android.app.TaskStackListener;
 import android.content.Context;
 import android.hardware.biometrics.BiometricAuthenticator;
 import android.hardware.biometrics.BiometricFingerprintConstants;
+import android.hardware.biometrics.BiometricFingerprintConstants.FingerprintAcquired;
 import android.hardware.biometrics.BiometricsProtoEnums;
 import android.hardware.biometrics.common.ICancellationSignal;
 import android.hardware.biometrics.fingerprint.ISession;
@@ -81,6 +82,17 @@ class FingerprintAuthenticationClient extends AuthenticationClient<ISession> imp
     }
 
     @Override
+    public void onAcquired(@FingerprintAcquired int acquiredInfo, int vendorCode) {
+        // For UDFPS, notify SysUI that the illumination can be turned off.
+        // See AcquiredInfo#GOOD and AcquiredInfo#RETRYING_CAPTURE
+        if (acquiredInfo == BiometricFingerprintConstants.FINGERPRINT_ACQUIRED_GOOD) {
+            UdfpsHelper.onAcquiredGood(getSensorId(), mUdfpsOverlayController);
+        }
+
+        super.onAcquired(acquiredInfo, vendorCode);
+    }
+
+    @Override
     public void onError(int errorCode, int vendorCode) {
         super.onError(errorCode, vendorCode);
 
@@ -120,7 +132,7 @@ class FingerprintAuthenticationClient extends AuthenticationClient<ISession> imp
         try {
             getFreshDaemon().onPointerDown(0 /* pointerId */, x, y, minor, major);
             if (getListener() != null) {
-                getListener().onUdfpsPointerDown(getSensorId(), getCookie());
+                getListener().onUdfpsPointerDown(getSensorId());
             }
         } catch (RemoteException e) {
             Slog.e(TAG, "Remote exception", e);
@@ -132,8 +144,17 @@ class FingerprintAuthenticationClient extends AuthenticationClient<ISession> imp
         try {
             getFreshDaemon().onPointerUp(0 /* pointerId */);
             if (getListener() != null) {
-                getListener().onUdfpsPointerUp(getSensorId(), getCookie());
+                getListener().onUdfpsPointerUp(getSensorId());
             }
+        } catch (RemoteException e) {
+            Slog.e(TAG, "Remote exception", e);
+        }
+    }
+
+    @Override
+    public void onUiReady() {
+        try {
+            getFreshDaemon().onUiReady();
         } catch (RemoteException e) {
             Slog.e(TAG, "Remote exception", e);
         }

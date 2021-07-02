@@ -273,6 +273,14 @@ java_library {
     installable: false,
 }
 
+// NOTE: This filegroup is exposed for vendor libraries to depend on and is referenced in
+// documentation. Do not remove without consulting the treble/hidl teams.
+filegroup {
+    name: "framework-jarjar-rules",
+    srcs: ["framework-jarjar-rules.txt"],
+    visibility: ["//visibility:public"],
+}
+
 java_defaults {
     name: "framework-minus-apex-defaults",
     defaults: ["framework-aidl-export-defaults"],
@@ -284,16 +292,17 @@ java_defaults {
         generate_get_transaction_name: true,
         local_include_dirs: [
             "media/aidl",
-            // TODO: move to include_dirs when migrated to packages/modules
-            "packages/Connectivity/framework/aidl-export",
         ],
-        include_dirs: ["frameworks/av/aidl"],
+        include_dirs: [
+            "frameworks/av/aidl",
+            "packages/modules/Connectivity/framework/aidl-export",
+        ],
     },
     dxflags: [
         "--core-library",
         "--multi-dex",
     ],
-    jarjar_rules: "framework-jarjar-rules.txt",
+    jarjar_rules: ":framework-jarjar-rules",
     javac_shard_size: 150,
     plugins: [
         "view-inspector-annotation-processor",
@@ -326,6 +335,7 @@ java_defaults {
         "av-types-aidl-java",
         "tv_tuner_resource_manager_aidl_interface-java",
         "soundtrigger_middleware-aidl-java",
+        "modules-utils-preconditions",
         "modules-utils-os",
         "framework-permission-aidl-java",
     ],
@@ -409,6 +419,7 @@ filegroup {
     srcs: [
         // TODO: remove these annotations as soon as we can use andoid.support.annotations.*
         ":framework-annotations",
+        ":modules-utils-preconditions-srcs",
         "core/java/android/net/DhcpResults.java",
         "core/java/android/util/IndentingPrintWriter.java",
         "core/java/android/util/LocalLog.java",
@@ -416,7 +427,6 @@ filegroup {
         "core/java/com/android/internal/util/IndentingPrintWriter.java",
         "core/java/com/android/internal/util/IState.java",
         "core/java/com/android/internal/util/MessageUtils.java",
-        "core/java/com/android/internal/util/Preconditions.java",
         "core/java/com/android/internal/util/RingBufferIndices.java",
         "core/java/com/android/internal/util/State.java",
         "core/java/com/android/internal/util/StateMachine.java",
@@ -446,11 +456,11 @@ java_library {
     sdk_version: "module_current",
     min_sdk_version: "30",
     srcs: [
+        ":modules-utils-preconditions-srcs",
         "core/java/android/os/HandlerExecutor.java",
         "core/java/com/android/internal/util/AsyncChannel.java",
         "core/java/com/android/internal/util/AsyncService.java",
         "core/java/com/android/internal/util/Protocol.java",
-        "core/java/com/android/internal/util/Preconditions.java",
         "telephony/java/android/telephony/Annotation.java",
         ":net-utils-framework-wifi-common-srcs",
     ],
@@ -483,6 +493,19 @@ metalava_framework_docs_args = "--manifest $(location core/res/AndroidManifest.x
     "--api-lint-ignore-prefix junit. " +
     "--api-lint-ignore-prefix org. "
 
+packages_to_document = [
+    "android",
+    "dalvik",
+    "java",
+    "javax",
+    "junit",
+    "org.apache.http",
+    "org.json",
+    "org.w3c.dom",
+    "org.xml.sax",
+    "org.xmlpull",
+]
+
 filegroup {
     name: "android-non-updatable-stub-sources",
     srcs: [
@@ -509,12 +532,12 @@ stubs_defaults {
         local_include_dirs: [
             "apex/media/aidl/stable",
             "media/aidl",
-            // TODO: move to include-dirs for packages/modules/Connectivity when this moves out of
-            // frameworks/base
-            "packages/Connectivity/framework/aidl-export",
             "telephony/java",
         ],
-        include_dirs: ["frameworks/av/aidl"],
+        include_dirs: [
+            "frameworks/av/aidl",
+            "packages/modules/Connectivity/framework/aidl-export",
+        ],
     },
     // These are libs from framework-internal-utils that are required (i.e. being referenced)
     // from framework-non-updatable-sources. Add more here when there's a need.
@@ -535,7 +558,7 @@ stubs_defaults {
         "android.hardware.usb.gadget-V1.0-java",
         "android.hardware.vibrator-V1.3-java",
         "framework-protos",
-        "stable.core.platform.api.stubs",
+        "art.module.public.api",
         // There are a few classes from modules used by the core that
         // need to be resolved by metalava. We use a prebuilt stub of the
         // full sdk to ensure we can resolve them. If a new class gets added,
@@ -544,6 +567,7 @@ stubs_defaults {
         // NOTE: The below can be removed once the prebuilt stub contains IKE.
         "sdk_system_current_android.net.ipsec.ike",
     ],
+    filter_packages: packages_to_document,
     high_mem: true, // Lots of sources => high memory use, see b/170701554
     installable: false,
     annotations_enabled: true,

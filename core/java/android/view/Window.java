@@ -1354,6 +1354,11 @@ public abstract class Window {
     public void setDecorFitsSystemWindows(boolean decorFitsSystemWindows) {
     }
 
+    /** @hide */
+    public boolean decorFitsSystemWindows() {
+        return false;
+    }
+
     /**
      * Specify custom window attributes.  <strong>PLEASE NOTE:</strong> the
      * layout params you give here should generally be from values previously
@@ -1714,8 +1719,9 @@ public abstract class Window {
      * The window background drawable is drawn on top of the blurred region. The blur
      * region bounds and rounded corners will mimic those of the background drawable.
      * </p><p>
-     * For the blur region to be visible, the window has to be translucent. See
-     * {@link android.R.styleable#Window_windowIsTranslucent}.
+     * For the blur region to be visible, the window has to be translucent
+     * (see {@link android.R.attr#windowIsTranslucent}) and floating
+     * (see {@link android.R.attr#windowIsFloating}).
      * </p><p>
      * Note the difference with {@link WindowManager.LayoutParams#setBlurBehindRadius},
      * which blurs the whole screen behind the window. Background blur blurs the screen behind
@@ -2722,11 +2728,12 @@ public abstract class Window {
 
     /**
      * This will be null before a content view is added, e.g. via
-     * {@link #setContentView} or {@link #addContentView}.
+     * {@link #setContentView} or {@link #addContentView}. See
+     * {@link android.view.View#getRootSurfaceControl}.
      *
-     * @return The {@link android.view.ViewRoot} interface for this Window
+     * @return The {@link android.view.AttachedSurfaceControl} interface for this Window
      */
-    public @Nullable ViewRoot getViewRoot() {
+    public @Nullable AttachedSurfaceControl getRootSurfaceControl() {
         return null;
     }
 }

@@ -40,12 +40,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Rect;
-import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
-import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.util.Log;
 import android.util.Pair;
@@ -132,6 +130,11 @@ public class PipMenuView extends FrameLayout {
     private ShellExecutor mMainExecutor;
     private Handler mMainHandler;
 
+    /**
+     * Whether the most recent showing of the menu caused a PIP resize, such as when PIP is too
+     * small and it is resized on menu show to fit the actions.
+     */
+    private boolean mDidLastShowMenuResize;
     private final Runnable mHideMenuRunnable = this::hideMenu;
 
     protected View mViewRoot;
@@ -152,12 +155,7 @@ public class PipMenuView extends FrameLayout {
         mAccessibilityManager = context.getSystemService(AccessibilityManager.class);
         inflate(context, R.layout.pip_menu, this);
 
-        final boolean enableCornerRadius = mContext.getResources()
-                .getBoolean(R.bool.config_pipEnableRoundCorner)
-                || SystemProperties.getBoolean("debug.sf.enable_hole_punch_pip", false);
-        mBackgroundDrawable = enableCornerRadius
-                ? mContext.getDrawable(R.drawable.pip_menu_background)
-                : new ColorDrawable(Color.BLACK);
+        mBackgroundDrawable = mContext.getDrawable(R.drawable.pip_menu_background);
         mBackgroundDrawable.setAlpha(0);
         mViewRoot = findViewById(R.id.background);
         mViewRoot.setBackground(mBackgroundDrawable);
@@ -252,6 +250,7 @@ public class PipMenuView extends FrameLayout {
     void showMenu(int menuState, Rect stackBounds, boolean allowMenuTimeout,
             boolean resizeMenuOnShow, boolean withDelay, boolean showResizeHandle) {
         mAllowMenuTimeout = allowMenuTimeout;
+        mDidLastShowMenuResize = resizeMenuOnShow;
         if (mMenuState != menuState) {
             // Disallow touches if the menu needs to resize while showing, and we are transitioning
             // to/from a full menu state.
@@ -282,17 +281,24 @@ public class PipMenuView extends FrameLayout {
             }
             mMenuContainerAnimator.setInterpolator(Interpolators.ALPHA_IN);
             mMenuContainerAnimator.setDuration(ANIMATION_HIDE_DURATION_MS);
-            if (allowMenuTimeout) {
-                mMenuContainerAnimator.addListener(new AnimatorListenerAdapter() {
-                    @Override
-                    public void onAnimationEnd(Animator animation) {
+            mMenuContainerAnimator.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    mAllowTouches = true;
+                    notifyMenuStateChangeFinish(menuState);
+                    if (allowMenuTimeout) {
                         repostDelayedHide(INITIAL_DISMISS_DELAY);
                     }
-                });
-            }
+                }
+
+                @Override
+                public void onAnimationCancel(Animator animation) {
+                    mAllowTouches = true;
+                }
+            });
             if (withDelay) {
                 // starts the menu container animation after window expansion is completed
-                notifyMenuStateChange(menuState, resizeMenuOnShow, () -> {
+                notifyMenuStateChangeStart(menuState, resizeMenuOnShow, () -> {
                     if (mMenuContainerAnimator == null) {
                         return;
                     }
@@ -301,11 +307,11 @@ public class PipMenuView extends FrameLayout {
                     mMenuContainerAnimator.start();
                 });
             } else {
-                notifyMenuStateChange(menuState, resizeMenuOnShow, null);
+                notifyMenuStateChangeStart(menuState, resizeMenuOnShow, null);
                 setVisibility(VISIBLE);
                 mMenuContainerAnimator.start();
             }
-            updateActionViews(stackBounds);
+            updateActionViews(menuState, stackBounds);
         } else {
             // If we are already visible, then just start the delayed dismiss and unregister any
             // existing input consumers from the previous drag
@@ -331,10 +337,6 @@ public class PipMenuView extends FrameLayout {
         cancelDelayedHide();
     }
 
-    void onPipAnimationEnded() {
-        mAllowTouches = true;
-    }
-
     void updateMenuLayout(Rect bounds) {
         mPipMenuIconsAlgorithm.onBoundsChanged(bounds);
     }
@@ -344,7 +346,7 @@ public class PipMenuView extends FrameLayout {
     }
 
     void hideMenu(Runnable animationEndCallback) {
-        hideMenu(animationEndCallback, true /* notifyMenuVisibility */, true /* resize */,
+        hideMenu(animationEndCallback, true /* notifyMenuVisibility */, mDidLastShowMenuResize,
                 ANIM_TYPE_HIDE);
     }
 
@@ -358,7 +360,7 @@ public class PipMenuView extends FrameLayout {
         if (mMenuState != MENU_STATE_NONE) {
             cancelDelayedHide();
             if (notifyMenuVisibility) {
-                notifyMenuStateChange(MENU_STATE_NONE, resize, null);
+                notifyMenuStateChangeStart(MENU_STATE_NONE, resize, null);
             }
             mMenuContainerAnimator = new AnimatorSet();
             ObjectAnimator menuAnim = ObjectAnimator.ofFloat(mMenuContainer, View.ALPHA,
@@ -377,6 +379,9 @@ public class PipMenuView extends FrameLayout {
                 @Override
                 public void onAnimationEnd(Animator animation) {
                     setVisibility(GONE);
+                    if (notifyMenuVisibility) {
+                        notifyMenuStateChangeFinish(MENU_STATE_NONE);
+                    }
                     if (animationFinishedRunnable != null) {
                         animationFinishedRunnable.run();
                     }
@@ -405,11 +410,11 @@ public class PipMenuView extends FrameLayout {
         mActions.clear();
         mActions.addAll(actions);
         if (mMenuState == MENU_STATE_FULL) {
-            updateActionViews(stackBounds);
+            updateActionViews(mMenuState, stackBounds);
         }
     }
 
-    private void updateActionViews(Rect stackBounds) {
+    private void updateActionViews(int menuState, Rect stackBounds) {
         ViewGroup expandContainer = findViewById(R.id.expand_container);
         ViewGroup actionsContainer = findViewById(R.id.actions_container);
         actionsContainer.setOnTouchListener((v, ev) -> {
@@ -418,13 +423,13 @@ public class PipMenuView extends FrameLayout {
         });
 
         // Update the expand button only if it should show with the menu
-        expandContainer.setVisibility(mMenuState == MENU_STATE_FULL
+        expandContainer.setVisibility(menuState == MENU_STATE_FULL
                 ? View.VISIBLE
                 : View.INVISIBLE);
 
         FrameLayout.LayoutParams expandedLp =
                 (FrameLayout.LayoutParams) expandContainer.getLayoutParams();
-        if (mActions.isEmpty() || mMenuState == MENU_STATE_CLOSE || mMenuState == MENU_STATE_NONE) {
+        if (mActions.isEmpty() || menuState == MENU_STATE_CLOSE || menuState == MENU_STATE_NONE) {
             actionsContainer.setVisibility(View.INVISIBLE);
 
             // Update the expand container margin to adjust the center of the expand button to
@@ -494,9 +499,13 @@ public class PipMenuView extends FrameLayout {
         expandContainer.requestLayout();
     }
 
-    private void notifyMenuStateChange(int menuState, boolean resize, Runnable callback) {
+    private void notifyMenuStateChangeStart(int menuState, boolean resize, Runnable callback) {
+        mController.onMenuStateChangeStart(menuState, resize, callback);
+    }
+
+    private void notifyMenuStateChangeFinish(int menuState) {
         mMenuState = menuState;
-        mController.onMenuStateChanged(menuState, resize, callback);
+        mController.onMenuStateChangeFinish(menuState);
     }
 
     private void expandPip() {
