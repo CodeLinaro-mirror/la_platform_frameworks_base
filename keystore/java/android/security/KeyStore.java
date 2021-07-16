@@ -1072,11 +1072,12 @@ public class KeyStore {
      * Notify keystore about the latest user locked state. This is to support keyguard-bound key.
      */
     public void onUserLockedStateChanged(int userHandle, boolean locked) {
-        try {
+/*        try {
             mBinder.onKeyguardVisibilityChanged(locked, userHandle);
         } catch (RemoteException | NullPointerException e) {
             Log.w(TAG, "Failed to update user locked state " + userHandle, e);
         }
+*/
     }
 
     private class KeyAttestationCallbackResult {

@@ -748,7 +748,7 @@ public class LockSettingsService extends ILockSettings.Stub {
             @Override
             public void run() {
                 cleanupDataForReusedUserIdIfNecessary(userId);
-                ensureProfileKeystoreUnlocked(userId);
+//                ensureProfileKeystoreUnlocked(userId);
                 // Hide notification first, as tie managed profile lock takes time
                 hideEncryptionNotification(new UserHandle(userId));
 

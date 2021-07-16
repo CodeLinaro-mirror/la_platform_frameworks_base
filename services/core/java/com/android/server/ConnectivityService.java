@@ -5097,6 +5097,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
     }
 
     private void onUserStart(int userId) {
+/*
         synchronized (mVpns) {
             Vpn userVpn = mVpns.get(userId);
             if (userVpn != null) {
@@ -5109,6 +5110,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
                 updateLockdownVpn();
             }
         }
+*/
     }
 
     private void onUserStop(int userId) {
@@ -5202,6 +5204,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
     }
 
     private void onUserUnlocked(int userId) {
+/*
         synchronized (mVpns) {
             // User present may be sent because of an unlock, which might mean an unlocked keystore.
             if (mUserManager.getUserInfo(userId).isPrimary() && LockdownVpnTracker.isEnabled()) {
@@ -5210,6 +5213,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
                 startAlwaysOnVpn(userId);
             }
         }
+*/
     }
 
     private BroadcastReceiver mIntentReceiver = new BroadcastReceiver() {
