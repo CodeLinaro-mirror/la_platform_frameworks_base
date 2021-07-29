@@ -474,9 +474,31 @@ filegroup {
     path: "core/java",
 }
 
+soong_config_module_type_import {
+    from: "device/qcom/common/Android.bp",
+    module_types: [
+         "bredr_vs_btadva_java_defaults",
+    ],
+}
+
+bredr_vs_btadva_java_defaults {
+    name: "btadva_fwk_java_defaults",
+
+    soong_config_variables: {
+        bredr_or_btadva: {
+           btadva: {
+              srcs: [
+                 ":framework-bluetooth-adva-srcs",
+                 ":libbluetooth-binder-aidl-adva",
+              ],
+           }
+       }
+   }
+}
+
 java_library {
     name: "framework-minus-apex",
-    defaults: ["framework-defaults"],
+    defaults: ["framework-defaults", "btadva_fwk_java_defaults"],
     srcs: [":framework-non-updatable-sources"],
     installable: true,
     javac_shard_size: 150,

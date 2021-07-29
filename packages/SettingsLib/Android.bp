@@ -1,3 +1,24 @@
+soong_config_module_type_import {
+    from: "device/qcom/common/Android.bp",
+    module_types: [
+         "bredr_vs_btadva_java_defaults",
+    ],
+}
+
+bredr_vs_btadva_java_defaults {
+    name: "btadva_settings_lib_java_defaults",
+
+    soong_config_variables: {
+        bredr_or_btadva: {
+           btadva: {
+              srcs: [
+                 ":framework-settingslib-adva-srcs",
+              ],
+           }
+       }
+   }
+}
+
 android_library {
 
     name: "SettingsLib",
@@ -5,6 +26,7 @@ android_library {
     defaults: [
         "SettingsLibDependenciesWithoutWifiTracker",
         "framework-wifi-vendor-hide-access-defaults",
+        "btadva_settings_lib_java_defaults",
     ],
 
     // TODO(b/149540986): revert this change.
