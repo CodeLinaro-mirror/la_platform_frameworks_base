@@ -9,27 +9,34 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
+import android.util.Log
 import android.view.GhostView
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroupOverlay
 import android.widget.FrameLayout
+import com.android.internal.jank.InteractionJankMonitor
 import kotlin.math.min
+
+private const val TAG = "GhostedViewLaunchAnimatorController"
 
 /**
  * A base implementation of [ActivityLaunchAnimator.Controller] which creates a [ghost][GhostView]
  * of [ghostedView] as well as an expandable background view, which are drawn and animated instead
  * of the ghosted view.
  *
- * Important: [ghostedView] must be attached to the window when calling this function and during the
- * animation.
+ * Important: [ghostedView] must be attached to a [ViewGroup] when calling this function and during
+ * the animation.
  *
  * Note: Avoid instantiating this directly and call [ActivityLaunchAnimator.Controller.fromView]
  * whenever possible instead.
  */
 open class GhostedViewLaunchAnimatorController(
     /** The view that will be ghosted and from which the background will be extracted. */
-    private val ghostedView: View
+    private val ghostedView: View,
+
+    /** The [InteractionJankMonitor.CujType] associated to this animation. */
+    private val cujType: Int? = null
 ) : ActivityLaunchAnimator.Controller {
     /** The container to which we will add the ghost view and expanding background. */
     override var launchContainer = ghostedView.rootView as ViewGroup
@@ -109,6 +116,13 @@ open class GhostedViewLaunchAnimatorController(
     }
 
     override fun onLaunchAnimationStart(isExpandingFullyAbove: Boolean) {
+        if (ghostedView.parent !is ViewGroup) {
+            // This should usually not happen, but let's make sure we don't crash if the view was
+            // detached right before we started the animation.
+            Log.w(TAG, "Skipping animation as ghostedView is not attached to a ViewGroup")
+            return
+        }
+
         backgroundView = FrameLayout(launchContainer.context)
         launchContainerOverlay.add(backgroundView)
 
@@ -125,6 +139,8 @@ open class GhostedViewLaunchAnimatorController(
 
         val matrix = ghostView?.animationMatrix ?: Matrix.IDENTITY_MATRIX
         matrix.getValues(initialGhostViewMatrixValues)
+
+        cujType?.let { InteractionJankMonitor.getInstance().begin(ghostedView, it) }
     }
 
     override fun onLaunchAnimationProgress(
@@ -132,7 +148,7 @@ open class GhostedViewLaunchAnimatorController(
         progress: Float,
         linearProgress: Float
     ) {
-        val ghostView = this.ghostView!!
+        val ghostView = this.ghostView ?: return
         val backgroundView = this.backgroundView!!
 
         if (!state.visible) {
@@ -167,6 +183,13 @@ open class GhostedViewLaunchAnimatorController(
     }
 
     override fun onLaunchAnimationEnd(isExpandingFullyAbove: Boolean) {
+        if (ghostView == null) {
+            // We didn't actually run the animation.
+            return
+        }
+
+        cujType?.let { InteractionJankMonitor.getInstance().end(it) }
+
         backgroundDrawable?.wrapped?.alpha = startBackgroundAlpha
 
         GhostView.removeGhost(ghostedView)

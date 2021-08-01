@@ -15,6 +15,9 @@
  */
 package com.android.server.devicepolicy;
 
+import static android.app.AppOpsManager.MODE_ALLOWED;
+import static android.app.AppOpsManager.MODE_DEFAULT;
+import static android.app.AppOpsManager.OP_ACTIVATE_VPN;
 import static android.app.Notification.EXTRA_TEXT;
 import static android.app.Notification.EXTRA_TITLE;
 import static android.app.admin.DevicePolicyManager.ACTION_CHECK_POLICY_COMPLIANCE;
@@ -81,6 +84,7 @@ import android.app.PendingIntent;
 import android.app.admin.DeviceAdminReceiver;
 import android.app.admin.DevicePolicyManager;
 import android.app.admin.DevicePolicyManagerInternal;
+import android.app.admin.DevicePolicyManagerLiteInternal;
 import android.app.admin.FactoryResetProtectionPolicy;
 import android.app.admin.PasswordMetrics;
 import android.app.admin.SystemUpdatePolicy;
@@ -277,6 +281,7 @@ public class DevicePolicyManagerTest extends DpmTestBase {
     private void initializeDpms() {
         // Need clearCallingIdentity() to pass permission checks.
         final long ident = mContext.binder.clearCallingIdentity();
+        LocalServices.removeServiceForTest(DevicePolicyManagerLiteInternal.class);
         LocalServices.removeServiceForTest(DevicePolicyManagerInternal.class);
 
         dpms = new DevicePolicyManagerServiceTestable(getServices(), mContext);
@@ -366,10 +371,14 @@ public class DevicePolicyManagerTest extends DpmTestBase {
                 .thenReturn(false);
 
         LocalServices.removeServiceForTest(DevicePolicyManagerInternal.class);
+        LocalServices.removeServiceForTest(DevicePolicyManagerLiteInternal.class);
         new DevicePolicyManagerServiceTestable(getServices(), mContext);
 
         // If the device has no DPMS feature, it shouldn't register the local service.
         assertThat(LocalServices.getService(DevicePolicyManagerInternal.class)).isNull();
+
+        // But should still register the lite one
+        assertThat(LocalServices.getService(DevicePolicyManagerLiteInternal.class)).isNotNull();
     }
 
     @Test
@@ -5419,6 +5428,205 @@ public class DevicePolicyManagerTest extends DpmTestBase {
     }
 
     @Test
+    public void isActivePasswordSufficient_SeparateWorkChallenge_ProfileQualityRequirementMet()
+            throws Exception {
+        // Create work profile with empty separate challenge
+        final int managedProfileUserId = 15;
+        final int managedProfileAdminUid = UserHandle.getUid(managedProfileUserId, 19436);
+        addManagedProfileForPasswordTests(managedProfileUserId, managedProfileAdminUid,
+                /* separateChallenge */ true);
+
+        // Set profile password quality requirement. No password added yet so
+        // profile.isActivePasswordSufficient should return false
+        mContext.binder.callingUid = managedProfileAdminUid;
+        dpm.setPasswordQuality(admin1, DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC);
+        assertThat(dpm.isActivePasswordSufficient()).isFalse();
+        assertThat(parentDpm.isActivePasswordSufficient()).isTrue();
+
+        // Set a work challenge and verify profile.isActivePasswordSufficient is now true
+        when(getServices().lockSettingsInternal.getUserPasswordMetrics(managedProfileUserId))
+                .thenReturn(computeForPasswordOrPin("abcdXYZ5".getBytes(), /* isPin */ false));
+        assertThat(dpm.isActivePasswordSufficient()).isTrue();
+        assertThat(parentDpm.isActivePasswordSufficient()).isTrue();
+    }
+
+    @Test
+    public void isActivePasswordSufficient_SeparateWorkChallenge_ProfileComplexityRequirementMet()
+            throws Exception {
+        // Create work profile with empty separate challenge
+        final int managedProfileUserId = 15;
+        final int managedProfileAdminUid = UserHandle.getUid(managedProfileUserId, 19436);
+        addManagedProfileForPasswordTests(managedProfileUserId, managedProfileAdminUid,
+                /* separateChallenge */ true);
+
+        // Set profile password complexity requirement. No password added yet so
+        // profile.isActivePasswordSufficient should return false
+        mContext.binder.callingUid = managedProfileAdminUid;
+        dpm.setRequiredPasswordComplexity(PASSWORD_COMPLEXITY_MEDIUM);
+        assertThat(dpm.isActivePasswordSufficient()).isFalse();
+        assertThat(parentDpm.isActivePasswordSufficient()).isTrue();
+
+        // Set a work challenge and verify profile.isActivePasswordSufficient is now true
+        when(getServices().lockSettingsInternal.getUserPasswordMetrics(managedProfileUserId))
+                .thenReturn(computeForPasswordOrPin("5156".getBytes(), /* isPin */ true));
+        assertThat(dpm.isActivePasswordSufficient()).isTrue();
+        assertThat(parentDpm.isActivePasswordSufficient()).isTrue();
+    }
+
+    @Test
+    public void isActivePasswordSufficient_SeparateWorkChallenge_ParentQualityRequirementMet()
+            throws Exception {
+        // Create work profile with empty separate challenge
+        final int managedProfileUserId = 15;
+        final int managedProfileAdminUid = UserHandle.getUid(managedProfileUserId, 19436);
+        addManagedProfileForPasswordTests(managedProfileUserId, managedProfileAdminUid,
+                /* separateChallenge */ true);
+
+        // Set parent password quality requirement. No password added yet so
+        // parent.isActivePasswordSufficient should return false
+        mContext.binder.callingUid = managedProfileAdminUid;
+        parentDpm.setPasswordQuality(admin1, DevicePolicyManager.PASSWORD_QUALITY_NUMERIC_COMPLEX);
+        assertThat(dpm.isActivePasswordSufficient()).isTrue();
+        assertThat(parentDpm.isActivePasswordSufficient()).isFalse();
+
+        // Set a device lockscreen and verify parent.isActivePasswordSufficient is now true
+        when(getServices().lockSettingsInternal.getUserPasswordMetrics(UserHandle.USER_SYSTEM))
+                .thenReturn(computeForPasswordOrPin("acbdXYZ5".getBytes(), /* isPin */ false));
+        assertThat(dpm.isActivePasswordSufficient()).isTrue();
+        assertThat(parentDpm.isActivePasswordSufficient()).isTrue();
+    }
+
+    @Test
+    public void isActivePasswordSufficient_SeparateWorkChallenge_ParentComplexityRequirementMet()
+            throws Exception {
+        // Create work profile with empty separate challenge
+        final int managedProfileUserId = 15;
+        final int managedProfileAdminUid = UserHandle.getUid(managedProfileUserId, 19436);
+        addManagedProfileForPasswordTests(managedProfileUserId, managedProfileAdminUid,
+                /* separateChallenge */ true);
+
+        // Set parent password complexity requirement. No password added yet so
+        // parent.isActivePasswordSufficient should return false
+        mContext.binder.callingUid = managedProfileAdminUid;
+        parentDpm.setRequiredPasswordComplexity(PASSWORD_COMPLEXITY_LOW);
+        assertThat(dpm.isActivePasswordSufficient()).isTrue();
+        assertThat(parentDpm.isActivePasswordSufficient()).isFalse();
+
+        // Set a device lockscreen and verify parent.isActivePasswordSufficient is now true
+        when(getServices().lockSettingsInternal.getUserPasswordMetrics(UserHandle.USER_SYSTEM))
+                .thenReturn(computeForPasswordOrPin("1234".getBytes(), /* isPin */ true));
+        assertThat(dpm.isActivePasswordSufficient()).isTrue();
+        assertThat(parentDpm.isActivePasswordSufficient()).isTrue();
+    }
+
+    @Test
+    public void isActivePasswordSufficient_UnifiedWorkChallenge_ProfileQualityRequirementMet()
+            throws Exception {
+        // Create work profile with unified challenge
+        final int managedProfileUserId = 15;
+        final int managedProfileAdminUid = UserHandle.getUid(managedProfileUserId, 19436);
+        addManagedProfileForPasswordTests(managedProfileUserId, managedProfileAdminUid,
+                /* separateChallenge */ false);
+
+        // Set profile password quality requirement. No password added yet so
+        // {profile, parent}.isActivePasswordSufficient should return false
+        mContext.binder.callingUid = managedProfileAdminUid;
+        dpm.setPasswordQuality(admin1, DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC);
+        assertThat(dpm.isActivePasswordSufficient()).isFalse();
+        assertThat(parentDpm.isActivePasswordSufficient()).isFalse();
+
+        // Set a device lockscreen and verify {profile, parent}.isActivePasswordSufficient is true
+        when(getServices().lockSettingsInternal.getUserPasswordMetrics(UserHandle.USER_SYSTEM))
+                .thenReturn(computeForPasswordOrPin("abcdXYZ5".getBytes(), /* isPin */ false));
+        assertThat(dpm.isActivePasswordSufficient()).isTrue();
+        assertThat(parentDpm.isActivePasswordSufficient()).isTrue();
+    }
+
+    @Test
+    public void isActivePasswordSufficient_UnifiedWorkChallenge_ProfileComplexityRequirementMet()
+            throws Exception {
+        // Create work profile with unified challenge
+        final int managedProfileUserId = 15;
+        final int managedProfileAdminUid = UserHandle.getUid(managedProfileUserId, 19436);
+        addManagedProfileForPasswordTests(managedProfileUserId, managedProfileAdminUid,
+                /* separateChallenge */ false);
+
+        // Set profile password complexity requirement. No password added yet so
+        // {profile, parent}.isActivePasswordSufficient should return false
+        mContext.binder.callingUid = managedProfileAdminUid;
+        dpm.setRequiredPasswordComplexity(PASSWORD_COMPLEXITY_HIGH);
+        assertThat(dpm.isActivePasswordSufficient()).isFalse();
+        assertThat(parentDpm.isActivePasswordSufficient()).isFalse();
+
+        // Set a device lockscreen and verify {profile, parent}.isActivePasswordSufficient is true
+        when(getServices().lockSettingsInternal.getUserPasswordMetrics(UserHandle.USER_SYSTEM))
+                .thenReturn(computeForPasswordOrPin("51567548".getBytes(), /* isPin */ true));
+        assertThat(dpm.isActivePasswordSufficient()).isTrue();
+        assertThat(parentDpm.isActivePasswordSufficient()).isTrue();
+    }
+
+    @Test
+    public void isActivePasswordSufficient_UnifiedWorkChallenge_ParentQualityRequirementMet()
+            throws Exception {
+        // Create work profile with unified challenge
+        final int managedProfileUserId = 15;
+        final int managedProfileAdminUid = UserHandle.getUid(managedProfileUserId, 19436);
+        addManagedProfileForPasswordTests(managedProfileUserId, managedProfileAdminUid,
+                /* separateChallenge */ false);
+
+        // Set parent password quality requirement. No password added yet so
+        // {profile, parent}.isActivePasswordSufficient should return false
+        mContext.binder.callingUid = managedProfileAdminUid;
+        parentDpm.setPasswordQuality(admin1, DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC);
+        assertThat(dpm.isActivePasswordSufficient()).isFalse();
+        assertThat(parentDpm.isActivePasswordSufficient()).isFalse();
+
+        // Set a device lockscreen and verify {profile, parent}.isActivePasswordSufficient is true
+        when(getServices().lockSettingsInternal.getUserPasswordMetrics(UserHandle.USER_SYSTEM))
+                .thenReturn(computeForPasswordOrPin("abcdXYZ5".getBytes(), /* isPin */ false));
+        assertThat(dpm.isActivePasswordSufficient()).isTrue();
+        assertThat(parentDpm.isActivePasswordSufficient()).isTrue();
+    }
+
+    @Test
+    public void isActivePasswordSufficient_UnifiedWorkChallenge_ParentComplexityRequirementMet()
+            throws Exception {
+        // Create work profile with unified challenge
+        final int managedProfileUserId = 15;
+        final int managedProfileAdminUid = UserHandle.getUid(managedProfileUserId, 19436);
+        addManagedProfileForPasswordTests(managedProfileUserId, managedProfileAdminUid,
+                /* separateChallenge */ false);
+
+        // Set parent password complexity requirement. No password added yet so
+        // {profile, parent}.isActivePasswordSufficient should return false
+        mContext.binder.callingUid = managedProfileAdminUid;
+        parentDpm.setRequiredPasswordComplexity(PASSWORD_COMPLEXITY_MEDIUM);
+        assertThat(dpm.isActivePasswordSufficient()).isFalse();
+        assertThat(parentDpm.isActivePasswordSufficient()).isFalse();
+
+        // Set a device lockscreen and verify {profile, parent}.isActivePasswordSufficient is true
+        when(getServices().lockSettingsInternal.getUserPasswordMetrics(UserHandle.USER_SYSTEM))
+                .thenReturn(computeForPasswordOrPin("5156".getBytes(), /* isPin */ true));
+        assertThat(dpm.isActivePasswordSufficient()).isTrue();
+        assertThat(parentDpm.isActivePasswordSufficient()).isTrue();
+    }
+
+    private void addManagedProfileForPasswordTests(int userId, int adminUid,
+            boolean separateChallenge) throws Exception {
+        addManagedProfile(admin1, adminUid, admin1);
+        when(getServices().userManager.getProfileParent(userId))
+                .thenReturn(new UserInfo(UserHandle.USER_SYSTEM, "user system", 0));
+        doReturn(separateChallenge).when(getServices().lockPatternUtils)
+                .isSeparateProfileChallengeEnabled(userId);
+        when(getServices().userManager.getCredentialOwnerProfile(userId))
+                .thenReturn(separateChallenge ? userId : UserHandle.USER_SYSTEM);
+        when(getServices().lockSettingsInternal.getUserPasswordMetrics(userId))
+                .thenReturn(new PasswordMetrics(CREDENTIAL_TYPE_NONE));
+        when(getServices().lockSettingsInternal.getUserPasswordMetrics(UserHandle.USER_SYSTEM))
+                .thenReturn(new PasswordMetrics(CREDENTIAL_TYPE_NONE));
+    }
+
+    @Test
     public void testPasswordQualityAppliesToParentPreS() throws Exception {
         final int managedProfileUserId = CALLER_USER_HANDLE;
         final int managedProfileAdminUid =
@@ -6521,6 +6729,8 @@ public class DevicePolicyManagerTest extends DpmTestBase {
         when(getServices().settings.settingsSecureGetIntForUser(
                 Settings.Secure.CROSS_PROFILE_CALENDAR_ENABLED,
                 0, CALLER_USER_HANDLE)).thenReturn(1);
+        mContext.permissions.add(permission.INTERACT_ACROSS_USERS);
+
         assertThat(dpm.isPackageAllowedToAccessCalendar("TEST_PACKAGE")).isFalse();
     }
 
@@ -6532,6 +6742,8 @@ public class DevicePolicyManagerTest extends DpmTestBase {
         when(getServices().settings.settingsSecureGetIntForUser(
                 Settings.Secure.CROSS_PROFILE_CALENDAR_ENABLED,
                 0, CALLER_USER_HANDLE)).thenReturn(0);
+        mContext.permissions.add(permission.INTERACT_ACROSS_USERS);
+
         assertThat(dpm.isPackageAllowedToAccessCalendar(testPackage)).isFalse();
     }
 
@@ -6543,6 +6755,33 @@ public class DevicePolicyManagerTest extends DpmTestBase {
         when(getServices().settings.settingsSecureGetIntForUser(
                 Settings.Secure.CROSS_PROFILE_CALENDAR_ENABLED,
                 0, CALLER_USER_HANDLE)).thenReturn(1);
+        mContext.permissions.add(permission.INTERACT_ACROSS_USERS);
+
+        assertThat(dpm.isPackageAllowedToAccessCalendar(testPackage)).isTrue();
+    }
+
+    @Test
+    public void testIsPackageAllowedToAccessCalendar_requiresPermission() {
+        final String testPackage = "TEST_PACKAGE";
+
+        assertExpectException(SecurityException.class, /* messageRegex= */ null,
+                () -> dpm.isPackageAllowedToAccessCalendar(testPackage));
+    }
+
+    @Test
+    public void testIsPackageAllowedToAccessCalendar_samePackageAndSameUser_noPermissionRequired()
+            throws Exception {
+        final String testPackage = "TEST_PACKAGE";
+        setAsProfileOwner(admin1);
+        dpm.setCrossProfileCalendarPackages(admin1, null);
+        when(getServices().settings.settingsSecureGetIntForUser(
+                Settings.Secure.CROSS_PROFILE_CALENDAR_ENABLED,
+                0, CALLER_USER_HANDLE)).thenReturn(1);
+        doReturn(mContext.binder.callingUid)
+                .when(getServices().packageManager).getPackageUidAsUser(
+                eq(testPackage),
+                anyInt());
+
         assertThat(dpm.isPackageAllowedToAccessCalendar(testPackage)).isTrue();
     }
 
@@ -7434,6 +7673,101 @@ public class DevicePolicyManagerTest extends DpmTestBase {
         setAsProfileOwner(admin2);
 
         assertThrows(SecurityException.class, () -> dpm.setRecommendedGlobalProxy(admin1, null));
+    }
+
+    @Test
+    public void testSetAlwaysOnVpnPackage_clearsAdminVpn() throws Exception {
+        setDeviceOwner();
+
+        when(getServices().vpnManager
+                .setAlwaysOnVpnPackageForUser(anyInt(), any(), anyBoolean(), any()))
+                .thenReturn(true);
+
+        // Set VPN package to admin package.
+        dpm.setAlwaysOnVpnPackage(admin1, admin1.getPackageName(), false, null);
+
+        verify(getServices().vpnManager).setAlwaysOnVpnPackageForUser(
+                UserHandle.USER_SYSTEM, admin1.getPackageName(), false, null);
+
+        // Clear VPN package.
+        dpm.setAlwaysOnVpnPackage(admin1, null, false, null);
+
+        // Change should be propagated to VpnManager
+        verify(getServices().vpnManager).setAlwaysOnVpnPackageForUser(
+                UserHandle.USER_SYSTEM, null, false, null);
+        // The package should lose authorization to start VPN.
+        verify(getServices().appOpsManager).setMode(OP_ACTIVATE_VPN,
+                DpmMockContext.CALLER_SYSTEM_USER_UID, admin1.getPackageName(), MODE_DEFAULT);
+    }
+
+    @Test
+    public void testSetAlwaysOnVpnPackage_doesntKillUserVpn() throws Exception {
+        setDeviceOwner();
+
+        when(getServices().vpnManager
+                .setAlwaysOnVpnPackageForUser(anyInt(), any(), anyBoolean(), any()))
+                .thenReturn(true);
+
+        // this time it shouldn't go into VpnManager anymore.
+        dpm.setAlwaysOnVpnPackage(admin1, null, false, null);
+
+        verifyNoMoreInteractions(getServices().vpnManager);
+        verifyNoMoreInteractions(getServices().appOpsManager);
+    }
+
+    @Test
+    public void testDisallowConfigVpn_clearsUserVpn() throws Exception {
+        final String userVpnPackage = "org.some.vpn.servcie";
+        final int userVpnUid = 20374;
+
+        setDeviceOwner();
+
+        setupVpnAuthorization(userVpnPackage, userVpnUid);
+
+        simulateRestrictionAdded(UserManager.DISALLOW_CONFIG_VPN);
+
+        verify(getServices().vpnManager).setAlwaysOnVpnPackageForUser(
+                UserHandle.USER_SYSTEM, null, false, null);
+        verify(getServices().appOpsManager).setMode(OP_ACTIVATE_VPN,
+                userVpnUid, userVpnPackage, MODE_DEFAULT);
+    }
+
+    @Test
+    public void testDisallowConfigVpn_doesntKillAdminVpn() throws Exception {
+        setDeviceOwner();
+
+        when(getServices().vpnManager
+                .setAlwaysOnVpnPackageForUser(anyInt(), any(), anyBoolean(), any()))
+                .thenReturn(true);
+
+        // Set VPN package to admin package.
+        dpm.setAlwaysOnVpnPackage(admin1, admin1.getPackageName(), false, null);
+        setupVpnAuthorization(admin1.getPackageName(), DpmMockContext.CALLER_SYSTEM_USER_UID);
+        clearInvocations(getServices().vpnManager);
+
+        simulateRestrictionAdded(UserManager.DISALLOW_CONFIG_VPN);
+
+        // Admin-set package should remain always-on and should retain its authorization.
+        verifyNoMoreInteractions(getServices().vpnManager);
+        verify(getServices().appOpsManager, never()).setMode(OP_ACTIVATE_VPN,
+                DpmMockContext.CALLER_SYSTEM_USER_UID, admin1.getPackageName(), MODE_DEFAULT);
+    }
+
+    private void setupVpnAuthorization(String userVpnPackage, int userVpnUid) {
+        final AppOpsManager.PackageOps vpnOp = new AppOpsManager.PackageOps(userVpnPackage,
+                userVpnUid, List.of(new AppOpsManager.OpEntry(
+                OP_ACTIVATE_VPN, MODE_ALLOWED, Collections.emptyMap())));
+        when(getServices().appOpsManager.getPackagesForOps(any(int[].class)))
+                .thenReturn(List.of(vpnOp));
+    }
+
+    private void simulateRestrictionAdded(String restriction) {
+        RestrictionsListener listener = new RestrictionsListener(
+                mServiceContext, getServices().userManagerInternal, dpms);
+
+        final Bundle newRestrictions = new Bundle();
+        newRestrictions.putBoolean(restriction, true);
+        listener.onUserRestrictionsChanged(UserHandle.USER_SYSTEM, newRestrictions, new Bundle());
     }
 
     private void setUserUnlocked(int userHandle, boolean unlocked) {

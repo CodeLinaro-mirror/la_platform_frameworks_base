@@ -143,8 +143,8 @@ public class QuickAccessWalletController {
      */
     public void queryWalletCards(
             QuickAccessWalletClient.OnWalletCardsRetrievedCallback cardsRetriever) {
-        if (!mWalletEnabled) {
-            Log.w(TAG, "QuickAccessWallet is unavailable, unable to query cards.");
+        if (!mQuickAccessWalletClient.isWalletFeatureAvailable()) {
+            Log.d(TAG, "QuickAccessWallet feature is not available.");
             return;
         }
         int cardWidth =

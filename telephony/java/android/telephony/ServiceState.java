@@ -353,9 +353,11 @@ public class ServiceState implements Parcelable {
     private int mChannelNumber;
     private int[] mCellBandwidths = new int[0];
 
-    /* EARFCN stands for E-UTRA Absolute Radio Frequency Channel Number,
-     * Reference: 3GPP TS 36.104 5.4.3 */
-    private int mLteEarfcnRsrpBoost = 0;
+    /**
+     *  ARFCN stands for Absolute Radio Frequency Channel Number. This field is current used for
+     *  LTE where it represents the boost for EARFCN (Reference: 3GPP TS 36.104 5.4.3) and for NR
+     *  where it's for NR ARFCN (Reference: 3GPP TS 36.108) */
+    private int mArfcnRsrpBoost = 0;
 
     private final List<NetworkRegistrationInfo> mNetworkRegistrationInfos = new ArrayList<>();
 
@@ -439,7 +441,7 @@ public class ServiceState implements Parcelable {
         mChannelNumber = s.mChannelNumber;
         mCellBandwidths = s.mCellBandwidths == null ? null :
                 Arrays.copyOf(s.mCellBandwidths, s.mCellBandwidths.length);
-        mLteEarfcnRsrpBoost = s.mLteEarfcnRsrpBoost;
+        mArfcnRsrpBoost = s.mArfcnRsrpBoost;
         synchronized (mNetworkRegistrationInfos) {
             mNetworkRegistrationInfos.clear();
             mNetworkRegistrationInfos.addAll(s.getNetworkRegistrationInfoList());
@@ -473,7 +475,7 @@ public class ServiceState implements Parcelable {
         mCdmaEriIconIndex = in.readInt();
         mCdmaEriIconMode = in.readInt();
         mIsEmergencyOnly = in.readInt() != 0;
-        mLteEarfcnRsrpBoost = in.readInt();
+        mArfcnRsrpBoost = in.readInt();
         synchronized (mNetworkRegistrationInfos) {
             in.readList(mNetworkRegistrationInfos, NetworkRegistrationInfo.class.getClassLoader());
         }
@@ -501,7 +503,7 @@ public class ServiceState implements Parcelable {
         out.writeInt(mCdmaEriIconIndex);
         out.writeInt(mCdmaEriIconMode);
         out.writeInt(mIsEmergencyOnly ? 1 : 0);
-        out.writeInt(mLteEarfcnRsrpBoost);
+        out.writeInt(mArfcnRsrpBoost);
         synchronized (mNetworkRegistrationInfos) {
             out.writeList(mNetworkRegistrationInfos);
         }
@@ -756,6 +758,11 @@ public class ServiceState implements Parcelable {
      * In GSM/UMTS, long format can be up to 16 characters long.
      * In CDMA, returns the ERI text, if set. Otherwise, returns the ONS.
      *
+     * Require at least {@link android.Manifest.permission#ACCESS_FINE_LOCATION} or
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}. Otherwise return null if the
+     * caller does not hold neither {@link android.Manifest.permission#ACCESS_FINE_LOCATION} nor
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}.
+     *
      * @return long name of operator, null if unregistered or unknown
      */
     public String getOperatorAlphaLong() {
@@ -764,6 +771,12 @@ public class ServiceState implements Parcelable {
 
     /**
      * Get current registered voice network operator name in long alphanumeric format.
+     *
+     * Require at least {@link android.Manifest.permission#ACCESS_FINE_LOCATION} or
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}. Otherwise return null if the
+     * caller does not hold neither {@link android.Manifest.permission#ACCESS_FINE_LOCATION} nor
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}.
+     *
      * @return long name of operator
      * @hide
      */
@@ -778,6 +791,11 @@ public class ServiceState implements Parcelable {
      *
      * In GSM/UMTS, short format can be up to 8 characters long.
      *
+     * Require at least {@link android.Manifest.permission#ACCESS_FINE_LOCATION} or
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}. Otherwise return null if the
+     * caller does not hold neither {@link android.Manifest.permission#ACCESS_FINE_LOCATION} nor
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}.
+     *
      * @return short name of operator, null if unregistered or unknown
      */
     public String getOperatorAlphaShort() {
@@ -786,6 +804,12 @@ public class ServiceState implements Parcelable {
 
     /**
      * Get current registered voice network operator name in short alphanumeric format.
+     *
+     * Require at least {@link android.Manifest.permission#ACCESS_FINE_LOCATION} or
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}. Otherwise return null if the
+     * caller does not have neither {@link android.Manifest.permission#ACCESS_FINE_LOCATION} nor
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}.
+     *
      * @return short name of operator, null if unregistered or unknown
      * @hide
      */
@@ -797,6 +821,12 @@ public class ServiceState implements Parcelable {
 
     /**
      * Get current registered data network operator name in short alphanumeric format.
+     *
+     * Require at least {@link android.Manifest.permission#ACCESS_FINE_LOCATION} or
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}. Otherwise return null if the
+     * caller does not have neither {@link android.Manifest.permission#ACCESS_FINE_LOCATION} nor
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}.
+     *
      * @return short name of operator, null if unregistered or unknown
      * @hide
      */
@@ -809,6 +839,11 @@ public class ServiceState implements Parcelable {
     /**
      * Get current registered operator name in long alphanumeric format if
      * available or short otherwise.
+     *
+     * Require at least {@link android.Manifest.permission#ACCESS_FINE_LOCATION} or
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}. Otherwise return null if the
+     * caller does not hold neither {@link android.Manifest.permission#ACCESS_FINE_LOCATION} nor
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}.
      *
      * @see #getOperatorAlphaLong
      * @see #getOperatorAlphaShort
@@ -830,6 +865,11 @@ public class ServiceState implements Parcelable {
      * In GSM/UMTS, numeric format is 3 digit country code plus 2 or 3 digit
      * network code.
      *
+     * Require at least {@link android.Manifest.permission#ACCESS_FINE_LOCATION} or
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}. Otherwise return null if the
+     * caller does not hold neither {@link android.Manifest.permission#ACCESS_FINE_LOCATION} nor
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}.
+     *
      * @return numeric format of operator, null if unregistered or unknown
      */
     /*
@@ -842,6 +882,12 @@ public class ServiceState implements Parcelable {
 
     /**
      * Get current registered voice network operator numeric id.
+     *
+     * Require at least {@link android.Manifest.permission#ACCESS_FINE_LOCATION} or
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}. Otherwise return null if the
+     * caller does not hold neither {@link android.Manifest.permission#ACCESS_FINE_LOCATION} nor
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}.
+     *
      * @return numeric format of operator, null if unregistered or unknown
      * @hide
      */
@@ -852,6 +898,12 @@ public class ServiceState implements Parcelable {
 
     /**
      * Get current registered data network operator numeric id.
+     *
+     * Require at least {@link android.Manifest.permission#ACCESS_FINE_LOCATION} or
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}. Otherwise return null if the
+     * caller does not hold neither {@link android.Manifest.permission#ACCESS_FINE_LOCATION} nor
+     * {@link android.Manifest.permission#ACCESS_COARSE_LOCATION}.
+     *
      * @return numeric format of operator, null if unregistered or unknown
      * @hide
      */
@@ -890,7 +942,7 @@ public class ServiceState implements Parcelable {
                     mCdmaEriIconIndex,
                     mCdmaEriIconMode,
                     mIsEmergencyOnly,
-                    mLteEarfcnRsrpBoost,
+                    mArfcnRsrpBoost,
                     mNetworkRegistrationInfos,
                     mNrFrequencyRange,
                     mOperatorAlphaLongRaw,
@@ -1101,7 +1153,7 @@ public class ServiceState implements Parcelable {
                     .append(", mCdmaDefaultRoamingIndicator=").append(mCdmaDefaultRoamingIndicator)
                     .append(", mIsEmergencyOnly=").append(mIsEmergencyOnly)
                     .append(", isUsingCarrierAggregation=").append(isUsingCarrierAggregation())
-                    .append(", mLteEarfcnRsrpBoost=").append(mLteEarfcnRsrpBoost)
+                    .append(", mArfcnRsrpBoost=").append(mArfcnRsrpBoost)
                     .append(", mNetworkRegistrationInfos=").append(mNetworkRegistrationInfos)
                     .append(", mNrFrequencyRange=").append(Build.IS_DEBUGGABLE
                             ? mNrFrequencyRange : FREQUENCY_RANGE_UNKNOWN)
@@ -1132,7 +1184,7 @@ public class ServiceState implements Parcelable {
         mCdmaEriIconIndex = -1;
         mCdmaEriIconMode = -1;
         mIsEmergencyOnly = false;
-        mLteEarfcnRsrpBoost = 0;
+        mArfcnRsrpBoost = 0;
         mNrFrequencyRange = FREQUENCY_RANGE_UNKNOWN;
         synchronized (mNetworkRegistrationInfos) {
             mNetworkRegistrationInfos.clear();
@@ -1364,7 +1416,7 @@ public class ServiceState implements Parcelable {
         m.putBoolean("emergencyOnly", mIsEmergencyOnly);
         m.putBoolean("isDataRoamingFromRegistration", getDataRoamingFromRegistration());
         m.putBoolean("isUsingCarrierAggregation", isUsingCarrierAggregation());
-        m.putInt("LteEarfcnRsrpBoost", mLteEarfcnRsrpBoost);
+        m.putInt("ArfcnRsrpBoost", mArfcnRsrpBoost);
         m.putInt("ChannelNumber", mChannelNumber);
         m.putIntArray("CellBandwidths", mCellBandwidths);
         m.putInt("mNrFrequencyRange", mNrFrequencyRange);
@@ -1455,13 +1507,13 @@ public class ServiceState implements Parcelable {
     }
 
     /** @hide */
-    public int getLteEarfcnRsrpBoost() {
-        return mLteEarfcnRsrpBoost;
+    public int getArfcnRsrpBoost() {
+        return mArfcnRsrpBoost;
     }
 
     /** @hide */
-    public void setLteEarfcnRsrpBoost(int LteEarfcnRsrpBoost) {
-        mLteEarfcnRsrpBoost = LteEarfcnRsrpBoost;
+    public void setArfcnRsrpBoost(int arfcnRsrpBoost) {
+        mArfcnRsrpBoost = arfcnRsrpBoost;
     }
 
     /** @hide */

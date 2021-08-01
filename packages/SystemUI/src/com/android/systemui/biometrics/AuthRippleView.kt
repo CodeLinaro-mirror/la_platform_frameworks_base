@@ -23,38 +23,34 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PointF
-import android.media.AudioAttributes
-import android.os.VibrationEffect
-import android.os.Vibrator
 import android.util.AttributeSet
-import android.util.MathUtils
 import android.view.View
 import android.view.animation.PathInterpolator
 import com.android.internal.graphics.ColorUtils
+import com.android.systemui.statusbar.LightRevealScrim
 import com.android.systemui.statusbar.charging.RippleShader
 
 private const val RIPPLE_ANIMATION_DURATION: Long = 1533
 private const val RIPPLE_SPARKLE_STRENGTH: Float = 0.4f
-private const val RIPPLE_VIBRATION_PRIMITIVE: Int = VibrationEffect.Composition.PRIMITIVE_LOW_TICK
-private const val RIPPLE_VIBRATION_SIZE: Int = 60
-private const val RIPPLE_VIBRATION_SCALE_START: Float = 0.6f
-private const val RIPPLE_VIBRATION_SCALE_DECAY: Float = -0.1f
 
 /**
  * Expanding ripple effect on the transition from biometric authentication success to showing
  * launcher.
  */
 class AuthRippleView(context: Context?, attrs: AttributeSet?) : View(context, attrs) {
-    private val vibrator: Vibrator? = context?.getSystemService(Vibrator::class.java)
     private var rippleInProgress: Boolean = false
     private val rippleShader = RippleShader()
     private val ripplePaint = Paint()
-    private val rippleVibrationEffect = createVibrationEffect(vibrator)
-    private val rippleVibrationAttrs =
-            AudioAttributes.Builder()
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                    .build()
+    private var radius: Float = 0.0f
+        set(value) {
+            rippleShader.radius = value
+            field = value
+        }
+    private var origin: PointF = PointF()
+        set(value) {
+            rippleShader.origin = value
+            field = value
+        }
 
     init {
         rippleShader.color = 0xffffffff.toInt() // default color
@@ -65,55 +61,82 @@ class AuthRippleView(context: Context?, attrs: AttributeSet?) : View(context, at
     }
 
     fun setSensorLocation(location: PointF) {
-        rippleShader.origin = location
-        rippleShader.radius = maxOf(location.x, location.y, width - location.x, height - location.y)
+        origin = location
+        radius = maxOf(location.x, location.y, width - location.x, height - location.y)
             .toFloat()
     }
 
-    fun startRipple(onAnimationEnd: Runnable?) {
+    fun startRipple(onAnimationEnd: Runnable?, lightReveal: LightRevealScrim?) {
         if (rippleInProgress) {
             return // Ignore if ripple effect is already playing
         }
 
-        val animator = ValueAnimator.ofFloat(0f, 1f)
-        animator.interpolator = PathInterpolator(0.4f, 0f, 0f, 1f)
-        animator.duration = RIPPLE_ANIMATION_DURATION
-        animator.addUpdateListener { animator ->
-            val now = animator.currentPlayTime
-            rippleShader.progress = animator.animatedValue as Float
-            rippleShader.time = now.toFloat()
-            rippleShader.distortionStrength = 1 - rippleShader.progress
-            invalidate()
-        }
-        val alphaInAnimator = ValueAnimator.ofInt(0, 127)
-        alphaInAnimator.duration = 167
-        alphaInAnimator.addUpdateListener { alphaInAnimator ->
-            rippleShader.color = ColorUtils.setAlphaComponent(rippleShader.color,
-                alphaInAnimator.animatedValue as Int)
-            invalidate()
-        }
-        val alphaOutAnimator = ValueAnimator.ofInt(127, 0)
-        alphaOutAnimator.startDelay = 417
-        alphaOutAnimator.duration = 1116
-        alphaOutAnimator.addUpdateListener { alphaOutAnimator ->
-            rippleShader.color = ColorUtils.setAlphaComponent(rippleShader.color,
-                alphaOutAnimator.animatedValue as Int)
-            invalidate()
+        val rippleAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            interpolator = PathInterpolator(0.4f, 0f, 0f, 1f)
+            duration = RIPPLE_ANIMATION_DURATION
+            addUpdateListener { animator ->
+                val now = animator.currentPlayTime
+                rippleShader.progress = animator.animatedValue as Float
+                rippleShader.time = now.toFloat()
+
+                lightReveal?.revealAmount = animator.animatedValue as Float
+                invalidate()
+            }
         }
 
-        val animatorSet = AnimatorSet()
-        animatorSet.playTogether(animator, alphaInAnimator, alphaOutAnimator)
-        animatorSet.addListener(object : AnimatorListenerAdapter() {
-            override fun onAnimationEnd(animation: Animator?) {
-                onAnimationEnd?.run()
-                rippleInProgress = false
-                visibility = GONE
+        val revealAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            interpolator = rippleAnimator.interpolator
+            startDelay = 10
+            duration = rippleAnimator.duration
+            addUpdateListener { animator ->
+                lightReveal?.revealAmount = animator.animatedValue as Float
             }
-        })
-        vibrate()
+        }
+
+        val alphaInAnimator = ValueAnimator.ofInt(0, 127).apply {
+            duration = 167
+            addUpdateListener { animator ->
+                rippleShader.color = ColorUtils.setAlphaComponent(
+                    rippleShader.color,
+                    animator.animatedValue as Int
+                )
+                invalidate()
+            }
+        }
+
+        val alphaOutAnimator = ValueAnimator.ofInt(127, 0).apply {
+            startDelay = 417
+            duration = 1116
+            addUpdateListener { animator ->
+                rippleShader.color = ColorUtils.setAlphaComponent(
+                    rippleShader.color,
+                    animator.animatedValue as Int
+                )
+                invalidate()
+            }
+        }
+
+        val animatorSet = AnimatorSet().apply {
+            playTogether(
+                rippleAnimator,
+                revealAnimator,
+                alphaInAnimator,
+                alphaOutAnimator
+            )
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationStart(animation: Animator?) {
+                    rippleInProgress = true
+                    visibility = VISIBLE
+                }
+
+                override fun onAnimationEnd(animation: Animator?) {
+                    onAnimationEnd?.run()
+                    rippleInProgress = false
+                    visibility = GONE
+                }
+            })
+        }
         animatorSet.start()
-        visibility = VISIBLE
-        rippleInProgress = true
     }
 
     fun setColor(color: Int) {
@@ -121,26 +144,11 @@ class AuthRippleView(context: Context?, attrs: AttributeSet?) : View(context, at
     }
 
     override fun onDraw(canvas: Canvas?) {
-        // draw over the entire screen
-        canvas?.drawRect(0f, 0f, width.toFloat(), height.toFloat(), ripplePaint)
-    }
-
-    private fun vibrate() {
-        if (rippleVibrationEffect != null) {
-            vibrator?.vibrate(rippleVibrationEffect, rippleVibrationAttrs)
-        }
-    }
-
-    private fun createVibrationEffect(vibrator: Vibrator?): VibrationEffect? {
-        if (vibrator?.areAllPrimitivesSupported(RIPPLE_VIBRATION_PRIMITIVE) == false) {
-            return null
-        }
-        val composition = VibrationEffect.startComposition()
-        for (i in 0 until RIPPLE_VIBRATION_SIZE) {
-            val scale =
-                    RIPPLE_VIBRATION_SCALE_START * MathUtils.exp(RIPPLE_VIBRATION_SCALE_DECAY * i)
-            composition.addPrimitive(RIPPLE_VIBRATION_PRIMITIVE, scale, 0 /* delay */)
-        }
-        return composition.compose()
+        // To reduce overdraw, we mask the effect to a circle whose radius is big enough to cover
+        // the active effect area. Values here should be kept in sync with the
+        // animation implementation in the ripple shader.
+        val maskRadius = (1 - (1 - rippleShader.progress) * (1 - rippleShader.progress) *
+            (1 - rippleShader.progress)) * radius * 1.5f
+        canvas?.drawCircle(origin.x, origin.y, maskRadius, ripplePaint)
     }
 }

@@ -39,6 +39,7 @@ import android.media.session.MediaSession
 import android.net.Uri
 import android.os.Parcelable
 import android.os.UserHandle
+import android.provider.Settings
 import android.service.notification.StatusBarNotification
 import android.text.TextUtils
 import android.util.Log
@@ -54,6 +55,7 @@ import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.plugins.BcSmartspaceDataPlugin
 import com.android.systemui.statusbar.NotificationMediaManager.isPlayingState
 import com.android.systemui.statusbar.notification.row.HybridGroupManager
+import com.android.systemui.tuner.TunerService
 import com.android.systemui.util.Assert
 import com.android.systemui.util.Utils
 import com.android.systemui.util.concurrency.DelayableExecutor
@@ -114,7 +116,8 @@ class MediaDataManager(
     private val smartspaceMediaDataProvider: SmartspaceMediaDataProvider,
     private var useMediaResumption: Boolean,
     private val useQsMediaPlayer: Boolean,
-    private val systemClock: SystemClock
+    private val systemClock: SystemClock,
+    private val tunerService: TunerService
 ) : Dumpable, BcSmartspaceDataPlugin.SmartspaceTargetListener {
 
     companion object {
@@ -145,8 +148,9 @@ class MediaDataManager(
     private val internalListeners: MutableSet<Listener> = mutableSetOf()
     private val mediaEntries: LinkedHashMap<String, MediaData> = LinkedHashMap()
     // There should ONLY be at most one Smartspace media recommendation.
-    private var smartspaceMediaData: SmartspaceMediaData = EMPTY_SMARTSPACE_MEDIA_DATA
+    var smartspaceMediaData: SmartspaceMediaData = EMPTY_SMARTSPACE_MEDIA_DATA
     private var smartspaceSession: SmartspaceSession? = null
+    private var allowMediaRecommendations = Utils.allowMediaRecommendations(context)
 
     @Inject
     constructor(
@@ -164,12 +168,13 @@ class MediaDataManager(
         mediaDataFilter: MediaDataFilter,
         activityStarter: ActivityStarter,
         smartspaceMediaDataProvider: SmartspaceMediaDataProvider,
-        clock: SystemClock
+        clock: SystemClock,
+        tunerService: TunerService
     ) : this(context, backgroundExecutor, foregroundExecutor, mediaControllerFactory,
             broadcastDispatcher, dumpManager, mediaTimeoutListener, mediaResumeListener,
             mediaSessionBasedFilter, mediaDeviceManager, mediaDataCombineLatest, mediaDataFilter,
             activityStarter, smartspaceMediaDataProvider, Utils.useMediaResumption(context),
-            Utils.useQsMediaPlayer(context), clock)
+            Utils.useQsMediaPlayer(context), clock, tunerService)
 
     private val appChangeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -243,6 +248,14 @@ class MediaDataManager(
                 })
         }
         smartspaceSession?.let { it.requestSmartspaceUpdate() }
+        tunerService.addTunable(object : TunerService.Tunable {
+            override fun onTuningChanged(key: String?, newValue: String?) {
+                allowMediaRecommendations = Utils.allowMediaRecommendations(context)
+                if (!allowMediaRecommendations) {
+                    dismissSmartspaceRecommendation(key = smartspaceMediaData.targetId, delay = 0L)
+                }
+            }
+        }, Settings.Secure.MEDIA_CONTROLS_RECOMMENDATION)
     }
 
     fun destroy() {
@@ -417,7 +430,11 @@ class MediaDataManager(
         notifyMediaDataRemoved(key)
     }
 
-    fun dismissMediaData(key: String, delay: Long) {
+    /**
+     * Dismiss a media entry. Returns false if the key was not found.
+     */
+    fun dismissMediaData(key: String, delay: Long): Boolean {
+        val existed = mediaEntries[key] != null
         backgroundExecutor.execute {
             mediaEntries[key]?.let { mediaData ->
                 if (mediaData.isLocalSession) {
@@ -429,6 +446,7 @@ class MediaDataManager(
             }
         }
         foregroundExecutor.executeDelayed({ removeEntry(key) }, delay)
+        return existed
     }
 
     /**
@@ -437,10 +455,11 @@ class MediaDataManager(
      * connection session.
      */
     fun dismissSmartspaceRecommendation(key: String, delay: Long) {
-        Log.d(TAG, "Dismissing Smartspace media target")
         if (smartspaceMediaData.targetId != key) {
             return
         }
+
+        if (DEBUG) Log.d(TAG, "Dismissing Smartspace media target")
         if (smartspaceMediaData.isActive) {
             smartspaceMediaData = EMPTY_SMARTSPACE_MEDIA_DATA.copy(
                 targetId = smartspaceMediaData.targetId)
@@ -695,19 +714,20 @@ class MediaDataManager(
     }
 
     override fun onSmartspaceTargetsUpdated(targets: List<Parcelable>) {
-        if (!Utils.allowMediaRecommendations(context)) {
-            Log.d(TAG, "Smartspace recommendation is disabled in Settings.")
+        if (!allowMediaRecommendations) {
+            if (DEBUG) Log.d(TAG, "Smartspace recommendation is disabled in Settings.")
             return
         }
 
         val mediaTargets = targets.filterIsInstance<SmartspaceTarget>()
         when (mediaTargets.size) {
             0 -> {
-                Log.d(TAG, "Empty Smartspace media target")
                 if (!smartspaceMediaData.isActive) {
                     return
                 }
-                Log.d(TAG, "Set Smartspace media to be inactive for the data update")
+                if (DEBUG) {
+                    Log.d(TAG, "Set Smartspace media to be inactive for the data update")
+                }
                 smartspaceMediaData = EMPTY_SMARTSPACE_MEDIA_DATA.copy(
                     targetId = smartspaceMediaData.targetId)
                 notifySmartspaceMediaDataRemoved(smartspaceMediaData.targetId, immediately = false)
@@ -716,13 +736,12 @@ class MediaDataManager(
                 val newMediaTarget = mediaTargets.get(0)
                 if (smartspaceMediaData.targetId == newMediaTarget.smartspaceTargetId) {
                     // The same Smartspace updates can be received. Skip the duplicate updates.
-                    Log.d(TAG, "Same Smartspace media update exists. Skip loading data.")
-                } else {
-                    Log.d(TAG, "Forwarding Smartspace media update.")
-                    smartspaceMediaData = toSmartspaceMediaData(newMediaTarget, isActive = true)
-                    notifySmartspaceMediaDataLoaded(
-                        smartspaceMediaData.targetId, smartspaceMediaData)
+                    return
                 }
+                if (DEBUG) Log.d(TAG, "Forwarding Smartspace media update.")
+                smartspaceMediaData = toSmartspaceMediaData(newMediaTarget, isActive = true)
+                notifySmartspaceMediaDataLoaded(
+                    smartspaceMediaData.targetId, smartspaceMediaData)
             }
             else -> {
                 // There should NOT be more than 1 Smartspace media update. When it happens, it
@@ -812,12 +831,16 @@ class MediaDataManager(
          * @param immediately indicates should apply the UI changes immediately, otherwise wait
          * until the next refresh-round before UI becomes visible. True by default to take in place
          * immediately.
+         *
+         * @param isSsReactivated indicates transition from a state with no active media players to
+         * a state with active media players upon receiving Smartspace media data.
          */
         fun onMediaDataLoaded(
             key: String,
             oldKey: String?,
             data: MediaData,
-            immediately: Boolean = true
+            immediately: Boolean = true,
+            isSsReactivated: Boolean = false
         ) {}
 
         /**
@@ -867,7 +890,7 @@ class MediaDataManager(
     private fun packageName(target: SmartspaceTarget): String? {
         val recommendationList = target.iconGrid
         if (recommendationList == null || recommendationList.isEmpty()) {
-            Log.d(TAG, "Empty or media recommendation list.")
+            Log.w(TAG, "Empty or null media recommendation list.")
             return null
         }
         for (recommendation in recommendationList) {
@@ -877,7 +900,7 @@ class MediaDataManager(
                     packageName -> return packageName }
             }
         }
-        Log.d(TAG, "No valid package name is provided.")
+        Log.w(TAG, "No valid package name is provided.")
         return null
     }
 

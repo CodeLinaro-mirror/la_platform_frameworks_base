@@ -340,6 +340,7 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
                     mSensors.get(sensorId).getLazySession(), token,
                     new ClientMonitorCallbackConverter(receiver), userId, hardwareAuthToken,
                     opPackageName, FingerprintUtils.getInstance(sensorId), sensorId,
+                    mSensors.get(sensorId).getSensorProperties(),
                     mUdfpsOverlayController, mSidefpsController, maxTemplatesPerUser, enrollReason);
             scheduleForSensor(sensorId, client, new BaseClientMonitor.Callback() {
 
@@ -394,7 +395,8 @@ public class FingerprintProvider implements IBinder.DeathRecipient, ServiceProvi
                     operationId, restricted, opPackageName, cookie,
                     false /* requireConfirmation */, sensorId, isStrongBiometric, statsClient,
                     mTaskStackListener, mSensors.get(sensorId).getLockoutCache(),
-                    mUdfpsOverlayController, allowBackgroundAuthentication);
+                    mUdfpsOverlayController, allowBackgroundAuthentication,
+                    mSensors.get(sensorId).getSensorProperties());
             scheduleForSensor(sensorId, client, fingerprintStateCallback);
         });
     }

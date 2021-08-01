@@ -56,6 +56,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.window.IRemoteTransition;
+import android.window.SplashScreen;
 import android.window.WindowContainerToken;
 
 import java.lang.annotation.Retention;
@@ -327,6 +328,10 @@ public class ActivityOptions {
     private static final String KEY_LAUNCHED_FROM_BUBBLE =
             "android.activity.launchTypeBubble";
 
+    /** See {@link #setSplashscreenStyle(int)}. */
+    private static final String KEY_SPLASH_SCREEN_STYLE =
+            "android.activity.splashScreenStyle";
+
     /** See {@link #setTransientLaunch()}. */
     private static final String KEY_TRANSIENT_LAUNCH = "android.activity.transientLaunch";
 
@@ -414,7 +419,9 @@ public class ActivityOptions {
     private IBinder mLaunchCookie;
     private IRemoteTransition mRemoteTransition;
     private boolean mOverrideTaskTransition;
-    private int mSplashScreenThemeResId;
+    private String mSplashScreenThemeResName;
+    @SplashScreen.SplashScreenStyle
+    private int mSplashScreenStyle;
     private boolean mRemoveWithTaskOrganizer;
     private boolean mLaunchedFromBubble;
     private boolean mTransientLaunch;
@@ -1167,10 +1174,11 @@ public class ActivityOptions {
         mRemoteTransition = IRemoteTransition.Stub.asInterface(opts.getBinder(
                 KEY_REMOTE_TRANSITION));
         mOverrideTaskTransition = opts.getBoolean(KEY_OVERRIDE_TASK_TRANSITION);
-        mSplashScreenThemeResId = opts.getInt(KEY_SPLASH_SCREEN_THEME);
+        mSplashScreenThemeResName = opts.getString(KEY_SPLASH_SCREEN_THEME);
         mRemoveWithTaskOrganizer = opts.getBoolean(KEY_REMOVE_WITH_TASK_ORGANIZER);
         mLaunchedFromBubble = opts.getBoolean(KEY_LAUNCHED_FROM_BUBBLE);
         mTransientLaunch = opts.getBoolean(KEY_TRANSIENT_LAUNCH);
+        mSplashScreenStyle = opts.getInt(KEY_SPLASH_SCREEN_STYLE);
     }
 
     /**
@@ -1360,8 +1368,26 @@ public class ActivityOptions {
      * Gets whether the activity want to be launched as other theme for the splash screen.
      * @hide
      */
-    public int getSplashScreenThemeResId() {
-        return mSplashScreenThemeResId;
+    @Nullable
+    public String getSplashScreenThemeResName() {
+        return mSplashScreenThemeResName;
+    }
+
+    /**
+     * Sets the preferred splash screen style.
+     * @hide
+     */
+    public void setSplashscreenStyle(@SplashScreen.SplashScreenStyle int style) {
+        mSplashScreenStyle = style;
+    }
+
+    /**
+     * Gets the preferred splash screen style from caller
+     * @hide
+     */
+    @SplashScreen.SplashScreenStyle
+    public int getSplashScreenStyle() {
+        return mSplashScreenStyle;
     }
 
     /**
@@ -1920,8 +1946,8 @@ public class ActivityOptions {
         if (mOverrideTaskTransition) {
             b.putBoolean(KEY_OVERRIDE_TASK_TRANSITION, mOverrideTaskTransition);
         }
-        if (mSplashScreenThemeResId != 0) {
-            b.putInt(KEY_SPLASH_SCREEN_THEME, mSplashScreenThemeResId);
+        if (mSplashScreenThemeResName != null && !mSplashScreenThemeResName.isEmpty()) {
+            b.putString(KEY_SPLASH_SCREEN_THEME, mSplashScreenThemeResName);
         }
         if (mRemoveWithTaskOrganizer) {
             b.putBoolean(KEY_REMOVE_WITH_TASK_ORGANIZER, mRemoveWithTaskOrganizer);
@@ -1931,6 +1957,9 @@ public class ActivityOptions {
         }
         if (mTransientLaunch) {
             b.putBoolean(KEY_TRANSIENT_LAUNCH, mTransientLaunch);
+        }
+        if (mSplashScreenStyle != 0) {
+            b.putInt(KEY_SPLASH_SCREEN_STYLE, mSplashScreenStyle);
         }
         return b;
     }

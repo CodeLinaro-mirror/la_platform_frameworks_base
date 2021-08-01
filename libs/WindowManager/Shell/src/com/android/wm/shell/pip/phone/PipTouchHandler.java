@@ -75,6 +75,7 @@ public class PipTouchHandler {
     private final @NonNull PipBoundsState mPipBoundsState;
     private final PipUiEventLogger mPipUiEventLogger;
     private final PipDismissTargetHandler mPipDismissTargetHandler;
+    private final PipTaskOrganizer mPipTaskOrganizer;
     private final ShellExecutor mMainExecutor;
 
     private PipResizeGestureHandler mPipResizeGestureHandler;
@@ -173,6 +174,7 @@ public class PipTouchHandler {
         mAccessibilityManager = context.getSystemService(AccessibilityManager.class);
         mPipBoundsAlgorithm = pipBoundsAlgorithm;
         mPipBoundsState = pipBoundsState;
+        mPipTaskOrganizer = pipTaskOrganizer;
         mMenuController = menuController;
         mPipUiEventLogger = pipUiEventLogger;
         mFloatingContentCoordinator = floatingContentCoordinator;
@@ -724,12 +726,17 @@ public class PipTouchHandler {
     }
 
     private void animateToNormalSize(Runnable callback) {
+        // Save the current bounds as the user-resize bounds.
         mPipResizeGestureHandler.setUserResizeBounds(mPipBoundsState.getBounds());
-        final Rect normalBounds = new Rect(mPipBoundsState.getNormalBounds());
+
+        final Size minMenuSize = mMenuController.getEstimatedMinMenuSize();
+        final Rect normalBounds = mPipBoundsState.getNormalBounds();
+        final Rect destBounds = mPipBoundsAlgorithm.adjustNormalBoundsToFitMenu(normalBounds,
+                minMenuSize);
         Rect restoredMovementBounds = new Rect();
-        mPipBoundsAlgorithm.getMovementBounds(normalBounds,
+        mPipBoundsAlgorithm.getMovementBounds(destBounds,
                 mInsetBounds, restoredMovementBounds, mIsImeShowing ? mImeHeight : 0);
-        mSavedSnapFraction = mMotionHelper.animateToExpandedState(normalBounds,
+        mSavedSnapFraction = mMotionHelper.animateToExpandedState(destBounds,
                 mPipBoundsState.getMovementBounds(), restoredMovementBounds, callback);
     }
 
@@ -799,6 +806,7 @@ public class PipTouchHandler {
             mMovementWithinDismiss = touchState.getDownTouchPosition().y
                     >= mPipBoundsState.getMovementBounds().bottom;
             mMotionHelper.setSpringingToTouch(false);
+            mPipDismissTargetHandler.setTaskLeash(mPipTaskOrganizer.getSurfaceControl());
 
             // If the menu is still visible then just poke the menu
             // so that it will timeout after the user stops touching it
@@ -847,6 +855,7 @@ public class PipTouchHandler {
         @Override
         public boolean onUp(PipTouchState touchState) {
             mPipDismissTargetHandler.hideDismissTargetMaybe();
+            mPipDismissTargetHandler.setTaskLeash(null);
 
             if (!touchState.isUserInteracting()) {
                 return false;

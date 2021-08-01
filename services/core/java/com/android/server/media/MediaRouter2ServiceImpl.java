@@ -903,9 +903,9 @@ class MediaRouter2ServiceImpl {
         userRecord.mManagerRecords.add(managerRecord);
         mAllManagerRecords.put(binder, managerRecord);
 
-        userRecord.mHandler.sendMessage(obtainMessage(UserHandler::notifyRoutesToManager,
-                userRecord.mHandler, manager));
-
+        // Note: Features should be sent first before the routes. If not, the
+        // RouteCallback#onRoutesAdded() for system MR2 will never be called with initial routes
+        // due to the lack of features.
         for (RouterRecord routerRecord : userRecord.mRouterRecords) {
             // TODO: UserRecord <-> routerRecord, why do they reference each other?
             // How about removing mUserRecord from routerRecord?
@@ -913,6 +913,9 @@ class MediaRouter2ServiceImpl {
                     obtainMessage(UserHandler::notifyPreferredFeaturesChangedToManager,
                         routerRecord.mUserRecord.mHandler, routerRecord, manager));
         }
+
+        userRecord.mHandler.sendMessage(obtainMessage(UserHandler::notifyRoutesToManager,
+                userRecord.mHandler, manager));
     }
 
     private void unregisterManagerLocked(@NonNull IMediaRouter2Manager manager, boolean died) {
@@ -2156,6 +2159,8 @@ class MediaRouter2ServiceImpl {
             List<RouterRecord> routerRecords = getRouterRecords();
             List<ManagerRecord> managerRecords = getManagerRecords();
 
+            boolean shouldBindProviders = false;
+
             if (service.mPowerManager.isInteractive()) {
                 boolean isManagerScanning = managerRecords.stream().anyMatch(manager ->
                         manager.mIsScanning && service.mActivityManager
@@ -2166,12 +2171,20 @@ class MediaRouter2ServiceImpl {
                     discoveryPreferences = routerRecords.stream()
                             .map(record -> record.mDiscoveryPreference)
                             .collect(Collectors.toList());
+                    shouldBindProviders = true;
                 } else {
                     discoveryPreferences = routerRecords.stream().filter(record ->
                             service.mActivityManager.getPackageImportance(record.mPackageName)
                                     <= PACKAGE_IMPORTANCE_FOR_DISCOVERY)
                             .map(record -> record.mDiscoveryPreference)
                             .collect(Collectors.toList());
+                }
+            }
+
+            for (MediaRoute2Provider provider : mRouteProviders) {
+                if (provider instanceof MediaRoute2ProviderServiceProxy) {
+                    ((MediaRoute2ProviderServiceProxy) provider)
+                            .setManagerScanning(shouldBindProviders);
                 }
             }
 

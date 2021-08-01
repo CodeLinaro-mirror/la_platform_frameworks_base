@@ -32,6 +32,7 @@ import android.util.Slog;
 
 import com.android.server.biometrics.Utils;
 import com.android.server.biometrics.sensors.AuthenticationClient;
+import com.android.server.biometrics.sensors.BiometricNotificationUtils;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.LockoutTracker;
 import com.android.server.biometrics.sensors.fingerprint.Udfps;
@@ -64,9 +65,15 @@ class FingerprintAuthenticationClient extends AuthenticationClient<IBiometricsFi
         super(context, lazyDaemon, token, listener, targetUserId, operationId, restricted,
                 owner, cookie, requireConfirmation, sensorId, isStrongBiometric,
                 BiometricsProtoEnums.MODALITY_FINGERPRINT, statsClient, taskStackListener,
-                lockoutTracker, allowBackgroundAuthentication);
+                lockoutTracker, allowBackgroundAuthentication, true /* shouldVibrate */);
         mLockoutFrameworkImpl = lockoutTracker;
         mUdfpsOverlayController = udfpsOverlayController;
+    }
+
+    @NonNull
+    @Override
+    protected Callback wrapCallbackForStart(@NonNull Callback callback) {
+        return new CompositeCallback(createALSCallback(), callback);
     }
 
     @Override
@@ -104,6 +111,10 @@ class FingerprintAuthenticationClient extends AuthenticationClient<IBiometricsFi
     @Override
     public void onError(int errorCode, int vendorCode) {
         super.onError(errorCode, vendorCode);
+
+        if (errorCode == BiometricFingerprintConstants.FINGERPRINT_ERROR_BAD_CALIBRATION) {
+            BiometricNotificationUtils.showBadCalibrationNotification(getContext());
+        }
 
         UdfpsHelper.hideUdfpsOverlay(getSensorId(), mUdfpsOverlayController);
     }

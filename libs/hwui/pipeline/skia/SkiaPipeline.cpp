@@ -59,6 +59,10 @@ void SkiaPipeline::onDestroyHardwareResources() {
 }
 
 bool SkiaPipeline::pinImages(std::vector<SkImage*>& mutableImages) {
+    if (!mRenderThread.getGrContext()) {
+        ALOGD("Trying to pin an image with an invalid GrContext");
+        return false;
+    }
     for (SkImage* image : mutableImages) {
         if (SkImage_pinAsTexture(image, mRenderThread.getGrContext())) {
             mPinnedImages.emplace_back(sk_ref_sp(image));
@@ -203,12 +207,16 @@ bool SkiaPipeline::createOrUpdateLayer(RenderNode* node, const DamageAccumulator
 
 void SkiaPipeline::prepareToDraw(const RenderThread& thread, Bitmap* bitmap) {
     GrDirectContext* context = thread.getGrContext();
-    if (context) {
+    if (context && !bitmap->isHardware()) {
         ATRACE_FORMAT("Bitmap#prepareToDraw %dx%d", bitmap->width(), bitmap->height());
         auto image = bitmap->makeImage();
-        if (image.get() && !bitmap->isHardware()) {
+        if (image.get()) {
             SkImage_pinAsTexture(image.get(), context);
             SkImage_unpinAsTexture(image.get(), context);
+            // A submit is necessary as there may not be a frame coming soon, so without a call
+            // to submit these texture uploads can just sit in the queue building up until
+            // we run out of RAM
+            context->flushAndSubmit();
         }
     }
 }
@@ -420,7 +428,7 @@ void SkiaPipeline::endCapture(SkSurface* surface) {
                 procs.fTypefaceProc = [](SkTypeface* tf, void* ctx){
                     return tf->serialize(SkTypeface::SerializeBehavior::kDoIncludeData);
                 };
-                auto data = picture->serialize();
+                auto data = picture->serialize(&procs);
                 savePictureAsync(data, mCapturedFile);
                 mCaptureSequence = 0;
                 mCaptureMode = CaptureMode::None;
@@ -470,8 +478,7 @@ void SkiaPipeline::renderFrameImpl(const SkRect& clip,
                                    const SkMatrix& preTransform) {
     SkAutoCanvasRestore saver(canvas, true);
     auto clipRestriction = preTransform.mapRect(clip).roundOut();
-    if (CC_UNLIKELY(mCaptureMode == CaptureMode::SingleFrameSKP
-         || mCaptureMode == CaptureMode::MultiFrameSKP)) {
+    if (CC_UNLIKELY(isCapturingSkp())) {
         canvas->drawAnnotation(SkRect::Make(clipRestriction), "AndroidDeviceClipRestriction",
             nullptr);
     } else {

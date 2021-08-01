@@ -18,11 +18,13 @@ package com.android.server;
 
 import static android.Manifest.permission.DUMP;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED;
+import static android.net.NetworkCapabilities.TRANSPORT_TEST;
 import static android.net.NetworkCapabilities.TRANSPORT_WIFI;
 import static android.net.vcn.VcnManager.VCN_STATUS_CODE_ACTIVE;
 import static android.net.vcn.VcnManager.VCN_STATUS_CODE_INACTIVE;
 import static android.net.vcn.VcnManager.VCN_STATUS_CODE_NOT_CONFIGURED;
 import static android.net.vcn.VcnManager.VCN_STATUS_CODE_SAFE_MODE;
+import static android.telephony.SubscriptionManager.isValidSubscriptionId;
 
 import static com.android.server.vcn.TelephonySubscriptionTracker.TelephonySubscriptionSnapshot;
 import static com.android.server.vcn.TelephonySubscriptionTracker.TelephonySubscriptionTrackerCallback;
@@ -36,6 +38,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.Network;
@@ -73,6 +76,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.annotations.VisibleForTesting.Visibility;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.net.module.util.LocationPermissionChecker;
+import com.android.net.module.util.PermissionUtils;
 import com.android.server.vcn.TelephonySubscriptionTracker;
 import com.android.server.vcn.Vcn;
 import com.android.server.vcn.VcnContext;
@@ -432,6 +436,15 @@ public class VcnManagementService extends IVcnManagementService.Stub {
         }
     }
 
+    private boolean isActiveSubGroup(
+            @NonNull ParcelUuid subGrp, @NonNull TelephonySubscriptionSnapshot snapshot) {
+        if (subGrp == null || snapshot == null) {
+            return false;
+        }
+
+        return Objects.equals(subGrp, snapshot.getActiveDataSubscriptionGroup());
+    }
+
     private class VcnSubscriptionTrackerCallback implements TelephonySubscriptionTrackerCallback {
         /**
          * Handles subscription group changes, as notified by {@link TelephonySubscriptionTracker}
@@ -449,28 +462,49 @@ public class VcnManagementService extends IVcnManagementService.Stub {
 
                 // Start any VCN instances as necessary
                 for (Entry<ParcelUuid, VcnConfig> entry : mConfigs.entrySet()) {
+                    final ParcelUuid subGrp = entry.getKey();
+
+                    // TODO(b/193687515): Support multiple VCNs active at the same time
                     if (snapshot.packageHasPermissionsForSubscriptionGroup(
-                            entry.getKey(), entry.getValue().getProvisioningPackageName())) {
-                        if (!mVcns.containsKey(entry.getKey())) {
-                            startVcnLocked(entry.getKey(), entry.getValue());
+                                    subGrp, entry.getValue().getProvisioningPackageName())
+                            && isActiveSubGroup(subGrp, snapshot)) {
+                        if (!mVcns.containsKey(subGrp)) {
+                            startVcnLocked(subGrp, entry.getValue());
                         }
 
                         // Cancel any scheduled teardowns for active subscriptions
-                        mHandler.removeCallbacksAndMessages(mVcns.get(entry.getKey()));
+                        mHandler.removeCallbacksAndMessages(mVcns.get(subGrp));
                     }
                 }
 
                 // Schedule teardown of any VCN instances that have lost carrier privileges (after a
                 // delay)
                 for (Entry<ParcelUuid, Vcn> entry : mVcns.entrySet()) {
-                    final VcnConfig config = mConfigs.get(entry.getKey());
+                    final ParcelUuid subGrp = entry.getKey();
+                    final VcnConfig config = mConfigs.get(subGrp);
 
+                    final boolean isActiveSubGrp = isActiveSubGroup(subGrp, snapshot);
+                    final boolean isValidActiveDataSubIdNotInVcnSubGrp =
+                            isValidSubscriptionId(snapshot.getActiveDataSubscriptionId())
+                                    && !isActiveSubGroup(subGrp, snapshot);
+
+                    // TODO(b/193687515): Support multiple VCNs active at the same time
                     if (config == null
                             || !snapshot.packageHasPermissionsForSubscriptionGroup(
-                                    entry.getKey(), config.getProvisioningPackageName())) {
-                        final ParcelUuid uuidToTeardown = entry.getKey();
+                                    subGrp, config.getProvisioningPackageName())
+                            || !isActiveSubGrp) {
+                        final ParcelUuid uuidToTeardown = subGrp;
                         final Vcn instanceToTeardown = entry.getValue();
 
+                        // TODO(b/193687515): Support multiple VCNs active at the same time
+                        // If directly switching to a subscription not in the current group,
+                        // teardown immediately to prevent other subscription's network from being
+                        // outscored by the VCN. Otherwise, teardown after a delay to ensure that
+                        // SIM profile switches do not trigger the VCN to cycle.
+                        final long teardownDelayMs =
+                                isValidActiveDataSubIdNotInVcnSubGrp
+                                        ? 0
+                                        : CARRIER_PRIVILEGES_LOST_TEARDOWN_DELAY_MS;
                         mHandler.postDelayed(() -> {
                             synchronized (mLock) {
                                 // Guard against case where this is run after a old instance was
@@ -486,7 +520,7 @@ public class VcnManagementService extends IVcnManagementService.Stub {
                                             uuidToTeardown, VCN_STATUS_CODE_INACTIVE);
                                 }
                             }
-                        }, instanceToTeardown, CARRIER_PRIVILEGES_LOST_TEARDOWN_DELAY_MS);
+                        }, instanceToTeardown, teardownDelayMs);
                     } else {
                         // If this VCN's status has not changed, update it with the new snapshot
                         entry.getValue().updateSubscriptionSnapshot(mLastSnapshot);
@@ -550,8 +584,13 @@ public class VcnManagementService extends IVcnManagementService.Stub {
     private void startVcnLocked(@NonNull ParcelUuid subscriptionGroup, @NonNull VcnConfig config) {
         logDbg("Starting VCN config for subGrp: " + subscriptionGroup);
 
-        // TODO(b/176939047): Support multiple VCNs active at the same time, or limit to one active
-        //                    VCN.
+        // TODO(b/193687515): Support multiple VCNs active at the same time
+        if (!mVcns.isEmpty()) {
+            // Only one VCN supported at a time; teardown all others before starting new one
+            for (ParcelUuid uuidToTeardown : mVcns.keySet()) {
+                stopVcnLocked(uuidToTeardown);
+            }
+        }
 
         final VcnCallbackImpl vcnCallback = new VcnCallbackImpl(subscriptionGroup);
 
@@ -579,7 +618,10 @@ public class VcnManagementService extends IVcnManagementService.Stub {
             final Vcn vcn = mVcns.get(subscriptionGroup);
             vcn.updateConfig(config);
         } else {
-            startVcnLocked(subscriptionGroup, config);
+            // TODO(b/193687515): Support multiple VCNs active at the same time
+            if (isActiveSubGroup(subscriptionGroup, mLastSnapshot)) {
+                startVcnLocked(subscriptionGroup, config);
+            }
         }
     }
 
@@ -739,9 +781,10 @@ public class VcnManagementService extends IVcnManagementService.Stub {
             @NonNull IVcnUnderlyingNetworkPolicyListener listener) {
         requireNonNull(listener, "listener was null");
 
-        mContext.enforceCallingOrSelfPermission(
+        PermissionUtils.enforceAnyPermissionOf(
+                mContext,
                 android.Manifest.permission.NETWORK_FACTORY,
-                "Must have permission NETWORK_FACTORY to register a policy listener");
+                android.Manifest.permission.MANAGE_TEST_NETWORKS);
 
         Binder.withCleanCallingIdentity(() -> {
             PolicyListenerBinderDeath listenerBinderDeath = new PolicyListenerBinderDeath(listener);
@@ -766,9 +809,10 @@ public class VcnManagementService extends IVcnManagementService.Stub {
             @NonNull IVcnUnderlyingNetworkPolicyListener listener) {
         requireNonNull(listener, "listener was null");
 
-        mContext.enforceCallingOrSelfPermission(
+        PermissionUtils.enforceAnyPermissionOf(
+                mContext,
                 android.Manifest.permission.NETWORK_FACTORY,
-                "Must have permission NETWORK_FACTORY to unregister a policy listener");
+                android.Manifest.permission.MANAGE_TEST_NETWORKS);
 
         Binder.withCleanCallingIdentity(() -> {
             synchronized (mLock) {
@@ -819,10 +863,20 @@ public class VcnManagementService extends IVcnManagementService.Stub {
         requireNonNull(networkCapabilities, "networkCapabilities was null");
         requireNonNull(linkProperties, "linkProperties was null");
 
-        mContext.enforceCallingOrSelfPermission(
+        PermissionUtils.enforceAnyPermissionOf(
+                mContext,
                 android.Manifest.permission.NETWORK_FACTORY,
-                "Must have permission NETWORK_FACTORY or be the SystemServer to get underlying"
-                        + " Network policies");
+                android.Manifest.permission.MANAGE_TEST_NETWORKS);
+
+        final boolean isUsingManageTestNetworks =
+                mContext.checkCallingOrSelfPermission(android.Manifest.permission.NETWORK_FACTORY)
+                        != PackageManager.PERMISSION_GRANTED;
+
+        if (isUsingManageTestNetworks && !networkCapabilities.hasTransport(TRANSPORT_TEST)) {
+            throw new IllegalStateException(
+                    "NetworkCapabilities must be for Test Network if using permission"
+                            + " MANAGE_TEST_NETWORKS");
+        }
 
         return Binder.withCleanCallingIdentity(() -> {
             // Defensive copy in case this call is in-process and the given NetworkCapabilities
@@ -990,6 +1044,11 @@ public class VcnManagementService extends IVcnManagementService.Stub {
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
+    }
+
+    @VisibleForTesting(visibility = Visibility.PRIVATE)
+    void setLastSnapshot(@NonNull TelephonySubscriptionSnapshot snapshot) {
+        mLastSnapshot = Objects.requireNonNull(snapshot);
     }
 
     private void logVdbg(String msg) {

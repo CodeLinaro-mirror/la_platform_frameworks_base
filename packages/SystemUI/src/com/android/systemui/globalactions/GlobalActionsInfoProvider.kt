@@ -24,7 +24,7 @@ import android.service.quickaccesswallet.QuickAccessWalletClient
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.ViewGroup
-import android.widget.ImageView
+import android.widget.TextView
 import com.android.systemui.R
 import com.android.systemui.controls.controller.ControlsController
 import com.android.systemui.plugins.ActivityStarter
@@ -70,8 +70,12 @@ class GlobalActionsInfoProvider @Inject constructor(
 
         val view = LayoutInflater.from(context).inflate(R.layout.global_actions_change_panel,
                 parent, false)
-        val button = view.findViewById<ImageView>(R.id.global_actions_change_button)
-        button.setOnClickListener { _ ->
+
+        val walletTitle = walletClient.serviceLabel ?: context.getString(R.string.wallet_title)
+        val message = view.findViewById<TextView>(R.id.global_actions_change_message)
+        message?.setText(context.getString(R.string.global_actions_change_description, walletTitle))
+
+        view.setOnClickListener { _ ->
             dismissParent.run()
             activityStarter.postStartActivityDismissingKeyguard(pendingIntent)
         }

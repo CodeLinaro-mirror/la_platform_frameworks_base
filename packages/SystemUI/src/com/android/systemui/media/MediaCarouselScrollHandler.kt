@@ -62,7 +62,7 @@ class MediaCarouselScrollHandler(
     private val closeGuts: (immediate: Boolean) -> Unit,
     private val falsingCollector: FalsingCollector,
     private val falsingManager: FalsingManager,
-    private val logSmartspaceImpression: () -> Unit
+    private val logSmartspaceImpression: (Boolean) -> Unit
 ) {
     /**
      * Is the view in RTL
@@ -195,18 +195,22 @@ class MediaCarouselScrollHandler(
             if (playerWidthPlusPadding == 0) {
                 return
             }
+
             val relativeScrollX = scrollView.relativeScrollX
             onMediaScrollingChanged(relativeScrollX / playerWidthPlusPadding,
                     relativeScrollX % playerWidthPlusPadding)
         }
     }
 
+    /**
+     * Whether the media card is visible to user if any
+     */
     var visibleToUser: Boolean = false
-        set(value) {
-            if (field != value) {
-                field = value
-            }
-        }
+
+    /**
+     * Whether the quick setting is expanded or not
+     */
+    var qsExpanded: Boolean = false
 
     init {
         gestureDetector = GestureDetectorCompat(scrollView.context, gestureListener)
@@ -232,7 +236,7 @@ class MediaCarouselScrollHandler(
     }
 
     private fun updateSettingsPresentation() {
-        if (showsSettingsButton) {
+        if (showsSettingsButton && settingsButton.width > 0) {
             val settingsOffset = MathUtils.map(
                     0.0f,
                     getMaxTranslation().toFloat(),
@@ -471,7 +475,7 @@ class MediaCarouselScrollHandler(
             val oldIndex = visibleMediaIndex
             visibleMediaIndex = newIndex
             if (oldIndex != visibleMediaIndex && visibleToUser) {
-                logSmartspaceImpression()
+                logSmartspaceImpression(qsExpanded)
             }
             closeGuts(false)
             updatePlayerVisibilities()
@@ -559,8 +563,17 @@ class MediaCarouselScrollHandler(
         scrollView.relativeScrollX = 0
     }
 
-    fun scrollToActivePlayer(activePlayerIndex: Int) {
-        val destIndex = Math.min(mediaContent.getChildCount() - 1, activePlayerIndex)
+    /**
+     * Smooth scroll to the destination player.
+     *
+     * @param sourceIndex optional source index to indicate where the scroll should begin.
+     * @param destIndex destination index to indicate where the scroll should end.
+     */
+    fun scrollToPlayer(sourceIndex: Int = -1, destIndex: Int) {
+        if (sourceIndex >= 0 && sourceIndex < mediaContent.childCount) {
+            scrollView.relativeScrollX = sourceIndex * playerWidthPlusPadding
+        }
+        val destIndex = Math.min(mediaContent.getChildCount() - 1, destIndex)
         val view = mediaContent.getChildAt(destIndex)
         // We need to post this to wait for the active player becomes visible.
         mainExecutor.executeDelayed({

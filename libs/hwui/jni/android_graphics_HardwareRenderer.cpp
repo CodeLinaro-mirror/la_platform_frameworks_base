@@ -23,6 +23,8 @@
 #include <Picture.h>
 #include <Properties.h>
 #include <RootRenderNode.h>
+#include <SkImagePriv.h>
+#include <SkSerialProcs.h>
 #include <dlfcn.h>
 #include <gui/TraceUtils.h>
 #include <inttypes.h>
@@ -35,6 +37,7 @@
 #include <renderthread/RenderProxy.h>
 #include <renderthread/RenderTask.h>
 #include <renderthread/RenderThread.h>
+#include <src/image/SkImage_Base.h>
 #include <thread/CommonPool.h>
 #include <utils/Color.h>
 #include <utils/RefBase.h>
@@ -66,6 +69,10 @@ struct {
 struct {
     jmethodID onMergeTransaction;
 } gASurfaceTransactionCallback;
+
+struct {
+    jmethodID prepare;
+} gPrepareSurfaceControlForWebviewCallback;
 
 struct {
     jmethodID onFrameDraw;
@@ -497,6 +504,130 @@ private:
     jobject mObject;
 };
 
+class JWeakGlobalRefHolder {
+public:
+    JWeakGlobalRefHolder(JavaVM* vm, jobject object) : mVm(vm) {
+        mWeakRef = getenv(vm)->NewWeakGlobalRef(object);
+    }
+
+    virtual ~JWeakGlobalRefHolder() {
+        if (mWeakRef != nullptr) getenv(mVm)->DeleteWeakGlobalRef(mWeakRef);
+        mWeakRef = nullptr;
+    }
+
+    jobject ref() { return mWeakRef; }
+    JavaVM* vm() { return mVm; }
+
+private:
+    JWeakGlobalRefHolder(const JWeakGlobalRefHolder&) = delete;
+    void operator=(const JWeakGlobalRefHolder&) = delete;
+
+    JavaVM* mVm;
+    jobject mWeakRef;
+};
+
+using TextureMap = std::unordered_map<uint32_t, sk_sp<SkImage>>;
+
+struct PictureCaptureState {
+    // Each frame we move from the active map to the previous map, essentially an LRU of 1 frame
+    // This avoids repeated readbacks of the same image, but avoids artificially extending the
+    // lifetime of any particular image.
+    TextureMap mActiveMap;
+    TextureMap mPreviousActiveMap;
+};
+
+// TODO: This & Multi-SKP & Single-SKP should all be de-duped into
+// a single "make a SkPicture serailizable-safe" utility somewhere
+class PictureWrapper : public Picture {
+public:
+    PictureWrapper(sk_sp<SkPicture>&& src, const std::shared_ptr<PictureCaptureState>& state)
+            : Picture(), mPicture(std::move(src)) {
+        ATRACE_NAME("Preparing SKP for capture");
+        // Move the active to previous active
+        state->mPreviousActiveMap = std::move(state->mActiveMap);
+        state->mActiveMap.clear();
+        SkSerialProcs tempProc;
+        tempProc.fImageCtx = state.get();
+        tempProc.fImageProc = collectNonTextureImagesProc;
+        auto ns = SkNullWStream();
+        mPicture->serialize(&ns, &tempProc);
+        state->mPreviousActiveMap.clear();
+
+        // Now snapshot a copy of the active map so this PictureWrapper becomes self-sufficient
+        mTextureMap = state->mActiveMap;
+    }
+
+    static sk_sp<SkImage> imageForCache(SkImage* img) {
+        const SkBitmap* bitmap = as_IB(img)->onPeekBitmap();
+        // This is a mutable bitmap pretending to be an immutable SkImage. As we're going to
+        // actually cross thread boundaries here, make a copy so it's immutable proper
+        if (bitmap && !bitmap->isImmutable()) {
+            ATRACE_NAME("Copying mutable bitmap");
+            return SkImage::MakeFromBitmap(*bitmap);
+        }
+        if (img->isTextureBacked()) {
+            ATRACE_NAME("Readback of texture image");
+            return img->makeNonTextureImage();
+        }
+        SkPixmap pm;
+        if (img->isLazyGenerated() && !img->peekPixels(&pm)) {
+            ATRACE_NAME("Readback of HW bitmap");
+            // This is a hardware bitmap probably
+            SkBitmap bm;
+            if (!bm.tryAllocPixels(img->imageInfo())) {
+                // Failed to allocate, just see what happens
+                return sk_ref_sp(img);
+            }
+            if (RenderProxy::copyImageInto(sk_ref_sp(img), &bm)) {
+                // Failed to readback
+                return sk_ref_sp(img);
+            }
+            bm.setImmutable();
+            return SkMakeImageFromRasterBitmap(bm, kNever_SkCopyPixelsMode);
+        }
+        return sk_ref_sp(img);
+    }
+
+    static sk_sp<SkData> collectNonTextureImagesProc(SkImage* img, void* ctx) {
+        PictureCaptureState* context = reinterpret_cast<PictureCaptureState*>(ctx);
+        const uint32_t originalId = img->uniqueID();
+        auto it = context->mActiveMap.find(originalId);
+        if (it == context->mActiveMap.end()) {
+            auto pit = context->mPreviousActiveMap.find(originalId);
+            if (pit == context->mPreviousActiveMap.end()) {
+                context->mActiveMap[originalId] = imageForCache(img);
+            } else {
+                context->mActiveMap[originalId] = pit->second;
+            }
+        }
+        return SkData::MakeEmpty();
+    }
+
+    static sk_sp<SkData> serializeImage(SkImage* img, void* ctx) {
+        PictureWrapper* context = reinterpret_cast<PictureWrapper*>(ctx);
+        const uint32_t id = img->uniqueID();
+        auto iter = context->mTextureMap.find(id);
+        if (iter != context->mTextureMap.end()) {
+            img = iter->second.get();
+        }
+        return img->encodeToData();
+    }
+
+    void serialize(SkWStream* stream) const override {
+        SkSerialProcs procs;
+        procs.fImageProc = serializeImage;
+        procs.fImageCtx = const_cast<PictureWrapper*>(this);
+        procs.fTypefaceProc = [](SkTypeface* tf, void* ctx) {
+            return tf->serialize(SkTypeface::SerializeBehavior::kDoIncludeData);
+        };
+        mPicture->serialize(stream, &procs);
+    }
+
+private:
+    sk_sp<SkPicture> mPicture;
+    TextureMap mTextureMap;
+};
+
 static void android_view_ThreadedRenderer_setPictureCapturedCallbackJNI(JNIEnv* env,
         jobject clazz, jlong proxyPtr, jobject pictureCallback) {
     RenderProxy* proxy = reinterpret_cast<RenderProxy*>(proxyPtr);
@@ -507,9 +638,11 @@ static void android_view_ThreadedRenderer_setPictureCapturedCallbackJNI(JNIEnv* 
         LOG_ALWAYS_FATAL_IF(env->GetJavaVM(&vm) != JNI_OK, "Unable to get Java VM");
         auto globalCallbackRef = std::make_shared<JGlobalRefHolder>(vm,
                 env->NewGlobalRef(pictureCallback));
-        proxy->setPictureCapturedCallback([globalCallbackRef](sk_sp<SkPicture>&& picture) {
+        auto pictureState = std::make_shared<PictureCaptureState>();
+        proxy->setPictureCapturedCallback([globalCallbackRef,
+                                           pictureState](sk_sp<SkPicture>&& picture) {
             JNIEnv* env = getenv(globalCallbackRef->vm());
-            Picture* wrapper = new Picture{std::move(picture)};
+            Picture* wrapper = new PictureWrapper{std::move(picture), pictureState};
             env->CallStaticVoidMethod(gHardwareRenderer.clazz,
                     gHardwareRenderer.invokePictureCapturedCallback,
                     static_cast<jlong>(reinterpret_cast<intptr_t>(wrapper)),
@@ -526,16 +659,44 @@ static void android_view_ThreadedRenderer_setASurfaceTransactionCallback(
     } else {
         JavaVM* vm = nullptr;
         LOG_ALWAYS_FATAL_IF(env->GetJavaVM(&vm) != JNI_OK, "Unable to get Java VM");
-        auto globalCallbackRef = std::make_shared<JGlobalRefHolder>(
-                vm, env->NewGlobalRef(aSurfaceTransactionCallback));
+        auto globalCallbackRef =
+                std::make_shared<JWeakGlobalRefHolder>(vm, aSurfaceTransactionCallback);
         proxy->setASurfaceTransactionCallback(
-                [globalCallbackRef](int64_t transObj, int64_t scObj, int64_t frameNr) {
+                [globalCallbackRef](int64_t transObj, int64_t scObj, int64_t frameNr) -> bool {
                     JNIEnv* env = getenv(globalCallbackRef->vm());
-                    env->CallVoidMethod(globalCallbackRef->object(),
-                                        gASurfaceTransactionCallback.onMergeTransaction,
-                                        static_cast<jlong>(transObj), static_cast<jlong>(scObj),
-                                        static_cast<jlong>(frameNr));
+                    jobject localref = env->NewLocalRef(globalCallbackRef->ref());
+                    if (CC_UNLIKELY(!localref)) {
+                        return false;
+                    }
+                    jboolean ret = env->CallBooleanMethod(
+                            localref, gASurfaceTransactionCallback.onMergeTransaction,
+                            static_cast<jlong>(transObj), static_cast<jlong>(scObj),
+                            static_cast<jlong>(frameNr));
+                    env->DeleteLocalRef(localref);
+                    return ret;
                 });
+    }
+}
+
+static void android_view_ThreadedRenderer_setPrepareSurfaceControlForWebviewCallback(
+        JNIEnv* env, jobject clazz, jlong proxyPtr, jobject callback) {
+    RenderProxy* proxy = reinterpret_cast<RenderProxy*>(proxyPtr);
+    if (!callback) {
+        proxy->setPrepareSurfaceControlForWebviewCallback(nullptr);
+    } else {
+        JavaVM* vm = nullptr;
+        LOG_ALWAYS_FATAL_IF(env->GetJavaVM(&vm) != JNI_OK, "Unable to get Java VM");
+        auto globalCallbackRef =
+                std::make_shared<JWeakGlobalRefHolder>(vm, callback);
+        proxy->setPrepareSurfaceControlForWebviewCallback([globalCallbackRef]() {
+            JNIEnv* env = getenv(globalCallbackRef->vm());
+            jobject localref = env->NewLocalRef(globalCallbackRef->ref());
+            if (CC_UNLIKELY(!localref)) {
+                return;
+            }
+            env->CallVoidMethod(localref, gPrepareSurfaceControlForWebviewCallback.prepare);
+            env->DeleteLocalRef(localref);
+        });
     }
 }
 
@@ -601,9 +762,11 @@ static jobject android_view_ThreadedRenderer_createHardwareBitmapFromRenderNode(
 
     // Create an ImageReader wired up to a BufferItemConsumer
     AImageReader* rawReader;
+    constexpr auto usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE |
+                           AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER |
+                           AHARDWAREBUFFER_USAGE_COMPOSER_OVERLAY;
     media_status_t result =
-            AImageReader_newWithUsage(width, height, AIMAGE_FORMAT_RGBA_8888,
-                                      AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, 2, &rawReader);
+            AImageReader_newWithUsage(width, height, AIMAGE_FORMAT_RGBA_8888, usage, 2, &rawReader);
     std::unique_ptr<AImageReader, decltype(&AImageReader_delete)> reader(rawReader,
                                                                          AImageReader_delete);
 
@@ -772,6 +935,11 @@ static void android_view_ThreadedRenderer_setupShadersDiskCache(JNIEnv* env, job
     env->ReleaseStringUTFChars(skiaDiskCachePath, skiaCacheArray);
 }
 
+static jboolean android_view_ThreadedRenderer_isWebViewOverlaysEnabled(JNIEnv* env, jobject clazz) {
+    // this value is valid only after loadSystemProperties() is called
+    return Properties::enableWebViewOverlays;
+}
+
 // ----------------------------------------------------------------------------
 // JNI Glue
 // ----------------------------------------------------------------------------
@@ -837,6 +1005,9 @@ static const JNINativeMethod gMethods[] = {
         {"nSetASurfaceTransactionCallback",
          "(JLandroid/graphics/HardwareRenderer$ASurfaceTransactionCallback;)V",
          (void*)android_view_ThreadedRenderer_setASurfaceTransactionCallback},
+        {"nSetPrepareSurfaceControlForWebviewCallback",
+         "(JLandroid/graphics/HardwareRenderer$PrepareSurfaceControlForWebviewCallback;)V",
+         (void*)android_view_ThreadedRenderer_setPrepareSurfaceControlForWebviewCallback},
         {"nSetFrameCallback", "(JLandroid/graphics/HardwareRenderer$FrameDrawingCallback;)V",
          (void*)android_view_ThreadedRenderer_setFrameCallback},
         {"nSetFrameCompleteCallback",
@@ -861,6 +1032,8 @@ static const JNINativeMethod gMethods[] = {
          (void*)android_view_ThreadedRenderer_setDisplayDensityDpi},
         {"nInitDisplayInfo", "(IIFIJJ)V", (void*)android_view_ThreadedRenderer_initDisplayInfo},
         {"preload", "()V", (void*)android_view_ThreadedRenderer_preload},
+        {"isWebViewOverlaysEnabled", "()Z",
+         (void*)android_view_ThreadedRenderer_isWebViewOverlaysEnabled},
 };
 
 static JavaVM* mJvm = nullptr;
@@ -902,7 +1075,12 @@ int register_android_view_ThreadedRenderer(JNIEnv* env) {
     jclass aSurfaceTransactionCallbackClass =
             FindClassOrDie(env, "android/graphics/HardwareRenderer$ASurfaceTransactionCallback");
     gASurfaceTransactionCallback.onMergeTransaction =
-            GetMethodIDOrDie(env, aSurfaceTransactionCallbackClass, "onMergeTransaction", "(JJJ)V");
+            GetMethodIDOrDie(env, aSurfaceTransactionCallbackClass, "onMergeTransaction", "(JJJ)Z");
+
+    jclass prepareSurfaceControlForWebviewCallbackClass = FindClassOrDie(
+            env, "android/graphics/HardwareRenderer$PrepareSurfaceControlForWebviewCallback");
+    gPrepareSurfaceControlForWebviewCallback.prepare =
+            GetMethodIDOrDie(env, prepareSurfaceControlForWebviewCallbackClass, "prepare", "()V");
 
     jclass frameCallbackClass = FindClassOrDie(env,
             "android/graphics/HardwareRenderer$FrameDrawingCallback");

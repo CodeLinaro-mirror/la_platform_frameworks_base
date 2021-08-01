@@ -16,6 +16,8 @@
 
 package com.android.server.compat;
 
+import static android.content.pm.PackageManager.MATCH_ANY_USER;
+
 import android.annotation.Nullable;
 import android.app.compat.ChangeIdStateCache;
 import android.app.compat.PackageOverride;
@@ -235,13 +237,11 @@ final class CompatConfig {
      * @param packageName app for which the overrides will be applied.
      */
     void addOverrides(CompatibilityOverrideConfig overrides, String packageName) {
-        synchronized (mChanges) {
-            for (Long changeId : overrides.overrides.keySet()) {
-                addOverrideUnsafe(changeId, packageName, overrides.overrides.get(changeId));
-            }
-            saveOverrides();
-            invalidateCache();
+        for (Long changeId : overrides.overrides.keySet()) {
+            addOverrideUnsafe(changeId, packageName, overrides.overrides.get(changeId));
         }
+        saveOverrides();
+        invalidateCache();
     }
 
     private boolean addOverrideUnsafe(long changeId, String packageName,
@@ -259,8 +259,8 @@ final class CompatConfig {
                 addChange(c);
             }
             c.addPackageOverride(packageName, overrides, allowedState, versionCode);
-            invalidateCache();
         }
+        invalidateCache();
         return alreadyKnown;
     }
 
@@ -335,22 +335,33 @@ final class CompatConfig {
 
     /**
      * Unsafe version of {@link #removeOverride(long, String)}.
-     * It does not invalidate the cache nor save the overrides.
+     * It does not save the overrides.
      */
     private boolean removeOverrideUnsafe(long changeId, String packageName) {
         Long versionCode = getVersionCodeOrNull(packageName);
         synchronized (mChanges) {
             CompatChange c = mChanges.get(changeId);
             if (c != null) {
-                OverrideAllowedState allowedState =
-                        mOverrideValidator.getOverrideAllowedState(changeId, packageName);
-                if (c.hasPackageOverride(packageName)) {
-                    allowedState.enforce(changeId, packageName);
-                    c.removePackageOverride(packageName, allowedState, versionCode);
-                    invalidateCache();
-                    return true;
-                }
+                return removeOverrideUnsafe(c, packageName, versionCode);
             }
+        }
+        return false;
+    }
+
+    /**
+     * Similar to {@link #removeOverrideUnsafe(long, String)} except this method receives a {@link
+     * CompatChange} directly as well as the package's version code.
+     */
+    private boolean removeOverrideUnsafe(CompatChange change, String packageName,
+            @Nullable Long versionCode) {
+        long changeId = change.getId();
+        OverrideAllowedState allowedState =
+                mOverrideValidator.getOverrideAllowedState(changeId, packageName);
+        if (change.hasPackageOverride(packageName)) {
+            allowedState.enforce(changeId, packageName);
+            change.removePackageOverride(packageName, allowedState, versionCode);
+            invalidateCache();
+            return true;
         }
         return false;
     }
@@ -364,14 +375,15 @@ final class CompatConfig {
      * @param packageName the package for which the overrides should be purged
      */
     void removePackageOverrides(String packageName) {
+        Long versionCode = getVersionCodeOrNull(packageName);
         synchronized (mChanges) {
             for (int i = 0; i < mChanges.size(); ++i) {
                 CompatChange change = mChanges.valueAt(i);
-                removeOverrideUnsafe(change.getId(), packageName);
+                removeOverrideUnsafe(change, packageName, versionCode);
             }
-            saveOverrides();
-            invalidateCache();
         }
+        saveOverrides();
+        invalidateCache();
     }
 
     /**
@@ -386,13 +398,11 @@ final class CompatConfig {
      */
     void removePackageOverrides(CompatibilityOverridesToRemoveConfig overridesToRemove,
             String packageName) {
-        synchronized (mChanges) {
-            for (Long changeId : overridesToRemove.changeIds) {
-                removeOverrideUnsafe(changeId, packageName);
-            }
-            saveOverrides();
-            invalidateCache();
+        for (Long changeId : overridesToRemove.changeIds) {
+            removeOverrideUnsafe(changeId, packageName);
         }
+        saveOverrides();
+        invalidateCache();
     }
 
     private long[] getAllowedChangesSinceTargetSdkForPackage(String packageName,
@@ -595,6 +605,10 @@ final class CompatConfig {
 
         try (InputStream in = new BufferedInputStream(new FileInputStream(overridesFile))) {
             Overrides overrides = com.android.server.compat.overrides.XmlParser.read(in);
+            if (overrides == null) {
+                Slog.w(TAG, "Parsing " + overridesFile.getPath() + " failed");
+                return;
+            }
             for (ChangeOverrides changeOverrides : overrides.getChangeOverrides()) {
                 long changeId = changeOverrides.getChangeId();
                 CompatChange compatChange = mChanges.get(changeId);
@@ -618,7 +632,18 @@ final class CompatConfig {
         if (mOverridesFile == null) {
             return;
         }
+        Overrides overrides = new Overrides();
         synchronized (mChanges) {
+            List<ChangeOverrides> changeOverridesList = overrides.getChangeOverrides();
+            for (int idx = 0; idx < mChanges.size(); ++idx) {
+                CompatChange c = mChanges.valueAt(idx);
+                ChangeOverrides changeOverrides = c.saveOverrides();
+                if (changeOverrides != null) {
+                    changeOverridesList.add(changeOverrides);
+                }
+            }
+        }
+        synchronized (mOverridesFile) {
             // Create the file if it doesn't already exist
             try {
                 mOverridesFile.createNewFile();
@@ -628,15 +653,6 @@ final class CompatConfig {
             }
             try (PrintWriter out = new PrintWriter(mOverridesFile)) {
                 XmlWriter writer = new XmlWriter(out);
-                Overrides overrides = new Overrides();
-                List<ChangeOverrides> changeOverridesList = overrides.getChangeOverrides();
-                for (int idx = 0; idx < mChanges.size(); ++idx) {
-                    CompatChange c = mChanges.valueAt(idx);
-                    ChangeOverrides changeOverrides = c.saveOverrides();
-                    if (changeOverrides != null) {
-                        changeOverridesList.add(changeOverrides);
-                    }
-                }
                 XmlWriter.write(writer, overrides);
             } catch (IOException e) {
                 Slog.e(TAG, e.toString());
@@ -679,7 +695,7 @@ final class CompatConfig {
     private Long getVersionCodeOrNull(String packageName) {
         try {
             ApplicationInfo applicationInfo = mContext.getPackageManager().getApplicationInfo(
-                    packageName, 0);
+                    packageName, MATCH_ANY_USER);
             return applicationInfo.longVersionCode;
         } catch (PackageManager.NameNotFoundException e) {
             return null;

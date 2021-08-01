@@ -32,6 +32,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageParser.PackageParserException;
+import android.content.pm.PackageParser.SigningDetails;
 import android.content.pm.parsing.PackageInfoWithoutStateUtils;
 import android.content.pm.parsing.ParsingPackageUtils;
 import android.os.Binder;
@@ -45,6 +46,7 @@ import android.util.ArraySet;
 import android.util.Singleton;
 import android.util.Slog;
 import android.util.SparseArray;
+import android.util.apk.ApkSignatureVerifier;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -52,6 +54,7 @@ import com.android.internal.util.IndentingPrintWriter;
 import com.android.internal.util.Preconditions;
 import com.android.server.pm.parsing.PackageParser2;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
+import com.android.server.pm.parsing.pkg.ParsedPackage;
 import com.android.server.utils.TimingsTraceAndSlog;
 
 import com.google.android.collect.Lists;
@@ -64,6 +67,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -303,17 +307,19 @@ public abstract class ApexManager {
     /**
      * Reports error raised during installation of apk-in-apex.
      *
-     * @param scanDir the directory of the apex inside which apk-in-apex resides.
+     * @param scanDirPath the directory of the apex inside which apk-in-apex resides.
+     * @param errorMsg the actual error that occurred when scanning the path
      */
-    abstract void reportErrorWithApkInApex(String scanDirPath);
+    abstract void reportErrorWithApkInApex(String scanDirPath, String errorMsg);
 
     /**
-     * Returns true if there were no errors when installing apk-in-apex inside
-     * {@param apexPackageName}, otherwise false.
+     * Returns null if there were no errors when installing apk-in-apex inside
+     * {@param apexPackageName}, otherwise returns the error as string
      *
      * @param apexPackageName Package name of the apk container of apex
      */
-    abstract boolean isApkInApexInstallSuccess(String apexPackageName);
+    @Nullable
+    abstract String getApkInApexInstallError(String apexPackageName);
 
     /**
      * Returns list of {@code packageName} of apks inside the given apex.
@@ -390,9 +396,10 @@ public abstract class ApexManager {
             throws RemoteException;
 
     /**
-     * Performs a non-staged install of an APEX package with given {@code packagePath}.
+     * Performs a non-staged install of the given {@code apexFile}.
      */
-    abstract void installPackage(String packagePath) throws PackageManagerException;
+    abstract void installPackage(File apexFile, PackageParser2 packageParser)
+            throws PackageManagerException;
 
     /**
      * Dumps various state information to the provided {@link PrintWriter} object.
@@ -434,7 +441,7 @@ public abstract class ApexManager {
          * inside {@code apexModuleName}.
          */
         @GuardedBy("mLock")
-        private Set<String> mErrorWithApkInApex = new ArraySet<>();
+        private Map<String, String> mErrorWithApkInApex = new ArrayMap<>();
 
         @GuardedBy("mLock")
         private List<PackageInfo> mAllPackagesCache;
@@ -837,26 +844,27 @@ public abstract class ApexManager {
         }
 
         @Override
-        void reportErrorWithApkInApex(String scanDirPath) {
+        void reportErrorWithApkInApex(String scanDirPath, String errorMsg) {
             synchronized (mLock) {
                 for (ActiveApexInfo aai : mActiveApexInfosCache) {
                     if (scanDirPath.startsWith(aai.apexDirectory.getAbsolutePath())) {
-                        mErrorWithApkInApex.add(aai.apexModuleName);
+                        mErrorWithApkInApex.put(aai.apexModuleName, errorMsg);
                     }
                 }
             }
         }
 
         @Override
-        boolean isApkInApexInstallSuccess(String apexPackageName) {
+        @Nullable
+        String getApkInApexInstallError(String apexPackageName) {
             synchronized (mLock) {
                 Preconditions.checkState(mPackageNameToApexModuleName != null,
                         "APEX packages have not been scanned");
                 String moduleName = mPackageNameToApexModuleName.get(apexPackageName);
                 if (moduleName == null) {
-                    return false;
+                    return null;
                 }
-                return !mErrorWithApkInApex.contains(moduleName);
+                return mErrorWithApkInApex.get(moduleName);
             }
         }
 
@@ -979,12 +987,85 @@ public abstract class ApexManager {
             waitForApexService().reserveSpaceForCompressedApex(infoList);
         }
 
-        @Override
-        void installPackage(String packagePath) throws PackageManagerException {
+        private SigningDetails getSigningDetails(PackageInfo pkg) throws PackageManagerException {
+            int minSignatureScheme =
+                    ApkSignatureVerifier.getMinimumSignatureSchemeVersionForTargetSdk(
+                            pkg.applicationInfo.targetSdkVersion);
             try {
-                // TODO(b/187864524): do pre-install verification.
-                waitForApexService().installAndActivatePackage(packagePath);
-                // TODO(b/187864524): update mAllPackagesCache.
+                return ApkSignatureVerifier.verify(pkg.applicationInfo.sourceDir,
+                        minSignatureScheme);
+            } catch (PackageParserException e) {
+                throw PackageManagerException.from(e);
+            }
+        }
+
+        private void checkApexSignature(PackageInfo existingApexPkg, PackageInfo newApexPkg)
+                throws PackageManagerException {
+            final SigningDetails existingSigningDetails = getSigningDetails(existingApexPkg);
+            final SigningDetails newSigningDetails = getSigningDetails(newApexPkg);
+            if (!newSigningDetails.checkCapability(existingSigningDetails,
+                      SigningDetails.CertCapabilities.INSTALLED_DATA)) {
+                throw new PackageManagerException(PackageManager.INSTALL_FAILED_BAD_SIGNATURE,
+                          "APK container signature of " + newApexPkg.applicationInfo.sourceDir
+                                   + " is not compatible with currently installed on device");
+            }
+        }
+
+        private void checkDowngrade(PackageInfo existingApexPkg, PackageInfo newApexPkg)
+                throws PackageManagerException {
+            final long currentVersionCode = existingApexPkg.applicationInfo.longVersionCode;
+            final long newVersionCode = newApexPkg.applicationInfo.longVersionCode;
+            if (currentVersionCode > newVersionCode) {
+                throw new PackageManagerException(PackageManager.INSTALL_FAILED_VERSION_DOWNGRADE,
+                          "Downgrade of APEX package " + newApexPkg.packageName
+                                  + " is not allowed");
+            }
+        }
+
+        @Override
+        void installPackage(File apexFile, PackageParser2 packageParser)
+                throws PackageManagerException {
+            try {
+                final int flags = PackageManager.GET_META_DATA
+                        | PackageManager.GET_SIGNING_CERTIFICATES
+                        | PackageManager.GET_SIGNATURES;
+                final ParsedPackage parsedPackage = packageParser.parsePackage(
+                        apexFile, flags, /* useCaches= */ false);
+                final PackageInfo newApexPkg = PackageInfoWithoutStateUtils.generate(parsedPackage,
+                        /* apexInfo= */ null, flags);
+                if (newApexPkg == null) {
+                    throw new PackageManagerException(PackageManager.INSTALL_FAILED_INVALID_APK,
+                            "Failed to generate package info for " + apexFile.getAbsolutePath());
+                }
+                final PackageInfo existingApexPkg = getPackageInfo(newApexPkg.packageName,
+                        MATCH_ACTIVE_PACKAGE);
+                if (existingApexPkg == null) {
+                    Slog.w(TAG, "Attempting to install new APEX package " + newApexPkg.packageName);
+                    throw new PackageManagerException(PackageManager.INSTALL_FAILED_PACKAGE_CHANGED,
+                            "It is forbidden to install new APEX packages");
+                }
+                checkApexSignature(existingApexPkg, newApexPkg);
+                checkDowngrade(existingApexPkg, newApexPkg);
+                ApexInfo apexInfo = waitForApexService().installAndActivatePackage(
+                        apexFile.getAbsolutePath());
+                final ParsedPackage parsedPackage2 = packageParser.parsePackage(
+                        new File(apexInfo.modulePath), flags, /* useCaches= */ false);
+                final PackageInfo finalApexPkg = PackageInfoWithoutStateUtils.generate(
+                        parsedPackage2, apexInfo, flags);
+                // Installation was successful, time to update mAllPackagesCache
+                synchronized (mLock) {
+                    if (isFactory(existingApexPkg)) {
+                        existingApexPkg.applicationInfo.flags &= ~ApplicationInfo.FLAG_INSTALLED;
+                        mAllPackagesCache.add(finalApexPkg);
+                    } else {
+                        for (int i = 0, size = mAllPackagesCache.size(); i < size; i++) {
+                            if (mAllPackagesCache.get(i).equals(existingApexPkg)) {
+                                mAllPackagesCache.set(i, finalApexPkg);
+                                break;
+                            }
+                        }
+                    }
+                }
             } catch (RemoteException e) {
                 throw new PackageManagerException(PackageManager.INSTALL_FAILED_INTERNAL_ERROR,
                         "apexservice not available");
@@ -1201,13 +1282,14 @@ public abstract class ApexManager {
         }
 
         @Override
-        void reportErrorWithApkInApex(String scanDirPath) {
+        void reportErrorWithApkInApex(String scanDirPath, String errorMsg) {
             // No-op
         }
 
         @Override
-        boolean isApkInApexInstallSuccess(String apexPackageName) {
-            return true;
+        @Nullable
+        String getApkInApexInstallError(String apexPackageName) {
+            return null;
         }
 
         @Override
@@ -1262,7 +1344,7 @@ public abstract class ApexManager {
         }
 
         @Override
-        void installPackage(String packagePath) {
+        void installPackage(File apexFile, PackageParser2 packageParser) {
             throw new UnsupportedOperationException("APEX updates are not supported");
         }
 

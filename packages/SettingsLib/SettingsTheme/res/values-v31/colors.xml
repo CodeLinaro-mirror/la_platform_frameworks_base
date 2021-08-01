@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Copyright (C) 2020 The Android Open Source Project
+  Copyright (C) 2021 The Android Open Source Project
 
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
@@ -22,12 +22,24 @@
     <!-- Material next state off color-->
     <color name="settingslib_state_off_color">@android:color/system_accent2_100</color>
 
+    <!-- Material next thumb disable color-->
+    <color name="settingslib_thumb_disabled_color">@android:color/system_neutral2_100</color>
+
     <!-- Material next thumb off color-->
-    <color name="settingslib_thumb_off_color">@android:color/system_neutral2_100</color>
+    <color name="settingslib_thumb_off_color">@android:color/system_neutral2_300</color>
 
     <!-- Material next track on color-->
     <color name="settingslib_track_on_color">@android:color/system_accent1_600</color>
 
     <!-- Material next track off color-->
-    <color name="settingslib_track_off_color">@android:color/system_neutral2_600</color>
+    <color name="settingslib_track_off_color">@color/settingslib_switch_track_off</color>
+
+    <!-- Dialog accent color -->
+    <color name="settingslib_dialog_accent">@android:color/system_accent1_600</color>
+    <!-- Dialog background color -->
+    <color name="settingslib_dialog_background">@*android:color/surface_light</color>
+    <!-- Dialog error color. -->
+    <color name="settingslib_dialog_colorError">#d93025</color> <!-- Red 600 -->
+
+    <color name="settingslib_colorSurfaceVariant">@android:color/system_neutral2_100</color>
 </resources>

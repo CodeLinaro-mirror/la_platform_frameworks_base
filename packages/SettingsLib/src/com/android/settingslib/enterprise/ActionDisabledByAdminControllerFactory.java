@@ -20,6 +20,11 @@ import static android.app.admin.DevicePolicyManager.DEVICE_OWNER_TYPE_FINANCED;
 
 import android.app.admin.DevicePolicyManager;
 import android.content.Context;
+import android.hardware.biometrics.BiometricAuthenticator;
+import android.hardware.biometrics.ParentalControlsUtilsInternal;
+import android.os.UserHandle;
+import android.os.UserManager;
+import android.text.TextUtils;
 
 /**
  * A factory that returns the relevant instance of {@link ActionDisabledByAdminController}.
@@ -28,12 +33,32 @@ public final class ActionDisabledByAdminControllerFactory {
 
     /**
      * Returns the relevant instance of {@link ActionDisabledByAdminController}.
+     * @param userHandle user on which to launch the help page, if necessary
      */
     public static ActionDisabledByAdminController createInstance(Context context,
-            DeviceAdminStringProvider stringProvider) {
-        return isFinancedDevice(context)
-                ? new FinancedDeviceActionDisabledByAdminController(stringProvider)
-                : new ManagedDeviceActionDisabledByAdminController(stringProvider);
+            String restriction, DeviceAdminStringProvider stringProvider,
+            UserHandle userHandle) {
+        if (doesBiometricRequireParentalConsent(context, restriction)) {
+            return new BiometricActionDisabledByAdminController(stringProvider);
+        } else if (isFinancedDevice(context)) {
+            return new FinancedDeviceActionDisabledByAdminController(stringProvider);
+        } else {
+            return new ManagedDeviceActionDisabledByAdminController(stringProvider, userHandle);
+        }
+    }
+
+    /**
+     * @return true if the restriction == UserManager.DISALLOW_BIOMETRIC and parental consent
+     * is required.
+     */
+    private static boolean doesBiometricRequireParentalConsent(Context context,
+            String restriction) {
+        if (!TextUtils.equals(UserManager.DISALLOW_BIOMETRIC, restriction)) {
+            return false;
+        }
+        DevicePolicyManager dpm = context.getSystemService(DevicePolicyManager.class);
+        return ParentalControlsUtilsInternal.parentConsentRequired(context, dpm,
+                BiometricAuthenticator.TYPE_ANY_BIOMETRIC, new UserHandle(UserHandle.myUserId()));
     }
 
     private static boolean isFinancedDevice(Context context) {

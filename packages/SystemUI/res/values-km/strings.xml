@@ -666,9 +666,11 @@
     <string name="status_bar_ethernet" msgid="5690979758988647484">"អ៊ីសឺរណិត"</string>
     <string name="status_bar_alarm" msgid="87160847643623352">"ម៉ោងរោទ៍"</string>
     <string name="wallet_title" msgid="5369767670735827105">"កាបូប"</string>
+    <string name="wallet_empty_state_label" msgid="7776761245237530394">"ធ្វើការ​រៀបចំ ដើម្បី​ធ្វើការទិញ​កាន់តែលឿន​ជាងមុន សុវត្ថិភាព​ជាងមុន ដោយ​ប្រើ​ទូរសព្ទ​របស់អ្នក"</string>
     <string name="wallet_app_button_label" msgid="7123784239111190992">"បង្ហាញ​ទាំងអស់"</string>
     <string name="wallet_action_button_label_unlock" msgid="8663239748726774487">"ដោះសោដើម្បីបង់ប្រាក់"</string>
-    <string name="wallet_secondary_label_no_card" msgid="1282609666895946317">"មិន​បាន​រៀបចំទេ"</string>
+    <string name="wallet_secondary_label_no_card" msgid="530725155985223497">"បញ្ចូល​កាត"</string>
+    <string name="wallet_secondary_label_updating" msgid="5726130686114928551">"កំពុង​ធ្វើ​បច្ចុប្បន្នភាព"</string>
     <string name="wallet_secondary_label_device_locked" msgid="5175862019125370506">"ដោះសោដើម្បីប្រើប្រាស់"</string>
     <string name="wallet_error_generic" msgid="257704570182963611">"មានបញ្ហា​ក្នុងការទាញយក​កាត​របស់អ្នក សូម​ព្យាយាមម្ដងទៀត​នៅពេលក្រោយ"</string>
     <string name="wallet_lockscreen_settings_label" msgid="3539105300870383570">"ការកំណត់អេក្រង់ចាក់សោ"</string>
@@ -750,7 +752,7 @@
     <string name="notification_unblockable_desc" msgid="2073030886006190804">"មិនអាច​កែប្រែ​ការជូនដំណឹង​ទាំងនេះ​បានទេ។"</string>
     <string name="notification_multichannel_desc" msgid="7414593090056236179">"មិនអាច​កំណត់​រចនាសម្ព័ន្ធ​ក្រុមការជូនដំណឹងនេះ​នៅទីនេះ​បានទេ"</string>
     <string name="notification_delegate_header" msgid="1264510071031479920">"ការជូនដំណឹង​ជា​ប្រូកស៊ី"</string>
-    <string name="notification_channel_dialog_title" msgid="6856514143093200019">"ការជូន​ដំណឹងទាំងអស់​របស់ <xliff:g id="APP_NAME">%1$s</xliff:g>"</string>
+    <string name="notification_channel_dialog_title" msgid="6856514143093200019">"ការជូន​ដំណឹងទាំងអស់​ពី <xliff:g id="APP_NAME">%1$s</xliff:g>"</string>
     <string name="see_more_title" msgid="7409317011708185729">"មើលច្រើនទៀត"</string>
     <string name="appops_camera" msgid="5215967620896725715">"កម្មវិធីនេះ​កំពុងប្រើ​កាមេរ៉ា។"</string>
     <string name="appops_microphone" msgid="8805468338613070149">"កម្មវិធីនេះ​កំពុងប្រើ​មីក្រូហ្វូន។"</string>
@@ -1033,6 +1035,7 @@
     <string name="magnification_mode_switch_state_window" msgid="8597100249594076965">"ពង្រីក​ផ្នែកនៃ​អេក្រង់"</string>
     <string name="magnification_mode_switch_click_label" msgid="2786203505805898199">"ប៊ូតុងបិទបើក"</string>
     <string name="accessibility_floating_button_migration_tooltip" msgid="4431046858918714564">"ប៊ូតុង​ភាពងាយស្រួល​បានជំនួស​ចលនាភាពងាយស្រួល\n\n"<annotation id="link">"មើល​ការកំណត់"</annotation></string>
+    <string name="accessibility_floating_button_switch_migration_tooltip" msgid="6248529129221218770">"អ្នកអាចប្ដូរពីចលនាភាពងាយស្រួលទៅប៊ូតុង\n\n"<annotation id="link">"ការកំណត់"</annotation></string>
     <string name="accessibility_floating_button_docking_tooltip" msgid="6814897496767461517">"ផ្លាស់ទី​ប៊ូតុង​ទៅគែម ដើម្បីលាក់វា​ជាបណ្ដោះអាសន្ន"</string>
     <string name="accessibility_floating_button_action_move_top_left" msgid="6253520703618545705">"ផ្លាស់ទីទៅខាងលើផ្នែកខាងឆ្វេង"</string>
     <string name="accessibility_floating_button_action_move_top_right" msgid="6106225581993479711">"ផ្លាស់ទីទៅខាងលើផ្នែកខាងស្ដាំ"</string>
@@ -1041,7 +1044,7 @@
     <string name="accessibility_floating_button_action_move_to_edge_and_hide_to_half" msgid="662401168245782658">"ផ្លាស់ទីទៅផ្នែកខាងចុង រួចលាក់"</string>
     <string name="accessibility_floating_button_action_move_out_edge_and_show" msgid="8354760891651663326">"ផ្លាស់ទីចេញពីផ្នែកខាងចុង រួចបង្ហាញ"</string>
     <string name="accessibility_floating_button_action_double_tap_to_toggle" msgid="7976492639670692037">"បិទ/បើក"</string>
-    <string name="quick_controls_title" msgid="7095074621086860062">"ការគ្រប់គ្រង​ផ្ទះ"</string>
+    <string name="quick_controls_title" msgid="6839108006171302273">"ផ្ទាំងគ្រប់គ្រងឧបករណ៍"</string>
     <string name="controls_providers_title" msgid="6879775889857085056">"ជ្រើសរើស​កម្មវិធីដែលត្រូវបញ្ចូល​ផ្ទាំងគ្រប់គ្រង"</string>
     <plurals name="controls_number_of_favorites" formatted="false" msgid="1057347832073807380">
       <item quantity="other">បានបញ្ចូល​ការគ្រប់គ្រង <xliff:g id="NUMBER_1">%s</xliff:g>។</item>
@@ -1084,7 +1087,11 @@
     <string name="controls_media_dismiss_button" msgid="9081375542265132213">"ច្រាន​ចោល"</string>
     <string name="controls_media_resume" msgid="1933520684481586053">"បន្ត"</string>
     <string name="controls_media_settings_button" msgid="5815790345117172504">"ការកំណត់"</string>
+    <string name="controls_media_playing_item_description" msgid="4531853311504359098">"<xliff:g id="SONG_NAME">%1$s</xliff:g> ច្រៀងដោយ <xliff:g id="ARTIST_NAME">%2$s</xliff:g> កំពុងចាក់ពី <xliff:g id="APP_LABEL">%3$s</xliff:g>"</string>
     <string name="controls_media_smartspace_rec_title" msgid="1699818353932537407">"ចាក់"</string>
+    <string name="controls_media_smartspace_rec_description" msgid="4136242327044070732">"បើក <xliff:g id="APP_LABEL">%1$s</xliff:g>"</string>
+    <string name="controls_media_smartspace_rec_item_description" msgid="2189271793070870883">"ចាក់ <xliff:g id="SONG_NAME">%1$s</xliff:g> ច្រៀងដោយ <xliff:g id="ARTIST_NAME">%2$s</xliff:g> ពី <xliff:g id="APP_LABEL">%3$s</xliff:g>"</string>
+    <string name="controls_media_smartspace_rec_item_no_artist_description" msgid="8703614798636591077">"ចាក់ <xliff:g id="SONG_NAME">%1$s</xliff:g> ពី <xliff:g id="APP_LABEL">%2$s</xliff:g>"</string>
     <string name="controls_error_timeout" msgid="794197289772728958">"អសកម្ម ពិនិត្យមើល​កម្មវិធី"</string>
     <string name="controls_error_retryable" msgid="864025882878378470">"បញ្ហា កំពុងព្យាយាម​ម្ដងទៀត…"</string>
     <string name="controls_error_removed" msgid="6675638069846014366">"រកមិន​ឃើញទេ"</string>
@@ -1109,7 +1116,7 @@
     <string name="basic_status" msgid="2315371112182658176">"បើកការសន្ទនា"</string>
     <string name="select_conversation_title" msgid="6716364118095089519">"ធាតុ​ក្រាហ្វិកនៃការសន្ទនា"</string>
     <string name="select_conversation_text" msgid="3376048251434956013">"ចុចការសន្ទនា ដើម្បីបញ្ចូលវាទៅក្នុងអេក្រង់ដើមរបស់អ្នក"</string>
-    <string name="no_conversations_text" msgid="7362374212649891057">"ត្រឡប់មក​មើលនៅទីនេះវិញ នៅពេលអ្នក​ទទួលបានសារ​មួយចំនួន"</string>
+    <string name="no_conversations_text" msgid="5354115541282395015">"ការសន្ទនាថ្មីៗរបស់អ្នក​នឹងបង្ហាញ​នៅទីនេះ"</string>
     <string name="priority_conversations" msgid="3967482288896653039">"ការសន្ទនា​អាទិភាព"</string>
     <string name="recent_conversations" msgid="8531874684782574622">"ការសន្ទនាថ្មីៗ"</string>
     <string name="okay" msgid="6490552955618608554">"យល់ព្រម"</string>
@@ -1138,8 +1145,11 @@
     <string name="messages_count_overflow_indicator" msgid="7850934067082006043">"<xliff:g id="NUMBER">%d</xliff:g>+"</string>
     <string name="people_tile_description" msgid="8154966188085545556">"មើលព័ត៌មាន​ថ្មីៗ​អំពីស្ថានភាព ការខកខាន​ទទួល និងសារថ្មីៗ"</string>
     <string name="people_tile_title" msgid="6589377493334871272">"ការ​សន្ទនា"</string>
-    <string name="new_notification_text_content_description" msgid="5574393603145263727">"<xliff:g id="NAME">%1$s</xliff:g> បានផ្ញើសារ"</string>
+    <string name="paused_by_dnd" msgid="7856941866433556428">"បានផ្អាក​ដោយមុខងារ​កុំរំខាន"</string>
+    <string name="new_notification_text_content_description" msgid="2915029960094389291">"<xliff:g id="NAME">%1$s</xliff:g> បានផ្ញើសារ៖ <xliff:g id="NOTIFICATION">%2$s</xliff:g>"</string>
     <string name="new_notification_image_content_description" msgid="6017506886810813123">"<xliff:g id="NAME">%1$s</xliff:g> បាន​ផ្ញើ​រូបភាព"</string>
+    <string name="new_status_content_description" msgid="6046637888641308327">"<xliff:g id="NAME">%1$s</xliff:g> មាន​បច្ចុប្បន្នភាព​ស្ថានភាព៖ <xliff:g id="STATUS">%2$s</xliff:g>"</string>
+    <string name="person_available" msgid="2318599327472755472">"មាន"</string>
     <string name="battery_state_unknown_notification_title" msgid="8464703640483773454">"មានបញ្ហាក្នុង​ការអាន​ឧបករណ៍រង្វាស់កម្រិតថ្មរបស់អ្នក"</string>
     <string name="battery_state_unknown_notification_text" msgid="13720937839460899">"ចុចដើម្បីទទួលបាន​ព័ត៌មានបន្ថែម"</string>
     <string name="qs_alarm_tile_no_alarm" msgid="4826472008616807923">"មិនបាន​កំណត់​ម៉ោងរោទ៍​ទេ"</string>

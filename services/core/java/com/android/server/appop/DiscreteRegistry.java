@@ -16,6 +16,10 @@
 
 package com.android.server.appop;
 
+import static android.app.AppOpsManager.ATTRIBUTION_CHAIN_ID_NONE;
+import static android.app.AppOpsManager.ATTRIBUTION_FLAG_ACCESSOR;
+import static android.app.AppOpsManager.ATTRIBUTION_FLAG_RECEIVER;
+import static android.app.AppOpsManager.ATTRIBUTION_FLAG_TRUSTED;
 import static android.app.AppOpsManager.FILTER_BY_ATTRIBUTION_TAG;
 import static android.app.AppOpsManager.FILTER_BY_OP_NAMES;
 import static android.app.AppOpsManager.FILTER_BY_PACKAGE_NAME;
@@ -26,6 +30,7 @@ import static android.app.AppOpsManager.OP_FINE_LOCATION;
 import static android.app.AppOpsManager.OP_FLAGS_ALL;
 import static android.app.AppOpsManager.OP_FLAG_SELF;
 import static android.app.AppOpsManager.OP_FLAG_TRUSTED_PROXIED;
+import static android.app.AppOpsManager.OP_FLAG_TRUSTED_PROXY;
 import static android.app.AppOpsManager.OP_NONE;
 import static android.app.AppOpsManager.OP_PHONE_CALL_CAMERA;
 import static android.app.AppOpsManager.OP_PHONE_CALL_MICROPHONE;
@@ -57,7 +62,9 @@ import com.android.internal.util.XmlUtils;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
 import java.time.Duration;
@@ -68,6 +75,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * This class manages information about recent accesses to ops for permission usage timeline.
@@ -137,6 +146,7 @@ final class DiscreteRegistry {
 
     private static final String TAG_HISTORY = "h";
     private static final String ATTR_VERSION = "v";
+    private static final String ATTR_LARGEST_CHAIN_ID = "lc";
     private static final int CURRENT_VERSION = 1;
 
     private static final String TAG_UID = "u";
@@ -156,8 +166,11 @@ final class DiscreteRegistry {
     private static final String ATTR_NOTE_DURATION = "nd";
     private static final String ATTR_UID_STATE = "us";
     private static final String ATTR_FLAGS = "f";
+    private static final String ATTR_ATTRIBUTION_FLAGS = "af";
+    private static final String ATTR_CHAIN_ID = "ci";
 
-    private static final int OP_FLAGS_DISCRETE = OP_FLAG_SELF | OP_FLAG_TRUSTED_PROXIED;
+    private static final int OP_FLAGS_DISCRETE = OP_FLAG_SELF | OP_FLAG_TRUSTED_PROXIED
+            | OP_FLAG_TRUSTED_PROXY;
 
     // Lock for read/write access to on disk state
     private final Object mOnDiskLock = new Object();
@@ -178,6 +191,16 @@ final class DiscreteRegistry {
 
     DiscreteRegistry(Object inMemoryLock) {
         mInMemoryLock = inMemoryLock;
+        synchronized (mOnDiskLock) {
+            mDiscreteAccessDir = new File(
+                    new File(Environment.getDataSystemDirectory(), "appops"),
+                    "discrete");
+            createDiscreteAccessDirLocked();
+            int largestChainId = readLargestChainIdFromDiskLocked();
+            synchronized (mInMemoryLock) {
+                mDiscreteOps = new DiscreteOps(largestChainId);
+            }
+        }
     }
 
     void systemReady() {
@@ -186,15 +209,6 @@ final class DiscreteRegistry {
                     setDiscreteHistoryParameters(p);
                 });
         setDiscreteHistoryParameters(DeviceConfig.getProperties(DeviceConfig.NAMESPACE_PRIVACY));
-        synchronized (mOnDiskLock) {
-            synchronized (mInMemoryLock) {
-                mDiscreteAccessDir = new File(
-                        new File(Environment.getDataSystemDirectory(), "appops"),
-                        "discrete");
-                createDiscreteAccessDirLocked();
-                mDiscreteOps = new DiscreteOps();
-            }
-        }
     }
 
     private void setDiscreteHistoryParameters(DeviceConfig.Properties p) {
@@ -227,13 +241,14 @@ final class DiscreteRegistry {
 
     void recordDiscreteAccess(int uid, String packageName, int op, @Nullable String attributionTag,
             @AppOpsManager.OpFlags int flags, @AppOpsManager.UidState int uidState, long accessTime,
-            long accessDuration) {
+            long accessDuration, @AppOpsManager.AttributionFlags int attributionFlags,
+            int attributionChainId) {
         if (!isDiscreteOp(op, flags)) {
             return;
         }
         synchronized (mInMemoryLock) {
             mDiscreteOps.addDiscreteAccess(op, uid, packageName, attributionTag, flags, uidState,
-                    accessTime, accessDuration);
+                    accessTime, accessDuration, attributionFlags, attributionChainId);
         }
     }
 
@@ -246,7 +261,7 @@ final class DiscreteRegistry {
             DiscreteOps discreteOps;
             synchronized (mInMemoryLock) {
                 discreteOps = mDiscreteOps;
-                mDiscreteOps = new DiscreteOps();
+                mDiscreteOps = new DiscreteOps(discreteOps.mChainIdOffset);
                 mCachedOps = null;
             }
             deleteOldDiscreteHistoryFilesLocked();
@@ -260,14 +275,108 @@ final class DiscreteRegistry {
             long beginTimeMillis, long endTimeMillis,
             @AppOpsManager.HistoricalOpsRequestFilter int filter, int uidFilter,
             @Nullable String packageNameFilter, @Nullable String[] opNamesFilter,
-            @Nullable String attributionTagFilter, @AppOpsManager.OpFlags int flagsFilter) {
+            @Nullable String attributionTagFilter, @AppOpsManager.OpFlags int flagsFilter,
+            Set<String> attributionExemptPkgs) {
+        boolean assembleChains = attributionExemptPkgs != null;
         DiscreteOps discreteOps = getAllDiscreteOps();
+        ArrayMap<Integer, AttributionChain> attributionChains = new ArrayMap<>();
+        if (assembleChains) {
+            attributionChains = createAttributionChains(discreteOps, attributionExemptPkgs);
+        }
         beginTimeMillis = max(beginTimeMillis, Instant.now().minus(sDiscreteHistoryCutoff,
                 ChronoUnit.MILLIS).toEpochMilli());
         discreteOps.filter(beginTimeMillis, endTimeMillis, filter, uidFilter, packageNameFilter,
-                opNamesFilter, attributionTagFilter, flagsFilter);
-        discreteOps.applyToHistoricalOps(result);
+                opNamesFilter, attributionTagFilter, flagsFilter, attributionChains);
+        discreteOps.applyToHistoricalOps(result, attributionChains);
         return;
+    }
+
+    private int readLargestChainIdFromDiskLocked() {
+        final File[] files = mDiscreteAccessDir.listFiles();
+        if (files != null && files.length > 0) {
+            File latestFile = null;
+            long latestFileTimestamp = 0;
+            for (File f : files) {
+                final String fileName = f.getName();
+                if (!fileName.endsWith(DISCRETE_HISTORY_FILE_SUFFIX)) {
+                    continue;
+                }
+                long timestamp = Long.valueOf(fileName.substring(0,
+                        fileName.length() - DISCRETE_HISTORY_FILE_SUFFIX.length()));
+                if (latestFileTimestamp < timestamp) {
+                    latestFile = f;
+                    latestFileTimestamp = timestamp;
+                }
+            }
+            if (latestFile == null) {
+                return 0;
+            }
+            FileInputStream stream;
+            try {
+                stream = new FileInputStream(latestFile);
+            } catch (FileNotFoundException e) {
+                return 0;
+            }
+            try {
+                TypedXmlPullParser parser = Xml.resolvePullParser(stream);
+                XmlUtils.beginDocument(parser, TAG_HISTORY);
+
+                final int largestChainId = parser.getAttributeInt(null, ATTR_LARGEST_CHAIN_ID, 0);
+                return largestChainId;
+            } catch (Throwable t) {
+                return 0;
+            } finally {
+                try {
+                    stream.close();
+                } catch (IOException e) {
+                }
+            }
+        } else {
+            return 0;
+        }
+    }
+
+    private ArrayMap<Integer, AttributionChain> createAttributionChains(
+            DiscreteOps discreteOps, Set<String> attributionExemptPkgs) {
+        ArrayMap<Integer, AttributionChain> chains = new ArrayMap<>();
+        int nUids = discreteOps.mUids.size();
+        for (int uidNum = 0; uidNum < nUids; uidNum++) {
+            ArrayMap<String, DiscretePackageOps> pkgs = discreteOps.mUids.valueAt(uidNum).mPackages;
+            int uid = discreteOps.mUids.keyAt(uidNum);
+            int nPackages = pkgs.size();
+            for (int pkgNum = 0; pkgNum < nPackages; pkgNum++) {
+                ArrayMap<Integer, DiscreteOp> ops = pkgs.valueAt(pkgNum).mPackageOps;
+                String pkg = pkgs.keyAt(pkgNum);
+                int nOps = ops.size();
+                for (int opNum = 0; opNum < nOps; opNum++) {
+                    ArrayMap<String, List<DiscreteOpEvent>> attrOps =
+                            ops.valueAt(opNum).mAttributedOps;
+                    int op = ops.keyAt(opNum);
+                    int nAttrOps = attrOps.size();
+                    for (int attrOpNum = 0; attrOpNum < nAttrOps; attrOpNum++) {
+                        List<DiscreteOpEvent> opEvents = attrOps.valueAt(attrOpNum);
+                        String attributionTag = attrOps.keyAt(attrOpNum);
+                        int nOpEvents = opEvents.size();
+                        for (int opEventNum = 0; opEventNum < nOpEvents; opEventNum++) {
+                            DiscreteOpEvent event = opEvents.get(opEventNum);
+                            if (event == null
+                                    || event.mAttributionChainId == ATTRIBUTION_CHAIN_ID_NONE
+                                    || (event.mAttributionFlags & ATTRIBUTION_FLAG_TRUSTED) == 0) {
+                                continue;
+                            }
+
+                            if (!chains.containsKey(event.mAttributionChainId)) {
+                                chains.put(event.mAttributionChainId,
+                                        new AttributionChain(attributionExemptPkgs));
+                            }
+                            chains.get(event.mAttributionChainId)
+                                    .addEvent(pkg, uid, attributionTag, op, event);
+                        }
+                    }
+                }
+            }
+        }
+        return chains;
     }
 
     private void readDiscreteOpsFromDisk(DiscreteOps discreteOps) {
@@ -296,7 +405,7 @@ final class DiscreteRegistry {
     void clearHistory() {
         synchronized (mOnDiskLock) {
             synchronized (mInMemoryLock) {
-                mDiscreteOps = new DiscreteOps();
+                mDiscreteOps = new DiscreteOps(0);
             }
             clearOnDiskHistoryLocked();
         }
@@ -335,7 +444,11 @@ final class DiscreteRegistry {
         String[] opNamesFilter = dumpOp == OP_NONE ? null
                 : new String[]{AppOpsManager.opToPublicName(dumpOp)};
         discreteOps.filter(0, Instant.now().toEpochMilli(), filter, uidFilter, packageNameFilter,
-                opNamesFilter, attributionTagFilter, OP_FLAGS_ALL);
+                opNamesFilter, attributionTagFilter, OP_FLAGS_ALL, new ArrayMap<>());
+        pw.print(prefix);
+        pw.print("Largest chain id: ");
+        pw.print(mDiscreteOps.mLargestChainId);
+        pw.println();
         discreteOps.dump(pw, sdf, date, prefix, nDiscreteOps);
     }
 
@@ -346,14 +459,14 @@ final class DiscreteRegistry {
     }
 
     private DiscreteOps getAllDiscreteOps() {
-        DiscreteOps discreteOps = new DiscreteOps();
+        DiscreteOps discreteOps = new DiscreteOps(0);
 
         synchronized (mOnDiskLock) {
             synchronized (mInMemoryLock) {
                 discreteOps.merge(mDiscreteOps);
             }
             if (mCachedOps == null) {
-                mCachedOps = new DiscreteOps();
+                mCachedOps = new DiscreteOps(0);
                 readDiscreteOpsFromDisk(mCachedOps);
             }
             discreteOps.merge(mCachedOps);
@@ -361,11 +474,143 @@ final class DiscreteRegistry {
         }
     }
 
+    /**
+     * Represents a chain of usages, each attributing its usage to the one before it
+     */
+    private static final class AttributionChain {
+        private static final class OpEvent {
+            String mPkgName;
+            int mUid;
+            String mAttributionTag;
+            int mOpCode;
+            DiscreteOpEvent mOpEvent;
+
+            OpEvent(String pkgName, int uid, String attributionTag, int opCode,
+                    DiscreteOpEvent event) {
+                mPkgName = pkgName;
+                mUid = uid;
+                mAttributionTag = attributionTag;
+                mOpCode = opCode;
+                mOpEvent = event;
+            }
+
+            public boolean matches(String pkgName, int uid, String attributionTag, int opCode,
+                    DiscreteOpEvent event) {
+                return Objects.equals(pkgName, mPkgName) && mUid == uid
+                        && Objects.equals(attributionTag, mAttributionTag) && mOpCode == opCode
+                        && mOpEvent.mAttributionChainId == event.mAttributionChainId
+                        && mOpEvent.mAttributionFlags == event.mAttributionFlags
+                        && mOpEvent.mNoteTime == event.mNoteTime;
+            }
+
+            public boolean packageOpEquals(OpEvent other) {
+                return Objects.equals(other.mPkgName, mPkgName) && other.mUid == mUid
+                        && Objects.equals(other.mAttributionTag, mAttributionTag)
+                        && mOpCode == other.mOpCode;
+            }
+
+            public boolean equalsExceptDuration(OpEvent other) {
+                if (other.mOpEvent.mNoteDuration == mOpEvent.mNoteDuration) {
+                    return false;
+                }
+                return packageOpEquals(other) && mOpEvent.equalsExceptDuration(other.mOpEvent);
+            }
+        }
+
+        ArrayList<OpEvent> mChain = new ArrayList<>();
+        Set<String> mExemptPkgs;
+        OpEvent mStartEvent = null;
+        OpEvent mLastVisibleEvent = null;
+
+        AttributionChain(Set<String> exemptPkgs) {
+            mExemptPkgs = exemptPkgs;
+        }
+
+        boolean isComplete() {
+            return !mChain.isEmpty() && getStart() != null && isEnd(mChain.get(mChain.size() - 1));
+        }
+
+        boolean isStart(String pkgName, int uid, String attributionTag, int op,
+                DiscreteOpEvent opEvent) {
+            if (mStartEvent == null || opEvent == null) {
+                return false;
+            }
+            return mStartEvent.matches(pkgName, uid, attributionTag, op, opEvent);
+        }
+
+        private OpEvent getStart() {
+            return mChain.isEmpty() || !isStart(mChain.get(0)) ? null : mChain.get(0);
+        }
+
+        private OpEvent getLastVisible() {
+            // Search all nodes but the first one, which is the start node
+            for (int i = mChain.size() - 1; i > 0; i--) {
+                OpEvent event = mChain.get(i);
+                if (!mExemptPkgs.contains(event.mPkgName)) {
+                    return event;
+                }
+            }
+            return null;
+        }
+
+        void addEvent(String pkgName, int uid, String attributionTag, int op,
+                DiscreteOpEvent opEvent) {
+            OpEvent event = new OpEvent(pkgName, uid, attributionTag, op, opEvent);
+
+            // check if we have a matching event, without duration, replacing duration otherwise
+            for (int i = 0; i < mChain.size(); i++) {
+                OpEvent item = mChain.get(i);
+                if (item.equalsExceptDuration(event)) {
+                    if (event.mOpEvent.mNoteDuration != -1) {
+                        item.mOpEvent = event.mOpEvent;
+                    }
+                    return;
+                }
+            }
+
+            if (mChain.isEmpty() || isEnd(event)) {
+                mChain.add(event);
+            } else if (isStart(event)) {
+                mChain.add(0, event);
+
+            } else {
+                for (int i = 0; i < mChain.size(); i++) {
+                    OpEvent currEvent = mChain.get(i);
+                    if ((!isStart(currEvent)
+                            && currEvent.mOpEvent.mNoteTime > event.mOpEvent.mNoteTime)
+                            || i == mChain.size() - 1 && isEnd(currEvent)) {
+                        mChain.add(i, event);
+                        break;
+                    } else if (i == mChain.size() - 1) {
+                        mChain.add(event);
+                        break;
+                    }
+                }
+            }
+            mStartEvent = isComplete() ? getStart() : null;
+            mLastVisibleEvent = isComplete() ? getLastVisible() : null;
+        }
+
+        private boolean isEnd(OpEvent event) {
+            return event != null
+                    && (event.mOpEvent.mAttributionFlags & ATTRIBUTION_FLAG_ACCESSOR) != 0;
+        }
+
+        private boolean isStart(OpEvent event) {
+            return event != null
+                    && (event.mOpEvent.mAttributionFlags & ATTRIBUTION_FLAG_RECEIVER) != 0;
+        }
+    }
+
     private final class DiscreteOps {
         ArrayMap<Integer, DiscreteUidOps> mUids;
+        int mChainIdOffset;
+        int mLargestChainId;
 
-        DiscreteOps() {
+        DiscreteOps(int chainIdOffset) {
             mUids = new ArrayMap<>();
+            mChainIdOffset = chainIdOffset;
+            mLargestChainId = chainIdOffset;
         }
 
         boolean isEmpty() {
@@ -373,6 +618,7 @@ final class DiscreteRegistry {
         }
 
         void merge(DiscreteOps other) {
+            mLargestChainId = max(mLargestChainId, other.mLargestChainId);
             int nUids = other.mUids.size();
             for (int i = 0; i < nUids; i++) {
                 int uid = other.mUids.keyAt(i);
@@ -383,15 +629,29 @@ final class DiscreteRegistry {
 
         void addDiscreteAccess(int op, int uid, @NonNull String packageName,
                 @Nullable String attributionTag, @AppOpsManager.OpFlags int flags,
-                @AppOpsManager.UidState int uidState, long accessTime, long accessDuration) {
+                @AppOpsManager.UidState int uidState, long accessTime, long accessDuration,
+                @AppOpsManager.AttributionFlags int attributionFlags, int attributionChainId) {
+            int offsetChainId = attributionChainId;
+            if (attributionChainId != ATTRIBUTION_CHAIN_ID_NONE) {
+                offsetChainId = attributionChainId + mChainIdOffset;
+                if (offsetChainId > mLargestChainId) {
+                    mLargestChainId = offsetChainId;
+                } else if (offsetChainId < 0) {
+                    // handle overflow
+                    offsetChainId = 0;
+                    mLargestChainId = 0;
+                    mChainIdOffset = -1 * attributionChainId;
+                }
+            }
             getOrCreateDiscreteUidOps(uid).addDiscreteAccess(op, packageName, attributionTag, flags,
-                    uidState, accessTime, accessDuration);
+                    uidState, accessTime, accessDuration, attributionFlags, offsetChainId);
         }
 
         private void filter(long beginTimeMillis, long endTimeMillis,
                 @AppOpsManager.HistoricalOpsRequestFilter int filter, int uidFilter,
                 @Nullable String packageNameFilter, @Nullable String[] opNamesFilter,
-                @Nullable String attributionTagFilter, @AppOpsManager.OpFlags int flagsFilter) {
+                @Nullable String attributionTagFilter, @AppOpsManager.OpFlags int flagsFilter,
+                ArrayMap<Integer, AttributionChain> attributionChains) {
             if ((filter & FILTER_BY_UID) != 0) {
                 ArrayMap<Integer, DiscreteUidOps> uids = new ArrayMap<>();
                 uids.put(uidFilter, getOrCreateDiscreteUidOps(uidFilter));
@@ -400,7 +660,8 @@ final class DiscreteRegistry {
             int nUids = mUids.size();
             for (int i = nUids - 1; i >= 0; i--) {
                 mUids.valueAt(i).filter(beginTimeMillis, endTimeMillis, filter, packageNameFilter,
-                        opNamesFilter, attributionTagFilter, flagsFilter);
+                        opNamesFilter, attributionTagFilter, flagsFilter, mUids.keyAt(i),
+                        attributionChains);
                 if (mUids.valueAt(i).isEmpty()) {
                     mUids.removeAt(i);
                 }
@@ -423,10 +684,11 @@ final class DiscreteRegistry {
             }
         }
 
-        private void applyToHistoricalOps(AppOpsManager.HistoricalOps result) {
+        private void applyToHistoricalOps(AppOpsManager.HistoricalOps result,
+                ArrayMap<Integer, AttributionChain> attributionChains) {
             int nUids = mUids.size();
             for (int i = 0; i < nUids; i++) {
-                mUids.valueAt(i).applyToHistory(result, mUids.keyAt(i));
+                mUids.valueAt(i).applyToHistory(result, mUids.keyAt(i), attributionChains);
             }
         }
 
@@ -436,6 +698,7 @@ final class DiscreteRegistry {
             out.startDocument(null, true);
             out.startTag(null, TAG_HISTORY);
             out.attributeInt(null, ATTR_VERSION, CURRENT_VERSION);
+            out.attributeInt(null, ATTR_LARGEST_CHAIN_ID, mLargestChainId);
 
             int nUids = mUids.size();
             for (int i = 0; i < nUids; i++) {
@@ -470,8 +733,13 @@ final class DiscreteRegistry {
         }
 
         private void readFromFile(File f, long beginTimeMillis) {
+            FileInputStream stream;
             try {
-                FileInputStream stream = new FileInputStream(f);
+                stream = new FileInputStream(f);
+            } catch (FileNotFoundException e) {
+                return;
+            }
+            try {
                 TypedXmlPullParser parser = Xml.resolvePullParser(stream);
                 XmlUtils.beginDocument(parser, TAG_HISTORY);
 
@@ -481,7 +749,6 @@ final class DiscreteRegistry {
                 if (version != CURRENT_VERSION) {
                     throw new IllegalStateException("Dropping unsupported discrete history " + f);
                 }
-
                 int depth = parser.getDepth();
                 while (XmlUtils.nextElementWithin(parser, depth)) {
                     if (TAG_UID.equals(parser.getName())) {
@@ -492,8 +759,12 @@ final class DiscreteRegistry {
             } catch (Throwable t) {
                 Slog.e(TAG, "Failed to read file " + f.getName() + " " + t.getMessage() + " "
                         + Arrays.toString(t.getStackTrace()));
+            } finally {
+                try {
+                    stream.close();
+                } catch (IOException e) {
+                }
             }
-
         }
     }
 
@@ -584,7 +855,8 @@ final class DiscreteRegistry {
         private void filter(long beginTimeMillis, long endTimeMillis,
                 @AppOpsManager.HistoricalOpsRequestFilter int filter,
                 @Nullable String packageNameFilter, @Nullable String[] opNamesFilter,
-                @Nullable String attributionTagFilter, @AppOpsManager.OpFlags int flagsFilter) {
+                @Nullable String attributionTagFilter, @AppOpsManager.OpFlags int flagsFilter,
+                int currentUid, ArrayMap<Integer, AttributionChain> attributionChains) {
             if ((filter & FILTER_BY_PACKAGE_NAME) != 0) {
                 ArrayMap<String, DiscretePackageOps> packages = new ArrayMap<>();
                 packages.put(packageNameFilter, getOrCreateDiscretePackageOps(packageNameFilter));
@@ -593,7 +865,8 @@ final class DiscreteRegistry {
             int nPackages = mPackages.size();
             for (int i = nPackages - 1; i >= 0; i--) {
                 mPackages.valueAt(i).filter(beginTimeMillis, endTimeMillis, filter, opNamesFilter,
-                        attributionTagFilter, flagsFilter);
+                        attributionTagFilter, flagsFilter, currentUid, mPackages.keyAt(i),
+                        attributionChains);
                 if (mPackages.valueAt(i).isEmpty()) {
                     mPackages.removeAt(i);
                 }
@@ -613,9 +886,10 @@ final class DiscreteRegistry {
 
         void addDiscreteAccess(int op, @NonNull String packageName, @Nullable String attributionTag,
                 @AppOpsManager.OpFlags int flags, @AppOpsManager.UidState int uidState,
-                long accessTime, long accessDuration) {
+                long accessTime, long accessDuration,
+                @AppOpsManager.AttributionFlags int attributionFlags, int attributionChainId) {
             getOrCreateDiscretePackageOps(packageName).addDiscreteAccess(op, attributionTag, flags,
-                    uidState, accessTime, accessDuration);
+                    uidState, accessTime, accessDuration, attributionFlags, attributionChainId);
         }
 
         private DiscretePackageOps getOrCreateDiscretePackageOps(String packageName) {
@@ -627,10 +901,12 @@ final class DiscreteRegistry {
             return result;
         }
 
-        private void applyToHistory(AppOpsManager.HistoricalOps result, int uid) {
+        private void applyToHistory(AppOpsManager.HistoricalOps result, int uid,
+                @NonNull ArrayMap<Integer, AttributionChain> attributionChains) {
             int nPackages = mPackages.size();
             for (int i = 0; i < nPackages; i++) {
-                mPackages.valueAt(i).applyToHistory(result, uid, mPackages.keyAt(i));
+                mPackages.valueAt(i).applyToHistory(result, uid, mPackages.keyAt(i),
+                        attributionChains);
             }
         }
 
@@ -680,9 +956,10 @@ final class DiscreteRegistry {
 
         void addDiscreteAccess(int op, @Nullable String attributionTag,
                 @AppOpsManager.OpFlags int flags, @AppOpsManager.UidState int uidState,
-                long accessTime, long accessDuration) {
+                long accessTime, long accessDuration,
+                @AppOpsManager.AttributionFlags int attributionFlags, int attributionChainId) {
             getOrCreateDiscreteOp(op).addDiscreteAccess(attributionTag, flags, uidState, accessTime,
-                    accessDuration);
+                    accessDuration, attributionFlags, attributionChainId);
         }
 
         void merge(DiscretePackageOps other) {
@@ -697,7 +974,8 @@ final class DiscreteRegistry {
         private void filter(long beginTimeMillis, long endTimeMillis,
                 @AppOpsManager.HistoricalOpsRequestFilter int filter,
                 @Nullable String[] opNamesFilter, @Nullable String attributionTagFilter,
-                @AppOpsManager.OpFlags int flagsFilter) {
+                @AppOpsManager.OpFlags int flagsFilter, int currentUid, String currentPkgName,
+                ArrayMap<Integer, AttributionChain> attributionChains) {
             int nOps = mPackageOps.size();
             for (int i = nOps - 1; i >= 0; i--) {
                 int opId = mPackageOps.keyAt(i);
@@ -707,7 +985,8 @@ final class DiscreteRegistry {
                     continue;
                 }
                 mPackageOps.valueAt(i).filter(beginTimeMillis, endTimeMillis, filter,
-                        attributionTagFilter, flagsFilter);
+                        attributionTagFilter, flagsFilter, currentUid, currentPkgName,
+                        mPackageOps.keyAt(i), attributionChains);
                 if (mPackageOps.valueAt(i).isEmpty()) {
                     mPackageOps.removeAt(i);
                 }
@@ -731,11 +1010,12 @@ final class DiscreteRegistry {
         }
 
         private void applyToHistory(AppOpsManager.HistoricalOps result, int uid,
-                @NonNull String packageName) {
+                @NonNull String packageName,
+                @NonNull ArrayMap<Integer, AttributionChain> attributionChains) {
             int nPackageOps = mPackageOps.size();
             for (int i = 0; i < nPackageOps; i++) {
                 mPackageOps.valueAt(i).applyToHistory(result, uid, packageName,
-                        mPackageOps.keyAt(i));
+                        mPackageOps.keyAt(i), attributionChains);
             }
         }
 
@@ -794,7 +1074,9 @@ final class DiscreteRegistry {
 
         private void filter(long beginTimeMillis, long endTimeMillis,
                 @AppOpsManager.HistoricalOpsRequestFilter int filter,
-                @Nullable String attributionTagFilter, @AppOpsManager.OpFlags int flagsFilter) {
+                @Nullable String attributionTagFilter, @AppOpsManager.OpFlags int flagsFilter,
+                int currentUid, String currentPkgName, int currentOp,
+                ArrayMap<Integer, AttributionChain> attributionChains) {
             if ((filter & FILTER_BY_ATTRIBUTION_TAG) != 0) {
                 ArrayMap<String, List<DiscreteOpEvent>> attributedOps = new ArrayMap<>();
                 attributedOps.put(attributionTagFilter,
@@ -806,7 +1088,9 @@ final class DiscreteRegistry {
             for (int i = nTags - 1; i >= 0; i--) {
                 String tag = mAttributedOps.keyAt(i);
                 List<DiscreteOpEvent> list = mAttributedOps.valueAt(i);
-                list = filterEventsList(list, beginTimeMillis, endTimeMillis, flagsFilter);
+                list = filterEventsList(list, beginTimeMillis, endTimeMillis, flagsFilter,
+                        currentUid, currentPkgName, currentOp, mAttributedOps.keyAt(i),
+                        attributionChains);
                 mAttributedOps.put(tag, list);
                 if (list.size() == 0) {
                     mAttributedOps.removeAt(i);
@@ -823,37 +1107,39 @@ final class DiscreteRegistry {
                 for (int j = 0; j < n; j++) {
                     DiscreteOpEvent event = list.get(j);
                     list.set(j, new DiscreteOpEvent(event.mNoteTime - offset, event.mNoteDuration,
-                            event.mUidState, event.mOpFlag));
+                            event.mUidState, event.mOpFlag, event.mAttributionFlags,
+                            event.mAttributionChainId));
                 }
             }
         }
 
         void addDiscreteAccess(@Nullable String attributionTag,
                 @AppOpsManager.OpFlags int flags, @AppOpsManager.UidState int uidState,
-                long accessTime, long accessDuration) {
+                long accessTime, long accessDuration,
+                @AppOpsManager.AttributionFlags int attributionFlags, int attributionChainId) {
             List<DiscreteOpEvent> attributedOps = getOrCreateDiscreteOpEventsList(
                     attributionTag);
-            accessTime = accessTime / sDiscreteHistoryQuantization * sDiscreteHistoryQuantization;
-            accessDuration = accessDuration == -1 ? -1
-                    : (accessDuration + sDiscreteHistoryQuantization - 1)
-                            / sDiscreteHistoryQuantization * sDiscreteHistoryQuantization;
 
             int nAttributedOps = attributedOps.size();
             int i = nAttributedOps;
             for (; i > 0; i--) {
                 DiscreteOpEvent previousOp = attributedOps.get(i - 1);
-                if (previousOp.mNoteTime < accessTime) {
+                if (discretizeTimeStamp(previousOp.mNoteTime) < discretizeTimeStamp(accessTime)) {
                     break;
                 }
-                if (previousOp.mOpFlag == flags && previousOp.mUidState == uidState) {
-                    if (accessDuration != previousOp.mNoteDuration) {
+                if (previousOp.mOpFlag == flags && previousOp.mUidState == uidState
+                        && previousOp.mAttributionFlags == attributionFlags
+                        && previousOp.mAttributionChainId == attributionChainId) {
+                    if (discretizeDuration(accessDuration) != discretizeDuration(
+                            previousOp.mNoteDuration)) {
                         break;
                     } else {
                         return;
                     }
                 }
             }
-            attributedOps.add(i, new DiscreteOpEvent(accessTime, accessDuration, uidState, flags));
+            attributedOps.add(i, new DiscreteOpEvent(accessTime, accessDuration, uidState, flags,
+                    attributionFlags, attributionChainId));
         }
 
         private List<DiscreteOpEvent> getOrCreateDiscreteOpEventsList(String attributionTag) {
@@ -866,7 +1152,8 @@ final class DiscreteRegistry {
         }
 
         private void applyToHistory(AppOpsManager.HistoricalOps result, int uid,
-                @NonNull String packageName, int op) {
+                @NonNull String packageName, int op,
+                @NonNull ArrayMap<Integer, AttributionChain> attributionChains) {
             int nOps = mAttributedOps.size();
             for (int i = 0; i < nOps; i++) {
                 String tag = mAttributedOps.keyAt(i);
@@ -874,8 +1161,21 @@ final class DiscreteRegistry {
                 int nEvents = events.size();
                 for (int j = 0; j < nEvents; j++) {
                     DiscreteOpEvent event = events.get(j);
+                    AppOpsManager.OpEventProxyInfo proxy = null;
+                    if (event.mAttributionChainId != ATTRIBUTION_CHAIN_ID_NONE
+                            && attributionChains != null) {
+                        AttributionChain chain = attributionChains.get(event.mAttributionChainId);
+                        if (chain != null && chain.isComplete()
+                                && chain.isStart(packageName, uid, tag, op, event)
+                                && chain.mLastVisibleEvent != null) {
+                            AttributionChain.OpEvent proxyEvent = chain.mLastVisibleEvent;
+                            proxy = new AppOpsManager.OpEventProxyInfo(proxyEvent.mUid,
+                                    proxyEvent.mPkgName, proxyEvent.mAttributionTag);
+                        }
+                    }
                     result.addDiscreteAccess(op, uid, packageName, tag, event.mUidState,
-                            event.mOpFlag, event.mNoteTime, event.mNoteDuration);
+                            event.mOpFlag, discretizeTimeStamp(event.mNoteTime),
+                            discretizeDuration(event.mNoteDuration), proxy);
                 }
             }
         }
@@ -932,11 +1232,15 @@ final class DiscreteRegistry {
                                     -1);
                             int uidState = parser.getAttributeInt(null, ATTR_UID_STATE);
                             int opFlags = parser.getAttributeInt(null, ATTR_FLAGS);
+                            int attributionFlags = parser.getAttributeInt(null,
+                                    ATTR_ATTRIBUTION_FLAGS, AppOpsManager.ATTRIBUTION_FLAGS_NONE);
+                            int attributionChainId = parser.getAttributeInt(null, ATTR_CHAIN_ID,
+                                    AppOpsManager.ATTRIBUTION_CHAIN_ID_NONE);
                             if (noteTime + noteDuration < beginTimeMillis) {
                                 continue;
                             }
                             DiscreteOpEvent event = new DiscreteOpEvent(noteTime, noteDuration,
-                                    uidState, opFlags);
+                                    uidState, opFlags, attributionFlags, attributionChainId);
                             events.add(event);
                         }
                     }
@@ -952,13 +1256,25 @@ final class DiscreteRegistry {
         final long mNoteDuration;
         final @AppOpsManager.UidState int mUidState;
         final @AppOpsManager.OpFlags int mOpFlag;
+        final @AppOpsManager.AttributionFlags int mAttributionFlags;
+        final int mAttributionChainId;
 
         DiscreteOpEvent(long noteTime, long noteDuration, @AppOpsManager.UidState int uidState,
-                @AppOpsManager.OpFlags int opFlag) {
+                @AppOpsManager.OpFlags int opFlag,
+                @AppOpsManager.AttributionFlags int attributionFlags, int attributionChainId) {
             mNoteTime = noteTime;
             mNoteDuration = noteDuration;
             mUidState = uidState;
             mOpFlag = opFlag;
+            mAttributionFlags = attributionFlags;
+            mAttributionChainId = attributionChainId;
+        }
+
+        public boolean equalsExceptDuration(DiscreteOpEvent o) {
+            return mNoteTime == o.mNoteTime && mUidState == o.mUidState && mOpFlag == o.mOpFlag
+                    && mAttributionFlags == o.mAttributionFlags
+                    && mAttributionChainId == o.mAttributionChainId;
+
         }
 
         private void dump(@NonNull PrintWriter pw, @NonNull SimpleDateFormat sdf,
@@ -969,12 +1285,18 @@ final class DiscreteRegistry {
             pw.print("-");
             pw.print(flagsToString(mOpFlag));
             pw.print("] at ");
-            date.setTime(mNoteTime);
+            date.setTime(discretizeTimeStamp(mNoteTime));
             pw.print(sdf.format(date));
             if (mNoteDuration != -1) {
                 pw.print(" for ");
-                pw.print(mNoteDuration);
+                pw.print(discretizeDuration(mNoteDuration));
                 pw.print(" milliseconds ");
+            }
+            if (mAttributionFlags != AppOpsManager.ATTRIBUTION_FLAGS_NONE) {
+                pw.print(" attribution flags=");
+                pw.print(mAttributionFlags);
+                pw.print(" with chainId=");
+                pw.print(mAttributionChainId);
             }
             pw.println();
         }
@@ -983,6 +1305,12 @@ final class DiscreteRegistry {
             out.attributeLong(null, ATTR_NOTE_TIME, mNoteTime);
             if (mNoteDuration != -1) {
                 out.attributeLong(null, ATTR_NOTE_DURATION, mNoteDuration);
+            }
+            if (mAttributionFlags != AppOpsManager.ATTRIBUTION_FLAGS_NONE) {
+                out.attributeInt(null, ATTR_ATTRIBUTION_FLAGS, mAttributionFlags);
+            }
+            if (mAttributionChainId != AppOpsManager.ATTRIBUTION_CHAIN_ID_NONE) {
+                out.attributeInt(null, ATTR_CHAIN_ID, mAttributionChainId);
             }
             out.attributeInt(null, ATTR_UID_STATE, mUidState);
             out.attributeInt(null, ATTR_FLAGS, mOpFlag);
@@ -1031,11 +1359,20 @@ final class DiscreteRegistry {
     }
 
     private static List<DiscreteOpEvent> filterEventsList(List<DiscreteOpEvent> list,
-            long beginTimeMillis, long endTimeMillis, @AppOpsManager.OpFlags int flagsFilter) {
+            long beginTimeMillis, long endTimeMillis, @AppOpsManager.OpFlags int flagsFilter,
+            int currentUid, String currentPackageName, int currentOp, String currentAttrTag,
+            ArrayMap<Integer, AttributionChain> attributionChains) {
         int n = list.size();
         List<DiscreteOpEvent> result = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
             DiscreteOpEvent event = list.get(i);
+            AttributionChain chain = attributionChains.get(event.mAttributionChainId);
+            // If we have an attribution chain, and this event isn't the beginning node, remove it
+            if (chain != null && !chain.isStart(currentPackageName, currentUid, currentAttrTag,
+                    currentOp, event) && chain.isComplete()
+                    && event.mAttributionChainId != ATTRIBUTION_CHAIN_ID_NONE) {
+                continue;
+            }
             if ((event.mOpFlag & flagsFilter) != 0
                     && event.mNoteTime + event.mNoteDuration > beginTimeMillis
                     && event.mNoteTime < endTimeMillis) {
@@ -1053,6 +1390,16 @@ final class DiscreteRegistry {
             return false;
         }
         return true;
+    }
+
+    private static long discretizeTimeStamp(long timeStamp) {
+        return timeStamp / sDiscreteHistoryQuantization * sDiscreteHistoryQuantization;
+
+    }
+
+    private static long discretizeDuration(long duration) {
+        return duration == -1 ? -1 : (duration + sDiscreteHistoryQuantization - 1)
+                        / sDiscreteHistoryQuantization * sDiscreteHistoryQuantization;
     }
 
     void setDebugMode(boolean debugMode) {

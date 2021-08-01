@@ -46,6 +46,7 @@ import android.window.TaskOrganizer;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.protolog.common.ProtoLog;
+import com.android.wm.shell.common.ScreenshotUtils;
 import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.sizecompatui.SizeCompatUIController;
 import com.android.wm.shell.startingsurface.StartingWindowController;
@@ -55,12 +56,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * Unified task organizer for all components in the shell.
  * TODO(b/167582004): may consider consolidating this class and TaskOrganizer
  */
-public class ShellTaskOrganizer extends TaskOrganizer {
+public class ShellTaskOrganizer extends TaskOrganizer implements
+        SizeCompatUIController.SizeCompatUICallback {
 
     // Intentionally using negative numbers here so the positive numbers can be used
     // for task id specific listeners that will be added later.
@@ -156,6 +159,9 @@ public class ShellTaskOrganizer extends TaskOrganizer {
             Context context, @Nullable SizeCompatUIController sizeCompatUI) {
         super(taskOrganizerController, mainExecutor);
         mSizeCompatUI = sizeCompatUI;
+        if (sizeCompatUI != null) {
+            sizeCompatUI.setSizeCompatUICallback(this);
+        }
     }
 
     @Override
@@ -323,6 +329,13 @@ public class ShellTaskOrganizer extends TaskOrganizer {
     }
 
     @Override
+    public void onAppSplashScreenViewRemoved(int taskId) {
+        if (mStartingWindow != null) {
+            mStartingWindow.onAppSplashScreenViewRemoved(taskId);
+        }
+    }
+
+    @Override
     public void onTaskAppeared(RunningTaskInfo taskInfo, SurfaceControl leash) {
         synchronized (mLock) {
             onTaskAppeared(new TaskAppearedInfo(taskInfo, leash));
@@ -341,6 +354,19 @@ public class ShellTaskOrganizer extends TaskOrganizer {
         notifyLocusVisibilityIfNeeded(info.getTaskInfo());
         notifySizeCompatUI(info.getTaskInfo(), listener);
     }
+
+    /**
+     * Take a screenshot of a task.
+     */
+    public void screenshotTask(RunningTaskInfo taskInfo, Rect crop,
+            Consumer<SurfaceControl.ScreenshotHardwareBuffer> consumer) {
+        final TaskAppearedInfo info = mTasks.get(taskInfo.taskId);
+        if (info == null) {
+            return;
+        }
+        ScreenshotUtils.captureLayer(info.getLeash(), crop, consumer);
+    }
+
 
     @Override
     public void onTaskInfoChanged(RunningTaskInfo taskInfo) {
@@ -459,6 +485,17 @@ public class ShellTaskOrganizer extends TaskOrganizer {
         }
     }
 
+    @Override
+    public void onSizeCompatRestartButtonClicked(int taskId) {
+        final TaskAppearedInfo info;
+        synchronized (mLock) {
+            info = mTasks.get(taskId);
+        }
+        if (info != null) {
+            restartTaskTopActivityProcessIfVisible(info.getTaskInfo().token);
+        }
+    }
+
     /**
      * Notifies {@link SizeCompatUIController} about the size compat info changed on the give Task
      * to update the UI accordingly.
@@ -475,15 +512,14 @@ public class ShellTaskOrganizer extends TaskOrganizer {
         // The task is vanished or doesn't support size compat UI, notify to remove size compat UI
         // on this Task if there is any.
         if (taskListener == null || !taskListener.supportSizeCompatUI()
-                || !taskInfo.topActivityInSizeCompat) {
+                || !taskInfo.topActivityInSizeCompat || !taskInfo.isVisible) {
             mSizeCompatUI.onSizeCompatInfoChanged(taskInfo.displayId, taskInfo.taskId,
-                    null /* taskConfig */, null /* sizeCompatActivity*/,
-                    null /* taskListener */);
+                    null /* taskConfig */, null /* taskListener */);
             return;
         }
 
         mSizeCompatUI.onSizeCompatInfoChanged(taskInfo.displayId, taskInfo.taskId,
-                taskInfo.configuration, taskInfo.topActivityToken, taskListener);
+                taskInfo.configuration, taskListener);
     }
 
     private TaskListener getTaskListener(RunningTaskInfo runningTaskInfo) {

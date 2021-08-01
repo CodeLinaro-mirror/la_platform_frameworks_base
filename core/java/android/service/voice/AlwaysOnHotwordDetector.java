@@ -263,6 +263,7 @@ public class AlwaysOnHotwordDetector extends AbstractHotwordDetector {
     private static final int MSG_DETECTION_RESUME = 5;
     private static final int MSG_HOTWORD_REJECTED = 6;
     private static final int MSG_HOTWORD_STATUS_REPORTED = 7;
+    private static final int MSG_PROCESS_RESTARTED = 8;
 
     private final String mText;
     private final Locale mLocale;
@@ -352,6 +353,13 @@ public class AlwaysOnHotwordDetector extends AbstractHotwordDetector {
                 AudioFormat audioFormat, int captureSession, byte[] data) {
             this(triggerAvailable, captureAvailable, audioFormat, captureSession, data, null,
                     null);
+        }
+
+        EventPayload(boolean triggerAvailable, boolean captureAvailable,
+                AudioFormat audioFormat, int captureSession, byte[] data,
+                HotwordDetectedResult hotwordDetectedResult) {
+            this(triggerAvailable, captureAvailable, audioFormat, captureSession, data,
+                    hotwordDetectedResult, null);
         }
 
         EventPayload(AudioFormat audioFormat, HotwordDetectedResult hotwordDetectedResult) {
@@ -1149,7 +1157,8 @@ public class AlwaysOnHotwordDetector extends AbstractHotwordDetector {
         }
 
         @Override
-        public void onKeyphraseDetected(KeyphraseRecognitionEvent event) {
+        public void onKeyphraseDetected(
+                KeyphraseRecognitionEvent event, HotwordDetectedResult result) {
             if (DBG) {
                 Slog.d(TAG, "onDetected(" + event + ")");
             } else {
@@ -1157,7 +1166,7 @@ public class AlwaysOnHotwordDetector extends AbstractHotwordDetector {
             }
             Message.obtain(mHandler, MSG_HOTWORD_DETECTED,
                     new EventPayload(event.triggerInData, event.captureAvailable,
-                            event.captureFormat, event.captureSession, event.data))
+                            event.captureFormat, event.captureSession, event.data, result))
                     .sendToTarget();
         }
         @Override
@@ -1204,6 +1213,12 @@ public class AlwaysOnHotwordDetector extends AbstractHotwordDetector {
             message.arg1 = status;
             message.sendToTarget();
         }
+
+        @Override
+        public void onProcessRestarted() {
+            Slog.i(TAG, "onProcessRestarted");
+            mHandler.sendEmptyMessage(MSG_PROCESS_RESTARTED);
+        }
     }
 
     class MyHandler extends Handler {
@@ -1237,6 +1252,9 @@ public class AlwaysOnHotwordDetector extends AbstractHotwordDetector {
                     break;
                 case MSG_HOTWORD_STATUS_REPORTED:
                     mExternalCallback.onHotwordDetectionServiceInitialized(msg.arg1);
+                    break;
+                case MSG_PROCESS_RESTARTED:
+                    mExternalCallback.onHotwordDetectionServiceRestarted();
                     break;
                 default:
                     super.handleMessage(msg);

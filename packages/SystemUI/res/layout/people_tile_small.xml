@@ -20,11 +20,12 @@
     android:layout_height="match_parent">
 
     <LinearLayout
-        android:id="@+id/item"
+        android:id="@android:id/background"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:layout_gravity="center"
         android:background="@drawable/people_space_tile_view_card"
+        android:clipToOutline="true"
         android:orientation="vertical"
         android:paddingHorizontal="4dp"
         android:paddingTop="6dp"
@@ -40,17 +41,17 @@
 
         <ImageView
             android:id="@+id/predefined_icon"
-            android:tint="?android:attr/textColorTertiary"
+            android:tint="?android:attr/textColorSecondary"
             android:layout_gravity="center"
             android:layout_width="18dp"
-            android:layout_height="22dp" />
+            android:layout_height="18dp" />
 
         <TextView
             android:id="@+id/messages_count"
             android:layout_gravity="center"
             android:gravity="center"
             android:paddingHorizontal="8dp"
-            android:textAppearance="@*android:style/TextAppearance.DeviceDefault.ListItem"
+            android:textAppearance="@*android:style/TextAppearance.DeviceDefault.Notification.Title"
             android:textColor="?androidprv:attr/textColorOnAccent"
             android:background="@drawable/people_space_messages_count_background"
             android:textSize="@dimen/name_text_size_for_small"
@@ -69,7 +70,7 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:paddingHorizontal="4dp"
-            android:textAppearance="@*android:style/TextAppearance.DeviceDefault.ListItem"
+            android:textAppearance="@*android:style/TextAppearance.DeviceDefault.Notification.Title"
             android:textColor="?android:attr/textColorPrimary"
             android:textSize="@dimen/name_text_size_for_small" />
     </LinearLayout>

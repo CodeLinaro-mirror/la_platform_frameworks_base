@@ -102,7 +102,6 @@ import com.android.server.am.LowMemDetector.MemFactor;
 import com.android.server.compat.PlatformCompat;
 
 import java.io.BufferedReader;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -230,6 +229,8 @@ final class ActivityManagerShellCommand extends ShellCommand {
                     return runBugReport(pw);
                 case "force-stop":
                     return runForceStop(pw);
+                case "fgs-notification-rate-limit":
+                    return runFgsNotificationRateLimit(pw);
                 case "crash":
                     return runCrash(pw);
                 case "kill":
@@ -320,6 +321,8 @@ final class ActivityManagerShellCommand extends ShellCommand {
                     return runMemoryFactor(pw);
                 case "service-restart-backoff":
                     return runServiceRestartBackoff(pw);
+                case "get-isolated-pids":
+                    return runGetIsolatedProcesses(pw);
                 default:
                     return handleDefaultCommands(cmd);
             }
@@ -804,8 +807,7 @@ final class ActivityManagerShellCommand extends ShellCommand {
             return -1;
         }
 
-        File file = new File(filename);
-        file.delete();
+        // Writes an error message to stderr on failure
         ParcelFileDescriptor fd = openFileForSystem(filename, "w");
         if (fd == null) {
             return -1;
@@ -959,15 +961,15 @@ final class ActivityManagerShellCommand extends ShellCommand {
             String logNameTimeString = LOG_NAME_TIME_FORMATTER.format(localDateTime);
             heapFile = "/data/local/tmp/heapdump-" + logNameTimeString + ".prof";
         }
-        pw.println("File: " + heapFile);
-        pw.flush();
 
-        File file = new File(heapFile);
-        file.delete();
+        // Writes an error message to stderr on failure
         ParcelFileDescriptor fd = openFileForSystem(heapFile, "w");
         if (fd == null) {
             return -1;
         }
+
+        pw.println("File: " + heapFile);
+        pw.flush();
 
         final CountDownLatch latch = new CountDownLatch(1);
 
@@ -1100,6 +1102,24 @@ final class ActivityManagerShellCommand extends ShellCommand {
             }
         }
         mInterface.forceStopPackage(getNextArgRequired(), userId);
+        return 0;
+    }
+
+    int runFgsNotificationRateLimit(PrintWriter pw) throws RemoteException {
+        final String toggleValue = getNextArgRequired();
+        final boolean enable;
+        switch (toggleValue) {
+            case "enable":
+                enable = true;
+                break;
+            case "disable":
+                enable = false;
+                break;
+            default:
+                throw new IllegalArgumentException(
+                        "Argument must be either 'enable' or 'disable'");
+        }
+        mInterface.enableFgsNotificationRateLimit(enable);
         return 0;
     }
 
@@ -3119,6 +3139,24 @@ final class ActivityManagerShellCommand extends ShellCommand {
         }
     }
 
+    private int runGetIsolatedProcesses(PrintWriter pw) throws RemoteException {
+        mInternal.enforceCallingPermission(android.Manifest.permission.DUMP,
+                "getIsolatedProcesses()");
+        final List<Integer> result = mInternal.mInternal.getIsolatedProcesses(
+                Integer.parseInt(getNextArgRequired()));
+        pw.print("[");
+        if (result != null) {
+            for (int i = 0, size = result.size(); i < size; i++) {
+                if (i > 0) {
+                    pw.print(", ");
+                }
+                pw.print(result.get(i));
+            }
+        }
+        pw.println("]");
+        return 0;
+    }
+
     private Resources getResources(PrintWriter pw) throws RemoteException {
         // system resources does not contain all the device configuration, construct it manually.
         Configuration config = mInterface.getConfiguration();
@@ -3303,6 +3341,8 @@ final class ActivityManagerShellCommand extends ShellCommand {
             pw.println("        when done to select where it should be delivered. Options are:");
             pw.println("     --progress: will launch a notification right away to show its progress.");
             pw.println("     --telephony: will dump only telephony sections.");
+            pw.println("  fgs-notification-rate-limit {enable | disable}");
+            pw.println("     Enable/disable rate limit on FGS notification deferral policy.");
             pw.println("  force-stop [--user <USER_ID> | all | current] <PACKAGE>");
             pw.println("      Completely stop the given application package.");
             pw.println("  crash [--user <USER_ID>] <PACKAGE|PID>");
@@ -3447,6 +3487,8 @@ final class ActivityManagerShellCommand extends ShellCommand {
             pw.println("            Toggles the restart backoff policy on/off for <PACKAGE_NAME>.");
             pw.println("         show <PACKAGE_NAME>");
             pw.println("            Shows the restart backoff policy state for <PACKAGE_NAME>.");
+            pw.println("  get-isolated-pids <UID>");
+            pw.println("         Get the PIDs of isolated processes with packages in this <UID>");
             pw.println();
             Intent.printIntentArgsHelp(pw, "");
         }

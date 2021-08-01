@@ -56,8 +56,8 @@ class FingerprintDetectClient extends AcquisitionClient<IBiometricsFingerprint>
             int sensorId, @Nullable IUdfpsOverlayController udfpsOverlayController,
             boolean isStrongBiometric, int statsClient) {
         super(context, lazyDaemon, token, listener, userId, owner, 0 /* cookie */, sensorId,
-                BiometricsProtoEnums.MODALITY_FINGERPRINT, BiometricsProtoEnums.ACTION_AUTHENTICATE,
-                statsClient);
+                true /* shouldVibrate */, BiometricsProtoEnums.MODALITY_FINGERPRINT,
+                BiometricsProtoEnums.ACTION_AUTHENTICATE, statsClient);
         mUdfpsOverlayController = udfpsOverlayController;
         mIsStrongBiometric = isStrongBiometric;
     }
@@ -124,10 +124,12 @@ class FingerprintDetectClient extends AcquisitionClient<IBiometricsFingerprint>
         final PerformanceTracker pm = PerformanceTracker.getInstanceForSensorId(getSensorId());
         pm.incrementAuthForUser(getTargetUserId(), authenticated);
 
-        try {
-            getListener().onDetected(getSensorId(), getTargetUserId(), mIsStrongBiometric);
-        } catch (RemoteException e) {
-            Slog.e(TAG, "Remote exception when sending onDetected", e);
+        if (getListener() != null) {
+            try {
+                getListener().onDetected(getSensorId(), getTargetUserId(), mIsStrongBiometric);
+            } catch (RemoteException e) {
+                Slog.e(TAG, "Remote exception when sending onDetected", e);
+            }
         }
     }
 

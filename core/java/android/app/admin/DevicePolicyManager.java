@@ -1605,20 +1605,29 @@ public class DevicePolicyManager {
             "android.app.extra.PASSWORD_COMPLEXITY";
 
     /**
-     * Constant for {@link #getPasswordComplexity()}: no password.
+     * Constant for {@link #getPasswordComplexity()} and
+     * {@link #setRequiredPasswordComplexity(int)}: no password.
      *
-     * <p>Note that these complexity constants are ordered so that higher values are more complex.
+     * <p> When returned from {@link #getPasswordComplexity()}, the constant represents
+     * the exact complexity band the password is in.
+     * When passed to {@link #setRequiredPasswordComplexity(int), it sets the minimum complexity
+     * band which the password must meet.
      */
     public static final int PASSWORD_COMPLEXITY_NONE = 0;
 
     /**
-     * Constant for {@link #getPasswordComplexity()}: password satisfies one of the following:
+     * Constant for {@link #getPasswordComplexity()} and
+     * {@link #setRequiredPasswordComplexity(int)}.
+     * Define the low password complexity band as:
      * <ul>
      * <li>pattern
      * <li>PIN with repeating (4444) or ordered (1234, 4321, 2468) sequences
      * </ul>
      *
-     * <p>Note that these complexity constants are ordered so that higher values are more complex.
+     * <p> When returned from {@link #getPasswordComplexity()}, the constant represents
+     * the exact complexity band the password is in.
+     * When passed to {@link #setRequiredPasswordComplexity(int), it sets the minimum complexity
+     * band which the password must meet.
      *
      * @see #PASSWORD_QUALITY_SOMETHING
      * @see #PASSWORD_QUALITY_NUMERIC
@@ -1626,7 +1635,9 @@ public class DevicePolicyManager {
     public static final int PASSWORD_COMPLEXITY_LOW = 0x10000;
 
     /**
-     * Constant for {@link #getPasswordComplexity()}: password satisfies one of the following:
+     * Constant for {@link #getPasswordComplexity()} and
+     * {@link #setRequiredPasswordComplexity(int)}.
+     * Define the medium password complexity band as:
      * <ul>
      * <li>PIN with <b>no</b> repeating (4444) or ordered (1234, 4321, 2468) sequences, length at
      * least 4
@@ -1634,7 +1645,10 @@ public class DevicePolicyManager {
      * <li>alphanumeric, length at least 4
      * </ul>
      *
-     * <p>Note that these complexity constants are ordered so that higher values are more complex.
+     * <p> When returned from {@link #getPasswordComplexity()}, the constant represents
+     * the exact complexity band the password is in.
+     * When passed to {@link #setRequiredPasswordComplexity(int), it sets the minimum complexity
+     * band which the password must meet.
      *
      * @see #PASSWORD_QUALITY_NUMERIC_COMPLEX
      * @see #PASSWORD_QUALITY_ALPHABETIC
@@ -1643,7 +1657,9 @@ public class DevicePolicyManager {
     public static final int PASSWORD_COMPLEXITY_MEDIUM = 0x30000;
 
     /**
-     * Constant for {@link #getPasswordComplexity()}: password satisfies one of the following:
+     * Constant for {@link #getPasswordComplexity()} and
+     * {@link #setRequiredPasswordComplexity(int)}.
+     * Define the high password complexity band as:
      * <ul>
      * <li>PIN with <b>no</b> repeating (4444) or ordered (1234, 4321, 2468) sequences, length at
      * least 8
@@ -1651,7 +1667,10 @@ public class DevicePolicyManager {
      * <li>alphanumeric, length at least 6
      * </ul>
      *
-     * <p>Note that these complexity constants are ordered so that higher values are more complex.
+     * <p> When returned from {@link #getPasswordComplexity()}, the constant represents
+     * the exact complexity band the password is in.
+     * When passed to {@link #setRequiredPasswordComplexity(int), it sets the minimum complexity
+     * band which the password must meet.
      *
      * @see #PASSWORD_QUALITY_NUMERIC_COMPLEX
      * @see #PASSWORD_QUALITY_ALPHABETIC
@@ -4455,8 +4474,9 @@ public class DevicePolicyManager {
     }
 
     /**
-     * Sets a password complexity requirement for the user's screen lock.
-     * The complexity level is one of the pre-defined levels.
+     * Sets a minimum password complexity requirement for the user's screen lock.
+     * The complexity level is one of the pre-defined levels, and the user is unable to set a
+     * password with a lower complexity level.
      *
      * <p>Note that when called on a profile which uses an unified challenge with its parent, the
      * complexity would apply to the unified challenge.
@@ -6845,6 +6865,10 @@ public class DevicePolicyManager {
      * <p> Enabling lockdown via {@code lockdownEnabled} argument carries the risk that any failure
      * of the VPN provider could break networking for all apps. This method clears any lockdown
      * allowlist set by {@link #setAlwaysOnVpnPackage(ComponentName, String, boolean, Set)}.
+     * <p> Starting from {@link android.os.Build.VERSION_CODES#S API 31} calling this method with
+     * {@code vpnPackage} set to {@code null} only removes the existing configuration if it was
+     * previously created by this admin. To remove VPN configuration created by the user use
+     * {@link UserManager#DISALLOW_CONFIG_VPN}.
      *
      * @param vpnPackage The package name for an installed VPN app on the device, or {@code null} to
      *        remove an existing always-on VPN configuration.
@@ -11867,7 +11891,19 @@ public class DevicePolicyManager {
     public boolean isAffiliatedUser() {
         throwIfParentInstance("isAffiliatedUser");
         try {
-            return mService.isAffiliatedUser();
+            return mService.isCallingUserAffiliated();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * @hide
+     * Returns whether target user is affiliated with the device.
+     */
+    public boolean isAffiliatedUser(@UserIdInt int userId) {
+        try {
+            return mService.isAffiliatedUser(userId);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -13084,6 +13120,10 @@ public class DevicePolicyManager {
      * @see #getCrossProfileCalendarPackages(ComponentName)
      * @hide
      */
+    @RequiresPermission(anyOf = {
+            permission.INTERACT_ACROSS_USERS_FULL,
+            permission.INTERACT_ACROSS_USERS
+    }, conditional = true)
     public boolean isPackageAllowedToAccessCalendar(@NonNull  String packageName) {
         throwIfParentInstance("isPackageAllowedToAccessCalendar");
         if (mService != null) {
@@ -13112,6 +13152,10 @@ public class DevicePolicyManager {
      * @see #getCrossProfileCalendarPackages(ComponentName)
      * @hide
      */
+    @RequiresPermission(anyOf = {
+            permission.INTERACT_ACROSS_USERS_FULL,
+            permission.INTERACT_ACROSS_USERS
+    })
     public @Nullable Set<String> getCrossProfileCalendarPackages() {
         throwIfParentInstance("getCrossProfileCalendarPackages");
         if (mService != null) {
@@ -13872,8 +13916,11 @@ public class DevicePolicyManager {
     }
 
     /**
-     * Called by device owner or profile owner of an organization-owned managed profile to return
-     * whether USB data signaling is currently enabled by the admin.
+     * Returns whether USB data signaling is currently enabled.
+     *
+     * <p> When called by a device owner or profile owner of an organization-owned managed profile,
+     * this API returns whether USB data signaling is currently enabled by that admin. When called
+     * by any other app, returns whether USB data signaling is currently enabled on the device.
      *
      * @return {@code true} if USB data signaling is enabled, {@code false} otherwise.
      */

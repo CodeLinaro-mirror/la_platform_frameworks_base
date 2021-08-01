@@ -22,7 +22,6 @@ import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
 import android.app.TaskStackListener;
 import android.content.ComponentName;
-import android.content.ContentResolver;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.hardware.biometrics.BiometricAuthenticator;
@@ -31,8 +30,6 @@ import android.hardware.biometrics.BiometricManager;
 import android.hardware.biometrics.BiometricsProtoEnums;
 import android.os.IBinder;
 import android.os.RemoteException;
-import android.os.VibrationEffect;
-import android.provider.Settings;
 import android.security.KeyStore;
 import android.util.EventLog;
 import android.util.Slog;
@@ -59,23 +56,23 @@ public abstract class AuthenticationClient<T> extends AcquisitionClient<T>
     private final LockoutTracker mLockoutTracker;
     private final boolean mIsRestricted;
     private final boolean mAllowBackgroundAuthentication;
-    @NonNull private final ContentResolver mContentResolver;
 
     protected final long mOperationId;
 
     private long mStartTimeMs;
 
     protected boolean mAuthAttempted;
-    private final boolean mCustomHaptics;
 
     public AuthenticationClient(@NonNull Context context, @NonNull LazyDaemon<T> lazyDaemon,
             @NonNull IBinder token, @NonNull ClientMonitorCallbackConverter listener,
             int targetUserId, long operationId, boolean restricted, @NonNull String owner,
             int cookie, boolean requireConfirmation, int sensorId, boolean isStrongBiometric,
             int statsModality, int statsClient, @Nullable TaskStackListener taskStackListener,
-            @NonNull LockoutTracker lockoutTracker, boolean allowBackgroundAuthentication) {
+            @NonNull LockoutTracker lockoutTracker, boolean allowBackgroundAuthentication,
+            boolean shouldVibrate) {
         super(context, lazyDaemon, token, listener, targetUserId, owner, cookie, sensorId,
-                statsModality, BiometricsProtoEnums.ACTION_AUTHENTICATE, statsClient);
+                shouldVibrate, statsModality, BiometricsProtoEnums.ACTION_AUTHENTICATE,
+                statsClient);
         mIsStrongBiometric = isStrongBiometric;
         mOperationId = operationId;
         mRequireConfirmation = requireConfirmation;
@@ -85,10 +82,6 @@ public abstract class AuthenticationClient<T> extends AcquisitionClient<T>
         mLockoutTracker = lockoutTracker;
         mIsRestricted = restricted;
         mAllowBackgroundAuthentication = allowBackgroundAuthentication;
-
-        mContentResolver = context.getContentResolver();
-        mCustomHaptics = Settings.Global.getInt(mContentResolver,
-                "fp_custom_success_error", 0) == 1;
     }
 
     public @LockoutTracker.LockoutMode int handleFailedAttempt(int userId) {
@@ -213,7 +206,7 @@ public abstract class AuthenticationClient<T> extends AcquisitionClient<T>
 
                 mAlreadyDone = true;
 
-                if (listener != null) {
+                if (listener != null && mShouldVibrate) {
                     vibrateSuccess();
                 }
 
@@ -259,7 +252,7 @@ public abstract class AuthenticationClient<T> extends AcquisitionClient<T>
                     Slog.w(TAG, "Client not listening");
                 }
             } else {
-                if (listener != null) {
+                if (listener != null && mShouldVibrate) {
                     vibrateError();
                 }
 
@@ -317,7 +310,7 @@ public abstract class AuthenticationClient<T> extends AcquisitionClient<T>
             mActivityTaskManager.registerTaskStackListener(mTaskStackListener);
         }
 
-        if (DEBUG) Slog.w(TAG, "Requesting auth for " + getOwnerString());
+        Slog.d(TAG, "Requesting auth for " + getOwnerString());
 
         mStartTimeMs = System.currentTimeMillis();
         mAuthAttempted = true;
@@ -341,26 +334,5 @@ public abstract class AuthenticationClient<T> extends AcquisitionClient<T>
     @Override
     public boolean interruptsPrecedingClients() {
         return true;
-    }
-
-    @Override
-    protected @NonNull VibrationEffect getSuccessVibrationEffect() {
-        if (!mCustomHaptics) {
-            return super.getSuccessVibrationEffect();
-        }
-
-        return getVibration(Settings.Global.getString(mContentResolver,
-                "fp_success_type"), super.getSuccessVibrationEffect());
-    }
-
-    @Override
-    protected @NonNull VibrationEffect getErrorVibrationEffect() {
-        if (!mCustomHaptics) {
-            return super.getErrorVibrationEffect();
-        }
-
-        return getVibration(Settings.Global.getString(mContentResolver,
-                "fp_error_type"), super.getErrorVibrationEffect());
-
     }
 }

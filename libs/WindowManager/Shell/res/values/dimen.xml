@@ -15,7 +15,8 @@
     limitations under the License.
 -->
 <resources>
-    <dimen name="dismiss_circle_size">52dp</dimen>
+    <dimen name="dismiss_circle_size">96dp</dimen>
+    <dimen name="dismiss_circle_small">60dp</dimen>
 
     <!-- The height of the gradient indicating the dismiss edge when moving a PIP. -->
     <dimen name="floating_dismiss_gradient_height">250dp</dimen>
@@ -43,7 +44,7 @@
     <dimen name="pip_bottom_offset_buffer">1dp</dimen>
 
     <!-- The corner radius for PiP window. -->
-    <dimen name="pip_corner_radius">8dp</dimen>
+    <dimen name="pip_corner_radius">16dp</dimen>
 
     <!-- The bottom margin of the PIP drag to dismiss info text shown when moving a PIP. -->
     <dimen name="pip_dismiss_text_bottom_margin">24dp</dimen>
@@ -116,7 +117,9 @@
     <!-- This should be at least the size of bubble_expanded_view_padding; it is used to include
          a slight touch slop around the expanded view. -->
     <dimen name="bubble_expanded_view_slop">8dp</dimen>
-    <!-- Default (and minimum) height of the expanded view shown when the bubble is expanded -->
+    <!-- Default (and minimum) height of the expanded view shown when the bubble is expanded.
+         If this value changes then R.dimen.bubble_expanded_view_min_height in CtsVerifier
+         should also be updated. -->
     <dimen name="bubble_expanded_default_height">180dp</dimen>
     <!-- On large screens the width of the expanded view is restricted to this size. -->
     <dimen name="bubble_expanded_view_tablet_width">412dp</dimen>

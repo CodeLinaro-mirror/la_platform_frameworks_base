@@ -32,6 +32,7 @@ import android.bluetooth.annotations.RequiresLegacyBluetoothAdminPermission;
 import android.bluetooth.annotations.RequiresLegacyBluetoothPermission;
 import android.companion.AssociationRequest;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.content.Attributable;
 import android.content.AttributionSource;
 import android.content.Context;
 import android.os.Build;
@@ -47,7 +48,6 @@ import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.util.List;
 import java.util.UUID;
 
 /**
@@ -84,7 +84,7 @@ import java.util.UUID;
  * {@see BluetoothAdapter}
  * {@see BluetoothSocket}
  */
-public final class BluetoothDevice implements Parcelable {
+public final class BluetoothDevice implements Parcelable, Attributable {
     private static final String TAG = "BluetoothDevice";
     private static final boolean DBG = false;
 
@@ -1170,28 +1170,13 @@ public final class BluetoothDevice implements Parcelable {
         mAttributionSource = BluetoothManager.resolveAttributionSource(null);
     }
 
-    void setAttributionSource(AttributionSource attributionSource) {
+    /** {@hide} */
+    public void setAttributionSource(@NonNull AttributionSource attributionSource) {
         mAttributionSource = attributionSource;
     }
 
-    static BluetoothDevice setAttributionSource(BluetoothDevice device,
-            AttributionSource attributionSource) {
-        device.setAttributionSource(attributionSource);
-        return device;
-    }
-
-    static List<BluetoothDevice> setAttributionSource(List<BluetoothDevice> devices,
-            AttributionSource attributionSource) {
-        if (devices != null) {
-            for (BluetoothDevice device : devices) {
-                device.setAttributionSource(attributionSource);
-            }
-        }
-        return devices;
-    }
-
     /** {@hide} */
-    public void prepareToEnterProcess(AttributionSource attributionSource) {
+    public void prepareToEnterProcess(@NonNull AttributionSource attributionSource) {
         setAttributionSource(attributionSource);
     }
 
@@ -1790,7 +1775,8 @@ public final class BluetoothDevice implements Parcelable {
      * in getting the SDP records or if the process takes a long time, or the device is bonding and
      * we have its UUIDs cached, {@link #ACTION_UUID} intent is sent with the UUIDs that is
      * currently present in the cache. Clients should use the {@link #getUuids} to get UUIDs
-     * if service discovery is not to be performed.
+     * if service discovery is not to be performed. If there is an ongoing bonding process,
+     * service discovery or device inquiry, the request will be queued.
      *
      * @return False if the check fails, True if the process of initiating an ACL connection
      * to the remote device was started or cached UUIDs will be broadcast.

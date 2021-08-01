@@ -43,11 +43,6 @@ public class UdfpsEnrollView extends UdfpsAnimationView {
     }
 
     @Override
-    protected void updateAlpha() {
-        super.updateAlpha();
-    }
-
-    @Override
     protected void onFinishInflate() {
         mFingerprintView = findViewById(R.id.udfps_enroll_animation_fp_view);
         mFingerprintView.setImageDrawable(mFingerprintDrawable);
@@ -63,8 +58,10 @@ public class UdfpsEnrollView extends UdfpsAnimationView {
     }
 
     void onEnrollmentProgress(int remaining, int totalSteps) {
-        mHandler.post(() -> {
-            mFingerprintDrawable.onEnrollmentProgress(remaining, totalSteps);
-        });
+        mHandler.post(() -> mFingerprintDrawable.onEnrollmentProgress(remaining, totalSteps));
+    }
+
+    void onLastStepAcquired() {
+        mHandler.post(mFingerprintDrawable::onLastStepAcquired);
     }
 }

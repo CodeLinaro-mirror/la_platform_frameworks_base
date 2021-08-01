@@ -31,6 +31,7 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Slog;
 
+import com.android.server.biometrics.sensors.BiometricNotificationUtils;
 import com.android.server.biometrics.sensors.BiometricUtils;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.EnrollClient;
@@ -72,6 +73,12 @@ public class FingerprintEnrollClient extends EnrollClient<IBiometricsFingerprint
         }
     }
 
+    @NonNull
+    @Override
+    protected Callback wrapCallbackForStart(@NonNull Callback callback) {
+        return new CompositeCallback(createALSCallback(), callback);
+    }
+
     @Override
     protected boolean hasReachedEnrollmentLimit() {
         final int limit = getContext().getResources().getInteger(
@@ -91,6 +98,7 @@ public class FingerprintEnrollClient extends EnrollClient<IBiometricsFingerprint
                 UdfpsHelper.getReasonFromEnrollReason(mEnrollReason),
                 mUdfpsOverlayController, this);
         SidefpsHelper.showOverlay(mSidefpsController);
+        BiometricNotificationUtils.cancelBadCalibrationNotification(getContext());
         try {
             // GroupId was never used. In fact, groupId is always the same as userId.
             getFreshDaemon().enroll(mHardwareAuthToken, getTargetUserId(), mTimeoutSec);

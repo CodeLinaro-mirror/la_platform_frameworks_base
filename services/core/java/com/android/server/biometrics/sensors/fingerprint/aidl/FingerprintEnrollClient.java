@@ -27,6 +27,7 @@ import android.hardware.biometrics.common.ICancellationSignal;
 import android.hardware.biometrics.fingerprint.ISession;
 import android.hardware.fingerprint.Fingerprint;
 import android.hardware.fingerprint.FingerprintManager;
+import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
 import android.hardware.fingerprint.ISidefpsController;
 import android.hardware.fingerprint.IUdfpsOverlayController;
 import android.os.IBinder;
@@ -34,6 +35,7 @@ import android.os.RemoteException;
 import android.util.Slog;
 
 import com.android.server.biometrics.HardwareAuthTokenUtils;
+import com.android.server.biometrics.sensors.BiometricNotificationUtils;
 import com.android.server.biometrics.sensors.BiometricUtils;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
 import com.android.server.biometrics.sensors.EnrollClient;
@@ -46,6 +48,7 @@ class FingerprintEnrollClient extends EnrollClient<ISession> implements Udfps {
 
     private static final String TAG = "FingerprintEnrollClient";
 
+    @NonNull private final FingerprintSensorPropertiesInternal mSensorProps;
     @Nullable private final IUdfpsOverlayController mUdfpsOverlayController;
     @Nullable private final ISidefpsController mSidefpsController;
 
@@ -58,12 +61,15 @@ class FingerprintEnrollClient extends EnrollClient<ISession> implements Udfps {
             @NonNull ClientMonitorCallbackConverter listener, int userId,
             @NonNull byte[] hardwareAuthToken, @NonNull String owner,
             @NonNull BiometricUtils<Fingerprint> utils, int sensorId,
+            @NonNull FingerprintSensorPropertiesInternal sensorProps,
             @Nullable IUdfpsOverlayController udfpsOvelayController,
             @Nullable ISidefpsController sidefpsController,
             int maxTemplatesPerUser, @FingerprintManager.EnrollReason int enrollReason) {
+        // UDFPS haptics occur when an image is acquired (instead of when the result is known)
         super(context, lazyDaemon, token, listener, userId, hardwareAuthToken, owner, utils,
                 0 /* timeoutSec */, BiometricsProtoEnums.MODALITY_FINGERPRINT, sensorId,
-                true /* shouldVibrate */);
+                !sensorProps.isAnyUdfpsType() /* shouldVibrate */);
+        mSensorProps = sensorProps;
         mUdfpsOverlayController = udfpsOvelayController;
         mSidefpsController = sidefpsController;
         mMaxTemplatesPerUser = maxTemplatesPerUser;
@@ -72,6 +78,12 @@ class FingerprintEnrollClient extends EnrollClient<ISession> implements Udfps {
         if (enrollReason == FingerprintManager.ENROLL_FIND_SENSOR) {
             setShouldLog(false);
         }
+    }
+
+    @NonNull
+    @Override
+    protected Callback wrapCallbackForStart(@NonNull Callback callback) {
+        return new CompositeCallback(createALSCallback(), callback);
     }
 
     @Override
@@ -90,7 +102,9 @@ class FingerprintEnrollClient extends EnrollClient<ISession> implements Udfps {
     public void onAcquired(@FingerprintAcquired int acquiredInfo, int vendorCode) {
         // For UDFPS, notify SysUI that the illumination can be turned off.
         // See AcquiredInfo#GOOD and AcquiredInfo#RETRYING_CAPTURE
-        if (acquiredInfo == BiometricFingerprintConstants.FINGERPRINT_ACQUIRED_GOOD) {
+        if (acquiredInfo == BiometricFingerprintConstants.FINGERPRINT_ACQUIRED_GOOD
+                && mSensorProps.isAnyUdfpsType()) {
+            vibrateSuccess();
             UdfpsHelper.onAcquiredGood(getSensorId(), mUdfpsOverlayController);
         }
 
@@ -138,6 +152,7 @@ class FingerprintEnrollClient extends EnrollClient<ISession> implements Udfps {
                 UdfpsHelper.getReasonFromEnrollReason(mEnrollReason),
                 mUdfpsOverlayController, this);
         SidefpsHelper.showOverlay(mSidefpsController);
+        BiometricNotificationUtils.cancelBadCalibrationNotification(getContext());
         try {
             mCancellationSignal = getFreshDaemon().enroll(
                     HardwareAuthTokenUtils.toHardwareAuthToken(mHardwareAuthToken));

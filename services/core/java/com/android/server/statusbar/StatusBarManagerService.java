@@ -18,7 +18,6 @@ package com.android.server.statusbar;
 
 import static android.app.StatusBarManager.DISABLE2_GLOBAL_ACTIONS;
 import static android.app.StatusBarManager.DISABLE2_NOTIFICATION_SHADE;
-import static android.hardware.biometrics.BiometricManager.BiometricMultiSensorMode;
 import static android.view.Display.DEFAULT_DISPLAY;
 
 import android.Manifest;
@@ -33,6 +32,8 @@ import android.compat.annotation.EnabledSince;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.hardware.biometrics.BiometricAuthenticator.Modality;
+import android.hardware.biometrics.BiometricManager.BiometricMultiSensorMode;
 import android.hardware.biometrics.IBiometricSysuiReceiver;
 import android.hardware.biometrics.PromptInfo;
 import android.hardware.display.DisplayManager;
@@ -670,20 +671,8 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
 
     @Override
     public void collapsePanels() {
-        int uid = Binder.getCallingUid();
-        int pid = Binder.getCallingPid();
-        if (CompatChanges.isChangeEnabled(LOCK_DOWN_COLLAPSE_STATUS_BAR, uid)) {
-            enforceStatusBar();
-        } else {
-            if (mContext.checkPermission(Manifest.permission.STATUS_BAR, pid, uid)
-                    != PackageManager.PERMISSION_GRANTED) {
-                enforceExpandStatusBar();
-                if (!mActivityTaskManager.canCloseSystemDialogs(pid, uid)) {
-                    Slog.e(TAG, "Permission Denial: Method collapsePanels() requires permission "
-                            + Manifest.permission.STATUS_BAR + ", ignoring call.");
-                    return;
-                }
-            }
+        if (!checkCanCollapseStatusBar("collapsePanels")) {
+            return;
         }
 
         if (mBar != null) {
@@ -696,7 +685,9 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
 
     @Override
     public void togglePanel() {
-        enforceExpandStatusBar();
+        if (!checkCanCollapseStatusBar("togglePanel")) {
+            return;
+        }
 
         if (isDisable2FlagSet(DISABLE2_NOTIFICATION_SHADE)) {
             return;
@@ -757,7 +748,9 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
 
     @Override
     public void handleSystemKey(int key) throws RemoteException {
-        enforceExpandStatusBar();
+        if (!checkCanCollapseStatusBar("handleSystemKey")) {
+            return;
+        }
 
         if (mBar != null) {
             try {
@@ -814,11 +807,11 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     }
 
     @Override
-    public void onBiometricHelp(String message) {
+    public void onBiometricHelp(@Modality int modality, String message) {
         enforceBiometricDialog();
         if (mBar != null) {
             try {
-                mBar.onBiometricHelp(message);
+                mBar.onBiometricHelp(modality, message);
             } catch (RemoteException ex) {
             }
         }
@@ -1198,6 +1191,29 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         mContext.enforceCallingOrSelfPermission(
                 android.Manifest.permission.MANAGE_BIOMETRIC_DIALOG,
                 "StatusBarManagerService");
+    }
+
+    /**
+     *  For targetSdk S+ we require STATUS_BAR. For targetSdk < S, we only require EXPAND_STATUS_BAR
+     *  but also require that it falls into one of the allowed use-cases to lock down abuse vector.
+     */
+    private boolean checkCanCollapseStatusBar(String method) {
+        int uid = Binder.getCallingUid();
+        int pid = Binder.getCallingUid();
+        if (CompatChanges.isChangeEnabled(LOCK_DOWN_COLLAPSE_STATUS_BAR, uid)) {
+            enforceStatusBar();
+        } else {
+            if (mContext.checkPermission(Manifest.permission.STATUS_BAR, pid, uid)
+                    != PackageManager.PERMISSION_GRANTED) {
+                enforceExpandStatusBar();
+                if (!mActivityTaskManager.canCloseSystemDialogs(pid, uid)) {
+                    Slog.e(TAG, "Permission Denial: Method " + method + "() requires permission "
+                            + Manifest.permission.STATUS_BAR + ", ignoring call.");
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     // ================================================================================

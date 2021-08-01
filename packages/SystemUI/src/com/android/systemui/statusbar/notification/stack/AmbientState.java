@@ -29,6 +29,7 @@ import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.row.ActivatableNotificationView;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.ExpandableView;
+import com.android.systemui.statusbar.notification.stack.StackScrollAlgorithm.BypassController;
 import com.android.systemui.statusbar.notification.stack.StackScrollAlgorithm.SectionProvider;
 
 import javax.inject.Inject;
@@ -43,6 +44,7 @@ public class AmbientState {
     private static final boolean NOTIFICATIONS_HAVE_SHADOWS = false;
 
     private final SectionProvider mSectionProvider;
+    private final BypassController mBypassController;
     private int mScrollY;
     private boolean mDimmed;
     private ActivatableNotificationView mActivatedChild;
@@ -72,10 +74,7 @@ public class AmbientState {
     private boolean mUnlockHintRunning;
     private boolean mQsCustomizerShowing;
     private int mIntrinsicPadding;
-    private int mExpandAnimationTopChange;
-    private ExpandableNotificationRow mExpandingNotification;
     private float mHideAmount;
-    private float mNotificationScrimTop;
     private boolean mAppearing;
     private float mPulseHeight = MAX_PULSE_HEIGHT;
     private float mDozeAmount = 0.0f;
@@ -83,7 +82,7 @@ public class AmbientState {
     private ExpandableNotificationRow mTrackedHeadsUpRow;
     private float mAppearFraction;
     private boolean mIsShadeOpening;
-    private float mSectionPadding;
+    private float mOverExpansion;
 
     /** Distance of top of notifications panel from top of screen. */
     private float mStackY = 0;
@@ -155,14 +154,25 @@ public class AmbientState {
         return mStackHeight;
     }
 
+    /**
+     * @return Height of notifications panel, with the animation from pulseHeight accounted for.
+     */
+    // TODO(b/192348384): move this logic to getStackHeight, and remove this and getInnerHeight
+    public float getPulseStackHeight() {
+        float pulseHeight = Math.min(mPulseHeight, mStackHeight);
+        return MathUtils.lerp(mStackHeight, pulseHeight, mDozeAmount);
+    }
+
     /** Tracks the state from AlertingNotificationManager#hasNotifications() */
     private boolean mHasAlertEntries;
 
     @Inject
     public AmbientState(
             Context context,
-            @NonNull SectionProvider sectionProvider) {
+            @NonNull SectionProvider sectionProvider,
+            @NonNull BypassController bypassController) {
         mSectionProvider = sectionProvider;
+        mBypassController = bypassController;
         reload(context);
     }
 
@@ -182,12 +192,12 @@ public class AmbientState {
         return mIsShadeOpening;
     }
 
-    void setSectionPadding(float padding) {
-        mSectionPadding = padding;
+    void setOverExpansion(float overExpansion) {
+        mOverExpansion = overExpansion;
     }
 
-    float getSectionPadding() {
-        return mSectionPadding;
+    float getOverExpansion() {
+        return mOverExpansion;
     }
 
     private static int getZDistanceBetweenElements(Context context) {
@@ -225,8 +235,14 @@ public class AmbientState {
         return mScrollY;
     }
 
+    /**
+     * Set the new Scroll Y position.
+     */
     public void setScrollY(int scrollY) {
-        this.mScrollY = scrollY;
+        // Because we're dealing with an overscroller, scrollY could sometimes become smaller than
+        // 0. However this is only for internal purposes and the scroll position when read
+        // should never be smaller than 0, otherwise it can lead to flickers.
+        this.mScrollY = Math.max(scrollY, 0);
     }
 
     /**
@@ -254,20 +270,6 @@ public class AmbientState {
     /** Returns the hide ratio of the status bar */
     public float getHideAmount() {
         return mHideAmount;
-    }
-
-    /**
-     * Set y position of top of notifications background scrim, relative to top of screen.
-     */
-    public void setNotificationScrimTop(float notificationScrimTop) {
-        mNotificationScrimTop = notificationScrimTop;
-    }
-
-    /**
-     * @return Y position of top of notifications background scrim, relative to top of screen.
-     */
-    public float getNotificationScrimTop() {
-        return mNotificationScrimTop;
     }
 
     public void setHideSensitive(boolean hideSensitive) {
@@ -306,6 +308,13 @@ public class AmbientState {
         } else {
             mOverScrollBottomAmount = amount;
         }
+    }
+
+    /**
+     * Is bypass currently enabled?
+     */
+    public boolean isBypassEnabled() {
+        return mBypassController.isBypassEnabled();
     }
 
     public float getOverScrollAmount(boolean top) {
@@ -525,22 +534,6 @@ public class AmbientState {
      */
     public boolean isDozingAndNotPulsing(ExpandableNotificationRow row) {
         return isDozing() && !isPulsing(row.getEntry());
-    }
-
-    public void setExpandAnimationTopChange(int expandAnimationTopChange) {
-        mExpandAnimationTopChange = expandAnimationTopChange;
-    }
-
-    public void setExpandingNotification(ExpandableNotificationRow row) {
-        mExpandingNotification = row;
-    }
-
-    public ExpandableNotificationRow getExpandingNotification() {
-        return mExpandingNotification;
-    }
-
-    public int getExpandAnimationTopChange() {
-        return mExpandAnimationTopChange;
     }
 
     /**

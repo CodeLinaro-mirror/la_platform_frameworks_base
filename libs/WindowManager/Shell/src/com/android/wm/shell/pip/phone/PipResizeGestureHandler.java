@@ -235,16 +235,31 @@ public class PipResizeGestureHandler {
 
     @VisibleForTesting
     void onInputEvent(InputEvent ev) {
+        if (!mEnableDragCornerResize && !mEnablePinchResize) {
+            // No need to handle anything if neither form of resizing is enabled.
+            return;
+        }
+
         // Don't allow resize when PiP is stashed.
         if (mPipBoundsState.isStashed()) {
             return;
         }
 
         if (ev instanceof MotionEvent) {
-            if (mOngoingPinchToResize) {
-                onPinchResize((MotionEvent) ev);
-            } else {
-                onDragCornerResize((MotionEvent) ev);
+            MotionEvent mv = (MotionEvent) ev;
+            int action = mv.getActionMasked();
+            final Rect pipBounds = mPipBoundsState.getBounds();
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                if (!pipBounds.contains((int) mv.getRawX(), (int) mv.getRawY())
+                        && mPhonePipMenuController.isMenuVisible()) {
+                    mPhonePipMenuController.hideMenu();
+                }
+            }
+
+            if (mEnablePinchResize && mOngoingPinchToResize) {
+                onPinchResize(mv);
+            } else if (mEnableDragCornerResize) {
+                onDragCornerResize(mv);
             }
         }
     }
@@ -318,8 +333,8 @@ public class PipResizeGestureHandler {
                 case MotionEvent.ACTION_POINTER_DOWN:
                     if (mEnablePinchResize && ev.getPointerCount() == 2) {
                         onPinchResize(ev);
-                        mOngoingPinchToResize = true;
-                        return true;
+                        mOngoingPinchToResize = mAllowGesture;
+                        return mAllowGesture;
                     }
                     break;
 
@@ -445,7 +460,6 @@ public class PipResizeGestureHandler {
         float x = ev.getX();
         float y = ev.getY() - mOhmOffset;
         if (action == MotionEvent.ACTION_DOWN) {
-            final Rect currentPipBounds = mPipBoundsState.getBounds();
             mLastResizeBounds.setEmpty();
             mAllowGesture = isInValidSysUiState() && isWithinDragResizeRegion((int) x, (int) y);
             if (mAllowGesture) {
@@ -453,11 +467,6 @@ public class PipResizeGestureHandler {
                 mDownPoint.set(x, y);
                 mDownBounds.set(mPipBoundsState.getBounds());
             }
-            if (!currentPipBounds.contains((int) x, (int) y)
-                    && mPhonePipMenuController.isMenuVisible()) {
-                mPhonePipMenuController.hideMenu();
-            }
-
         } else if (mAllowGesture) {
             switch (action) {
                 case MotionEvent.ACTION_POINTER_DOWN:
@@ -536,8 +545,9 @@ public class PipResizeGestureHandler {
                 mPipTaskOrganizer.scheduleFinishResizePip(mLastResizeBounds,
                         PipAnimationController.TRANSITION_DIRECTION_USER_RESIZE, callback);
             }
+            final float magnetRadiusPercent = (float) mLastResizeBounds.width() / mMinSize.x / 2.f;
             mPipDismissTargetHandler
-                    .setMagneticFieldRadiusPercent((float) mLastResizeBounds.width() / mMinSize.x);
+                    .setMagneticFieldRadiusPercent(magnetRadiusPercent);
             mPipUiEventLogger.log(
                     PipUiEventLogger.PipUiEventEnum.PICTURE_IN_PICTURE_RESIZE);
         } else {

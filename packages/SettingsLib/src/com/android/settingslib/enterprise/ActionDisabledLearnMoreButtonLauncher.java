@@ -18,6 +18,7 @@ package com.android.settingslib.enterprise;
 
 import static java.util.Objects.requireNonNull;
 
+import android.app.admin.DevicePolicyManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -42,9 +43,10 @@ public abstract class ActionDisabledLearnMoreButtonLauncher {
         requireNonNull(enforcedAdmin, "enforcedAdmin cannot be null");
 
         // The "Learn more" button appears only if the restriction is enforced by an admin in the
-        // same profile group. Otherwise the admin package and its policies are not accessible to
-        // the current user.
-        if (isSameProfileGroup(context, enforcementAdminUserId)) {
+        // same profile group or by the device owner. Otherwise the admin package and its policies
+        // are not accessible to the current user.
+        if (isSameProfileGroup(context, enforcementAdminUserId)
+                || isEnforcedByDeviceOwnerOnSystemUserMode(context, enforcementAdminUserId)) {
             setLearnMoreButton(() -> showAdminPolicies(context, enforcedAdmin));
         }
     }
@@ -52,11 +54,12 @@ public abstract class ActionDisabledLearnMoreButtonLauncher {
     /**
      * Sets up a "learn more" button which launches a help page
      */
-    public final void setupLearnMoreButtonToLaunchHelpPage(Context context, String url) {
+    public final void setupLearnMoreButtonToLaunchHelpPage(
+            Context context, String url, UserHandle userHandle) {
         requireNonNull(context, "context cannot be null");
         requireNonNull(url, "url cannot be null");
 
-        setLearnMoreButton(() -> showHelpPage(context, url));
+        setLearnMoreButton(() -> showHelpPage(context, url, userHandle));
     }
 
     /**
@@ -90,12 +93,21 @@ public abstract class ActionDisabledLearnMoreButtonLauncher {
         return um.isSameProfileGroup(enforcementAdminUserId, um.getUserHandle());
     }
 
+    private boolean isEnforcedByDeviceOwnerOnSystemUserMode(
+            Context context, int enforcementAdminUserId) {
+        if (enforcementAdminUserId != UserHandle.USER_SYSTEM) {
+            return false;
+        }
+        DevicePolicyManager dpm = context.getSystemService(DevicePolicyManager.class);
+        return enforcementAdminUserId == dpm.getDeviceOwnerUserId();
+    }
+
     /**
      * Shows the help page using the given {@code url}.
      */
     @VisibleForTesting
-    public void showHelpPage(Context context, String url) {
-        context.startActivityAsUser(createLearnMoreIntent(url), UserHandle.of(context.getUserId()));
+    public void showHelpPage(Context context, String url, UserHandle userHandle) {
+        context.startActivityAsUser(createLearnMoreIntent(url), userHandle);
         finishSelf();
     }
 

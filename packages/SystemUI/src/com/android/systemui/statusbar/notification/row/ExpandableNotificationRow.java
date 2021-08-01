@@ -35,6 +35,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.graphics.Canvas;
 import android.graphics.Path;
 import android.graphics.drawable.AnimatedVectorDrawable;
 import android.graphics.drawable.AnimationDrawable;
@@ -85,6 +86,7 @@ import com.android.systemui.statusbar.RemoteInputController;
 import com.android.systemui.statusbar.StatusBarIconView;
 import com.android.systemui.statusbar.notification.AboveShelfChangedListener;
 import com.android.systemui.statusbar.notification.ExpandAnimationParameters;
+import com.android.systemui.statusbar.notification.NotificationLaunchAnimatorController;
 import com.android.systemui.statusbar.notification.NotificationUtils;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.collection.legacy.VisualStabilityManager;
@@ -133,7 +135,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
 
     private boolean mUpdateBackgroundOnUpdate;
     private boolean mNotificationTranslationFinished = false;
-    private ArrayList<MenuItem> mSnoozedMenuItems;
+    private boolean mIsSnoozed;
 
     /**
      * Listener for when {@link ExpandableNotificationRow} is laid out.
@@ -252,6 +254,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     private OnExpandClickListener mOnExpandClickListener;
     private View.OnClickListener mOnAppClickListener;
     private View.OnClickListener mOnFeedbackClickListener;
+    private Path mExpandingClipPath;
 
     // Listener will be called when receiving a long click event.
     // Use #setLongPressPosition to optionally assign positional data with the long press.
@@ -836,6 +839,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     public void setIsChildInGroup(boolean isChildInGroup, ExpandableNotificationRow parent) {
         if (mExpandAnimationRunning && !isChildInGroup && mNotificationParent != null) {
             mNotificationParent.setChildIsExpanding(false);
+            mNotificationParent.setExpandingClipPath(null);
             mNotificationParent.setExtraWidthForClipping(0.0f);
             mNotificationParent.setMinimumHeightForClipping(0);
         }
@@ -846,8 +850,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         updateClickAndFocus();
         if (mNotificationParent != null) {
             setOverrideTintColor(NO_COLOR, 0.0f);
-            // Let's reset the distance to top roundness, as this isn't applied to group children
-            setDistanceToTopRoundness(NO_ROUNDNESS);
             mNotificationParent.updateBackgroundForGroupState();
         }
         updateBackgroundClipping();
@@ -876,7 +878,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     @Override
     protected boolean handleSlideBack() {
         if (mMenuRow != null && mMenuRow.isMenuVisible()) {
-            animateTranslateNotification(0 /* targetLeft */);
+            animateResetTranslation();
             return true;
         }
         return false;
@@ -1107,8 +1109,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
                     false /* force */, false /* removeControls */, -1 /* x */, -1 /* y */,
                     false /* resetMenu */);
             mNotificationGutsManager.openGuts(this, 0, 0, item);
-            mSnoozedMenuItems = mMenuRow.getMenuItems(mMenuRow.getMenuView().getContext());
-            mMenuRow.resetMenu();
+            mIsSnoozed = true;
         };
     }
 
@@ -1713,21 +1714,17 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             mChildrenContainer.setContainingNotification(ExpandableNotificationRow.this);
             mChildrenContainer.onNotificationUpdated();
 
-            if (mShouldTranslateContents) {
-                mTranslateableViews.add(mChildrenContainer);
-            }
+            mTranslateableViews.add(mChildrenContainer);
         });
 
-        if (mShouldTranslateContents) {
-            // Add the views that we translate to reveal the menu
-            mTranslateableViews = new ArrayList<>();
-            for (int i = 0; i < getChildCount(); i++) {
-                mTranslateableViews.add(getChildAt(i));
-            }
-            // Remove views that don't translate
-            mTranslateableViews.remove(mChildrenContainerStub);
-            mTranslateableViews.remove(mGutsStub);
+        // Add the views that we translate to reveal the menu
+        mTranslateableViews = new ArrayList<>();
+        for (int i = 0; i < getChildCount(); i++) {
+            mTranslateableViews.add(getChildAt(i));
         }
+        // Remove views that don't translate
+        mTranslateableViews.remove(mChildrenContainerStub);
+        mTranslateableViews.remove(mGutsStub);
     }
 
     private void doLongClickCallback() {
@@ -1805,7 +1802,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             mTranslateAnim.cancel();
         }
 
-        if (!mShouldTranslateContents) {
+        if (mDismissUsingRowTranslationX) {
             setTranslationX(0);
         } else if (mTranslateableViews != null) {
             for (int i = 0; i < mTranslateableViews.size(); i++) {
@@ -1827,10 +1824,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
 
     void onGutsClosed() {
         updateContentAccessibilityImportanceForGuts(true /* isEnabled */);
-        if (mSnoozedMenuItems != null && mSnoozedMenuItems.size() > 0) {
-            mMenuRow.setMenuItems(mSnoozedMenuItems);
-            mSnoozedMenuItems = null;
-        }
+        mIsSnoozed = false;
     }
 
     /**
@@ -1867,13 +1861,37 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         return mPrivateLayout.getActiveRemoteInputText();
     }
 
-    public void animateTranslateNotification(final float leftTarget) {
+    /**
+     * Reset the translation with an animation.
+     */
+    public void animateResetTranslation() {
         if (mTranslateAnim != null) {
             mTranslateAnim.cancel();
         }
-        mTranslateAnim = getTranslateViewAnimator(leftTarget, null /* updateListener */);
+        mTranslateAnim = getTranslateViewAnimator(0, null /* updateListener */);
         if (mTranslateAnim != null) {
             mTranslateAnim.start();
+        }
+    }
+
+    /**
+     * Set the dismiss behavior of the view.
+     * @param usingRowTranslationX {@code true} if the view should translate using regular
+     *                                          translationX, otherwise the contents will be
+     *                                          translated.
+     */
+    @Override
+    public void setDismissUsingRowTranslationX(boolean usingRowTranslationX) {
+        if (usingRowTranslationX != mDismissUsingRowTranslationX) {
+            // In case we were already transitioning, let's switch over!
+            float previousTranslation = getTranslation();
+            if (previousTranslation != 0) {
+                setTranslation(0);
+            }
+            super.setDismissUsingRowTranslationX(usingRowTranslationX);
+            if (previousTranslation != 0) {
+                setTranslation(previousTranslation);
+            }
         }
     }
 
@@ -1883,7 +1901,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         if (isBlockingHelperShowingAndTranslationFinished()) {
             mGuts.setTranslationX(translationX);
             return;
-        } else if (!mShouldTranslateContents) {
+        } else if (mDismissUsingRowTranslationX) {
             setTranslationX(translationX);
         } else if (mTranslateableViews != null) {
             // Translate the group of views
@@ -1907,7 +1925,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
 
     @Override
     public float getTranslation() {
-        if (!mShouldTranslateContents) {
+        if (mDismissUsingRowTranslationX) {
             return getTranslationX();
         }
 
@@ -1997,23 +2015,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         return false;
     }
 
-    @Override
-    public float getCurrentTopRoundness() {
-        if (mExpandAnimationRunning) {
-            return mTopRoundnessDuringExpandAnimation;
-        }
-
-        return super.getCurrentTopRoundness();
-    }
-
-    @Override
-    public float getCurrentBottomRoundness() {
-        if (mExpandAnimationRunning) {
-            return mBottomRoundnessDuringExpandAnimation;
-        }
-
-        return super.getCurrentBottomRoundness();
-    }
 
     public void applyExpandAnimationParams(ExpandAnimationParameters params) {
         if (params == null) {
@@ -2035,7 +2036,22 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         setTranslationZ(translationZ);
         float extraWidthForClipping = params.getWidth() - getWidth();
         setExtraWidthForClipping(extraWidthForClipping);
-        int top = params.getTop();
+        int top;
+        if (params.getStartRoundedTopClipping() > 0) {
+            // If we were clipping initially, let's interpolate from the start position to the
+            // top. Otherwise, we just take the top directly.
+            float expandProgress = Interpolators.FAST_OUT_SLOW_IN.getInterpolation(
+                    params.getProgress(0,
+                            NotificationLaunchAnimatorController.ANIMATION_DURATION_TOP_ROUNDING));
+            float startTop = params.getStartNotificationTop();
+            top = (int) Math.min(MathUtils.lerp(startTop,
+                    params.getTop(), expandProgress),
+                    startTop);
+        } else {
+            top = params.getTop();
+        }
+        int actualHeight = params.getBottom() - top;
+        setActualHeight(actualHeight);
         int startClipTopAmount = params.getStartClipTopAmount();
         int clipTopAmount = (int) MathUtils.lerp(startClipTopAmount, 0, params.getProgress());
         if (mNotificationParent != null) {
@@ -2064,13 +2080,12 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             setClipTopAmount(clipTopAmount);
         }
         setTranslationY(top);
-        setActualHeight(params.getHeight());
 
         mTopRoundnessDuringExpandAnimation = params.getTopCornerRadius() / mOutlineRadius;
         mBottomRoundnessDuringExpandAnimation = params.getBottomCornerRadius() / mOutlineRadius;
         invalidateOutline();
 
-        mBackgroundNormal.setExpandAnimationParams(params);
+        mBackgroundNormal.setExpandAnimationSize(params.getWidth(), actualHeight);
     }
 
     public void setExpandAnimationRunning(boolean expandAnimationRunning) {
@@ -2467,7 +2482,8 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
         int intrinsicBefore = getIntrinsicHeight();
         super.onLayout(changed, left, top, right, bottom);
-        if (intrinsicBefore != getIntrinsicHeight() && intrinsicBefore != 0) {
+        if (intrinsicBefore != getIntrinsicHeight()
+                && (intrinsicBefore != 0 || getActualHeight() > 0)) {
             notifyHeightChanged(true  /* needsAnimation */);
         }
         if (mMenuRow != null && mMenuRow.getMenuView() != null) {
@@ -2889,6 +2905,12 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             mShowNoBackground = false;
         }
         updateOutline();
+        updateBackground();
+    }
+
+    @Override
+    protected boolean hideBackground() {
+        return mShowNoBackground || super.hideBackground();
     }
 
     public int getPositionOfChild(ExpandableNotificationRow childRow) {
@@ -2915,7 +2937,11 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         float y = event.getY();
         NotificationViewWrapper wrapper = getVisibleNotificationViewWrapper();
         NotificationHeaderView header = wrapper == null ? null : wrapper.getNotificationHeader();
-        if (header != null && header.isInTouchRect(x - getTranslation(), y)) {
+        // the extra translation only needs to be added, if we're translating the notification
+        // contents, otherwise the motionEvent is already at the right place due to the
+        // touch event system.
+        float translation = !mDismissUsingRowTranslationX ? getTranslation() : 0;
+        if (header != null && header.isInTouchRect(x - translation, y)) {
             return true;
         }
         if ((!mIsSummaryWithChildren || shouldShowPublic())
@@ -2970,7 +2996,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     public void onInitializeAccessibilityNodeInfoInternal(AccessibilityNodeInfo info) {
         super.onInitializeAccessibilityNodeInfoInternal(info);
         info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_LONG_CLICK);
-        if (canViewBeDismissed()) {
+        if (canViewBeDismissed() && !mIsSnoozed) {
             info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_DISMISS);
         }
         boolean expandable = shouldShowPublic();
@@ -2986,7 +3012,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
                 isExpanded = isExpanded();
             }
         }
-        if (expandable) {
+        if (expandable && !mIsSnoozed) {
             if (isExpanded) {
                 info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_COLLAPSE);
             } else {
@@ -3054,24 +3080,6 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     }
 
     @Override
-    public boolean topAmountNeedsClipping() {
-        if (isGroupExpanded()) {
-            return true;
-        }
-        if (isGroupExpansionChanging()) {
-            return true;
-        }
-        if (getShowingLayout().shouldClipToRounding(true /* topRounded */,
-                false /* bottomRounded */)) {
-            return true;
-        }
-        if (mGuts != null && mGuts.getAlpha() != 0.0f) {
-            return true;
-        }
-        return false;
-    }
-
-    @Override
     protected boolean childNeedsClipping(View child) {
         if (child instanceof NotificationContentView) {
             NotificationContentView contentView = (NotificationContentView) child;
@@ -3090,6 +3098,26 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             return !hasNoRounding();
         }
         return super.childNeedsClipping(child);
+    }
+
+    /**
+     * Set a clip path to be set while expanding the notification. This is needed to nicely
+     * clip ourselves during the launch if we were clipped rounded in the beginning
+     */
+    public void setExpandingClipPath(Path path) {
+        mExpandingClipPath = path;
+        invalidate();
+    }
+
+    @Override
+    protected void dispatchDraw(Canvas canvas) {
+        canvas.save();
+        if (mExpandingClipPath != null && (mExpandAnimationRunning || mChildIsExpanding)) {
+            // If we're launching a notification, let's clip if a clip rounded to the clipPath
+            canvas.clipPath(mExpandingClipPath);
+        }
+        super.dispatchDraw(canvas);
+        canvas.restore();
     }
 
     @Override

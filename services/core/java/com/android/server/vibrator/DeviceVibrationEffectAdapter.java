@@ -26,17 +26,15 @@ import java.util.List;
 final class DeviceVibrationEffectAdapter
         implements VibrationEffectAdapters.EffectAdapter<VibratorInfo> {
 
-    /** Duration of each step created to simulate a ramp segment. */
-    private static final int RAMP_STEP_DURATION_MILLIS = 5;
-
     private final List<VibrationEffectAdapters.SegmentsAdapter<VibratorInfo>> mSegmentAdapters;
 
-    DeviceVibrationEffectAdapter() {
+    DeviceVibrationEffectAdapter(VibrationSettings settings) {
         mSegmentAdapters = Arrays.asList(
                 // TODO(b/167947076): add filter that removes unsupported primitives
                 // TODO(b/167947076): add filter that replaces unsupported prebaked with fallback
-                new RampToStepAdapter(RAMP_STEP_DURATION_MILLIS),
+                new RampToStepAdapter(settings.getRampStepDuration()),
                 new StepToRampAdapter(),
+                new RampDownAdapter(settings.getRampDownDuration(), settings.getRampStepDuration()),
                 new ClippingAmplitudeAndFrequencyAdapter()
         );
     }

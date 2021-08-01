@@ -63,12 +63,10 @@ public class QuickAccessWalletControllerTest extends SysuiTestCase {
     private ArgumentCaptor<GetWalletCardsRequest> mRequestCaptor;
 
     private QuickAccessWalletController mController;
-    private TestableLooper mTestableLooper;
 
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
-        mTestableLooper = TestableLooper.get(this);
         when(mQuickAccessWalletClient.isWalletServiceAvailable()).thenReturn(true);
         when(mQuickAccessWalletClient.isWalletFeatureAvailable()).thenReturn(true);
         when(mQuickAccessWalletClient.isWalletFeatureAvailableWhenDeviceLocked()).thenReturn(true);
@@ -127,17 +125,7 @@ public class QuickAccessWalletControllerTest extends SysuiTestCase {
     }
 
     @Test
-    public void queryWalletCards_walletNotEnabled_notQuery() {
-        when(mQuickAccessWalletClient.isWalletServiceAvailable()).thenReturn(false);
-
-        mController.queryWalletCards(mCardsRetriever);
-
-        verify(mQuickAccessWalletClient, never()).getWalletCards(any(), any(), any());
-    }
-
-    @Test
     public void queryWalletCards_walletEnabled_queryCards() {
-        mController.updateWalletPreference();
         mController.queryWalletCards(mCardsRetriever);
 
         verify(mQuickAccessWalletClient)
@@ -154,5 +142,14 @@ public class QuickAccessWalletControllerTest extends SysuiTestCase {
         assertEquals(
                 mContext.getResources().getDimensionPixelSize(R.dimen.wallet_tile_card_view_height),
                 request.getCardHeightPx());
+    }
+
+    @Test
+    public void queryWalletCards_walletFeatureNotAvailable_noQuery() {
+        when(mQuickAccessWalletClient.isWalletFeatureAvailable()).thenReturn(false);
+
+        mController.queryWalletCards(mCardsRetriever);
+
+        verify(mQuickAccessWalletClient, never()).getWalletCards(any(), any(), any());
     }
 }

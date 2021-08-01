@@ -508,7 +508,6 @@ interface IActivityManager {
     boolean stopBinderTrackingAndDump(in ParcelFileDescriptor fd);
     @UnsupportedAppUsage(maxTargetSdk = 30, trackingBug = 170729553)
     void suppressResizeConfigChanges(boolean suppress);
-    boolean isAppStartModeDisabled(int uid, in String packageName);
     @UnsupportedAppUsage(maxTargetSdk = 30, trackingBug = 170729553)
     boolean unlockUser(int userid, in byte[] token, in byte[] secret,
             in IProgressListener listener);
@@ -684,6 +683,14 @@ interface IActivityManager {
      * @param enable set it to true to enable the app freezer, false to disable it.
      */
     boolean enableAppFreezer(in boolean enable);
+
+    /**
+     * Suppress or reenable the rate limit on foreground service notification deferral.
+     * This is for use within CTS and is protected by android.permission.WRITE_DEVICE_CONFIG.
+     *
+     * @param enable false to suppress rate-limit policy; true to reenable it.
+     */
+    boolean enableFgsNotificationRateLimit(in boolean enable);
 
     /**
      * Holds the AM lock for the specified amount of milliseconds.

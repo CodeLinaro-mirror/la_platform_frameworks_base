@@ -124,6 +124,7 @@ import com.android.systemui.tuner.TunerService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -302,8 +303,11 @@ public class NotificationStackScrollLayoutController {
         }
     };
 
-    public void setSectionPadding(float padding) {
-        mView.setSectionPadding(padding);
+    /**
+     * Set the overexpansion of the panel to be applied to the view.
+     */
+    public void setOverExpansion(float overExpansion) {
+        mView.setOverExpansion(overExpansion);
     }
 
     private final OnMenuEventListener mMenuEventListener = new OnMenuEventListener() {
@@ -377,6 +381,11 @@ public class NotificationStackScrollLayoutController {
                     mNotificationGutsManager.closeAndSaveGuts(true /* removeLeavebehind */,
                             false /* force */, false /* removeControls */, -1 /* x */, -1 /* y */,
                             false /* resetMenu */);
+                }
+
+                @Override
+                public float getTotalTranslationLength(View animView) {
+                    return mView.getTotalTranslationLength(animView);
                 }
 
                 @Override
@@ -544,7 +553,11 @@ public class NotificationStackScrollLayoutController {
 
                 @Override
                 public void onHeadsUpUnPinned(NotificationEntry entry) {
-                    mNotificationRoundnessManager.updateView(entry.getRow(), true /* animate */);
+                    ExpandableNotificationRow row = entry.getRow();
+                    // update the roundedness posted, because we might be animating away the
+                    // headsup soon, so no need to set the roundedness to 0 and then back to 1.
+                    row.post(() -> mNotificationRoundnessManager.updateView(row,
+                            true /* animate */));
                 }
 
                 @Override
@@ -553,7 +566,9 @@ public class NotificationStackScrollLayoutController {
                     NotificationEntry topEntry = mHeadsUpManager.getTopEntry();
                     mView.setNumHeadsUp(numEntries);
                     mView.setTopHeadsUpEntry(topEntry);
-                    mNotificationRoundnessManager.updateView(entry.getRow(), false /* animate */);
+                    generateHeadsUpAnimation(entry, isHeadsUp);
+                    ExpandableNotificationRow row = entry.getRow();
+                    mNotificationRoundnessManager.updateView(row, true /* animate */);
                 }
             };
 
@@ -812,8 +827,18 @@ public class NotificationStackScrollLayoutController {
         return mView.isLayoutRtl();
     }
 
+    /**
+     * @return the left of the view.
+     */
     public int getLeft() {
-        return  mView.getLeft();
+        return mView.getLeft();
+    }
+
+    /**
+     * @return the top of the view.
+     */
+    public int getTop() {
+        return mView.getTop();
     }
 
     public float getTranslationX() {
@@ -944,10 +969,6 @@ public class NotificationStackScrollLayoutController {
         mView.setOverScrollAmount(amount, onTop, animate);
     }
 
-    public void setOverScrolledPixels(float numPixels, boolean onTop, boolean animate) {
-        mView.setOverScrolledPixels(numPixels, onTop, animate);
-    }
-
     public void resetScrollPosition() {
         mView.resetScrollPosition();
     }
@@ -1002,7 +1023,7 @@ public class NotificationStackScrollLayoutController {
         mView.setQsExpansionFraction(expansionFraction);
     }
 
-    public void setOnStackYChanged(Runnable onStackYChanged) {
+    public void setOnStackYChanged(Consumer<Boolean> onStackYChanged) {
         mView.setOnStackYChanged(onStackYChanged);
     }
 
@@ -1048,14 +1069,6 @@ public class NotificationStackScrollLayoutController {
 
     public void setAlpha(float alpha) {
         mView.setAlpha(alpha);
-    }
-
-    public float getCurrentOverScrollAmount(boolean top) {
-        return mView.getCurrentOverScrollAmount(top);
-    }
-
-    public float getCurrentOverScrolledPixels(boolean top) {
-        return mView.getCurrentOverScrolledPixels(top);
     }
 
     public float calculateAppearFraction(float height) {
@@ -1238,7 +1251,7 @@ public class NotificationStackScrollLayoutController {
         return mView.getFirstChildNotGone();
     }
 
-    public void generateHeadsUpAnimation(NotificationEntry entry, boolean isHeadsUp) {
+    private void generateHeadsUpAnimation(NotificationEntry entry, boolean isHeadsUp) {
         mView.generateHeadsUpAnimation(entry, isHeadsUp);
     }
 
@@ -1431,6 +1444,28 @@ public class NotificationStackScrollLayoutController {
     }
 
     /**
+     * Set a listener to when scrolling changes.
+     */
+    public void setOnScrollListener(Consumer<Integer> listener) {
+        mView.setOnScrollListener(listener);
+    }
+
+    /**
+     * Set rounded rect clipping bounds on this view.
+     */
+    public void setRoundedClippingBounds(int left, int top, int right, int bottom, int topRadius,
+            int bottomRadius) {
+        mView.setRoundedClippingBounds(left, top, right, bottom, topRadius, bottomRadius);
+    }
+
+    /**
+     * Request an animation whenever the toppadding changes next
+     */
+    public void animateNextTopPaddingChange() {
+        mView.animateNextTopPaddingChange();
+    }
+
+    /**
      * Enum for UiEvent logged from this class
      */
     enum NotificationPanelEvent implements UiEventLogger.UiEventEnum {
@@ -1502,6 +1537,11 @@ public class NotificationStackScrollLayoutController {
         public void setNotificationActivityStarter(
                 NotificationActivityStarter notificationActivityStarter) {
             mView.setNotificationActivityStarter(notificationActivityStarter);
+        }
+
+        @Override
+        public int getTopClippingStartLocation() {
+            return mView.getTopClippingStartLocation();
         }
 
         @Override

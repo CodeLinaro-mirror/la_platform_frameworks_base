@@ -152,6 +152,7 @@ import com.android.systemui.volume.VolumeComponent;
 import com.android.systemui.wmshell.BubblesManager;
 import com.android.wm.shell.bubbles.Bubbles;
 import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
+import com.android.wm.shell.startingsurface.StartingSurface;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -273,6 +274,7 @@ public class StatusBarTest extends SysuiTestCase {
     @Mock private IWallpaperManager mWallpaperManager;
     @Mock private KeyguardUnlockAnimationController mKeyguardUnlockAnimationController;
     @Mock private UnlockedScreenOffAnimationController mUnlockedScreenOffAnimationController;
+    @Mock private StartingSurface mStartingSurface;
     private ShadeController mShadeController;
     private FakeExecutor mUiBgExecutor = new FakeExecutor(new FakeSystemClock());
     private InitController mInitController = new InitController();
@@ -443,7 +445,8 @@ public class StatusBarTest extends SysuiTestCase {
                 mLockscreenTransitionController,
                 mFeatureFlags,
                 mKeyguardUnlockAnimationController,
-                mUnlockedScreenOffAnimationController);
+                mUnlockedScreenOffAnimationController,
+                Optional.of(mStartingSurface));
         when(mKeyguardViewMediator.registerStatusBar(any(StatusBar.class), any(ViewGroup.class),
                 any(NotificationPanelViewController.class), any(BiometricUnlockController.class),
                 any(ViewGroup.class), any(KeyguardBypassController.class)))
@@ -755,7 +758,7 @@ public class StatusBarTest extends SysuiTestCase {
         when(mCommandQueue.panelsEnabled()).thenReturn(false);
         mStatusBar.disable(DEFAULT_DISPLAY, StatusBarManager.DISABLE_NONE,
                 StatusBarManager.DISABLE2_NOTIFICATION_SHADE, false);
-        verify(mNotificationPanelViewController).setQsExpansionEnabled(false);
+        verify(mNotificationPanelViewController).setQsExpansionEnabledPolicy(false);
         mStatusBar.animateExpandNotificationsPanel();
         verify(mNotificationPanelViewController, never()).expand(anyBoolean());
         mStatusBar.animateExpandSettingsPanel(null);
@@ -764,7 +767,7 @@ public class StatusBarTest extends SysuiTestCase {
         when(mCommandQueue.panelsEnabled()).thenReturn(true);
         mStatusBar.disable(DEFAULT_DISPLAY, StatusBarManager.DISABLE_NONE,
                 StatusBarManager.DISABLE2_NONE, false);
-        verify(mNotificationPanelViewController).setQsExpansionEnabled(true);
+        verify(mNotificationPanelViewController).setQsExpansionEnabledPolicy(true);
         mStatusBar.animateExpandNotificationsPanel();
         verify(mNotificationPanelViewController).expandWithoutQs();
         mStatusBar.animateExpandSettingsPanel(null);
@@ -774,6 +777,12 @@ public class StatusBarTest extends SysuiTestCase {
     @Test
     public void testDump_DoesNotCrash() {
         mStatusBar.dump(null, new PrintWriter(new ByteArrayOutputStream()), null);
+    }
+
+    @Test
+    public void testDumpBarTransitions_DoesNotCrash() {
+        StatusBar.dumpBarTransitions(
+                new PrintWriter(new ByteArrayOutputStream()), "var", /* transitions= */ null);
     }
 
     @Test
@@ -843,12 +852,14 @@ public class StatusBarTest extends SysuiTestCase {
 
         // By default, showKeyguardImpl sets state to KEYGUARD.
         mStatusBar.showKeyguardImpl();
-        verify(mStatusBarStateController).setState(eq(StatusBarState.KEYGUARD));
+        verify(mStatusBarStateController).setState(
+                eq(StatusBarState.KEYGUARD), eq(false) /* force */);
 
         // If useFullscreenUserSwitcher is true, state is set to FULLSCREEN_USER_SWITCHER.
         when(mUserSwitcherController.useFullscreenUserSwitcher()).thenReturn(true);
         mStatusBar.showKeyguardImpl();
-        verify(mStatusBarStateController).setState(eq(StatusBarState.FULLSCREEN_USER_SWITCHER));
+        verify(mStatusBarStateController).setState(
+                eq(StatusBarState.FULLSCREEN_USER_SWITCHER), eq(false) /* force */);
     }
 
     @Test

@@ -46,6 +46,7 @@ final class FakeVibratorControllerProvider {
     private final List<VibrationEffectSegment> mEffectSegments = new ArrayList<>();
     private final List<Integer> mBraking = new ArrayList<>();
     private final List<Float> mAmplitudes = new ArrayList<>();
+    private final List<Boolean> mExternalControlStates = new ArrayList<>();
     private final Handler mHandler;
     private final FakeNativeWrapper mNativeWrapper;
 
@@ -56,6 +57,8 @@ final class FakeVibratorControllerProvider {
     private int[] mSupportedEffects;
     private int[] mSupportedBraking;
     private int[] mSupportedPrimitives;
+    private int mCompositionSizeMax;
+    private int mPwleSizeMax;
     private float mMinFrequency = Float.NaN;
     private float mResonantFrequency = Float.NaN;
     private float mFrequencyResolution = Float.NaN;
@@ -137,6 +140,7 @@ final class FakeVibratorControllerProvider {
 
         @Override
         public void setExternalControl(boolean enabled) {
+            mExternalControlStates.add(enabled);
         }
 
         @Override
@@ -151,12 +155,22 @@ final class FakeVibratorControllerProvider {
         }
 
         @Override
-        public VibratorInfo getInfo(float suggestedFrequencyRange) {
-            VibratorInfo.FrequencyMapping frequencyMapping = new VibratorInfo.FrequencyMapping(
-                    mMinFrequency, mResonantFrequency, mFrequencyResolution,
-                    suggestedFrequencyRange, mMaxAmplitudes);
-            return new VibratorInfo(vibratorId, mCapabilities, mSupportedEffects, mSupportedBraking,
-                    mSupportedPrimitives, null, mQFactor, frequencyMapping);
+        public boolean getInfo(float suggestedFrequencyRange, VibratorInfo.Builder infoBuilder) {
+            infoBuilder.setCapabilities(mCapabilities);
+            infoBuilder.setSupportedBraking(mSupportedBraking);
+            infoBuilder.setPwleSizeMax(mPwleSizeMax);
+            infoBuilder.setSupportedEffects(mSupportedEffects);
+            if (mSupportedPrimitives != null) {
+                for (int primitive : mSupportedPrimitives) {
+                    infoBuilder.setSupportedPrimitive(primitive, EFFECT_DURATION);
+                }
+            }
+            infoBuilder.setCompositionSizeMax(mCompositionSizeMax);
+            infoBuilder.setQFactor(mQFactor);
+            infoBuilder.setFrequencyMapping(new VibratorInfo.FrequencyMapping(mMinFrequency,
+                    mResonantFrequency, mFrequencyResolution, suggestedFrequencyRange,
+                    mMaxAmplitudes));
+            return true;
         }
 
         private void applyLatency() {
@@ -236,6 +250,16 @@ final class FakeVibratorControllerProvider {
         mSupportedPrimitives = primitives;
     }
 
+    /** Set the max number of primitives allowed in a composition by the fake vibrator hardware. */
+    public void setCompositionSizeMax(int compositionSizeMax) {
+        mCompositionSizeMax = compositionSizeMax;
+    }
+
+    /** Set the max number of PWLEs allowed in a composition by the fake vibrator hardware. */
+    public void setPwleSizeMax(int pwleSizeMax) {
+        mPwleSizeMax = pwleSizeMax;
+    }
+
     /** Set the resonant frequency of the fake vibrator hardware. */
     public void setResonantFrequency(float frequencyHz) {
         mResonantFrequency = frequencyHz;
@@ -277,6 +301,11 @@ final class FakeVibratorControllerProvider {
     /** Return list of {@link VibrationEffectSegment} played by this controller, in order. */
     public List<VibrationEffectSegment> getEffectSegments() {
         return new ArrayList<>(mEffectSegments);
+    }
+
+    /** Return list of states set for external control to the fake vibrator hardware. */
+    public List<Boolean> getExternalControlStates() {
+        return mExternalControlStates;
     }
 
     /**

@@ -33,6 +33,7 @@ import android.os.PersistableBundle;
 import android.os.RemoteException;
 import android.service.carrier.CarrierService;
 import android.telecom.TelecomManager;
+import android.telephony.data.DataCallResponse;
 import android.telephony.gba.TlsParams;
 import android.telephony.gba.UaSecurityProtocolIdentifier;
 import android.telephony.ims.ImsReasonInfo;
@@ -283,6 +284,21 @@ public class CarrierConfigManager {
      */
     public static final String KEY_CALL_BARRING_DEFAULT_SERVICE_CLASS_INT =
             "call_barring_default_service_class_int";
+
+    /**
+     * This carrier supports dialing USSD codes to enable/disable supplementary services such as
+     * call forwarding and call waiting over CDMA.
+     * <p>
+     * The supplementary service menu will still need to be set as visible, see
+     * {@link #KEY_CALL_FORWARDING_VISIBILITY_BOOL} and
+     * {@link #KEY_ADDITIONAL_SETTINGS_CALL_WAITING_VISIBILITY_BOOL}.
+     * <p>
+     * If this is set as false and the supplementary service menu is visible, the associated setting
+     * will be enabled and disabled based on the availability of supplementary services over UT. See
+     * {@link #KEY_CARRIER_SUPPORTS_SS_OVER_UT_BOOL}.
+     * @hide
+     */
+    public static final String KEY_SUPPORT_SS_OVER_CDMA_BOOL = "support_ss_over_cdma_bool";
 
     /**
      * Flag indicating whether the Phone app should ignore EVENT_SIM_NETWORK_LOCKED
@@ -1050,6 +1066,21 @@ public class CarrierConfigManager {
      */
     public static final String KEY_CARRIER_DATA_CALL_APN_RETRY_AFTER_DISCONNECT_LONG =
             "carrier_data_call_apn_retry_after_disconnect_long";
+
+    /**
+     * The maximum times for telephony to retry data setup on the same APN requested by
+     * network through the data setup response retry timer
+     * {@link DataCallResponse#getRetryDurationMillis()}. This is to prevent that network keeps
+     * asking device to retry data setup forever and causes power consumption issue. For infinite
+     * retring same APN, configure this as 2147483647 (i.e. {@link Integer#MAX_VALUE}).
+     *
+     * Note if network does not suggest any retry timer, frameworks uses the retry configuration
+     * from {@link #KEY_CARRIER_DATA_CALL_RETRY_CONFIG_STRINGS}, and the maximum retry times could
+     * be configured there.
+     * @hide
+     */
+    public static final String KEY_CARRIER_DATA_CALL_RETRY_NETWORK_REQUESTED_MAX_COUNT_INT =
+            "carrier_data_call_retry_network_requested_max_count_int";
 
     /**
      * Data call setup permanent failure causes by the carrier
@@ -2680,13 +2711,31 @@ public class CarrierConfigManager {
 
     /**
      * List of EARFCN (E-UTRA Absolute Radio Frequency Channel Number,
-     * Reference: 3GPP TS 36.104 5.4.3) inclusive ranges on which lte_rsrp_boost_int
-     * will be applied. Format of the String array is expected to be {"erafcn1_start-earfcn1_end",
+     * Reference: 3GPP TS 36.104 5.4.3) inclusive ranges on which lte_earfcns_rsrp_boost_int
+     * will be applied. Format of the String array is expected to be {"earfcn1_start-earfcn1_end",
      * "earfcn2_start-earfcn2_end" ... }
      * @hide
      */
     public static final String KEY_BOOSTED_LTE_EARFCNS_STRING_ARRAY =
             "boosted_lte_earfcns_string_array";
+
+    /**
+     * Offset to be reduced from rsrp threshold while calculating signal strength level.
+     * @hide
+     */
+    public static final String KEY_NRARFCNS_RSRP_BOOST_INT_ARRAY = "nrarfcns_rsrp_boost_int_array";
+
+    /**
+     * List of NR ARFCN (5G Absolute Radio Frequency Channel Number,
+     * Reference: 3GPP TS 36.108) inclusive ranges on which corresponding
+     * nrarfcns_rsrp_boost_int_array will be applied. The size of this array and
+     * nrarfcns_rsrp_boost_int_array must be the same.
+     * Format of the String array is expected to be {"nrarfcn1_start-nrarfcn1_end",
+     * "nrarfcn2_start-nrarfcn2_end" ... }
+     * @hide
+     */
+    public static final String KEY_BOOSTED_NRARFCNS_STRING_ARRAY =
+            "boosted_nrarfcns_string_array";
 
     /**
      * Determine whether to use only RSRP for the number of LTE signal bars.
@@ -3487,6 +3536,30 @@ public class CarrierConfigManager {
      */
     public static final String KEY_NR_ADVANCED_CAPABLE_PCO_ID_INT =
             "nr_advanced_capable_pco_id_int";
+
+    /**
+     * This configuration allows the framework to use user data communication to detect RRC state,
+     * and this is used on the 5G icon.
+     *
+     * There is a new way for for RRC state detection at Android 12. If
+     * {@link android.telephony.TelephonyManager#isRadioInterfaceCapabilitySupported}(
+     * {@link TelephonyManager#CAPABILITY_PHYSICAL_CHANNEL_CONFIG_1_6_SUPPORTED}) returns true,
+     * then framework can use PHYSICAL_CHANNEL_CONFIG for RRC state detection. Based on this
+     * condition, some carriers want to use the legacy behavior that way is using user data
+     * communication to detect the RRC state. Therefore, this configuration allows the framework
+     * to use user data communication to detect RRC state.
+     *
+     * The precondition is
+     * {@link android.telephony.TelephonyManager#isRadioInterfaceCapabilitySupported}(
+     * {@link TelephonyManager#CAPABILITY_PHYSICAL_CHANNEL_CONFIG_1_6_SUPPORTED}) returns true,
+     * otherwise this config is not working.
+     * If this is true, framework uses the user data communication for RRC state detection.
+     * If this is false, framework uses the PHYSICAL_CHANNEL_CONFIG for RRC state detection.
+     *
+     * @hide
+     */
+    public static final String KEY_LTE_ENDC_USING_USER_DATA_FOR_RRC_DETECTION_BOOL =
+            "lte_endc_using_user_data_for_rrc_detection_bool";
 
     /**
      * Controls time in milliseconds until DcTracker reevaluates 5G connection state.
@@ -4336,7 +4409,7 @@ public class CarrierConfigManager {
                     new String[] {});
             defaults.putBoolean(KEY_ENABLE_PRESENCE_CAPABILITY_EXCHANGE_BOOL, false);
             defaults.putBoolean(KEY_RCS_BULK_CAPABILITY_EXCHANGE_BOOL, false);
-            defaults.putBoolean(KEY_ENABLE_PRESENCE_GROUP_SUBSCRIBE_BOOL, true);
+            defaults.putBoolean(KEY_ENABLE_PRESENCE_GROUP_SUBSCRIBE_BOOL, false);
             defaults.putInt(KEY_NON_RCS_CAPABILITIES_CACHE_EXPIRATION_SEC_INT, 30 * 24 * 60 * 60);
             defaults.putBoolean(KEY_RCS_REQUEST_FORBIDDEN_BY_SIP_489_BOOL, false);
             defaults.putLong(KEY_RCS_REQUEST_RETRY_INTERVAL_MILLIS_LONG, 20 * 60 * 1000);
@@ -5062,6 +5135,7 @@ public class CarrierConfigManager {
         sDefaults.putBoolean(KEY_CALL_BARRING_SUPPORTS_PASSWORD_CHANGE_BOOL, true);
         sDefaults.putBoolean(KEY_CALL_BARRING_SUPPORTS_DEACTIVATE_ALL_BOOL, true);
         sDefaults.putInt(KEY_CALL_BARRING_DEFAULT_SERVICE_CLASS_INT, SERVICE_CLASS_VOICE);
+        sDefaults.putBoolean(KEY_SUPPORT_SS_OVER_CDMA_BOOL, false);
         sDefaults.putBoolean(KEY_CALL_FORWARDING_VISIBILITY_BOOL, true);
         sDefaults.putBoolean(KEY_CALL_FORWARDING_WHEN_UNREACHABLE_SUPPORTED_BOOL, true);
         sDefaults.putBoolean(KEY_CALL_FORWARDING_WHEN_UNANSWERED_SUPPORTED_BOOL, true);
@@ -5130,6 +5204,7 @@ public class CarrierConfigManager {
         sDefaults.putLong(KEY_CARRIER_DATA_CALL_APN_DELAY_DEFAULT_LONG, 20000);
         sDefaults.putLong(KEY_CARRIER_DATA_CALL_APN_DELAY_FASTER_LONG, 3000);
         sDefaults.putLong(KEY_CARRIER_DATA_CALL_APN_RETRY_AFTER_DISCONNECT_LONG, 10000);
+        sDefaults.putInt(KEY_CARRIER_DATA_CALL_RETRY_NETWORK_REQUESTED_MAX_COUNT_INT, 3);
         sDefaults.putString(KEY_CARRIER_ERI_FILE_NAME_STRING, "eri.xml");
         sDefaults.putInt(KEY_DURATION_BLOCKING_DISABLED_AFTER_EMERGENCY_INT, 7200);
         sDefaults.putStringArray(KEY_CARRIER_METERED_APN_TYPES_STRINGS,
@@ -5338,6 +5413,8 @@ public class CarrierConfigManager {
         sDefaults.putBoolean(KEY_SUPPORT_IMS_CALL_FORWARDING_WHILE_ROAMING_BOOL, true);
         sDefaults.putInt(KEY_LTE_EARFCNS_RSRP_BOOST_INT, 0);
         sDefaults.putStringArray(KEY_BOOSTED_LTE_EARFCNS_STRING_ARRAY, null);
+        sDefaults.putIntArray(KEY_NRARFCNS_RSRP_BOOST_INT_ARRAY, null);
+        sDefaults.putStringArray(KEY_BOOSTED_NRARFCNS_STRING_ARRAY, null);
         sDefaults.putBoolean(KEY_USE_ONLY_RSRP_FOR_LTE_SIGNAL_BAR_BOOL, false);
         sDefaults.putBoolean(KEY_DISABLE_VOICE_BARRING_NOTIFICATION_BOOL, false);
         sDefaults.putInt(IMSI_KEY_AVAILABILITY_INT, 0);
@@ -5463,6 +5540,7 @@ public class CarrierConfigManager {
         sDefaults.putLong(KEY_5G_WATCHDOG_TIME_MS_LONG, 3600000);
         sDefaults.putIntArray(KEY_ADDITIONAL_NR_ADVANCED_BANDS_INT_ARRAY, new int[0]);
         sDefaults.putInt(KEY_NR_ADVANCED_CAPABLE_PCO_ID_INT, 0);
+        sDefaults.putBoolean(KEY_LTE_ENDC_USING_USER_DATA_FOR_RRC_DETECTION_BOOL, false);
         sDefaults.putBoolean(KEY_UNMETERED_NR_NSA_BOOL, false);
         sDefaults.putBoolean(KEY_UNMETERED_NR_NSA_MMWAVE_BOOL, false);
         sDefaults.putBoolean(KEY_UNMETERED_NR_NSA_SUB6_BOOL, false);

@@ -110,6 +110,10 @@ public class ViewRootInsetsControllerHost implements InsetsController.Host {
     @Override
     public void dispatchWindowInsetsAnimationEnd(@NonNull WindowInsetsAnimation animation) {
         if (DEBUG) Log.d(TAG, "windowInsetsAnimation ended");
+        if (mViewRoot.mView == null) {
+            // The view has already detached from window.
+            return;
+        }
         mViewRoot.mView.dispatchWindowInsetsAnimationEnd(animation);
     }
 
@@ -176,11 +180,12 @@ public class ViewRootInsetsControllerHost implements InsetsController.Host {
 
     @Override
     public int getSystemBarsAppearance() {
-        if ((mViewRoot.mWindowAttributes.privateFlags & PRIVATE_FLAG_APPEARANCE_CONTROLLED) == 0) {
-            // We only return the requested appearance, not the implied one.
-            return 0;
-        }
         return mViewRoot.mWindowAttributes.insetsFlags.appearance;
+    }
+
+    @Override
+    public boolean isSystemBarsAppearanceControlled() {
+        return (mViewRoot.mWindowAttributes.privateFlags & PRIVATE_FLAG_APPEARANCE_CONTROLLED) != 0;
     }
 
     @Override
@@ -195,11 +200,12 @@ public class ViewRootInsetsControllerHost implements InsetsController.Host {
 
     @Override
     public int getSystemBarsBehavior() {
-        if ((mViewRoot.mWindowAttributes.privateFlags & PRIVATE_FLAG_BEHAVIOR_CONTROLLED) == 0) {
-            // We only return the requested behavior, not the implied one.
-            return 0;
-        }
         return mViewRoot.mWindowAttributes.insetsFlags.behavior;
+    }
+
+    @Override
+    public boolean isSystemBarsBehaviorControlled() {
+        return (mViewRoot.mWindowAttributes.privateFlags & PRIVATE_FLAG_BEHAVIOR_CONTROLLED) != 0;
     }
 
     @Override

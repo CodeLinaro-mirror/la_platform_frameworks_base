@@ -3,6 +3,8 @@ package com.android.systemui.statusbar.phone
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.content.Context
+import android.content.res.Configuration
 import android.os.Handler
 import android.view.View
 import com.android.systemui.animation.Interpolators
@@ -16,6 +18,7 @@ import com.android.systemui.statusbar.notification.AnimatableProperty
 import com.android.systemui.statusbar.notification.PropertyAnimator
 import com.android.systemui.statusbar.notification.stack.AnimationProperties
 import com.android.systemui.statusbar.notification.stack.StackStateAnimator
+import com.android.systemui.statusbar.policy.KeyguardStateController
 import javax.inject.Inject
 
 /**
@@ -38,10 +41,12 @@ private const val LIGHT_REVEAL_ANIMATION_DURATION = 750L
  */
 @SysUISingleton
 class UnlockedScreenOffAnimationController @Inject constructor(
+    private val context: Context,
     private val wakefulnessLifecycle: WakefulnessLifecycle,
     private val statusBarStateControllerImpl: StatusBarStateControllerImpl,
     private val keyguardViewMediatorLazy: dagger.Lazy<KeyguardViewMediator>,
-    private val dozeParameters: DozeParameters
+    private val keyguardStateController: KeyguardStateController,
+    private val dozeParameters: dagger.Lazy<DozeParameters>
 ) : WakefulnessLifecycle.Observer {
     private val handler = Handler()
 
@@ -51,9 +56,16 @@ class UnlockedScreenOffAnimationController @Inject constructor(
     private var lightRevealAnimationPlaying = false
     private var aodUiAnimationPlaying = false
 
+    /**
+     * The result of our decision whether to play the screen off animation in
+     * [onStartedGoingToSleep], or null if we haven't made that decision yet or aren't going to
+     * sleep.
+     */
+    private var decidedToAnimateGoingToSleep: Boolean? = null
+
     private val lightRevealAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
         duration = LIGHT_REVEAL_ANIMATION_DURATION
-        interpolator = Interpolators.FAST_OUT_SLOW_IN_REVERSE
+        interpolator = Interpolators.LINEAR
         addUpdateListener { lightRevealScrim.revealAmount = it.animatedValue as Float }
         addListener(object : AnimatorListenerAdapter() {
             override fun onAnimationCancel(animation: Animator?) {
@@ -115,11 +127,17 @@ class UnlockedScreenOffAnimationController @Inject constructor(
 
                     // Run the callback given to us by the KeyguardVisibilityHelper.
                     after.run()
+
+                    // Done going to sleep, reset this flag.
+                    decidedToAnimateGoingToSleep = null
                 }
                 .start()
     }
 
     override fun onStartedWakingUp() {
+        // Waking up, so reset this flag.
+        decidedToAnimateGoingToSleep = null
+
         lightRevealAnimator.cancel()
         handler.removeCallbacksAndMessages(null)
     }
@@ -131,13 +149,20 @@ class UnlockedScreenOffAnimationController @Inject constructor(
         lightRevealAnimationPlaying = false
         aodUiAnimationPlaying = false
 
-        // Make sure the status bar is in the correct keyguard state, since we might have left it in
-        // the KEYGUARD state if this wakeup cancelled the screen off animation.
-        statusBar.updateIsKeyguard()
+        // Make sure the status bar is in the correct keyguard state, forcing it if necessary. This
+        // is required if the screen off animation is cancelled, since it might be incorrectly left
+        // in the KEYGUARD or SHADE states depending on when it was cancelled and whether 'lock
+        // instantly' is enabled. We need to force it so that the state is set even if we're going
+        // from SHADE to SHADE or KEYGUARD to KEYGUARD, since we might have changed parts of the UI
+        // (such as showing AOD in the shade) without actually changing the StatusBarState. This
+        // ensures that the UI definitely reflects the desired state.
+        statusBar.updateIsKeyguard(true /* force */)
     }
 
     override fun onStartedGoingToSleep() {
-        if (shouldPlayScreenOffAnimation()) {
+        if (dozeParameters.get().shouldControlUnlockedScreenOff()) {
+            decidedToAnimateGoingToSleep = true
+
             lightRevealAnimationPlaying = true
             lightRevealAnimator.start()
 
@@ -147,17 +172,49 @@ class UnlockedScreenOffAnimationController @Inject constructor(
                 // Show AOD. That'll cause the KeyguardVisibilityHelper to call #animateInKeyguard.
                 statusBar.notificationPanelViewController.showAodUi()
             }, ANIMATE_IN_KEYGUARD_DELAY)
+        } else {
+            decidedToAnimateGoingToSleep = false
         }
     }
 
     /**
-     * Whether we should play the screen off animation when the phone starts going to sleep. We can
-     * do that if dozeParameters says we can control the unlocked screen off animation and we are in
-     * the SHADE state. If we're in KEYGUARD or SHADE_LOCKED, the regular
+     * Whether we want to play the screen off animation when the phone starts going to sleep, based
+     * on the current state of the device.
      */
-    fun shouldPlayScreenOffAnimation(): Boolean {
-        return dozeParameters.shouldControlUnlockedScreenOff() &&
-                statusBarStateControllerImpl.state == StatusBarState.SHADE
+    fun shouldPlayUnlockedScreenOffAnimation(): Boolean {
+        // If we explicitly already decided not to play the screen off animation, then never change
+        // our mind.
+        if (decidedToAnimateGoingToSleep == false) {
+            return false
+        }
+
+        if (!dozeParameters.get().canControlUnlockedScreenOff()) {
+            return false
+        }
+
+        // We only play the unlocked screen off animation if we are... unlocked.
+        if (statusBarStateControllerImpl.state != StatusBarState.SHADE) {
+            return false
+        }
+
+        // We currently draw both the light reveal scrim, and the AOD UI, in the shade. If it's
+        // already expanded and showing notifications/QS, the animation looks really messy. For now,
+        // disable it if the notification panel is expanded.
+        if (!this::statusBar.isInitialized ||
+                statusBar.notificationPanelViewController.isFullyExpanded ||
+                statusBar.notificationPanelViewController.isExpanding) {
+            return false
+        }
+
+        // If we're not allowed to rotate the keyguard, then only do the screen off animation if
+        // we're in portrait. Otherwise, AOD will animate in sideways, which looks weird.
+        if (!keyguardStateController.isKeyguardScreenRotationAllowed &&
+                context.resources.configuration.orientation != Configuration.ORIENTATION_PORTRAIT) {
+            return false
+        }
+
+        // Otherwise, good to go.
+        return true
     }
 
     /**

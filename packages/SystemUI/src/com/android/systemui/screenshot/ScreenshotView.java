@@ -36,10 +36,13 @@ import android.app.ActivityManager;
 import android.app.Notification;
 import android.app.PendingIntent;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
+import android.graphics.BlendMode;
 import android.graphics.Color;
 import android.graphics.Insets;
+import android.graphics.Matrix;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.Region;
@@ -49,19 +52,26 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
 import android.graphics.drawable.InsetDrawable;
 import android.graphics.drawable.LayerDrawable;
+import android.os.Looper;
 import android.os.RemoteException;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.MathUtils;
+import android.view.Choreographer;
+import android.view.Display;
+import android.view.DisplayCutout;
 import android.view.GestureDetector;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
+import android.view.ScrollCaptureResponse;
 import android.view.TouchDelegate;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.WindowInsets;
+import android.view.WindowManager;
+import android.view.WindowMetrics;
 import android.view.accessibility.AccessibilityManager;
 import android.view.animation.AccelerateInterpolator;
 import android.view.animation.AnimationUtils;
@@ -71,9 +81,12 @@ import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 
+import androidx.constraintlayout.widget.ConstraintLayout;
+
 import com.android.internal.logging.UiEventLogger;
 import com.android.systemui.R;
 import com.android.systemui.screenshot.ScreenshotController.SavedImageData.ActionTransition;
+import com.android.systemui.shared.system.InputMonitorCompat;
 import com.android.systemui.shared.system.QuickStepContract;
 
 import java.util.ArrayList;
@@ -89,6 +102,9 @@ public class ScreenshotView extends FrameLayout implements
         void onUserInteraction();
 
         void onDismiss();
+
+        /** DOWN motion event was observed outside of the touchable areas of this view. */
+        void onTouchOutside();
     }
 
     private static final String TAG = logTag(ScreenshotView.class);
@@ -119,15 +135,17 @@ public class ScreenshotView extends FrameLayout implements
     private final AccessibilityManager mAccessibilityManager;
 
     private int mNavMode;
-    private int mLeftInset;
-    private int mRightInset;
     private boolean mOrientationPortrait;
     private boolean mDirectionLTR;
+    private int mStaticLeftMargin;
 
     private ScreenshotSelectorView mScreenshotSelectorView;
+    private ImageView mScrollingScrim;
     private View mScreenshotStatic;
     private ImageView mScreenshotPreview;
+    private View mTransitionView;
     private View mScreenshotPreviewBorder;
+    private ImageView mScrollablePreview;
     private ImageView mScreenshotFlash;
     private ImageView mActionsContainerBackground;
     private HorizontalScrollView mActionsContainer;
@@ -145,6 +163,8 @@ public class ScreenshotView extends FrameLayout implements
     private boolean mPendingSharedTransition;
     private GestureDetector mSwipeDetector;
     private SwipeDismissHandler mSwipeDismissHandler;
+    private InputMonitorCompat mInputMonitor;
+    private boolean mShowScrollablePreview;
 
     private final ArrayList<ScreenshotActionChip> mSmartChips = new ArrayList<>();
     private PendingInteraction mPendingInteraction;
@@ -202,6 +222,21 @@ public class ScreenshotView extends FrameLayout implements
                 });
         mSwipeDetector.setIsLongpressEnabled(false);
         mSwipeDismissHandler = new SwipeDismissHandler();
+        addOnAttachStateChangeListener(new OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View v) {
+                startInputListening();
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View v) {
+                stopInputListening();
+            }
+        });
+    }
+
+    public void hideScrollChip() {
+        mScrollChip.setVisibility(View.GONE);
     }
 
     /**
@@ -227,6 +262,10 @@ public class ScreenshotView extends FrameLayout implements
     @Override // ViewTreeObserver.OnComputeInternalInsetsListener
     public void onComputeInternalInsets(ViewTreeObserver.InternalInsetsInfo inoutInfo) {
         inoutInfo.setTouchableInsets(ViewTreeObserver.InternalInsetsInfo.TOUCHABLE_INSETS_REGION);
+        inoutInfo.touchableRegion.set(getTouchRegion(true));
+    }
+
+    private Region getTouchRegion(boolean includeScrim) {
         Region touchRegion = new Region();
 
         final Rect tmpRect = new Rect();
@@ -239,20 +278,55 @@ public class ScreenshotView extends FrameLayout implements
         mDismissButton.getBoundsOnScreen(tmpRect);
         touchRegion.op(tmpRect, Region.Op.UNION);
 
-        if (QuickStepContract.isGesturalMode(mNavMode)) {
-            // Receive touches in gesture insets such that they don't cause TOUCH_OUTSIDE
-            Rect inset = new Rect(0, 0, mLeftInset, mDisplayMetrics.heightPixels);
-            touchRegion.op(inset, Region.Op.UNION);
-            inset.set(mDisplayMetrics.widthPixels - mRightInset, 0, mDisplayMetrics.widthPixels,
-                    mDisplayMetrics.heightPixels);
-            touchRegion.op(inset, Region.Op.UNION);
+        if (includeScrim && mScrollingScrim.getVisibility() == View.VISIBLE) {
+            mScrollingScrim.getBoundsOnScreen(tmpRect);
+            touchRegion.op(tmpRect, Region.Op.UNION);
         }
 
-        inoutInfo.touchableRegion.set(touchRegion);
+        if (QuickStepContract.isGesturalMode(mNavMode)) {
+            final WindowManager wm = mContext.getSystemService(WindowManager.class);
+            final WindowMetrics windowMetrics = wm.getCurrentWindowMetrics();
+            final Insets gestureInsets = windowMetrics.getWindowInsets().getInsets(
+                    WindowInsets.Type.systemGestures());
+            // Receive touches in gesture insets such that they don't cause TOUCH_OUTSIDE
+            Rect inset = new Rect(0, 0, gestureInsets.left, mDisplayMetrics.heightPixels);
+            touchRegion.op(inset, Region.Op.UNION);
+            inset.set(mDisplayMetrics.widthPixels - gestureInsets.right, 0,
+                    mDisplayMetrics.widthPixels, mDisplayMetrics.heightPixels);
+            touchRegion.op(inset, Region.Op.UNION);
+        }
+        return touchRegion;
+    }
+
+    private void startInputListening() {
+        stopInputListening();
+        mInputMonitor = new InputMonitorCompat("Screenshot", Display.DEFAULT_DISPLAY);
+        mInputMonitor.getInputReceiver(Looper.getMainLooper(), Choreographer.getInstance(),
+                ev -> {
+                    if (ev instanceof MotionEvent) {
+                        MotionEvent event = (MotionEvent) ev;
+                        if (event.getActionMasked() == MotionEvent.ACTION_DOWN
+                                && !getTouchRegion(false).contains(
+                                (int) event.getRawX(), (int) event.getRawY())) {
+                            mCallbacks.onTouchOutside();
+                        }
+                    }
+                });
+    }
+
+    private void stopInputListening() {
+        if (mInputMonitor != null) {
+            mInputMonitor.dispose();
+            mInputMonitor = null;
+        }
     }
 
     @Override // ViewGroup
     public boolean onInterceptTouchEvent(MotionEvent ev) {
+        // scrolling scrim should not be swipeable; return early if we're on the scrim
+        if (!getTouchRegion(false).contains((int) ev.getRawX(), (int) ev.getRawY())) {
+            return false;
+        }
         // always pass through the down event so the swipe handler knows the initial state
         if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
             mSwipeDismissHandler.onTouch(this, ev);
@@ -262,8 +336,10 @@ public class ScreenshotView extends FrameLayout implements
 
     @Override // View
     protected void onFinishInflate() {
+        mScrollingScrim = requireNonNull(findViewById(R.id.screenshot_scrolling_scrim));
         mScreenshotStatic = requireNonNull(findViewById(R.id.global_screenshot_static));
         mScreenshotPreview = requireNonNull(findViewById(R.id.global_screenshot_preview));
+        mTransitionView = requireNonNull(findViewById(R.id.screenshot_transition_view));
         mScreenshotPreviewBorder = requireNonNull(
                 findViewById(R.id.global_screenshot_preview_border));
         mScreenshotPreview.setClipToOutline(true);
@@ -275,6 +351,7 @@ public class ScreenshotView extends FrameLayout implements
         mBackgroundProtection = requireNonNull(
                 findViewById(R.id.global_screenshot_actions_background));
         mDismissButton = requireNonNull(findViewById(R.id.global_screenshot_dismiss_button));
+        mScrollablePreview = requireNonNull(findViewById(R.id.screenshot_scrollable_preview));
         mScreenshotFlash = requireNonNull(findViewById(R.id.global_screenshot_flash));
         mScreenshotSelectorView = requireNonNull(findViewById(R.id.global_screenshot_selector));
         mShareChip = requireNonNull(mActionsContainer.findViewById(R.id.screenshot_share_chip));
@@ -303,24 +380,17 @@ public class ScreenshotView extends FrameLayout implements
         mDirectionLTR =
                 getResources().getConfiguration().getLayoutDirection() == View.LAYOUT_DIRECTION_LTR;
 
-        setOnApplyWindowInsetsListener((v, insets) -> {
-            if (QuickStepContract.isGesturalMode(mNavMode)) {
-                Insets gestureInsets = insets.getInsets(WindowInsets.Type.systemGestures());
-                mLeftInset = gestureInsets.left;
-                mRightInset = gestureInsets.right;
-            } else {
-                mLeftInset = mRightInset = 0;
-            }
-            return ScreenshotView.this.onApplyWindowInsets(insets);
-        });
-
         // Get focus so that the key events go to the layout.
         setFocusableInTouchMode(true);
         requestFocus();
     }
 
-    View getScreenshotPreview() {
-        return mScreenshotPreview;
+    View getTransitionView() {
+        return mTransitionView;
+    }
+
+    int getStaticLeftMargin() {
+        return mStaticLeftMargin;
     }
 
     /**
@@ -344,12 +414,36 @@ public class ScreenshotView extends FrameLayout implements
         mScreenshotPreview.setImageDrawable(createScreenDrawable(mResources, bitmap, screenInsets));
     }
 
-    void updateOrientation(boolean portrait) {
-        mOrientationPortrait = portrait;
+    void updateDisplayCutoutMargins(DisplayCutout cutout) {
+        int orientation = mContext.getResources().getConfiguration().orientation;
+        mOrientationPortrait = (orientation == ORIENTATION_PORTRAIT);
+        FrameLayout.LayoutParams p =
+                (FrameLayout.LayoutParams) mScreenshotStatic.getLayoutParams();
+        if (cutout == null) {
+            p.setMargins(0, 0, 0, 0);
+        } else {
+            Insets waterfall = cutout.getWaterfallInsets();
+            if (mOrientationPortrait) {
+                p.setMargins(waterfall.left, Math.max(cutout.getSafeInsetTop(), waterfall.top),
+                        waterfall.right, Math.max(cutout.getSafeInsetBottom(), waterfall.bottom));
+            } else {
+                p.setMargins(Math.max(cutout.getSafeInsetLeft(), waterfall.left), waterfall.top,
+                        Math.max(cutout.getSafeInsetRight(), waterfall.right), waterfall.bottom);
+            }
+        }
+        mStaticLeftMargin = p.leftMargin;
+        mScreenshotStatic.setLayoutParams(p);
+        mScreenshotStatic.requestLayout();
+    }
+
+    void updateOrientation(DisplayCutout cutout) {
+        int orientation = mContext.getResources().getConfiguration().orientation;
+        mOrientationPortrait = (orientation == ORIENTATION_PORTRAIT);
+        updateDisplayCutoutMargins(cutout);
         int screenshotFixedSize =
                 mContext.getResources().getDimensionPixelSize(R.dimen.global_screenshot_x_scale);
         ViewGroup.LayoutParams params = mScreenshotPreview.getLayoutParams();
-        if (portrait) {
+        if (mOrientationPortrait) {
             params.width = screenshotFixedSize;
             params.height = LayoutParams.WRAP_CONTENT;
             mScreenshotPreview.setScaleType(ImageView.ScaleType.FIT_START);
@@ -358,6 +452,7 @@ public class ScreenshotView extends FrameLayout implements
             params.height = screenshotFixedSize;
             mScreenshotPreview.setScaleType(ImageView.ScaleType.FIT_END);
         }
+
         mScreenshotPreview.setLayoutParams(params);
     }
 
@@ -373,14 +468,6 @@ public class ScreenshotView extends FrameLayout implements
         float cornerScale =
                 mCornerSizeX / (mOrientationPortrait ? bounds.width() : bounds.height());
         final float currentScale = 1 / cornerScale;
-
-        mScreenshotPreview.setScaleX(currentScale);
-        mScreenshotPreview.setScaleY(currentScale);
-
-        if (mAccessibilityManager.isEnabled()) {
-            mDismissButton.setAlpha(0);
-            mDismissButton.setVisibility(View.VISIBLE);
-        }
 
         AnimatorSet dropInAnimation = new AnimatorSet();
         ValueAnimator flashInAnimator = ValueAnimator.ofFloat(0, 1);
@@ -400,6 +487,11 @@ public class ScreenshotView extends FrameLayout implements
         final PointF finalPos = new PointF(targetPosition.exactCenterX(),
                 targetPosition.exactCenterY());
 
+        // Shift to screen coordinates so that the animation runs on top of the entire screen,
+        // including e.g. bars covering the display cutout.
+        int[] locInScreen = mScreenshotPreview.getLocationOnScreen();
+        startPos.offset(targetPosition.left - locInScreen[0], targetPosition.top - locInScreen[1]);
+
         if (DEBUG_ANIM) {
             Log.d(TAG, "toCorner: startPos=" + startPos);
             Log.d(TAG, "toCorner: finalPos=" + finalPos);
@@ -407,6 +499,20 @@ public class ScreenshotView extends FrameLayout implements
 
         ValueAnimator toCorner = ValueAnimator.ofFloat(0, 1);
         toCorner.setDuration(SCREENSHOT_TO_CORNER_Y_DURATION_MS);
+
+        toCorner.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationStart(Animator animation) {
+                mScreenshotPreview.setScaleX(currentScale);
+                mScreenshotPreview.setScaleY(currentScale);
+                mScreenshotPreview.setVisibility(View.VISIBLE);
+                if (mAccessibilityManager.isEnabled()) {
+                    mDismissButton.setAlpha(0);
+                    mDismissButton.setVisibility(View.VISIBLE);
+                }
+            }
+        });
+
         float xPositionPct =
                 SCREENSHOT_TO_CORNER_X_DURATION_MS / (float) SCREENSHOT_TO_CORNER_Y_DURATION_MS;
         float dismissPct =
@@ -447,13 +553,6 @@ public class ScreenshotView extends FrameLayout implements
                 } else {
                     mDismissButton.setX(currentX - mDismissButton.getWidth() / 2f);
                 }
-            }
-        });
-
-        toCorner.addListener(new AnimatorListenerAdapter() {
-            @Override
-            public void onAnimationStart(Animator animation) {
-                mScreenshotPreview.setVisibility(View.VISIBLE);
             }
         });
 
@@ -672,6 +771,142 @@ public class ScreenshotView extends FrameLayout implements
         }
     }
 
+    private Rect scrollableAreaOnScreen(ScrollCaptureResponse response) {
+        Rect r = new Rect(response.getBoundsInWindow());
+        Rect windowInScreen = response.getWindowBounds();
+        r.offset(windowInScreen.left, windowInScreen.top);
+        r.intersect(new Rect(0, 0, mDisplayMetrics.widthPixels, mDisplayMetrics.heightPixels));
+        return r;
+    }
+
+    void startLongScreenshotTransition(Rect destination, Runnable onTransitionEnd,
+            ScrollCaptureController.LongScreenshot longScreenshot) {
+        AnimatorSet animSet = new AnimatorSet();
+
+        ValueAnimator scrimAnim = ValueAnimator.ofFloat(0, 1);
+        scrimAnim.addUpdateListener(animation ->
+                mScrollingScrim.setAlpha(1 - animation.getAnimatedFraction()));
+
+        if (mShowScrollablePreview) {
+            mScrollablePreview.setImageBitmap(longScreenshot.toBitmap());
+            float startX = mScrollablePreview.getX();
+            float startY = mScrollablePreview.getY();
+            int[] locInScreen = mScrollablePreview.getLocationOnScreen();
+            destination.offset((int) startX - locInScreen[0], (int) startY - locInScreen[1]);
+            mScrollablePreview.setPivotX(0);
+            mScrollablePreview.setPivotY(0);
+            mScrollablePreview.setAlpha(1f);
+            float currentScale = mScrollablePreview.getWidth() / (float) longScreenshot.getWidth();
+            Matrix matrix = new Matrix();
+            matrix.setScale(currentScale, currentScale);
+            matrix.postTranslate(
+                    longScreenshot.getLeft() * currentScale,
+                    longScreenshot.getTop() * currentScale);
+            mScrollablePreview.setImageMatrix(matrix);
+            float destinationScale = destination.width() / (float) mScrollablePreview.getWidth();
+
+            ValueAnimator previewAnim = ValueAnimator.ofFloat(0, 1);
+            previewAnim.addUpdateListener(animation -> {
+                float t = animation.getAnimatedFraction();
+                float currScale = MathUtils.lerp(1, destinationScale, t);
+                mScrollablePreview.setScaleX(currScale);
+                mScrollablePreview.setScaleY(currScale);
+                mScrollablePreview.setX(MathUtils.lerp(startX, destination.left, t));
+                mScrollablePreview.setY(MathUtils.lerp(startY, destination.top, t));
+            });
+            ValueAnimator previewFadeAnim = ValueAnimator.ofFloat(1, 0);
+            previewFadeAnim.addUpdateListener(animation ->
+                    mScrollablePreview.setAlpha(1 - animation.getAnimatedFraction()));
+            animSet.play(previewAnim).with(scrimAnim).before(previewFadeAnim);
+            previewAnim.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    super.onAnimationEnd(animation);
+                    onTransitionEnd.run();
+                }
+            });
+        } else {
+            // if we switched orientations between the original screenshot and the long screenshot
+            // capture, just fade out the scrim instead of running the preview animation
+            animSet.play(scrimAnim);
+            animSet.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    super.onAnimationEnd(animation);
+                    onTransitionEnd.run();
+                }
+            });
+        }
+        animSet.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                super.onAnimationEnd(animation);
+                        mCallbacks.onDismiss();
+                    }
+        });
+        animSet.start();
+    }
+
+    void prepareScrollingTransition(ScrollCaptureResponse response, Bitmap screenBitmap,
+            Bitmap newBitmap, boolean screenshotTakenInPortrait) {
+        mShowScrollablePreview = (screenshotTakenInPortrait == mOrientationPortrait);
+
+        mScrollingScrim.setImageBitmap(newBitmap);
+        mScrollingScrim.setVisibility(View.VISIBLE);
+
+        if (mShowScrollablePreview) {
+            Rect scrollableArea = scrollableAreaOnScreen(response);
+
+            float scale = mCornerSizeX
+                    / (mOrientationPortrait ? screenBitmap.getWidth() : screenBitmap.getHeight());
+            ConstraintLayout.LayoutParams params =
+                    (ConstraintLayout.LayoutParams) mScrollablePreview.getLayoutParams();
+
+            params.width = (int) (scale * scrollableArea.width());
+            params.height = (int) (scale * scrollableArea.height());
+            Matrix matrix = new Matrix();
+            matrix.setScale(scale, scale);
+            matrix.postTranslate(-scrollableArea.left * scale, -scrollableArea.top * scale);
+
+            mScrollablePreview.setTranslationX(scale
+                    * (mDirectionLTR ? scrollableArea.left : scrollableArea.right - getWidth()));
+            mScrollablePreview.setTranslationY(scale * scrollableArea.top);
+            mScrollablePreview.setImageMatrix(matrix);
+            mScrollablePreview.setImageBitmap(screenBitmap);
+            mScrollablePreview.setVisibility(View.VISIBLE);
+        }
+        mDismissButton.setVisibility(View.GONE);
+        mActionsContainer.setVisibility(View.GONE);
+        mBackgroundProtection.setVisibility(View.GONE);
+        // set these invisible, but not gone, so that the views are laid out correctly
+        mActionsContainerBackground.setVisibility(View.INVISIBLE);
+        mScreenshotPreviewBorder.setVisibility(View.INVISIBLE);
+        mScreenshotPreview.setVisibility(View.INVISIBLE);
+        mScrollingScrim.setImageTintBlendMode(BlendMode.SRC_ATOP);
+        ValueAnimator anim = ValueAnimator.ofFloat(0, .3f);
+        anim.addUpdateListener(animation -> mScrollingScrim.setImageTintList(
+                ColorStateList.valueOf(Color.argb((float) animation.getAnimatedValue(), 0, 0, 0))));
+        anim.setDuration(200);
+        anim.start();
+    }
+
+    void restoreNonScrollingUi() {
+        mScrollChip.setVisibility(View.GONE);
+        mScrollablePreview.setVisibility(View.GONE);
+        mScrollingScrim.setVisibility(View.GONE);
+
+        if (mAccessibilityManager.isEnabled()) {
+            mDismissButton.setVisibility(View.VISIBLE);
+        }
+        mActionsContainer.setVisibility(View.VISIBLE);
+        mBackgroundProtection.setVisibility(View.VISIBLE);
+        mActionsContainerBackground.setVisibility(View.VISIBLE);
+        mScreenshotPreviewBorder.setVisibility(View.VISIBLE);
+        mScreenshotPreview.setVisibility(View.VISIBLE);
+        // reset the timeout
+        mCallbacks.onUserInteraction();
+    }
+
     boolean isDismissing() {
         return (mDismissAnimation != null && mDismissAnimation.isRunning());
     }
@@ -685,10 +920,6 @@ public class ScreenshotView extends FrameLayout implements
     }
 
     private void animateDismissal(Animator dismissAnimation) {
-        if (DEBUG_WINDOW) {
-            Log.d(TAG, "removing OnComputeInternalInsetsListener");
-        }
-        getViewTreeObserver().removeOnComputeInternalInsetsListener(this);
         mDismissAnimation = dismissAnimation;
         mDismissAnimation.addListener(new AnimatorListenerAdapter() {
             private boolean mCancelled = false;
@@ -744,12 +975,15 @@ public class ScreenshotView extends FrameLayout implements
         mActionsContainer.setVisibility(View.GONE);
         mBackgroundProtection.setAlpha(0f);
         mDismissButton.setVisibility(View.GONE);
+        mScrollingScrim.setVisibility(View.GONE);
+        mScrollablePreview.setVisibility(View.GONE);
         mScreenshotStatic.setTranslationX(0);
         mScreenshotPreview.setTranslationY(0);
         mScreenshotPreview.setContentDescription(
                 mContext.getResources().getString(R.string.screenshot_preview_description));
         mScreenshotPreview.setOnClickListener(null);
         mShareChip.setOnClickListener(null);
+        mScrollingScrim.setVisibility(View.GONE);
         mEditChip.setOnClickListener(null);
         mShareChip.setIsPending(false);
         mEditChip.setIsPending(false);
@@ -810,7 +1044,7 @@ public class ScreenshotView extends FrameLayout implements
         return animSet;
     }
 
-    private ValueAnimator createScreenshotFadeDismissAnimation() {
+    ValueAnimator createScreenshotFadeDismissAnimation() {
         ValueAnimator alphaAnim = ValueAnimator.ofFloat(0, 1);
         alphaAnim.addUpdateListener(animation -> {
             float alpha = 1 - animation.getAnimatedFraction();
@@ -818,6 +1052,7 @@ public class ScreenshotView extends FrameLayout implements
             mActionsContainerBackground.setAlpha(alpha);
             mActionsContainer.setAlpha(alpha);
             mBackgroundProtection.setAlpha(alpha);
+            mScreenshotPreviewBorder.setAlpha(alpha);
         });
         alphaAnim.setDuration(600);
         return alphaAnim;

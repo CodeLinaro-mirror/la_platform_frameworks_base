@@ -59,7 +59,33 @@ public interface SysuiStatusBarStateController extends StatusBarStateController 
      * @param state see {@link StatusBarState} for valid options
      * @return {@code true} if the state changed, else {@code false}
      */
-    boolean setState(int state);
+    default boolean setState(int state) {
+        return setState(state, false /* force */);
+    }
+
+    /**
+     * Update the status bar state
+     * @param state see {@link StatusBarState} for valid options
+     * @param force whether to set the state even if it's the same as the current state. This will
+     *              dispatch the state to all StatusBarStateListeners, ensuring that all listening
+     *              components are reset to this state.
+     * @return {@code true} if the state was changed or set forcefully
+     */
+    boolean setState(int state, boolean force);
+
+    /**
+     * Provides a hint that the status bar has started to transition to another
+     * {@link StatusBarState}. This suggests that a matching call to setState() with the same value
+     * will happen in the near future, although that may not happen if the animation is canceled,
+     * etc.
+     */
+    void setUpcomingState(int state);
+
+    /**
+     * If the status bar is in the process of transitioning to a new state, returns that state.
+     * Otherwise, returns the current state.
+     */
+    int getCurrentOrUpcomingState();
 
     /**
      * Update the dozing state from {@link StatusBar}'s perspective
