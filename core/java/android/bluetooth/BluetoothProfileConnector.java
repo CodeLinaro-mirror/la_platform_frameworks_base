@@ -40,27 +40,13 @@ public abstract class BluetoothProfileConnector<T> {
     private String mServiceName;
     private volatile T mService;
 
-    private void unregisterStateChangeCallback () {
-        IBluetoothManager mgr = BluetoothAdapter.getDefaultAdapter().getBluetoothManager();
-        if (mgr != null) {
-            try {
-                mgr.unregisterStateChangeCallback(mBluetoothStateChangeCallback);
-            } catch (RemoteException e) {
-                logError("Failed to unregister state change callback" + e);
-            }
-        }
-    }
-
     private final IBluetoothStateChangeCallback mBluetoothStateChangeCallback =
             new IBluetoothStateChangeCallback.Stub() {
         public void onBluetoothStateChange(boolean up) {
             if (up) {
-                if (!doBind()) {
-                    unregisterStateChangeCallback();
-                }
+                doBind();
             } else {
                 doUnbind();
-                unregisterStateChangeCallback();
             }
         }
     };
@@ -146,7 +132,14 @@ public abstract class BluetoothProfileConnector<T> {
 
     void disconnect() {
         mServiceListener = null;
-        unregisterStateChangeCallback();
+        IBluetoothManager mgr = BluetoothAdapter.getDefaultAdapter().getBluetoothManager();
+        if (mgr != null) {
+            try {
+                mgr.unregisterStateChangeCallback(mBluetoothStateChangeCallback);
+            } catch (RemoteException re) {
+                logError("Failed to unregister state change callback" + re);
+            }
+        }
         doUnbind();
     }
 
