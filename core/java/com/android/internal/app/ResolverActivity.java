@@ -1999,6 +1999,7 @@ public class ResolverActivity extends Activity implements
         private final List<Intent> mIntents = new ArrayList<>();
         private final List<ResolveInfo> mResolveInfos = new ArrayList<>();
         private boolean mPinned;
+        private boolean mFixedAtTop;
 
         public ResolvedComponentInfo(ComponentName name, Intent intent, ResolveInfo info) {
             this.name = name;
@@ -2046,6 +2047,14 @@ public class ResolverActivity extends Activity implements
 
         public void setPinned(boolean pinned) {
             mPinned = pinned;
+        }
+
+        public boolean isFixedAtTop() {
+            return mFixedAtTop;
+        }
+
+        public void setFixedAtTop(boolean isFixedAtTop) {
+            mFixedAtTop = isFixedAtTop;
         }
     }
 
