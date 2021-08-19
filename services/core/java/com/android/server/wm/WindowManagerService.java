@@ -34,6 +34,7 @@ import static android.content.pm.PackageManager.FEATURE_FREEFORM_WINDOW_MANAGEME
 import static android.content.pm.PackageManager.FEATURE_PC;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.os.InputConstants.DEFAULT_DISPATCHING_TIMEOUT_MILLIS;
+import static android.os.Parcelable.PARCELABLE_WRITE_RETURN_VALUE;
 import static android.os.Process.SYSTEM_UID;
 import static android.os.Process.myPid;
 import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
@@ -422,18 +423,41 @@ public class WindowManagerService extends IWindowManager.Stub
             SystemProperties.getBoolean(DISABLE_CUSTOM_TASK_ANIMATION_PROPERTY, true);
 
     /**
+     * Use WMShell for app transition.
+     */
+    public static final String ENABLE_SHELL_TRANSITIONS = "persist.debug.shell_transit";
+
+    /**
+     * @see #ENABLE_SHELL_TRANSITIONS
+     */
+    public static final boolean sEnableShellTransitions =
+            SystemProperties.getBoolean(ENABLE_SHELL_TRANSITIONS, false);
+
+    /**
      * Run Keyguard animation as remote animation in System UI instead of local animation in
      * the server process.
+     *
+     * 0: Runs all keyguard animation as local animation
+     * 1: Only runs keyguard going away animation as remote animation
+     * 2: Runs all keyguard animation as remote animation
      */
     private static final String ENABLE_REMOTE_KEYGUARD_ANIMATION_PROPERTY =
             "persist.wm.enable_remote_keyguard_animation";
 
+    private static final int sEnableRemoteKeyguardAnimation =
+            SystemProperties.getInt(ENABLE_REMOTE_KEYGUARD_ANIMATION_PROPERTY, 0);
+
     /**
      * @see #ENABLE_REMOTE_KEYGUARD_ANIMATION_PROPERTY
      */
-    public static boolean sEnableRemoteKeyguardAnimation =
-            SystemProperties.getBoolean(ENABLE_REMOTE_KEYGUARD_ANIMATION_PROPERTY, false);
+    public static final boolean sEnableRemoteKeyguardGoingAwayAnimation = !sEnableShellTransitions
+            && sEnableRemoteKeyguardAnimation >= 1;
 
+    /**
+     * @see #ENABLE_REMOTE_KEYGUARD_ANIMATION_PROPERTY
+     */
+    public static final boolean sEnableRemoteKeyguardOccludeAnimation = !sEnableShellTransitions
+            && sEnableRemoteKeyguardAnimation >= 2;
 
     /**
      * Allows a fullscreen windowing mode activity to launch in its desired orientation directly
@@ -459,10 +483,7 @@ public class WindowManagerService extends IWindowManager.Stub
     private final DisplayAreaPolicy.Provider mDisplayAreaPolicyProvider;
 
     final private KeyguardDisableHandler mKeyguardDisableHandler;
-    // TODO: eventually unify all keyguard state in a common place instead of having it spread over
-    // AM's KeyguardController and the policy's KeyguardServiceDelegate.
-    boolean mKeyguardGoingAway;
-    boolean mKeyguardOrAodShowingOnDefaultDisplay;
+
     // VR Vr2d Display Id.
     int mVr2dDisplayId = INVALID_DISPLAY;
     boolean mVrModeEnabled = false;
@@ -2440,6 +2461,17 @@ public class WindowManagerService extends IWindowManager.Stub
             configChanged = displayContent.updateOrientation();
             Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
 
+            final DisplayInfo rotatedDisplayInfo =
+                    win.mToken.getFixedRotationTransformDisplayInfo();
+            if (rotatedDisplayInfo != null) {
+                outSurfaceControl.setTransformHint(rotatedDisplayInfo.rotation);
+            } else {
+                // We have to update the transform hint of display here, but we need to get if from
+                // SurfaceFlinger, so set it as rotation of display for most cases, then
+                // SurfaceFlinger would still update the transform hint of display in next frame.
+                outSurfaceControl.setTransformHint(displayContent.getDisplayInfo().rotation);
+            }
+
             if (toBeDisplayed && win.mIsWallpaper) {
                 displayContent.mWallpaperController.updateWallpaperOffset(win, false /* sync */);
             }
@@ -2511,12 +2543,13 @@ public class WindowManagerService extends IWindowManager.Stub
                 // We will leave the critical section before returning the leash to the client,
                 // so we need to copy the leash to prevent others release the one that we are
                 // about to return.
-                // TODO: We will have an extra copy if the client is not local.
-                //       For now, we rely on GC to release it.
-                //       Maybe we can modify InsetsSourceControl.writeToParcel so it can release
-                //       the extra leash as soon as possible.
-                outControls[i] = controls[i] != null
-                        ? new InsetsSourceControl(controls[i]) : null;
+                if (controls[i] != null) {
+                    // This source control is an extra copy if the client is not local. By setting
+                    // PARCELABLE_WRITE_RETURN_VALUE, the leash will be released at the end of
+                    // SurfaceControl.writeToParcel.
+                    outControls[i] = new InsetsSourceControl(controls[i]);
+                    outControls[i].setParcelableFlags(PARCELABLE_WRITE_RETURN_VALUE);
+                }
             }
         }
     }
@@ -2887,6 +2920,7 @@ public class WindowManagerService extends IWindowManager.Stub
                         + " for the display " + displayId + " that does not exist.");
                 return;
             }
+            remoteAnimationAdapter.setCallingPidUid(Binder.getCallingPid(), Binder.getCallingUid());
             displayContent.mAppTransition.overridePendingAppTransitionRemote(
                     remoteAnimationAdapter);
         }
@@ -3035,17 +3069,6 @@ public class WindowManagerService extends IWindowManager.Stub
         mAtmInternal.notifyKeyguardFlagsChanged(callback, displayId);
     }
 
-    public void setKeyguardGoingAway(boolean keyguardGoingAway) {
-        synchronized (mGlobalLock) {
-            mKeyguardGoingAway = keyguardGoingAway;
-        }
-    }
-
-    public void setKeyguardOrAodShowingOnDefaultDisplay(boolean showing) {
-        synchronized (mGlobalLock) {
-            mKeyguardOrAodShowingOnDefaultDisplay = showing;
-        }
-    }
 
     // -------------------------------------------------------------
     // Misc IWindowSession methods
@@ -5360,25 +5383,6 @@ public class WindowManagerService extends IWindowManager.Stub
                 final DisplayContent displayContent = mRoot.getDisplayContent(displayId);
                 if (displayContent != null) {
                     displayContent.setForcedScalingMode(mode);
-                }
-            }
-        } finally {
-            Binder.restoreCallingIdentity(ident);
-        }
-    }
-
-    void setSandboxDisplayApis(int displayId, boolean sandboxDisplayApis) {
-        if (mContext.checkCallingOrSelfPermission(WRITE_SECURE_SETTINGS)
-                != PackageManager.PERMISSION_GRANTED) {
-            throw new SecurityException("Must hold permission " + WRITE_SECURE_SETTINGS);
-        }
-
-        final long ident = Binder.clearCallingIdentity();
-        try {
-            synchronized (mGlobalLock) {
-                final DisplayContent displayContent = mRoot.getDisplayContent(displayId);
-                if (displayContent != null) {
-                    displayContent.setSandboxDisplayApis(sandboxDisplayApis);
                 }
             }
         } finally {

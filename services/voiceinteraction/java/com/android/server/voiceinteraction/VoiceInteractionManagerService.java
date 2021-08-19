@@ -23,6 +23,7 @@ import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.ActivityManagerInternal;
+import android.app.ActivityThread;
 import android.app.AppGlobals;
 import android.app.role.OnRoleHoldersChangedListener;
 import android.app.role.RoleManager;
@@ -50,6 +51,7 @@ import android.hardware.soundtrigger.SoundTrigger.ModuleProperties;
 import android.hardware.soundtrigger.SoundTrigger.RecognitionConfig;
 import android.media.AudioFormat;
 import android.media.permission.Identity;
+import android.media.permission.IdentityContext;
 import android.media.permission.PermissionUtil;
 import android.media.permission.SafeCloseable;
 import android.os.Binder;
@@ -59,6 +61,7 @@ import android.os.IBinder;
 import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
 import android.os.PersistableBundle;
+import android.os.Process;
 import android.os.RemoteCallback;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
@@ -104,11 +107,8 @@ import com.android.server.wm.ActivityTaskManagerInternal;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
-import java.lang.ref.WeakReference;
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
-import java.util.ListIterator;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.Executor;
@@ -251,6 +251,26 @@ public class VoiceInteractionManagerService extends SystemService {
 
             return TextUtils.equals(packageName, session.mSessionComponentName.getPackageName());
         }
+
+        @Override
+        public HotwordDetectionServiceIdentity getHotwordDetectionServiceIdentity() {
+            // IMPORTANT: This is called when performing permission checks; do not lock!
+
+            // TODO: Have AppOpsPolicy register a listener instead of calling in here everytime.
+            // Then also remove the `volatile`s that were added with this method.
+
+            VoiceInteractionManagerServiceImpl impl =
+                    VoiceInteractionManagerService.this.mServiceStub.mImpl;
+            if (impl == null) {
+                return null;
+            }
+            HotwordDetectionConnection hotwordDetectionConnection =
+                    impl.mHotwordDetectionConnection;
+            if (hotwordDetectionConnection == null) {
+                return null;
+            }
+            return hotwordDetectionConnection.mIdentity;
+        }
     }
 
     // implementation entry point and binder service
@@ -258,7 +278,7 @@ public class VoiceInteractionManagerService extends SystemService {
 
     class VoiceInteractionManagerServiceStub extends IVoiceInteractionManagerService.Stub {
 
-        VoiceInteractionManagerServiceImpl mImpl;
+        volatile VoiceInteractionManagerServiceImpl mImpl;
 
         private boolean mSafeMode;
         private int mCurUser;
@@ -268,7 +288,6 @@ public class VoiceInteractionManagerService extends SystemService {
         private boolean mTemporarilyDisabled;
 
         private final boolean mEnableService;
-        private final List<WeakReference<SoundTriggerSession>> mSessions = new LinkedList<>();
 
         VoiceInteractionManagerServiceStub() {
             mEnableService = shouldEnableService(mContext);
@@ -279,15 +298,49 @@ public class VoiceInteractionManagerService extends SystemService {
         public @NonNull IVoiceInteractionSoundTriggerSession createSoundTriggerSessionAsOriginator(
                 @NonNull Identity originatorIdentity, IBinder client) {
             Objects.requireNonNull(originatorIdentity);
-            try (SafeCloseable ignored = PermissionUtil.establishIdentityDirect(
-                    originatorIdentity)) {
-                SoundTriggerSession session = new SoundTriggerSession(
-                        mSoundTriggerInternal.attach(client));
-                synchronized (mSessions) {
-                    mSessions.add(new WeakReference<>(session));
-                }
-                return session;
+            boolean forHotwordDetectionService;
+            synchronized (VoiceInteractionManagerServiceStub.this) {
+                enforceIsCurrentVoiceInteractionService();
+                forHotwordDetectionService =
+                        mImpl != null && mImpl.mHotwordDetectionConnection != null;
             }
+            IVoiceInteractionSoundTriggerSession session;
+            if (forHotwordDetectionService) {
+                // Use our own identity and handle the permission checks ourselves. This allows
+                // properly checking/noting against the voice interactor or hotword detection
+                // service as needed.
+                if (HotwordDetectionConnection.DEBUG) {
+                    Slog.d(TAG, "Creating a SoundTriggerSession for a HotwordDetectionService");
+                }
+                originatorIdentity.uid = Binder.getCallingUid();
+                originatorIdentity.pid = Binder.getCallingPid();
+                session = new SoundTriggerSessionPermissionsDecorator(
+                        createSoundTriggerSessionForSelfIdentity(client),
+                        mContext,
+                        originatorIdentity);
+            } else {
+                if (HotwordDetectionConnection.DEBUG) {
+                    Slog.d(TAG, "Creating a SoundTriggerSession");
+                }
+                try (SafeCloseable ignored = PermissionUtil.establishIdentityDirect(
+                        originatorIdentity)) {
+                    session = new SoundTriggerSession(mSoundTriggerInternal.attach(client));
+                }
+            }
+            return new SoundTriggerSessionBinderProxy(session);
+        }
+
+        private IVoiceInteractionSoundTriggerSession createSoundTriggerSessionForSelfIdentity(
+                IBinder client) {
+            Identity identity = new Identity();
+            identity.uid = Process.myUid();
+            identity.pid = Process.myPid();
+            identity.packageName = ActivityThread.currentOpPackageName();
+            return Binder.withCleanCallingIdentity(() -> {
+                try (SafeCloseable ignored = IdentityContext.create(identity)) {
+                    return new SoundTriggerSession(mSoundTriggerInternal.attach(client));
+                }
+            });
         }
 
         // TODO: VI Make sure the caller is the current user or profile
@@ -542,11 +595,10 @@ public class VoiceInteractionManagerService extends SystemService {
         }
 
         void switchImplementationIfNeededLocked(boolean force) {
-            if (!mCurUserSupported || mTemporarilyDisabled) {
+            if (!mCurUserSupported) {
                 if (DEBUG_USER) {
                     Slog.d(TAG, "switchImplementationIfNeeded(): skipping: force= " + force
-                            + "mCurUserSupported=" + mCurUserSupported
-                            + "mTemporarilyDisabled=" + mTemporarilyDisabled);
+                            + "mCurUserSupported=" + mCurUserSupported);
                 }
                 if (mImpl != null) {
                     mImpl.shutdownLocked();
@@ -774,6 +826,10 @@ public class VoiceInteractionManagerService extends SystemService {
         void resetCurAssistant(int userHandle) {
             Settings.Secure.putStringForUser(mContext.getContentResolver(),
                     Settings.Secure.ASSISTANT, null, userHandle);
+        }
+
+        void forceRestartHotwordDetector() {
+            mImpl.forceRestartHotwordDetector();
         }
 
         @Override
@@ -1028,13 +1084,16 @@ public class VoiceInteractionManagerService extends SystemService {
                     if (DEBUG) Slog.d(TAG, "setDisabled(): already " + disabled);
                     return;
                 }
-                Slog.i(TAG, "setDisabled(): changing to " + disabled);
-                final long caller = Binder.clearCallingIdentity();
-                try {
-                    mTemporarilyDisabled = disabled;
-                    switchImplementationIfNeeded(/* force= */ false);
-                } finally {
-                    Binder.restoreCallingIdentity(caller);
+                mTemporarilyDisabled = disabled;
+                if (mTemporarilyDisabled) {
+                    Slog.i(TAG, "setDisabled(): temporarily disabling and hiding current session");
+                    try {
+                        hideCurrentSession();
+                    } catch (RemoteException e) {
+                        Log.w(TAG, "Failed to call hideCurrentSession", e);
+                    }
+                } else {
+                    Slog.i(TAG, "setDisabled(): re-enabling");
                 }
             }
         }
@@ -1042,8 +1101,11 @@ public class VoiceInteractionManagerService extends SystemService {
         //----------------- Hotword Detection/Validation APIs --------------------------------//
 
         @Override
-        public void updateState(@Nullable PersistableBundle options,
-                @Nullable SharedMemory sharedMemory, IHotwordRecognitionStatusCallback callback) {
+        public void updateState(
+                @NonNull Identity voiceInteractorIdentity,
+                @Nullable PersistableBundle options,
+                @Nullable SharedMemory sharedMemory,
+                IHotwordRecognitionStatusCallback callback) {
             enforceCallingPermission(Manifest.permission.MANAGE_HOTWORD_DETECTION);
             synchronized (this) {
                 enforceIsCurrentVoiceInteractionService();
@@ -1052,9 +1114,14 @@ public class VoiceInteractionManagerService extends SystemService {
                     Slog.w(TAG, "updateState without running voice interaction service");
                     return;
                 }
+
+                voiceInteractorIdentity.uid = Binder.getCallingUid();
+                voiceInteractorIdentity.pid = Binder.getCallingPid();
+
                 final long caller = Binder.clearCallingIdentity();
                 try {
-                    mImpl.updateStateLocked(options, sharedMemory, callback);
+                    mImpl.updateStateLocked(
+                            voiceInteractorIdentity, options, sharedMemory, callback);
                 } finally {
                     Binder.restoreCallingIdentity(caller);
                 }
@@ -1308,7 +1375,11 @@ public class VoiceInteractionManagerService extends SystemService {
             return null;
         }
 
-        class SoundTriggerSession extends IVoiceInteractionSoundTriggerSession.Stub {
+        /**
+         * Implementation of SoundTriggerSession. Does not implement {@link #asBinder()} as it's
+         * intended to be wrapped by an {@link IVoiceInteractionSoundTriggerSession.Stub} object.
+         */
+        private class SoundTriggerSession implements IVoiceInteractionSoundTriggerSession {
             final SoundTriggerInternal.Session mSession;
             private IHotwordRecognitionStatusCallback mSessionExternalCallback;
             private IRecognitionStatusCallback mSessionInternalCallback;
@@ -1455,6 +1526,12 @@ public class VoiceInteractionManagerService extends SystemService {
                 }
             }
 
+            @Override
+            public IBinder asBinder() {
+                throw new UnsupportedOperationException(
+                        "This object isn't intended to be used as a Binder.");
+            }
+
             private int unloadKeyphraseModel(int keyphraseId) {
                 final long caller = Binder.clearCallingIdentity();
                 try {
@@ -1488,12 +1565,20 @@ public class VoiceInteractionManagerService extends SystemService {
         public boolean showSessionForActiveService(Bundle args, int sourceFlags,
                 IVoiceInteractionSessionShowCallback showCallback, IBinder activityToken) {
             enforceCallingPermission(Manifest.permission.ACCESS_VOICE_INTERACTION_SERVICE);
+            if (DEBUG_USER) Slog.d(TAG, "showSessionForActiveService()");
+
             synchronized (this) {
                 if (mImpl == null) {
                     Slog.w(TAG, "showSessionForActiveService without running voice interaction"
                             + "service");
                     return false;
                 }
+                if (mTemporarilyDisabled) {
+                    Slog.i(TAG, "showSessionForActiveService(): ignored while temporarily "
+                            + "disabled");
+                    return false;
+                }
+
                 final long caller = Binder.clearCallingIdentity();
                 try {
                     return mImpl.showSessionLocked(args,
@@ -1510,22 +1595,21 @@ public class VoiceInteractionManagerService extends SystemService {
         @Override
         public void hideCurrentSession() throws RemoteException {
             enforceCallingPermission(Manifest.permission.ACCESS_VOICE_INTERACTION_SERVICE);
-            synchronized (this) {
-                if (mImpl == null) {
-                    return;
-                }
-                final long caller = Binder.clearCallingIdentity();
-                try {
-                    if (mImpl.mActiveSession != null && mImpl.mActiveSession.mSession != null) {
-                        try {
-                            mImpl.mActiveSession.mSession.closeSystemDialogs();
-                        } catch (RemoteException e) {
-                            Log.w(TAG, "Failed to call closeSystemDialogs", e);
-                        }
+
+            if (mImpl == null) {
+                return;
+            }
+            final long caller = Binder.clearCallingIdentity();
+            try {
+                if (mImpl.mActiveSession != null && mImpl.mActiveSession.mSession != null) {
+                    try {
+                        mImpl.mActiveSession.mSession.closeSystemDialogs();
+                    } catch (RemoteException e) {
+                        Log.w(TAG, "Failed to call closeSystemDialogs", e);
                     }
-                } finally {
-                    Binder.restoreCallingIdentity(caller);
                 }
+            } finally {
+                Binder.restoreCallingIdentity(caller);
             }
         }
 
@@ -1676,22 +1760,6 @@ public class VoiceInteractionManagerService extends SystemService {
             }
 
             mSoundTriggerInternal.dump(fd, pw, args);
-
-            // Dump all sessions.
-            synchronized (mSessions) {
-                ListIterator<WeakReference<SoundTriggerSession>> iter =
-                        mSessions.listIterator();
-                while (iter.hasNext()) {
-                    SoundTriggerSession session = iter.next().get();
-                    if (session != null) {
-                        session.dump(fd, args);
-                    } else {
-                        // Session is obsolete, now is a good chance to remove it from the list.
-                        iter.remove();
-                    }
-                }
-            }
-
         }
 
         @Override

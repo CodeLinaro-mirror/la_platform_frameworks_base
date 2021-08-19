@@ -46,8 +46,8 @@ public class FaceDetectClient extends AcquisitionClient<ISession> implements Det
             @NonNull IBinder token, @NonNull ClientMonitorCallbackConverter listener, int userId,
             @NonNull String owner, int sensorId, boolean isStrongBiometric, int statsClient) {
         super(context, lazyDaemon, token, listener, userId, owner, 0 /* cookie */, sensorId,
-                BiometricsProtoEnums.MODALITY_FACE, BiometricsProtoEnums.ACTION_AUTHENTICATE,
-                statsClient);
+                true /* shouldVibrate */, BiometricsProtoEnums.MODALITY_FACE,
+                BiometricsProtoEnums.ACTION_AUTHENTICATE, statsClient);
         mIsStrongBiometric = isStrongBiometric;
     }
 
@@ -59,11 +59,13 @@ public class FaceDetectClient extends AcquisitionClient<ISession> implements Det
 
     @Override
     protected void stopHalOperation() {
-        try {
-            mCancellationSignal.cancel();
-        } catch (RemoteException e) {
-            Slog.e(TAG, "Remote exception", e);
-            mCallback.onClientFinished(this, false /* success */);
+        if (mCancellationSignal != null) {
+            try {
+                mCancellationSignal.cancel();
+            } catch (RemoteException e) {
+                Slog.e(TAG, "Remote exception", e);
+                mCallback.onClientFinished(this, false /* success */);
+            }
         }
     }
 

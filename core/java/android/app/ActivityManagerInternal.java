@@ -19,6 +19,7 @@ package android.app;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
+import android.app.ActivityManager.ProcessCapability;
 import android.content.ComponentName;
 import android.content.IIntentReceiver;
 import android.content.IIntentSender;
@@ -254,6 +255,9 @@ public abstract class ActivityManagerInternal {
     /** Returns the current user id. */
     public abstract int getCurrentUserId();
 
+    /** Returns the currently started user ids. */
+    public abstract int[] getStartedUserIds();
+
     /** Returns true if the user is running. */
     public abstract boolean isUserRunning(@UserIdInt int userId, int flags);
 
@@ -482,15 +486,15 @@ public abstract class ActivityManagerInternal {
      * not associated with an FGS; ensure display; or only update if already displayed.
      */
     public abstract ServiceNotificationPolicy applyForegroundServiceNotification(
-            Notification notification, int id, String pkg, @UserIdInt int userId);
+            Notification notification, String tag, int id, String pkg, @UserIdInt int userId);
 
     /**
      * Callback from the notification subsystem that the given FGS notification has
-     * been shown or updated.  This can happen after either Service.startForeground()
-     * or NotificationManager.notify().
+     * been evaluated, and either shown or explicitly overlooked.  This can happen
+     * after either Service.startForeground() or NotificationManager.notify().
      */
-    public abstract void onForegroundServiceNotificationUpdate(Notification notification,
-            int id, String pkg, @UserIdInt int userId);
+    public abstract void onForegroundServiceNotificationUpdate(boolean shown,
+            Notification notification, int id, String pkg, @UserIdInt int userId);
 
     /**
      * If the given app has any FGSs whose notifications are in the given channel,
@@ -604,6 +608,14 @@ public abstract class ActivityManagerInternal {
             String ownerPkgName, int ownerUid);
 
     /**
+     * Effectively PendingIntent.getActivityForUser(), but the PendingIntent is
+     * owned by the given uid rather than by the caller (i.e. the system).
+     */
+    public abstract PendingIntent getPendingIntentActivityAsApp(
+            int requestCode, @NonNull Intent[] intents, int flags, Bundle options,
+            String ownerPkgName, int ownerUid);
+
+    /**
      * @return mBootTimeTempAllowlistDuration of ActivityManagerConstants.
      */
     public abstract long getBootTimeTempAllowListDuration();
@@ -623,4 +635,15 @@ public abstract class ActivityManagerInternal {
      * Return the temp allowlist type when server push messaging is over the quota.
      */
     public abstract @TempAllowListType int getPushMessagingOverQuotaBehavior();
+
+    /**
+     * Returns the capability of the given uid
+     */
+    public abstract @ProcessCapability int getUidCapability(int uid);
+
+    /**
+     * @return The PID list of the isolated process with packages matching the given uid.
+     */
+    @Nullable
+    public abstract List<Integer> getIsolatedProcesses(int uid);
 }

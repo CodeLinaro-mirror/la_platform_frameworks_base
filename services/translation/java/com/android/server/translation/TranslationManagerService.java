@@ -246,6 +246,16 @@ public final class TranslationManagerService
         }
 
         @Override
+        public void onTranslationFinished(boolean activityDestroyed, IBinder token,
+                ComponentName componentName, int userId) {
+            TranslationManagerServiceImpl service;
+            synchronized (mLock) {
+                service = getServiceForUserLocked(userId);
+                service.onTranslationFinishedLocked(activityDestroyed, token, componentName);
+            }
+        }
+
+        @Override
         public void getServiceSettingsActivity(IResultReceiver result, int userId) {
             final TranslationManagerServiceImpl service;
             synchronized (mLock) {
@@ -294,6 +304,11 @@ public final class TranslationManagerService
 
             synchronized (mLock) {
                 dumpLocked("", pw);
+                final int userId = UserHandle.getCallingUserId();
+                final TranslationManagerServiceImpl service = getServiceForUserLocked(userId);
+                if (service != null) {
+                    service.dumpLocked("  ", fd, pw);
+                }
             }
         }
 

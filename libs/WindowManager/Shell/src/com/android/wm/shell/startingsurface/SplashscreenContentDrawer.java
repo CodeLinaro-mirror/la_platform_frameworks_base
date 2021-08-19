@@ -18,11 +18,17 @@ package com.android.wm.shell.startingsurface;
 
 import static android.os.Process.THREAD_PRIORITY_TOP_APP_BOOST;
 import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
+import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_EMPTY_SPLASH_SCREEN;
+import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_LEGACY_SPLASH_SCREEN;
+import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_SPLASH_SCREEN;
 
 import android.annotation.ColorInt;
 import android.annotation.NonNull;
 import android.app.ActivityThread;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
@@ -34,15 +40,20 @@ import android.graphics.drawable.AdaptiveIconDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.LayerDrawable;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Trace;
+import android.os.UserHandle;
+import android.util.ArrayMap;
 import android.util.Slog;
 import android.view.SurfaceControl;
 import android.view.View;
 import android.window.SplashScreenView;
+import android.window.StartingWindowInfo.StartingWindowType;
 
 import com.android.internal.R;
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.graphics.palette.Palette;
 import com.android.internal.graphics.palette.Quantizer;
 import com.android.internal.graphics.palette.VariationalKMeansQuantizer;
@@ -51,6 +62,9 @@ import com.android.wm.shell.common.TransactionPool;
 
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.IntSupplier;
+import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
 /**
  * Util class to create the view for a splash screen content.
@@ -67,6 +81,13 @@ public class SplashscreenContentDrawer {
     // For example, an icon with the foreground 108*108 opaque pixels and it's background
     // also 108*108 pixels, then do not enlarge this icon if only need to show foreground icon.
     private static final float ENLARGE_FOREGROUND_ICON_THRESHOLD = (72f * 72f) / (108f * 108f);
+
+    /**
+     * If the developer doesn't specify a background for the icon, we slightly scale it up.
+     *
+     * The background is either manually specified in the theme or the Adaptive Icon
+     * background is used if it's different from the window background.
+     */
     private static final float NO_BACKGROUND_SCALE = 192f / 160;
     private final Context mContext;
     private final IconProvider mIconProvider;
@@ -76,9 +97,12 @@ public class SplashscreenContentDrawer {
     private int mBrandingImageWidth;
     private int mBrandingImageHeight;
     private int mMainWindowShiftLength;
+    private int mLastPackageContextConfigHash;
     private final TransactionPool mTransactionPool;
     private final SplashScreenWindowAttrs mTmpAttrs = new SplashScreenWindowAttrs();
     private final Handler mSplashscreenWorkerHandler;
+    @VisibleForTesting
+    final ColorCache mColorCache;
 
     SplashscreenContentDrawer(Context context, TransactionPool pool) {
         mContext = context;
@@ -92,6 +116,7 @@ public class SplashscreenContentDrawer {
                 new HandlerThread("wmshell.splashworker", THREAD_PRIORITY_TOP_APP_BOOST);
         shellSplashscreenWorkerThread.start();
         mSplashscreenWorkerHandler = shellSplashscreenWorkerThread.getThreadHandler();
+        mColorCache = new ColorCache(mContext, mSplashscreenWorkerHandler);
     }
 
     /**
@@ -101,24 +126,26 @@ public class SplashscreenContentDrawer {
      * view on background thread so the view and the drawable can be create and pre-draw in
      * parallel.
      *
-     * @param emptyView Create a splash screen view without icon on it.
-     * @param consumer Receiving the SplashScreenView object, which will also be executed
-     *                 on splash screen thread. Note that the view can be null if failed.
+     * @param suggestType Suggest type to create the splash screen view.
+     * @param splashScreenViewConsumer Receiving the SplashScreenView object, which will also be
+     *                                 executed on splash screen thread. Note that the view can be
+     *                                 null if failed.
+     * @param bgColorConsumer Receiving the background color once it's estimated complete.
      */
-    void createContentView(Context context, boolean emptyView, ActivityInfo info, int taskId,
-            Consumer<SplashScreenView> consumer) {
+    void createContentView(Context context, @StartingWindowType int suggestType, ActivityInfo info,
+            int taskId, Consumer<SplashScreenView> splashScreenViewConsumer) {
         mSplashscreenWorkerHandler.post(() -> {
             SplashScreenView contentView;
             try {
                 Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "makeSplashScreenContentView");
-                contentView = makeSplashScreenContentView(context, info, emptyView);
+                contentView = makeSplashScreenContentView(context, info, suggestType);
                 Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
             } catch (RuntimeException e) {
                 Slog.w(TAG, "failed creating starting window content at taskId: "
                         + taskId, e);
                 contentView = null;
             }
-            consumer.accept(contentView);
+            splashScreenViewConsumer.accept(contentView);
         });
     }
 
@@ -135,7 +162,10 @@ public class SplashscreenContentDrawer {
                 com.android.wm.shell.R.dimen.starting_surface_exit_animation_window_shift_length);
     }
 
-    private static int getSystemBGColor() {
+    /**
+     * @return Current system background color.
+     */
+    public static int getSystemBGColor() {
         final Context systemContext = ActivityThread.currentApplication();
         if (systemContext == null) {
             Slog.e(TAG, "System context does not exist!");
@@ -145,12 +175,22 @@ public class SplashscreenContentDrawer {
         return res.getColor(com.android.wm.shell.R.color.splash_window_background_default);
     }
 
+    /**
+     * Estimate the background color of the app splash screen, this may take a while so use it only
+     * if there is no starting window exists for that context.
+     **/
+    int estimateTaskBackgroundColor(Context context) {
+        final SplashScreenWindowAttrs windowAttrs = new SplashScreenWindowAttrs();
+        getWindowAttrs(context, windowAttrs);
+        return peekWindowBGColor(context, windowAttrs);
+    }
+
     private static Drawable createDefaultBackgroundDrawable() {
         return new ColorDrawable(getSystemBGColor());
     }
 
     /** Extract the window background color from {@code attrs}. */
-    public static int peekWindowBGColor(Context context, SplashScreenWindowAttrs attrs) {
+    private static int peekWindowBGColor(Context context, SplashScreenWindowAttrs attrs) {
         Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "peekWindowBGColor");
         final Drawable themeBGDrawable;
         if (attrs.mWindowBgColor != 0) {
@@ -178,45 +218,79 @@ public class SplashscreenContentDrawer {
         }
     }
 
+    private static Drawable peekLegacySplashscreenContent(Context context,
+            SplashScreenWindowAttrs attrs) {
+        final TypedArray a = context.obtainStyledAttributes(R.styleable.Window);
+        final int resId = safeReturnAttrDefault((def) ->
+                a.getResourceId(R.styleable.Window_windowSplashscreenContent, def), 0);
+        a.recycle();
+        if (resId != 0) {
+            return context.getDrawable(resId);
+        }
+        if (attrs.mWindowBgResId != 0) {
+            return context.getDrawable(attrs.mWindowBgResId);
+        }
+        return null;
+    }
+
     private SplashScreenView makeSplashScreenContentView(Context context, ActivityInfo ai,
-            boolean emptyView) {
+            @StartingWindowType int suggestType) {
         updateDensity();
 
         getWindowAttrs(context, mTmpAttrs);
-        final StartingWindowViewBuilder builder = new StartingWindowViewBuilder();
-        final int themeBGColor = peekWindowBGColor(context, this.mTmpAttrs);
-        // TODO (b/173975965) Tracking the performance on improved splash screen.
-        return builder
-                .setContext(context)
+        mLastPackageContextConfigHash = context.getResources().getConfiguration().hashCode();
+
+        final Drawable legacyDrawable = suggestType == STARTING_WINDOW_TYPE_LEGACY_SPLASH_SCREEN
+                ? peekLegacySplashscreenContent(context, mTmpAttrs) : null;
+        final int themeBGColor = legacyDrawable != null
+                ? getBGColorFromCache(ai, () -> estimateWindowBGColor(legacyDrawable))
+                : getBGColorFromCache(ai, () -> peekWindowBGColor(context, mTmpAttrs));
+        return new StartingWindowViewBuilder(context, ai)
                 .setWindowBGColor(themeBGColor)
-                .makeEmptyView(emptyView)
-                .setActivityInfo(ai)
+                .overlayDrawable(legacyDrawable)
+                .chooseStyle(suggestType)
                 .build();
+    }
+
+    private int getBGColorFromCache(ActivityInfo ai, IntSupplier windowBgColorSupplier) {
+        return mColorCache.getWindowColor(ai.packageName, mLastPackageContextConfigHash,
+                mTmpAttrs.mWindowBgColor, mTmpAttrs.mWindowBgResId, windowBgColorSupplier).mBgColor;
+    }
+
+    private static <T> T safeReturnAttrDefault(UnaryOperator<T> getMethod, T def) {
+        try {
+            return getMethod.apply(def);
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Get attribute fail, return default: " + e.getMessage());
+            return def;
+        }
     }
 
     /**
      * Get the {@link SplashScreenWindowAttrs} from {@code context} and fill them into
      * {@code attrs}.
      */
-    public static void getWindowAttrs(Context context, SplashScreenWindowAttrs attrs) {
+    private static void getWindowAttrs(Context context, SplashScreenWindowAttrs attrs) {
         final TypedArray typedArray = context.obtainStyledAttributes(
                 com.android.internal.R.styleable.Window);
         attrs.mWindowBgResId = typedArray.getResourceId(R.styleable.Window_windowBackground, 0);
-        attrs.mWindowBgColor = typedArray.getColor(
-                R.styleable.Window_windowSplashScreenBackground, Color.TRANSPARENT);
-        attrs.mReplaceIcon = typedArray.getDrawable(
-                R.styleable.Window_windowSplashScreenAnimatedIcon);
-        attrs.mAnimationDuration = typedArray.getInt(
-                R.styleable.Window_windowSplashScreenAnimationDuration, 0);
-        attrs.mBrandingImage = typedArray.getDrawable(
-                R.styleable.Window_windowSplashScreenBrandingImage);
-        attrs.mIconBgColor = typedArray.getColor(
-                R.styleable.Window_windowSplashScreenIconBackgroundColor, Color.TRANSPARENT);
+        attrs.mWindowBgColor = safeReturnAttrDefault((def) -> typedArray.getColor(
+                R.styleable.Window_windowSplashScreenBackground, def),
+                Color.TRANSPARENT);
+        attrs.mSplashScreenIcon = safeReturnAttrDefault((def) -> typedArray.getDrawable(
+                R.styleable.Window_windowSplashScreenAnimatedIcon), null);
+        attrs.mAnimationDuration = safeReturnAttrDefault((def) -> typedArray.getInt(
+                R.styleable.Window_windowSplashScreenAnimationDuration, def), 0);
+        attrs.mBrandingImage = safeReturnAttrDefault((def) -> typedArray.getDrawable(
+                R.styleable.Window_windowSplashScreenBrandingImage), null);
+        attrs.mIconBgColor = safeReturnAttrDefault((def) -> typedArray.getColor(
+                R.styleable.Window_windowSplashScreenIconBackgroundColor, def),
+                Color.TRANSPARENT);
         typedArray.recycle();
         if (DEBUG) {
             Slog.d(TAG, "window attributes color: "
                     + Integer.toHexString(attrs.mWindowBgColor)
-                    + " icon " + attrs.mReplaceIcon + " duration " + attrs.mAnimationDuration
+                    + " icon " + attrs.mSplashScreenIcon + " duration " + attrs.mAnimationDuration
                     + " brandImage " + attrs.mBrandingImage);
         }
     }
@@ -225,74 +299,68 @@ public class SplashscreenContentDrawer {
     public static class SplashScreenWindowAttrs {
         private int mWindowBgResId = 0;
         private int mWindowBgColor = Color.TRANSPARENT;
-        private Drawable mReplaceIcon = null;
+        private Drawable mSplashScreenIcon = null;
         private Drawable mBrandingImage = null;
         private int mIconBgColor = Color.TRANSPARENT;
         private int mAnimationDuration = 0;
     }
 
     private class StartingWindowViewBuilder {
-        private ActivityInfo mActivityInfo;
-        private Context mContext;
-        private boolean mEmptyView;
+        private final Context mContext;
+        private final ActivityInfo mActivityInfo;
 
-        // result
-        private boolean mBuildComplete = false;
-        private SplashScreenView mCachedResult;
+        private Drawable mOverlayDrawable;
+        private int mSuggestType;
         private int mThemeColor;
         private Drawable mFinalIconDrawable;
         private int mFinalIconSize = mIconSize;
 
+        StartingWindowViewBuilder(@NonNull Context context, @NonNull ActivityInfo aInfo) {
+            mContext = context;
+            mActivityInfo = aInfo;
+        }
+
         StartingWindowViewBuilder setWindowBGColor(@ColorInt int background) {
             mThemeColor = background;
-            mBuildComplete = false;
             return this;
         }
 
-        StartingWindowViewBuilder makeEmptyView(boolean empty) {
-            mEmptyView = empty;
-            mBuildComplete = false;
+        StartingWindowViewBuilder overlayDrawable(Drawable overlay) {
+            mOverlayDrawable = overlay;
             return this;
         }
 
-        StartingWindowViewBuilder setActivityInfo(ActivityInfo ai) {
-            mActivityInfo = ai;
-            mBuildComplete = false;
-            return this;
-        }
-
-        StartingWindowViewBuilder setContext(Context context) {
-            mContext = context;
-            mBuildComplete = false;
+        StartingWindowViewBuilder chooseStyle(int suggestType) {
+            mSuggestType = suggestType;
             return this;
         }
 
         SplashScreenView build() {
-            if (mBuildComplete) {
-                return mCachedResult;
-            }
-            if (mContext == null || mActivityInfo == null) {
-                Slog.e(TAG, "Unable to create StartingWindowView, lack of materials!");
-                return null;
-            }
-
             Drawable iconDrawable;
             final int animationDuration;
-            if (mEmptyView) {
-                // empty splash screen case
+            if (mSuggestType == STARTING_WINDOW_TYPE_EMPTY_SPLASH_SCREEN
+                    || mSuggestType == STARTING_WINDOW_TYPE_LEGACY_SPLASH_SCREEN) {
+                // empty or legacy splash screen case
                 animationDuration = 0;
                 mFinalIconSize = 0;
-            } else if (mTmpAttrs.mReplaceIcon != null) {
+            } else if (mTmpAttrs.mSplashScreenIcon != null) {
                 // replaced icon, don't process
-                iconDrawable = mTmpAttrs.mReplaceIcon;
+                iconDrawable = mTmpAttrs.mSplashScreenIcon;
                 animationDuration = mTmpAttrs.mAnimationDuration;
+
+                // There is no background below the icon, so scale the icon up
+                if (mTmpAttrs.mIconBgColor == Color.TRANSPARENT) {
+                    mFinalIconSize *= NO_BACKGROUND_SCALE;
+                }
                 createIconDrawable(iconDrawable, false);
             } else {
                 final float iconScale = (float) mIconSize / (float) mDefaultIconSize;
                 final int densityDpi = mContext.getResources().getDisplayMetrics().densityDpi;
                 final int scaledIconDpi =
                         (int) (0.5f + iconScale * densityDpi * NO_BACKGROUND_SCALE);
+                Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "getIcon");
                 iconDrawable = mIconProvider.getIcon(mActivityInfo, scaledIconDpi);
+                Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
                 if (iconDrawable == null) {
                     iconDrawable = mContext.getPackageManager().getDefaultActivityIcon();
                 }
@@ -306,9 +374,7 @@ public class SplashscreenContentDrawer {
                 animationDuration = 0;
             }
 
-            mCachedResult = fillViewWithIcon(mFinalIconSize, mFinalIconDrawable, animationDuration);
-            mBuildComplete = true;
-            return mCachedResult;
+            return fillViewWithIcon(mFinalIconSize, mFinalIconDrawable, animationDuration);
         }
 
         private void createIconDrawable(Drawable iconDrawable, boolean legacy) {
@@ -331,28 +397,20 @@ public class SplashscreenContentDrawer {
             }
 
             Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "processAdaptiveIcon");
-            final AdaptiveIconDrawable adaptiveIconDrawable =
-                    (AdaptiveIconDrawable) iconDrawable;
-            final DrawableColorTester backIconTester =
-                    new DrawableColorTester(adaptiveIconDrawable.getBackground());
-
+            final AdaptiveIconDrawable adaptiveIconDrawable = (AdaptiveIconDrawable) iconDrawable;
             final Drawable iconForeground = adaptiveIconDrawable.getForeground();
-            final DrawableColorTester foreIconTester =
-                    new DrawableColorTester(iconForeground, true /* filterTransparent */);
-
-            final boolean foreComplex = foreIconTester.isComplexColor();
-            final int foreMainColor = foreIconTester.getDominateColor();
+            final ColorCache.IconColor iconColor = mColorCache.getIconColor(
+                    mActivityInfo.packageName, mActivityInfo.getIconResource(),
+                    mLastPackageContextConfigHash,
+                    () -> new DrawableColorTester(iconForeground, true /* filterTransparent */),
+                    () -> new DrawableColorTester(adaptiveIconDrawable.getBackground()));
 
             if (DEBUG) {
-                Slog.d(TAG, "foreground complex color? " + foreComplex + " main color: "
-                        + Integer.toHexString(foreMainColor));
-            }
-            final boolean backComplex = backIconTester.isComplexColor();
-            final int backMainColor = backIconTester.getDominateColor();
-            if (DEBUG) {
-                Slog.d(TAG, "background complex color? " + backComplex + " main color: "
-                        + Integer.toHexString(backMainColor));
-                Slog.d(TAG, "theme color? " + Integer.toHexString(mThemeColor));
+                Slog.d(TAG, "FgMainColor=" + Integer.toHexString(iconColor.mFgColor)
+                        + " BgMainColor=" + Integer.toHexString(iconColor.mBgColor)
+                        + " IsBgComplex=" + iconColor.mIsBgComplex
+                        + " FromCache=" + (iconColor.mReuseCount > 0)
+                        + " ThemeColor=" + Integer.toHexString(mThemeColor));
             }
 
             // Only draw the foreground of AdaptiveIcon to the splash screen if below condition
@@ -363,17 +421,17 @@ public class SplashscreenContentDrawer {
             // C. The background of the adaptive icon is grayscale, and the foreground of the
             // adaptive icon forms a certain contrast with the theme color.
             // D. Didn't specify icon background color.
-            if (!backComplex && mTmpAttrs.mIconBgColor == Color.TRANSPARENT
-                    && (isRgbSimilarInHsv(mThemeColor, backMainColor)
-                    || (backIconTester.isGrayscale()
-                    && !isRgbSimilarInHsv(mThemeColor, foreMainColor)))) {
+            if (!iconColor.mIsBgComplex && mTmpAttrs.mIconBgColor == Color.TRANSPARENT
+                    && (isRgbSimilarInHsv(mThemeColor, iconColor.mBgColor)
+                            || (iconColor.mIsBgGrayscale
+                                    && !isRgbSimilarInHsv(mThemeColor, iconColor.mFgColor)))) {
                 if (DEBUG) {
                     Slog.d(TAG, "makeSplashScreenContentView: choose fg icon");
                 }
                 // Reference AdaptiveIcon description, outer is 108 and inner is 72, so we
                 // scale by 192/160 if we only draw adaptiveIcon's foreground.
                 final float noBgScale =
-                        foreIconTester.nonTransparentRatio() < ENLARGE_FOREGROUND_ICON_THRESHOLD
+                        iconColor.mFgNonTransparentRatio < ENLARGE_FOREGROUND_ICON_THRESHOLD
                                 ? NO_BACKGROUND_SCALE : 1f;
                 // Using AdaptiveIconDrawable here can help keep the shape consistent with the
                 // current settings.
@@ -394,13 +452,15 @@ public class SplashscreenContentDrawer {
             Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "fillViewWithIcon");
             final SplashScreenView.Builder builder = new SplashScreenView.Builder(mContext);
             builder.setBackgroundColor(mThemeColor);
+            builder.setOverlayDrawable(mOverlayDrawable);
             if (iconDrawable != null) {
                 builder.setIconSize(iconSize)
                         .setIconBackground(mTmpAttrs.mIconBgColor)
                         .setCenterViewDrawable(iconDrawable)
                         .setAnimationDurationMillis(animationDuration);
             }
-            if (mTmpAttrs.mBrandingImage != null) {
+            if (mSuggestType == STARTING_WINDOW_TYPE_SPLASH_SCREEN
+                    && mTmpAttrs.mBrandingImage != null) {
                 builder.setBrandingDrawable(mTmpAttrs.mBrandingImage, mBrandingImageWidth,
                         mBrandingImageHeight);
             }
@@ -408,21 +468,22 @@ public class SplashscreenContentDrawer {
             if (DEBUG) {
                 Slog.d(TAG, "fillViewWithIcon surfaceWindowView " + splashScreenView);
             }
-            if (mEmptyView) {
-                splashScreenView.setNotCopyable();
-                splashScreenView.setRevealAnimationSupported(false);
-            }
-            splashScreenView.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
-                @Override
-                public void onViewAttachedToWindow(View v) {
-                    SplashScreenView.applySystemBarsContrastColor(v.getWindowInsetsController(),
-                            splashScreenView.getInitBackgroundColor());
-                }
+            if (mSuggestType != STARTING_WINDOW_TYPE_LEGACY_SPLASH_SCREEN) {
+                splashScreenView.addOnAttachStateChangeListener(
+                        new View.OnAttachStateChangeListener() {
+                            @Override
+                            public void onViewAttachedToWindow(View v) {
+                                SplashScreenView.applySystemBarsContrastColor(
+                                        v.getWindowInsetsController(),
+                                        splashScreenView.getInitBackgroundColor());
+                            }
 
-                @Override
-                public void onViewDetachedFromWindow(View v) {
-                }
-            });
+                            @Override
+                            public void onViewDetachedFromWindow(View v) {
+                            }
+                        });
+            }
+
             Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
             return splashScreenView;
         }
@@ -491,9 +552,14 @@ public class SplashscreenContentDrawer {
                     drawable = layerDrawable.getDrawable(0);
                 }
             }
-            mColorChecker = drawable instanceof ColorDrawable
-                    ? new SingleColorTester((ColorDrawable) drawable)
-                    : new ComplexDrawableTester(drawable, filterTransparent);
+            if (drawable == null) {
+                mColorChecker = new SingleColorTester(
+                        (ColorDrawable) createDefaultBackgroundDrawable());
+            } else {
+                mColorChecker = drawable instanceof ColorDrawable
+                        ? new SingleColorTester((ColorDrawable) drawable)
+                        : new ComplexDrawableTester(drawable, filterTransparent);
+            }
         }
 
         public float nonTransparentRatio() {
@@ -686,6 +752,150 @@ public class SplashscreenContentDrawer {
                     return mInnerQuantizer.getQuantizedColors();
                 }
             }
+        }
+    }
+
+    /** Cache the result of {@link DrawableColorTester} to reduce expensive calculation. */
+    @VisibleForTesting
+    static class ColorCache extends BroadcastReceiver {
+        /**
+         * The color may be different according to resource id and configuration (e.g. night mode),
+         * so this allows to cache more than one color per package.
+         */
+        private static final int CACHE_SIZE = 2;
+
+        /** The computed colors of packages. */
+        private final ArrayMap<String, Colors> mColorMap = new ArrayMap<>();
+
+        private static class Colors {
+            final WindowColor[] mWindowColors = new WindowColor[CACHE_SIZE];
+            final IconColor[] mIconColors = new IconColor[CACHE_SIZE];
+        }
+
+        private static class Cache {
+            /** The hash used to check whether this cache is hit. */
+            final int mHash;
+
+            /** The number of times this cache has been reused. */
+            int mReuseCount;
+
+            Cache(int hash) {
+                mHash = hash;
+            }
+        }
+
+        static class WindowColor extends Cache {
+            final int mBgColor;
+
+            WindowColor(int hash, int bgColor) {
+                super(hash);
+                mBgColor = bgColor;
+            }
+        }
+
+        static class IconColor extends Cache {
+            final int mFgColor;
+            final int mBgColor;
+            final boolean mIsBgComplex;
+            final boolean mIsBgGrayscale;
+            final float mFgNonTransparentRatio;
+
+            IconColor(int hash, int fgColor, int bgColor, boolean isBgComplex,
+                    boolean isBgGrayscale, float fgNonTransparentRatio) {
+                super(hash);
+                mFgColor = fgColor;
+                mBgColor = bgColor;
+                mIsBgComplex = isBgComplex;
+                mIsBgGrayscale = isBgGrayscale;
+                mFgNonTransparentRatio = fgNonTransparentRatio;
+            }
+        }
+
+        ColorCache(Context context, Handler handler) {
+            // This includes reinstall and uninstall.
+            final IntentFilter filter = new IntentFilter(Intent.ACTION_PACKAGE_REMOVED);
+            filter.addDataScheme(IntentFilter.SCHEME_PACKAGE);
+            context.registerReceiverAsUser(this, UserHandle.ALL, filter,
+                    null /* broadcastPermission */, handler);
+        }
+
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            final Uri packageUri = intent.getData();
+            if (packageUri != null) {
+                mColorMap.remove(packageUri.getEncodedSchemeSpecificPart());
+            }
+        }
+
+        /**
+         * Gets the existing cache if the hash matches. If null is returned, the caller can use
+         * outLeastUsedIndex to put the new cache.
+         */
+        private static <T extends Cache> T getCache(T[] caches, int hash, int[] outLeastUsedIndex) {
+            int minReuseCount = Integer.MAX_VALUE;
+            for (int i = 0; i < CACHE_SIZE; i++) {
+                final T cache = caches[i];
+                if (cache == null) {
+                    // Empty slot has the highest priority to put new cache.
+                    minReuseCount = -1;
+                    outLeastUsedIndex[0] = i;
+                    continue;
+                }
+                if (cache.mHash == hash) {
+                    cache.mReuseCount++;
+                    return cache;
+                }
+                if (cache.mReuseCount < minReuseCount) {
+                    minReuseCount = cache.mReuseCount;
+                    outLeastUsedIndex[0] = i;
+                }
+            }
+            return null;
+        }
+
+        @NonNull WindowColor getWindowColor(String packageName, int configHash, int windowBgColor,
+                int windowBgResId, IntSupplier windowBgColorSupplier) {
+            Colors colors = mColorMap.get(packageName);
+            int hash = 31 * configHash + windowBgColor;
+            hash = 31 * hash + windowBgResId;
+            final int[] leastUsedIndex = { 0 };
+            if (colors != null) {
+                final WindowColor windowColor = getCache(colors.mWindowColors, hash,
+                        leastUsedIndex);
+                if (windowColor != null) {
+                    return windowColor;
+                }
+            } else {
+                colors = new Colors();
+                mColorMap.put(packageName, colors);
+            }
+            final WindowColor windowColor = new WindowColor(hash, windowBgColorSupplier.getAsInt());
+            colors.mWindowColors[leastUsedIndex[0]] = windowColor;
+            return windowColor;
+        }
+
+        @NonNull IconColor getIconColor(String packageName, int configHash, int iconResId,
+                Supplier<DrawableColorTester> fgColorTesterSupplier,
+                Supplier<DrawableColorTester> bgColorTesterSupplier) {
+            Colors colors = mColorMap.get(packageName);
+            final int hash = configHash * 31 + iconResId;
+            final int[] leastUsedIndex = { 0 };
+            if (colors != null) {
+                final IconColor iconColor = getCache(colors.mIconColors, hash, leastUsedIndex);
+                if (iconColor != null) {
+                    return iconColor;
+                }
+            } else {
+                colors = new Colors();
+                mColorMap.put(packageName, colors);
+            }
+            final DrawableColorTester fgTester = fgColorTesterSupplier.get();
+            final DrawableColorTester bgTester = bgColorTesterSupplier.get();
+            final IconColor iconColor = new IconColor(hash, fgTester.getDominateColor(),
+                    bgTester.getDominateColor(), bgTester.isComplexColor(), bgTester.isGrayscale(),
+                    fgTester.nonTransparentRatio());
+            colors.mIconColors[leastUsedIndex[0]] = iconColor;
+            return iconColor;
         }
     }
 

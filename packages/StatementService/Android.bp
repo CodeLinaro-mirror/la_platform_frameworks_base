@@ -23,16 +23,22 @@ package {
 android_app {
     name: "StatementService",
     defaults: ["platform_app_defaults"],
-    srcs: ["src/**/*.java"],
+    srcs: [
+        "src/**/*.java",
+        "src/**/*.kt",
+    ],
     optimize: {
         proguard_flags_files: ["proguard.flags"],
     },
+    target_sdk_version: "29",
     platform_apis: true,
     privileged: true,
-    libs: ["org.apache.http.legacy"],
-    uses_libs: ["org.apache.http.legacy"],
+    certificate: "platform",
     static_libs: [
-        "libprotobuf-java-nano",
-        "volley",
+        "androidx.appcompat_appcompat",
+        "androidx.collection_collection-ktx",
+        "androidx.work_work-runtime",
+        "androidx.work_work-runtime-ktx",
+        "kotlinx-coroutines-android",
     ],
 }

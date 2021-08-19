@@ -87,6 +87,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.FileUtils;
+import android.os.Parcel;
 import android.os.RemoteException;
 import android.os.Trace;
 import android.os.UserHandle;
@@ -582,12 +583,12 @@ public class ParsingPackageUtils {
      */
     private ParseResult<ParsingPackage> parseBaseApk(ParseInput input, String apkPath,
             String codePath, Resources res, XmlResourceParser parser, int flags)
-            throws XmlPullParserException, IOException, PackageParserException {
+            throws XmlPullParserException, IOException {
         final String splitName;
         final String pkgName;
 
         ParseResult<Pair<String, String>> packageSplitResult =
-                ApkLiteParseUtils.parsePackageSplitNames(input, parser, parser);
+                ApkLiteParseUtils.parsePackageSplitNames(input, parser);
         if (packageSplitResult.isError()) {
             return input.error(packageSplitResult);
         }
@@ -1460,9 +1461,9 @@ public class ParsingPackageUtils {
         if (SDK_VERSION > 0) {
             TypedArray sa = res.obtainAttributes(parser, R.styleable.AndroidManifestUsesSdk);
             try {
-                int minVers = 1;
+                int minVers = ParsingUtils.DEFAULT_MIN_SDK_VERSION;
                 String minCode = null;
-                int targetVers = 0;
+                int targetVers = ParsingUtils.DEFAULT_TARGET_SDK_VERSION;
                 String targetCode = null;
 
                 TypedValue val = sa.peekValue(R.styleable.AndroidManifestUsesSdk_minSdkVersion);
@@ -3158,6 +3159,68 @@ public class ParsingPackageUtils {
     private static String nonResString(@StyleableRes int index, TypedArray sa) {
         return sa.getNonResourceString(index);
     }
+
+    /**
+     * Writes the keyset mapping to the provided package. {@code null} mappings are permitted.
+     */
+    public static void writeKeySetMapping(@NonNull Parcel dest,
+            @NonNull Map<String, ArraySet<PublicKey>> keySetMapping) {
+        if (keySetMapping == null) {
+            dest.writeInt(-1);
+            return;
+        }
+
+        final int N = keySetMapping.size();
+        dest.writeInt(N);
+
+        for (String key : keySetMapping.keySet()) {
+            dest.writeString(key);
+            ArraySet<PublicKey> keys = keySetMapping.get(key);
+            if (keys == null) {
+                dest.writeInt(-1);
+                continue;
+            }
+
+            final int M = keys.size();
+            dest.writeInt(M);
+            for (int j = 0; j < M; j++) {
+                dest.writeSerializable(keys.valueAt(j));
+            }
+        }
+    }
+
+    /**
+     * Reads a keyset mapping from the given parcel at the given data position. May return
+     * {@code null} if the serialized mapping was {@code null}.
+     */
+    @NonNull
+    public static ArrayMap<String, ArraySet<PublicKey>> readKeySetMapping(@NonNull Parcel in) {
+        final int N = in.readInt();
+        if (N == -1) {
+            return null;
+        }
+
+        ArrayMap<String, ArraySet<PublicKey>> keySetMapping = new ArrayMap<>();
+        for (int i = 0; i < N; ++i) {
+            String key = in.readString();
+            final int M = in.readInt();
+            if (M == -1) {
+                keySetMapping.put(key, null);
+                continue;
+            }
+
+            ArraySet<PublicKey> keys = new ArraySet<>(M);
+            for (int j = 0; j < M; ++j) {
+                PublicKey pk = (PublicKey) in.readSerializable();
+                keys.add(pk);
+            }
+
+            keySetMapping.put(key, keys);
+        }
+
+        return keySetMapping;
+    }
+
 
     /**
      * Callback interface for retrieving information that may be needed while parsing

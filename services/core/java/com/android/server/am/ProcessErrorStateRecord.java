@@ -267,7 +267,7 @@ class ProcessErrorStateRecord {
 
             if (mService.mTraceErrorLogger.isAddErrorIdEnabled()) {
                 errorId = mService.mTraceErrorLogger.generateErrorId();
-                mService.mTraceErrorLogger.addErrorIdToTrace(errorId);
+                mService.mTraceErrorLogger.addErrorIdToTrace(mApp.processName, errorId);
             } else {
                 errorId = null;
             }
@@ -333,6 +333,7 @@ class ProcessErrorStateRecord {
         if (errorId != null) {
             info.append("ErrorId: ").append(errorId.toString()).append("\n");
         }
+        info.append("Frozen: ").append(mApp.mOptRecord.isFrozen()).append("\n");
 
         // Retrieve controller with max ANR delay from AnrControllers
         // Note that we retrieve the controller before dumping stacks because dumping stacks can
@@ -470,7 +471,9 @@ class ProcessErrorStateRecord {
                 incrementalMetrics != null ? incrementalMetrics.getMillisSinceLastReadError()
                         : -1,
                 incrementalMetrics != null ? incrementalMetrics.getLastReadErrorNumber()
-                        : 0);
+                        : 0,
+                incrementalMetrics != null ? incrementalMetrics.getTotalDelayedReadsDurationMillis()
+                        : -1);
         final ProcessRecord parentPr = parentProcess != null
                 ? (ProcessRecord) parentProcess.mOwner : null;
         mService.addErrorToDropBox("anr", mApp, mApp.processName, activityShortComponentName,

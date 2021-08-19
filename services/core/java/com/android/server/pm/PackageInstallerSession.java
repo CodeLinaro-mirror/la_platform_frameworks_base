@@ -147,6 +147,7 @@ import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.internal.util.Preconditions;
 import com.android.server.LocalServices;
+import com.android.server.SystemConfig;
 import com.android.server.pm.Installer.InstallerException;
 import com.android.server.pm.dex.DexManager;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
@@ -956,7 +957,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 android.Manifest.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION, mInstallerUid)
                 == PackageManager.PERMISSION_GRANTED);
         final int targetPackageUid = mPm.getPackageUid(packageName, 0, userId);
-        final boolean isUpdate = targetPackageUid != -1;
+        final boolean isUpdate = targetPackageUid != -1 || isApexSession();
         final InstallSourceInfo existingInstallSourceInfo = isUpdate
                 ? mPm.getInstallSourceInfo(packageName)
                 : null;
@@ -1264,12 +1265,13 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
     @GuardedBy("mProgressLock")
     private void computeProgressLocked(boolean forcePublish) {
-        if (!mCommitted) {
+        if (!isIncrementalInstallation() || !mCommitted) {
             mProgress = MathUtils.constrain(mClientProgress * 0.8f, 0f, 0.8f)
                     + MathUtils.constrain(mInternalProgress * 0.2f, 0f, 0.2f);
         } else {
-            // For incremental install, continue to publish incremental progress during committing.
-            if (isIncrementalInstallation() && (mIncrementalProgress - mProgress) >= 0.01) {
+            // For incremental, publish regular install progress before the session is committed,
+            // but publish incremental progress afterwards.
+            if (mIncrementalProgress - mProgress >= 0.01) {
                 // It takes some time for data loader to write to incremental file system, so at the
                 // beginning of the commit, the incremental progress might be very small.
                 // Wait till the incremental progress is larger than what's already displayed.
@@ -1278,7 +1280,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             }
         }
 
-        // Only publish when meaningful change
+        // Only publish meaningful progress changes.
         if (forcePublish || (mProgress - mReportedProgress) >= 0.01) {
             mReportedProgress = mProgress;
             mCallback.onSessionProgressChanged(this, mProgress);
@@ -2238,6 +2240,26 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                     .setAdmin(mInstallSource.installerPackageName)
                     .write();
         }
+
+        // Check if APEX update is allowed. We do this check in handleInstall, since this is one of
+        // the places that:
+        //   * Shared between staged and non-staged APEX update flows.
+        //   * Only is called after boot completes.
+        // The later is important, since isApexUpdateAllowed check depends on the
+        // ModuleInfoProvider, which is only populated after device has booted.
+        if (isApexSession()) {
+            boolean checkApexUpdateAllowed =
+                    (params.installFlags & PackageManager.INSTALL_DISABLE_ALLOWED_APEX_UPDATE_CHECK)
+                        == 0;
+            synchronized (mLock) {
+                if (checkApexUpdateAllowed && !isApexUpdateAllowed(mPackageName)) {
+                    onSessionValidationFailure(PackageManager.INSTALL_FAILED_VERIFICATION_FAILURE,
+                            "Update of APEX package " + mPackageName + " is not allowed");
+                    return;
+                }
+            }
+        }
+
         if (params.isStaged) {
             mStagingManager.commitSession(mStagedSession);
             // TODO(b/136257624): CTS test fails if we don't send session finished broadcast, even
@@ -2774,6 +2796,11 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
 
     boolean containsApkSession() {
         return sessionContains((s) -> !s.isApexSession());
+    }
+
+    private boolean isApexUpdateAllowed(String apexPackageName) {
+        return mPm.getModuleInfo(apexPackageName, 0) != null
+                || SystemConfig.getInstance().getAllowedVendorApexes().contains(apexPackageName);
     }
 
     /**
@@ -3760,11 +3787,6 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             return true;
         }
 
-        // Retrying commit.
-        if (mIncrementalFileStorages != null) {
-            return false;
-        }
-
         final List<InstallationFileParcel> addedFiles = new ArrayList<>();
         final List<String> removedFiles = new ArrayList<>();
 
@@ -3925,18 +3947,24 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                         (pkgInfo != null && pkgInfo.applicationInfo != null) ? new File(
                                 pkgInfo.applicationInfo.getCodePath()).getParentFile() : null;
 
-                mIncrementalFileStorages = IncrementalFileStorages.initialize(mContext, stageDir,
-                        inheritedDir, params, statusListener, healthCheckParams, healthListener,
-                        addedFiles, perUidReadTimeouts,
-                        new IPackageLoadingProgressCallback.Stub() {
-                            @Override
-                            public void onPackageLoadingProgressChanged(float progress) {
-                                synchronized (mProgressLock) {
-                                    mIncrementalProgress = progress;
-                                    computeProgressLocked(true);
+                if (mIncrementalFileStorages == null) {
+                    mIncrementalFileStorages = IncrementalFileStorages.initialize(mContext,
+                            stageDir, inheritedDir, params, statusListener, healthCheckParams,
+                            healthListener, addedFiles, perUidReadTimeouts,
+                            new IPackageLoadingProgressCallback.Stub() {
+                                @Override
+                                public void onPackageLoadingProgressChanged(float progress) {
+                                    synchronized (mProgressLock) {
+                                        mIncrementalProgress = progress;
+                                        computeProgressLocked(true);
+                                    }
                                 }
-                            }
-                        });
+                            });
+                } else {
+                    // Retrying commit.
+                    mIncrementalFileStorages.startLoading(params, statusListener, healthCheckParams,
+                            healthListener, perUidReadTimeouts);
+                }
                 return false;
             } catch (IOException e) {
                 throw new PackageManagerException(INSTALL_FAILED_MEDIA_UNAVAILABLE, e.getMessage(),

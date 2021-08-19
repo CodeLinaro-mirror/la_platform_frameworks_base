@@ -157,6 +157,7 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
 
     private volatile boolean mOkToSendBroadcasts = false;
     private volatile boolean mBypassNextStagedInstallerCheck = false;
+    private volatile boolean mBypassNextAllowedApexUpdateCheck = false;
 
     /**
      * File storing persisted {@link #mSessions} metadata.
@@ -626,7 +627,14 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
         }
 
         boolean isApex = (params.installFlags & PackageManager.INSTALL_APEX) != 0;
-        if (params.isStaged || isApex) {
+        if (isApex) {
+            if (mContext.checkCallingOrSelfPermission(Manifest.permission.INSTALL_PACKAGE_UPDATES)
+                    == PackageManager.PERMISSION_DENIED
+                    && mContext.checkCallingOrSelfPermission(Manifest.permission.INSTALL_PACKAGES)
+                    == PackageManager.PERMISSION_DENIED) {
+                throw new SecurityException("Not allowed to perform APEX updates");
+            }
+        } else if (params.isStaged) {
             mContext.enforceCallingOrSelfPermission(Manifest.permission.INSTALL_PACKAGES, TAG);
         }
 
@@ -643,6 +651,13 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
                 throw new IllegalArgumentException(
                     "Non-staged APEX session doesn't support INSTALL_ENABLE_ROLLBACK");
             }
+            if (isCalledBySystemOrShell(callingUid) || mBypassNextAllowedApexUpdateCheck) {
+                params.installFlags |= PackageManager.INSTALL_DISABLE_ALLOWED_APEX_UPDATE_CHECK;
+            } else {
+                // Only specific APEX updates (installed through ADB, or for CTS tests) can disable
+                // allowed APEX update check.
+                params.installFlags &= ~PackageManager.INSTALL_DISABLE_ALLOWED_APEX_UPDATE_CHECK;
+            }
         }
 
         if ((params.installFlags & PackageManager.INSTALL_INSTANT_APP) != 0
@@ -653,12 +668,21 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
         }
 
         if (params.isStaged && !isCalledBySystemOrShell(callingUid)) {
-            if (mBypassNextStagedInstallerCheck) {
-                mBypassNextStagedInstallerCheck = false;
-            } else if (!isStagedInstallerAllowed(requestedInstallerPackageName)) {
+            if (!mBypassNextStagedInstallerCheck
+                    && !isStagedInstallerAllowed(requestedInstallerPackageName)) {
                 throw new SecurityException("Installer not allowed to commit staged install");
             }
         }
+        if (isApex && !isCalledBySystemOrShell(callingUid)) {
+            if (!mBypassNextStagedInstallerCheck
+                    && !isStagedInstallerAllowed(requestedInstallerPackageName)) {
+                throw new SecurityException(
+                        "Installer not allowed to commit non-staged APEX install");
+            }
+        }
+
+        mBypassNextStagedInstallerCheck = false;
+        mBypassNextAllowedApexUpdateCheck = false;
 
         if (!params.isMultiPackage) {
             // Only system components can circumvent runtime permissions when installing.
@@ -965,7 +989,8 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
                 SessionInfo info =
                         session.generateInfoForCaller(false /*withIcon*/, Process.SYSTEM_UID);
                 if (Objects.equals(info.getInstallerPackageName(), installerPackageName)
-                        && session.userId == userId && !session.hasParentSessionId()) {
+                        && session.userId == userId && !session.hasParentSessionId()
+                        && isCallingUidOwner(session)) {
                     result.add(info);
                 }
             }
@@ -1092,6 +1117,14 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
         mBypassNextStagedInstallerCheck = value;
     }
 
+    @Override
+    public void bypassNextAllowedApexUpdateCheck(boolean value) {
+        if (!isCalledBySystemOrShell(Binder.getCallingUid())) {
+            throw new SecurityException("Caller not allowed to bypass allowed apex update check");
+        }
+        mBypassNextAllowedApexUpdateCheck = value;
+    }
+
     /**
      * Set an installer to allow for the unlimited silent updates.
      */
@@ -1101,6 +1134,17 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
             throw new SecurityException("Caller not allowed to unlimite silent updates");
         }
         mSilentUpdatePolicy.setAllowUnlimitedSilentUpdates(installerPackageName);
+    }
+
+    /**
+     * Set the silent updates throttle time in seconds.
+     */
+    @Override
+    public void setSilentUpdatesThrottleTime(long throttleTimeInSeconds) {
+        if (!isCalledBySystemOrShell(Binder.getCallingUid())) {
+            throw new SecurityException("Caller not allowed to set silent updates throttle time");
+        }
+        mSilentUpdatePolicy.setSilentUpdatesThrottleTime(throttleTimeInSeconds);
     }
 
     private static int getSessionCount(SparseArray<PackageInstallerSession> sessions,

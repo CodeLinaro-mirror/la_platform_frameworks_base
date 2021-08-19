@@ -17,30 +17,37 @@ package com.android.wm.shell.startingsurface;
 
 import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
 import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_EMPTY_SPLASH_SCREEN;
+import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_LEGACY_SPLASH_SCREEN;
+import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_NONE;
 import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_SNAPSHOT;
 import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_SPLASH_SCREEN;
 
 import static com.android.wm.shell.common.ExecutorUtils.executeRemoteCallWithTaskPermission;
 
 import android.app.ActivityManager.RunningTaskInfo;
+import android.app.TaskInfo;
 import android.content.Context;
+import android.graphics.Color;
 import android.graphics.Rect;
+import android.os.Build;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.Trace;
 import android.util.Slog;
+import android.util.SparseIntArray;
 import android.view.SurfaceControl;
 import android.window.StartingWindowInfo;
+import android.window.StartingWindowInfo.StartingWindowType;
 import android.window.TaskOrganizer;
 import android.window.TaskSnapshot;
 
 import androidx.annotation.BinderThread;
 
+import com.android.internal.annotations.GuardedBy;
+import com.android.internal.util.function.TriConsumer;
 import com.android.wm.shell.common.RemoteCallable;
 import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.common.TransactionPool;
-
-import java.util.function.BiConsumer;
 
 /**
  * Implementation to draw the starting window to an application, and remove the starting window
@@ -61,17 +68,23 @@ import java.util.function.BiConsumer;
 public class StartingWindowController implements RemoteCallable<StartingWindowController> {
     private static final String TAG = StartingWindowController.class.getSimpleName();
 
-    // TODO b/183150443 Keep this flag open for a while, several things might need to adjust.
-    public static final boolean DEBUG_SPLASH_SCREEN = true;
+    public static final boolean DEBUG_SPLASH_SCREEN = Build.isDebuggable();
     public static final boolean DEBUG_TASK_SNAPSHOT = false;
+
+    private static final long TASK_BG_COLOR_RETAIN_TIME_MS = 5000;
 
     private final StartingSurfaceDrawer mStartingSurfaceDrawer;
     private final StartingWindowTypeAlgorithm mStartingWindowTypeAlgorithm;
 
-    private BiConsumer<Integer, Integer> mTaskLaunchingCallback;
+    private TriConsumer<Integer, Integer, Integer> mTaskLaunchingCallback;
     private final StartingSurfaceImpl mImpl = new StartingSurfaceImpl();
     private final Context mContext;
     private final ShellExecutor mSplashScreenExecutor;
+    /**
+     * Need guarded because it has exposed to StartingSurface
+     */
+    @GuardedBy("mTaskBackgroundColors")
+    private final SparseIntArray mTaskBackgroundColors = new SparseIntArray();
 
     public StartingWindowController(Context context, ShellExecutor splashScreenExecutor,
             StartingWindowTypeAlgorithm startingWindowTypeAlgorithm, TransactionPool pool) {
@@ -103,12 +116,8 @@ public class StartingWindowController implements RemoteCallable<StartingWindowCo
      *
      * @param listener The callback when need a starting window.
      */
-    void setStartingWindowListener(BiConsumer<Integer, Integer> listener) {
+    void setStartingWindowListener(TriConsumer<Integer, Integer, Integer> listener) {
         mTaskLaunchingCallback = listener;
-    }
-
-    private boolean shouldSendToListener(int suggestionType) {
-        return suggestionType != STARTING_WINDOW_TYPE_EMPTY_SPLASH_SCREEN;
     }
 
     /**
@@ -121,25 +130,36 @@ public class StartingWindowController implements RemoteCallable<StartingWindowCo
             final int suggestionType = mStartingWindowTypeAlgorithm.getSuggestedWindowType(
                     windowInfo);
             final RunningTaskInfo runningTaskInfo = windowInfo.taskInfo;
-            if (mTaskLaunchingCallback != null && shouldSendToListener(suggestionType)) {
-                mTaskLaunchingCallback.accept(runningTaskInfo.taskId, suggestionType);
-            }
-            if (suggestionType == STARTING_WINDOW_TYPE_SPLASH_SCREEN) {
+            if (isSplashScreenType(suggestionType)) {
                 mStartingSurfaceDrawer.addSplashScreenStartingWindow(windowInfo, appToken,
-                        false /* emptyView */);
-            } else if (suggestionType == STARTING_WINDOW_TYPE_EMPTY_SPLASH_SCREEN) {
-                mStartingSurfaceDrawer.addSplashScreenStartingWindow(windowInfo, appToken,
-                        true /* emptyView */);
+                        suggestionType);
             } else if (suggestionType == STARTING_WINDOW_TYPE_SNAPSHOT) {
                 final TaskSnapshot snapshot = windowInfo.mTaskSnapshot;
                 mStartingSurfaceDrawer.makeTaskSnapshotWindow(windowInfo, appToken,
                         snapshot);
-            } else /* suggestionType == STARTING_WINDOW_TYPE_NONE */ {
-                // Don't add a staring window.
+            }
+            if (suggestionType != STARTING_WINDOW_TYPE_NONE) {
+                int taskId = runningTaskInfo.taskId;
+                int color = mStartingSurfaceDrawer
+                        .getStartingWindowBackgroundColorForTask(taskId);
+                if (color != Color.TRANSPARENT) {
+                    synchronized (mTaskBackgroundColors) {
+                        mTaskBackgroundColors.append(taskId, color);
+                    }
+                }
+                if (mTaskLaunchingCallback != null && isSplashScreenType(suggestionType)) {
+                    mTaskLaunchingCallback.accept(taskId, suggestionType, color);
+                }
             }
 
             Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
         });
+    }
+
+    private static boolean isSplashScreenType(@StartingWindowType int suggestionType) {
+        return suggestionType == STARTING_WINDOW_TYPE_SPLASH_SCREEN
+                || suggestionType == STARTING_WINDOW_TYPE_EMPTY_SPLASH_SCREEN
+                || suggestionType == STARTING_WINDOW_TYPE_LEGACY_SPLASH_SCREEN;
     }
 
     public void copySplashScreenView(int taskId) {
@@ -149,13 +169,25 @@ public class StartingWindowController implements RemoteCallable<StartingWindowCo
     }
 
     /**
+     * @see StartingSurfaceDrawer#onAppSplashScreenViewRemoved(int)
+     */
+    public void onAppSplashScreenViewRemoved(int taskId) {
+        mSplashScreenExecutor.execute(
+                () -> mStartingSurfaceDrawer.onAppSplashScreenViewRemoved(taskId));
+    }
+
+    /**
      * Called when the content of a task is ready to show, starting window can be removed.
      */
     public void removeStartingWindow(int taskId, SurfaceControl leash, Rect frame,
             boolean playRevealAnimation) {
-        mSplashScreenExecutor.execute(() -> {
-            mStartingSurfaceDrawer.removeStartingWindow(taskId, leash, frame, playRevealAnimation);
-        });
+        mSplashScreenExecutor.execute(() -> mStartingSurfaceDrawer.removeStartingWindow(
+                taskId, leash, frame, playRevealAnimation));
+        mSplashScreenExecutor.executeDelayed(() -> {
+            synchronized (mTaskBackgroundColors) {
+                mTaskBackgroundColors.delete(taskId);
+            }
+        }, TASK_BG_COLOR_RETAIN_TIME_MS);
     }
 
     /**
@@ -172,6 +204,19 @@ public class StartingWindowController implements RemoteCallable<StartingWindowCo
             mIStartingWindow = new IStartingWindowImpl(StartingWindowController.this);
             return mIStartingWindow;
         }
+
+        @Override
+        public int getBackgroundColor(TaskInfo taskInfo) {
+            synchronized (mTaskBackgroundColors) {
+                final int index = mTaskBackgroundColors.indexOfKey(taskInfo.taskId);
+                if (index >= 0) {
+                    return mTaskBackgroundColors.valueAt(index);
+                }
+            }
+            final int color = mStartingSurfaceDrawer.estimateTaskBackgroundColor(taskInfo);
+            return color != Color.TRANSPARENT
+                    ? color : SplashscreenContentDrawer.getSystemBGColor();
+        }
     }
 
     /**
@@ -181,7 +226,7 @@ public class StartingWindowController implements RemoteCallable<StartingWindowCo
     private static class IStartingWindowImpl extends IStartingWindow.Stub {
         private StartingWindowController mController;
         private IStartingWindowListener mListener;
-        private final BiConsumer<Integer, Integer> mStartingWindowListener =
+        private final TriConsumer<Integer, Integer, Integer> mStartingWindowListener =
                 this::notifyIStartingWindowListener;
         private final IBinder.DeathRecipient mListenerDeathRecipient =
                 new IBinder.DeathRecipient() {
@@ -230,13 +275,14 @@ public class StartingWindowController implements RemoteCallable<StartingWindowCo
                     });
         }
 
-        private void notifyIStartingWindowListener(int taskId, int supportedType) {
+        private void notifyIStartingWindowListener(int taskId, int supportedType,
+                int startingWindowBackgroundColor) {
             if (mListener == null) {
                 return;
             }
 
             try {
-                mListener.onTaskLaunching(taskId, supportedType);
+                mListener.onTaskLaunching(taskId, supportedType, startingWindowBackgroundColor);
             } catch (RemoteException e) {
                 Slog.e(TAG, "Failed to notify task launching", e);
             }

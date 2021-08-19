@@ -43,9 +43,11 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.IBinder.DeathRecipient;
 import android.os.RemoteException;
+import android.text.Selection;
 import android.text.Spannable;
+import android.text.SpannableString;
+import android.text.Spanned;
 import android.text.TextUtils;
-import android.util.ArrayMap;
 import android.util.LocalLog;
 import android.util.Log;
 import android.util.TimeUtils;
@@ -60,7 +62,6 @@ import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -149,12 +150,6 @@ public final class MainContentCaptureSession extends ContentCaptureSession {
 
     @Nullable
     private final LocalLog mFlushHistory;
-
-    /**
-     * If the event in the buffer is of type {@link TYPE_VIEW_TEXT_CHANGED}, this value
-     * indicates whether the event has composing span or not.
-     */
-    private final Map<AutofillId, Boolean> mLastComposingSpan = new ArrayMap<>();
 
     /**
      * Binder object used to update the session state.
@@ -268,7 +263,13 @@ public final class MainContentCaptureSession extends ContentCaptureSession {
     @Override
     void onDestroy() {
         mHandler.removeMessages(MSG_FLUSH);
-        mHandler.post(() -> destroySession());
+        mHandler.post(() -> {
+            try {
+                flush(FLUSH_REASON_SESSION_FINISHED);
+            } finally {
+                destroySession();
+            }
+        });
     }
 
     /**
@@ -322,9 +323,11 @@ public final class MainContentCaptureSession extends ContentCaptureSession {
         if (!hasStarted() && eventType != ContentCaptureEvent.TYPE_SESSION_STARTED
                 && eventType != ContentCaptureEvent.TYPE_CONTEXT_UPDATED) {
             // TODO(b/120494182): comment when this could happen (dialogs?)
-            Log.v(TAG, "handleSendEvent(" + getDebugState() + ", "
-                    + ContentCaptureEvent.getTypeAsString(eventType)
-                    + "): dropping because session not started yet");
+            if (sVerbose) {
+                Log.v(TAG, "handleSendEvent(" + getDebugState() + ", "
+                        + ContentCaptureEvent.getTypeAsString(eventType)
+                        + "): dropping because session not started yet");
+            }
             return;
         }
         if (mDisabled.get()) {
@@ -352,40 +355,37 @@ public final class MainContentCaptureSession extends ContentCaptureSession {
             //    2.1 either last or current text is empty: add.
             //    2.2 last event doesn't have composing span: add.
             // Otherwise, merge.
-
             final CharSequence text = event.getText();
-            final boolean textHasComposingSpan = event.getTextHasComposingSpan();
-
-            if (textHasComposingSpan && !mLastComposingSpan.isEmpty()) {
-                final Boolean lastEventHasComposingSpan = mLastComposingSpan.get(event.getId());
-                if (lastEventHasComposingSpan != null && lastEventHasComposingSpan.booleanValue()) {
-                    ContentCaptureEvent lastEvent = null;
-                    for (int index = mEvents.size() - 1; index >= 0; index--) {
-                        final ContentCaptureEvent tmpEvent = mEvents.get(index);
-                        if (event.getId().equals(tmpEvent.getId())) {
-                            lastEvent = tmpEvent;
-                            break;
-                        }
+            final boolean hasComposingSpan = event.hasComposingSpan();
+            if (hasComposingSpan) {
+                ContentCaptureEvent lastEvent = null;
+                for (int index = mEvents.size() - 1; index >= 0; index--) {
+                    final ContentCaptureEvent tmpEvent = mEvents.get(index);
+                    if (event.getId().equals(tmpEvent.getId())) {
+                        lastEvent = tmpEvent;
+                        break;
                     }
-                    if (lastEvent != null) {
-                        final CharSequence lastText = lastEvent.getText();
-                        final boolean bothNonEmpty = !TextUtils.isEmpty(lastText)
-                                && !TextUtils.isEmpty(text);
-                        boolean equalContent = TextUtils.equals(lastText, text);
-                        if (equalContent) {
-                            addEvent = false;
-                        } else if (bothNonEmpty && lastEventHasComposingSpan) {
-                            lastEvent.mergeEvent(event);
-                            addEvent = false;
-                        }
-                        if (!addEvent && sVerbose) {
-                            Log.v(TAG, "Buffering VIEW_TEXT_CHANGED event, updated text="
-                                    + getSanitizedString(text));
-                        }
+                }
+                if (lastEvent != null && lastEvent.hasComposingSpan()) {
+                    final CharSequence lastText = lastEvent.getText();
+                    final boolean bothNonEmpty = !TextUtils.isEmpty(lastText)
+                            && !TextUtils.isEmpty(text);
+                    boolean equalContent =
+                            TextUtils.equals(lastText, text)
+                            && lastEvent.hasSameComposingSpan(event)
+                            && lastEvent.hasSameSelectionSpan(event);
+                    if (equalContent) {
+                        addEvent = false;
+                    } else if (bothNonEmpty) {
+                        lastEvent.mergeEvent(event);
+                        addEvent = false;
+                    }
+                    if (!addEvent && sVerbose) {
+                        Log.v(TAG, "Buffering VIEW_TEXT_CHANGED event, updated text="
+                                + getSanitizedString(text));
                     }
                 }
             }
-            mLastComposingSpan.put(event.getId(), textHasComposingSpan);
         }
 
         if (!mEvents.isEmpty() && eventType == TYPE_VIEW_DISAPPEARED) {
@@ -582,11 +582,12 @@ public final class MainContentCaptureSession extends ContentCaptureSession {
     private ParceledListSlice<ContentCaptureEvent> clearEvents() {
         // NOTE: we must save a reference to the current mEvents and then set it to to null,
         // otherwise clearing it would clear it in the receiving side if the service is also local.
-        final List<ContentCaptureEvent> events = mEvents == null
-                ? Collections.EMPTY_LIST
-                : new ArrayList<>(mEvents);
+        if (mEvents == null) {
+            return new ParceledListSlice<>(Collections.EMPTY_LIST);
+        }
+
+        final List<ContentCaptureEvent> events = new ArrayList<>(mEvents);
         mEvents.clear();
-        mLastComposingSpan.clear();
         return new ParceledListSlice<>(events);
     }
 
@@ -717,13 +718,35 @@ public final class MainContentCaptureSession extends ContentCaptureSession {
         // Since the same CharSequence instance may be reused in the TextView, we need to make
         // a copy of its content so that its value will not be changed by subsequent updates
         // in the TextView.
-        final String eventText = text == null ? null : text.toString();
-        final boolean textHasComposingSpan =
-                text instanceof Spannable && BaseInputConnection.getComposingSpanStart(
-                        (Spannable) text) >= 0;
+        final CharSequence eventText = stringOrSpannedStringWithoutNoCopySpans(text);
+
+        final int composingStart;
+        final int composingEnd;
+        if (text instanceof Spannable) {
+            composingStart = BaseInputConnection.getComposingSpanStart((Spannable) text);
+            composingEnd = BaseInputConnection.getComposingSpanEnd((Spannable) text);
+        } else {
+            composingStart = ContentCaptureEvent.MAX_INVALID_VALUE;
+            composingEnd = ContentCaptureEvent.MAX_INVALID_VALUE;
+        }
+
+        final int startIndex = Selection.getSelectionStart(text);
+        final int endIndex = Selection.getSelectionEnd(text);
         mHandler.post(() -> sendEvent(
                 new ContentCaptureEvent(sessionId, TYPE_VIEW_TEXT_CHANGED)
-                        .setAutofillId(id).setText(eventText, textHasComposingSpan)));
+                        .setAutofillId(id).setText(eventText)
+                        .setComposingIndex(composingStart, composingEnd)
+                        .setSelectionIndex(startIndex, endIndex)));
+    }
+
+    private CharSequence stringOrSpannedStringWithoutNoCopySpans(CharSequence source) {
+        if (source == null) {
+            return null;
+        } else if (source instanceof Spanned) {
+            return new SpannableString(source, /* ignoreNoCopySpan= */ true);
+        } else {
+            return source.toString();
+        }
     }
 
     /** Public because is also used by ViewRootImpl */
@@ -750,7 +773,7 @@ public final class MainContentCaptureSession extends ContentCaptureSession {
 
     void notifyContextUpdated(int sessionId, @Nullable ContentCaptureContext context) {
         mHandler.post(() -> sendEvent(new ContentCaptureEvent(sessionId, TYPE_CONTEXT_UPDATED)
-                .setClientContext(context)));
+                .setClientContext(context), FORCE_FLUSH));
     }
 
     @Override

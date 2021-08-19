@@ -30,6 +30,7 @@ import android.app.admin.DevicePolicyManager;
 import android.app.trust.TrustManager;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.graphics.drawable.Drawable;
@@ -70,8 +71,8 @@ import com.android.systemui.model.SysUiState;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.GlobalActions.GlobalActionsManager;
 import com.android.systemui.plugins.GlobalActionsPanelPlugin;
-import com.android.systemui.statusbar.NotificationShadeDepthController;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
+import com.android.systemui.statusbar.phone.StatusBar;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.telephony.TelephonyListenerManager;
@@ -101,7 +102,6 @@ public class GlobalActionsDialog extends GlobalActionsDialogLite
 
     private final LockPatternUtils mLockPatternUtils;
     private final KeyguardStateController mKeyguardStateController;
-    private final NotificationShadeDepthController mDepthController;
     private final SysUiState mSysUiState;
     private final ActivityStarter mActivityStarter;
     private final SysuiColorExtractor mSysuiColorExtractor;
@@ -112,84 +112,123 @@ public class GlobalActionsDialog extends GlobalActionsDialogLite
     @VisibleForTesting
     boolean mShowLockScreenCards = false;
 
+    private final KeyguardStateController.Callback mKeyguardStateControllerListener =
+            new KeyguardStateController.Callback() {
+        @Override
+        public void onUnlockedChanged() {
+            if (mDialog != null) {
+                ActionsDialog dialog = (ActionsDialog) mDialog;
+                boolean unlocked = mKeyguardStateController.isUnlocked();
+                if (dialog.mWalletViewController != null) {
+                    dialog.mWalletViewController.onDeviceLockStateChanged(!unlocked);
+                }
+
+                if (unlocked) {
+                    dialog.hideLockMessage();
+                }
+            }
+        }
+    };
+
+    private final ContentObserver mSettingsObserver = new ContentObserver(mMainHandler) {
+        @Override
+        public void onChange(boolean selfChange) {
+            onPowerMenuLockScreenSettingsChanged();
+        }
+    };
+
     /**
      * @param context everything needs a context :(
      */
     @Inject
-    public GlobalActionsDialog(Context context, GlobalActionsManager windowManagerFuncs,
-            AudioManager audioManager, IDreamManager iDreamManager,
-            DevicePolicyManager devicePolicyManager, LockPatternUtils lockPatternUtils,
+    public GlobalActionsDialog(
+            Context context,
+            GlobalActionsManager windowManagerFuncs,
+            AudioManager audioManager,
+            IDreamManager iDreamManager,
+            DevicePolicyManager devicePolicyManager,
+            LockPatternUtils lockPatternUtils,
             BroadcastDispatcher broadcastDispatcher,
             TelephonyListenerManager telephonyListenerManager,
-            GlobalSettings globalSettings, SecureSettings secureSettings,
-            @Nullable Vibrator vibrator, @Main Resources resources,
-            ConfigurationController configurationController, ActivityStarter activityStarter,
-            KeyguardStateController keyguardStateController, UserManager userManager,
-            TrustManager trustManager, IActivityManager iActivityManager,
-            @Nullable TelecomManager telecomManager, MetricsLogger metricsLogger,
-            NotificationShadeDepthController depthController, SysuiColorExtractor colorExtractor,
+            GlobalSettings globalSettings,
+            SecureSettings secureSettings,
+            @Nullable Vibrator vibrator,
+            @Main Resources resources,
+            ConfigurationController configurationController,
+            ActivityStarter activityStarter,
+            KeyguardStateController keyguardStateController,
+            UserManager userManager,
+            TrustManager trustManager,
+            IActivityManager iActivityManager,
+            @Nullable TelecomManager telecomManager,
+            MetricsLogger metricsLogger,
+            SysuiColorExtractor colorExtractor,
             IStatusBarService statusBarService,
             NotificationShadeWindowController notificationShadeWindowController,
             IWindowManager iWindowManager,
             @Background Executor backgroundExecutor,
             UiEventLogger uiEventLogger,
-            RingerModeTracker ringerModeTracker, SysUiState sysUiState, @Main Handler handler) {
+            RingerModeTracker ringerModeTracker,
+            SysUiState sysUiState,
+            @Main Handler handler,
+            PackageManager packageManager,
+            StatusBar statusBar) {
 
-        super(context, windowManagerFuncs,
-                audioManager, iDreamManager,
-                devicePolicyManager, lockPatternUtils,
-                broadcastDispatcher, telephonyListenerManager,
-                globalSettings, secureSettings,
-                vibrator, resources,
+        super(context,
+                windowManagerFuncs,
+                audioManager,
+                iDreamManager,
+                devicePolicyManager,
+                lockPatternUtils,
+                broadcastDispatcher,
+                telephonyListenerManager,
+                globalSettings,
+                secureSettings,
+                vibrator,
+                resources,
                 configurationController,
-                keyguardStateController, userManager,
-                trustManager, iActivityManager,
-                telecomManager, metricsLogger,
-                depthController, colorExtractor,
+                keyguardStateController,
+                userManager,
+                trustManager,
+                iActivityManager,
+                telecomManager,
+                metricsLogger,
+                colorExtractor,
                 statusBarService,
                 notificationShadeWindowController,
                 iWindowManager,
                 backgroundExecutor,
                 uiEventLogger,
                 null,
-                ringerModeTracker, sysUiState, handler);
+                ringerModeTracker,
+                sysUiState,
+                handler,
+                packageManager,
+                statusBar);
 
         mLockPatternUtils = lockPatternUtils;
         mKeyguardStateController = keyguardStateController;
-        mDepthController = depthController;
         mSysuiColorExtractor = colorExtractor;
         mStatusBarService = statusBarService;
         mNotificationShadeWindowController = notificationShadeWindowController;
         mSysUiState = sysUiState;
         mActivityStarter = activityStarter;
-        keyguardStateController.addCallback(new KeyguardStateController.Callback() {
-            @Override
-            public void onUnlockedChanged() {
-                if (mDialog != null) {
-                    ActionsDialog dialog = (ActionsDialog) mDialog;
-                    boolean unlocked = mKeyguardStateController.isUnlocked();
-                    if (dialog.mWalletViewController != null) {
-                        dialog.mWalletViewController.onDeviceLockStateChanged(!unlocked);
-                    }
 
-                    if (unlocked) {
-                        dialog.hideLockMessage();
-                    }
-                }
-            }
-        });
+        mKeyguardStateController.addCallback(mKeyguardStateControllerListener);
 
         // Listen for changes to show pay on the power menu while locked
         onPowerMenuLockScreenSettingsChanged();
         mGlobalSettings.registerContentObserver(
                 Settings.Secure.getUriFor(Settings.Secure.POWER_MENU_LOCKED_SHOW_CONTENT),
                 false /* notifyForDescendants */,
-                new ContentObserver(handler) {
-                    @Override
-                    public void onChange(boolean selfChange) {
-                        onPowerMenuLockScreenSettingsChanged();
-                    }
-                });
+                mSettingsObserver);
+    }
+
+    @Override
+    public void destroy() {
+        super.destroy();
+        mKeyguardStateController.removeCallback(mKeyguardStateControllerListener);
+        mGlobalSettings.unregisterContentObserver(mSettingsObserver);
     }
 
     /**
@@ -223,11 +262,11 @@ public class GlobalActionsDialog extends GlobalActionsDialogLite
     protected ActionsDialogLite createDialog() {
         initDialogItems();
 
-        mDepthController.setShowingHomeControls(true);
         ActionsDialog dialog = new ActionsDialog(getContext(), mAdapter, mOverflowAdapter,
-                this::getWalletViewController, mDepthController, mSysuiColorExtractor,
+                this::getWalletViewController, mSysuiColorExtractor,
                 mStatusBarService, mNotificationShadeWindowController,
-                mSysUiState, this::onRotate, isKeyguardShowing(), mPowerAdapter, getEventLogger());
+                mSysUiState, this::onRotate, isKeyguardShowing(), mPowerAdapter, getEventLogger(),
+                getStatusBar());
 
         if (shouldShowLockMessage(dialog)) {
             dialog.showLockMessage();
@@ -291,15 +330,16 @@ public class GlobalActionsDialog extends GlobalActionsDialogLite
 
         ActionsDialog(Context context, MyAdapter adapter, MyOverflowAdapter overflowAdapter,
                 Provider<GlobalActionsPanelPlugin.PanelViewController> walletFactory,
-                NotificationShadeDepthController depthController,
                 SysuiColorExtractor sysuiColorExtractor, IStatusBarService statusBarService,
                 NotificationShadeWindowController notificationShadeWindowController,
                 SysUiState sysuiState, Runnable onRotateCallback, boolean keyguardShowing,
-                MyPowerOptionsAdapter powerAdapter, UiEventLogger uiEventLogger) {
+                MyPowerOptionsAdapter powerAdapter, UiEventLogger uiEventLogger,
+                StatusBar statusBar) {
             super(context, com.android.systemui.R.style.Theme_SystemUI_Dialog_GlobalActions,
-                    adapter, overflowAdapter, depthController, sysuiColorExtractor,
-                    statusBarService, notificationShadeWindowController, sysuiState,
-                    onRotateCallback, keyguardShowing, powerAdapter, uiEventLogger, null);
+                    adapter, overflowAdapter, sysuiColorExtractor, statusBarService,
+                    notificationShadeWindowController, sysuiState, onRotateCallback,
+                    keyguardShowing, powerAdapter, uiEventLogger, null,
+                    statusBar);
             mWalletFactory = walletFactory;
 
             // Update window attributes
@@ -447,8 +487,6 @@ public class GlobalActionsDialog extends GlobalActionsDialogLite
                 float animatedValue = animation.getAnimatedFraction();
                 int alpha = (int) (animatedValue * mScrimAlpha * 255);
                 mBackgroundDrawable.setAlpha(alpha);
-                mDepthController.updateGlobalDialogVisibility(animatedValue,
-                        mGlobalActionsLayout);
             });
 
             ObjectAnimator xAnimator =

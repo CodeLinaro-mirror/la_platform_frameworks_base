@@ -356,7 +356,7 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
     private float minAspectRatio;
     @Nullable
     private SparseIntArray minExtensionVersions;
-    private int minSdkVersion;
+    private int minSdkVersion = ParsingUtils.DEFAULT_MIN_SDK_VERSION;
     private int networkSecurityConfigRes;
     @Nullable
     private CharSequence nonLocalizedLabel;
@@ -369,7 +369,7 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
     private int requiresSmallestWidthDp;
     private int roundIconRes;
     private int targetSandboxVersion;
-    private int targetSdkVersion;
+    private int targetSdkVersion = ParsingUtils.DEFAULT_TARGET_SDK_VERSION;
     @Nullable
     @DataClass.ParcelWith(ForInternedString.class)
     private String taskAffinity;
@@ -1164,7 +1164,7 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
         dest.writeTypedList(this.usesPermissions);
         sForInternedStringList.parcel(this.implicitPermissions, dest, flags);
         sForStringSet.parcel(this.upgradeKeySets, dest, flags);
-        dest.writeMap(this.keySetMapping);
+        ParsingPackageUtils.writeKeySetMapping(dest, this.keySetMapping);
         sForInternedStringList.parcel(this.protectedBroadcasts, dest, flags);
         dest.writeTypedList(this.activities);
         dest.writeTypedList(this.receivers);
@@ -1180,7 +1180,7 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
         sForInternedString.parcel(this.volumeUuid, dest, flags);
         dest.writeParcelable(this.signingDetails, flags);
         dest.writeString(this.mPath);
-        dest.writeParcelableList(this.queriesIntents, flags);
+        dest.writeTypedList(this.queriesIntents, flags);
         sForInternedStringList.parcel(this.queriesPackages, dest, flags);
         sForInternedStringSet.parcel(this.queriesProviders, dest, flags);
         dest.writeString(this.appComponentFactory);
@@ -1287,7 +1287,7 @@ public class ParsingPackageImpl implements ParsingPackage, Parcelable {
         this.usesPermissions = in.createTypedArrayList(ParsedUsesPermission.CREATOR);
         this.implicitPermissions = sForInternedStringList.unparcel(in);
         this.upgradeKeySets = sForStringSet.unparcel(in);
-        this.keySetMapping = in.readHashMap(boot);
+        this.keySetMapping = ParsingPackageUtils.readKeySetMapping(in);
         this.protectedBroadcasts = sForInternedStringList.unparcel(in);
 
         this.activities = in.createTypedArrayList(ParsedActivity.CREATOR);

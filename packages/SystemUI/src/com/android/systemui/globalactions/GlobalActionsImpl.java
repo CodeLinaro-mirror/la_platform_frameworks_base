@@ -30,9 +30,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import com.android.internal.R;
-import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.settingslib.Utils;
-import com.android.systemui.Dependency;
 import com.android.systemui.plugins.GlobalActions;
 import com.android.systemui.scrim.ScrimDrawable;
 import com.android.systemui.statusbar.BlurUtils;
@@ -58,11 +56,13 @@ public class GlobalActionsImpl implements GlobalActions, CommandQueue.Callbacks 
 
     @Inject
     public GlobalActionsImpl(Context context, CommandQueue commandQueue,
-            Lazy<GlobalActionsDialogLite> globalActionsDialogLazy, BlurUtils blurUtils) {
+            Lazy<GlobalActionsDialogLite> globalActionsDialogLazy, BlurUtils blurUtils,
+            KeyguardStateController keyguardStateController,
+            DeviceProvisionedController deviceProvisionedController) {
         mContext = context;
         mGlobalActionsDialogLazy = globalActionsDialogLazy;
-        mKeyguardStateController = Dependency.get(KeyguardStateController.class);
-        mDeviceProvisionedController = Dependency.get(DeviceProvisionedController.class);
+        mKeyguardStateController = keyguardStateController;
+        mDeviceProvisionedController = deviceProvisionedController;
         mCommandQueue = commandQueue;
         mBlurUtils = blurUtils;
         mCommandQueue.addCallback(this);
@@ -83,7 +83,6 @@ public class GlobalActionsImpl implements GlobalActions, CommandQueue.Callbacks 
         mGlobalActionsDialog = mGlobalActionsDialogLazy.get();
         mGlobalActionsDialog.showOrHideDialog(mKeyguardStateController.isShowing(),
                 mDeviceProvisionedController.isDeviceProvisioned());
-        Dependency.get(KeyguardUpdateMonitor.class).requestFaceAuth();
     }
 
     @Override

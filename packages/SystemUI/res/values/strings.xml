@@ -1653,12 +1653,16 @@
     <!-- Wallet strings -->
     <!-- Wallet empty state, title [CHAR LIMIT=32] -->
     <string name="wallet_title">Wallet</string>
+    <!-- Wallet empty state label. [CHAR LIMIT=NONE] -->
+    <string name="wallet_empty_state_label">Get set up to make faster, more secure purchases with your phone</string>
     <!-- Label of the button at the bottom prompting user enter wallet app. [CHAR LIMIT=NONE] -->
     <string name="wallet_app_button_label">Show all</string>
     <!-- Label of the button underneath the card carousel prompting user unlock device. [CHAR LIMIT=NONE] -->
     <string name="wallet_action_button_label_unlock">Unlock to pay</string>
     <!-- Secondary label of the quick access wallet tile if no card. [CHAR LIMIT=NONE] -->
-    <string name="wallet_secondary_label_no_card">Not set up</string>
+    <string name="wallet_secondary_label_no_card">Add a card</string>
+    <!-- Secondary label of the quick access wallet tile if wallet is still updating. [CHAR LIMIT=NONE] -->
+    <string name="wallet_secondary_label_updating">Updating</string>
     <!-- Secondary label of the quick access wallet tile if device locked. [CHAR LIMIT=NONE] -->
     <string name="wallet_secondary_label_device_locked">Unlock to use</string>
     <!-- Message shown when an unknown failure occurred when fetching cards. [CHAR LIMIT=NONE] -->
@@ -2703,6 +2707,8 @@
     <!-- Accessibility floating menu strings -->
     <!-- Message for the accessibility floating button migration tooltip. It shows when the user use gestural navigation then upgrade their system. It will tell the user the accessibility gesture had been replaced by accessibility floating button. [CHAR LIMIT=100] -->
     <string name="accessibility_floating_button_migration_tooltip">Accessibility button replaced the accessibility gesture\n\n<annotation id="link">View settings</annotation></string>
+    <!-- Message for the accessibility floating button settings tooltip. It shows when the user use gestural navigation then upgrade their system. It will tell the user to have another option to switch from the accessibility gesture to a button. [CHAR LIMIT=100] -->
+    <string name="accessibility_floating_button_switch_migration_tooltip">You can switch from the accessibility gesture to a button\n\n<annotation id="link">Settings</annotation></string>
     <!-- Message for the accessibility floating button docking tooltip. It shows when the user first time drag the button. It will tell the user about docking behavior. [CHAR LIMIT=70] -->
     <string name="accessibility_floating_button_docking_tooltip">Move button to the edge to hide it temporarily</string>
     <!-- Action in accessibility menu to move the accessibility floating button to the top left of the screen. [CHAR LIMIT=30] -->
@@ -2722,7 +2728,7 @@
 
     <!-- Device Controls strings -->
     <!-- Device Controls, Quick Settings tile title [CHAR LIMIT=30] -->
-    <string name="quick_controls_title">Home controls</string>
+    <string name="quick_controls_title">Device controls</string>
 
     <!-- Controls management providers screen title [CHAR LIMIT=60]-->
     <string name="controls_providers_title">Choose app to add controls</string>
@@ -2819,9 +2825,17 @@
     <string name="controls_media_resume">Resume</string>
     <!-- Label for button to go to media control settings screen [CHAR_LIMIT=30] -->
     <string name="controls_media_settings_button">Settings</string>
+    <!-- Description for media control's playing media item, including information for the media's title, the artist, and source app [CHAR LIMIT=NONE]-->
+    <string name="controls_media_playing_item_description"><xliff:g id="song_name" example="Daily mix">%1$s</xliff:g> by <xliff:g id="artist_name" example="Various artists">%2$s</xliff:g> is playing from <xliff:g id="app_label" example="Spotify">%3$s</xliff:g></string>
 
     <!-- Title for Smartspace recommendation card within media controls. The "Play" means the action to play a media [CHAR_LIMIT=10] -->
     <string name="controls_media_smartspace_rec_title">Play</string>
+    <!-- Description for Smartspace recommendation card within media controls [CHAR_LIMIT=NONE] -->
+    <string name="controls_media_smartspace_rec_description">Open <xliff:g id="app_label" example="Spotify">%1$s</xliff:g></string>
+    <!-- Description for Smartspace recommendation's media item, including information for the media's title, the artist, and source app [CHAR LIMIT=NONE]-->
+    <string name="controls_media_smartspace_rec_item_description">Play <xliff:g id="song_name" example="Daily mix">%1$s</xliff:g> by <xliff:g id="artist_name" example="Various artists">%2$s</xliff:g> from <xliff:g id="app_label" example="Spotify">%3$s</xliff:g></string>
+    <!-- Description for Smartspace recommendation's media item which doesn't have artist info, including information for the media's title and the source app [CHAR LIMIT=NONE]-->
+    <string name="controls_media_smartspace_rec_item_no_artist_description">Play <xliff:g id="song_name" example="Daily mix">%1$s</xliff:g> from <xliff:g id="app_label" example="Spotify">%2$s</xliff:g></string>
 
     <!-- Error message indicating that a control timed out while waiting for an update [CHAR_LIMIT=30] -->
     <string name="controls_error_timeout">Inactive, check app</string>
@@ -2877,7 +2891,7 @@
     <!--Text explaining to tap a conversation to select it show in their Conversation widget [CHAR LIMIT=180] -->
     <string name="select_conversation_text">Tap a conversation to add it to your Home screen</string>
     <!--Text explaining there are no existing conversations to show in their Conversation widget [CHAR LIMIT=100] -->
-    <string name="no_conversations_text">Check back here once you get some messages</string>
+    <string name="no_conversations_text">Your recent conversations will show up here</string>
     <!--Text header for priority conversation tiles available to be added to the home screen [CHAR LIMIT=100] -->
     <string name="priority_conversations">Priority conversations</string>
     <!--Text header for recent conversation tiles available to be added to the home screen [CHAR LIMIT=100] -->
@@ -2920,7 +2934,7 @@
     <string name="audio_status">Listening</string>
     <!-- Status text on the Conversation widget for playing a game [CHAR LIMIT=20] -->
     <string name="game_status">Playing</string>
-    <!-- Empty user name before user has selected a friend for their Conversation widget [CHAR LIMIT=20] -->
+    <!-- Empty user name before user has selected a friend for their Conversation widget [CHAR LIMIT=10] -->
     <string name="empty_user_name">Friends</string>
     <!-- Empty status shown before user has selected a friend for their Conversation widget [CHAR LIMIT=20] -->
     <string name="empty_status">Let’s chat tonight!</string>
@@ -2934,10 +2948,16 @@
     <string name="people_tile_description">See recent messages, missed calls, and status updates</string>
     <!-- Title text displayed for the Conversation widget [CHAR LIMIT=50] -->
     <string name="people_tile_title">Conversation</string>
+    <!-- Text when the Conversation widget when Do Not Disturb is suppressing the notification. [CHAR LIMIT=50] -->
+    <string name="paused_by_dnd">Paused by Do Not Disturb</string>
     <!-- Content description text on the Conversation widget when a person has sent a new text message [CHAR LIMIT=150] -->
-    <string name="new_notification_text_content_description"><xliff:g id="name" example="Anna">%1$s</xliff:g> sent a message</string>
+    <string name="new_notification_text_content_description"><xliff:g id="name" example="Anna">%1$s</xliff:g> sent a message: <xliff:g id="notification" example="Hey! How is your day going">%2$s</xliff:g></string>
     <!-- Content description text on the Conversation widget when a person has sent a new image message [CHAR LIMIT=150] -->
     <string name="new_notification_image_content_description"><xliff:g id="name" example="Anna">%1$s</xliff:g> sent an image</string>
+    <!-- Content description text on the Conversation widget when a person has a new status posted [CHAR LIMIT=150] -->
+    <string name="new_status_content_description"><xliff:g id="name" example="Anna">%1$s</xliff:g> has a status update: <xliff:g id="status" example="Listening to music">%2$s</xliff:g></string>
+    <!-- Content description text on the Conversation widget when a person is  available, meaning online on an application [CHAR LIMIT=150] -->
+    <string name="person_available">Available</string>
 
     <!-- Title to display in a notification when ACTION_BATTERY_CHANGED.EXTRA_PRESENT field is false
     [CHAR LIMIT=NONE] -->
@@ -2967,6 +2987,8 @@
     <!-- Content description for a chip in the status bar showing that the user is currently on a phone call. [CHAR LIMIT=NONE] -->
     <string name="ongoing_phone_call_content_description">Ongoing phone call</string>
 
+    <!-- Placeholder for string describing changes in global actions -->
+    <string name="global_actions_change_description" translatable="false"><xliff:g>%1$s</xliff:g></string>
     <!-- URL for more information about changes in global actions -->
     <string name="global_actions_change_url" translatable="false"></string>
 </resources>

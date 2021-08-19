@@ -202,7 +202,6 @@
     <string name="gnss_service" msgid="8907781262179951385">"GNSS қызметі"</string>
     <string name="sensor_notification_service" msgid="7474531979178682676">"Датчик хабарландыруы қызметі"</string>
     <string name="twilight_service" msgid="8964898045693187224">"Twilight қызметі"</string>
-    <string name="offline_location_time_zone_detection_service_attribution" msgid="303754195048744816">"Уақыт белдеуін анықтағыш (қосылу мүмкіндігі жоқ)"</string>
     <string name="gnss_time_update_service" msgid="9039489496037616095">"GNSS уақыт жаңарту жүйесі"</string>
     <string name="music_recognition_manager_service" msgid="7481956037950276359">"Музыканы анықтау менеджері қызметі"</string>
     <string name="factory_reset_warning" msgid="6858705527798047809">"Құрылғыңыздағы деректер өшіріледі"</string>
@@ -246,7 +245,7 @@
     <string name="global_action_lock" msgid="6949357274257655383">"Экранды құлыптау"</string>
     <string name="global_action_power_off" msgid="4404936470711393203">"Өшіру"</string>
     <string name="global_action_power_options" msgid="1185286119330160073">"Қуат"</string>
-    <string name="global_action_restart" msgid="4678451019561687074">"Қайта қосу"</string>
+    <string name="global_action_restart" msgid="4678451019561687074">"Өшіріп қосу"</string>
     <string name="global_action_emergency" msgid="1387617624177105088">"Төтенше жағдай"</string>
     <string name="global_action_bug_report" msgid="5127867163044170003">"Вирус туралы хабарлау"</string>
     <string name="global_action_logout" msgid="6093581310002476511">"Сеансты аяқтау"</string>
@@ -349,7 +348,7 @@
     <string name="permdesc_expandStatusBar" msgid="7180756900448498536">"Қолданбаға статус жолағын жаюға емесе тасалауға рұқсат береді."</string>
     <string name="permlab_fullScreenIntent" msgid="4310888199502509104">"құлыпталған құрылғыда хабарландыруларды толық экрандағы әрекеттер түрінде көрсету"</string>
     <string name="permdesc_fullScreenIntent" msgid="1100721419406643997">"Қолданбаның құлыпталған құрылғыда хабарландыруларды толық экрандағы әрекеттер түрінде көрсетуіне рұқсат береді."</string>
-    <string name="permlab_install_shortcut" msgid="7451554307502256221">"төте пернелерді орнату"</string>
+    <string name="permlab_install_shortcut" msgid="7451554307502256221">"таңбаша орнату"</string>
     <string name="permdesc_install_shortcut" msgid="4476328467240212503">"Қолданбаға Негізгі экранның төте пернелерін пайдаланушының қатысуынсыз қосу мүмкіндігін береді."</string>
     <string name="permlab_uninstall_shortcut" msgid="295263654781900390">"төте пернелерді алып тастау"</string>
     <string name="permdesc_uninstall_shortcut" msgid="1924735350988629188">"Қолданбаға Негізгі экранның төте пернелерін пайдаланушының қатысуынсыз алып тастау мүмкіндігін береді."</string>
@@ -442,7 +441,7 @@
     <string name="permlab_accessCoarseLocation" msgid="1561042925407799741">"болжалды орналасқан жер туралы ақпаратқа тек ашық экранда кіру"</string>
     <string name="permdesc_accessCoarseLocation" msgid="778521847873199160">"Бұл қолданба пайдаланылып жатқанда, ол Локация қызметтерінен болжалды геодерегіңізді ала алады. Геодеректі алу үшін құрылғыңызға арналған Локация қызметтері қосулы тұруы керек."</string>
     <string name="permlab_accessBackgroundLocation" msgid="1721164702777366138">"геодеректерді фондық режимде пайдалану"</string>
-    <string name="permdesc_accessBackgroundLocation" msgid="8264885066095638105">"Бұл қолданба пайдаланылмайтын кезде де, ол геодеректі кез келген уақытта пайдалана алады."</string>
+    <string name="permdesc_accessBackgroundLocation" msgid="8264885066095638105">"Бұл қолданба кез келген уақытта (пайдаланылмайтын кезде де) локацияны  пайдалана алады."</string>
     <string name="permlab_modifyAudioSettings" msgid="6129039778010031815">"аудио параметрлерін өзгерту"</string>
     <string name="permdesc_modifyAudioSettings" msgid="8687227609663124921">"Қолданбаға дыбыс қаттылығы және аудио шығыс үндеткішін таңдау сияқты жаһандық аудио параметрлерін өзгерту мүмкіндігін береді."</string>
     <string name="permlab_recordAudio" msgid="1208457423054219147">"аудио жазу"</string>
@@ -585,6 +584,7 @@
     <string name="fingerprint_acquired_already_enrolled" msgid="2285166003936206785">"Басқа саусақ ізін байқап көріңіз."</string>
     <string name="fingerprint_acquired_too_bright" msgid="3863560181670915607">"Тым жарық."</string>
     <string name="fingerprint_acquired_try_adjusting" msgid="3667006071003809364">"Дұрыстап қойып көріңіз."</string>
+    <string name="fingerprint_acquired_immobile" msgid="1621891895241888048">"Саусағыңыздың қалпын аздап өзгертіп тұрыңыз."</string>
   <string-array name="fingerprint_acquired_vendor">
   </string-array>
     <string name="fingerprint_authenticated" msgid="2024862866860283100">"Саусақ ізі аутентификацияланды"</string>
@@ -601,6 +601,7 @@
     <string name="fingerprint_error_no_fingerprints" msgid="8671811719699072411">"Саусақ іздері тіркелмеген."</string>
     <string name="fingerprint_error_hw_not_present" msgid="578914350967423382">"Бұл құрылғыда саусақ ізін оқу сканері жоқ."</string>
     <string name="fingerprint_error_security_update_required" msgid="7750187320640856433">"Датчик уақытша өшірулі."</string>
+    <string name="fingerprint_error_bad_calibration" msgid="4385512597740168120">"Саусақ ізін оқу сканерін пайдалану мүмкін емес. Жөндеу қызметіне барыңыз."</string>
     <string name="fingerprint_name_template" msgid="8941662088160289778">"<xliff:g id="FINGERID">%d</xliff:g>-саусақ"</string>
     <string name="fingerprint_app_setting_name" msgid="4253767877095495844">"Саусақ ізін пайдалану"</string>
     <string name="fingerprint_or_screen_lock_app_setting_name" msgid="3501743523487644907">"Саусақ ізін немесе экран құлпын пайдалану"</string>
@@ -610,12 +611,15 @@
   </string-array>
     <string name="fingerprint_icon_content_description" msgid="4741068463175388817">"Саусақ ізі белгішесі"</string>
     <string name="face_recalibrate_notification_name" msgid="7311163114750748686">"Бет тану"</string>
-    <string name="face_recalibrate_notification_title" msgid="5944930528030496897">"Бетті қайта тіркеу"</string>
-    <string name="face_recalibrate_notification_content" msgid="892757485125249962">"Құрылғы жүзіңізді жақсырақ тануы үшін, бетіңізді қайта тіркеңіз."</string>
+    <string name="face_recalibrate_notification_title" msgid="2524791952735579082">"Бет тану функциясына қатысты мәселе шықты"</string>
+    <string name="face_recalibrate_notification_content" msgid="3064513770251355594">"Бет үлгісін жою үшін түртіңіз, содан соң жаңа бет үлгісін қосыңыз."</string>
     <string name="face_setup_notification_title" msgid="8843461561970741790">"Бет тану функциясын реттеу"</string>
     <string name="face_setup_notification_content" msgid="5463999831057751676">"Телефоныңызға қарап, оның құлпын ашыңыз."</string>
     <string name="fingerprint_setup_notification_title" msgid="2002630611398849495">"Құлыпты ашудың басқа тәсілдерін реттеу"</string>
     <string name="fingerprint_setup_notification_content" msgid="205578121848324852">"Саусақ ізін қосу үшін түртіңіз."</string>
+    <string name="fingerprint_recalibrate_notification_name" msgid="1414578431898579354">"Құлыпты саусақ ізімен ашу"</string>
+    <string name="fingerprint_recalibrate_notification_title" msgid="2406561052064558497">"Саусақ ізін оқу сканерін пайдалану мүмкін емес"</string>
+    <string name="fingerprint_recalibrate_notification_content" msgid="8519935717822194943">"Жөндеу қызметіне барыңыз."</string>
     <string name="face_acquired_insufficient" msgid="2150805835949162453">"Бет деректері дұрыс алынбады. Әрекетті қайталаңыз."</string>
     <string name="face_acquired_too_bright" msgid="8070756048978079164">"Тым ашық. Күңгірттеу жарық керек."</string>
     <string name="face_acquired_too_dark" msgid="252573548464426546">"Тым қараңғы. Молырақ жарық керек."</string>
@@ -971,7 +975,7 @@
     <string name="factorytest_failed" msgid="3190979160945298006">"Зауыт тесті орындалмады."</string>
     <string name="factorytest_not_system" msgid="5658160199925519869">"ЗАУЫТ_TEСТІ әрекетінің қолдауы жүйеде/қолданбада орнатылған жинақтар үшін ғана ұсынылған."</string>
     <string name="factorytest_no_action" msgid="339252838115675515">"ЗАУЫТ_TEСТІ әрекетін жабдықтайтын жинақ табылмады."</string>
-    <string name="factorytest_reboot" msgid="2050147445567257365">"Қайта қосу"</string>
+    <string name="factorytest_reboot" msgid="2050147445567257365">"Өшіріп қосу"</string>
     <string name="js_dialog_title" msgid="7464775045615023241">"\"<xliff:g id="TITLE">%s</xliff:g>\" парағында былай делінген:"</string>
     <string name="js_dialog_title_default" msgid="3769524569903332476">"JavaScript"</string>
     <string name="js_dialog_before_unload_title" msgid="7012587995876771246">"Жылжуды растау"</string>
@@ -1239,7 +1243,7 @@
     <string name="unsupported_display_size_show" msgid="980129850974919375">"Үнемі көрсету"</string>
     <string name="unsupported_compile_sdk_message" msgid="7326293500707890537">"<xliff:g id="APP_NAME">%1$s</xliff:g> қолданбасы сіздің Android OЖ-бен үйлеспейді және дұрыс жұмыс істемеуі ықтимал. Қолданбаның жаңартылған нұсқасы қолжетімді болуы мүмкін."</string>
     <string name="unsupported_compile_sdk_show" msgid="1601210057960312248">"Үнемі көрсету"</string>
-    <string name="unsupported_compile_sdk_check_update" msgid="1103639989147664456">"Жаңа нұсқасының бар-жоғын тексеру"</string>
+    <string name="unsupported_compile_sdk_check_update" msgid="1103639989147664456">"Жаңарту бар-жоғын тексеру"</string>
     <string name="smv_application" msgid="3775183542777792638">"<xliff:g id="APPLICATION">%1$s</xliff:g> қолданбасы (<xliff:g id="PROCESS">%2$s</xliff:g> процесі) өзі қолданған StrictMode саясатын бұзды."</string>
     <string name="smv_process" msgid="1398801497130695446">"<xliff:g id="PROCESS">%1$s</xliff:g> үрдісі өздігінен күшіне енген ҚатаңРежим ережесін бұзды."</string>
     <string name="android_upgrading_title" product="default" msgid="7279077384220829683">"Телефон жаңартылуда…"</string>
@@ -1458,6 +1462,8 @@
     <string name="permdesc_requestDeletePackages" msgid="6133633516423860381">"Қолданбаның пакеттерді жоюға рұқсат сұрауына мүмкіндік береді."</string>
     <string name="permlab_requestIgnoreBatteryOptimizations" msgid="7646611326036631439">"батареяны оңтайландыру әрекетін елемеуді сұрау"</string>
     <string name="permdesc_requestIgnoreBatteryOptimizations" msgid="634260656917874356">"Қолданба батареяны оңтайландыру әрекетін елемеуді сұрай алады."</string>
+    <string name="permlab_queryAllPackages" msgid="2928450604653281650">"барлық бумаға сұрау жасау"</string>
+    <string name="permdesc_queryAllPackages" msgid="5339069855520996010">"Қолданба барлық орнатылған буманы көре алады."</string>
     <string name="tutorial_double_tap_to_zoom_message_short" msgid="1842872462124648678">"Масштабтау параметрін басқару үшін екі рет түртіңіз"</string>
     <string name="gadget_host_error_inflating" msgid="2449961590495198720">"Виджетті қосу."</string>
     <string name="ime_action_go" msgid="5536744546326495436">"Өту"</string>
@@ -1473,9 +1479,10 @@
     <string name="grant_credentials_permission_message_footer" msgid="1886710210516246461">"Бұл өтініштің орындалуын қалайсыз ба?"</string>
     <string name="grant_permissions_header_text" msgid="3420736827804657201">"Кіру өтініші"</string>
     <string name="allow" msgid="6195617008611933762">"Рұқсат беру"</string>
-    <string name="deny" msgid="6632259981847676572">"Бас тарту"</string>
+    <string name="deny" msgid="6632259981847676572">"Тыйым салу"</string>
     <string name="permission_request_notification_title" msgid="1810025922441048273">"Рұқсат өтінілді"</string>
     <string name="permission_request_notification_with_subtitle" msgid="3743417870360129298">"Рұқсат \nесептік жазба үшін <xliff:g id="ACCOUNT">%s</xliff:g> өтінілді."</string>
+    <string name="permission_request_notification_for_app_with_subtitle" msgid="1298704005732851350">"<xliff:g id="ACCOUNT">%2$s</xliff:g> есептік жазбасы үшін <xliff:g id="APP">%1$s</xliff:g>\nқолданбасы арқылы рұқсат сұралды."</string>
     <string name="forward_intent_to_owner" msgid="4620359037192871015">"Осы қолданбаны жұмыс профиліңізден тыс пайдаланып жатырсыз"</string>
     <string name="forward_intent_to_work" msgid="3620262405636021151">"Осы қолданбаны жұмыс профиліңізде пайдаланып жатырсыз"</string>
     <string name="input_method_binding_label" msgid="1166731601721983656">"Енгізу әдісі"</string>
@@ -1830,7 +1837,7 @@
     <string name="reason_unknown" msgid="5599739807581133337">"белгісіз"</string>
     <string name="reason_service_unavailable" msgid="5288405248063804713">"Принтер қызметі қосылмаған"</string>
     <string name="print_service_installed_title" msgid="6134880817336942482">"<xliff:g id="NAME">%s</xliff:g> қызметі орнатылды"</string>
-    <string name="print_service_installed_message" msgid="7005672469916968131">"Қосу үшін түрту"</string>
+    <string name="print_service_installed_message" msgid="7005672469916968131">"Қосу үшін түртіңіз"</string>
     <string name="restr_pin_enter_admin_pin" msgid="1199419462726962697">"Әкімшінің PIN кодын енгізіңіз"</string>
     <string name="restr_pin_enter_pin" msgid="373139384161304555">"PIN енгізу"</string>
     <string name="restr_pin_incorrect" msgid="3861383632940852496">"Дұрыс емес"</string>
@@ -1866,8 +1873,7 @@
     <string name="package_updated_device_owner" msgid="7560272363805506941">"Әкімші жаңартқан"</string>
     <string name="package_deleted_device_owner" msgid="2292335928930293023">"Әкімші жойған"</string>
     <string name="confirm_battery_saver" msgid="5247976246208245754">"Жарайды"</string>
-    <!-- no translation found for battery_saver_description_with_learn_more (5444908404021316250) -->
-    <skip />
+    <string name="battery_saver_description_with_learn_more" msgid="5444908404021316250">"Батареяны үнемдеу режимі қараңғы тақырыпты іске қосады және фондық әрекеттерге, кейбір визуалдық әсерлерге, белгілі бір функциялар мен кейбір желі байланыстарына шектеу қояды немесе оларды өшіреді."</string>
     <string name="battery_saver_description" msgid="8518809702138617167">"Батареяны үнемдеу режимі қараңғы тақырыпты іске қосады және фондық әрекеттерге, кейбір визуалдық әсерлерге, белгілі бір функциялар мен кейбір желі байланыстарына шектеу қояды немесе оларды өшіреді."</string>
     <string name="data_saver_description" msgid="4995164271550590517">"Дерек шығынын азайту үшін Трафикті үнемдеу режимінде кейбір қолданбаларға деректі фондық режимде жіберуге және алуға тыйым салынады. Ашық тұрған қолданба деректі шектеулі шамада пайдаланады (мысалы, кескіндер оларды түрткенге дейін көрсетілмейді)."</string>
     <string name="data_saver_enable_title" msgid="7080620065745260137">"Трафикті үнемдеу режимі қосылсын ба?"</string>
@@ -1972,12 +1978,12 @@
     <string name="app_suspended_more_details" msgid="211260942831587014">"Толығырақ"</string>
     <string name="app_suspended_unsuspend_message" msgid="1665438589450555459">"Қолданбаны қайта қосу"</string>
     <string name="work_mode_off_title" msgid="961171256005852058">"Жұмыс қолданбаларын қосасыз ба?"</string>
-    <string name="work_mode_off_message" msgid="7319580997683623309">"Жұмыс қолданбалары мен хабарландыруларына рұқсат алу"</string>
+    <string name="work_mode_off_message" msgid="7319580997683623309">"Жұмыс қолданбалары мен хабарландыруларына қол жеткізесіз."</string>
     <string name="work_mode_turn_on" msgid="3662561662475962285">"Қосу"</string>
     <string name="app_blocked_title" msgid="7353262160455028160">"Қолданба қолжетімді емес"</string>
     <string name="app_blocked_message" msgid="542972921087873023">"<xliff:g id="APP_NAME">%1$s</xliff:g> қазір қолжетімді емес."</string>
     <string name="deprecated_target_sdk_message" msgid="5203207875657579953">"Қолданба Android жүйесінің ескі нұсқасына арналған және дұрыс жұмыс істемеуі мүмкін. Жаңартылған нұсқаны тексеріңіз немесе әзірлеушіге хабарласыңыз."</string>
-    <string name="deprecated_target_sdk_app_store" msgid="8456784048558808909">"Жаңа нұсқасының бар-жоғын тексеру"</string>
+    <string name="deprecated_target_sdk_app_store" msgid="8456784048558808909">"Жаңарту бар-жоғын тексеру"</string>
     <string name="new_sms_notification_title" msgid="6528758221319927107">"Сізде жаңа хабарлар бар"</string>
     <string name="new_sms_notification_content" msgid="3197949934153460639">"Көру үшін SMS қолданбасын ашыңыз"</string>
     <string name="profile_encrypted_title" msgid="9001208667521266472">"Кейбір функциялар істемеуі мүмкін."</string>
@@ -2093,7 +2099,7 @@
     <string name="nas_upgrade_notification_enable_action" msgid="3046406808378726874">"Жарайды"</string>
     <string name="nas_upgrade_notification_disable_action" msgid="3794833210043497982">"Өшіру"</string>
     <string name="nas_upgrade_notification_learn_more_action" msgid="7011130656195423947">"Толығырақ"</string>
-    <string name="nas_upgrade_notification_learn_more_content" msgid="3735480566983530650">"Android 12 жүйесінде кеңейтілген хабарландырулар функциясы бейімделетін хабарландырулар функциясын алмастырды. Бұл функция ұсынылған әрекеттер мен жауаптарды көрсетіп, хабарландыруларыңызды ретке келтіреді.\n\nОл хабарландыру мазмұнын, соның ішінде жеке ақпаратыңызды (мысалы, контакт аттары мен хабарлар) пайдалана алады. Сондай-ақ бұл функция арқылы хабарландыруларды жабуға немесе оларға жауап беруге (мысалы, телефон қоңырауларына жауап беру және \"Мазаламау\" режимін басқару) болады."</string>
+    <string name="nas_upgrade_notification_learn_more_content" msgid="3735480566983530650">"Android 12 жүйесінде кеңейтілген хабарландырулар функциясы бейімделетін хабарландырулар функциясын алмастырды. Бұл функция ұсынылған әрекеттер мен жауаптарды көрсетіп, хабарландыруларыңызды ретке келтіреді.\n\nОл хабарландыру мазмұнын, соның ішінде жеке ақпаратыңызды (мысалы, контакт аттары мен хабарлар) пайдалана алады. Сондай-ақ бұл функция арқылы хабарландыруларды жабуға немесе оларға жауап беруге (мысалы, телефон қоңырауларына жауап беру және Мазаламау режимін басқару) болады."</string>
     <string name="dynamic_mode_notification_channel_name" msgid="2986926422100223328">"Режим туралы хабарландыру"</string>
     <string name="dynamic_mode_notification_title" msgid="9205715501274608016">"Батарея заряды азаюы мүмкін"</string>
     <string name="dynamic_mode_notification_summary" msgid="4141614604437372157">"Батарея ұзаққа жетуі үшін, Батареяны үнемдеу режимі іске қосылды"</string>
@@ -2158,7 +2164,7 @@
     <string name="resolver_cant_share_with_personal_apps_explanation" msgid="6349766201904601544">"Бұл мазмұнды жеке қолданбалармен бөлісу мүмкін емес."</string>
     <string name="resolver_cant_access_personal_apps_explanation" msgid="1679399548862724359">"Бұл мазмұнды жеке қолданбалармен ашу мүмкін емес."</string>
     <string name="resolver_turn_on_work_apps" msgid="884910835250037247">"Жұмыс профилі кідіртілді."</string>
-    <string name="resolver_switch_on_work" msgid="463709043650610420">"Қосу үшін түрту"</string>
+    <string name="resolver_switch_on_work" msgid="463709043650610420">"Қосу үшін түртіңіз"</string>
     <string name="resolver_no_work_apps_available" msgid="3298291360133337270">"Жұмыс қолданбалары жоқ."</string>
     <string name="resolver_no_personal_apps_available" msgid="6284837227019594881">"Жеке қолданбалар жоқ."</string>
     <string name="miniresolver_open_in_personal" msgid="2937599899213467617">"Жеке профильдегі <xliff:g id="APP">%s</xliff:g> қолданбасында ашу керек пе?"</string>

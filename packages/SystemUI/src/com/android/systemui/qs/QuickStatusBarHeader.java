@@ -23,7 +23,6 @@ import android.content.res.Resources;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.util.AttributeSet;
-import android.util.FeatureFlagUtils;
 import android.util.Pair;
 import android.view.DisplayCutout;
 import android.view.View;
@@ -68,7 +67,9 @@ public class QuickStatusBarHeader extends FrameLayout {
     private Space mDatePrivacySeparator;
     private View mClockIconsSeparator;
     private boolean mShowClockIconsSeparator;
-    private ViewGroup mRightLayout;
+    private View mRightLayout;
+    private View mDateContainer;
+    private View mPrivacyContainer;
 
     private BatteryMeterView mBatteryRemainingIcon;
     private StatusIconContainer mIconContainer;
@@ -77,7 +78,6 @@ public class QuickStatusBarHeader extends FrameLayout {
     private TintedIconManager mTintedIconManager;
     private QSExpansionPathInterpolator mQSExpansionPathInterpolator;
 
-    private int mStatusBarPaddingTop = 0;
     private int mRoundedCornerPadding = 0;
     private int mWaterfallTopInset;
     private int mCutOutPaddingLeft;
@@ -86,11 +86,11 @@ public class QuickStatusBarHeader extends FrameLayout {
     private float mKeyguardExpansionFraction;
     private int mTextColorPrimary = Color.TRANSPARENT;
     private int mTopViewMeasureHeight;
+    private boolean mProviderModel;
 
     private final String mMobileSlotName;
     private final String mNoCallingSlotName;
     private final String mCallStrengthSlotName;
-    private final boolean mProviderModel;
 
     public QuickStatusBarHeader(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -98,11 +98,6 @@ public class QuickStatusBarHeader extends FrameLayout {
         mNoCallingSlotName = context.getString(com.android.internal.R.string.status_bar_no_calling);
         mCallStrengthSlotName =
                 context.getString(com.android.internal.R.string.status_bar_call_strength);
-        if (FeatureFlagUtils.isEnabled(context, FeatureFlagUtils.SETTINGS_PROVIDER_MODEL)) {
-            mProviderModel = true;
-        } else {
-            mProviderModel = false;
-        }
     }
 
     /**
@@ -129,6 +124,8 @@ public class QuickStatusBarHeader extends FrameLayout {
         mSecurityHeaderView = findViewById(R.id.header_text_container);
         mClockIconsSeparator = findViewById(R.id.separator);
         mRightLayout = findViewById(R.id.rightLayout);
+        mDateContainer = findViewById(R.id.date_container);
+        mPrivacyContainer = findViewById(R.id.privacy_container);
 
         mClockView = findViewById(R.id.clock);
         mDatePrivacySeparator = findViewById(R.id.space);
@@ -150,7 +147,9 @@ public class QuickStatusBarHeader extends FrameLayout {
     }
 
     void onAttach(TintedIconManager iconManager,
-            QSExpansionPathInterpolator qsExpansionPathInterpolator) {
+            QSExpansionPathInterpolator qsExpansionPathInterpolator,
+            boolean providerModel) {
+        mProviderModel = providerModel;
         mTintedIconManager = iconManager;
         int fillColor = Utils.getColorAttrDefaultColor(getContext(),
                 android.R.attr.textColorPrimary);
@@ -179,6 +178,7 @@ public class QuickStatusBarHeader extends FrameLayout {
     protected void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         updateResources();
+        setDatePrivacyContainersWidth(newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE);
     }
 
     @Override
@@ -187,12 +187,23 @@ public class QuickStatusBarHeader extends FrameLayout {
         updateResources();
     }
 
+    private void setDatePrivacyContainersWidth(boolean landscape) {
+        LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) mDateContainer.getLayoutParams();
+        lp.width = landscape ? WRAP_CONTENT : 0;
+        lp.weight = landscape ? 0f : 1f;
+        mDateContainer.setLayoutParams(lp);
+
+        lp = (LinearLayout.LayoutParams) mPrivacyContainer.getLayoutParams();
+        lp.width = landscape ? WRAP_CONTENT : 0;
+        lp.weight = landscape ? 0f : 1f;
+        mPrivacyContainer.setLayoutParams(lp);
+    }
+
     void updateResources() {
         Resources resources = mContext.getResources();
 
         mRoundedCornerPadding = resources.getDimensionPixelSize(
                 R.dimen.rounded_corner_content_padding);
-        mStatusBarPaddingTop = resources.getDimensionPixelSize(R.dimen.status_bar_padding_top);
 
         int qsOffsetHeight = resources.getDimensionPixelSize(
                 com.android.internal.R.dimen.quick_qs_offset_height);
@@ -249,10 +260,9 @@ public class QuickStatusBarHeader extends FrameLayout {
 
     private void updateAlphaAnimator() {
         TouchAnimator.Builder builder = new TouchAnimator.Builder()
-                // The following two views have to be hidden manually, so as not to hide the
-                // Privacy chip in QQS
-                .addFloat(mDateView, "alpha", 0, 1)
                 .addFloat(mSecurityHeaderView, "alpha", 0, 1)
+                // These views appear on expanding down
+                .addFloat(mClockView, "alpha", 0, 1)
                 .addFloat(mQSCarriers, "alpha", 0, 1)
                 .setListener(new TouchAnimator.ListenerAdapter() {
                     @Override
@@ -383,12 +393,14 @@ public class QuickStatusBarHeader extends FrameLayout {
                 mClockIconsSeparatorLayoutParams.width = 0;
                 setSeparatorVisibility(false);
                 mShowClockIconsSeparator = false;
+                mBatteryRemainingIcon.setPercentShowMode(BatteryMeterView.MODE_ESTIMATE);
             } else {
                 datePrivacySeparatorLayoutParams.width = topCutout.width();
                 mDatePrivacySeparator.setVisibility(View.VISIBLE);
                 mClockIconsSeparatorLayoutParams.width = topCutout.width();
                 mShowClockIconsSeparator = true;
                 setSeparatorVisibility(mKeyguardExpansionFraction == 0f);
+                mBatteryRemainingIcon.setPercentShowMode(BatteryMeterView.MODE_ON);
             }
         }
         mDatePrivacySeparator.setLayoutParams(datePrivacySeparatorLayoutParams);
@@ -451,11 +463,11 @@ public class QuickStatusBarHeader extends FrameLayout {
         }
 
         mDatePrivacyView.setPadding(paddingLeft,
-                mWaterfallTopInset + mStatusBarPaddingTop,
+                mWaterfallTopInset,
                 paddingRight,
                 0);
         mClockIconsView.setPadding(paddingLeft,
-                mWaterfallTopInset + mStatusBarPaddingTop,
+                mWaterfallTopInset,
                 paddingRight,
                 0);
     }

@@ -73,6 +73,7 @@ import com.android.systemui.shared.system.ActivityManagerWrapper;
 import com.android.systemui.shared.system.DevicePolicyManagerWrapper;
 import com.android.systemui.shared.system.PackageManagerWrapper;
 import com.android.systemui.statusbar.CommandQueue;
+import com.android.systemui.statusbar.FeatureFlags;
 import com.android.systemui.statusbar.NotificationListener;
 import com.android.systemui.statusbar.NotificationLockscreenUserManager;
 import com.android.systemui.statusbar.NotificationMediaManager;
@@ -139,6 +140,7 @@ import java.util.function.Consumer;
 
 import javax.inject.Inject;
 import javax.inject.Named;
+import javax.inject.Provider;
 
 import dagger.Lazy;
 
@@ -198,6 +200,12 @@ public class Dependency {
     public static final String ALLOW_NOTIFICATION_LONG_PRESS_NAME = "allow_notif_longpress";
 
     /**
+     * A provider of {@link EdgeBackGestureHandler}.
+     */
+    public static final String EDGE_BACK_GESTURE_HANDLER_PROVIDER_NAME =
+            "edge_back_gesture_handler_provider";
+
+    /**
      * Key for getting a background Looper for background work.
      */
     public static final DependencyKey<Looper> BG_LOOPER = new DependencyKey<>(BG_LOOPER_NAME);
@@ -232,6 +240,12 @@ public class Dependency {
      */
     public static final DependencyKey<String> LEAK_REPORT_EMAIL =
             new DependencyKey<>(LEAK_REPORT_EMAIL_NAME);
+    /**
+     * Key for retrieving an Provider<EdgeBackGestureHandler>.
+     */
+    public static final DependencyKey<Provider<EdgeBackGestureHandler>>
+            EDGE_BACK_GESTURE_HANDLER_PROVIDER =
+            new DependencyKey<>(EDGE_BACK_GESTURE_HANDLER_PROVIDER_NAME);
 
     private final ArrayMap<Object, Object> mDependencies = new ArrayMap<>();
     private final ArrayMap<Object, LazyDependencyCreator> mProviders = new ArrayMap<>();
@@ -358,8 +372,9 @@ public class Dependency {
     @Inject Lazy<TelephonyListenerManager> mTelephonyListenerManager;
     @Inject Lazy<SystemStatusAnimationScheduler> mSystemStatusAnimationSchedulerLazy;
     @Inject Lazy<PrivacyDotViewController> mPrivacyDotViewControllerLazy;
-    @Inject Lazy<EdgeBackGestureHandler> mEdgeBackGestureHandler;
+    @Inject Provider<EdgeBackGestureHandler> mEdgeBackGestureHandlerProvider;
     @Inject Lazy<UiEventLogger> mUiEventLogger;
+    @Inject Lazy<FeatureFlags> mFeatureFlagsLazy;
 
     @Inject
     public Dependency() {
@@ -572,8 +587,9 @@ public class Dependency {
         mProviders.put(SystemStatusAnimationScheduler.class,
                 mSystemStatusAnimationSchedulerLazy::get);
         mProviders.put(PrivacyDotViewController.class, mPrivacyDotViewControllerLazy::get);
-        mProviders.put(EdgeBackGestureHandler.class, mEdgeBackGestureHandler::get);
+        mProviders.put(EDGE_BACK_GESTURE_HANDLER_PROVIDER, () -> mEdgeBackGestureHandlerProvider);
         mProviders.put(UiEventLogger.class, mUiEventLogger::get);
+        mProviders.put(FeatureFlags.class, mFeatureFlagsLazy::get);
 
         Dependency.setInstance(this);
     }

@@ -146,10 +146,8 @@ public class LegacySplitScreenController implements DisplayController.OnDisplays
                             new LegacySplitDisplayLayout(mContext, displayLayout, mSplits);
                     sdl.rotateTo(toRotation);
                     mRotateSplitLayout = sdl;
-                    final int position = isDividerVisible()
-                            ? (mMinimized ? mView.mSnapTargetBeforeMinimized.position
-                            : mView.getCurrentPosition())
-                            // snap resets to middle target when not in split-mode
+                    // snap resets to middle target when not minimized and rotation changed.
+                    final int position = mMinimized ? mView.mSnapTargetBeforeMinimized.position
                             : sdl.getSnapAlgorithm().getMiddleTarget().position;
                     DividerSnapAlgorithm snap = sdl.getSnapAlgorithm();
                     final DividerSnapAlgorithm.SnapTarget target =
@@ -229,9 +227,6 @@ public class LegacySplitScreenController implements DisplayController.OnDisplays
             return;
         }
         mView.setHidden(showing);
-        if (!showing) {
-            mImePositionProcessor.updateAdjustForIme();
-        }
         mIsKeyguardShowing = showing;
     }
 
@@ -550,12 +545,14 @@ public class LegacySplitScreenController implements DisplayController.OnDisplays
         update(mDisplayController.getDisplayContext(
                 mContext.getDisplayId()).getResources().getConfiguration());
         // Set resizable directly here because applyEnterSplit already resizes home stack.
-        mHomeStackResizable = mWindowManagerProxy.applyEnterSplit(mSplits, mSplitLayout);
+        mHomeStackResizable = mWindowManagerProxy.applyEnterSplit(mSplits,
+                mRotateSplitLayout != null ? mRotateSplitLayout : mSplitLayout);
     }
 
     public void prepareEnterSplitTransition(WindowContainerTransaction outWct) {
         // Set resizable directly here because buildEnterSplit already resizes home stack.
-        mHomeStackResizable = mWindowManagerProxy.buildEnterSplit(outWct, mSplits, mSplitLayout);
+        mHomeStackResizable = mWindowManagerProxy.buildEnterSplit(outWct, mSplits,
+                mRotateSplitLayout != null ? mRotateSplitLayout : mSplitLayout);
     }
 
     public void finishEnterSplitTransition(boolean minimized) {

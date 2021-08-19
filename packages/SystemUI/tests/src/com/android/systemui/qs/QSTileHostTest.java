@@ -39,7 +39,6 @@ import android.os.Looper;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.testing.TestableLooper.RunWithLooper;
-import android.util.FeatureFlagUtils;
 import android.view.View;
 
 import androidx.annotation.Nullable;
@@ -59,10 +58,13 @@ import com.android.systemui.plugins.qs.QSFactory;
 import com.android.systemui.plugins.qs.QSTile;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.qs.external.CustomTile;
+import com.android.systemui.qs.external.CustomTileStatePersister;
+import com.android.systemui.qs.external.TileServiceKey;
 import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.qs.tileimpl.QSTileImpl;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shared.plugins.PluginManager;
+import com.android.systemui.statusbar.FeatureFlags;
 import com.android.systemui.statusbar.phone.AutoTileManager;
 import com.android.systemui.statusbar.phone.StatusBar;
 import com.android.systemui.statusbar.phone.StatusBarIconController;
@@ -125,6 +127,8 @@ public class QSTileHostTest extends SysuiTestCase {
     private UserTracker mUserTracker;
     @Mock
     private SecureSettings mSecureSettings;
+    @Mock
+    private CustomTileStatePersister mCustomTileStatePersister;
 
     private Handler mHandler;
     private TestableLooper mLooper;
@@ -136,16 +140,16 @@ public class QSTileHostTest extends SysuiTestCase {
         // TODO(b/174753536): Remove the mMockingSession when
         // FeatureFlagUtils.SETTINGS_PROVIDER_MODEL is removed.
         mMockingSession = ExtendedMockito.mockitoSession().strictness(Strictness.LENIENT)
-                .mockStatic(FeatureFlagUtils.class).startMocking();
-        ExtendedMockito.doReturn(false).when(() -> FeatureFlagUtils.isEnabled(mContext,
-                FeatureFlagUtils.SETTINGS_PROVIDER_MODEL));
+                .mockStatic(FeatureFlags.class).startMocking();
+        ExtendedMockito.doReturn(false)
+                .when(() -> FeatureFlags.isProviderModelSettingEnabled(mContext));
         MockitoAnnotations.initMocks(this);
         mLooper = TestableLooper.get(this);
         mHandler = new Handler(mLooper.getLooper());
         mQSTileHost = new TestQSTileHost(mContext, mIconController, mDefaultFactory, mHandler,
                 mLooper.getLooper(), mPluginManager, mTunerService, mAutoTiles, mDumpManager,
                 mBroadcastDispatcher, mStatusBar, mQSLogger, mUiEventLogger, mUserTracker,
-                mSecureSettings);
+                mSecureSettings, mCustomTileStatePersister);
         setUpTileFactory();
 
         when(mSecureSettings.getStringForUser(eq(QSTileHost.TILES_SETTING), anyInt()))
@@ -371,6 +375,14 @@ public class QSTileHostTest extends SysuiTestCase {
         verify(mQSLogger, never()).logTileDestroyed(isNull(), anyString());
     }
 
+    @Test
+    public void testCustomTileRemoved_stateDeleted() {
+        mQSTileHost.changeTiles(List.of(CUSTOM_TILE_SPEC), List.of());
+
+        verify(mCustomTileStatePersister)
+                .removeState(new TileServiceKey(CUSTOM_TILE, mQSTileHost.getUserId()));
+    }
+
     private class TestQSTileHost extends QSTileHost {
         TestQSTileHost(Context context, StatusBarIconController iconController,
                 QSFactory defaultFactory, Handler mainHandler, Looper bgLooper,
@@ -378,10 +390,11 @@ public class QSTileHostTest extends SysuiTestCase {
                 Provider<AutoTileManager> autoTiles, DumpManager dumpManager,
                 BroadcastDispatcher broadcastDispatcher, StatusBar statusBar, QSLogger qsLogger,
                 UiEventLogger uiEventLogger, UserTracker userTracker,
-                SecureSettings secureSettings) {
+                SecureSettings secureSettings, CustomTileStatePersister customTileStatePersister) {
             super(context, iconController, defaultFactory, mainHandler, bgLooper, pluginManager,
                     tunerService, autoTiles, dumpManager, broadcastDispatcher,
-                    Optional.of(statusBar), qsLogger, uiEventLogger, userTracker, secureSettings);
+                    Optional.of(statusBar), qsLogger, uiEventLogger, userTracker, secureSettings,
+                    customTileStatePersister);
         }
 
         @Override

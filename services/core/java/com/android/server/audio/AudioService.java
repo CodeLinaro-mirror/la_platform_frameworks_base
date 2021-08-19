@@ -95,8 +95,6 @@ import android.media.IRecordingConfigDispatcher;
 import android.media.IRingtonePlayer;
 import android.media.IStrategyPreferredDevicesDispatcher;
 import android.media.IVolumeController;
-import android.media.MediaExtractor;
-import android.media.MediaFormat;
 import android.media.MediaMetrics;
 import android.media.MediaRecorder.AudioSource;
 import android.media.PlayerBase;
@@ -163,7 +161,6 @@ import com.android.server.pm.UserManagerService;
 import com.android.server.wm.ActivityTaskManagerInternal;
 
 import java.io.FileDescriptor;
-import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -1931,6 +1928,32 @@ public class AudioService extends IAudioService.Stub
             mDeviceBroker.setForceUse_Async(AudioSystem.FOR_ENCODED_SURROUND, forceSetting,
                     eventSource);
         }
+    }
+
+    /** @see AudioManager#getSurroundFormats() */
+    @Override
+    public Map<Integer, Boolean> getSurroundFormats() {
+        Map<Integer, Boolean> surroundFormats = new HashMap<>();
+        int status = AudioSystem.getSurroundFormats(surroundFormats);
+        if (status != AudioManager.SUCCESS) {
+            // fail and bail!
+            Log.e(TAG, "getSurroundFormats failed:" + status);
+            return new HashMap<>(); // Always return a map.
+        }
+        return surroundFormats;
+    }
+
+    /** @see AudioManager#getReportedSurroundFormats() */
+    @Override
+    public List<Integer> getReportedSurroundFormats() {
+        ArrayList<Integer> reportedSurroundFormats = new ArrayList<>();
+        int status = AudioSystem.getReportedSurroundFormats(reportedSurroundFormats);
+        if (status != AudioManager.SUCCESS) {
+            // fail and bail!
+            Log.e(TAG, "getReportedSurroundFormats failed:" + status);
+            return new ArrayList<>(); // Always return a list.
+        }
+        return reportedSurroundFormats;
     }
 
     /** @see AudioManager#isSurroundFormatEnabled(int) */
@@ -6305,23 +6328,10 @@ public class AudioService extends IAudioService.Stub
     }
 
     /**
-     * See AudioManager.hasHapticChannels(Uri).
+     * See AudioManager.hasHapticChannels(Context, Uri).
      */
     public boolean hasHapticChannels(Uri uri) {
-        MediaExtractor extractor = new MediaExtractor();
-        try {
-            extractor.setDataSource(mContext, uri, null);
-            for (int i = 0; i < extractor.getTrackCount(); i++) {
-                MediaFormat format = extractor.getTrackFormat(i);
-                if (format.containsKey(MediaFormat.KEY_HAPTIC_CHANNEL_COUNT)
-                        && format.getInteger(MediaFormat.KEY_HAPTIC_CHANNEL_COUNT) > 0) {
-                    return true;
-                }
-            }
-        } catch (IOException e) {
-            Log.e(TAG, "hasHapticChannels failure:" + e);
-        }
-        return false;
+        return AudioManager.hasHapticChannelsImpl(mContext, uri);
     }
 
     ///////////////////////////////////////////////////////////////////////////

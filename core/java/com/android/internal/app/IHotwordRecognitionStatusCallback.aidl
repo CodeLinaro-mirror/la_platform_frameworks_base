@@ -17,6 +17,7 @@
 package com.android.internal.app;
 
 import android.hardware.soundtrigger.SoundTrigger;
+import android.service.voice.HotwordDetectedResult;
 import android.service.voice.HotwordRejectedResult;
 
 /**
@@ -29,8 +30,11 @@ oneway interface IHotwordRecognitionStatusCallback {
      * @param recognitionEvent Object containing data relating to the
      *                         keyphrase recognition event such as keyphrase
      *                         extras.
+     * @param result Successful detection result payload.
      */
-    void onKeyphraseDetected(in SoundTrigger.KeyphraseRecognitionEvent recognitionEvent);
+    void onKeyphraseDetected(
+            in SoundTrigger.KeyphraseRecognitionEvent recognitionEvent,
+            in HotwordDetectedResult result);
 
    /**
      * Called when a generic sound trigger event is witnessed.
@@ -74,4 +78,7 @@ oneway interface IHotwordRecognitionStatusCallback {
      * @param status The status about the result of requesting update state action.
      */
     void onStatusReported(int status);
+
+    /** Called when the hotword detection process is restarted */
+    void onProcessRestarted();
 }

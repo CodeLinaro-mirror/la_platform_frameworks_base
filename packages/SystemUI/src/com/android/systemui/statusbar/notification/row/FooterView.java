@@ -25,6 +25,7 @@ import android.view.View;
 
 import com.android.systemui.R;
 import com.android.systemui.statusbar.notification.stack.ExpandableViewState;
+import com.android.systemui.statusbar.notification.stack.ViewState;
 
 public class FooterView extends StackScrollerDecorView {
     private final int mClearAllTopPadding;
@@ -115,13 +116,26 @@ public class FooterView extends StackScrollerDecorView {
     }
 
     public class FooterViewState extends ExpandableViewState {
+        /**
+         * used to hide the content of the footer to animate.
+         * #hide is applied without animation, but #hideContent has animation.
+         */
+        public boolean hideContent;
+
+        @Override
+        public void copyFrom(ViewState viewState) {
+            super.copyFrom(viewState);
+            if (viewState instanceof FooterViewState) {
+                hideContent = ((FooterViewState) viewState).hideContent;
+            }
+        }
+
         @Override
         public void applyToView(View view) {
             super.applyToView(view);
             if (view instanceof FooterView) {
                 FooterView footerView = (FooterView) view;
-                boolean visible = this.clipTopAmount < mClearAllTopPadding;
-                footerView.setContentVisible(visible && footerView.isVisible());
+                footerView.setContentVisible(!hideContent);
             }
         }
     }

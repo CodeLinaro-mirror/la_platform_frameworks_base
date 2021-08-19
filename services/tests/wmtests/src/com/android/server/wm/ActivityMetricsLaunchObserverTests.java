@@ -38,6 +38,7 @@ import static org.mockito.Mockito.timeout;
 import android.app.ActivityOptions;
 import android.app.ActivityOptions.SourceInfo;
 import android.app.WaitResult;
+import android.app.WindowConfiguration;
 import android.content.Intent;
 import android.os.IBinder;
 import android.os.SystemClock;
@@ -269,9 +270,16 @@ public class ActivityMetricsLaunchObserverTests extends WindowTestsBase {
 
     @Test
     public void testOnReportFullyDrawn() {
+        // Create an invisible event that should be cancelled after the next event starts.
+        onActivityLaunched(mTrampolineActivity);
+        mTrampolineActivity.mVisibleRequested = false;
+
         mActivityOptions = ActivityOptions.makeBasic();
         mActivityOptions.setSourceInfo(SourceInfo.TYPE_LAUNCHER, SystemClock.uptimeMillis() - 10);
-        onActivityLaunched(mTopActivity);
+        onIntentStarted(mTopActivity.intent);
+        notifyActivityLaunched(START_SUCCESS, mTopActivity);
+        verifyAsync(mLaunchObserver).onActivityLaunched(eqProto(mTopActivity), anyInt());
+        verifyAsync(mLaunchObserver).onActivityLaunchCancelled(eqProto(mTrampolineActivity));
 
         // The activity reports fully drawn before windows drawn, then the fully drawn event will
         // be pending (see {@link WindowingModeTransitionInfo#pendingFullyDrawn}).
@@ -286,6 +294,10 @@ public class ActivityMetricsLaunchObserverTests extends WindowTestsBase {
         verifyAsync(mLaunchObserver).onReportFullyDrawn(eqProto(mTopActivity), anyLong());
         verifyOnActivityLaunchFinished(mTopActivity);
         verifyNoMoreInteractions(mLaunchObserver);
+
+        final ActivityMetricsLogger.TransitionInfoSnapshot fullyDrawnInfo = mActivityMetricsLogger
+                .logAppTransitionReportedDrawn(mTopActivity, false /* restoredFromBundle */);
+        assertWithMessage("Invisible event must be dropped").that(fullyDrawnInfo).isNull();
     }
 
     private void onActivityLaunchedTrampoline() {
@@ -353,8 +365,22 @@ public class ActivityMetricsLaunchObserverTests extends WindowTestsBase {
         mTrampolineActivity.setVisibility(false);
         notifyWindowsDrawn(mTopActivity);
 
-        assertWithMessage("Trampoline activity is invisble so there should be no undrawn windows")
+        assertWithMessage("Trampoline activity is invisible so there should be no undrawn windows")
                 .that(mLaunchingState.allDrawn()).isTrue();
+
+        // Since the activity is drawn, the launch event should be reported.
+        notifyTransitionStarting(mTopActivity);
+        verifyOnActivityLaunchFinished(mTopActivity);
+        mLaunchTopByTrampoline = false;
+        clearInvocations(mLaunchObserver);
+
+        // Another round without setting visibility of the trampoline activity.
+        onActivityLaunchedTrampoline();
+        notifyWindowsDrawn(mTopActivity);
+        // If the transition can start, the invisible activities should be discarded and the launch
+        // event be reported successfully.
+        notifyTransitionStarting(mTopActivity);
+        verifyOnActivityLaunchFinished(mTopActivity);
     }
 
     @Test
@@ -460,6 +486,19 @@ public class ActivityMetricsLaunchObserverTests extends WindowTestsBase {
         // There should be 2 events instead of coalescing as one event.
         transitToDrawnAndVerifyOnLaunchFinished(mTopActivity);
         transitToDrawnAndVerifyOnLaunchFinished(activityOnNewDisplay);
+    }
+
+    @Test
+    public void testConsecutiveLaunchWithDifferentWindowingMode() {
+        mTopActivity.setWindowingMode(WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW);
+        mTrampolineActivity.mVisibleRequested = true;
+        onActivityLaunched(mTrampolineActivity);
+        mActivityMetricsLogger.notifyActivityLaunching(mTopActivity.intent,
+                mTrampolineActivity /* caller */, mTrampolineActivity.getUid());
+        notifyActivityLaunched(START_SUCCESS, mTopActivity);
+        // Different windowing modes should be independent launch events.
+        transitToDrawnAndVerifyOnLaunchFinished(mTrampolineActivity);
+        transitToDrawnAndVerifyOnLaunchFinished(mTopActivity);
     }
 
     private void transitToDrawnAndVerifyOnLaunchFinished(ActivityRecord activity) {

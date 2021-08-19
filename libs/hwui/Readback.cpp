@@ -183,8 +183,10 @@ CopyResult Readback::copySurfaceInto(ANativeWindow* window, const Rect& inSrcRec
     SkPaint paint;
     paint.setAlpha(255);
     paint.setBlendMode(SkBlendMode::kSrc);
-    canvas->drawImageRect(image, imageSrcRect, imageDstRect, sampling, &paint,
-                          SkCanvas::kFast_SrcRectConstraint);
+    const bool hasBufferCrop = cropRect.left < cropRect.right && cropRect.top < cropRect.bottom;
+    auto constraint =
+            hasBufferCrop ? SkCanvas::kStrict_SrcRectConstraint : SkCanvas::kFast_SrcRectConstraint;
+    canvas->drawImageRect(image, imageSrcRect, imageDstRect, sampling, &paint, constraint);
     canvas->restore();
 
     if (!tmpSurface->readPixels(*bitmap, 0, 0)) {
@@ -273,6 +275,14 @@ CopyResult Readback::copyLayerInto(DeferredLayerUpdater* deferredLayer, SkBitmap
         }
     }
     return copyResult;
+}
+
+CopyResult Readback::copyImageInto(const sk_sp<SkImage>& image, SkBitmap* bitmap) {
+    Rect srcRect;
+    Matrix4 transform;
+    transform.loadScale(1, -1, 1);
+    transform.translate(0, -1);
+    return copyImageInto(image, transform, srcRect, bitmap);
 }
 
 CopyResult Readback::copyImageInto(const sk_sp<SkImage>& image, Matrix4& texTransform,

@@ -99,7 +99,7 @@
 
     <!-- The default tiles to display in QuickSettings -->
     <string name="quick_settings_tiles_default" translatable="false">
-        internet,wifi,bt,dnd,flashlight,rotation,battery,cell,airplane,cast,screenrecord
+        internet,bt,flashlight,dnd,alarm,airplane,controls,wallet,rotation,battery,cast,screenrecord,mictoggle,cameratoggle
     </string>
 
     <!-- The minimum number of tiles to display in QuickSettings -->
@@ -107,7 +107,7 @@
 
     <!-- Tiles native to System UI. Order should match "quick_settings_tiles_default" -->
     <string name="quick_settings_tiles_stock" translatable="false">
-        internet,wifi,cell,battery,dnd,flashlight,rotation,bt,airplane,location,hotspot,inversion,saver,dark,work,cast,night,screenrecord,reverse,reduce_brightness,cameratoggle,mictoggle,controls,alarm,wallet
+        internet,wifi,cell,bt,flashlight,dnd,alarm,airplane,controls,wallet,rotation,battery,cast,screenrecord,mictoggle,cameratoggle,location,hotspot,inversion,saver,dark,work,night,reverse,reduce_brightness
     </string>
 
     <!-- The tiles to display in QuickSettings -->
@@ -396,10 +396,6 @@
     <!-- Whether or not the notifications should always fade as they are dismissed. -->
     <bool name="config_fadeNotificationsOnDismiss">false</bool>
 
-    <!-- Whether or not the parent of the notification row itself is being translated when swiped or
-         its children views. If true, then the contents are translated and vice versa. -->
-    <bool name="config_translateNotificationContentsOnSwipe">true</bool>
-
     <!-- Whether or not the fade on the notification is based on the amount that it has been swiped
          off-screen. -->
     <bool name="config_fadeDependingOnAmountSwiped">false</bool>
@@ -430,7 +426,7 @@
     <!-- Whether or not the dividing lines should be shown when the container is expanding and
          collapsing. If this value is true, then the lines will only show when the container has
          been completely expanded. -->
-    <bool name="config_hideDividersDuringExpand">false</bool>
+    <bool name="config_hideDividersDuringExpand">true</bool>
 
     <!-- Whether or not child notifications that are part of a group will have shadows. -->
     <bool name="config_enableShadowOnChildNotifications">true</bool>
@@ -446,8 +442,8 @@
      vibrator is capable of subtle vibrations -->
     <bool name="config_vibrateOnIconAnimation">false</bool>
 
-    <!-- Adjust the theme on fully custom and decorated custom view notifications -->
-    <bool name="config_adjustThemeOnNotificationCustomViews">false</bool>
+    <!-- Notifications are sized to match the width of two (of 4) qs tiles in landscape. -->
+    <bool name="config_skinnyNotifsInLandscape">true</bool>
 
     <!-- If true, enable the advance anti-falsing classifier on the lockscreen. On some devices it
          does not work well, particularly with noisy touchscreens. Note that disabling it may
@@ -524,8 +520,12 @@
      -->
     <string name="config_rounded_mask" translatable="false">"M8,0C3.6,0,0,3.6,0,8"</string>
 
-    <!-- Preferred refresh rate at keyguard, if supported by the display -->
+    <!-- Preferred refresh rate at keyguard, if supported by the display. Overrides
+         keyguardMaxRefreshRate. -->
     <integer name="config_keyguardRefreshRate">-1</integer>
+
+    <!-- Preferred max refresh rate at keyguard, if supported by the display. -->
+    <integer name="config_keyguardMaxRefreshRate">-1</integer>
 
     <!-- Whether or not to add a "people" notifications section -->
     <bool name="config_usePeopleFiltering">false</bool>
@@ -630,9 +630,9 @@
         58.0001 29.2229,56.9551 26.8945,55.195
     </string>
 
-    <!-- The radius of the enrollment progress bar, in pixels -->
+    <!-- The radius of the enrollment progress bar, in dp -->
     <integer name="config_udfpsEnrollProgressBar" translatable="false">
-        360
+        280
     </integer>
 
     <!-- package name of a built-in camera app to use to restrict implicit intent resolution
@@ -658,13 +658,6 @@
         <!-- sensorLocationX -->
         <!-- sensorLocationY -->
         <!--sensorRadius -->
-    </integer-array>
-
-    <!-- The properties of the lock icon in pixels. -->
-    <integer-array name="config_lock_icon_props">
-        <!-- X -->
-        <!-- Y -->
-        <!-- radius -->
     </integer-array>
 
     <!-- Overrides the behavior of the face unlock keyguard bypass setting:

@@ -89,10 +89,10 @@ public class PeopleSpaceActivity extends Activity {
 
             // The Tile preview has colorBackground as its background. Change it so it's different
             // than the activity's background.
-            LinearLayout item = findViewById(R.id.item);
+            LinearLayout item = findViewById(android.R.id.background);
             GradientDrawable shape = (GradientDrawable) item.getBackground();
-            final TypedArray ta = mContext.obtainStyledAttributes(
-                    new int[]{android.R.attr.colorBackgroundFloating});
+            final TypedArray ta = mContext.getTheme().obtainStyledAttributes(
+                    new int[]{com.android.internal.R.attr.colorSurface});
             shape.setColor(ta.getColor(0, Color.WHITE));
             return;
         }

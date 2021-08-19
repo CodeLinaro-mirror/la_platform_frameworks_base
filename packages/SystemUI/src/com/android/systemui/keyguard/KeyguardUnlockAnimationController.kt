@@ -31,6 +31,7 @@ import com.android.keyguard.KeyguardViewController
 import com.android.systemui.animation.Interpolators
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.shared.system.smartspace.SmartspaceTransitionController
+import com.android.systemui.statusbar.FeatureFlags
 import com.android.systemui.statusbar.policy.KeyguardStateController
 import dagger.Lazy
 import javax.inject.Inject
@@ -89,7 +90,8 @@ class KeyguardUnlockAnimationController @Inject constructor(
     private val keyguardStateController: KeyguardStateController,
     private val keyguardViewMediator: Lazy<KeyguardViewMediator>,
     private val keyguardViewController: KeyguardViewController,
-    private val smartspaceTransitionController: SmartspaceTransitionController
+    private val smartspaceTransitionController: SmartspaceTransitionController,
+    private val featureFlags: FeatureFlags
 ) : KeyguardStateController.Callback {
 
     /**
@@ -162,7 +164,8 @@ class KeyguardUnlockAnimationController @Inject constructor(
                 // If the surface alpha is 0f, it's no longer visible so we can safely be done with
                 // the animation.
                 if (surfaceBehindAlpha == 0f) {
-                    keyguardViewMediator.get().finishSurfaceBehindRemoteAnimation()
+                    keyguardViewMediator.get().finishSurfaceBehindRemoteAnimation(
+                            false /* cancelled */)
                 }
             }
         })
@@ -175,7 +178,8 @@ class KeyguardUnlockAnimationController @Inject constructor(
         }
         surfaceBehindEntryAnimator.addListener(object : AnimatorListenerAdapter() {
             override fun onAnimationEnd(animation: Animator) {
-                keyguardViewMediator.get().onKeyguardExitRemoteAnimationFinished()
+                keyguardViewMediator.get().onKeyguardExitRemoteAnimationFinished(
+                        false /* cancelled */)
             }
         })
 
@@ -317,7 +321,7 @@ class KeyguardUnlockAnimationController @Inject constructor(
     }
 
     override fun onKeyguardDismissAmountChanged() {
-        if (!KeyguardService.sEnableRemoteKeyguardAnimation) {
+        if (!KeyguardService.sEnableRemoteKeyguardGoingAwayAnimation) {
             return
         }
 
@@ -344,6 +348,10 @@ class KeyguardUnlockAnimationController @Inject constructor(
      * keyguard visible.
      */
     private fun updateKeyguardViewMediatorIfThresholdsReached() {
+        if (!featureFlags.isNewKeyguardSwipeAnimationEnabled) {
+            return
+        }
+
         val dismissAmount = keyguardStateController.dismissAmount
 
         // Hide the keyguard if we're fully dismissed, or if we're swiping to dismiss and have
@@ -370,7 +378,7 @@ class KeyguardUnlockAnimationController @Inject constructor(
         } else if (keyguardViewMediator.get()
                         .isAnimatingBetweenKeyguardAndSurfaceBehindOrWillBe &&
                 reachedHideKeyguardThreshold) {
-            keyguardViewMediator.get().onKeyguardExitRemoteAnimationFinished()
+            keyguardViewMediator.get().onKeyguardExitRemoteAnimationFinished(false /* cancelled */)
         }
     }
 
@@ -380,6 +388,10 @@ class KeyguardUnlockAnimationController @Inject constructor(
      * know if it needs to do something as a result.
      */
     private fun updateSmartSpaceTransition() {
+        if (!featureFlags.isSmartSpaceSharedElementTransitionEnabled) {
+            return
+        }
+
         val dismissAmount = keyguardStateController.dismissAmount
 
         // If we've begun a swipe, and are capable of doing the SmartSpace transition, start it!

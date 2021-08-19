@@ -307,8 +307,10 @@ class PackageManagerShellCommand extends ShellCommand {
                     return runLogVisibility();
                 case "bypass-staged-installer-check":
                     return runBypassStagedInstallerCheck();
-                case "allow-unlimited-silent-updates":
-                    return runAllowUnlimitedSilentUpdates();
+                case "bypass-allowed-apex-update-check":
+                    return runBypassAllowedApexUpdateCheck();
+                case "set-silent-updates-policy":
+                    return runSetSilentUpdatesPolicy();
                 default: {
                     Boolean domainVerificationResult =
                             mDomainVerificationShell.runCommand(this, cmd);
@@ -415,6 +417,20 @@ class PackageManagerShellCommand extends ShellCommand {
         try {
             mInterface.getPackageInstaller()
                     .bypassNextStagedInstallerCheck(Boolean.parseBoolean(getNextArg()));
+            return 0;
+        } catch (RemoteException e) {
+            pw.println("Failure ["
+                    + e.getClass().getName() + " - "
+                    + e.getMessage() + "]");
+            return -1;
+        }
+    }
+
+    private int runBypassAllowedApexUpdateCheck() {
+        final PrintWriter pw = getOutPrintWriter();
+        try {
+            mInterface.getPackageInstaller()
+                    .bypassNextAllowedApexUpdateCheck(Boolean.parseBoolean(getNextArg()));
             return 0;
         } catch (RemoteException e) {
             pw.println("Failure ["
@@ -3041,12 +3057,20 @@ class PackageManagerShellCommand extends ShellCommand {
         }
     }
 
-    private int runAllowUnlimitedSilentUpdates() {
+    private int runSetSilentUpdatesPolicy() {
         final PrintWriter pw = getOutPrintWriter();
         String opt;
+        String installerPackageName = null;
+        Long throttleTimeInSeconds = null;
         boolean reset = false;
         while ((opt = getNextOption()) != null) {
             switch (opt) {
+                case "--allow-unlimited-silent-updates":
+                    installerPackageName = getNextArgRequired();
+                    break;
+                case "--throttle-time":
+                    throttleTimeInSeconds = Long.parseLong(getNextArgRequired());
+                    break;
                 case "--reset":
                     reset = true;
                     break;
@@ -3055,10 +3079,24 @@ class PackageManagerShellCommand extends ShellCommand {
                     return -1;
             }
         }
+        if (throttleTimeInSeconds != null && throttleTimeInSeconds < 0) {
+            pw.println("Error: Invalid value for \"--throttle-time\":" + throttleTimeInSeconds);
+            return -1;
+        }
 
-        final String installerPackageName = reset ? null : getNextArgRequired();
         try {
-            mInterface.getPackageInstaller().setAllowUnlimitedSilentUpdates(installerPackageName);
+            final IPackageInstaller installer = mInterface.getPackageInstaller();
+            if (reset) {
+                installer.setAllowUnlimitedSilentUpdates(null /* installerPackageName */);
+                installer.setSilentUpdatesThrottleTime(-1 /* restore to the default */);
+            } else {
+                if (installerPackageName != null) {
+                    installer.setAllowUnlimitedSilentUpdates(installerPackageName);
+                }
+                if (throttleTimeInSeconds != null) {
+                    installer.setSilentUpdatesThrottleTime(throttleTimeInSeconds);
+                }
+            }
         } catch (RemoteException e) {
             pw.println("Failure ["
                     + e.getClass().getName() + " - "
@@ -3772,9 +3810,6 @@ class PackageManagerShellCommand extends ShellCommand {
         pw.println("  get-oem-permissions TARGET-PACKAGE");
         pw.println("    Prints all OEM permissions for a package.");
         pw.println("");
-        pw.println("  set-app-link [--user USER_ID] PACKAGE {always|ask|never|undefined}");
-        pw.println("  get-app-link [--user USER_ID] PACKAGE");
-        pw.println("");
         pw.println("  trim-caches DESIRED_FREE_SPACE [internal|UUID]");
         pw.println("    Trim cache files to reach the given free space.");
         pw.println("");
@@ -3892,11 +3927,14 @@ class PackageManagerShellCommand extends ShellCommand {
         pw.println("      --enable: turn on debug logging (default)");
         pw.println("      --disable: turn off debug logging");
         pw.println("");
-        pw.println("  allow-unlimited-silent-updates (--reset | <INSTALLER>)");
-        pw.println("    Allows unlimited silent updated installation requests from the installer");
-        pw.println("    without the throttle time.");
-        pw.println("      --reset: clear the allowed installer and tracks of silent updates in");
-        pw.println("        the system.");
+        pw.println("  set-silent-updates-policy [--allow-unlimited-silent-updates <INSTALLER>]");
+        pw.println("                            [--throttle-time <SECONDS>] [--reset]");
+        pw.println("    Sets the policies of the silent updates.");
+        pw.println("      --allow-unlimited-silent-updates: allows unlimited silent updated");
+        pw.println("        installation requests from the installer without the throttle time.");
+        pw.println("      --throttle-time: update the silent updates throttle time in seconds.");
+        pw.println("      --reset: restore the installer and throttle time to the default, and");
+        pw.println("        clear tracks of silent updates in the system.");
         pw.println("");
         mDomainVerificationShell.printHelp(pw);
         pw.println("");

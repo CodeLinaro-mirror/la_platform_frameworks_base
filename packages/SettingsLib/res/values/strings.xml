@@ -886,7 +886,7 @@
     <!-- UI debug setting: force right to left layout summary [CHAR LIMIT=100] -->
     <string name="force_rtl_layout_all_locales_summary">Force screen layout direction to RTL for all locales</string>
 
-    <!-- UI debug setting: enable or disable window blurs [CHAR LIMIT=25] -->
+    <!-- UI debug setting: enable or disable window blurs [CHAR LIMIT=50] -->
     <string name="window_blurs">Allow window-level blurs</string>
 
     <!-- UI debug setting: force anti-aliasing to render apps [CHAR LIMIT=25] -->
@@ -1287,25 +1287,10 @@
     <!-- Title for the setting screen for controlling apps that can schedule alarms [CHAR LIMIT=30] -->
     <string name="alarms_and_reminders_title">Alarms &amp; reminders</string>
     <!-- Description that appears below the alarms_and_reminders switch [CHAR LIMIT=NONE] -->
-    <string name="alarms_and_reminders_footer_title" product="default">
-        Allow this app to set alarms and schedule other actions.
-        This app may be used when you\u2019re not using your phone, which may use more battery.
-        If this permission is off, this app may not function normally,
-        and its alarms won\u2019t work as scheduled.
-    </string>
-    <!-- Description that appears below the alarms_and_reminders switch [CHAR LIMIT=NONE] -->
-    <string name="alarms_and_reminders_footer_title" product="tablet">
-        Allow this app to set alarms and schedule other actions.
-        This app may be used when you\u2019re not using your tablet, which may use more battery.
-        If this permission is off, this app may not function normally,
-        and its alarms won\u2019t work as scheduled.
-    </string>
-    <!-- Description that appears below the alarms_and_reminders switch [CHAR LIMIT=NONE] -->
-    <string name="alarms_and_reminders_footer_title" product="device">
-        Allow this app to set alarms and schedule other actions.
-        This app may be used when you\u2019re not using your device, which may use more battery.
-        If this permission is off, this app may not function normally,
-        and its alarms won\u2019t work as scheduled.
+    <string name="alarms_and_reminders_footer_title">
+        Allow this app to set alarms and schedule time-sensitive actions.
+        This lets the app run in the background, which may use more battery.\n\nIf this permission
+        is off, existing alarms and time-based events scheduled by this app won\u2019t work.
     </string>
     <!-- Keywords for setting screen for controlling apps that can schedule alarms [CHAR LIMIT=100] -->
     <string name="keywords_alarms_and_reminders">schedule, alarm, reminder, clock</string>
@@ -1437,9 +1422,16 @@
     <string name="guest_new_guest">Add guest</string>
     <!-- Label for exiting and removing the guest session in the user switcher [CHAR LIMIT=35] -->
     <string name="guest_exit_guest">Remove guest</string>
+    <!-- Label for resetting guest session in the user switcher, which will remove all data from the current guest session [CHAR LIMIT=35] -->
+    <string name="guest_reset_guest">Reset guest</string>
     <!-- Name for the guest user [CHAR LIMIT=35] -->
     <string name="guest_nickname">Guest</string>
-
+    <!-- Title of the confirmation dialog to confirm resetting guest. [CHAR LIMIT=NONE] -->
+    <string name="guest_reset_guest_dialog_title">Reset guest?</string>
+    <!-- Label for button in confirmation dialog when resetting guest user [CHAR LIMIT=35] -->
+    <string name="guest_reset_guest_confirm_button">Reset</string>
+    <!-- Status message indicating the device is in the process of resetting the guest user. [CHAR_LIMIT=NONE] -->
+    <string name="guest_resetting">Resetting guest\u2026</string>
     <!-- An option in a photo selection dialog to take a new photo [CHAR LIMIT=50] -->
     <string name="user_image_take_photo">Take a photo</string>
     <!-- An option in a photo selection dialog to choose a pre-existing image [CHAR LIMIT=50] -->

@@ -17,14 +17,18 @@
 package com.android.systemui.shared.system;
 
 import android.annotation.IntDef;
+import android.os.Build;
 import android.view.View;
 
 import com.android.internal.jank.InteractionJankMonitor;
+import com.android.internal.jank.InteractionJankMonitor.Configuration;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 public final class InteractionJankMonitorWrapper {
+    private static final String TAG = "JankMonitorWrapper";
+
     // Launcher journeys.
     public static final int CUJ_APP_LAUNCH_FROM_RECENTS =
             InteractionJankMonitor.CUJ_LAUNCHER_APP_LAUNCH_FROM_RECENTS;
@@ -55,19 +59,48 @@ public final class InteractionJankMonitorWrapper {
     public @interface CujType {
     }
 
-    public static boolean begin(View v, @CujType int cujType) {
-        return InteractionJankMonitor.getInstance().begin(v, cujType);
+    /**
+     * Begin a trace session.
+     *
+     * @param v       an attached view.
+     * @param cujType the specific {@link InteractionJankMonitor.CujType}.
+     */
+    public static void begin(View v, @CujType int cujType) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return;
+        InteractionJankMonitor.getInstance().begin(v, cujType);
     }
 
-    public static boolean begin(View v, @CujType int cujType, long timeout) {
-        return InteractionJankMonitor.getInstance().begin(v, cujType, timeout);
+    /**
+     * Begin a trace session.
+     *
+     * @param v       an attached view.
+     * @param cujType the specific {@link InteractionJankMonitor.CujType}.
+     * @param timeout duration to cancel the instrumentation in ms
+     */
+    public static void begin(View v, @CujType int cujType, long timeout) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return;
+        Configuration.Builder builder =
+                new Configuration.Builder(cujType)
+                        .setView(v)
+                        .setTimeout(timeout);
+        InteractionJankMonitor.getInstance().begin(builder);
     }
 
-    public static boolean end(@CujType int cujType) {
-        return InteractionJankMonitor.getInstance().end(cujType);
+    /**
+     * End a trace session.
+     *
+     * @param cujType the specific {@link InteractionJankMonitor.CujType}.
+     */
+    public static void end(@CujType int cujType) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return;
+        InteractionJankMonitor.getInstance().end(cujType);
     }
 
-    public static boolean cancel(@CujType int cujType) {
-        return InteractionJankMonitor.getInstance().cancel(cujType);
+    /**
+     * Cancel the trace session.
+     */
+    public static void cancel(@CujType int cujType) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return;
+        InteractionJankMonitor.getInstance().cancel(cujType);
     }
 }

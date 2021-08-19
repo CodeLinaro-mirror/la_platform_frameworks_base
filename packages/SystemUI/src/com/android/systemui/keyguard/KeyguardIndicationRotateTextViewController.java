@@ -20,11 +20,9 @@ import android.annotation.Nullable;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.text.TextUtils;
-import android.view.View;
 
 import androidx.annotation.IntDef;
 
-import com.android.settingslib.Utils;
 import com.android.systemui.Dumpable;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
@@ -165,15 +163,14 @@ public class KeyguardIndicationRotateTextViewController extends
      * Transient messages:
      * - show immediately
      * - will continue to be in the rotation of messages shown until hideTransient is called.
-     * - can be presented with an "error" color if isError is true
      */
-    public void showTransient(CharSequence newIndication, boolean isError) {
+    public void showTransient(CharSequence newIndication) {
+        final long inAnimationDuration = 600L; // see KeyguardIndicationTextView.getYInDuration
         updateIndication(INDICATION_TYPE_TRANSIENT,
                 new KeyguardIndication.Builder()
                         .setMessage(newIndication)
-                        .setTextColor(isError
-                                ? Utils.getColorError(getContext())
-                                : mInitialTextColorState)
+                        .setMinVisibilityMillis(2000L + inAnimationDuration)
+                        .setTextColor(mInitialTextColorState)
                         .build(),
                 /* showImmediately */true);
     }
@@ -202,10 +199,7 @@ public class KeyguardIndicationRotateTextViewController extends
 
         mCurrIndicationType = type;
         mIndicationQueue.removeIf(x -> x == type);
-        if (mCurrIndicationType == INDICATION_TYPE_NONE) {
-            mView.setVisibility(View.GONE);
-        } else {
-            mView.setVisibility(View.VISIBLE);
+        if (mCurrIndicationType != INDICATION_TYPE_NONE) {
             mIndicationQueue.add(type); // re-add to show later
         }
 
@@ -299,7 +293,7 @@ public class KeyguardIndicationRotateTextViewController extends
         }
     }
 
-    private static final int INDICATION_TYPE_NONE = -1;
+    static final int INDICATION_TYPE_NONE = -1;
     public static final int INDICATION_TYPE_OWNER_INFO = 0;
     public static final int INDICATION_TYPE_DISCLOSURE = 1;
     public static final int INDICATION_TYPE_LOGOUT = 2;

@@ -32,6 +32,7 @@ import static android.os.PowerExemptionManager.REASON_ALLOWLISTED_PACKAGE;
 import static android.os.PowerExemptionManager.REASON_BACKGROUND_ACTIVITY_PERMISSION;
 import static android.os.PowerExemptionManager.REASON_BACKGROUND_FGS_PERMISSION;
 import static android.os.PowerExemptionManager.REASON_COMPANION_DEVICE_MANAGER;
+import static android.os.PowerExemptionManager.REASON_CURRENT_INPUT_METHOD;
 import static android.os.PowerExemptionManager.REASON_DENIED;
 import static android.os.PowerExemptionManager.REASON_DEVICE_DEMO_MODE;
 import static android.os.PowerExemptionManager.REASON_DEVICE_OWNER;
@@ -122,6 +123,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.PowerExemptionManager;
 import android.os.PowerExemptionManager.ReasonCode;
 import android.os.Process;
 import android.os.RemoteCallback;
@@ -250,6 +252,14 @@ public final class ActiveServices {
     final ArrayList<ServiceRecord> mPendingFgsNotifications = new ArrayList<>();
 
     /**
+     * Whether there is a rate limit that suppresses immediate re-deferral of new FGS
+     * notifications from each app.  On by default, disabled only by shell command for
+     * test-suite purposes.  To disable the behavior more generally, use the usual
+     * DeviceConfig mechanism to set the rate limit interval to zero.
+     */
+    private boolean mFgsDeferralRateLimited = true;
+
+    /**
      * Uptime at which a given uid becomes eliglible again for FGS notification deferral
      */
     final SparseLongArray mFgsDeferralEligible = new SparseLongArray();
@@ -319,23 +329,11 @@ public final class ActiveServices {
      * Watch for apps being put into forced app standby, so we can step their fg
      * services down.
      */
-    class ForcedStandbyListener implements AppStateTracker.ForcedAppStandbyListener {
+    class ForcedStandbyListener implements AppStateTracker.ServiceStateListener {
         @Override
-        public void updateForceAppStandbyForUidPackage(int uid, String packageName,
-                boolean standby) {
+        public void stopForegroundServicesForUidPackage(final int uid, final String packageName) {
             synchronized (mAm) {
-                if (standby) {
-                    stopAllForegroundServicesLocked(uid, packageName);
-                }
-                mAm.mProcessList.updateForceAppStandbyForUidPackageLocked(
-                        uid, packageName, standby);
-            }
-        }
-
-        @Override
-        public void updateForcedAppStandbyForAllApps() {
-            synchronized (mAm) {
-                mAm.mProcessList.updateForcedAppStandbyForAllAppsLocked();
+                stopAllForegroundServicesLocked(uid, packageName);
             }
         }
     }
@@ -521,7 +519,7 @@ public final class ActiveServices {
 
     void systemServicesReady() {
         AppStateTracker ast = LocalServices.getService(AppStateTracker.class);
-        ast.addForcedAppStandbyListener(new ForcedStandbyListener());
+        ast.addServiceStateListener(new ForcedStandbyListener());
         mAppWidgetManagerInternal = LocalServices.getService(AppWidgetManagerInternal.class);
         setAllowListWhileInUsePermissionInFgs();
     }
@@ -1782,6 +1780,7 @@ public final class ActiveServices {
                         if (!r.fgRequired) {
                             final long delayMs = SystemClock.elapsedRealtime() - r.createRealTime;
                             if (delayMs > mAm.mConstants.mFgsStartForegroundTimeoutMs) {
+                                resetFgsRestrictionLocked(r);
                                 setFgsRestrictionLocked(r.serviceInfo.packageName, r.app.getPid(),
                                         r.appInfo.uid, r.intent.getIntent(), r, r.userId,false);
                                 final String temp = "startForegroundDelayMs:" + delayMs;
@@ -1842,7 +1841,6 @@ public final class ActiveServices {
                     notification.flags |= Notification.FLAG_FOREGROUND_SERVICE;
                     r.foregroundNoti = notification;
                     r.foregroundServiceType = foregroundServiceType;
-                    boolean enterForeground = false;
                     if (!r.isForeground) {
                         final ServiceMap smap = getServiceMapLocked(r.userId);
                         if (smap != null) {
@@ -1868,8 +1866,12 @@ public final class ActiveServices {
                             active.mNumActive++;
                         }
                         r.isForeground = true;
-                        r.mLogEntering = true;
-                        enterForeground = true;
+                        // The logging of FOREGROUND_SERVICE_STATE_CHANGED__STATE__ENTER event could
+                        // be deferred, make a copy of mAllowStartForeground and
+                        // mAllowWhileInUsePermissionInFgs.
+                        r.mAllowStartForegroundAtEntering = r.mAllowStartForeground;
+                        r.mAllowWhileInUsePermissionInFgsAtEntering =
+                                r.mAllowWhileInUsePermissionInFgs;
                         r.mStartForegroundCount++;
                         r.mFgsEnterTime = SystemClock.uptimeMillis();
                         if (!stopProcStatsOp) {
@@ -1889,6 +1891,9 @@ public final class ActiveServices {
                                 AppOpsManager.ATTRIBUTION_CHAIN_ID_NONE);
                         registerAppOpCallbackLocked(r);
                         mAm.updateForegroundServiceUsageStats(r.name, r.userId, true);
+                        logFGSStateChangeLocked(r,
+                                FrameworkStatsLog.FOREGROUND_SERVICE_STATE_CHANGED__STATE__ENTER,
+                                0);
                     }
                     // Even if the service is already a FGS, we need to update the notification,
                     // so we need to call it again.
@@ -1930,7 +1935,6 @@ public final class ActiveServices {
                     decActiveForegroundAppLocked(smap, r);
                 }
                 r.isForeground = false;
-                resetFgsRestrictionLocked(r);
                 r.mFgsExitTime = SystemClock.uptimeMillis();
                 ServiceState stracker = r.getTracker();
                 if (stracker != null) {
@@ -1945,6 +1949,8 @@ public final class ActiveServices {
                         FrameworkStatsLog.FOREGROUND_SERVICE_STATE_CHANGED__STATE__EXIT,
                         r.mFgsExitTime > r.mFgsEnterTime
                                 ? (int)(r.mFgsExitTime - r.mFgsEnterTime) : 0);
+                r.mFgsNotificationWasDeferred = false;
+                resetFgsRestrictionLocked(r);
                 mAm.updateForegroundServiceUsageStats(r.name, r.userId, false);
                 if (r.app != null) {
                     mAm.updateLruProcessLocked(r.app, false, null);
@@ -1959,7 +1965,7 @@ public final class ActiveServices {
                 r.foregroundId = 0;
                 r.foregroundNoti = null;
             } else if (r.appInfo.targetSdkVersion >= Build.VERSION_CODES.LOLLIPOP) {
-                r.stripForegroundServiceFlagFromNotification();
+                dropFgsNotificationStateLocked(r);
                 if ((flags & Service.STOP_FOREGROUND_DETACH) != 0) {
                     r.foregroundId = 0;
                     r.foregroundNoti = null;
@@ -1991,11 +1997,17 @@ public final class ActiveServices {
     }
 
     ServiceNotificationPolicy applyForegroundServiceNotificationLocked(Notification notification,
-            final int id, final String pkg, final int userId) {
+            final String tag, final int id, final String pkg, final int userId) {
+        // By nature of the FGS API, all FGS notifications have a null tag
+        if (tag != null) {
+            return ServiceNotificationPolicy.NOT_FOREGROUND_SERVICE;
+        }
+
         if (DEBUG_FOREGROUND_SERVICE) {
             Slog.d(TAG_SERVICE, "Evaluating FGS policy for id=" + id
                     + " pkg=" + pkg + " not=" + notification);
         }
+
         // Is there an FGS using this notification?
         final ServiceMap smap = mServiceMap.get(userId);
         if (smap == null) {
@@ -2142,10 +2154,13 @@ public final class ActiveServices {
             }
         }
 
-        final long nextEligible = when + mAm.mConstants.mFgsNotificationDeferralExclusionTime;
-        mFgsDeferralEligible.put(uid, nextEligible);
+        if (mFgsDeferralRateLimited) {
+            final long nextEligible = when + mAm.mConstants.mFgsNotificationDeferralExclusionTime;
+            mFgsDeferralEligible.put(uid, nextEligible);
+        }
         r.fgDisplayTime = when;
         r.mFgsNotificationDeferred = true;
+        r.mFgsNotificationWasDeferred = true;
         r.mFgsNotificationShown = false;
         mPendingFgsNotifications.add(r);
         if (DEBUG_FOREGROUND_SERVICE) {
@@ -2189,11 +2204,6 @@ public final class ActiveServices {
                                 Slog.d(TAG_SERVICE, "  - service no longer running/fg, ignoring");
                             }
                         }
-                        // Regardless of whether we needed to post the notification or the
-                        // service is no longer running, we may not have logged its FGS
-                        // transition yet depending on the timing and API sequence that led
-                        // to this point - so make sure to do so.
-                        maybeLogFGSStateEnteredLocked(r);
                     }
                 }
                 if (DEBUG_FOREGROUND_SERVICE) {
@@ -2204,13 +2214,35 @@ public final class ActiveServices {
         }
     };
 
-    private void maybeLogFGSStateEnteredLocked(ServiceRecord r) {
-        if (r.mLogEntering) {
-            logFGSStateChangeLocked(r,
-                    FrameworkStatsLog
-                            .FOREGROUND_SERVICE_STATE_CHANGED__STATE__ENTER,
-                    0);
-            r.mLogEntering = false;
+    /**
+     * Suppress or reenable the rate limit on foreground service notification deferral.
+     * Invoked from the activity manager shell command.
+     *
+     * @param enable false to suppress rate-limit policy; true to reenable it.
+     */
+    boolean enableFgsNotificationRateLimitLocked(final boolean enable) {
+        if (enable != mFgsDeferralRateLimited) {
+            mFgsDeferralRateLimited = enable;
+            if (!enable) {
+                // make sure to reset any active rate limiting
+                mFgsDeferralEligible.clear();
+            }
+        }
+        return enable;
+    }
+
+    private void removeServiceNotificationDeferralsLocked(String packageName,
+            final @UserIdInt int userId) {
+        for (int i = mPendingFgsNotifications.size() - 1; i >= 0; i--) {
+            final ServiceRecord r = mPendingFgsNotifications.get(i);
+            if (userId == r.userId
+                    && r.appInfo.packageName.equals(packageName)) {
+                mPendingFgsNotifications.remove(i);
+                if (DEBUG_FOREGROUND_SERVICE) {
+                    Slog.d(TAG_SERVICE, "Removing notification deferral for "
+                            + r);
+                }
+            }
         }
     }
 
@@ -2221,8 +2253,9 @@ public final class ActiveServices {
      * visibility, starting with both Service.startForeground() and
      * NotificationManager.notify().
      */
-    public void onForegroundServiceNotificationUpdateLocked(Notification notification,
-            final int id, final String pkg, @UserIdInt final int userId) {
+    public void onForegroundServiceNotificationUpdateLocked(boolean shown,
+            Notification notification, final int id, final String pkg,
+            @UserIdInt final int userId) {
         // If this happens to be a Notification for an FGS still in its deferral period,
         // drop the deferral and make sure our content bookkeeping is up to date.
         for (int i = mPendingFgsNotifications.size() - 1; i >= 0; i--) {
@@ -2230,17 +2263,24 @@ public final class ActiveServices {
             if (userId == sr.userId
                     && id == sr.foregroundId
                     && sr.appInfo.packageName.equals(pkg)) {
-                if (DEBUG_FOREGROUND_SERVICE) {
-                    Slog.d(TAG_SERVICE, "Notification shown; canceling deferral of "
-                            + sr);
+                // Found it.  If 'shown' is false, it means that the notification
+                // subsystem will not be displaying it yet.
+                if (shown) {
+                    if (DEBUG_FOREGROUND_SERVICE) {
+                        Slog.d(TAG_SERVICE, "Notification shown; canceling deferral of "
+                                + sr);
+                    }
+                    sr.mFgsNotificationShown = true;
+                    sr.mFgsNotificationDeferred = false;
+                    mPendingFgsNotifications.remove(i);
+                } else {
+                    if (DEBUG_FOREGROUND_SERVICE) {
+                        Slog.d(TAG_SERVICE, "FGS notification deferred for " + sr);
+                    }
                 }
-                maybeLogFGSStateEnteredLocked(sr);
-                sr.mFgsNotificationShown = true;
-                sr.mFgsNotificationDeferred = false;
-                mPendingFgsNotifications.remove(i);
             }
         }
-        // And make sure to retain the latest notification content for the FGS
+        // In all cases, make sure to retain the latest notification content for the FGS
         ServiceMap smap = mServiceMap.get(userId);
         if (smap != null) {
             for (int i = 0; i < smap.mServicesByInstanceName.size(); i++) {
@@ -2449,7 +2489,7 @@ public final class ActiveServices {
     }
 
     private void cancelForegroundNotificationLocked(ServiceRecord r) {
-        if (r.foregroundId != 0) {
+        if (r.foregroundNoti != null) {
             // First check to see if this app has any other active foreground services
             // with the same notification ID.  If so, we shouldn't actually cancel it,
             // because that would wipe away the notification that still needs to be shown
@@ -2458,9 +2498,16 @@ public final class ActiveServices {
             if (sm != null) {
                 for (int i = sm.mServicesByInstanceName.size() - 1; i >= 0; i--) {
                     ServiceRecord other = sm.mServicesByInstanceName.valueAt(i);
-                    if (other != r && other.foregroundId == r.foregroundId
+                    if (other != r
+                            && other.isForeground
+                            && other.foregroundId == r.foregroundId
                             && other.packageName.equals(r.packageName)) {
-                        // Found one!  Abort the cancel.
+                        if (DEBUG_FOREGROUND_SERVICE) {
+                            Slog.i(TAG_SERVICE, "FGS notification for " + r
+                                    + " shared by " + other
+                                    + " (isForeground=" + other.isForeground + ")"
+                                    + " - NOT cancelling");
+                        }
                         return;
                     }
                 }
@@ -3287,7 +3334,13 @@ public final class ActiveServices {
         }
     }
 
-    private final void bumpServiceExecutingLocked(ServiceRecord r, boolean fg, String why) {
+    /**
+     * Bump the given service record into executing state.
+     * @param oomAdjReason The caller requests it to perform the oomAdjUpdate if it's not null.
+     * @return {@code true} if it performed oomAdjUpdate.
+     */
+    private boolean bumpServiceExecutingLocked(ServiceRecord r, boolean fg, String why,
+            @Nullable String oomAdjReason) {
         if (DEBUG_SERVICE) Slog.v(TAG_SERVICE, ">>> EXECUTING "
                 + why + " of " + r + " in app " + r.app);
         else if (DEBUG_SERVICE_EXECUTING) Slog.v(TAG_SERVICE_EXECUTING, ">>> EXECUTING "
@@ -3336,9 +3389,19 @@ public final class ActiveServices {
                 }
             }
         }
+        boolean oomAdjusted = false;
+        if (oomAdjReason != null && r.app != null
+                && r.app.mState.getCurProcState() > ActivityManager.PROCESS_STATE_SERVICE) {
+            // Force an immediate oomAdjUpdate, so the client app could be in the correct process
+            // state before doing any service related transactions
+            mAm.enqueueOomAdjTargetLocked(r.app);
+            mAm.updateOomAdjPendingTargetsLocked(oomAdjReason);
+            oomAdjusted = true;
+        }
         r.executeFg |= fg;
         r.executeNesting++;
         r.executingStart = now;
+        return oomAdjusted;
     }
 
     private final boolean requestServiceBindingLocked(ServiceRecord r, IntentBindRecord i,
@@ -3351,8 +3414,8 @@ public final class ActiveServices {
                 + " rebind=" + rebind);
         if ((!i.requested || rebind) && i.apps.size() > 0) {
             try {
-                bumpServiceExecutingLocked(r, execInFg, "bind");
-                r.app.mState.forceProcessStateUpTo(ActivityManager.PROCESS_STATE_SERVICE);
+                bumpServiceExecutingLocked(r, execInFg, "bind",
+                        OomAdjuster.OOM_ADJ_REASON_BIND_SERVICE);
                 r.app.getThread().scheduleBindService(r, i.intent.getIntent(), rebind,
                         r.app.mState.getReportedProcState());
                 if (!rebind) {
@@ -3820,14 +3883,13 @@ public final class ActiveServices {
 
         final ProcessServiceRecord psr = app.mServices;
         final boolean newService = psr.startService(r);
-        bumpServiceExecutingLocked(r, execInFg, "create");
+        bumpServiceExecutingLocked(r, execInFg, "create", null /* oomAdjReason */);
         mAm.updateLruProcessLocked(app, false, null);
         updateServiceForegroundLocked(psr, /* oomAdj= */ false);
-        if (enqueueOomAdj) {
-            mAm.enqueueOomAdjTargetLocked(app);
-        } else {
-            mAm.updateOomAdjLocked(app, OomAdjuster.OOM_ADJ_REASON_START_SERVICE);
-        }
+        // Force an immediate oomAdjUpdate, so the client app could be in the correct process state
+        // before doing any service related transactions
+        mAm.enqueueOomAdjTargetLocked(app);
+        mAm.updateOomAdjLocked(app, OomAdjuster.OOM_ADJ_REASON_START_SERVICE);
 
         boolean created = false;
         try {
@@ -3848,7 +3910,6 @@ public final class ActiveServices {
             mAm.mBatteryStatsService.noteServiceStartLaunch(uid, packageName, serviceName);
             mAm.notifyPackageUse(r.serviceInfo.packageName,
                                  PackageManager.NOTIFY_PACKAGE_USE_SERVICE);
-            app.mState.forceProcessStateUpTo(ActivityManager.PROCESS_STATE_SERVICE);
             thread.scheduleCreateService(r, r.serviceInfo,
                     mAm.compatibilityInfoForPackage(r.serviceInfo.applicationInfo),
                     app.mState.getReportedProcState());
@@ -3948,11 +4009,7 @@ public final class ActiveServices {
             mAm.grantImplicitAccess(r.userId, si.intent, si.callingId,
                     UserHandle.getAppId(r.appInfo.uid)
             );
-            bumpServiceExecutingLocked(r, execInFg, "start");
-            if (!oomAdjusted) {
-                oomAdjusted = true;
-                mAm.updateOomAdjLocked(r.app, true, OomAdjuster.OOM_ADJ_REASON_START_SERVICE);
-            }
+            bumpServiceExecutingLocked(r, execInFg, "start", null /* oomAdjReason */);
             if (r.fgRequired && !r.fgWaiting) {
                 if (!r.isForeground) {
                     if (DEBUG_BACKGROUND_CHECK) {
@@ -3976,6 +4033,10 @@ public final class ActiveServices {
             args.add(new ServiceStartArgs(si.taskRemoved, si.id, flags, si.intent));
         }
 
+        if (!oomAdjusted) {
+            mAm.enqueueOomAdjTargetLocked(r.app);
+            mAm.updateOomAdjPendingTargetsLocked(OomAdjuster.OOM_ADJ_REASON_START_SERVICE);
+        }
         ParceledListSlice<ServiceStartArgs> slice = new ParceledListSlice<>(args);
         slice.setInlineCountLimit(4);
         Exception caughtException = null;
@@ -4070,7 +4131,7 @@ public final class ActiveServices {
             }
         }
 
-        boolean needOomAdj = false;
+        boolean oomAdjusted = false;
         // Tell the service that it has been unbound.
         if (r.app != null && r.app.getThread() != null) {
             for (int i = r.bindings.size() - 1; i >= 0; i--) {
@@ -4079,8 +4140,8 @@ public final class ActiveServices {
                         + ": hasBound=" + ibr.hasBound);
                 if (ibr.hasBound) {
                     try {
-                        bumpServiceExecutingLocked(r, false, "bring down unbind");
-                        needOomAdj = true;
+                        oomAdjusted |= bumpServiceExecutingLocked(r, false, "bring down unbind",
+                                OomAdjuster.OOM_ADJ_REASON_UNBIND_SERVICE);
                         ibr.hasBound = false;
                         ibr.requested = false;
                         r.app.getThread().scheduleUnbindService(r,
@@ -4088,7 +4149,6 @@ public final class ActiveServices {
                     } catch (Exception e) {
                         Slog.w(TAG, "Exception when unbinding service "
                                 + r.shortInstanceName, e);
-                        needOomAdj = false;
                         serviceProcessGoneLocked(r, enqueueOomAdj);
                         break;
                     }
@@ -4180,10 +4240,11 @@ public final class ActiveServices {
         }
 
         r.isForeground = false;
+        r.mFgsNotificationWasDeferred = false;
+        dropFgsNotificationStateLocked(r);
         r.foregroundId = 0;
         r.foregroundNoti = null;
-        r.mAllowWhileInUsePermissionInFgs = false;
-        r.mAllowStartForeground = REASON_DENIED;
+        resetFgsRestrictionLocked(r);
 
         // Clear start entries.
         r.clearDeliveredStartsLocked();
@@ -4199,10 +4260,10 @@ public final class ActiveServices {
                 mAm.updateLruProcessLocked(r.app, false, null);
                 updateServiceForegroundLocked(r.app.mServices, false);
                 try {
-                    bumpServiceExecutingLocked(r, false, "destroy");
+                    oomAdjusted |= bumpServiceExecutingLocked(r, false, "destroy",
+                            oomAdjusted ? null : OomAdjuster.OOM_ADJ_REASON_UNBIND_SERVICE);
                     mDestroyingServices.add(r);
                     r.destroying = true;
-                    needOomAdj = true;
                     r.app.getThread().scheduleStopService(r);
                 } catch (Exception e) {
                     Slog.w(TAG, "Exception when destroying service "
@@ -4218,11 +4279,10 @@ public final class ActiveServices {
                 TAG_SERVICE, "Removed service that is not running: " + r);
         }
 
-        if (needOomAdj) {
-            if (enqueueOomAdj) {
-                mAm.enqueueOomAdjTargetLocked(r.app);
-            } else {
-                mAm.updateOomAdjLocked(r.app, true, OomAdjuster.OOM_ADJ_REASON_UNBIND_SERVICE);
+        if (!oomAdjusted) {
+            mAm.enqueueOomAdjTargetLocked(r.app);
+            if (!enqueueOomAdj) {
+                mAm.updateOomAdjPendingTargetsLocked(OomAdjuster.OOM_ADJ_REASON_UNBIND_SERVICE);
             }
         }
         if (r.bindings.size() > 0) {
@@ -4244,6 +4304,39 @@ public final class ActiveServices {
         }
 
         smap.ensureNotStartingBackgroundLocked(r);
+    }
+
+    private void dropFgsNotificationStateLocked(ServiceRecord r) {
+        if (r.foregroundNoti == null) {
+            return;
+        }
+
+        // If this is the only FGS using this notification, clear its FGS flag
+        boolean shared = false;
+        final ServiceMap smap = mServiceMap.get(r.userId);
+        if (smap != null) {
+            // Is any other FGS using this notification?
+            final int numServices = smap.mServicesByInstanceName.size();
+            for (int i = 0; i < numServices; i++) {
+                final ServiceRecord sr = smap.mServicesByInstanceName.valueAt(i);
+                if (sr == r) {
+                    continue;
+                }
+                if (sr.isForeground
+                        && r.foregroundId == sr.foregroundId
+                        && r.appInfo.packageName.equals(sr.appInfo.packageName)) {
+                    shared = true;
+                    break;
+                }
+            }
+        } else {
+            Slog.wtf(TAG, "FGS " + r + " not found!");
+        }
+
+        // No other FGS is sharing this notification, so we're done with it
+        if (!shared) {
+            r.stripForegroundServiceFlagFromNotification();
+        }
     }
 
     void removeConnectionLocked(ConnectionRecord c, ProcessRecord skipApp,
@@ -4306,19 +4399,14 @@ public final class ActiveServices {
             if (s.app != null && s.app.getThread() != null && b.intent.apps.size() == 0
                     && b.intent.hasBound) {
                 try {
-                    bumpServiceExecutingLocked(s, false, "unbind");
+                    bumpServiceExecutingLocked(s, false, "unbind",
+                            OomAdjuster.OOM_ADJ_REASON_UNBIND_SERVICE);
                     if (b.client != s.app && (c.flags&Context.BIND_WAIVE_PRIORITY) == 0
                             && s.app.mState.getSetProcState() <= PROCESS_STATE_HEAVY_WEIGHT) {
                         // If this service's process is not already in the cached list,
                         // then update it in the LRU list here because this may be causing
                         // it to go down there and we want it to start out near the top.
                         mAm.updateLruProcessLocked(s.app, false, null);
-                    }
-                    if (enqueueOomAdj) {
-                        mAm.enqueueOomAdjTargetLocked(s.app);
-                    } else {
-                        mAm.updateOomAdjLocked(s.app, true,
-                                OomAdjuster.OOM_ADJ_REASON_UNBIND_SERVICE);
                     }
                     b.intent.hasBound = false;
                     // Assume the client doesn't want to know about a rebind;
@@ -4482,7 +4570,7 @@ public final class ActiveServices {
                 if (enqueueOomAdj) {
                     mAm.enqueueOomAdjTargetLocked(r.app);
                 } else {
-                    mAm.updateOomAdjLocked(r.app, true, OomAdjuster.OOM_ADJ_REASON_UNBIND_SERVICE);
+                    mAm.updateOomAdjLocked(r.app, OomAdjuster.OOM_ADJ_REASON_UNBIND_SERVICE);
                 }
             }
             r.executeFg = false;
@@ -4681,6 +4769,7 @@ public final class ActiveServices {
             }
         }
         removeServiceRestartBackoffEnabledLocked(packageName);
+        removeServiceNotificationDeferralsLocked(packageName, userId);
     }
 
     void cleanUpServices(int userId, ComponentName component, Intent baseIntent) {
@@ -4857,7 +4946,8 @@ public final class ActiveServices {
                 Slog.w(TAG, "Service crashed " + sr.crashCount
                         + " times, stopping: " + sr);
                 EventLog.writeEvent(EventLogTags.AM_SERVICE_CRASHED_TOO_MUCH,
-                        sr.userId, sr.crashCount, sr.shortInstanceName, sr.app.getPid());
+                        sr.userId, sr.crashCount, sr.shortInstanceName,
+                        sr.app != null ? sr.app.getPid() : -1);
                 bringDownServiceLocked(sr, true);
             } else if (!allowRestart
                     || !mAm.mUserController.isUserRunning(sr.userId, 0)) {
@@ -6098,6 +6188,20 @@ public final class ActiveServices {
                 ret = REASON_OP_ACTIVATE_PLATFORM_VPN;
             }
         }
+
+        if (ret == REASON_DENIED) {
+            final String inputMethod =
+                    Settings.Secure.getStringForUser(mAm.mContext.getContentResolver(),
+                            Settings.Secure.DEFAULT_INPUT_METHOD,
+                            UserHandle.getUserId(callingUid));
+            if (inputMethod != null) {
+                final ComponentName cn = ComponentName.unflattenFromString(inputMethod);
+                if (cn != null && cn.getPackageName().equals(callingPackage)) {
+                    ret = REASON_CURRENT_INPUT_METHOD;
+                }
+            }
+        }
+
         if (ret == REASON_DENIED) {
             if (mAm.mConstants.mFgsAllowOptOut
                     && targetService != null
@@ -6119,8 +6223,10 @@ public final class ActiveServices {
                 && code != REASON_UID_VISIBLE;
     }
 
-    // TODO: remove this notification after feature development is done
     private void showFgsBgRestrictedNotificationLocked(ServiceRecord r) {
+        if (!mAm.mConstants.mFgsStartRestrictionNotificationEnabled /* default is false */) {
+            return;
+        }
         final Context context = mAm.mContext;
         final String title = "Foreground Service BG-Launch Restricted";
         final String content = "App restricted: " + r.mRecentCallingPackage;
@@ -6183,19 +6289,29 @@ public final class ActiveServices {
                 r.packageName, mAm.mConstants.mFgsAtomSampleRate)) {
             return;
         }
+        boolean allowWhileInUsePermissionInFgs;
+        @PowerExemptionManager.ReasonCode int fgsStartReasonCode;
+        if (state == FrameworkStatsLog.FOREGROUND_SERVICE_STATE_CHANGED__STATE__ENTER
+                || state == FrameworkStatsLog.FOREGROUND_SERVICE_STATE_CHANGED__STATE__EXIT) {
+            allowWhileInUsePermissionInFgs = r.mAllowWhileInUsePermissionInFgsAtEntering;
+            fgsStartReasonCode = r.mAllowStartForegroundAtEntering;
+        } else {
+            allowWhileInUsePermissionInFgs = r.mAllowWhileInUsePermissionInFgs;
+            fgsStartReasonCode = r.mAllowStartForeground;
+        }
         FrameworkStatsLog.write(FrameworkStatsLog.FOREGROUND_SERVICE_STATE_CHANGED,
                 r.appInfo.uid,
                 r.shortInstanceName,
                 state,
-                r.mAllowWhileInUsePermissionInFgs,
-                r.mAllowStartForeground,
+                allowWhileInUsePermissionInFgs,
+                fgsStartReasonCode,
                 r.appInfo.targetSdkVersion,
                 r.mRecentCallingUid,
                 r.mRecentCallerApplicationInfo != null
                         ? r.mRecentCallerApplicationInfo.targetSdkVersion : 0,
                 r.mInfoTempFgsAllowListReason != null
                         ? r.mInfoTempFgsAllowListReason.mCallingUid : INVALID_UID,
-                r.mFgsNotificationDeferred,
+                r.mFgsNotificationWasDeferred,
                 r.mFgsNotificationShown,
                 durationMs,
                 r.mStartForegroundCount,

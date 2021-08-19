@@ -105,7 +105,7 @@
     <string name="screenrecord_device_audio_label" msgid="9016927171280567791">"Audio des Geräts"</string>
     <string name="screenrecord_device_audio_description" msgid="4922694220572186193">"Audioinhalte auf deinem Gerät, wie Musik, Anrufe und Klingeltöne"</string>
     <string name="screenrecord_mic_label" msgid="2111264835791332350">"Mikrofon"</string>
-    <string name="screenrecord_device_audio_and_mic_label" msgid="1831323771978646841">"Audio des Geräts und über externes Mikrofon aufnehmen"</string>
+    <string name="screenrecord_device_audio_and_mic_label" msgid="1831323771978646841">"Audio des Geräts und über Mikrofon"</string>
     <string name="screenrecord_start" msgid="330991441575775004">"Start"</string>
     <string name="screenrecord_ongoing_screen_only" msgid="4459670242451527727">"Bildschirm wird aufgezeichnet"</string>
     <string name="screenrecord_ongoing_screen_and_audio" msgid="5351133763125180920">"Bildschirm und Ton werden aufgezeichnet"</string>
@@ -616,7 +616,7 @@
     <string name="screen_pinning_toast_gesture_nav" msgid="170699893395336705">"Zum Loslösen der App nach oben wischen und halten"</string>
     <string name="screen_pinning_positive" msgid="3285785989665266984">"Ok"</string>
     <string name="screen_pinning_negative" msgid="6882816864569211666">"Nein danke"</string>
-    <string name="screen_pinning_start" msgid="7483998671383371313">"App angepinnt"</string>
+    <string name="screen_pinning_start" msgid="7483998671383371313">"Bildschirm wurde fixiert"</string>
     <string name="screen_pinning_exit" msgid="4553787518387346893">"App vom Bildschirm losgelöst"</string>
     <string name="quick_settings_reset_confirmation_title" msgid="463533331480997595">"<xliff:g id="TILE_LABEL">%1$s</xliff:g> ausblenden?"</string>
     <string name="quick_settings_reset_confirmation_message" msgid="2320586180785674186">"Sie wird wieder eingeblendet, wenn du sie in den Einstellungen erneut aktivierst."</string>
@@ -666,9 +666,11 @@
     <string name="status_bar_ethernet" msgid="5690979758988647484">"Ethernet"</string>
     <string name="status_bar_alarm" msgid="87160847643623352">"Weckruf"</string>
     <string name="wallet_title" msgid="5369767670735827105">"Geldbörse"</string>
+    <string name="wallet_empty_state_label" msgid="7776761245237530394">"Füge eine Zahlungsmethode hinzu, um noch schneller und sicherer mit deinem Smartphone zu bezahlen"</string>
     <string name="wallet_app_button_label" msgid="7123784239111190992">"Alle anzeigen"</string>
     <string name="wallet_action_button_label_unlock" msgid="8663239748726774487">"Zum Bezahlen entsperren"</string>
-    <string name="wallet_secondary_label_no_card" msgid="1282609666895946317">"Nicht eingerichtet"</string>
+    <string name="wallet_secondary_label_no_card" msgid="530725155985223497">"Karte hinzufügen"</string>
+    <string name="wallet_secondary_label_updating" msgid="5726130686114928551">"Wird aktualisiert"</string>
     <string name="wallet_secondary_label_device_locked" msgid="5175862019125370506">"Zum Verwenden entsperren"</string>
     <string name="wallet_error_generic" msgid="257704570182963611">"Beim Abrufen deiner Karten ist ein Fehler aufgetreten – bitte versuch es später noch einmal"</string>
     <string name="wallet_lockscreen_settings_label" msgid="3539105300870383570">"Einstellungen für den Sperrbildschirm"</string>
@@ -1033,6 +1035,7 @@
     <string name="magnification_mode_switch_state_window" msgid="8597100249594076965">"Teil des Bildschirms vergrößern"</string>
     <string name="magnification_mode_switch_click_label" msgid="2786203505805898199">"Schalter"</string>
     <string name="accessibility_floating_button_migration_tooltip" msgid="4431046858918714564">"Die Schaltfläche „Bedienungshilfen“ ersetzt die Touch-Geste für Bedienungshilfen\n\n"<annotation id="link">"Einstellungen aufrufen"</annotation></string>
+    <string name="accessibility_floating_button_switch_migration_tooltip" msgid="6248529129221218770">"Du kannst von der barrierefreien Geste zu einer Schaltfläche wechseln\n\n"<annotation id="link">"Einstellungen"</annotation></string>
     <string name="accessibility_floating_button_docking_tooltip" msgid="6814897496767461517">"Durch Ziehen an den Rand wird die Schaltfläche zeitweise ausgeblendet"</string>
     <string name="accessibility_floating_button_action_move_top_left" msgid="6253520703618545705">"Nach oben links verschieben"</string>
     <string name="accessibility_floating_button_action_move_top_right" msgid="6106225581993479711">"Nach rechts oben verschieben"</string>
@@ -1041,7 +1044,7 @@
     <string name="accessibility_floating_button_action_move_to_edge_and_hide_to_half" msgid="662401168245782658">"An den Rand verschieben und verbergen"</string>
     <string name="accessibility_floating_button_action_move_out_edge_and_show" msgid="8354760891651663326">"Vom Rand verschieben und anzeigen"</string>
     <string name="accessibility_floating_button_action_double_tap_to_toggle" msgid="7976492639670692037">"Wechseln"</string>
-    <string name="quick_controls_title" msgid="7095074621086860062">"Smart-Home-Steuerung"</string>
+    <string name="quick_controls_title" msgid="6839108006171302273">"Gerätesteuerung"</string>
     <string name="controls_providers_title" msgid="6879775889857085056">"App zum Hinzufügen von Steuerelementen auswählen"</string>
     <plurals name="controls_number_of_favorites" formatted="false" msgid="1057347832073807380">
       <item quantity="other"><xliff:g id="NUMBER_1">%s</xliff:g> Steuerelemente hinzugefügt.</item>
@@ -1084,7 +1087,11 @@
     <string name="controls_media_dismiss_button" msgid="9081375542265132213">"Ablehnen"</string>
     <string name="controls_media_resume" msgid="1933520684481586053">"Fortsetzen"</string>
     <string name="controls_media_settings_button" msgid="5815790345117172504">"Einstellungen"</string>
+    <string name="controls_media_playing_item_description" msgid="4531853311504359098">"<xliff:g id="SONG_NAME">%1$s</xliff:g> von <xliff:g id="ARTIST_NAME">%2$s</xliff:g> wird gerade über <xliff:g id="APP_LABEL">%3$s</xliff:g> wiedergegeben"</string>
     <string name="controls_media_smartspace_rec_title" msgid="1699818353932537407">"Wiedergeben"</string>
+    <string name="controls_media_smartspace_rec_description" msgid="4136242327044070732">"<xliff:g id="APP_LABEL">%1$s</xliff:g> öffnen"</string>
+    <string name="controls_media_smartspace_rec_item_description" msgid="2189271793070870883">"<xliff:g id="SONG_NAME">%1$s</xliff:g> von <xliff:g id="ARTIST_NAME">%2$s</xliff:g> über <xliff:g id="APP_LABEL">%3$s</xliff:g> wiedergeben"</string>
+    <string name="controls_media_smartspace_rec_item_no_artist_description" msgid="8703614798636591077">"<xliff:g id="SONG_NAME">%1$s</xliff:g> über <xliff:g id="APP_LABEL">%2$s</xliff:g> wiedergeben"</string>
     <string name="controls_error_timeout" msgid="794197289772728958">"Inaktiv – sieh in der App nach"</string>
     <string name="controls_error_retryable" msgid="864025882878378470">"Fehler. Neuer Versuch…"</string>
     <string name="controls_error_removed" msgid="6675638069846014366">"Nicht gefunden"</string>
@@ -1109,7 +1116,7 @@
     <string name="basic_status" msgid="2315371112182658176">"Offene Unterhaltung"</string>
     <string name="select_conversation_title" msgid="6716364118095089519">"Unterhaltungs-Widgets"</string>
     <string name="select_conversation_text" msgid="3376048251434956013">"Tippe auf eine Unterhaltung, um sie deinem Startbildschirm hinzuzufügen"</string>
-    <string name="no_conversations_text" msgid="7362374212649891057">"Wenn du Nachrichten empfängst, findest du sie hier"</string>
+    <string name="no_conversations_text" msgid="5354115541282395015">"Deine letzten Unterhaltungen werden hier angezeigt"</string>
     <string name="priority_conversations" msgid="3967482288896653039">"Vorrangige Unterhaltungen"</string>
     <string name="recent_conversations" msgid="8531874684782574622">"Neueste Unterhaltungen"</string>
     <string name="okay" msgid="6490552955618608554">"Ok"</string>
@@ -1138,8 +1145,11 @@
     <string name="messages_count_overflow_indicator" msgid="7850934067082006043">"<xliff:g id="NUMBER">%d</xliff:g>+"</string>
     <string name="people_tile_description" msgid="8154966188085545556">"Letzte Nachrichten, verpasste Anrufe und Statusaktualisierungen ansehen"</string>
     <string name="people_tile_title" msgid="6589377493334871272">"Unterhaltung"</string>
-    <string name="new_notification_text_content_description" msgid="5574393603145263727">"<xliff:g id="NAME">%1$s</xliff:g> hat eine Nachricht gesendet"</string>
+    <string name="paused_by_dnd" msgid="7856941866433556428">"Durch „Bitte nicht stören“ pausiert"</string>
+    <string name="new_notification_text_content_description" msgid="2915029960094389291">"<xliff:g id="NAME">%1$s</xliff:g> hat eine Nachricht gesendet: <xliff:g id="NOTIFICATION">%2$s</xliff:g>"</string>
     <string name="new_notification_image_content_description" msgid="6017506886810813123">"<xliff:g id="NAME">%1$s</xliff:g> hat ein Bild gesendet"</string>
+    <string name="new_status_content_description" msgid="6046637888641308327">"<xliff:g id="NAME">%1$s</xliff:g> hat den Status aktualisiert: <xliff:g id="STATUS">%2$s</xliff:g>"</string>
+    <string name="person_available" msgid="2318599327472755472">"Verfügbar"</string>
     <string name="battery_state_unknown_notification_title" msgid="8464703640483773454">"Problem beim Lesen des Akkustands"</string>
     <string name="battery_state_unknown_notification_text" msgid="13720937839460899">"Für weitere Informationen tippen"</string>
     <string name="qs_alarm_tile_no_alarm" msgid="4826472008616807923">"Kein Wecker gestellt"</string>

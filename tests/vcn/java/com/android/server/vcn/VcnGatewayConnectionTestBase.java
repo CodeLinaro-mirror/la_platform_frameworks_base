@@ -127,7 +127,9 @@ public class VcnGatewayConnectionTestBase {
 
     protected static final TelephonySubscriptionSnapshot TEST_SUBSCRIPTION_SNAPSHOT =
             new TelephonySubscriptionSnapshot(
-                    Collections.singletonMap(TEST_SUB_ID, TEST_SUB_INFO), Collections.EMPTY_MAP);
+                    TEST_SUB_ID,
+                    Collections.singletonMap(TEST_SUB_ID, TEST_SUB_INFO),
+                    Collections.EMPTY_MAP);
 
     @NonNull protected final Context mContext;
     @NonNull protected final TestLooper mTestLooper;
@@ -177,7 +179,7 @@ public class VcnGatewayConnectionTestBase {
 
         doReturn(mUnderlyingNetworkTracker)
                 .when(mDeps)
-                .newUnderlyingNetworkTracker(any(), any(), any(), any(), any());
+                .newUnderlyingNetworkTracker(any(), any(), any(), any());
         doReturn(mWakeLock)
                 .when(mDeps)
                 .newWakeLock(eq(mContext), eq(PowerManager.PARTIAL_WAKE_LOCK), any());

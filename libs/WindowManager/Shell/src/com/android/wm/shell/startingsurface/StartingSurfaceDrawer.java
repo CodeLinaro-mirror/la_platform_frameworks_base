@@ -17,40 +17,53 @@
 package com.android.wm.shell.startingsurface;
 
 import static android.content.Context.CONTEXT_RESTRICTED;
+import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
 import static android.view.Choreographer.CALLBACK_INSETS_ANIMATION;
 import static android.view.Display.DEFAULT_DISPLAY;
+import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_LEGACY_SPLASH_SCREEN;
+import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_SNAPSHOT;
 
 import android.annotation.Nullable;
 import android.app.ActivityManager.RunningTaskInfo;
 import android.app.ActivityTaskManager;
+import android.app.ActivityThread;
+import android.app.TaskInfo;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
+import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
+import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.os.IBinder;
-import android.os.SystemProperties;
+import android.os.RemoteCallback;
+import android.os.RemoteException;
+import android.os.Trace;
 import android.os.UserHandle;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.view.Choreographer;
 import android.view.Display;
 import android.view.SurfaceControl;
+import android.view.SurfaceControlViewHost;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.window.SplashScreenView;
 import android.window.SplashScreenView.SplashScreenViewParcelable;
 import android.window.StartingWindowInfo;
+import android.window.StartingWindowInfo.StartingWindowType;
 import android.window.TaskSnapshot;
 
 import com.android.internal.R;
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.common.TransactionPool;
+import com.android.wm.shell.common.annotations.ShellSplashscreenThread;
 
 import java.util.function.Supplier;
 
@@ -90,6 +103,7 @@ import java.util.function.Supplier;
  * => WM#addView -> .. waiting for Choreographer#doFrame -> relayout -> draw -> (draw the Paint
  * directly).
  */
+@ShellSplashscreenThread
 public class StartingSurfaceDrawer {
     static final String TAG = StartingSurfaceDrawer.class.getSimpleName();
     static final boolean DEBUG_SPLASH_SCREEN = StartingWindowController.DEBUG_SPLASH_SCREEN;
@@ -98,11 +112,10 @@ public class StartingSurfaceDrawer {
     private final Context mContext;
     private final DisplayManager mDisplayManager;
     private final ShellExecutor mSplashScreenExecutor;
-    private final SplashscreenContentDrawer mSplashscreenContentDrawer;
+    @VisibleForTesting
+    final SplashscreenContentDrawer mSplashscreenContentDrawer;
     private Choreographer mChoreographer;
 
-    private static final boolean DEBUG_ENABLE_REVEAL_ANIMATION =
-            SystemProperties.getBoolean("persist.debug.enable_reveal_animation", true);
     /**
      * @param splashScreenExecutor The thread used to control add and remove starting window.
      */
@@ -116,6 +129,13 @@ public class StartingSurfaceDrawer {
     }
 
     private final SparseArray<StartingWindowRecord> mStartingWindowRecords = new SparseArray<>();
+
+    /**
+     * Records of {@link SurfaceControlViewHost} where the splash screen icon animation is
+     * rendered and that have not yet been removed by their client.
+     */
+    private final SparseArray<SurfaceControlViewHost> mAnimatedSplashScreenSurfaceHosts =
+            new SparseArray<>(1);
 
     /** Obtain proper context for showing splash screen on the provided display. */
     private Context getDisplayContext(Context context, int displayId) {
@@ -134,12 +154,19 @@ public class StartingSurfaceDrawer {
         return context.createDisplayContext(targetDisplay);
     }
 
+    private int getSplashScreenTheme(int splashScreenThemeResId, ActivityInfo activityInfo) {
+        return splashScreenThemeResId != 0
+                ? splashScreenThemeResId
+                : activityInfo.getThemeResource() != 0 ? activityInfo.getThemeResource()
+                        : com.android.internal.R.style.Theme_DeviceDefault_DayNight;
+    }
     /**
      * Called when a task need a splash screen starting window.
-     * @param emptyView Whether drawing an empty frame without anything on it.
+     *
+     * @param suggestType The suggestion type to draw the splash screen.
      */
     void addSplashScreenStartingWindow(StartingWindowInfo windowInfo, IBinder appToken,
-            boolean emptyView) {
+            @StartingWindowType int suggestType) {
         final RunningTaskInfo taskInfo = windowInfo.taskInfo;
         final ActivityInfo activityInfo = taskInfo.topActivityInfo;
         if (activityInfo == null) {
@@ -154,13 +181,11 @@ public class StartingSurfaceDrawer {
         final int taskId = taskInfo.taskId;
         Context context = mContext;
         // replace with the default theme if the application didn't set
-        final int theme = windowInfo.splashScreenThemeResId != 0
-                ? windowInfo.splashScreenThemeResId
-                : activityInfo.getThemeResource() != 0 ? activityInfo.getThemeResource()
-                        : com.android.internal.R.style.Theme_DeviceDefault_DayNight;
+        final int theme = getSplashScreenTheme(windowInfo.splashScreenThemeResId, activityInfo);
         if (DEBUG_SPLASH_SCREEN) {
             Slog.d(TAG, "addSplashScreen " + activityInfo.packageName
-                    + " theme=" + Integer.toHexString(theme) + " task= " + taskInfo.taskId);
+                    + " theme=" + Integer.toHexString(theme) + " task=" + taskInfo.taskId
+                    + " suggestType=" + suggestType);
         }
 
         // Obtain proper context to launch on the right display.
@@ -218,12 +243,18 @@ public class StartingSurfaceDrawer {
         params.setFitInsetsTypes(0);
         params.format = PixelFormat.TRANSLUCENT;
         int windowFlags = WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-                | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS
                 | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                 | WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR;
         final TypedArray a = context.obtainStyledAttributes(R.styleable.Window);
         if (a.getBoolean(R.styleable.Window_windowShowWallpaper, false)) {
             windowFlags |= WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER;
+        }
+        if (suggestType == STARTING_WINDOW_TYPE_LEGACY_SPLASH_SCREEN) {
+            if (a.getBoolean(R.styleable.Window_windowDrawsSystemBarBackgrounds, false)) {
+                windowFlags |= WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS;
+            }
+        } else {
+            windowFlags |= WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS;
         }
         params.layoutInDisplayCutoutMode = a.getInt(
                 R.styleable.Window_windowLayoutInDisplayCutoutMode,
@@ -275,7 +306,10 @@ public class StartingSurfaceDrawer {
         // create splash screen view finished.
         final SplashScreenViewSupplier viewSupplier = new SplashScreenViewSupplier();
         final FrameLayout rootLayout = new FrameLayout(context);
+        rootLayout.setPadding(0, 0, 0, 0);
+        rootLayout.setFitsSystemWindows(false);
         final Runnable setViewSynchronized = () -> {
+            Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "addSplashScreenView");
             // waiting for setContentView before relayoutWindow
             SplashScreenView contentView = viewSupplier.get();
             final StartingWindowRecord record = mStartingWindowRecords.get(taskId);
@@ -294,13 +328,14 @@ public class StartingSurfaceDrawer {
                 }
                 record.setSplashScreenView(contentView);
             }
+            Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
         };
-        mSplashscreenContentDrawer.createContentView(context, emptyView, activityInfo, taskId,
+        mSplashscreenContentDrawer.createContentView(context, suggestType, activityInfo, taskId,
                 viewSupplier::setView);
 
         try {
             final WindowManager wm = context.getSystemService(WindowManager.class);
-            if (postAddWindow(taskId, appToken, rootLayout, wm, params)) {
+            if (addWindow(taskId, appToken, rootLayout, wm, params, suggestType)) {
                 // We use the splash screen worker thread to create SplashScreenView while adding
                 // the window, as otherwise Choreographer#doFrame might be delayed on this thread.
                 // And since Choreographer#doFrame won't happen immediately after adding the window,
@@ -309,6 +344,10 @@ public class StartingSurfaceDrawer {
                 // the window before first round relayoutWindow, which will happen after insets
                 // animation.
                 mChoreographer.postCallback(CALLBACK_INSETS_ANIMATION, setViewSynchronized, null);
+                // Block until we get the background color.
+                final StartingWindowRecord record = mStartingWindowRecords.get(taskId);
+                final SplashScreenView contentView = viewSupplier.get();
+                record.mBGColor = contentView.getInitBackgroundColor();
             }
         } catch (RuntimeException e) {
             // don't crash if something else bad happens, for example a
@@ -316,6 +355,14 @@ public class StartingSurfaceDrawer {
             // on external storage that has been unmounted.
             Slog.w(TAG, "failed creating starting window at taskId: " + taskId, e);
         }
+    }
+
+    int getStartingWindowBackgroundColorForTask(int taskId) {
+        final StartingWindowRecord startingWindowRecord = mStartingWindowRecords.get(taskId);
+        if (startingWindowRecord == null) {
+            return Color.TRANSPARENT;
+        }
+        return startingWindowRecord.mBGColor;
     }
 
     private static class SplashScreenViewSupplier implements Supplier<SplashScreenView> {
@@ -343,6 +390,43 @@ public class StartingSurfaceDrawer {
         }
     }
 
+    int estimateTaskBackgroundColor(TaskInfo taskInfo) {
+        if (taskInfo.topActivityInfo == null) {
+            return Color.TRANSPARENT;
+        }
+        final ActivityInfo activityInfo = taskInfo.topActivityInfo;
+        final String packageName = activityInfo.packageName;
+        final int userId = taskInfo.userId;
+        final Context windowContext;
+        try {
+            windowContext = mContext.createPackageContextAsUser(
+                    packageName, Context.CONTEXT_RESTRICTED, UserHandle.of(userId));
+        } catch (PackageManager.NameNotFoundException e) {
+            Slog.w(TAG, "Failed creating package context with package name "
+                    + packageName + " for user " + taskInfo.userId, e);
+            return Color.TRANSPARENT;
+        }
+        try {
+            final IPackageManager packageManager = ActivityThread.getPackageManager();
+            final String splashScreenThemeName = packageManager.getSplashScreenTheme(packageName,
+                    userId);
+            final int splashScreenThemeId = splashScreenThemeName != null
+                    ? windowContext.getResources().getIdentifier(splashScreenThemeName, null, null)
+                    : 0;
+
+            final int theme = getSplashScreenTheme(splashScreenThemeId, activityInfo);
+
+            if (theme != windowContext.getThemeResId()) {
+                windowContext.setTheme(theme);
+            }
+            return mSplashscreenContentDrawer.estimateTaskBackgroundColor(windowContext);
+        } catch (RuntimeException | RemoteException e) {
+            Slog.w(TAG, "failed get starting window background color at taskId: "
+                    + taskInfo.taskId, e);
+        }
+        return Color.TRANSPARENT;
+    }
+
     /**
      * Called when a task need a snapshot starting window.
      */
@@ -357,7 +441,7 @@ public class StartingSurfaceDrawer {
             return;
         }
         final StartingWindowRecord tView = new StartingWindowRecord(appToken,
-                null/* decorView */, surface);
+                null/* decorView */, surface, STARTING_WINDOW_TYPE_SNAPSHOT);
         mStartingWindowRecords.put(taskId, tView);
     }
 
@@ -374,29 +458,63 @@ public class StartingSurfaceDrawer {
 
     /**
      * Called when the Task wants to copy the splash screen.
-     * @param taskId
      */
     public void copySplashScreenView(int taskId) {
         final StartingWindowRecord preView = mStartingWindowRecords.get(taskId);
         SplashScreenViewParcelable parcelable;
-        if (preView != null && preView.mContentView != null
-                && preView.mContentView.isCopyable()) {
-            parcelable = new SplashScreenViewParcelable(preView.mContentView);
-            preView.mContentView.onCopied();
+        SplashScreenView splashScreenView = preView != null ? preView.mContentView : null;
+        if (splashScreenView != null && splashScreenView.isCopyable()) {
+            parcelable = new SplashScreenViewParcelable(splashScreenView);
+            parcelable.setClientCallback(
+                    new RemoteCallback((bundle) -> mSplashScreenExecutor.execute(
+                            () -> onAppSplashScreenViewRemoved(taskId, false))));
+            splashScreenView.onCopied();
+            mAnimatedSplashScreenSurfaceHosts.append(taskId, splashScreenView.getSurfaceHost());
         } else {
             parcelable = null;
         }
         if (DEBUG_SPLASH_SCREEN) {
             Slog.v(TAG, "Copying splash screen window view for task: " + taskId
-                    + " parcelable? " + parcelable);
+                    + " parcelable: " + parcelable);
         }
         ActivityTaskManager.getInstance().onSplashScreenViewCopyFinished(taskId, parcelable);
     }
 
-    protected boolean postAddWindow(int taskId, IBinder appToken, View view, WindowManager wm,
-            WindowManager.LayoutParams params) {
+    /**
+     * Called when the {@link SplashScreenView} is removed from the client Activity view's hierarchy
+     * or when the Activity is clean up.
+     *
+     * @param taskId The Task id on which the splash screen was attached
+     */
+    public void onAppSplashScreenViewRemoved(int taskId) {
+        onAppSplashScreenViewRemoved(taskId, true /* fromServer */);
+    }
+
+    /**
+     * @param fromServer If true, this means the removal was notified by the server. This is only
+     *                   used for debugging purposes.
+     * @see #onAppSplashScreenViewRemoved(int)
+     */
+    private void onAppSplashScreenViewRemoved(int taskId, boolean fromServer) {
+        SurfaceControlViewHost viewHost =
+                mAnimatedSplashScreenSurfaceHosts.get(taskId);
+        if (viewHost == null) {
+            return;
+        }
+        mAnimatedSplashScreenSurfaceHosts.remove(taskId);
+        if (DEBUG_SPLASH_SCREEN) {
+            String reason = fromServer ? "Server cleaned up" : "App removed";
+            Slog.v(TAG, reason + "the splash screen. Releasing SurfaceControlViewHost for task:"
+                    + taskId);
+        }
+        viewHost.getView().post(viewHost::release);
+    }
+
+    protected boolean addWindow(int taskId, IBinder appToken, View view, WindowManager wm,
+            WindowManager.LayoutParams params, @StartingWindowType int suggestType) {
         boolean shouldSaveView = true;
         try {
+            Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "addRootView");
             wm.addView(view, params);
         } catch (WindowManager.BadTokenException e) {
             // ignore
@@ -404,6 +522,7 @@ public class StartingSurfaceDrawer {
                     + e.getMessage());
             shouldSaveView = false;
         } finally {
+            Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
             if (view != null && view.getParent() == null) {
                 Slog.w(TAG, "view not successfully added to wm, removing view");
                 wm.removeViewImmediate(view);
@@ -412,14 +531,15 @@ public class StartingSurfaceDrawer {
         }
         if (shouldSaveView) {
             removeWindowNoAnimate(taskId);
-            saveSplashScreenRecord(appToken, taskId, view);
+            saveSplashScreenRecord(appToken, taskId, view, suggestType);
         }
         return shouldSaveView;
     }
 
-    private void saveSplashScreenRecord(IBinder appToken, int taskId, View view) {
+    private void saveSplashScreenRecord(IBinder appToken, int taskId, View view,
+            @StartingWindowType int suggestType) {
         final StartingWindowRecord tView = new StartingWindowRecord(appToken, view,
-                null/* TaskSnapshotWindow */);
+                null/* TaskSnapshotWindow */, suggestType);
         mStartingWindowRecords.put(taskId, tView);
     }
 
@@ -435,24 +555,23 @@ public class StartingSurfaceDrawer {
                 if (DEBUG_SPLASH_SCREEN) {
                     Slog.v(TAG, "Removing splash screen window for task: " + taskId);
                 }
-                if (record.mContentView != null
-                        && record.mContentView.isRevealAnimationSupported()) {
-                    if (playRevealAnimation) {
-                        if (DEBUG_ENABLE_REVEAL_ANIMATION) {
+                if (record.mContentView != null) {
+                    if (record.mSuggestType == STARTING_WINDOW_TYPE_LEGACY_SPLASH_SCREEN) {
+                        removeWindowInner(record.mDecorView, false);
+                    } else {
+                        if (playRevealAnimation) {
                             mSplashscreenContentDrawer.applyExitAnimation(record.mContentView,
                                     leash, frame,
                                     () -> removeWindowInner(record.mDecorView, true));
                         } else {
-                            // using the default exit animation from framework
-                            removeWindowInner(record.mDecorView, false);
+                            // the SplashScreenView has been copied to client, hide the view to skip
+                            // default exit animation
+                            removeWindowInner(record.mDecorView, true);
                         }
-                    } else {
-                        // the SplashScreenView has been copied to client, hide the view to skip
-                        // default exit animation
-                        removeWindowInner(record.mDecorView, true);
                     }
                 } else {
-                    // this is a blank splash screen, don't apply reveal animation
+                    // shouldn't happen
+                    Slog.e(TAG, "Found empty splash screen, remove!");
                     removeWindowInner(record.mDecorView, false);
                 }
             }
@@ -485,12 +604,18 @@ public class StartingSurfaceDrawer {
         private final TaskSnapshotWindow mTaskSnapshotWindow;
         private SplashScreenView mContentView;
         private boolean mSetSplashScreen;
+        private @StartingWindowType int mSuggestType;
+        private int mBGColor;
 
         StartingWindowRecord(IBinder appToken, View decorView,
-                TaskSnapshotWindow taskSnapshotWindow) {
+                TaskSnapshotWindow taskSnapshotWindow, @StartingWindowType int suggestType) {
             mAppToken = appToken;
             mDecorView = decorView;
             mTaskSnapshotWindow = taskSnapshotWindow;
+            if (mTaskSnapshotWindow != null) {
+                mBGColor = mTaskSnapshotWindow.getBackgroundColor();
+            }
+            mSuggestType = suggestType;
         }
 
         private void setSplashScreenView(SplashScreenView splashScreenView) {

@@ -22,6 +22,7 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.HardwareRenderer;
+import android.graphics.Matrix;
 import android.graphics.RecordingCanvas;
 import android.graphics.Rect;
 import android.graphics.RenderNode;
@@ -34,6 +35,7 @@ import android.text.TextUtils;
 import android.util.Log;
 import android.view.ScrollCaptureResponse;
 import android.view.View;
+import android.view.ViewTreeObserver;
 import android.widget.ImageView;
 
 import androidx.constraintlayout.widget.ConstraintLayout;
@@ -61,7 +63,7 @@ import javax.inject.Inject;
  * and bottom before saving/sharing/editing.
  */
 public class LongScreenshotActivity extends Activity {
-    private static final String TAG = "LongScreenshotActivity";
+    private static final String TAG = LogConfig.logTag(LongScreenshotActivity.class);
 
     public static final String EXTRA_CAPTURE_RESPONSE = "capture-response";
     private static final String KEY_SAVED_IMAGE_PATH = "saved-image-path";
@@ -70,10 +72,11 @@ public class LongScreenshotActivity extends Activity {
     private final Executor mUiExecutor;
     private final Executor mBackgroundExecutor;
     private final ImageExporter mImageExporter;
-    private final LongScreenshotHolder mLongScreenshotHolder;
+    private final LongScreenshotData mLongScreenshotHolder;
 
     private ImageView mPreview;
     private ImageView mTransitionView;
+    private ImageView mEnterTransitionView;
     private View mSave;
     private View mEdit;
     private View mShare;
@@ -98,7 +101,7 @@ public class LongScreenshotActivity extends Activity {
     @Inject
     public LongScreenshotActivity(UiEventLogger uiEventLogger, ImageExporter imageExporter,
             @Main Executor mainExecutor, @Background Executor bgExecutor,
-            LongScreenshotHolder longScreenshotHolder) {
+            LongScreenshotData longScreenshotHolder) {
         mUiEventLogger = uiEventLogger;
         mUiExecutor = mainExecutor;
         mBackgroundExecutor = bgExecutor;
@@ -109,9 +112,7 @@ public class LongScreenshotActivity extends Activity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        Log.d(TAG, "onCreate(savedInstanceState = " + savedInstanceState + ")");
         super.onCreate(savedInstanceState);
-
         setContentView(R.layout.long_screenshot);
 
         mPreview = requireViewById(R.id.preview);
@@ -122,6 +123,9 @@ public class LongScreenshotActivity extends Activity {
         mMagnifierView = requireViewById(R.id.magnifier);
         mCropView.setCropInteractionListener(mMagnifierView);
         mTransitionView = requireViewById(R.id.transition);
+        mEnterTransitionView = requireViewById(R.id.enter_transition);
+
+        requireViewById(R.id.cancel).setOnClickListener(v -> finishAndRemoveTask());
 
         mSave.setOnClickListener(this::onClicked);
         mEdit.setOnClickListener(this::onClicked);
@@ -149,8 +153,12 @@ public class LongScreenshotActivity extends Activity {
 
     @Override
     public void onStart() {
-        Log.d(TAG, "onStart");
         super.onStart();
+
+        if (mPreview.getDrawable() != null) {
+            // We already have an image, so no need to try to load again.
+            return;
+        }
 
         if (mCacheLoadFuture != null) {
             Log.d(TAG, "mCacheLoadFuture != null");
@@ -182,11 +190,10 @@ public class LongScreenshotActivity extends Activity {
     }
 
     private void onLongScreenshotReceived(LongScreenshot longScreenshot) {
-        Log.d(TAG, "onLongScreenshotReceived(longScreenshot=" + longScreenshot + ")");
+        Log.i(TAG, "Completed: " + longScreenshot);
         mLongScreenshot = longScreenshot;
-        mPreview.setImageDrawable(mLongScreenshot.getDrawable());
-        updateImageDimensions();
-        mCropView.setVisibility(View.VISIBLE);
+        Drawable drawable = mLongScreenshot.getDrawable();
+        mPreview.setImageDrawable(drawable);
         mMagnifierView.setDrawable(mLongScreenshot.getDrawable(),
                 mLongScreenshot.getWidth(), mLongScreenshot.getHeight());
         // Original boundaries go from the image tile set's y=0 to y=pageSize, so
@@ -196,13 +203,36 @@ public class LongScreenshotActivity extends Activity {
         float bottomFraction = Math.min(1f,
                 1 - (mLongScreenshot.getBottom() - mLongScreenshot.getPageHeight())
                         / (float) mLongScreenshot.getHeight());
-        mCropView.animateBoundaryTo(CropView.CropBoundary.TOP, topFraction);
-        mCropView.animateBoundaryTo(CropView.CropBoundary.BOTTOM, bottomFraction);
-        setButtonsEnabled(true);
+
+        mEnterTransitionView.setImageDrawable(drawable);
+        mEnterTransitionView.getViewTreeObserver().addOnPreDrawListener(
+                new ViewTreeObserver.OnPreDrawListener() {
+                    @Override
+                    public boolean onPreDraw() {
+                        mEnterTransitionView.getViewTreeObserver().removeOnPreDrawListener(this);
+                        updateImageDimensions();
+                        mEnterTransitionView.post(() -> {
+                            Rect dest = new Rect();
+                            mEnterTransitionView.getBoundsOnScreen(dest);
+                            mLongScreenshotHolder.takeTransitionDestinationCallback()
+                                    .setTransitionDestination(dest, () -> {
+                                        mPreview.animate().alpha(1f);
+                                        mCropView.setBoundaryPosition(
+                                                CropView.CropBoundary.TOP, topFraction);
+                                        mCropView.setBoundaryPosition(
+                                                CropView.CropBoundary.BOTTOM, bottomFraction);
+                                        mCropView.animateEntrance();
+                                        mCropView.setVisibility(View.VISIBLE);
+                                        setButtonsEnabled(true);
+                                    });
+                        });
+                        return true;
+                    }
+                });
 
         // Immediately export to temp image file for saved state
-        mCacheSaveFuture = mImageExporter.exportAsTempFile(mBackgroundExecutor,
-                mLongScreenshot.toBitmap());
+        mCacheSaveFuture = mImageExporter.exportToRawFile(mBackgroundExecutor,
+                mLongScreenshot.toBitmap(), new File(getCacheDir(), "long_screenshot_cache.png"));
         mCacheSaveFuture.addListener(() -> {
             try {
                 // Get the temp file path to persist, used in onSavedInstanceState
@@ -215,9 +245,9 @@ public class LongScreenshotActivity extends Activity {
     }
 
     private void onCachedImageLoaded(ImageLoader.Result imageResult) {
-        Log.d(TAG, "onCachedImageLoaded(imageResult=" + imageResult + ")");
         BitmapDrawable drawable = new BitmapDrawable(getResources(), imageResult.bitmap);
         mPreview.setImageDrawable(drawable);
+        mPreview.setAlpha(1f);
         mMagnifierView.setDrawable(drawable, imageResult.bitmap.getWidth(),
                 imageResult.bitmap.getHeight());
         mCropView.setVisibility(View.VISIBLE);
@@ -239,7 +269,6 @@ public class LongScreenshotActivity extends Activity {
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
-        Log.d(TAG, "onSaveInstanceState");
         super.onSaveInstanceState(outState);
         if (mSavedImagePath != null) {
             outState.putString(KEY_SAVED_IMAGE_PATH, mSavedImagePath.getPath());
@@ -247,14 +276,7 @@ public class LongScreenshotActivity extends Activity {
     }
 
     @Override
-    protected void onPause() {
-        Log.d(TAG, "onPause");
-        super.onPause();
-    }
-
-    @Override
     protected void onStop() {
-        Log.d(TAG, "onStop finishing=" + isFinishing());
         super.onStop();
         if (mTransitionStarted) {
             finish();
@@ -276,17 +298,10 @@ public class LongScreenshotActivity extends Activity {
             mCacheSaveFuture.cancel(true);
         }
         if (mSavedImagePath != null) {
-            Log.d(TAG, "Deleting " + mSavedImagePath);
             //noinspection ResultOfMethodCallIgnored
             mSavedImagePath.delete();
             mSavedImagePath = null;
         }
-    }
-
-    @Override
-    protected void onDestroy() {
-        Log.d(TAG, "onDestroy");
-        super.onDestroy();
     }
 
     private void setButtonsEnabled(boolean enabled) {
@@ -306,11 +321,18 @@ public class LongScreenshotActivity extends Activity {
                 | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
 
         mTransitionView.setImageBitmap(mOutputBitmap);
-        mTransitionView.setVisibility(View.VISIBLE);
         mTransitionView.setTransitionName(
                 ChooserActivity.FIRST_IMAGE_PREVIEW_TRANSITION_NAME);
         // TODO: listen for transition completing instead of finishing onStop
         mTransitionStarted = true;
+        int[] locationOnScreen = new int[2];
+        mTransitionView.getLocationOnScreen(locationOnScreen);
+        int[] locationInWindow = new int[2];
+        mTransitionView.getLocationInWindow(locationInWindow);
+        int deltaX = locationOnScreen[0] - locationInWindow[0];
+        int deltaY = locationOnScreen[1] - locationInWindow[1];
+        mTransitionView.setX(mTransitionView.getX() - deltaX);
+        mTransitionView.setY(mTransitionView.getY() - deltaY);
         startActivity(intent,
                 ActivityOptions.makeSceneTransitionAnimation(this, mTransitionView,
                         ChooserActivity.FIRST_IMAGE_PREVIEW_TRANSITION_NAME).toBundle());
@@ -344,7 +366,6 @@ public class LongScreenshotActivity extends Activity {
     }
 
     private void startExport(PendingAction action) {
-        Log.d(TAG, "startExport(action = " + action + ")");
         Drawable drawable = mPreview.getDrawable();
         if (drawable == null) {
             Log.e(TAG, "No drawable, skipping export!");
@@ -412,22 +433,26 @@ public class LongScreenshotActivity extends Activity {
         // The image width and height on screen
         int imageHeight = previewHeight;
         int imageWidth = previewWidth;
+        float scale;
+        int extraPadding = 0;
         if (imageRatio > viewRatio) {
             // Image is full width and height is constrained, compute extra padding to inform
             // CropView
             imageHeight = (int) (previewHeight * viewRatio / imageRatio);
-            int extraPadding = (previewHeight - imageHeight) / 2;
+            extraPadding = (previewHeight - imageHeight) / 2;
             mCropView.setExtraPadding(extraPadding + mPreview.getPaddingTop(),
                     extraPadding + mPreview.getPaddingBottom());
             imageTop += (previewHeight - imageHeight) / 2;
             mCropView.setExtraPadding(extraPadding, extraPadding);
             mCropView.setImageWidth(previewWidth);
+            scale = previewWidth / (float) mPreview.getDrawable().getIntrinsicWidth();
         } else {
             imageWidth = (int) (previewWidth * imageRatio / viewRatio);
             imageLeft += (previewWidth - imageWidth) / 2;
             // Image is full height
             mCropView.setExtraPadding(mPreview.getPaddingTop(), mPreview.getPaddingBottom());
             mCropView.setImageWidth((int) (previewHeight * imageRatio));
+            scale = previewHeight / (float) mPreview.getDrawable().getIntrinsicHeight();
         }
 
         // Update transition view's position and scale.
@@ -439,5 +464,22 @@ public class LongScreenshotActivity extends Activity {
         params.width = boundaries.width();
         params.height = boundaries.height();
         mTransitionView.setLayoutParams(params);
+
+        if (mLongScreenshot != null) {
+            ConstraintLayout.LayoutParams enterTransitionParams =
+                    (ConstraintLayout.LayoutParams) mEnterTransitionView.getLayoutParams();
+            float topFraction = Math.max(0,
+                    -mLongScreenshot.getTop() / (float) mLongScreenshot.getHeight());
+            enterTransitionParams.width = (int) (scale * drawable.getIntrinsicWidth());
+            enterTransitionParams.height = (int) (scale * mLongScreenshot.getPageHeight());
+            mEnterTransitionView.setLayoutParams(enterTransitionParams);
+
+            Matrix matrix = new Matrix();
+            matrix.setScale(scale, scale);
+            matrix.postTranslate(0, -scale * drawable.getIntrinsicHeight() * topFraction);
+            mEnterTransitionView.setImageMatrix(matrix);
+            mEnterTransitionView.setTranslationY(
+                    topFraction * previewHeight + mPreview.getPaddingTop() + extraPadding);
+        }
     }
 }

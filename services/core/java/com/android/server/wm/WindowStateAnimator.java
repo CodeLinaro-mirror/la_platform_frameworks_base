@@ -16,12 +16,6 @@
 
 package com.android.server.wm;
 
-import static android.graphics.Matrix.MSCALE_X;
-import static android.graphics.Matrix.MSCALE_Y;
-import static android.graphics.Matrix.MSKEW_X;
-import static android.graphics.Matrix.MSKEW_Y;
-import static android.graphics.Matrix.MTRANS_X;
-import static android.graphics.Matrix.MTRANS_Y;
 import static android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
 import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_IS_ROUNDED_CORNERS_OVERLAY;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_STARTING;
@@ -54,14 +48,12 @@ import static com.android.server.wm.WindowStateAnimatorProto.SURFACE;
 import static com.android.server.wm.WindowStateAnimatorProto.SYSTEM_DECOR_RECT;
 
 import android.content.Context;
-import android.graphics.Matrix;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.os.Debug;
 import android.os.Trace;
 import android.util.Slog;
 import android.util.proto.ProtoOutputStream;
-import android.view.DisplayInfo;
 import android.view.Surface.OutOfResourcesException;
 import android.view.SurfaceControl;
 import android.view.WindowManager;
@@ -169,16 +161,6 @@ class WindowStateAnimator {
 
     int mAttrType;
 
-    // An offset in pixel of the surface contents from the window position. Used for Wallpaper
-    // to provide the effect of scrolling within a large surface. We just use these values as
-    // a cache.
-    int mXOffset = 0;
-    int mYOffset = 0;
-
-    // A scale factor for the surface contents, that will be applied from the center of the visible
-    // region.
-    float mWallpaperScale = 1f;
-
     private final Rect mTmpSize = new Rect();
 
     /**
@@ -270,7 +252,10 @@ class WindowStateAnimator {
         }
 
         if (postDrawTransaction != null) {
-            if (mLastHidden) {
+            // If there is no surface, the last draw was for the previous surface. We don't want to
+            // wait until the new surface is shown and instead just apply the transaction right
+            // away.
+            if (mLastHidden && mDrawState != NO_SURFACE) {
                 mPostDrawTransaction.merge(postDrawTransaction);
                 layoutNeeded = true;
             } else {
@@ -502,18 +487,6 @@ class WindowStateAnimator {
         }
 
         final WindowState w = mWin;
-
-        if (!w.mSeamlesslyRotated) {
-            // Used to offset the WSA when stack position changes before a resize.
-            int xOffset = mXOffset;
-            int yOffset = mYOffset;
-            if (!mIsWallpaper) {
-                mSurfaceController.setPosition(t, xOffset, yOffset);
-            } else {
-                setWallpaperPositionAndScale(t, xOffset, yOffset, mWallpaperScale);
-            }
-        }
-
         final Task task = w.getTask();
         if (shouldConsumeMainWindowSizeTransaction()) {
             if (isInBlastSync()) {
@@ -575,14 +548,8 @@ class WindowStateAnimator {
                     "SURFACE controller=%s alpha=%f HScale=%f, VScale=%f: %s",
                     mSurfaceController, mShownAlpha, w.mHScale, w.mVScale, w);
 
-            boolean prepared = true;
-
-            if (mIsWallpaper) {
-                setWallpaperPositionAndScale(t, mXOffset, mYOffset, mWallpaperScale);
-            } else {
-                prepared =
-                    mSurfaceController.prepareToShowInTransaction(t, mShownAlpha);
-            }
+            boolean prepared =
+                mSurfaceController.prepareToShowInTransaction(t, mShownAlpha);
 
             if (prepared && mDrawState == HAS_DRAWN) {
                 if (mLastHidden) {
@@ -633,53 +600,6 @@ class WindowStateAnimator {
         if (displayed) {
             w.mToken.hasVisible = true;
         }
-    }
-
-    boolean setWallpaperOffset(int dx, int dy, float scale) {
-        if (mXOffset == dx && mYOffset == dy && Float.compare(mWallpaperScale, scale) == 0) {
-            return false;
-        }
-        mXOffset = dx;
-        mYOffset = dy;
-        mWallpaperScale = scale;
-
-        if (mSurfaceController != null) {
-            try {
-                if (SHOW_LIGHT_TRANSACTIONS) {
-                    Slog.i(TAG, ">>> OPEN TRANSACTION setWallpaperOffset");
-                }
-                mService.openSurfaceTransaction();
-                setWallpaperPositionAndScale(SurfaceControl.getGlobalTransaction(), dx, dy, scale);
-            } catch (RuntimeException e) {
-                Slog.w(TAG, "Error positioning surface of " + mWin
-                        + " pos=(" + dx + "," + dy + ")", e);
-            } finally {
-                mService.closeSurfaceTransaction("setWallpaperOffset");
-                if (SHOW_LIGHT_TRANSACTIONS) {
-                    Slog.i(TAG, "<<< CLOSE TRANSACTION setWallpaperOffset");
-                }
-            }
-        }
-
-        return true;
-    }
-
-    private void setWallpaperPositionAndScale(SurfaceControl.Transaction t, int dx, int dy,
-            float scale) {
-        DisplayInfo displayInfo = mWin.getDisplayInfo();
-        Matrix matrix = mWin.mTmpMatrix;
-        matrix.setTranslate(dx, dy);
-        matrix.postScale(scale, scale, displayInfo.logicalWidth / 2f,
-                displayInfo.logicalHeight / 2f);
-        matrix.getValues(mWin.mTmpMatrixArray);
-        matrix.reset();
-
-        mSurfaceController.setPosition(t,mWin.mTmpMatrixArray[MTRANS_X],
-                mWin.mTmpMatrixArray[MTRANS_Y]);
-        mSurfaceController.setMatrix(t, mWin.mTmpMatrixArray[MSCALE_X],
-            mWin.mTmpMatrixArray[MSKEW_Y],
-            mWin.mTmpMatrixArray[MSKEW_X],
-            mWin.mTmpMatrixArray[MSCALE_Y]);
     }
 
     /**
@@ -758,8 +678,9 @@ class WindowStateAnimator {
         }
 
         // We don't apply animation for application main window here since this window type
-        // should be controlled by AppWindowToken in general.
-        if (mAttrType != TYPE_BASE_APPLICATION) {
+        // should be controlled by ActivityRecord in general. Wallpaper is also excluded because
+        // WallpaperController should handle it.
+        if (mAttrType != TYPE_BASE_APPLICATION && !mIsWallpaper) {
             applyAnimationLocked(transit, true);
         }
 
@@ -904,6 +825,10 @@ class WindowStateAnimator {
     }
 
     void destroySurface(SurfaceControl.Transaction t) {
+        // Since the SurfaceControl is getting torn down, it's safe to just clean up any
+        // pending transactions that were in mPostDrawTransaction, as well.
+        t.merge(mPostDrawTransaction);
+
         try {
             if (mSurfaceController != null) {
                 mSurfaceController.destroy(t);

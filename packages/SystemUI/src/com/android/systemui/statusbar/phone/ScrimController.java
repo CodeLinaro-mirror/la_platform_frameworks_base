@@ -551,11 +551,11 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
      */
     public void setNotificationsBounds(float left, float top, float right, float bottom) {
         if (mClipsQsScrim) {
-            // notification scrim's rounded corners are anti-aliased, but clipping of the QS scrim
-            // can't be and it's causing jagged corners. That's why notification scrim needs
-            // to overlap QS scrim by one pixel - both vertically (top - 1) and
-            // horizontally (left - 1 and right + 1), see: b/186644628
-            mNotificationsScrim.setDrawableBounds(left - 1, top - 1, right + 1, bottom);
+            // notification scrim's rounded corners are anti-aliased, but clipping of the QS/behind
+            // scrim can't be and it's causing jagged corners. That's why notification scrim needs
+            // to overlap QS scrim by one pixel horizontally (left - 1 and right + 1)
+            // see: b/186644628
+            mNotificationsScrim.setDrawableBounds(left - 1, top, right + 1, bottom);
             mScrimBehind.setBottomEdgePosition((int) top);
         } else {
             mNotificationsScrim.setDrawableBounds(left, top, right, bottom);
@@ -642,7 +642,7 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
             return;
         }
 
-        if (mState == ScrimState.UNLOCKED) {
+        if (mState == ScrimState.UNLOCKED || mState == ScrimState.BUBBLE_EXPANDED) {
             // Darken scrim as you pull down the shade when unlocked, unless the shade is expanding
             // because we're doing the screen off animation.
             if (!mUnlockedScreenOffAnimationController.isScreenOffAnimationPlaying()) {
@@ -657,12 +657,6 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
                 }
                 mInFrontAlpha = 0;
             }
-        } else if (mState == ScrimState.BUBBLE_EXPANDED) {
-            // Darken scrim as you pull down the shade when unlocked
-            float behindFraction = getInterpolatedFraction();
-            behindFraction = (float) Math.pow(behindFraction, 0.8f);
-            mBehindAlpha = behindFraction * mDefaultScrimAlpha;
-            mInFrontAlpha = 0;
         } else if (mState == ScrimState.KEYGUARD || mState == ScrimState.SHADE_LOCKED
                 || mState == ScrimState.PULSING) {
             Pair<Integer, Float> result = calculateBackStateForState(mState);
@@ -1248,6 +1242,9 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
         pw.println(mDefaultScrimAlpha);
         pw.print("  mExpansionFraction=");
         pw.println(mPanelExpansion);
+
+        pw.print("  mState.getMaxLightRevealScrimAlpha=");
+        pw.println(mState.getMaxLightRevealScrimAlpha());
     }
 
     public void setWallpaperSupportsAmbientMode(boolean wallpaperSupportsAmbientMode) {

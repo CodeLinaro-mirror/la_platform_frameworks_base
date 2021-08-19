@@ -33,6 +33,7 @@ import static org.mockito.Mockito.when;
 import android.app.IActivityManager;
 import android.app.admin.DevicePolicyManager;
 import android.app.trust.TrustManager;
+import android.content.pm.PackageManager;
 import android.content.pm.UserInfo;
 import android.content.res.Resources;
 import android.graphics.Color;
@@ -63,8 +64,8 @@ import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.GlobalActions;
 import com.android.systemui.plugins.GlobalActionsPanelPlugin;
 import com.android.systemui.settings.UserTracker;
-import com.android.systemui.statusbar.NotificationShadeDepthController;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
+import com.android.systemui.statusbar.phone.StatusBar;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.telephony.TelephonyListenerManager;
@@ -109,7 +110,6 @@ public class GlobalActionsDialogTest extends SysuiTestCase {
     @Mock private TrustManager mTrustManager;
     @Mock private IActivityManager mActivityManager;
     @Mock private MetricsLogger mMetricsLogger;
-    @Mock private NotificationShadeDepthController mDepthController;
     @Mock private SysuiColorExtractor mColorExtractor;
     @Mock private IStatusBarService mStatusBarService;
     @Mock private NotificationShadeWindowController mNotificationShadeWindowController;
@@ -123,7 +123,9 @@ public class GlobalActionsDialogTest extends SysuiTestCase {
     @Mock GlobalActionsPanelPlugin.PanelViewController mWalletController;
     @Mock private Handler mHandler;
     @Mock private UserTracker mUserTracker;
+    @Mock private PackageManager mPackageManager;
     @Mock private SecureSettings mSecureSettings;
+    @Mock private StatusBar mStatusBar;
 
     private TestableLooper mTestableLooper;
 
@@ -134,6 +136,8 @@ public class GlobalActionsDialogTest extends SysuiTestCase {
         allowTestableLooperAsMainThread();
 
         when(mRingerModeTracker.getRingerMode()).thenReturn(mRingerModeLiveData);
+        when(mResources.getConfiguration()).thenReturn(
+                getContext().getResources().getConfiguration());
 
         mGlobalActionsDialog = new GlobalActionsDialog(mContext,
                 mWindowManagerFuncs,
@@ -155,7 +159,6 @@ public class GlobalActionsDialogTest extends SysuiTestCase {
                 mActivityManager,
                 null,
                 mMetricsLogger,
-                mDepthController,
                 mColorExtractor,
                 mStatusBarService,
                 mNotificationShadeWindowController,
@@ -164,7 +167,9 @@ public class GlobalActionsDialogTest extends SysuiTestCase {
                 mUiEventLogger,
                 mRingerModeTracker,
                 mSysUiState,
-                mHandler
+                mHandler,
+                mPackageManager,
+                mStatusBar
         );
         mGlobalActionsDialog.setZeroDialogPressDelayForTesting();
 

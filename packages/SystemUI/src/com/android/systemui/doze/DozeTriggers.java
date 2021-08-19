@@ -38,6 +38,7 @@ import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dock.DockManager;
+import com.android.systemui.doze.DozeMachine.State;
 import com.android.systemui.doze.dagger.DozeScope;
 import com.android.systemui.statusbar.phone.DozeParameters;
 import com.android.systemui.util.Assert;
@@ -70,7 +71,6 @@ public class DozeTriggers implements DozeMachine.Part {
      * Assuming that the screen should start on.
      */
     private static boolean sWakeDisplaySensorState = true;
-    private Runnable mQuickPickupDozeCancellable;
 
     private static final int PROXIMITY_TIMEOUT_DELAY_MS = 500;
 
@@ -96,6 +96,7 @@ public class DozeTriggers implements DozeMachine.Part {
 
     private long mNotificationPulseTime;
     private boolean mPulsePending;
+    private Runnable mAodInterruptRunnable;
 
     /** see {@link #onProximityFar} prox for callback */
     private boolean mWantProxSensor;
@@ -277,14 +278,14 @@ public class DozeTriggers implements DozeMachine.Part {
         boolean isWakeDisplayEvent = isQuickPickup || ((isWakeOnPresence || isWakeOnReach)
                 && rawValues != null && rawValues.length > 0 && rawValues[0] != 0);
 
-        if (isWakeOnPresence || isQuickPickup) {
-            onWakeScreen(isQuickPickup || isWakeDisplayEvent,
+        if (isWakeOnPresence) {
+            onWakeScreen(isWakeDisplayEvent,
                     mMachine.isExecutingTransition() ? null : mMachine.getState(),
                     pulseReason);
         } else if (isLongPress) {
             requestPulse(pulseReason, true /* alreadyPerformedProxCheck */,
                     null /* onPulseSuppressedListener */);
-        } else if (isWakeOnReach) {
+        } else if (isWakeOnReach || isQuickPickup) {
             if (isWakeDisplayEvent) {
                 requestPulse(pulseReason, true /* alreadyPerformedProxCheck */,
                         null /* onPulseSuppressedListener */);
@@ -303,11 +304,16 @@ public class DozeTriggers implements DozeMachine.Part {
                 } else if (isPickup) {
                     gentleWakeUp(pulseReason);
                 } else if (isUdfpsLongPress) {
+                    final State state = mMachine.getState();
+                    if (state == State.DOZE_AOD || state == State.DOZE) {
+                        // Since the gesture won't be received by the UDFPS view, we need to
+                        // manually inject an event once the display is ON
+                        mAodInterruptRunnable = () ->
+                            mAuthController.onAodInterrupt((int) screenX, (int) screenY,
+                                rawValues[3] /* major */, rawValues[4] /* minor */);
+                    }
+
                     requestPulse(DozeLog.REASON_SENSOR_UDFPS_LONG_PRESS, true, null);
-                    // Since the gesture won't be received by the UDFPS view, manually inject an
-                    // event.
-                    mAuthController.onAodInterrupt((int) screenX, (int) screenY,
-                            rawValues[2] /* major */, rawValues[3] /* minor */);
                 } else {
                     mDozeHost.extendPulse(pulseReason);
                 }
@@ -381,11 +387,7 @@ public class DozeTriggers implements DozeMachine.Part {
      */
     private void onWakeScreen(boolean wake, @Nullable DozeMachine.State state, int reason) {
         mDozeLog.traceWakeDisplay(wake, reason);
-        final boolean isWakeOnPresence = reason == DozeLog.REASON_SENSOR_WAKE_UP;
-        final boolean isQuickPickup = reason == DozeLog.REASON_SENSOR_QUICK_PICKUP;
-        if (isWakeOnPresence) {
-            sWakeDisplaySensorState = wake;
-        }
+        sWakeDisplaySensorState = wake;
 
         if (wake) {
             proximityCheckThenCall((result) -> {
@@ -398,27 +400,13 @@ public class DozeTriggers implements DozeMachine.Part {
                     // Log sensor triggered
                     Optional.ofNullable(DozingUpdateUiEvent.fromReason(reason))
                             .ifPresent(mUiEventLogger::log);
-
-                    if (isQuickPickup) {
-                        // schedule runnable to go back to DOZE
-                        onQuickPickup();
-                    }
-                } else if (state == DozeMachine.State.DOZE_AOD && isQuickPickup) {
-                    // elongate time in DOZE_AOD, schedule new runnable to go back to DOZE
-                    onQuickPickup();
                 }
-            }, isQuickPickup /* alreadyPerformedProxCheck */, reason);
+            }, false /* alreadyPerformedProxCheck */, reason);
         } else {
             boolean paused = (state == DozeMachine.State.DOZE_AOD_PAUSED);
             boolean pausing = (state == DozeMachine.State.DOZE_AOD_PAUSING);
-            boolean pulse = (state == DozeMachine.State.DOZE_REQUEST_PULSE)
-                    || (state == DozeMachine.State.DOZE_PULSING)
-                    || (state == DozeMachine.State.DOZE_PULSING_BRIGHT);
-            boolean docked = (state == DozeMachine.State.DOZE_AOD_DOCKED);
+
             if (!pausing && !paused) {
-                if (isQuickPickup && (pulse || docked)) {
-                    return;
-                }
                 mMachine.requestState(DozeMachine.State.DOZE);
                 // log wake timeout
                 mUiEventLogger.log(DozingUpdateUiEvent.DOZING_UPDATE_WAKE_TIMEOUT);
@@ -426,19 +414,11 @@ public class DozeTriggers implements DozeMachine.Part {
         }
     }
 
-    private void onQuickPickup() {
-        cancelQuickPickupDelayableDoze();
-        mQuickPickupDozeCancellable = mMainExecutor.executeDelayed(() -> {
-            onWakeScreen(false,
-                    mMachine.isExecutingTransition() ? null : mMachine.getState(),
-                    DozeLog.REASON_SENSOR_QUICK_PICKUP);
-        }, mDozeParameters.getQuickPickupAodDuration());
-    }
-
     @Override
     public void transitionTo(DozeMachine.State oldState, DozeMachine.State newState) {
         switch (newState) {
             case INITIALIZED:
+                mAodInterruptRunnable = null;
                 sWakeDisplaySensorState = true;
                 mBroadcastReceiver.register(mBroadcastDispatcher);
                 mDozeHost.addCallback(mHostCallback);
@@ -448,6 +428,7 @@ public class DozeTriggers implements DozeMachine.Part {
                 break;
             case DOZE:
             case DOZE_AOD:
+                mAodInterruptRunnable = null;
                 mWantProxSensor = newState != DozeMachine.State.DOZE;
                 mWantSensors = true;
                 mWantTouchScreenSensors = true;
@@ -472,7 +453,6 @@ public class DozeTriggers implements DozeMachine.Part {
                 mDozeSensors.requestTemporaryDisable();
                 break;
             case FINISH:
-                cancelQuickPickupDelayableDoze();
                 mBroadcastReceiver.unregister(mBroadcastDispatcher);
                 mDozeHost.removeCallback(mHostCallback);
                 mDockManager.removeListener(mDockEventListener);
@@ -494,18 +474,13 @@ public class DozeTriggers implements DozeMachine.Part {
                 || state == Display.STATE_DOZE_SUSPEND || state == Display.STATE_OFF;
         mDozeSensors.setProxListening(mWantProxSensor && lowPowerStateOrOff);
         mDozeSensors.setListening(mWantSensors, mWantTouchScreenSensors, lowPowerStateOrOff);
-    }
 
-    /**
-     * Cancels last scheduled Runnable that transitions to STATE_DOZE (blank screen) after
-     * going into STATE_AOD (AOD screen) from the quick pickup gesture.
-     */
-    private void cancelQuickPickupDelayableDoze() {
-        if (mQuickPickupDozeCancellable != null) {
-            mQuickPickupDozeCancellable.run();
-            mQuickPickupDozeCancellable = null;
+        if (mAodInterruptRunnable != null && state == Display.STATE_ON) {
+            mAodInterruptRunnable.run();
+            mAodInterruptRunnable = null;
         }
     }
+
 
     private void checkTriggersAtInit() {
         if (mUiModeManager.getCurrentModeType() == Configuration.UI_MODE_TYPE_CAR
@@ -576,6 +551,8 @@ public class DozeTriggers implements DozeMachine.Part {
 
     @Override
     public void dump(PrintWriter pw) {
+        pw.println(" mAodInterruptRunnable=" + mAodInterruptRunnable);
+
         pw.print(" notificationPulseTime=");
         pw.println(Formatter.formatShortElapsedTime(mContext, mNotificationPulseTime));
 

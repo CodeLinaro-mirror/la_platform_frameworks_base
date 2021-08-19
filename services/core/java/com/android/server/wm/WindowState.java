@@ -25,6 +25,7 @@ import static android.app.WindowConfiguration.ACTIVITY_TYPE_HOME;
 import static android.app.WindowConfiguration.isSplitScreenWindowingMode;
 import static android.content.res.Configuration.ORIENTATION_LANDSCAPE;
 import static android.graphics.GraphicsProtos.dumpPointProto;
+import static android.hardware.display.DisplayManager.SWITCHING_TYPE_NONE;
 import static android.hardware.input.InputManager.BLOCK_UNTRUSTED_TOUCHES;
 import static android.os.InputConstants.DEFAULT_DISPATCHING_TIMEOUT_MILLIS;
 import static android.os.PowerManager.DRAW_WAKE_LOCK;
@@ -60,6 +61,7 @@ import static android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_M
 import static android.view.WindowManager.LayoutParams.MATCH_PARENT;
 import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_COMPATIBLE_WINDOW;
 import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_LAYOUT_CHILD_WINDOW_IN_PARENT_FRAME;
+import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_NOT_MAGNIFIABLE;
 import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_NO_MOVE_ANIMATION;
 import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY;
 import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_WILL_NOT_REPLACE_ON_RELAUNCH;
@@ -445,6 +447,17 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
     float mOverrideScale = 1;
     float mHScale=1, mVScale=1;
     float mLastHScale=1, mLastVScale=1;
+
+    // An offset in pixel of the surface contents from the window position. Used for Wallpaper
+    // to provide the effect of scrolling within a large surface. We just use these values as
+    // a cache.
+    int mXOffset = 0;
+    int mYOffset = 0;
+
+    // A scale factor for the surface contents, that will be applied from the center of the visible
+    // region.
+    float mWallpaperScale = 1f;
+
     final Matrix mTmpMatrix = new Matrix();
     final float[] mTmpMatrixArray = new float[9];
 
@@ -2555,6 +2568,7 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
     private void setupWindowForRemoveOnExit() {
         mRemoveOnExit = true;
         setDisplayLayoutNeeded();
+        getDisplayContent().getDisplayPolicy().removeWindowLw(this);
         // Request a focus update as this window's input channel is already gone. Otherwise
         // we could have no focused window in input manager.
         final boolean focusChanged = mWmService.updateFocusedWindowLocked(
@@ -3917,7 +3931,9 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
     void notifyInsetsChanged() {
         ProtoLog.d(WM_DEBUG_IME, "notifyInsetsChanged for %s ", this);
         try {
-            mClient.insetsChanged(getCompatInsetsState());
+            mClient.insetsChanged(getCompatInsetsState(),
+                    hasMoved(),
+                    mWindowFrames.isFrameSizeChangeReported());
         } catch (RemoteException e) {
             Slog.w(TAG, "Failed to deliver inset state change w=" + this, e);
         }
@@ -3933,7 +3949,9 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
                 getDisplayContent().getInsetsStateController();
         try {
             mClient.insetsControlChanged(getCompatInsetsState(),
-                    stateController.getControlsForDispatch(this));
+                    stateController.getControlsForDispatch(this),
+                    hasMoved(),
+                    mWindowFrames.isFrameSizeChangeReported());
         } catch (RemoteException e) {
             Slog.w(TAG, "Failed to deliver inset state change to w=" + this, e);
         }
@@ -5369,6 +5387,9 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
                 || mAttrs.type == TYPE_NAVIGATION_BAR_PANEL) {
             return false;
         }
+        if ((mAttrs.privateFlags & PRIVATE_FLAG_NOT_MAGNIFIABLE) != 0) {
+            return false;
+        }
         return true;
     }
 
@@ -5433,23 +5454,31 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
                     mFrameRateSelectionPriority);
         }
 
-        final float refreshRate = refreshRatePolicy.getPreferredRefreshRate(this);
-        if (mAppPreferredFrameRate != refreshRate) {
-            mAppPreferredFrameRate = refreshRate;
-            getPendingTransaction().setFrameRate(
-                    mSurfaceControl, mAppPreferredFrameRate,
-                    Surface.FRAME_RATE_COMPATIBILITY_EXACT, Surface.CHANGE_FRAME_RATE_ALWAYS);
+        // If refresh rate switching is disabled there is no point to set the frame rate on the
+        // surface as the refresh rate will be limited by display manager to a single value
+        // and SurfaceFlinger wouldn't be able to change it anyways.
+        if (mWmService.mDisplayManagerInternal.getRefreshRateSwitchingType()
+                != SWITCHING_TYPE_NONE) {
+            final float refreshRate = refreshRatePolicy.getPreferredRefreshRate(this);
+            if (mAppPreferredFrameRate != refreshRate) {
+                mAppPreferredFrameRate = refreshRate;
+                getPendingTransaction().setFrameRate(
+                        mSurfaceControl, mAppPreferredFrameRate,
+                        Surface.FRAME_RATE_COMPATIBILITY_EXACT, Surface.CHANGE_FRAME_RATE_ALWAYS);
+            }
         }
     }
 
     private void updateScaleIfNeeded() {
-        if (mLastGlobalScale != mGlobalScale || mLastHScale != mHScale ||
-            mLastVScale != mVScale ) {
+        float newHScale = mHScale * mGlobalScale * mWallpaperScale;
+        float newVScale = mVScale * mGlobalScale * mWallpaperScale;
+        if (mLastHScale != newHScale ||
+            mLastVScale != newVScale ) {
             getPendingTransaction().setMatrix(getSurfaceControl(),
-                mGlobalScale*mHScale, 0, 0, mGlobalScale*mVScale);
+                newHScale, 0, 0, newVScale);
             mLastGlobalScale = mGlobalScale;
-            mLastHScale = mHScale;
-            mLastVScale = mVScale;
+            mLastHScale = newHScale;
+            mLastVScale = newVScale;
         }
     }
 
@@ -5484,6 +5513,19 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
         mSurfacePlacementNeeded = false;
         transformFrameToSurfacePosition(mWindowFrames.mFrame.left, mWindowFrames.mFrame.top,
                 mSurfacePosition);
+
+        if (mWallpaperScale != 1f) {
+            DisplayInfo displayInfo = getDisplayInfo();
+            Matrix matrix = mTmpMatrix;
+            matrix.setTranslate(mXOffset, mYOffset);
+            matrix.postScale(mWallpaperScale, mWallpaperScale, displayInfo.logicalWidth / 2f,
+                displayInfo.logicalHeight / 2f);
+            matrix.getValues(mTmpMatrixArray);
+            mSurfacePosition.offset(Math.round(mTmpMatrixArray[Matrix.MTRANS_X]),
+                Math.round(mTmpMatrixArray[Matrix.MTRANS_Y]));
+        } else {
+            mSurfacePosition.offset(mXOffset, mYOffset);
+        }
 
         // Freeze position while we're unrotated, so the surface remains at the position it was
         // prior to the rotation.
@@ -6095,5 +6137,16 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
 
     void markRedrawForSyncReported() {
        mRedrawForSyncReported = true;
+    }
+
+    boolean setWallpaperOffset(int dx, int dy, float scale) {
+        if (mXOffset == dx && mYOffset == dy && Float.compare(mWallpaperScale, scale) == 0) {
+            return false;
+        }
+        mXOffset = dx;
+        mYOffset = dy;
+        mWallpaperScale = scale;
+        scheduleAnimation();
+        return true;
     }
 }

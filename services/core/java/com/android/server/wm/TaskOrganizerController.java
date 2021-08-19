@@ -43,6 +43,7 @@ import android.util.proto.ProtoOutputStream;
 import android.view.SurfaceControl;
 import android.window.ITaskOrganizer;
 import android.window.ITaskOrganizerController;
+import android.window.SplashScreenView;
 import android.window.StartingWindowInfo;
 import android.window.TaskAppearedInfo;
 import android.window.TaskSnapshot;
@@ -196,6 +197,7 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
                                 ANIMATION_TYPE_STARTING_REVEAL);
                         windowAnimationLeash = adaptor.mAnimationLeash;
                         mainFrame = mainWindow.getRelativeFrame();
+                        t.setPosition(windowAnimationLeash, mainFrame.left, mainFrame.top);
                     }
                 }
             }
@@ -212,6 +214,14 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
                 mTaskOrganizer.copySplashScreenView(task.mTaskId);
             } catch (RemoteException e) {
                 Slog.e(TAG, "Exception sending copyStartingWindowView callback", e);
+            }
+        }
+
+        void onAppSplashScreenViewRemoved(Task task) {
+            try {
+                mTaskOrganizer.onAppSplashScreenViewRemoved(task.mTaskId);
+            } catch (RemoteException e) {
+                Slog.e(TAG, "Exception sending onAppSplashScreenViewRemoved callback", e);
             }
         }
 
@@ -312,6 +322,10 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
 
         void copySplashScreenView(Task t) {
             mOrganizer.copySplashScreenView(t);
+        }
+
+        public void onAppSplashScreenViewRemoved(Task t) {
+            mOrganizer.onAppSplashScreenViewRemoved(t);
         }
 
         /**
@@ -564,6 +578,22 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
                 mTaskOrganizerStates.get(rootTask.mTaskOrganizer.asBinder());
         state.copySplashScreenView(task);
         return true;
+    }
+
+    /**
+     * Notify the shell ({@link com.android.wm.shell.ShellTaskOrganizer} that the client has
+     * removed the splash screen view.
+     * @see com.android.wm.shell.ShellTaskOrganizer#onAppSplashScreenViewRemoved(int)
+     * @see SplashScreenView#remove()
+     */
+    public void onAppSplashScreenViewRemoved(Task task) {
+        final Task rootTask = task.getRootTask();
+        if (rootTask == null || rootTask.mTaskOrganizer == null) {
+            return;
+        }
+        final TaskOrganizerState state =
+                mTaskOrganizerStates.get(rootTask.mTaskOrganizer.asBinder());
+        state.onAppSplashScreenViewRemoved(task);
     }
 
     void onTaskAppeared(ITaskOrganizer organizer, Task task) {
@@ -886,6 +916,34 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
                     mInterceptBackPressedOnRootTasks.add(task.mTaskId);
                 } else {
                     mInterceptBackPressedOnRootTasks.remove(task.mTaskId);
+                }
+            }
+        } finally {
+            Binder.restoreCallingIdentity(origId);
+        }
+    }
+
+    @Override
+    public void restartTaskTopActivityProcessIfVisible(WindowContainerToken token) {
+        enforceTaskPermission("restartTopActivityProcessIfVisible()");
+        final long origId = Binder.clearCallingIdentity();
+        try {
+            synchronized (mGlobalLock) {
+                final WindowContainer wc = WindowContainer.fromBinder(token.asBinder());
+                if (wc == null) {
+                    Slog.w(TAG, "Could not resolve window from token");
+                    return;
+                }
+                final Task task = wc.asTask();
+                if (task == null) {
+                    Slog.w(TAG, "Could not resolve task from token");
+                    return;
+                }
+                ProtoLog.v(WM_DEBUG_WINDOW_ORGANIZER,
+                        "Restart top activity process of Task taskId=%d", task.mTaskId);
+                final ActivityRecord activity = task.getTopNonFinishingActivity();
+                if (activity != null) {
+                    activity.restartProcessIfVisible();
                 }
             }
         } finally {

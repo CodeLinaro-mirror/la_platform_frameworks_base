@@ -314,9 +314,15 @@ void RenderProxy::setPictureCapturedCallback(
 }
 
 void RenderProxy::setASurfaceTransactionCallback(
-        const std::function<void(int64_t, int64_t, int64_t)>& callback) {
+        const std::function<bool(int64_t, int64_t, int64_t)>& callback) {
     mRenderThread.queue().post(
             [this, cb = callback]() { mContext->setASurfaceTransactionCallback(cb); });
+}
+
+void RenderProxy::setPrepareSurfaceControlForWebviewCallback(
+        const std::function<void()>& callback) {
+    mRenderThread.queue().post(
+            [this, cb = callback]() { mContext->setPrepareSurfaceControlForWebviewCallback(cb); });
 }
 
 void RenderProxy::setFrameCallback(std::function<void(int64_t)>&& callback) {
@@ -387,6 +393,17 @@ int RenderProxy::copyHWBitmapInto(Bitmap* hwBitmap, SkBitmap* bitmap) {
     } else {
         return thread.queue().runSync(
                 [&]() -> int { return (int)thread.readback().copyHWBitmapInto(hwBitmap, bitmap); });
+    }
+}
+
+int RenderProxy::copyImageInto(const sk_sp<SkImage>& image, SkBitmap* bitmap) {
+    RenderThread& thread = RenderThread::getInstance();
+    if (gettid() == thread.getTid()) {
+        // TODO: fix everything that hits this. We should never be triggering a readback ourselves.
+        return (int)thread.readback().copyImageInto(image, bitmap);
+    } else {
+        return thread.queue().runSync(
+                [&]() -> int { return (int)thread.readback().copyImageInto(image, bitmap); });
     }
 }
 

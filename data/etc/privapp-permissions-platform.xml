@@ -315,6 +315,7 @@ applications that come with the platform
         <permission name="android.permission.INSTALL_DYNAMIC_SYSTEM"/>
         <permission name="android.permission.INSTALL_LOCATION_PROVIDER"/>
         <permission name="android.permission.INSTALL_PACKAGES"/>
+        <permission name="android.permission.INSTALL_PACKAGE_UPDATES"/>
         <!-- Needed for test only -->
         <permission name="android.permission.ACCESS_MTP"/>
         <!-- Needed for test only -->
@@ -428,6 +429,8 @@ applications that come with the platform
         <!-- Permissions required for CTS test - TVInputManagerTest -->
         <permission name="android.permission.ACCESS_TUNED_INFO" />
         <permission name="android.permission.TV_INPUT_HARDWARE" />
+        <permission name="com.android.providers.tv.permission.ACCESS_WATCHED_PROGRAMS" />
+        <permission name="com.android.providers.tv.permission.WRITE_EPG_DATA"/>
         <!-- Permission required for CTS test - PrivilegedLocationPermissionTest -->
         <permission name="android.permission.LOCATION_HARDWARE" />
         <!-- Permissions required for GTS test - GtsDialerAudioTestCases -->
@@ -488,15 +491,20 @@ applications that come with the platform
         <permission name="android.permission.BRIGHTNESS_SLIDER_USAGE" />
         <permission name="android.permission.ACCESS_AMBIENT_LIGHT_STATS" />
         <permission name="android.permission.CONFIGURE_DISPLAY_BRIGHTNESS" />
+        <permission name="android.permission.GET_TOP_ACTIVITY_INFO" />
         <permission name="android.permission.SET_VOLUME_KEY_LONG_PRESS_LISTENER" />
         <permission name="android.permission.SET_MEDIA_KEY_LISTENER" />
         <permission name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />
         <!-- Permission required for CTS test - CtsAlarmManagerTestCases -->
         <permission name="android.permission.UPDATE_DEVICE_STATS" />
+        <!-- Permission required for GTS test - PendingSystemUpdateTest -->
+        <permission name="android.permission.NOTIFY_PENDING_SYSTEM_UPDATE" />
     </privapp-permissions>
 
     <privapp-permissions package="com.android.statementservice">
         <permission name="android.permission.INTENT_FILTER_VERIFICATION_AGENT"/>
+        <permission name="android.permission.DOMAIN_VERIFICATION_AGENT"/>
+        <permission name="android.permission.INTERACT_ACROSS_USERS"/>
     </privapp-permissions>
 
     <privapp-permissions package="com.android.traceur">

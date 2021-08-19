@@ -26,6 +26,7 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.LocusId;
 import android.content.pm.ShortcutInfo;
+import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Log;
@@ -72,6 +73,7 @@ public class BubbleData {
         boolean expandedChanged;
         boolean selectionChanged;
         boolean orderChanged;
+        boolean suppressedSummaryChanged;
         boolean expanded;
         @Nullable BubbleViewProvider selectedBubble;
         @Nullable Bubble addedBubble;
@@ -80,6 +82,7 @@ public class BubbleData {
         @Nullable Bubble removedOverflowBubble;
         @Nullable Bubble suppressedBubble;
         @Nullable Bubble unsuppressedBubble;
+        @Nullable String suppressedSummaryGroup;
         // Pair with Bubble and @DismissReason Integer
         final List<Pair<Bubble, Integer>> removedBubbles = new ArrayList<>();
 
@@ -102,7 +105,9 @@ public class BubbleData {
                     || removedOverflowBubble != null
                     || orderChanged
                     || suppressedBubble != null
-                    || unsuppressedBubble != null;
+                    || unsuppressedBubble != null
+                    || suppressedSummaryChanged
+                    || suppressedSummaryGroup != null;
         }
 
         void bubbleRemoved(Bubble bubbleToRemove, @DismissReason int reason) {
@@ -379,6 +384,9 @@ public class BubbleData {
      */
     void addSummaryToSuppress(String groupKey, String notifKey) {
         mSuppressedGroupKeys.put(groupKey, notifKey);
+        mStateChange.suppressedSummaryChanged = true;
+        mStateChange.suppressedSummaryGroup = groupKey;
+        dispatchPendingChanges();
     }
 
     /**
@@ -396,6 +404,9 @@ public class BubbleData {
      */
     void removeSuppressedSummary(String groupKey) {
         mSuppressedGroupKeys.remove(groupKey);
+        mStateChange.suppressedSummaryChanged = true;
+        mStateChange.suppressedSummaryGroup = groupKey;
+        dispatchPendingChanges();
     }
 
     /**
@@ -872,6 +883,34 @@ public class BubbleData {
             b = getOverflowBubbleWithKey(key);
         }
         return b;
+    }
+
+    /** @return any bubble (in the stack or the overflow) that matches the provided shortcutId. */
+    @Nullable
+    Bubble getAnyBubbleWithShortcutId(String shortcutId) {
+        if (TextUtils.isEmpty(shortcutId)) {
+            return null;
+        }
+        for (int i = 0; i < mBubbles.size(); i++) {
+            Bubble bubble = mBubbles.get(i);
+            String bubbleShortcutId = bubble.getShortcutInfo() != null
+                    ? bubble.getShortcutInfo().getId()
+                    : bubble.getMetadataShortcutId();
+            if (shortcutId.equals(bubbleShortcutId)) {
+                return bubble;
+            }
+        }
+
+        for (int i = 0; i < mOverflowBubbles.size(); i++) {
+            Bubble bubble = mOverflowBubbles.get(i);
+            String bubbleShortcutId = bubble.getShortcutInfo() != null
+                    ? bubble.getShortcutInfo().getId()
+                    : bubble.getMetadataShortcutId();
+            if (shortcutId.equals(bubbleShortcutId)) {
+                return bubble;
+            }
+        }
+        return null;
     }
 
     @VisibleForTesting(visibility = PRIVATE)

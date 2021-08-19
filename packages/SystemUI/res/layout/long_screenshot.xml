@@ -32,11 +32,26 @@
         android:text="@string/save"
         android:layout_marginStart="8dp"
         android:layout_marginTop="4dp"
-        android:background="@drawable/screenshot_save_background"
+        android:background="@drawable/screenshot_button_background"
         android:textColor="?android:textColorSecondary"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toTopOf="@id/preview" />
+
+    <Button
+        android:id="@+id/cancel"
+        style="@android:style/Widget.DeviceDefault.Button.Colored"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
+        android:text="@android:string/cancel"
+        android:layout_marginStart="6dp"
+        android:layout_marginTop="4dp"
+        android:background="@drawable/screenshot_button_background"
+        android:textColor="?android:textColorSecondary"
+        app:layout_constraintStart_toEndOf="@id/save"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/preview"
+    />
 
     <ImageButton
         android:id="@+id/share"
@@ -62,6 +77,7 @@
         android:paddingHorizontal="48dp"
         android:paddingTop="8dp"
         android:paddingBottom="42dp"
+        android:alpha="0"
         app:layout_constrainedHeight="true"
         app:layout_constrainedWidth="true"
         app:layout_constraintTop_toBottomOf="@id/save"
@@ -71,6 +87,17 @@
         tools:background="?android:colorBackground"
         tools:minHeight="100dp"
         tools:minWidth="100dp" />
+
+    <ImageView
+        android:id="@+id/enter_transition"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:scaleType="matrix"
+        android:visibility="invisible"
+        app:layout_constraintTop_toTopOf="@id/preview"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        android:transitionName="screenshot_preview_image"/>
 
     <com.android.systemui.screenshot.CropView
         android:id="@+id/crop_view"
@@ -86,8 +113,10 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:handleThickness="@dimen/screenshot_crop_handle_thickness"
-        app:handleColor="?androidprv:attr/colorAccentSecondary"
-        app:scrimColor="@color/screenshot_crop_scrim"
+        app:handleColor="?android:attr/colorAccent"
+        app:scrimColor="?android:colorBackgroundFloating"
+        app:scrimAlpha="128"
+        app:containerBackgroundColor="?android:colorBackgroundFloating"
         tools:background="?android:colorBackground"
         tools:minHeight="100dp"
         tools:minWidth="100dp" />
@@ -101,8 +130,9 @@
         app:layout_constraintTop_toTopOf="@id/preview"
         app:layout_constraintLeft_toLeftOf="parent"
         app:handleThickness="@dimen/screenshot_crop_handle_thickness"
-        app:handleColor="?androidprv:attr/colorAccentSecondary"
-        app:scrimColor="@color/screenshot_crop_scrim"
+        app:handleColor="?android:attr/colorAccent"
+        app:scrimColor="?android:colorBackgroundFloating"
+        app:scrimAlpha="128"
         app:borderThickness="4dp"
         app:borderColor="#fff"
         />
@@ -128,8 +158,8 @@
         android:id="@+id/transition"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        app:layout_constraintTop_toBottomOf="@id/save"
-        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="@id/preview"
+        app:layout_constraintLeft_toLeftOf="parent"
         android:scaleType="centerCrop"
         android:visibility="invisible"
         />

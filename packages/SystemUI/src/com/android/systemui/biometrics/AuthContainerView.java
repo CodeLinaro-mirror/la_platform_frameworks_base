@@ -16,6 +16,7 @@
 
 package com.android.systemui.biometrics;
 
+import static android.hardware.biometrics.BiometricAuthenticator.TYPE_FINGERPRINT;
 import static android.hardware.biometrics.BiometricManager.BiometricMultiSensorMode;
 
 import android.annotation.IntDef;
@@ -23,6 +24,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.Context;
 import android.graphics.PixelFormat;
+import android.hardware.biometrics.BiometricAuthenticator.Modality;
 import android.hardware.biometrics.BiometricConstants;
 import android.hardware.biometrics.PromptInfo;
 import android.hardware.face.FaceSensorPropertiesInternal;
@@ -34,6 +36,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.UserManager;
 import android.util.Log;
+import android.view.Display;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -353,6 +356,12 @@ public class AuthContainerView extends LinearLayout
                             (AuthBiometricFaceToFingerprintView) factory.inflate(
                                     R.layout.auth_biometric_face_to_fingerprint_view, null, false);
                     faceToFingerprintView.setFingerprintSensorProps(fingerprintSensorProps);
+                    faceToFingerprintView.setModalityListener(new ModalityListener() {
+                        @Override
+                        public void onModalitySwitched(int oldModality, int newModality) {
+                            maybeUpdatePositionForUdfps(true /* invalidate */);
+                        }
+                    });
                     mBiometricView = faceToFingerprintView;
                 } else {
                     Log.e(TAG, "Fingerprint props not found for sensor ID: " + fingerprintSensorId);
@@ -374,6 +383,17 @@ public class AuthContainerView extends LinearLayout
         mBackgroundView = mInjector.getBackgroundView(mFrameLayout);
 
         addView(mFrameLayout);
+
+        // init view before showing
+        if (mBiometricView != null) {
+            mBiometricView.setRequireConfirmation(mConfig.mRequireConfirmation);
+            mBiometricView.setPanelController(mPanelController);
+            mBiometricView.setPromptInfo(mConfig.mPromptInfo);
+            mBiometricView.setCallback(mBiometricCallback);
+            mBiometricView.setBackgroundView(mBackgroundView);
+            mBiometricView.setUserId(mConfig.mUserId);
+            mBiometricView.setEffectiveUserId(mEffectiveUserId);
+        }
 
         // TODO: De-dupe the logic with AuthCredentialPasswordView
         setOnKeyListener((v, keyCode, event) -> {
@@ -403,13 +423,6 @@ public class AuthContainerView extends LinearLayout
     }
 
     private void addBiometricView() {
-        mBiometricView.setRequireConfirmation(mConfig.mRequireConfirmation);
-        mBiometricView.setPanelController(mPanelController);
-        mBiometricView.setPromptInfo(mConfig.mPromptInfo);
-        mBiometricView.setCallback(mBiometricCallback);
-        mBiometricView.setBackgroundView(mBackgroundView);
-        mBiometricView.setUserId(mConfig.mUserId);
-        mBiometricView.setEffectiveUserId(mEffectiveUserId);
         mBiometricScrollView.addView(mBiometricView);
     }
 
@@ -464,6 +477,11 @@ public class AuthContainerView extends LinearLayout
     }
 
     @Override
+    public void onOrientationChanged() {
+        maybeUpdatePositionForUdfps(true /* invalidate */);
+    }
+
+    @Override
     public void onAttachedToWindow() {
         super.onAttachedToWindow();
         onAttachedToWindowInternal();
@@ -482,32 +500,7 @@ public class AuthContainerView extends LinearLayout
                     + mConfig.mPromptInfo.getAuthenticators());
         }
 
-        if (mBiometricView instanceof AuthBiometricUdfpsView) {
-            final int displayRotation = getDisplay().getRotation();
-            switch (displayRotation) {
-                case Surface.ROTATION_0:
-                    mPanelController.setPosition(AuthPanelController.POSITION_BOTTOM);
-                    setScrollViewGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
-                    break;
-
-                case Surface.ROTATION_90:
-                    mPanelController.setPosition(AuthPanelController.POSITION_RIGHT);
-                    setScrollViewGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-                    break;
-
-                case Surface.ROTATION_270:
-                    mPanelController.setPosition(AuthPanelController.POSITION_LEFT);
-                    setScrollViewGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
-                    break;
-
-                case Surface.ROTATION_180:
-                default:
-                    Log.e(TAG, "Unsupported display rotation: " + displayRotation);
-                    mPanelController.setPosition(AuthPanelController.POSITION_BOTTOM);
-                    setScrollViewGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
-                    break;
-            }
-        }
+        maybeUpdatePositionForUdfps(false /* invalidate */);
 
         if (mConfig.mSkipIntro) {
             mContainerState = STATE_SHOWING;
@@ -550,6 +543,63 @@ public class AuthContainerView extends LinearLayout
                         .start();
             });
         }
+    }
+
+    private static boolean shouldUpdatePositionForUdfps(@NonNull View view) {
+        if (view instanceof AuthBiometricUdfpsView) {
+            return true;
+        }
+
+        if (view instanceof AuthBiometricFaceToFingerprintView) {
+            AuthBiometricFaceToFingerprintView faceToFingerprintView =
+                    (AuthBiometricFaceToFingerprintView) view;
+            return faceToFingerprintView.getActiveSensorType() == TYPE_FINGERPRINT
+                    && faceToFingerprintView.isFingerprintUdfps();
+        }
+
+        return false;
+    }
+
+    private boolean maybeUpdatePositionForUdfps(boolean invalidate) {
+        final Display display = getDisplay();
+        if (display == null) {
+            return false;
+        }
+        if (!shouldUpdatePositionForUdfps(mBiometricView)) {
+            return false;
+        }
+
+        final int displayRotation = display.getRotation();
+        switch (displayRotation) {
+            case Surface.ROTATION_0:
+                mPanelController.setPosition(AuthPanelController.POSITION_BOTTOM);
+                setScrollViewGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+                break;
+
+            case Surface.ROTATION_90:
+                mPanelController.setPosition(AuthPanelController.POSITION_RIGHT);
+                setScrollViewGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+                break;
+
+            case Surface.ROTATION_270:
+                mPanelController.setPosition(AuthPanelController.POSITION_LEFT);
+                setScrollViewGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
+                break;
+
+            case Surface.ROTATION_180:
+            default:
+                Log.e(TAG, "Unsupported display rotation: " + displayRotation);
+                mPanelController.setPosition(AuthPanelController.POSITION_BOTTOM);
+                setScrollViewGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+                break;
+        }
+
+        if (invalidate) {
+            mPanelView.invalidateOutline();
+            mBiometricView.requestLayout();
+        }
+
+        return true;
     }
 
     private void setScrollViewGravity(int gravity) {
@@ -598,18 +648,18 @@ public class AuthContainerView extends LinearLayout
     }
 
     @Override
-    public void onAuthenticationFailed(String failureReason) {
-        mBiometricView.onAuthenticationFailed(failureReason);
+    public void onAuthenticationFailed(@Modality int modality, String failureReason) {
+        mBiometricView.onAuthenticationFailed(modality, failureReason);
     }
 
     @Override
-    public void onHelp(String help) {
-        mBiometricView.onHelp(help);
+    public void onHelp(@Modality int modality, String help) {
+        mBiometricView.onHelp(modality, help);
     }
 
     @Override
-    public void onError(String error) {
-        mBiometricView.onError(error);
+    public void onError(@Modality int modality, String error) {
+        mBiometricView.onError(modality, error);
     }
 
     @Override

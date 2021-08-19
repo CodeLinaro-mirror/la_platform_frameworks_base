@@ -74,6 +74,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.KeyguardUpdateMonitorCallback;
+import com.android.settingslib.Utils;
 import com.android.systemui.ActivityIntentHelper;
 import com.android.systemui.Dependency;
 import com.android.systemui.R;
@@ -368,8 +369,8 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
         updateLeftAffordanceIcon();
 
         lp = mWalletButton.getLayoutParams();
-        lp.width = getResources().getDimensionPixelSize(R.dimen.keyguard_affordance_width);
-        lp.height = getResources().getDimensionPixelSize(R.dimen.keyguard_affordance_height);
+        lp.width = getResources().getDimensionPixelSize(R.dimen.keyguard_affordance_wallet_width);
+        lp.height = getResources().getDimensionPixelSize(R.dimen.keyguard_affordance_wallet_width);
         mWalletButton.setLayoutParams(lp);
 
         mIndicationPadding = getResources().getDimensionPixelSize(
@@ -455,6 +456,14 @@ public class KeyguardBottomAreaView extends FrameLayout implements View.OnClickL
             mWalletButton.setVisibility(GONE);
             mIndicationArea.setPadding(0, 0, 0, 0);
         } else {
+            Drawable tileIcon = mQuickAccessWalletController.getWalletClient().getTileIcon();
+            if (tileIcon != null) {
+                mWalletButton.setImageDrawable(tileIcon);
+            }
+            mWalletButton.getDrawable().setTint(
+                    Utils.getColorAttr(
+                            mContext,
+                            com.android.internal.R.attr.textColorPrimary).getDefaultColor());
             mWalletButton.setVisibility(VISIBLE);
             mWalletButton.setOnClickListener(this::onWalletClick);
             mIndicationArea.setPadding(mIndicationPadding, 0, mIndicationPadding, 0);

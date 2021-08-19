@@ -48,6 +48,7 @@ import android.os.Trace;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.proto.ProtoOutputStream;
+import android.view.Display;
 
 import com.android.internal.policy.IKeyguardDismissCallback;
 import com.android.server.inputmethod.InputMethodManagerInternal;
@@ -71,7 +72,6 @@ class KeyguardController {
     private boolean mAodShowing;
     private boolean mKeyguardGoingAway;
     private boolean mDismissalRequested;
-    private int mBeforeUnoccludeTransit;
     private final SparseArray<KeyguardDisplayState> mDisplayStates = new SparseArray<>();
     private final ActivityTaskManagerService mService;
     private RootWindowContainer mRootWindowContainer;
@@ -163,36 +163,44 @@ class KeyguardController {
                 aodShowing ? 1 : 0,
                 mKeyguardGoingAway ? 1 : 0,
                 "setKeyguardShown");
+
+        // Update the task snapshot if the screen will not be turned off. To make sure that the
+        // unlocking animation can animate consistent content. The conditions are:
+        // - Either AOD or keyguard changes to be showing. So if the states change individually,
+        //   the later one can be skipped to avoid taking snapshot again. While it still accepts
+        //   if both of them change to show at the same time.
+        // - Keyguard was not going away. Because if it was, the closing transition is able to
+        //   handle the snapshot.
+        // - The display state is ON. Because if AOD is not on or pulsing, the display state will
+        //   be OFF or DOZE (the path of screen off may have handled it).
+        if (((aodShowing ^ keyguardShowing) || (aodShowing && aodChanged && keyguardChanged))
+                && !mKeyguardGoingAway && Display.isOnState(
+                        mRootWindowContainer.getDefaultDisplay().getDisplayInfo().state)) {
+            mWindowManager.mTaskSnapshotController.snapshotForSleeping(DEFAULT_DISPLAY);
+        }
+
         mKeyguardShowing = keyguardShowing;
         mAodShowing = aodShowing;
         if (aodChanged) {
             // Ensure the new state takes effect.
             mWindowManager.mWindowPlacerLocked.performSurfacePlacement();
-            // If the device can enter AOD and keyguard at the same time, the screen will not be
-            // turned off, so the snapshot needs to be refreshed when these states are changed.
-            if (aodShowing && keyguardShowing && keyguardChanged) {
-                mWindowManager.mTaskSnapshotController.snapshotForSleeping(DEFAULT_DISPLAY);
-            }
         }
 
         if (keyguardChanged) {
             // Irrelevant to AOD.
             dismissMultiWindowModeForTaskIfNeeded(null /* currentTaskControllsingOcclusion */,
                     false /* turningScreenOn */);
-            setKeyguardGoingAway(false);
+            mKeyguardGoingAway = false;
             if (keyguardShowing) {
                 mDismissalRequested = false;
             }
         }
-        // TODO(b/113840485): Check usage for non-default display
-        mWindowManager.setKeyguardOrAodShowingOnDefaultDisplay(
-                isKeyguardOrAodShowing(DEFAULT_DISPLAY));
 
         // Update the sleep token first such that ensureActivitiesVisible has correct sleep token
         // state when evaluating visibilities.
         updateKeyguardSleepToken();
         mRootWindowContainer.ensureActivitiesVisible(null, 0, !PRESERVE_WINDOWS);
-        InputMethodManagerInternal.get().updateImeWindowStatus();
+        InputMethodManagerInternal.get().updateImeWindowStatus(false /* disableImeIcon */);
     }
 
     /**
@@ -207,8 +215,8 @@ class KeyguardController {
         }
         Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "keyguardGoingAway");
         mService.deferWindowLayout();
+        mKeyguardGoingAway = true;
         try {
-            setKeyguardGoingAway(true);
             EventLogTags.writeWmSetKeyguardShown(
                     1 /* keyguardShowing */,
                     mAodShowing ? 1 : 0,
@@ -244,11 +252,6 @@ class KeyguardController {
         }
 
         mWindowManager.dismissKeyguard(callback, message);
-    }
-
-    private void setKeyguardGoingAway(boolean keyguardGoingAway) {
-        mKeyguardGoingAway = keyguardGoingAway;
-        mWindowManager.setKeyguardGoingAway(keyguardGoingAway);
     }
 
     private void failCallback(IKeyguardDismissCallback callback) {

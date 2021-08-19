@@ -20,6 +20,7 @@ import static android.graphics.Matrix.MSCALE_X;
 import static android.graphics.Matrix.MSCALE_Y;
 import static android.graphics.Matrix.MSKEW_X;
 import static android.graphics.Matrix.MSKEW_Y;
+import static android.view.SurfaceControl.METADATA_WINDOW_TYPE;
 import static android.view.View.SYSTEM_UI_FLAG_VISIBLE;
 import static android.view.WindowManager.LayoutParams.TYPE_WALLPAPER;
 
@@ -57,6 +58,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.Trace;
 import android.util.ArraySet;
 import android.util.Log;
@@ -155,6 +157,9 @@ public abstract class WallpaperService extends Service {
 
     private static final int NOTIFY_COLORS_RATE_LIMIT_MS = 1000;
 
+    private static final boolean ENABLE_WALLPAPER_DIMMING =
+            SystemProperties.getBoolean("persist.debug.enable_wallpaper_dimming", true);
+
     private final ArrayList<Engine> mActiveEngines
             = new ArrayList<Engine>();
 
@@ -202,6 +207,7 @@ public abstract class WallpaperService extends Service {
         boolean mDrawingAllowed;
         boolean mOffsetsChanged;
         boolean mFixedSizeAllowed;
+        boolean mShouldDim;
         int mWidth;
         int mHeight;
         int mFormat;
@@ -253,6 +259,7 @@ public abstract class WallpaperService extends Service {
         private Display mDisplay;
         private Context mDisplayContext;
         private int mDisplayState;
+        private float mWallpaperDimAmount = 0.05f;
 
         SurfaceControl mSurfaceControl = new SurfaceControl();
         SurfaceControl mBbqSurfaceControl;
@@ -783,6 +790,42 @@ public abstract class WallpaperService extends Service {
                     throw new RuntimeException(e);
                 }
             }
+            WallpaperColors primaryColors = mIWallpaperEngine.mWallpaperManager
+                    .getWallpaperColors(WallpaperManager.FLAG_SYSTEM);
+            setPrimaryWallpaperColors(primaryColors);
+        }
+
+        private void setPrimaryWallpaperColors(WallpaperColors colors) {
+            if (colors == null) {
+                return;
+            }
+            int colorHints = colors.getColorHints();
+            boolean shouldDim = ((colorHints & WallpaperColors.HINT_SUPPORTS_DARK_TEXT) == 0
+                    && (colorHints & WallpaperColors.HINT_SUPPORTS_DARK_THEME) == 0);
+            if (shouldDim != mShouldDim) {
+                mShouldDim = shouldDim;
+                updateSurfaceDimming();
+                updateSurface(false, false, true);
+            }
+        }
+
+        private void updateSurfaceDimming() {
+            if (!ENABLE_WALLPAPER_DIMMING || mBbqSurfaceControl == null) {
+                return;
+            }
+            // TODO: apply the dimming to preview as well once surface transparency works in
+            // preview mode.
+            if (!isPreview() && mShouldDim) {
+                Log.v(TAG, "Setting wallpaper dimming: " + mWallpaperDimAmount);
+                new SurfaceControl.Transaction()
+                        .setAlpha(mBbqSurfaceControl, 1 - mWallpaperDimAmount)
+                        .apply();
+            } else {
+                Log.v(TAG, "Setting wallpaper dimming: " + 0);
+                new SurfaceControl.Transaction()
+                        .setAlpha(mBbqSurfaceControl, 1.0f)
+                        .apply();
+            }
         }
 
         /**
@@ -982,10 +1025,13 @@ public abstract class WallpaperService extends Service {
                             mBbqSurfaceControl = new SurfaceControl.Builder()
                                     .setName("Wallpaper BBQ wrapper")
                                     .setHidden(false)
+                                    // TODO(b/192291754)
+                                    .setMetadata(METADATA_WINDOW_TYPE, TYPE_WALLPAPER)
                                     .setBLASTLayer()
                                     .setParent(mSurfaceControl)
                                     .setCallsite("Wallpaper#relayout")
                                     .build();
+                            updateSurfaceDimming();
                         }
                         Surface blastSurface = getOrCreateBLASTSurface(mSurfaceSize.x,
                                 mSurfaceSize.y, mFormat);
@@ -1222,6 +1268,8 @@ public abstract class WallpaperService extends Service {
             // Use window context of TYPE_WALLPAPER so client can access UI resources correctly.
             mDisplayContext = createDisplayContext(mDisplay)
                     .createWindowContext(TYPE_WALLPAPER, null /* options */);
+            mWallpaperDimAmount = mDisplayContext.getResources().getFloat(
+                    com.android.internal.R.dimen.config_wallpaperDimAmount);
             mDisplayState = mDisplay.getState();
 
             if (DEBUG) Log.v(TAG, "onCreate(): " + this);
@@ -1466,9 +1514,12 @@ public abstract class WallpaperService extends Service {
         void updatePage(EngineWindowPage currentPage, int pageIndx, int numPages,
                 float xOffsetStep) {
             // to save creating a runnable, check twice
-            long current = System.nanoTime() / 1_000_000;
+            long current = SystemClock.elapsedRealtime();
             long lapsed = current - currentPage.getLastUpdateTime();
-            if (lapsed < DEFAULT_UPDATE_SCREENSHOT_DURATION) {
+            // Always update the page when the last update time is <= 0
+            // This is important especially when the device first boots
+            if (lapsed < DEFAULT_UPDATE_SCREENSHOT_DURATION
+                    && currentPage.getLastUpdateTime() > 0) {
                 return;
             }
             Surface surface = mSurfaceHolder.getSurface();
@@ -1522,6 +1573,7 @@ public abstract class WallpaperService extends Service {
                         + page.getBitmap().getWidth() + " x " + page.getBitmap().getHeight());
             }
             for (RectF area: page.getAreas()) {
+                if (area == null) continue;
                 RectF subArea = generateSubRect(area, pageIndx, numPages);
                 Bitmap b = page.getBitmap();
                 int x = Math.round(b.getWidth() * subArea.left);
@@ -1719,6 +1771,7 @@ public abstract class WallpaperService extends Service {
                 float finalStep = step;
                 int finalPageIndx = pageIndx;
                 Bitmap screenShot = page.getBitmap();
+                if (screenShot == null) screenShot = mLastScreenshot;
                 if (screenShot == null || screenShot.isRecycled()) {
                     if (DEBUG) {
                         Log.d(TAG, "invalid bitmap " + screenShot
@@ -1884,6 +1937,7 @@ public abstract class WallpaperService extends Service {
     }
 
     private boolean isValid(RectF area) {
+        if (area == null) return false;
         boolean valid = area.bottom > area.top && area.left < area.right
                 && LOCAL_COLOR_BOUNDS.contains(area);
         return valid;
@@ -1908,6 +1962,7 @@ public abstract class WallpaperService extends Service {
         final int mDisplayId;
         final DisplayManager mDisplayManager;
         final Display mDisplay;
+        final WallpaperManager mWallpaperManager;
         private final AtomicBoolean mDetached = new AtomicBoolean();
 
         Engine mEngine;
@@ -1916,6 +1971,7 @@ public abstract class WallpaperService extends Service {
                 IWallpaperConnection conn, IBinder windowToken,
                 int windowType, boolean isPreview, int reqWidth, int reqHeight, Rect padding,
                 int displayId) {
+            mWallpaperManager = getSystemService(WallpaperManager.class);
             mCaller = new HandlerCaller(context, context.getMainLooper(), this, true);
             mConnection = conn;
             mWindowToken = windowToken;
@@ -2133,7 +2189,9 @@ public abstract class WallpaperService extends Service {
                         break;
                     }
                     try {
-                        mConnection.onWallpaperColorsChanged(mEngine.onComputeColors(), mDisplayId);
+                        WallpaperColors colors = mEngine.onComputeColors();
+                        mEngine.setPrimaryWallpaperColors(colors);
+                        mConnection.onWallpaperColorsChanged(colors, mDisplayId);
                     } catch (RemoteException e) {
                         // Connection went away, nothing to do in here.
                     }

@@ -24,6 +24,7 @@ import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.DisplayAdjustments.DEFAULT_DISPLAY_ADJUSTMENTS;
 
 import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.HOME_BUTTON_LONG_PRESS_DURATION_MS;
+import static com.android.systemui.Dependency.EDGE_BACK_GESTURE_HANDLER_PROVIDER;
 import static com.android.systemui.navigationbar.NavigationBar.NavBarActionEvent.NAVBAR_ASSIST_LONGPRESS;
 
 import static org.junit.Assert.assertEquals;
@@ -76,8 +77,10 @@ import com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.recents.OverviewProxyService;
 import com.android.systemui.recents.Recents;
+import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
+import com.android.systemui.statusbar.NotificationShadeDepthController;
 import com.android.systemui.statusbar.phone.ShadeController;
 import com.android.systemui.statusbar.phone.StatusBar;
 import com.android.systemui.statusbar.policy.AccessibilityManagerWrapper;
@@ -133,7 +136,8 @@ public class NavigationBarTest extends SysuiTestCase {
         mDependency.injectMockDependency(StatusBarStateController.class);
         mDependency.injectMockDependency(NavigationBarController.class);
         mOverviewProxyService = mDependency.injectMockDependency(OverviewProxyService.class);
-        mDependency.injectMockDependency(EdgeBackGestureHandler.class);
+        mDependency.injectTestDependency(EDGE_BACK_GESTURE_HANDLER_PROVIDER,
+                () -> mock(EdgeBackGestureHandler.class));
         TestableLooper.get(this).runWithLooper(() -> {
             mNavigationBar = createNavBar(mContext);
             mExternalDisplayNavigationBar = createNavBar(mSysuiTestableContextExternal);
@@ -273,10 +277,12 @@ public class NavigationBarTest extends SysuiTestCase {
                 () -> mock(StatusBar.class),
                 mock(ShadeController.class),
                 mock(NotificationRemoteInputManager.class),
+                mock(NotificationShadeDepthController.class),
                 mock(SystemActions.class),
                 mHandler,
                 mock(NavigationBarOverlayController.class),
-                mUiEventLogger));
+                mUiEventLogger,
+                mock(UserTracker.class)));
     }
 
     private void processAllMessages() {

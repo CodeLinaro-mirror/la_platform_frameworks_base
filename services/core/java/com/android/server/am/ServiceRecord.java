@@ -18,8 +18,9 @@ package com.android.server.am;
 
 import static android.app.PendingIntent.FLAG_IMMUTABLE;
 import static android.app.PendingIntent.FLAG_UPDATE_CURRENT;
-import static android.os.PowerWhitelistManager.REASON_DENIED;
+import static android.os.PowerExemptionManager.REASON_DENIED;
 
+import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_FOREGROUND_SERVICE;
 import static com.android.server.am.ActivityManagerDebugConfig.TAG_AM;
 import static com.android.server.am.ActivityManagerDebugConfig.TAG_WITH_CLASS_NAME;
 
@@ -37,7 +38,7 @@ import android.net.Uri;
 import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
-import android.os.PowerWhitelistManager;
+import android.os.PowerExemptionManager;
 import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.Settings;
@@ -109,7 +110,6 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
     boolean fgWaiting;      // is a timeout for going foreground already scheduled?
     boolean isNotAppComponentUsage; // is service binding not considered component/package usage?
     boolean isForeground;   // is service currently in foreground mode?
-    boolean mLogEntering;    // need to report fgs transition once deferral policy is known
     int foregroundId;       // Notification ID of last foreground req.
     Notification foregroundNoti; // Notification record of foreground state.
     long fgDisplayTime;     // time at which the FGS notification should become visible
@@ -153,6 +153,8 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
     // allow while-in-use permissions in foreground service or not.
     // while-in-use permissions in FGS started from background might be restricted.
     boolean mAllowWhileInUsePermissionInFgs;
+    // A copy of mAllowWhileInUsePermissionInFgs's value when the service is entering FGS state.
+    boolean mAllowWhileInUsePermissionInFgsAtEntering;
 
     // the most recent package that start/bind this service.
     String mRecentCallingPackage;
@@ -165,14 +167,18 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
     long mFgsEnterTime = 0;
     // The uptime when the service exits FGS state.
     long mFgsExitTime = 0;
-    // FGS notification was deferred.
+    // FGS notification is deferred.
     boolean mFgsNotificationDeferred;
+    // FGS notification was deferred.
+    boolean mFgsNotificationWasDeferred;
     // FGS notification was shown before the FGS finishes, or it wasn't deferred in the first place.
     boolean mFgsNotificationShown;
 
     // allow the service becomes foreground service? Service started from background may not be
     // allowed to become a foreground service.
-    @PowerWhitelistManager.ReasonCode int mAllowStartForeground = REASON_DENIED;
+    @PowerExemptionManager.ReasonCode int mAllowStartForeground = REASON_DENIED;
+    // A copy of mAllowStartForeground's value when the service is entering FGS state.
+    @PowerExemptionManager.ReasonCode int mAllowStartForegroundAtEntering = REASON_DENIED;
     // Debug info why mAllowStartForeground is allowed or denied.
     String mInfoAllowStartForeground;
     // Debug info if mAllowStartForeground is allowed because of a temp-allowlist.
@@ -923,13 +929,17 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
     public void postNotification() {
         final int appUid = appInfo.uid;
         final int appPid = app.getPid();
-        if (foregroundId != 0 && foregroundNoti != null) {
+        if (isForeground && foregroundNoti != null) {
             // Do asynchronous communication with notification manager to
             // avoid deadlocks.
             final String localPackageName = packageName;
             final int localForegroundId = foregroundId;
             final Notification _foregroundNoti = foregroundNoti;
             final ServiceRecord record = this;
+            if (DEBUG_FOREGROUND_SERVICE) {
+                Slog.d(TAG, "Posting notification " + _foregroundNoti
+                        + " for foreground service " + this);
+            }
             ams.mHandler.post(new Runnable() {
                 public void run() {
                     NotificationManagerInternal nm = LocalServices.getService(
@@ -1061,10 +1071,6 @@ final class ServiceRecord extends Binder implements ComponentName.WithComponentN
     }
 
     public void stripForegroundServiceFlagFromNotification() {
-        if (foregroundId == 0) {
-            return;
-        }
-
         final int localForegroundId = foregroundId;
         final int localUserId = userId;
         final String localPackageName = packageName;

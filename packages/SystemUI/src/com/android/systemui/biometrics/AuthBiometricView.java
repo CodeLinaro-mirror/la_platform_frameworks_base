@@ -16,6 +16,8 @@
 
 package com.android.systemui.biometrics;
 
+import static android.hardware.biometrics.BiometricAuthenticator.TYPE_NONE;
+
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.AnimatorSet;
@@ -24,6 +26,7 @@ import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.Context;
+import android.hardware.biometrics.BiometricAuthenticator.Modality;
 import android.hardware.biometrics.BiometricPrompt;
 import android.hardware.biometrics.PromptInfo;
 import android.os.Bundle;
@@ -542,12 +545,25 @@ public abstract class AuthBiometricView extends LinearLayout {
         }
     }
 
-    public void onAuthenticationFailed(String failureReason) {
+    /**
+     * Notify the view that auth has failed.
+     *
+     * @param modality sensor modality that failed
+     * @param failureReason message
+     */
+    public void onAuthenticationFailed(
+            @Modality int modality, @Nullable String failureReason) {
         showTemporaryMessage(failureReason, mResetErrorRunnable);
         updateState(STATE_ERROR);
     }
 
-    public void onError(String error) {
+    /**
+     * Notify the view that an error occurred.
+     *
+     * @param modality sensor modality that failed
+     * @param error message
+     */
+    public void onError(@Modality int modality, String error) {
         showTemporaryMessage(error, mResetErrorRunnable);
         updateState(STATE_ERROR);
 
@@ -556,21 +572,34 @@ public abstract class AuthBiometricView extends LinearLayout {
         }, mInjector.getDelayAfterError());
     }
 
-    public void onHelp(String help) {
+    /**
+     * Show a help message to the user.
+     *
+     * @param modality sensor modality
+     * @param help message
+     */
+    public void onHelp(@Modality int modality, String help) {
         if (mSize != AuthDialog.SIZE_MEDIUM) {
             Log.w(TAG, "Help received in size: " + mSize);
             return;
         }
+        if (TextUtils.isEmpty(help)) {
+            Log.w(TAG, "Ignoring blank help message");
+            return;
+        }
+
         showTemporaryMessage(help, mResetHelpRunnable);
         updateState(STATE_HELP);
     }
 
     public void onSaveState(@NonNull Bundle outState) {
+        outState.putInt(AuthDialog.KEY_BIOMETRIC_CONFIRM_VISIBILITY,
+                mConfirmButton.getVisibility());
         outState.putInt(AuthDialog.KEY_BIOMETRIC_TRY_AGAIN_VISIBILITY,
                 mTryAgainButton.getVisibility());
         outState.putInt(AuthDialog.KEY_BIOMETRIC_STATE, mState);
         outState.putString(AuthDialog.KEY_BIOMETRIC_INDICATOR_STRING,
-                mIndicatorView.getText().toString());
+                mIndicatorView.getText() != null ? mIndicatorView.getText().toString() : "");
         outState.putBoolean(AuthDialog.KEY_BIOMETRIC_INDICATOR_ERROR_SHOWING,
                 mHandler.hasCallbacks(mResetErrorRunnable));
         outState.putBoolean(AuthDialog.KEY_BIOMETRIC_INDICATOR_HELP_SHOWING,
@@ -607,7 +636,6 @@ public abstract class AuthBiometricView extends LinearLayout {
         mIndicatorView.setText(message);
         mIndicatorView.setTextColor(mTextColorError);
         mIndicatorView.setVisibility(View.VISIBLE);
-        mIndicatorView.setSelected(true);
         mHandler.postDelayed(resetMessageRunnable, mInjector.getDelayAfterError());
 
         Utils.notifyAccessibilityContentChanged(mAccessibilityManager, this);
@@ -727,9 +755,15 @@ public abstract class AuthBiometricView extends LinearLayout {
             // Restore as much state as possible first
             updateState(mSavedState.getInt(AuthDialog.KEY_BIOMETRIC_STATE));
 
-            // Restore positive button state
+            // Restore positive button(s) state
+            mConfirmButton.setVisibility(
+                    mSavedState.getInt(AuthDialog.KEY_BIOMETRIC_CONFIRM_VISIBILITY));
+            if (mConfirmButton.getVisibility() == View.GONE) {
+                setRequireConfirmation(false);
+            }
             mTryAgainButton.setVisibility(
                     mSavedState.getInt(AuthDialog.KEY_BIOMETRIC_TRY_AGAIN_VISIBILITY));
+
         }
     }
 
@@ -828,10 +862,10 @@ public abstract class AuthBiometricView extends LinearLayout {
                 final String indicatorText =
                         mSavedState.getString(AuthDialog.KEY_BIOMETRIC_INDICATOR_STRING);
                 if (mSavedState.getBoolean(AuthDialog.KEY_BIOMETRIC_INDICATOR_HELP_SHOWING)) {
-                    onHelp(indicatorText);
+                    onHelp(TYPE_NONE, indicatorText);
                 } else if (mSavedState.getBoolean(
                         AuthDialog.KEY_BIOMETRIC_INDICATOR_ERROR_SHOWING)) {
-                    onAuthenticationFailed(indicatorText);
+                    onAuthenticationFailed(TYPE_NONE, indicatorText);
                 }
             }
         }
