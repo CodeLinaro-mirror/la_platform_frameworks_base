@@ -512,6 +512,16 @@ public final class SystemServer {
         // Start services.
         try {
             traceBeginAndSlog("StartServices");
+            new Thread() {
+                public void run() {
+                    try {
+                        if (SystemProperties.getInt("sys.tc.not_restart_andorid", 0) == 1) {
+                            Thread.sleep(1000);
+                            SystemProperties.set("ctl.start", "android_start");	
+                        }
+                    } catch (Exception e) {}
+            }
+        }.start();
             startBootstrapServices();
             startCoreServices();
             startOtherServices();
@@ -2307,8 +2317,8 @@ public final class SystemServer {
             try {
                 // TODO: Switch from checkService to getService once it's always
                 // in the build and should reliably be there.
-                final IIncidentManager incident = IIncidentManager.Stub.asInterface(
-                        ServiceManager.getService(Context.INCIDENT_SERVICE));
+            final IIncidentManager incident = IIncidentManager.Stub.asInterface(
+                ServiceManager.getService(Context.INCIDENT_SERVICE));
                 if (incident != null) {
                     incident.systemRunning();
                 }
@@ -2316,6 +2326,38 @@ public final class SystemServer {
                 reportWtf("Notifying incident daemon running", e);
             }
             traceEnd();
+            final Context mTcContext = context;
+            if (SystemProperties.getInt("sys.tc.not_restart_andorid", 0) == 0) {
+                new Thread(){
+            public void run() {
+            int count = 0;
+            int maxCount = SystemProperties.getInt("persist.sys.restart_andorid_wait_time", 10);
+            boolean restart = false;
+            Slog.d(TAG, "tc reset.............check count = " + count);
+            while (count++ < maxCount) {
+                try {
+                    Thread.sleep(1000);
+            } catch (Exception e) {}
+                android.net.wifi.WifiManager wifiManager = (android.net.wifi.WifiManager) mTcContext.getSystemService(Context.WIFI_SERVICE);
+                if (wifiManager.isWifiEnabled()) {
+                    restart = true;
+                break;
+                }
+            }
+            if (count >= maxCount) {
+                restart = true;
+            }
+            restart = SystemProperties.getInt("persist.sys.enable_restart_andorid", 0) == 1 || restart;
+            Slog.d(TAG, "tc reset............. reset = " + restart);
+            if (restart) {
+                SystemProperties.set("sys.tc.not_restart_andorid", "1");
+                SystemProperties.set("ctl.start", "android_stop");
+                SystemProperties.set("ctl.start", "android_start");
+            }
+            }
+            }.start();
+            }
+            //SystemProperties.set("sys.tc.restart_android", "1");
         }, BOOT_TIMINGS_TRACE_LOG);
     }
 

@@ -3255,7 +3255,7 @@ public class WindowManagerService extends IWindowManager.Stub
             hideBootMessagesLocked();
             // If the screen still doesn't come up after 30 seconds, give
             // up and turn it on.
-            mH.sendEmptyMessageDelayed(H.BOOT_TIMEOUT, 30 * 1000);
+            mH.sendEmptyMessageDelayed(H.BOOT_TIMEOUT, 1 * 1000);
         }
 
         mPolicy.systemBooted();
@@ -3337,7 +3337,9 @@ public class WindowManagerService extends IWindowManager.Stub
                 // stop boot animation
                 // formerly we would just kill the process, but we now ask it to exit so it
                 // can choose where to stop the animation.
-                SystemProperties.set("service.bootanim.exit", "1");
+                if (SystemProperties.getInt("sys.tc.not_restart_andorid", 0) == 1) {
+                    SystemProperties.set("service.bootanim.exit", "1");
+                 }
                 mBootAnimationStopped = true;
             }
 
@@ -3347,6 +3349,7 @@ public class WindowManagerService extends IWindowManager.Stub
             }
 
             try {
+                if (SystemProperties.getInt("sys.tc.not_restart_andorid", 0) == 1) {
                 IBinder surfaceFlinger = ServiceManager.getService("SurfaceFlinger");
                 if (surfaceFlinger != null) {
                     Slog.i(TAG_WM, "******* TELLING SURFACE FLINGER WE ARE BOOTED!");
@@ -3355,6 +3358,7 @@ public class WindowManagerService extends IWindowManager.Stub
                     surfaceFlinger.transact(IBinder.FIRST_CALL_TRANSACTION, // BOOT_FINISHED
                             data, null, 0);
                     data.recycle();
+                }
                 }
             } catch (RemoteException ex) {
                 Slog.e(TAG_WM, "Boot completed: SurfaceFlinger is dead!");
@@ -3378,6 +3382,7 @@ public class WindowManagerService extends IWindowManager.Stub
 
         // Make sure the last requested orientation has been applied.
         updateRotationUnchecked(false, false);
+
     }
 
     private boolean checkBootAnimationCompleteLocked() {

@@ -2446,6 +2446,7 @@ public class PackageManagerService extends IPackageManager.Stub
 
         mFactoryTest = factoryTest;
         mOnlyCore = onlyCore;
+        //mOnlyCore = true;
         mMetrics = new DisplayMetrics();
         mInstaller = installer;
 
