@@ -819,6 +819,22 @@ public final class SystemServer {
         mSystemServiceManager.startService(LightsService.class);
         t.traceEnd();
 
+        //create new property for offload power test, we can disable offload feature when power test
+        boolean disableOffload =
+            SystemProperties.getBoolean("persist.sys.offload.debug.disable", false);
+        //offload feature can be disabled with overlay
+        //offload feature will be disabled when device is not watch
+        final boolean startOffloadService =
+            mSystemContext.getResources().getBoolean(R.bool.config_offloadEnabled) &&
+            SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
+        final String OFFLOAD_SERVICE_CLASS =
+            "com.qualcomm.qti.server.offloadservice.OffloadManagerService";
+        if (!disableOffload && startOffloadService) {
+            t.traceBegin("StartOffloadService");
+            mSystemServiceManager.startService(OFFLOAD_SERVICE_CLASS);
+            t.traceEnd();
+        }
+
         t.traceBegin("StartSidekickService");
         // Package manager isn't started yet; need to use SysProp not hardware feature
         if (SystemProperties.getBoolean("config.enable_sidekick_graphics", false)) {
