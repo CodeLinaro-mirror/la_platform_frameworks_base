@@ -616,14 +616,16 @@ class UserController implements Handler.Callback {
         }
         mInjector.installEncryptionUnawareProviders(userId);
 
-        // Dispatch unlocked to external apps
-        final Intent unlockedIntent = new Intent(Intent.ACTION_USER_UNLOCKED);
-        unlockedIntent.putExtra(Intent.EXTRA_USER_HANDLE, userId);
-        unlockedIntent.addFlags(
-                Intent.FLAG_RECEIVER_REGISTERED_ONLY | Intent.FLAG_RECEIVER_FOREGROUND);
-        mInjector.broadcastIntent(unlockedIntent, null, null, 0, null,
-                null, null, AppOpsManager.OP_NONE, null, false, false, MY_PID, SYSTEM_UID,
-                Binder.getCallingUid(), Binder.getCallingPid(), userId);
+        if (!mInjector.getUserManager().isPreCreated(userId)) {
+            // Dispatch unlocked to external apps
+            final Intent unlockedIntent = new Intent(Intent.ACTION_USER_UNLOCKED);
+            unlockedIntent.putExtra(Intent.EXTRA_USER_HANDLE, userId);
+            unlockedIntent.addFlags(
+                    Intent.FLAG_RECEIVER_REGISTERED_ONLY | Intent.FLAG_RECEIVER_FOREGROUND);
+            mInjector.broadcastIntent(unlockedIntent, null, null, 0, null,
+                    null, null, AppOpsManager.OP_NONE, null, false, false, MY_PID, SYSTEM_UID,
+                    Binder.getCallingUid(), Binder.getCallingPid(), userId);
+        }
 
         if (getUserInfo(userId).isManagedProfile()) {
             UserInfo parent = mInjector.getUserManager().getProfileParent(userId);
@@ -680,9 +682,12 @@ class UserController implements Handler.Callback {
         // Remember that we logged in
         mInjector.getUserManager().onUserLoggedIn(userId);
 
+        Runnable initializeUser = () -> mInjector.getUserManager().makeInitialized(userInfo.id);
         if (!userInfo.isInitialized()) {
-            if (userId != UserHandle.USER_SYSTEM) {
-                Slog.d(TAG, "Initializing user #" + userId);
+            Slog.d(TAG, "Initializing user #" + userId);
+            if (userInfo.preCreated) {
+                initializeUser.run();
+            } else if (userId != UserHandle.USER_SYSTEM) {
                 Intent intent = new Intent(Intent.ACTION_USER_INITIALIZE);
                 intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND
                         | Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
@@ -693,7 +698,7 @@ class UserController implements Handler.Callback {
                                     String data, Bundle extras, boolean ordered,
                                     boolean sticky, int sendingUser) {
                                 // Note: performReceive is called with mService lock held
-                                mInjector.getUserManager().makeInitialized(userInfo.id);
+                                initializeUser.run();
                             }
                         }, 0, null, null, null, AppOpsManager.OP_NONE,
                         null, true, false, MY_PID, SYSTEM_UID, Binder.getCallingUid(),
@@ -893,7 +898,15 @@ class UserController implements Handler.Callback {
             mInjector.getUserManagerInternal().setUserState(userId, uss.state);
             updateStartedUserArrayLU();
 
-            final boolean allowDelayyLockingCopied = allowDelayedLocking;
+            final boolean allowDelayedLockingCopied = allowDelayedLocking;
+            Runnable finishUserStoppingAsync = () ->
+                    mHandler.post(() -> finishUserStopping(userId, uss, allowDelayedLockingCopied));
+
+            if (mInjector.getUserManager().isPreCreated(userId)) {
+                finishUserStoppingAsync.run();
+                return;
+            }
+
             // Post to handler to obtain amLock
             mHandler.post(() -> {
                 // We are going to broadcast ACTION_USER_STOPPING and then
@@ -908,8 +921,7 @@ class UserController implements Handler.Callback {
                     @Override
                     public void performReceive(Intent intent, int resultCode, String data,
                             Bundle extras, boolean ordered, boolean sticky, int sendingUser) {
-                        mHandler.post(() -> finishUserStopping(userId, uss,
-                                allowDelayyLockingCopied));
+                        finishUserStoppingAsync.run();
                     }
                 };
 
@@ -928,22 +940,7 @@ class UserController implements Handler.Callback {
     void finishUserStopping(final int userId, final UserState uss,
             final boolean allowDelayedLocking) {
         EventLog.writeEvent(EventLogTags.UC_FINISH_USER_STOPPING, userId);
-        // On to the next.
-        final Intent shutdownIntent = new Intent(Intent.ACTION_SHUTDOWN);
-        // This is the result receiver for the final shutdown broadcast.
-        final IIntentReceiver shutdownReceiver = new IIntentReceiver.Stub() {
-            @Override
-            public void performReceive(Intent intent, int resultCode, String data,
-                    Bundle extras, boolean ordered, boolean sticky, int sendingUser) {
-                mHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        finishUserStopped(uss, allowDelayedLocking);
-                    }
-                });
-            }
-        };
-
+        Slog.d(TAG, "UserController event: finishUserStopping(" + userId + ")");
         synchronized (mLock) {
             if (uss.state != UserState.STATE_STOPPING) {
                 // Whoops, we are being started back up.  Abort, abort!
@@ -958,6 +955,23 @@ class UserController implements Handler.Callback {
                 Integer.toString(userId), userId);
         mInjector.getSystemServiceManager().stopUser(userId);
 
+        Runnable finishUserStoppedAsync = () ->
+                mHandler.post(() -> finishUserStopped(uss, allowDelayedLocking));
+        if (mInjector.getUserManager().isPreCreated(userId)) {
+            finishUserStoppedAsync.run();
+            return;
+        }
+
+        // Fire the shutdown intent.
+        final Intent shutdownIntent = new Intent(Intent.ACTION_SHUTDOWN);
+        // This is the result receiver for the final shutdown broadcast.
+        final IIntentReceiver shutdownReceiver = new IIntentReceiver.Stub() {
+            @Override
+            public void performReceive(Intent intent, int resultCode, String data,
+                    Bundle extras, boolean ordered, boolean sticky, int sendingUser) {
+                finishUserStoppedAsync.run();
+            }
+        };
         mInjector.broadcastIntent(shutdownIntent,
                 null, shutdownReceiver, 0, null, null, null,
                 AppOpsManager.OP_NONE,
@@ -1117,6 +1131,10 @@ class UserController implements Handler.Callback {
 
     private void forceStopUser(@UserIdInt int userId, String reason) {
         mInjector.activityManagerForceStopPackage(userId, reason);
+        if (mInjector.getUserManager().isPreCreated(userId)) {
+            // Don't fire intent for precreated.
+            return;
+        }
         Intent intent = new Intent(Intent.ACTION_USER_STOPPED);
         intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY
                 | Intent.FLAG_RECEIVER_FOREGROUND);
