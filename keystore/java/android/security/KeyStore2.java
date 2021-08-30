@@ -117,7 +117,7 @@ public class KeyStore2 {
                             + RECOVERY_GRACE_PERIOD_MS + "ms to recover.");
                     interruptedPreservingSleep(RECOVERY_GRACE_PERIOD_MS);
                     service = getService(true /* retry Lookup */);
-                    firstTry = false;
+                   firstTry = false;
                 } else {
                     Log.e(TAG, "Cannot connect to Keystore daemon.", e);
                     throw new KeyStoreException(ResponseCode.SYSTEM_ERROR, "");
