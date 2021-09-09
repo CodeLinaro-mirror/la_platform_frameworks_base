@@ -378,6 +378,7 @@ filegroup {
         "android/util/Rational.java",
         "com/android/internal/util/FastXmlSerializer.java",
         "com/android/internal/util/HexDump.java",
+        "com/android/internal/util/RingBuffer.java",
         "com/android/internal/util/IState.java",
         "com/android/internal/util/MessageUtils.java",
         "com/android/internal/util/State.java",
