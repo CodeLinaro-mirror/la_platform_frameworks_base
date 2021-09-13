@@ -9934,6 +9934,13 @@ public class PackageManagerService extends IPackageManager.Stub
 
     @Override
     public boolean hasSystemFeature(String name, int version) {
+        /* disable aware by vendor prop */
+        if (PackageManager.FEATURE_WIFI_AWARE.equals(name)) {
+            if (!SystemProperties.getBoolean("ro.vendor.wlan.aware", true)) {
+                Slog.w(TAG, "<" + name + "> not supported due to ro.vendor.wlan.aware is false");
+                return false;
+            }
+        }
         // allow instant applications
         synchronized (mAvailableFeatures) {
             final FeatureInfo feat = mAvailableFeatures.get(name);
