@@ -251,7 +251,6 @@ package android.net.wifi {
   public final class SoftApConfiguration implements android.os.Parcelable {
     method @NonNull public java.util.List<android.net.MacAddress> getAllowedClientList();
     method public int getBand();
-    method @NonNull public java.util.List<java.lang.Integer> getBands();
     method @NonNull public java.util.List<android.net.MacAddress> getBlockedClientList();
     method public int getChannel();
     method public int getMaxNumberOfClients();

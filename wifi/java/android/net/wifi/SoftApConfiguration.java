@@ -462,7 +462,6 @@ public final class SoftApConfiguration implements Parcelable {
      * @hide
      */
     @NonNull
-    @SystemApi
     public List<Integer> getBands() {
         return mBands;
     }
