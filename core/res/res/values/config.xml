@@ -4430,4 +4430,13 @@
     <!-- The number of degrees to rotate the display when the force landscape
          mode enabled. A value of -1 means no change in orientation by default. -->
     <integer name="config_forceLandscapeRotation">-1</integer>
+
+    <!-- True if OffloadManagerService is enabled -->
+    <bool name="config_offloadEnabled">false</bool>
+
+    <!-- Offload brightness alpha used to display the slate while tracker mode. -->
+    <integer name="config_offloadBrightenAlpha">0</integer>
+
+    <!-- Offload dimming alpha used to dimming the slate while tracker mode. -->
+    <integer name="config_offloadDimmingAlpha">0</integer>
 </resources>
