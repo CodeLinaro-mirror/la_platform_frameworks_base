@@ -469,6 +469,7 @@ public class Ringtone {
                     AssetFileDescriptor afd = mContext.getResources().openRawResourceFd(
                             com.android.internal.R.raw.fallbackring);
                     if (afd != null) {
+                        destroyLocalPlayer();
                         mLocalPlayer = new MediaPlayer();
                         if (afd.getDeclaredLength() < 0) {
                             mLocalPlayer.setDataSource(afd.getFileDescriptor());
@@ -521,7 +522,10 @@ public class Ringtone {
             synchronized (sActiveRingtones) {
                 sActiveRingtones.remove(Ringtone.this);
             }
+            mp.reset();
+            mp.release();
             mp.setOnCompletionListener(null); // Help the Java GC: break the refcount cycle.
+            mp = null;
         }
     }
 }
