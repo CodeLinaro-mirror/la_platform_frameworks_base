@@ -830,9 +830,13 @@ public final class SystemServer {
         final String OFFLOAD_SERVICE_CLASS =
             "com.qualcomm.qti.server.offloadservice.OffloadManagerService";
         if (!disableOffload && startOffloadService) {
-            t.traceBegin("StartOffloadService");
-            mSystemServiceManager.startService(OFFLOAD_SERVICE_CLASS);
-            t.traceEnd();
+            try {
+                t.traceBegin("StartOffloadService");
+                mSystemServiceManager.startService(OFFLOAD_SERVICE_CLASS);
+                t.traceEnd();
+            } catch (Throwable e) {
+                reportWtf("starting OffloadService", e);
+            }
         }
 
         t.traceBegin("StartSidekickService");
