@@ -122,7 +122,7 @@ class DisplayAreaPolicyBuilder {
                 mPolicy = policy;
                 mName = name;
                 mId = id;
-                mLayers = new boolean[mPolicy.getMaxWindowLayer()];
+                mLayers = new boolean[mPolicy.getMaxWindowLayer() + 1];
             }
 
             /**
@@ -197,7 +197,8 @@ class DisplayAreaPolicyBuilder {
 
         private final ArrayList<Feature> mFeatures;
         private final Map<Feature, List<DisplayArea<? extends WindowContainer>>> mAreas;
-        private final DisplayArea.Tokens[] mAreaForLayer = new DisplayArea.Tokens[mMaxWindowLayer];
+        private final DisplayArea.Tokens[] mAreaForLayer =
+                new DisplayArea.Tokens[mMaxWindowLayer + 1];
 
         Result(WindowManagerService wmService, DisplayContent content, DisplayArea.Root root,
                 DisplayArea<? extends WindowContainer> imeContainer,
@@ -234,14 +235,14 @@ class DisplayAreaPolicyBuilder {
             //        to the current layer
 
 
-            PendingArea[] areaForLayer = new PendingArea[mMaxWindowLayer];
+            PendingArea[] areaForLayer = new PendingArea[mMaxWindowLayer + 1];
             final PendingArea root = new PendingArea(null, 0, null);
             Arrays.fill(areaForLayer, root);
 
             final int size = mFeatures.size();
             for (int i = 0; i < size; i++) {
                 PendingArea featureArea = null;
-                for (int layer = 0; layer < mMaxWindowLayer; layer++) {
+                for (int layer = 0; layer <= mMaxWindowLayer; layer++) {
                     final Feature feature = mFeatures.get(i);
                     if (feature.mWindowLayers[layer]) {
                         if (featureArea == null || featureArea.mParent != areaForLayer[layer]) {
@@ -259,7 +260,7 @@ class DisplayAreaPolicyBuilder {
 
             PendingArea leafArea = null;
             int leafType = LEAF_TYPE_TOKENS;
-            for (int layer = 0; layer < mMaxWindowLayer; layer++) {
+            for (int layer = 0; layer <= mMaxWindowLayer; layer++) {
                 int type = typeOfLayer(mWmService.mPolicy, layer);
                 if (leafArea == null || leafArea.mParent != areaForLayer[layer]
                         || type != leafType) {

@@ -19,13 +19,13 @@ package com.android.server.wm;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
 import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD;
 import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR;
+import static android.view.WindowManager.LayoutParams.TYPE_POINTER;
 import static android.view.WindowManager.LayoutParams.TYPE_PRESENTATION;
 import static android.view.WindowManager.LayoutParams.TYPE_STATUS_BAR;
 import static android.view.WindowManagerPolicyConstants.APPLICATION_LAYER;
 import static android.window.DisplayAreaOrganizer.FEATURE_DEFAULT_TASK_CONTAINER;
 
 import static com.android.server.wm.DisplayArea.Type.ABOVE_TASKS;
-import static com.android.server.wm.DisplayArea.Type.ANY;
 import static com.android.server.wm.DisplayAreaPolicyBuilder.Feature;
 
 import static org.hamcrest.Matchers.empty;
@@ -125,6 +125,37 @@ public class DisplayAreaPolicyBuilderTest {
 
         assertThat(expectedByMinLayer, is(equalTo(expectedByMaxLayer)));
         assertThat(actualOrder, is(equalTo(expectedByMaxLayer)));
+    }
+
+    @Test
+    public void testAttachDisplayAreas_DoesNotThrowIndexOutOfBounds() {
+        WindowManagerService wms = mSystemServices.getWindowManagerService();
+        DisplayArea.Root root = new SurfacelessDisplayAreaRoot(wms);
+        DisplayArea<WindowContainer> ime = new DisplayArea<>(wms, ABOVE_TASKS, "Ime");
+        DisplayContent displayContent = mock(DisplayContent.class);
+        TaskDisplayArea taskDisplayArea = new TaskDisplayArea(displayContent, wms, "Tasks",
+                FEATURE_DEFAULT_TASK_CONTAINER);
+        List<TaskDisplayArea> taskDisplayAreaList = new ArrayList<>();
+        taskDisplayAreaList.add(taskDisplayArea);
+
+        Feature foo = new Feature.Builder(mPolicy, "Foo", 0)
+                .upTo(TYPE_POINTER)
+                .and(TYPE_NAVIGATION_BAR)
+                .build();
+        Feature bar = new Feature.Builder(mPolicy, "Bar", 1)
+                .all()
+                .except(TYPE_STATUS_BAR)
+                .build();
+
+        DisplayAreaPolicyBuilder.Result policy = new DisplayAreaPolicyBuilder()
+                .addFeature(foo)
+                .addFeature(bar)
+                .build(wms, displayContent, root, ime, taskDisplayAreaList);
+
+        policy.attachDisplayAreas();
+
+        assertThat(policy.getDisplayAreas(foo), is(not(empty())));
+        assertThat(policy.getDisplayAreas(bar), is(not(empty())));
     }
 
     private <K, V, R> Map<K, R> mapValues(Map<K, V> zSets, Function<V, R> f) {
