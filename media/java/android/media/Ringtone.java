@@ -522,10 +522,10 @@ public class Ringtone {
             synchronized (sActiveRingtones) {
                 sActiveRingtones.remove(Ringtone.this);
             }
-            mp.reset();
-            mp.release();
+            mLocalPlayer.reset();
+            mLocalPlayer.release();
             mp.setOnCompletionListener(null); // Help the Java GC: break the refcount cycle.
-            mp = null;
+            mLocalPlayer = null;
         }
     }
 }
