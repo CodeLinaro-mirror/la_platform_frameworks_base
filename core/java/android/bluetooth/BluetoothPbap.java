@@ -111,28 +111,14 @@ public class BluetoothPbap implements BluetoothProfile {
         public void onServiceDisconnected();
     }
 
-    private void unregisterStateChangeCallback () {
-        IBluetoothManager mgr = mAdapter.getBluetoothManager();
-        if (mgr != null) {
-            try {
-                mgr.unregisterStateChangeCallback(mBluetoothStateChangeCallback);
-            } catch (RemoteException e) {
-                Log.e(TAG, "", e);
-            }
-        }
-    }
-
     private final IBluetoothStateChangeCallback mBluetoothStateChangeCallback =
             new IBluetoothStateChangeCallback.Stub() {
                 public void onBluetoothStateChange(boolean up) {
                     log("onBluetoothStateChange: up=" + up);
                     if (!up) {
                         doUnbind();
-                        unregisterStateChangeCallback();
                     } else {
-                        if (!doBind()) {
-                            unregisterStateChangeCallback();
-                        }
+                        doBind();
                     }
                 }
             };
@@ -152,9 +138,7 @@ public class BluetoothPbap implements BluetoothProfile {
                 Log.e(TAG, "", re);
             }
         }
-        if (!doBind()) {
-            unregisterStateChangeCallback();
-        }
+        doBind();
     }
 
     boolean doBind() {
@@ -210,7 +194,14 @@ public class BluetoothPbap implements BluetoothProfile {
      * are ok.
      */
     public synchronized void close() {
-        unregisterStateChangeCallback();
+        IBluetoothManager mgr = mAdapter.getBluetoothManager();
+        if (mgr != null) {
+            try {
+                mgr.unregisterStateChangeCallback(mBluetoothStateChangeCallback);
+            } catch (RemoteException re) {
+                Log.e(TAG, "", re);
+            }
+        }
         doUnbind();
         mServiceListener = null;
     }
