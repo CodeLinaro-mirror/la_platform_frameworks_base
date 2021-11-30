@@ -76,6 +76,28 @@ public final class BluetoothAvrcpController implements BluetoothProfile {
     public static final String EXTRA_PLAYER_SETTING =
             "android.bluetooth.avrcp-controller.profile.extra.PLAYER_SETTING";
 
+    /**
+     * Intent used to broadcast the change of UIDs in the AVRCP Controller
+     * profile.
+     *
+     * <p>This intent will have 1 extra:
+     * <ul>
+     *   <li> {@link BluetoothDevice#EXTRA_DEVICE} - The remote device. </li>
+     * </ul>
+     *
+     * <p>Requires {@link android.Manifest.permission#BLUETOOTH} permission to
+     * receive.
+     */
+    public static final String ACTION_UIDS_EVENT =
+        "android.bluetooth.avrcp-controller.profile.action.UIDS_EVENT";
+
+    /* Remote supported Features */
+    public static final int BTRC_FEAT_NONE = 0x00;
+    public static final int BTRC_FEAT_METADATA = 0x01;
+    public static final int BTRC_FEAT_ABSOLUTE_VOLUME = 0x02;
+    public static final int BTRC_FEAT_BROWSE = 0x04;
+    public static final int BTRC_FEAT_COVER_ART = 0x08;
+
     private BluetoothAdapter mAdapter;
     private final BluetoothProfileConnector<IBluetoothAvrcpController> mProfileConnector =
             new BluetoothProfileConnector(this, BluetoothProfile.AVRCP_CONTROLLER,
@@ -229,6 +251,54 @@ public final class BluetoothAvrcpController implements BluetoothProfile {
             }
         }
         if (service == null) Log.w(TAG, "Proxy not attached to service");
+    }
+
+    /**
+     * Get Supported features for Remote.
+     */
+    public int getSupportedFeatures(BluetoothDevice device) {
+        Log.d(TAG, "getSupportedFeatures dev = " + device);
+        final IBluetoothAvrcpController service =
+                getService();
+        if (service != null && isEnabled()) {
+            try {
+                return service.getSupportedFeatures(device);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error talking to BT service in getSupportedFeatures()", e);
+                return 0;
+            }
+       }
+       if (service == null) Log.w(TAG, "Proxy not attached to service");
+       return 0;
+    }
+
+    /**
+     * Informs AvrcpControllerService to start fetching Album Art.
+     * Fetching will start only after this api is called.
+     * @device Bluetooth device
+     * @type Image type
+     * @scheme Image scheme
+     * @mimeType Image mime Type
+     * @height Image height
+     * @width Image width
+     * @maxSize Image maximum size
+     * if input parameters are null, 0, 0, 0: image in native encoding will be fetched.
+     */
+    public void startFetchingAlbumArt(BluetoothDevice device, String type, String scheme,
+            String mimeType, int height, int width, int maxSize) {
+        if (DBG) Log.d(TAG, "startFetchingAlbumArt");
+        final IBluetoothAvrcpController service =
+                getService();
+        if (service != null && isEnabled()) {
+            try {
+                service.startFetchingAlbumArt(device, type, scheme, mimeType, height, width, maxSize);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error talking to BT service in startFetchingAlbumArt() " + e);
+                return;
+            }
+        }
+        if (service == null) Log.w(TAG, "Proxy not attached to service");
+        return ;
     }
 
     private boolean isEnabled() {
