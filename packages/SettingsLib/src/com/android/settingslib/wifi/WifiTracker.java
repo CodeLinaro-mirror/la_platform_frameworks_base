@@ -96,6 +96,8 @@ public class WifiTracker implements LifecycleObserver, OnStart, OnStop, OnDestro
 
     /** Maximum age of scan results to hold onto while actively scanning. **/
     @VisibleForTesting static final long MAX_SCAN_RESULT_AGE_MILLIS = 15000;
+    /** Maximum age of scan results to hold onto while actively scanning. **/
+    @VisibleForTesting static final long MAX_SCAN_RESULT_LONG_AGE_MILLIS = 40000;
 
     private static final String TAG = "WifiTracker";
     private static final boolean DBG() {
@@ -118,6 +120,7 @@ public class WifiTracker implements LifecycleObserver, OnStart, OnStop, OnDestro
     // TODO: Allow control of this?
     // Combo scans can take 5-6s to complete - set to 10s.
     private static final int WIFI_RESCAN_INTERVAL_MS = 10 * 1000;
+    private static final int WIFI_RESCAN_LONG_INTERVAL_MS = 30 * 1000;
 
     private final Context mContext;
     private final WifiManager mWifiManager;
@@ -510,8 +513,11 @@ public class WifiTracker implements LifecycleObserver, OnStart, OnStop, OnDestro
      * {@link #mStaleScanResults} is false.
      */
     private void evictOldScans() {
-        long evictionTimeoutMillis = mLastScanSucceeded ? MAX_SCAN_RESULT_AGE_MILLIS
-                : MAX_SCAN_RESULT_AGE_MILLIS * 2;
+        long max_age = MAX_SCAN_RESULT_AGE_MILLIS;
+        if (isConnected()) {
+            max_age = MAX_SCAN_RESULT_LONG_AGE_MILLIS;
+        }
+        long evictionTimeoutMillis = mLastScanSucceeded ? max_age : max_age * 2;
 
         long nowMs = SystemClock.elapsedRealtime();
         for (Iterator<ScanResult> iter = mScanResultCache.values().iterator(); iter.hasNext(); ) {
@@ -991,7 +997,11 @@ public class WifiTracker implements LifecycleObserver, OnStart, OnStop, OnDestro
                 }
                 return;
             }
-            sendEmptyMessageDelayed(MSG_SCAN, WIFI_RESCAN_INTERVAL_MS);
+            if (isConnected()) {
+                sendEmptyMessageDelayed(MSG_SCAN, WIFI_RESCAN_LONG_INTERVAL_MS);
+            } else {
+                sendEmptyMessageDelayed(MSG_SCAN, WIFI_RESCAN_INTERVAL_MS);
+            }
         }
     }
 
