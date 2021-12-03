@@ -470,6 +470,11 @@ public class StatusBar extends SystemUI implements DemoMode,
                 updateQsExpansionEnabled();
             }
         }
+
+        @Override
+        public void onDeviceProvisionedChanged() {
+            updateQsExpansionEnabled();
+        }
     };
 
     @VisibleForTesting
