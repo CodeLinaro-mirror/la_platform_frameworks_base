@@ -91,6 +91,9 @@ public final class BluetoothMapClient implements BluetoothProfile {
     @RequiresBluetoothConnectPermission
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+     /**
+     * Action to notify read status changed
+     */
     public static final String ACTION_MESSAGE_READ_STATUS_CHANGED =
             "android.bluetooth.mapmce.profile.action.MESSAGE_READ_STATUS_CHANGED";
 
@@ -125,6 +128,19 @@ public final class BluetoothMapClient implements BluetoothProfile {
     public static final String EXTRA_SENDER_CONTACT_NAME =
             "android.bluetooth.mapmce.profile.extra.SENDER_CONTACT_NAME";
 
+    /**
+     * Used as a String extra field in ACTION_MESSAGE_RECEIVED
+     * It contains MAP message type
+     * Possible values are:
+     * "EMAIL"
+     * "SMS_GSM"
+     * "SMS_CDMA"
+     * "MMS"
+
+     * @hide
+     */
+    public static final String EXTRA_TYPE =
+            "android.bluetooth.extra.TYPE";
     /**
      * Used as a boolean extra in ACTION_MESSAGE_DELETED_STATUS_CHANGED
      * Contains the MAP message deleted status
@@ -626,6 +642,27 @@ public final class BluetoothMapClient implements BluetoothProfile {
             (status == READ || status == UNREAD || status == UNDELETED  || status == DELETED)) {
             try {
                 return service.setMessageStatus(device, handle, status, mAttributionSource);
+            } catch (RemoteException e) {
+                Log.e(TAG, Log.getStackTraceString(new Throwable()));
+                return false;
+          }
+        }
+        return false;
+    }
+
+    /**
+     * Abort current obex operation
+     *
+     * @param device Bluetooth device
+     * @return <code>true</code> if request has been sent, <code>false</code> on error
+     * @hide
+     */
+    public boolean abort(BluetoothDevice device) {
+        if (DBG) Log.d(TAG, "abort(" + device + ")");
+        final IBluetoothMapClient service = getService();
+        if (service != null && isEnabled() && isValidDevice(device)) {
+            try {
+                return service.abort(device, mAttributionSource);
             } catch (RemoteException e) {
                 Log.e(TAG, Log.getStackTraceString(new Throwable()));
                 return false;
