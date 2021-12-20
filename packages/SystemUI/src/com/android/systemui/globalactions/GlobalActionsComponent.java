@@ -120,4 +120,12 @@ public class GlobalActionsComponent implements CoreStartable, Callbacks, GlobalA
         } catch (RemoteException e) {
         }
     }
+
+    @Override
+    public void twm() {
+        try {
+            mBarService.twm();
+        } catch (RemoteException e) {
+        }
+    }
 }
