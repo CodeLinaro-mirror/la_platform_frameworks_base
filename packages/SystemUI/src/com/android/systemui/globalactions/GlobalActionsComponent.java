@@ -121,4 +121,12 @@ public class GlobalActionsComponent extends SystemUI implements Callbacks, Globa
         } catch (RemoteException e) {
         }
     }
+
+    @Override
+    public void twm() {
+        try {
+            mBarService.twm();
+        } catch (RemoteException e) {
+        }
+    }
 }
