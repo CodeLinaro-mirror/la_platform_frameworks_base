@@ -185,6 +185,7 @@ public class GlobalActionsDialog implements DialogInterface.OnDismissListener,
     private static final String GLOBAL_ACTION_KEY_LOGOUT = "logout";
     static final String GLOBAL_ACTION_KEY_EMERGENCY = "emergency";
     static final String GLOBAL_ACTION_KEY_SCREENSHOT = "screenshot";
+    static final String GLOBAL_ACTION_KEY_TWM = "twm";
 
     public static final String PREFS_CONTROLS_SEEDING_COMPLETED = "SeedingCompleted";
     public static final String PREFS_CONTROLS_FILE = "controls_prefs";
@@ -602,6 +603,7 @@ public class GlobalActionsDialog implements DialogInterface.OnDismissListener,
 
         ShutDownAction shutdownAction = new ShutDownAction();
         RestartAction restartAction = new RestartAction();
+        TWMAction twmAction = new TWMAction();
         ArraySet<String> addedKeys = new ArraySet<String>();
         List<Action> tempActions = new ArrayList<>();
         CurrentUserProvider currentUser = new CurrentUserProvider();
@@ -656,6 +658,11 @@ public class GlobalActionsDialog implements DialogInterface.OnDismissListener,
                 }
             } else if (GLOBAL_ACTION_KEY_EMERGENCY.equals(actionKey)) {
                 addIfShouldShowAction(tempActions, new EmergencyDialerAction());
+            }  else if (GLOBAL_ACTION_KEY_TWM.equals(actionKey)) {
+                boolean isQcomWatch = SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
+                if (isQcomWatch) {
+                    addIfShouldShowAction(tempActions, twmAction);
+                }
             } else {
                 Log.e(TAG, "Invalid global action key " + actionKey);
             }
@@ -957,6 +964,33 @@ public class GlobalActionsDialog implements DialogInterface.OnDismissListener,
         @Override
         public void onPress() {
             mWindowManagerFuncs.reboot(false);
+        }
+    }
+
+    @VisibleForTesting
+    final class TWMAction extends SinglePressAction implements LongPressAction {
+        private TWMAction() {
+            super(R.drawable.ic_restart, R.string.global_action_twm);
+        }
+
+        @Override
+        public boolean onLongPress() {
+             return false;
+        }
+
+        @Override
+        public boolean showDuringKeyguard() {
+            return true;
+        }
+
+        @Override
+        public boolean showBeforeProvisioning() {
+            return true;
+        }
+
+        @Override
+        public void onPress() {
+            mWindowManagerFuncs.twm();
         }
     }
 
