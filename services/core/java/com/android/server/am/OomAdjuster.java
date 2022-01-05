@@ -209,6 +209,11 @@ public class OomAdjuster {
     CachedAppOptimizer mCachedAppOptimizer;
 
     /**
+     * flag: is qcom watch device
+     */
+    boolean isQcomWatch;
+
+    /**
      * Re-rank apps getting a cache oom adjustment from lru to weighted order
      * based on weighted scores for LRU, PSS and cache use count.
      */
@@ -445,6 +450,7 @@ public class OomAdjuster {
         mConstants = mService.mConstants;
         mCachedAppOptimizer = new CachedAppOptimizer(mService);
         mCacheOomRanker = new CacheOomRanker(service);
+        isQcomWatch = SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
 
         if(mPerf != null) {
             mMinBServiceAgingTime = Integer.valueOf(mPerf.perfGetProp("ro.vendor.qti.sys.fw.bservice_age", "5000"));
@@ -2722,7 +2728,9 @@ public class OomAdjuster {
                     // processing of the requests. As a result, there is throttling both here
                     // and in CachedAppOptimizer.
                     && mCachedAppOptimizer.shouldCompactPersistent(app, now)) {
-                mCachedAppOptimizer.compactAppPersistent(app);
+                if ((isQcomWatch && state.getSetAdj() > ProcessList.SYSTEM_ADJ) || !isQcomWatch) {
+                    mCachedAppOptimizer.compactAppPersistent(app);
+                }
             } else if (mService.mWakefulness.get() != PowerManagerInternal.WAKEFULNESS_AWAKE
                     && state.getCurProcState()
                         == ActivityManager.PROCESS_STATE_BOUND_FOREGROUND_SERVICE
