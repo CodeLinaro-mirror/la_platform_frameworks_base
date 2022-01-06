@@ -4468,4 +4468,8 @@
   <java-symbol type="integer" name="config_maximumDelayTimeToDeactivateDataCall" />
   <!-- whether to enable offload function -->
   <java-symbol type="bool" name="config_offloadEnabled" />
+
+  <java-symbol type="integer" name="config_offloadBrightenAlpha" />
+  <java-symbol type="integer" name="config_offloadDimmingAlpha" />
+  <java-symbol type="integer" name="config_shutdownBehavior" />
 </resources>
