@@ -1096,6 +1096,101 @@ public final class BluetoothDevice implements Parcelable, Attributable {
     /** Address is either resolvable, non-resolvable or static. */
     public static final int ADDRESS_TYPE_RANDOM = 1;
 
+    /** @hide */
+    public static final String ACTION_LINKKEY =
+            "android.bluetooth.device.action.LINKKEY";
+
+    /**
+     * Used as an extra field in {@link #ACTION_LINKKEY} intent.
+     * intents for link key number string.
+     *
+     * @hide
+     */
+    public static final String EXTRA_KEY_LINK_KEY = "link_key";
+
+    /**
+     * Used as an extra field in {@link #ACTION_LINKKEY} intent.
+     * intents for Link Key Notification Event. Possible values are:
+     * {@link #LKEY_TYPE_COMBINATION}, {@link #LKEY_TYPE_LOCAL_UNIT},
+     * {@link #LKEY_TYPE_REMOTE_UNIT}, {@link #LKEY_TYPE_DEBUG_COMB},
+     * {@link #LKEY_TYPE_UNAUTH_COMB}, {@link #LKEY_TYPE_AUTH_COMB},
+     * {@link #LKEY_TYPE_CHANGED_COMB}, {@link #LKEY_TYPE_UNAUTH_COMB_P_256},
+     * {@link #LKEY_TYPE_AUTH_COMB_P_256}, {@link #LKEY_TYPE_NO_LINK},
+     *
+     * @hide
+     */
+    public static final String EXTRA_KEY_LINK_KEY_TYPE = "link_key_type";
+
+    /**
+     * link key type is Combination Key.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_COMBINATION = 0x00;
+
+    /**
+     * link key type is Local Unit Key.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_LOCAL_UNIT = 0x01;
+
+    /**
+     * link key type is Remote Unit Key.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_REMOTE_UNIT = 0x02;
+
+    /**
+     * link key type is Debug Combination Key.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_DEBUG_COMB = 0x03;
+
+    /**
+     * link key type is Unauthenticated Combination Key generated from P-192.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_UNAUTH_COMB = 0x04;
+
+    /**
+     * link key type is Authenticated Combination Key generated from P-192.
+     *
+     * @hide
+     */
+    public static final int TYPE_AUTH_COMB = 0x05;
+
+    /**
+     * link key type is Changed Combination Key.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_CHANGED_COMB = 0x06;
+
+    /**
+     * link key type is Unauthenticated Combination Key generated from P-256.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_UNAUTH_COMB_P_256 = 0x07;
+
+    /**
+     * link key type is Authenticated Combination Key generated from P-256.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_AUTH_COMB_P_256 = 0x08;
+
+    /**
+     * link key type is no link key.
+     *
+     * @hide
+     */
+    public static final int LKEY_TYPE_NO_LINK = -1;
+
     /**
      * Lazy initialization. Guaranteed final after first object constructed, or
      * getService() called.
@@ -1504,6 +1599,30 @@ public final class BluetoothDevice implements Parcelable, Attributable {
         }
         return false;
     }
+
+    /*
+     * Get link key and key type of current device.
+     *
+     * This API is asynchronous and {@link #ACTION_LINKKEY} intent is sent with
+     * linkkey and key type.
+     *
+     * <p>Requires {@link android.Manifest.permission#BLUETOOTH_PRIVILEGED}.
+     *
+     * @hide
+     */
+     @RequiresPermission(android.Manifest.permission.BLUETOOTH_PRIVILEGED)
+     public void getLinkKey(@NonNull Context context) {
+         final IBluetooth service = sService;
+         if (service == null) {
+             Log.w(TAG, "BT not enabled, getLinkKey failed");
+             return;
+         }
+         try {
+             service.getLinkKey(this, context.getPackageName());
+         } catch (RemoteException e) {
+             Log.e(TAG, "", e);
+         }
+     }
 
     /**
      * Gets whether bonding was initiated locally
