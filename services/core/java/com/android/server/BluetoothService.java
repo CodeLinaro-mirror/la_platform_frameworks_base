@@ -20,18 +20,23 @@ import android.bluetooth.BluetoothAdapter;
 import android.content.Context;
 import android.os.UserManager;
 
+import vendor.qti.bluetooth_offload.NotificationOffloadAdapter;
+
 class BluetoothService extends SystemService {
     private BluetoothManagerService mBluetoothManagerService;
+    private NotificationOffloadMgrService mNotificationOffloadMgrService;
     private boolean mInitialized = false;
 
     public BluetoothService(Context context) {
         super(context);
         mBluetoothManagerService = new BluetoothManagerService(context);
+        mNotificationOffloadMgrService = new NotificationOffloadMgrService(context);
     }
 
     private void initialize() {
         if (!mInitialized) {
             mBluetoothManagerService.handleOnBootPhase();
+            mNotificationOffloadMgrService.handleOnBootPhase();
             mInitialized = true;
         }
     }
@@ -45,6 +50,8 @@ class BluetoothService extends SystemService {
         if (phase == SystemService.PHASE_SYSTEM_SERVICES_READY) {
             publishBinderService(BluetoothAdapter.BLUETOOTH_MANAGER_SERVICE,
                     mBluetoothManagerService);
+            publishBinderService(NotificationOffloadAdapter.NOTIFICATION_OFFLOAD_MGR_SERVICE,
+                    mNotificationOffloadMgrService);
         } else if (phase == SystemService.PHASE_ACTIVITY_MANAGER_READY &&
                 !UserManager.isHeadlessSystemUserMode()) {
             initialize();
@@ -57,11 +64,13 @@ class BluetoothService extends SystemService {
             initialize();
         } else {
             mBluetoothManagerService.handleOnSwitchUser(userHandle);
+            mNotificationOffloadMgrService.handleOnSwitchUser(userHandle);
         }
     }
 
     @Override
     public void onUnlockUser(int userHandle) {
         mBluetoothManagerService.handleOnUnlockUser(userHandle);
+        mNotificationOffloadMgrService.handleOnUnlockUser(userHandle);
     }
 }
