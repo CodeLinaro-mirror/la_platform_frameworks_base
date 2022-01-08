@@ -261,6 +261,26 @@ public final class BluetoothAvrcpController implements BluetoothProfile {
         if (service == null) Log.w(TAG, "Proxy not attached to service");
     }
 
+    /**
+     * Fetch the playback state to Remote.
+     */
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    public void getPlaybackState(BluetoothDevice device){
+        Log.d(TAG, "getPlaybackStateNative dev = " + device);
+        final IBluetoothAvrcpController service = getService();
+        if (service != null && isEnabled()) {
+           try {
+               service.getPlaybackState(device, mAttributionSource);
+               return;
+           } catch (RemoteException e) {
+               Log.e(TAG, "Error talking to BT service in getPlaybackState()", e);
+               return;
+           }
+        }
+        if (service == null) Log.w(TAG, "Proxy not attached to service");
+    }
+
     private boolean isEnabled() {
         return mAdapter.getState() == BluetoothAdapter.STATE_ON;
     }
