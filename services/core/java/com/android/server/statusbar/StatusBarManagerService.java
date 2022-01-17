@@ -1207,6 +1207,28 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         }
     }
 
+    /**
+     * Allows the status bar to twm the device.
+     */
+    @Override
+    public void twm() {
+        enforceStatusBarService();
+        long identity = Binder.clearCallingIdentity();
+        try {
+            mNotificationDelegate.prepareForPossibleShutdown();
+            // ShutdownThread displays UI, so give it a UI context.
+            int shutdownBehavior = mContext.getResources().getInteger(
+                 com.android.internal.R.integer.config_shutdownBehavior);
+            if (shutdownBehavior == 1) {
+                mHandler.post(() ->
+                    ShutdownThread.reboot(getUiContext(),
+                            PowerManager.REBOOT_TWM, false));
+            }
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+    }
+
     @Override
     public void onGlobalActionsShown() {
         enforceStatusBarService();
