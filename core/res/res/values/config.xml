@@ -4439,4 +4439,9 @@
 
     <!-- Offload dimming alpha used to dimming the slate while tracker mode. -->
     <integer name="config_offloadDimmingAlpha">0</integer>
+
+    <!-- The number of config used to decide shutdown behavior.
+         A value of 0 means no change by default.
+         A value of 1 means enter TWM power off mode after shutdown.-->
+    <integer name="config_shutdownBehavior">0</integer>
 </resources>

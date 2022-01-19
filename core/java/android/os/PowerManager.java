@@ -672,6 +672,12 @@ public final class PowerManager {
     public static final String REBOOT_QUIESCENT = "quiescent";
 
     /**
+     * The 'reason' value used for  enter TWM mode.
+     * @hide
+     */
+    public static final String REBOOT_TWM = "twm";
+
+    /**
      * The value to pass as the 'reason' argument to android_reboot().
      * @hide
      */
