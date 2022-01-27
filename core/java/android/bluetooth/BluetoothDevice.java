@@ -163,6 +163,15 @@ public final class BluetoothDevice implements Parcelable {
             "android.bluetooth.device.action.ACL_DISCONNECTED";
 
     /**
+     * Used as an int extra field in {@link #ACTION_ACL_DISCONNECTED}
+     * intent for ACL disconnected reason.
+     *
+     * @hide
+     */
+    public static final String EXTRA_ACL_DISCONNECTED_REASON =
+            "android.bluetooth.device.extra.ACL_DISCONNECTED_REASON";
+
+    /**
      * Broadcast Action: Indicates the friendly name of a remote device has
      * been retrieved for the first time, or changed since the last retrieval.
      * <p>Always contains the extra fields {@link #EXTRA_DEVICE} and {@link
