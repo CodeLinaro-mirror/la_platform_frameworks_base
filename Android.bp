@@ -217,6 +217,14 @@ filegroup {
 }
 
 filegroup {
+    name: "framework-bluetooth_offload-adapter-srcs",
+    srcs: [
+        "core/java/android/bluetooth/bluetooth_offload/vendor/qti/bluetooth_offload/*.java",
+    ],
+    path: "core/java/android/bluetooth/bluetooth_offload/vendor/qti/bluetooth_offload",
+}
+
+filegroup {
     name: "framework-non-updatable-sources",
     srcs: [
         // Java/AIDL sources under frameworks/base
