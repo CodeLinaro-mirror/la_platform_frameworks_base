@@ -747,6 +747,21 @@ public final class BluetoothDevice implements Parcelable, Attributable {
             "android.bluetooth.device.action.SILENCE_MODE_CHANGED";
 
     /**
+     * Broadcast Action: This intent is used to broadcast the {@link RSSI}
+     * of the remote device after it has been fetched.
+     * This intent is used to broadcast remote device's RSSI
+     * <p> Always contains the extra field {@link #EXTRA_DEVICE}
+     * <p> Always contains the extra field {@link #EXTRA_RSSI}
+     */
+    /** @hide */
+    @RequiresLegacyBluetoothAdminPermission
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_RSSI =
+            "android.bluetooth.device.action.RSSI";
+
+    /**
      * Used as an extra field in {@link #ACTION_CONNECTION_ACCESS_REQUEST} intent.
      *
      * @hide
@@ -1655,6 +1670,30 @@ public final class BluetoothDevice implements Parcelable, Attributable {
         }
         try {
             return service.loadRemoteOobData(this, transport, remoteP192Data, remoteP256Data, mAttributionSource);
+        } catch (RemoteException e) {
+            Log.e(TAG, "", e);
+        }
+        return false;
+    }
+
+    /**
+     * Get Remote Device Rssi
+     *
+     * <p>This API is asynchronous and {@link #ACTION_RSSI} intent is sent with RSSI
+     *
+     * @param transport - Transport to use
+     * @return false on immediate error, otherwise true
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    public boolean getRssi(int transport) {
+        final IBluetooth service = sService;
+        if (service == null) {
+            Log.w(TAG, "BT not enabled, getRssi failed");
+            return false;
+        }
+        try {
+            return service.getRssi(this, transport);
         } catch (RemoteException e) {
             Log.e(TAG, "", e);
         }
