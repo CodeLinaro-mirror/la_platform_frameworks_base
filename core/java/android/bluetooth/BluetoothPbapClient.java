@@ -61,6 +61,28 @@ public final class BluetoothPbapClient implements BluetoothProfile {
 
     private final BluetoothAdapter mAdapter;
     private final AttributionSource mAttributionSource;
+
+    /**
+     * Intent used to broadcast the entry size.
+     *
+     * <p>This intent will have the following extras:
+     * <ul>
+     * <li> {@link #EXTRA_ENTRY_PATH} - path of calllog or phonebook </li>
+     * <li> {@link #EXTRA_ENTRY_SIZE} - entry size of calllog or phonebook </li>
+     * </ul>
+     */
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_ENTRY_SIZE =
+            "android.bluetooth.pbapclient.profile.action.ENTRY_SIZE";
+
+    public static final String EXTRA_ENTRY_PATH =
+            "android.bluetooth.pbapclient.profile.extra.ENTRY_PATH";
+    public static final String EXTRA_ENTRY_SIZE =
+            "android.bluetooth.pbapclient.profile.extra.ENTRY_SIZE";
+
+
     private final BluetoothProfileConnector<IBluetoothPbapClient> mProfileConnector =
             new BluetoothProfileConnector(this, BluetoothProfile.PBAP_CLIENT,
                     "BluetoothPbapClient", IBluetoothPbapClient.class.getName()) {
