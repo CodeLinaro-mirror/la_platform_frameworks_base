@@ -102,6 +102,8 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
     private static final String SECURE_SETTINGS_BLUETOOTH_ADDRESS = "bluetooth_address";
     private static final String SECURE_SETTINGS_BLUETOOTH_NAME = "bluetooth_name";
 
+    private static final String IS_BLE_SUPPORTED_PROPERTY = "persist.vendor.bt.is_ble_supported";
+
     private static final int ACTIVE_LOG_MAX_SIZE = 20;
     private static final int CRASH_LOG_MAX_SIZE = 100;
 
@@ -179,6 +181,9 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
     // used inside handler thread
     private boolean mQuietEnable = false;
     private boolean mEnable;
+
+    // Indicate whether BLE is supported or not
+    private boolean mIsBleSupported;
 
     private static CharSequence timeToLog(long timestamp) {
         return android.text.format.DateFormat.format("MM-dd HH:mm:ss", timestamp);
@@ -447,6 +452,10 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
         mBinding = false;
         mUnbinding = false;
         mEnable = false;
+        mIsBleSupported = SystemProperties.getBoolean(IS_BLE_SUPPORTED_PROPERTY, true);
+        if (DBG) {
+            Slog.d(TAG, "mIsBleSupported is " + mIsBleSupported);
+        }
         mState = BluetoothAdapter.STATE_OFF;
         mQuietEnableExternal = false;
         mEnableExternal = false;
@@ -1969,6 +1978,19 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
                             break;
                         } // else must be SERVICE_IBLUETOOTH
 
+                        if (!mIsBleSupported) {
+                            // Persisting Bluetooth setting to ON is done when adapter state is
+                            // transitioned into BluetoothAdapter.STATE_BLE_ON if BLE is supported.
+                            // BLE states are skipped if BLE is NOT supported.
+                            // So it's necessary to do adapter state persisting during turnning on
+                            // Bluetooth directly.
+                            if (DBG) {
+                                Slog.d(TAG, "Persisting Bluetooth Setting ON");
+                            }
+
+                            persistBluetoothSetting(BLUETOOTH_ON_BLUETOOTH);
+                        }
+
                         //Remove timeout
                         mHandler.removeMessages(MESSAGE_TIMEOUT_BIND);
 
@@ -2344,6 +2366,10 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
     }
 
     private void sendBleStateChanged(int prevState, int newState) {
+        if (!mIsBleSupported) {
+            // Ignore to send BLE state changed, if BLE is disabled
+            return;
+        }
         if (DBG) {
             Slog.d(TAG,
                     "Sending BLE State Change: " + BluetoothAdapter.nameForState(prevState) + " > "
@@ -2375,8 +2401,10 @@ class BluetoothManagerService extends IBluetoothManager.Stub {
                 sendBluetoothServiceDownCallback();
                 unbindAndFinish();
                 sendBleStateChanged(prevState, newState);
-                // Don't broadcast as it has already been broadcast before
-                isStandardBroadcast = false;
+                if (mIsBleSupported) {
+                    // Don't broadcast as it has already been broadcast before
+                    isStandardBroadcast = false;
+                }
 
             } else if (!intermediate_off) {
                 // connect to GattService
