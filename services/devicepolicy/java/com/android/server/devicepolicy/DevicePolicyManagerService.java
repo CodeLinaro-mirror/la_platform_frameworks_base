@@ -1919,6 +1919,7 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
 
             mOwners.removeProfileOwner(userHandle);
             mOwners.writeProfileOwner(userHandle);
+            pushScreenCapturePolicy(userHandle);
 
             DevicePolicyData policy = mUserData.get(userHandle);
             if (policy != null) {
@@ -3312,8 +3313,9 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
 
     @Override
     void handleStartUser(int userId) {
-        updateScreenCaptureDisabled(userId,
-                getScreenCaptureDisabled(null, userId, false));
+        synchronized (getLockObject()) {
+            pushScreenCapturePolicy(userId);
+        }
         pushUserRestrictions(userId);
         // When system user is started (device boot), load cache for all users.
         // This is to mitigate the potential race between loading the cache and keyguard
@@ -7030,7 +7032,6 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
             notifyResetProtectionPolicyChanged(frpAgentUid);
         }
         mLockSettingsInternal.refreshStrongAuthTimeout(parentId);
-        updateScreenCaptureDisabled(parentId, getScreenCaptureDisabled(null, parentId, false));
 
         Slogf.i(LOG_TAG, "Cleaning up device-wide policies done.");
     }
@@ -7737,10 +7738,7 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
             if (ap.disableScreenCapture != disabled) {
                 ap.disableScreenCapture = disabled;
                 saveSettingsLocked(caller.getUserId());
-                final int affectedUserId = parent
-                        ? getProfileParentId(caller.getUserId())
-                        : caller.getUserId();
-                updateScreenCaptureDisabled(affectedUserId, disabled);
+                pushScreenCapturePolicy(caller.getUserId());
             }
         }
         DevicePolicyEventLogger
@@ -7748,6 +7746,38 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
                 .setAdmin(caller.getComponentName())
                 .setBoolean(disabled)
                 .write();
+    }
+
+    // Push the screen capture policy for a given userId. If screen capture is disabled by the
+    // DO or COPE PO on the parent profile, then this takes precedence as screen capture will
+    // be disabled device-wide.
+    private void pushScreenCapturePolicy(int adminUserId) {
+        // Update screen capture device-wide if disabled by the DO or COPE PO on the parent profile.
+        ActiveAdmin admin =
+                getDeviceOwnerOrProfileOwnerOfOrganizationOwnedDeviceParentLocked(
+                        UserHandle.USER_SYSTEM);
+        if (admin != null && admin.disableScreenCapture) {
+            setScreenCaptureDisabled(UserHandle.USER_ALL);
+        } else {
+            // Otherwise, update screen capture only for the calling user.
+            admin = getProfileOwnerAdminLocked(adminUserId);
+            if (admin != null && admin.disableScreenCapture) {
+                setScreenCaptureDisabled(adminUserId);
+            } else {
+                setScreenCaptureDisabled(UserHandle.USER_NULL);
+            }
+        }
+    }
+
+    // Set the latest screen capture policy, overriding any existing ones.
+    // userHandle can be one of USER_ALL, USER_NULL or a concrete userId.
+    private void setScreenCaptureDisabled(int userHandle) {
+        int current = mPolicyCache.getScreenCaptureDisallowedUser();
+        if (userHandle == current) {
+            return;
+        }
+        mPolicyCache.setScreenCaptureDisallowedUser(userHandle);
+        updateScreenCaptureDisabled();
     }
 
     /**
@@ -7759,7 +7789,6 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
         if (!mHasFeature) {
             return false;
         }
-
         final CallerIdentity caller = getCallerIdentity(who);
         Preconditions.checkCallAuthorization(hasFullCrossUsersPermission(caller, userHandle));
 
@@ -7767,29 +7796,13 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
             Preconditions.checkCallAuthorization(
                     isProfileOwnerOfOrganizationOwnedDevice(getCallerIdentity().getUserId()));
         }
-
-        synchronized (getLockObject()) {
-            if (who != null) {
-                ActiveAdmin admin = getActiveAdminUncheckedLocked(who, userHandle, parent);
-                return (admin != null) && admin.disableScreenCapture;
-            }
-
-            final int affectedUserId = parent ? getProfileParentId(userHandle) : userHandle;
-            List<ActiveAdmin> admins = getActiveAdminsForAffectedUserLocked(affectedUserId);
-            for (ActiveAdmin admin: admins) {
-                if (admin.disableScreenCapture) {
-                    return true;
-                }
-            }
-            return false;
-        }
+        return !mPolicyCache.isScreenCaptureAllowed(userHandle);
     }
 
-    private void updateScreenCaptureDisabled(int userHandle, boolean disabled) {
-        mPolicyCache.setScreenCaptureAllowed(userHandle, !disabled);
+    private void updateScreenCaptureDisabled() {
         mHandler.post(() -> {
             try {
-                mInjector.getIWindowManager().refreshScreenCaptureDisabled(userHandle);
+                mInjector.getIWindowManager().refreshScreenCaptureDisabled();
             } catch (RemoteException e) {
                 Slogf.w(LOG_TAG, "Unable to notify WindowManager.", e);
             }
@@ -8715,11 +8728,22 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
     }
 
     ActiveAdmin getDeviceOwnerOrProfileOwnerOfOrganizationOwnedDeviceLocked(int userId) {
+        ensureLocked();
         ActiveAdmin admin = getDeviceOwnerAdminLocked();
         if (admin == null) {
             admin = getProfileOwnerOfOrganizationOwnedDeviceLocked(userId);
         }
         return admin;
+    }
+
+    ActiveAdmin getDeviceOwnerOrProfileOwnerOfOrganizationOwnedDeviceParentLocked(int userId) {
+        ensureLocked();
+        ActiveAdmin admin = getDeviceOwnerAdminLocked();
+        if (admin != null) {
+            return admin;
+        }
+        admin = getProfileOwnerOfOrganizationOwnedDeviceLocked(userId);
+        return admin != null ? admin.getParentActiveAdmin() : null;
     }
 
     @Override
@@ -15048,6 +15072,7 @@ public class DevicePolicyManagerService extends BaseIDevicePolicyManager {
             saveSettingsLocked(userHandle);
             updateMaximumTimeToLockLocked(userHandle);
             policy.mRemovingAdmins.remove(adminReceiver);
+            pushScreenCapturePolicy(userHandle);
 
             Slogf.i(LOG_TAG, "Device admin " + adminReceiver + " removed from user " + userHandle);
         }
