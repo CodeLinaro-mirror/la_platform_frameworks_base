@@ -17,15 +17,16 @@
 package com.android.server.wm.flicker.launch
 
 import android.platform.test.annotations.Presubmit
+import android.view.Display
 import androidx.test.filters.FlakyTest
 import androidx.test.filters.RequiresDevice
 import com.android.server.wm.flicker.FlickerParametersRunnerFactory
 import com.android.server.wm.flicker.FlickerTestParameter
 import com.android.server.wm.flicker.FlickerTestParameterFactory
+import com.android.server.wm.flicker.LAUNCHER_COMPONENT
 import com.android.server.wm.flicker.annotation.Group1
 import com.android.server.wm.flicker.helpers.reopenAppFromOverview
 import com.android.server.wm.flicker.helpers.setRotation
-import com.android.server.wm.flicker.startRotation
 import com.android.server.wm.flicker.dsl.FlickerBuilder
 import com.android.server.wm.traces.common.WindowManagerConditionsFactory
 import org.junit.FixMethodOrder
@@ -62,9 +63,9 @@ class OpenAppFromOverviewTest(testSpec: FlickerTestParameter) : OpenAppTransitio
     /**
      * Defines the transition used to run the test
      */
-    override val transition: FlickerBuilder.(Map<String, Any?>) -> Unit
+    override val transition: FlickerBuilder.() -> Unit
         get() = {
-            super.transition(this, it)
+            super.transition(this)
             setup {
                 test {
                     testApp.launchViaIntent(wmHelper)
@@ -73,30 +74,41 @@ class OpenAppFromOverviewTest(testSpec: FlickerTestParameter) : OpenAppTransitio
                     device.pressHome()
                     wmHelper.waitForAppTransitionIdle()
                     device.pressRecentApps()
-                    wmHelper.waitForAppTransitionIdle()
-                    this.setRotation(testSpec.config.startRotation)
+                    wmHelper.waitFor(
+                        WindowManagerConditionsFactory
+                            .isAppTransitionIdle(Display.DEFAULT_DISPLAY),
+                        WindowManagerConditionsFactory.isActivityVisible(LAUNCHER_COMPONENT),
+                        WindowManagerConditionsFactory.hasLayersAnimating().negate()
+                    )
+                    this.setRotation(testSpec.startRotation)
                 }
             }
             transitions {
                 device.reopenAppFromOverview(wmHelper)
                 wmHelper.waitFor(
-                        WindowManagerConditionsFactory.hasLayersAnimating().negate(),
-                        WindowManagerConditionsFactory.isWMStateComplete(),
-                        WindowManagerConditionsFactory.isHomeActivityVisible().negate()
+                    WindowManagerConditionsFactory.hasLayersAnimating().negate(),
+                    WindowManagerConditionsFactory.isWMStateComplete(),
+                    WindowManagerConditionsFactory.isLayerVisible(LAUNCHER_COMPONENT).negate(),
+                    WindowManagerConditionsFactory.isActivityVisible(LAUNCHER_COMPONENT).negate()
                 )
                 wmHelper.waitForFullScreenApp(testApp.component)
             }
         }
 
     /** {@inheritDoc} */
-    @FlakyTest
+    @FlakyTest(bugId = 206753786)
     @Test
-    override fun navBarLayerRotatesAndScales() = super.navBarLayerRotatesAndScales()
+    override fun statusBarLayerRotatesScales() = super.statusBarLayerRotatesScales()
 
     /** {@inheritDoc} */
     @Presubmit
     @Test
     override fun appLayerReplacesLauncher() = super.appLayerReplacesLauncher()
+
+    /** {@inheritDoc} */
+    @FlakyTest
+    @Test
+    override fun navBarLayerRotatesAndScales() = super.navBarLayerRotatesAndScales()
 
     /** {@inheritDoc} */
     @Presubmit

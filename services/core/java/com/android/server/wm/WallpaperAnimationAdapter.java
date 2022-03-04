@@ -20,6 +20,7 @@ import static com.android.server.wm.AnimationAdapterProto.REMOTE;
 import static com.android.server.wm.RemoteAnimationAdapterWrapperProto.TARGET;
 import static com.android.server.wm.SurfaceAnimator.ANIMATION_TYPE_WINDOW_ANIMATION;
 
+import android.annotation.NonNull;
 import android.graphics.Point;
 import android.os.SystemClock;
 import android.util.proto.ProtoOutputStream;
@@ -68,7 +69,7 @@ class WallpaperAnimationAdapter implements AnimationAdapter {
             long durationHint, long statusBarTransitionDelay,
             Consumer<WallpaperAnimationAdapter> animationCanceledRunnable,
             ArrayList<WallpaperAnimationAdapter> adaptersOut) {
-        if (!displayContent.mWallpaperController.isWallpaperVisible()) {
+        if (!shouldStartWallpaperAnimation(displayContent)) {
             ProtoLog.d(WM_DEBUG_REMOTE_ANIMATIONS,
                     "\tWallpaper of display=%s is not visible", displayContent);
             return new RemoteAnimationTarget[0];
@@ -84,6 +85,10 @@ class WallpaperAnimationAdapter implements AnimationAdapter {
             adaptersOut.add(wallpaperAdapter);
         });
         return targets.toArray(new RemoteAnimationTarget[targets.size()]);
+    }
+
+    static boolean shouldStartWallpaperAnimation(DisplayContent displayContent) {
+        return displayContent.mWallpaperController.isWallpaperVisible();
     }
 
     /**
@@ -133,7 +138,8 @@ class WallpaperAnimationAdapter implements AnimationAdapter {
 
     @Override
     public void startAnimation(SurfaceControl animationLeash, SurfaceControl.Transaction t,
-            @AnimationType int type, SurfaceAnimator.OnAnimationFinishedCallback finishCallback) {
+            @AnimationType int type,
+            @NonNull SurfaceAnimator.OnAnimationFinishedCallback finishCallback) {
         ProtoLog.d(WM_DEBUG_REMOTE_ANIMATIONS, "startAnimation");
 
         // Restore z-layering until client has a chance to modify it.

@@ -40,9 +40,11 @@ import android.testing.TestableLooper;
 
 import androidx.test.filters.SmallTest;
 
+import com.android.internal.jank.InteractionJankMonitor;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardDisplayManager;
 import com.android.keyguard.KeyguardUpdateMonitor;
+import com.android.keyguard.mediator.ScreenOnCoordinator;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.classifier.FalsingCollectorFake;
@@ -51,8 +53,8 @@ import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.statusbar.NotificationShadeDepthController;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.phone.DozeParameters;
+import com.android.systemui.statusbar.phone.ScreenOffAnimationController;
 import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager;
-import com.android.systemui.statusbar.phone.UnlockedScreenOffAnimationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.UserSwitcherController;
 import com.android.systemui.util.DeviceConfigProxy;
@@ -89,7 +91,9 @@ public class KeyguardViewMediatorTest extends SysuiTestCase {
     private @Mock KeyguardStateController mKeyguardStateController;
     private @Mock NotificationShadeDepthController mNotificationShadeDepthController;
     private @Mock KeyguardUnlockAnimationController mKeyguardUnlockAnimationController;
-    private @Mock UnlockedScreenOffAnimationController mUnlockedScreenOffAnimationController;
+    private @Mock ScreenOffAnimationController mScreenOffAnimationController;
+    private @Mock InteractionJankMonitor mInteractionJankMonitor;
+    private @Mock ScreenOnCoordinator mScreenOnCoordinator;
     private DeviceConfigProxy mDeviceConfig = new DeviceConfigProxyFake();
     private FakeExecutor mUiBgExecutor = new FakeExecutor(new FakeSystemClock());
 
@@ -102,30 +106,10 @@ public class KeyguardViewMediatorTest extends SysuiTestCase {
 
         when(mLockPatternUtils.getDevicePolicyManager()).thenReturn(mDevicePolicyManager);
         when(mPowerManager.newWakeLock(anyInt(), any())).thenReturn(mock(WakeLock.class));
+        when(mInteractionJankMonitor.begin(any(), anyInt())).thenReturn(true);
+        when(mInteractionJankMonitor.end(anyInt())).thenReturn(true);
 
-        mViewMediator = new KeyguardViewMediator(
-                mContext,
-                mFalsingCollector,
-                mLockPatternUtils,
-                mBroadcastDispatcher,
-                () -> mStatusBarKeyguardViewManager,
-                mDismissCallbackRegistry,
-                mUpdateMonitor,
-                mDumpManager,
-                mUiBgExecutor,
-                mPowerManager,
-                mTrustManager,
-                mUserSwitcherController,
-                mDeviceConfig,
-                mNavigationModeController,
-                mKeyguardDisplayManager,
-                mDozeParameters,
-                mStatusBarStateController,
-                mKeyguardStateController,
-                () -> mKeyguardUnlockAnimationController,
-                mUnlockedScreenOffAnimationController,
-                () -> mNotificationShadeDepthController);
-        mViewMediator.start();
+        createAndStartViewMediator();
     }
 
     @Test
@@ -150,6 +134,7 @@ public class KeyguardViewMediatorTest extends SysuiTestCase {
     @Test
     public void testIsAnimatingScreenOff() {
         when(mDozeParameters.shouldControlUnlockedScreenOff()).thenReturn(true);
+        when(mDozeParameters.shouldAnimateDozingChange()).thenReturn(true);
 
         mViewMediator.onFinishedGoingToSleep(OFF_BECAUSE_OF_USER, false);
         mViewMediator.setDozing(true);
@@ -186,5 +171,33 @@ public class KeyguardViewMediatorTest extends SysuiTestCase {
 
         // then make sure it comes back
         verify(mStatusBarKeyguardViewManager, atLeast(1)).show(null);
+    }
+
+    private void createAndStartViewMediator() {
+        mViewMediator = new KeyguardViewMediator(
+                mContext,
+                mFalsingCollector,
+                mLockPatternUtils,
+                mBroadcastDispatcher,
+                () -> mStatusBarKeyguardViewManager,
+                mDismissCallbackRegistry,
+                mUpdateMonitor,
+                mDumpManager,
+                mUiBgExecutor,
+                mPowerManager,
+                mTrustManager,
+                mUserSwitcherController,
+                mDeviceConfig,
+                mNavigationModeController,
+                mKeyguardDisplayManager,
+                mDozeParameters,
+                mStatusBarStateController,
+                mKeyguardStateController,
+                () -> mKeyguardUnlockAnimationController,
+                mScreenOffAnimationController,
+                () -> mNotificationShadeDepthController,
+                mScreenOnCoordinator,
+                mInteractionJankMonitor);
+        mViewMediator.start();
     }
 }

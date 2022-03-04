@@ -16,6 +16,8 @@
 
 package com.android.server.job;
 
+import static android.app.job.JobInfo.getPriorityString;
+
 import static com.android.server.job.JobConcurrencyManager.WORK_TYPE_NONE;
 import static com.android.server.job.JobSchedulerService.sElapsedRealtimeClock;
 
@@ -354,15 +356,16 @@ public final class JobServiceContext implements ServiceConnection {
                     job.hasContentTriggerConstraint(),
                     job.isRequestedExpeditedJob(),
                     job.shouldTreatAsExpeditedJob(),
-                    JobProtoEnums.STOP_REASON_UNDEFINED);
+                    JobProtoEnums.STOP_REASON_UNDEFINED,
+                    job.getJob().isPrefetch(),
+                    job.getJob().getPriority(),
+                    job.getEffectivePriority(),
+                    job.getNumFailures());
             try {
                 mBatteryStats.noteJobStart(job.getBatteryName(), job.getSourceUid());
             } catch (RemoteException e) {
                 // Whatever.
             }
-            mEconomyManagerInternal.noteOngoingEventStarted(
-                    job.getSourceUserId(), job.getSourcePackageName(),
-                    getRunningActionId(job), String.valueOf(job.getJobId()));
             final String jobPackage = job.getSourcePackageName();
             final int jobUserId = job.getSourceUserId();
             UsageStatsManagerInternal usageStats =
@@ -378,18 +381,21 @@ public final class JobServiceContext implements ServiceConnection {
 
     @EconomicPolicy.AppAction
     private static int getStartActionId(@NonNull JobStatus job) {
-        if (job.startedAsExpeditedJob || job.shouldTreatAsExpeditedJob()) {
-            return JobSchedulerEconomicPolicy.ACTION_JOB_MAX_START;
+        switch (job.getEffectivePriority()) {
+            case JobInfo.PRIORITY_MAX:
+                return JobSchedulerEconomicPolicy.ACTION_JOB_MAX_START;
+            case JobInfo.PRIORITY_HIGH:
+                return JobSchedulerEconomicPolicy.ACTION_JOB_HIGH_START;
+            case JobInfo.PRIORITY_LOW:
+                return JobSchedulerEconomicPolicy.ACTION_JOB_LOW_START;
+            case JobInfo.PRIORITY_MIN:
+                return JobSchedulerEconomicPolicy.ACTION_JOB_MIN_START;
+            default:
+                Slog.wtf(TAG, "Unknown priority: " + getPriorityString(job.getEffectivePriority()));
+                // Intentional fallthrough
+            case JobInfo.PRIORITY_DEFAULT:
+                return JobSchedulerEconomicPolicy.ACTION_JOB_DEFAULT_START;
         }
-        return JobSchedulerEconomicPolicy.ACTION_JOB_DEFAULT_START;
-    }
-
-    @EconomicPolicy.AppAction
-    private static int getRunningActionId(@NonNull JobStatus job) {
-        if (job.startedAsExpeditedJob || job.shouldTreatAsExpeditedJob()) {
-            return JobSchedulerEconomicPolicy.ACTION_JOB_MAX_RUNNING;
-        }
-        return JobSchedulerEconomicPolicy.ACTION_JOB_DEFAULT_RUNNING;
     }
 
     /**
@@ -1004,16 +1010,17 @@ public final class JobServiceContext implements ServiceConnection {
                 completedJob.hasContentTriggerConstraint(),
                 completedJob.isRequestedExpeditedJob(),
                 completedJob.startedAsExpeditedJob,
-                mParams.getStopReason());
+                mParams.getStopReason(),
+                completedJob.getJob().isPrefetch(),
+                completedJob.getJob().getPriority(),
+                completedJob.getEffectivePriority(),
+                completedJob.getNumFailures());
         try {
             mBatteryStats.noteJobFinish(mRunningJob.getBatteryName(), mRunningJob.getSourceUid(),
                     internalStopReason);
         } catch (RemoteException e) {
             // Whatever.
         }
-        mEconomyManagerInternal.noteOngoingEventStopped(
-                mRunningJob.getSourceUserId(), mRunningJob.getSourcePackageName(),
-                getRunningActionId(mRunningJob), String.valueOf(mRunningJob.getJobId()));
         if (mParams.getStopReason() == JobParameters.STOP_REASON_TIMEOUT) {
             mEconomyManagerInternal.noteInstantaneousEvent(
                     mRunningJob.getSourceUserId(), mRunningJob.getSourcePackageName(),

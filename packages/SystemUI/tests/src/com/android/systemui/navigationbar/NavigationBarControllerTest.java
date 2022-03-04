@@ -35,40 +35,27 @@ import static org.mockito.Mockito.verify;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper.RunWithLooper;
 import android.util.SparseArray;
-import android.view.WindowManager;
-import android.view.accessibility.AccessibilityManager;
 
 import androidx.test.filters.SmallTest;
 
-import com.android.internal.logging.MetricsLogger;
-import com.android.internal.logging.UiEventLogger;
 import com.android.systemui.Dependency;
 import com.android.systemui.SysuiTestCase;
-import com.android.systemui.accessibility.AccessibilityButtonModeObserver;
-import com.android.systemui.accessibility.SystemActions;
-import com.android.systemui.assist.AssistManager;
-import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.model.SysUiState;
-import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.recents.OverviewProxyService;
-import com.android.systemui.recents.Recents;
-import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.CommandQueue;
-import com.android.systemui.statusbar.NotificationRemoteInputManager;
-import com.android.systemui.statusbar.NotificationShadeDepthController;
-import com.android.systemui.statusbar.phone.ShadeController;
-import com.android.systemui.statusbar.phone.StatusBar;
-import com.android.systemui.statusbar.policy.AccessibilityManagerWrapper;
+import com.android.systemui.statusbar.phone.AutoHideController;
+import com.android.systemui.statusbar.phone.LightBarController;
 import com.android.systemui.statusbar.policy.ConfigurationController;
-import com.android.systemui.statusbar.policy.DeviceProvisionedController;
-import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
+import com.android.wm.shell.back.BackAnimation;
 import com.android.wm.shell.pip.Pip;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
 import java.util.Optional;
 
@@ -78,47 +65,36 @@ import java.util.Optional;
 @SmallTest
 public class NavigationBarControllerTest extends SysuiTestCase {
 
+    private static final int SECONDARY_DISPLAY = 1;
+
     private NavigationBarController mNavigationBarController;
     private NavigationBar mDefaultNavBar;
     private NavigationBar mSecondaryNavBar;
 
-    private CommandQueue mCommandQueue = mock(CommandQueue.class);
-
-    private static final int SECONDARY_DISPLAY = 1;
+    @Mock
+    private CommandQueue mCommandQueue;
+    @Mock
+    private NavigationBar.Factory mNavigationBarFactory;
 
     @Before
     public void setUp() {
+        MockitoAnnotations.initMocks(this);
         mNavigationBarController = spy(
                 new NavigationBarController(mContext,
-                        mock(WindowManager.class),
-                        () -> mock(AssistManager.class),
-                        mock(AccessibilityManager.class),
-                        mock(AccessibilityManagerWrapper.class),
-                        mock(DeviceProvisionedController.class),
-                        mock(MetricsLogger.class),
                         mock(OverviewProxyService.class),
                         mock(NavigationModeController.class),
-                        mock(AccessibilityButtonModeObserver.class),
-                        mock(StatusBarStateController.class),
                         mock(SysUiState.class),
-                        mock(BroadcastDispatcher.class),
                         mCommandQueue,
-                        Optional.of(mock(Pip.class)),
-                        Optional.of(mock(LegacySplitScreen.class)),
-                        Optional.of(mock(Recents.class)),
-                        () -> Optional.of(mock(StatusBar.class)),
-                        mock(ShadeController.class),
-                        mock(NotificationRemoteInputManager.class),
-                        mock(NotificationShadeDepthController.class),
-                        mock(SystemActions.class),
                         Dependency.get(Dependency.MAIN_HANDLER),
-                        mock(UiEventLogger.class),
-                        mock(NavigationBarOverlayController.class),
                         mock(ConfigurationController.class),
-                        mock(NavigationBarA11yHelper.class),
+                        mock(NavBarHelper.class),
                         mock(TaskbarDelegate.class),
-                        mock(UserTracker.class),
-                        mock(DumpManager.class)));
+                        mNavigationBarFactory,
+                        mock(DumpManager.class),
+                        mock(AutoHideController.class),
+                        mock(LightBarController.class),
+                        Optional.of(mock(Pip.class)),
+                        Optional.of(mock(BackAnimation.class))));
         initializeNavigationBars();
     }
 

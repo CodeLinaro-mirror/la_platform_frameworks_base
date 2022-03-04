@@ -33,7 +33,9 @@ import android.view.Surface;
 import com.android.internal.R;
 import com.android.server.biometrics.Utils;
 import com.android.server.biometrics.sensors.BiometricUtils;
+import com.android.server.biometrics.sensors.ClientMonitorCallback;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
+import com.android.server.biometrics.sensors.ClientMonitorCompositeCallback;
 import com.android.server.biometrics.sensors.EnrollClient;
 
 import java.util.ArrayList;
@@ -53,12 +55,13 @@ public class FaceEnrollClient extends EnrollClient<IBiometricsFace> {
 
     FaceEnrollClient(@NonNull Context context, @NonNull LazyDaemon<IBiometricsFace> lazyDaemon,
             @NonNull IBinder token, @NonNull ClientMonitorCallbackConverter listener, int userId,
-            @NonNull byte[] hardwareAuthToken, @NonNull String owner,
+            @NonNull byte[] hardwareAuthToken, @NonNull String owner, long requestId,
             @NonNull BiometricUtils<Face> utils, @NonNull int[] disabledFeatures, int timeoutSec,
             @Nullable Surface previewSurface, int sensorId) {
         super(context, lazyDaemon, token, listener, userId, hardwareAuthToken, owner, utils,
                 timeoutSec, BiometricsProtoEnums.MODALITY_FACE, sensorId,
                 false /* shouldVibrate */);
+        setRequestId(requestId);
         mDisabledFeatures = Arrays.copyOf(disabledFeatures, disabledFeatures.length);
         mEnrollIgnoreList = getContext().getResources()
                 .getIntArray(R.array.config_face_acquire_enroll_ignorelist);
@@ -68,8 +71,9 @@ public class FaceEnrollClient extends EnrollClient<IBiometricsFace> {
 
     @NonNull
     @Override
-    protected Callback wrapCallbackForStart(@NonNull Callback callback) {
-        return new CompositeCallback(createALSCallback(true /* startWithClient */), callback);
+    protected ClientMonitorCallback wrapCallbackForStart(@NonNull ClientMonitorCallback callback) {
+        return new ClientMonitorCompositeCallback(
+                getLogger().createALSCallback(true /* startWithClient */), callback);
     }
 
     @Override

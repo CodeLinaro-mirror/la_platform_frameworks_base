@@ -22,6 +22,7 @@ import android.testing.AndroidTestingRunner;
 
 import androidx.test.filters.SmallTest;
 
+import com.android.internal.graphics.cam.Cam;
 import com.android.systemui.SysuiTestCase;
 
 import org.junit.Assert;
@@ -89,5 +90,44 @@ public class ColorSchemeTest extends SysuiTestCase {
 
         List<Integer> rankedSeedColors = ColorScheme.getSeedColors(wallpaperColors);
         Assert.assertEquals(rankedSeedColors, List.of(0xffaec00a, 0xffbe0000, 0xffcc040f));
+    }
+
+    @Test
+    public void testTertiaryHueWrapsProperly() {
+        int colorInt = 0xffB3588A; // H350 C50 T50
+        ColorScheme colorScheme = new ColorScheme(colorInt, false /* darkTheme */);
+        int tertiaryMid = colorScheme.getAccent3().get(colorScheme.getAccent3().size() / 2);
+        Cam cam = Cam.fromInt(tertiaryMid);
+        Assert.assertEquals(cam.getHue(), 50.0, 10.0);
+    }
+
+    @Test
+    public void testSpritz() {
+        int colorInt = 0xffB3588A; // H350 C50 T50
+        ColorScheme colorScheme = new ColorScheme(colorInt, false /* darkTheme */,
+                Style.SPRITZ /* style */);
+        int primaryMid = colorScheme.getAccent1().get(colorScheme.getAccent1().size() / 2);
+        Cam cam = Cam.fromInt(primaryMid);
+        Assert.assertEquals(cam.getChroma(), 4.0, 1.0);
+    }
+
+    @Test
+    public void testVibrant() {
+        int colorInt = 0xffB3588A; // H350 C50 T50
+        ColorScheme colorScheme = new ColorScheme(colorInt, false /* darkTheme */,
+                Style.VIBRANT /* style */);
+        int neutralMid = colorScheme.getNeutral1().get(colorScheme.getNeutral1().size() / 2);
+        Cam cam = Cam.fromInt(neutralMid);
+        Assert.assertEquals(cam.getChroma(), 8.0, 1.0);
+    }
+
+    @Test
+    public void testExpressive() {
+        int colorInt = 0xffB3588A; // H350 C50 T50
+        ColorScheme colorScheme = new ColorScheme(colorInt, false /* darkTheme */,
+                Style.EXPRESSIVE /* style */);
+        int neutralMid = colorScheme.getNeutral1().get(colorScheme.getNeutral1().size() / 2);
+        Cam cam = Cam.fromInt(neutralMid);
+        Assert.assertEquals(cam.getChroma(), 16.0, 1.0);
     }
 }

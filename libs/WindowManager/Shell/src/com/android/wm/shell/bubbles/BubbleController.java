@@ -17,6 +17,8 @@
 package com.android.wm.shell.bubbles;
 
 import static android.app.ActivityTaskManager.INVALID_TASK_ID;
+import static android.service.notification.NotificationListenerService.NOTIFICATION_CHANNEL_OR_GROUP_DELETED;
+import static android.service.notification.NotificationListenerService.NOTIFICATION_CHANNEL_OR_GROUP_UPDATED;
 import static android.service.notification.NotificationListenerService.REASON_CANCEL;
 import static android.view.View.INVISIBLE;
 import static android.view.View.VISIBLE;
@@ -42,6 +44,7 @@ import android.annotation.NonNull;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.Notification;
+import android.app.NotificationChannel;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
@@ -80,6 +83,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.logging.UiEventLogger;
 import com.android.internal.statusbar.IStatusBarService;
 import com.android.wm.shell.ShellTaskOrganizer;
+import com.android.wm.shell.TaskViewTransitions;
 import com.android.wm.shell.WindowManagerShellWrapper;
 import com.android.wm.shell.common.DisplayChangeController;
 import com.android.wm.shell.common.DisplayController;
@@ -88,6 +92,8 @@ import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.common.SyncTransactionQueue;
 import com.android.wm.shell.common.TaskStackListenerCallback;
 import com.android.wm.shell.common.TaskStackListenerImpl;
+import com.android.wm.shell.onehanded.OneHandedController;
+import com.android.wm.shell.onehanded.OneHandedTransitionCallback;
 import com.android.wm.shell.pip.PinnedStackListenerForwarder;
 
 import java.io.FileDescriptor;
@@ -97,6 +103,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
@@ -111,8 +118,7 @@ public class BubbleController {
 
     private static final String TAG = TAG_WITH_CLASS_NAME ? "BubbleController" : TAG_BUBBLES;
 
-    // TODO(b/173386799) keep in sync with Launcher3 and also don't do a broadcast
-    public static final String TASKBAR_CHANGED_BROADCAST = "taskbarChanged";
+    // TODO(b/173386799) keep in sync with Launcher3, not hooked up to anything
     public static final String EXTRA_TASKBAR_CREATED = "taskbarCreated";
     public static final String EXTRA_BUBBLE_OVERFLOW_OPENED = "bubbleOverflowOpened";
     public static final String EXTRA_TASKBAR_VISIBLE = "taskbarVisible";
@@ -137,6 +143,7 @@ public class BubbleController {
     private final TaskStackListenerImpl mTaskStackListener;
     private final ShellTaskOrganizer mTaskOrganizer;
     private final DisplayController mDisplayController;
+    private final TaskViewTransitions mTaskViewTransitions;
     private final SyncTransactionQueue mSyncQueue;
 
     // Used to post to main UI thread
@@ -147,6 +154,7 @@ public class BubbleController {
     private BubbleData mBubbleData;
     @Nullable private BubbleStackView mStackView;
     private BubbleIconFactory mBubbleIconFactory;
+    private BubbleBadgeIconFactory mBubbleBadgeIconFactory;
     private BubblePositioner mBubblePositioner;
     private Bubbles.SysuiProxy mSysuiProxy;
 
@@ -197,6 +205,9 @@ public class BubbleController {
     /** True when user is in status bar unlock shade. */
     private boolean mIsStatusBarShade = true;
 
+    /** One handed mode controller to register transition listener. */
+    private Optional<OneHandedController> mOneHandedOptional;
+
     /**
      * Creates an instance of the BubbleController.
      */
@@ -211,8 +222,10 @@ public class BubbleController {
             UiEventLogger uiEventLogger,
             ShellTaskOrganizer organizer,
             DisplayController displayController,
+            Optional<OneHandedController> oneHandedOptional,
             ShellExecutor mainExecutor,
             Handler mainHandler,
+            TaskViewTransitions taskViewTransitions,
             SyncTransactionQueue syncQueue) {
         BubbleLogger logger = new BubbleLogger(uiEventLogger);
         BubblePositioner positioner = new BubblePositioner(context, windowManager);
@@ -220,8 +233,9 @@ public class BubbleController {
         return new BubbleController(context, data, synchronizer, floatingContentCoordinator,
                 new BubbleDataRepository(context, launcherApps, mainExecutor),
                 statusBarService, windowManager, windowManagerShellWrapper, launcherApps,
-                logger, taskStackListener, organizer, positioner, displayController, mainExecutor,
-                mainHandler, syncQueue);
+                logger, taskStackListener, organizer, positioner, displayController,
+                oneHandedOptional, mainExecutor, mainHandler, taskViewTransitions,
+                syncQueue);
     }
 
     /**
@@ -242,8 +256,10 @@ public class BubbleController {
             ShellTaskOrganizer organizer,
             BubblePositioner positioner,
             DisplayController displayController,
+            Optional<OneHandedController> oneHandedOptional,
             ShellExecutor mainExecutor,
             Handler mainHandler,
+            TaskViewTransitions taskViewTransitions,
             SyncTransactionQueue syncQueue) {
         mContext = context;
         mLauncherApps = launcherApps;
@@ -266,8 +282,30 @@ public class BubbleController {
         mBubbleData = data;
         mSavedBubbleKeysPerUser = new SparseSetArray<>();
         mBubbleIconFactory = new BubbleIconFactory(context);
+        mBubbleBadgeIconFactory = new BubbleBadgeIconFactory(context);
         mDisplayController = displayController;
+        mTaskViewTransitions = taskViewTransitions;
+        mOneHandedOptional = oneHandedOptional;
         mSyncQueue = syncQueue;
+    }
+
+    private void registerOneHandedState(OneHandedController oneHanded) {
+        oneHanded.registerTransitionCallback(
+                new OneHandedTransitionCallback() {
+                    @Override
+                    public void onStartFinished(Rect bounds) {
+                        if (mStackView != null) {
+                            mStackView.onVerticalOffsetChanged(bounds.top);
+                        }
+                    }
+
+                    @Override
+                    public void onStopFinished(Rect bounds) {
+                        if (mStackView != null) {
+                            mStackView.onVerticalOffsetChanged(bounds.top);
+                        }
+                    }
+                });
     }
 
     public void initialize() {
@@ -393,6 +431,8 @@ public class BubbleController {
                         }
                     }
                 });
+
+        mOneHandedOptional.ifPresent(this::registerOneHandedState);
     }
 
     @VisibleForTesting
@@ -465,6 +505,7 @@ public class BubbleController {
             }
             mStackView.updateStackPosition();
             mBubbleIconFactory = new BubbleIconFactory(mContext);
+            mBubbleBadgeIconFactory = new BubbleBadgeIconFactory(mContext);
             mStackView.onDisplaySizeChanged();
         }
         if (b.getBoolean(EXTRA_BUBBLE_OVERFLOW_OPENED, false)) {
@@ -569,6 +610,10 @@ public class BubbleController {
 
     SyncTransactionQueue getSyncTransactionQueue() {
         return mSyncQueue;
+    }
+
+    TaskViewTransitions getTaskViewTransitions() {
+        return mTaskViewTransitions;
     }
 
     /** Contains information to help position things on the screen.  */
@@ -739,13 +784,17 @@ public class BubbleController {
             mStackView.onThemeChanged();
         }
         mBubbleIconFactory = new BubbleIconFactory(mContext);
+        mBubbleBadgeIconFactory = new BubbleBadgeIconFactory(mContext);
+
         // Reload each bubble
-        for (Bubble b: mBubbleData.getBubbles()) {
+        for (Bubble b : mBubbleData.getBubbles()) {
             b.inflate(null /* callback */, mContext, this, mStackView, mBubbleIconFactory,
+                    mBubbleBadgeIconFactory,
                     false /* skipInflation */);
         }
-        for (Bubble b: mBubbleData.getOverflowBubbles()) {
+        for (Bubble b : mBubbleData.getOverflowBubbles()) {
             b.inflate(null /* callback */, mContext, this, mStackView, mBubbleIconFactory,
+                    mBubbleBadgeIconFactory,
                     false /* skipInflation */);
         }
     }
@@ -761,6 +810,7 @@ public class BubbleController {
                 mScreenBounds.set(newConfig.windowConfiguration.getBounds());
                 mBubbleData.onMaxBubblesChanged();
                 mBubbleIconFactory = new BubbleIconFactory(mContext);
+                mBubbleBadgeIconFactory = new BubbleBadgeIconFactory(mContext);
                 mStackView.onDisplaySizeChanged();
             }
             if (newConfig.fontScale != mFontScale) {
@@ -922,7 +972,8 @@ public class BubbleController {
                 }
                 bubble.inflate(
                         (b) -> mBubbleData.overflowBubble(Bubbles.DISMISS_RELOAD_FROM_DISK, bubble),
-                        mContext, this, mStackView, mBubbleIconFactory, true /* skipInflation */);
+                        mContext, this, mStackView, mBubbleIconFactory, mBubbleBadgeIconFactory,
+                        true /* skipInflation */);
             });
             return null;
         });
@@ -939,7 +990,7 @@ public class BubbleController {
     public void updateBubble(BubbleEntry notif, boolean suppressFlyout, boolean showInShade) {
         // If this is an interruptive notif, mark that it's interrupted
         mSysuiProxy.setNotificationInterruption(notif.getKey());
-        if (!notif.getRanking().visuallyInterruptive()
+        if (!notif.getRanking().isTextChanged()
                 && (notif.getBubbleMetadata() != null
                     && !notif.getBubbleMetadata().getAutoExpandBubble())
                 && mBubbleData.hasOverflowBubbleWithKey(notif.getKey())) {
@@ -957,7 +1008,8 @@ public class BubbleController {
         ensureStackViewCreated();
         bubble.setInflateSynchronously(mInflateSynchronously);
         bubble.inflate(b -> mBubbleData.notificationEntryUpdated(b, suppressFlyout, showInShade),
-                mContext, this, mStackView, mBubbleIconFactory, false /* skipInflation */);
+                mContext, this, mStackView, mBubbleIconFactory, mBubbleBadgeIconFactory,
+                false /* skipInflation */);
     }
 
     /**
@@ -1028,15 +1080,35 @@ public class BubbleController {
                 // If this entry is no longer allowed to bubble, dismiss with the BLOCKED reason.
                 // This means that the app or channel's ability to bubble has been revoked.
                 mBubbleData.dismissBubbleWithKey(key, DISMISS_BLOCKED);
-            } else if (isActiveBubble && !shouldBubbleUp) {
-                // If this entry is allowed to bubble, but cannot currently bubble up, dismiss it.
-                // This happens when DND is enabled and configured to hide bubbles. Dismissing with
-                // the reason DISMISS_NO_BUBBLE_UP will retain the underlying notification, so that
-                // the bubble will be re-created if shouldBubbleUp returns true.
+            } else if (isActiveBubble && (!shouldBubbleUp || entry.getRanking().isSuspended())) {
+                // If this entry is allowed to bubble, but cannot currently bubble up or is
+                // suspended, dismiss it. This happens when DND is enabled and configured to hide
+                // bubbles, or focus mode is enabled and the app is designated as distracting.
+                // Dismissing with the reason DISMISS_NO_BUBBLE_UP will retain the underlying
+                // notification, so that the bubble will be re-created if shouldBubbleUp returns
+                // true.
                 mBubbleData.dismissBubbleWithKey(key, DISMISS_NO_BUBBLE_UP);
             } else if (entry != null && mTmpRanking.isBubble() && !isActiveBubble) {
                 entry.setFlagBubble(true);
-                onEntryUpdated(entry, true /* shouldBubbleUp */);
+                onEntryUpdated(entry, shouldBubbleUp && !entry.getRanking().isSuspended());
+            }
+        }
+    }
+
+    @VisibleForTesting
+    public void onNotificationChannelModified(String pkg, UserHandle user,
+            NotificationChannel channel, int modificationType) {
+        // Only query overflow bubbles here because active bubbles will have an active notification
+        // and channel changes we care about would result in a ranking update.
+        List<Bubble> overflowBubbles = new ArrayList<>(mBubbleData.getOverflowBubbles());
+        for (int i = 0; i < overflowBubbles.size(); i++) {
+            Bubble b = overflowBubbles.get(i);
+            if (Objects.equals(b.getShortcutId(), channel.getConversationId())
+                    && b.getPackageName().equals(pkg)
+                    && b.getUser().getIdentifier() == user.getIdentifier()) {
+                if (!channel.canBubble() || channel.isDeleted()) {
+                    mBubbleData.dismissBubbleWithKey(b.getKey(), DISMISS_NO_LONGER_BUBBLE);
+                }
             }
         }
     }
@@ -1134,7 +1206,8 @@ public class BubbleController {
                 if (reason == DISMISS_USER_CHANGED || reason == DISMISS_NO_BUBBLE_UP) {
                     continue;
                 }
-                if (reason == DISMISS_NOTIF_CANCEL) {
+                if (reason == DISMISS_NOTIF_CANCEL
+                        || reason == DISMISS_SHORTCUT_REMOVED) {
                     bubblesToBeRemovedFromRepository.add(bubble);
                 }
                 if (!mBubbleData.hasBubbleInStackWithKey(bubble.getKey())) {
@@ -1277,6 +1350,7 @@ public class BubbleController {
      * Updates the visibility of the bubbles based on current state.
      * Does not un-bubble, just hides or un-hides.
      * Updates stack description for TalkBack focus.
+     * Updates bubbles' icon views clickable states
      */
     public void updateStack() {
         if (mStackView == null) {
@@ -1294,6 +1368,8 @@ public class BubbleController {
         }
 
         mStackView.updateContentDescription();
+
+        mStackView.updateBubblesAcessibillityStates();
     }
 
     @VisibleForTesting
@@ -1612,6 +1688,19 @@ public class BubbleController {
             mMainExecutor.execute(() -> {
                 BubbleController.this.onRankingUpdated(rankingMap, entryDataByKey);
             });
+        }
+
+        @Override
+        public void onNotificationChannelModified(String pkg,
+                UserHandle user, NotificationChannel channel, int modificationType) {
+            // Bubbles only cares about updates or deletions.
+            if (modificationType == NOTIFICATION_CHANNEL_OR_GROUP_UPDATED
+                    || modificationType == NOTIFICATION_CHANNEL_OR_GROUP_DELETED) {
+                mMainExecutor.execute(() -> {
+                    BubbleController.this.onNotificationChannelModified(pkg, user, channel,
+                            modificationType);
+                });
+            }
         }
 
         @Override

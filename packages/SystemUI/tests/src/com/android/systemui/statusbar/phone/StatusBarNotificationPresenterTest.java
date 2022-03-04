@@ -48,9 +48,11 @@ import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.NotificationViewHierarchyManager;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.notification.DynamicPrivacyController;
+import com.android.systemui.statusbar.notification.NotifPipelineFlags;
 import com.android.systemui.statusbar.notification.NotificationEntryManager;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.collection.NotificationEntryBuilder;
+import com.android.systemui.statusbar.notification.collection.render.NotifShadeEventSource;
 import com.android.systemui.statusbar.notification.interruption.NotificationInterruptStateProvider;
 import com.android.systemui.statusbar.notification.interruption.NotificationInterruptSuppressor;
 import com.android.systemui.statusbar.notification.row.ActivatableNotificationView;
@@ -109,12 +111,14 @@ public class StatusBarNotificationPresenterTest extends SysuiTestCase {
                 mock(DozeScrimController.class), mock(ScrimController.class),
                 mock(NotificationShadeWindowController.class), mock(DynamicPrivacyController.class),
                 mock(KeyguardStateController.class),
-                mock(KeyguardIndicationController.class), mStatusBar,
+                mock(KeyguardIndicationController.class),
+                mStatusBar,
                 mock(ShadeControllerImpl.class), mock(LockscreenShadeTransitionController.class),
                 mCommandQueue,
                 mock(NotificationViewHierarchyManager.class),
                 mock(NotificationLockscreenUserManager.class),
                 mock(SysuiStatusBarStateController.class),
+                mock(NotifShadeEventSource.class),
                 mock(NotificationEntryManager.class),
                 mock(NotificationMediaManager.class),
                 mock(NotificationGutsManager.class),
@@ -123,7 +127,8 @@ public class StatusBarNotificationPresenterTest extends SysuiTestCase {
                 mInitController,
                 mNotificationInterruptStateProvider,
                 mock(NotificationRemoteInputManager.class),
-                mock(ConfigurationController.class));
+                mock(ConfigurationController.class),
+                mock(NotifPipelineFlags.class));
         mInitController.executePostInitTasks();
         ArgumentCaptor<NotificationInterruptSuppressor> suppressorCaptor =
                 ArgumentCaptor.forClass(NotificationInterruptSuppressor.class);

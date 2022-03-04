@@ -40,6 +40,8 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.UserHandle;
 
+import androidx.annotation.VisibleForTesting;
+
 import com.android.settingslib.R;
 
 /**
@@ -173,12 +175,29 @@ public class UserIconDrawable extends Drawable implements Drawable.Callback {
     public UserIconDrawable setBadgeIfManagedUser(Context context, int userId) {
         Drawable badge = null;
         if (userId != UserHandle.USER_NULL) {
-            boolean isManaged = context.getSystemService(DevicePolicyManager.class)
-                    .getProfileOwnerAsUser(userId) != null;
-            if (isManaged) {
+            DevicePolicyManager dpm = context.getSystemService(DevicePolicyManager.class);
+            boolean isCorp =
+                    dpm.getProfileOwnerAsUser(userId) != null // has an owner
+                    && dpm.getProfileOwnerOrDeviceOwnerSupervisionComponent(UserHandle.of(userId))
+                            == null; // and has no supervisor
+            if (isCorp) {
                 badge = getDrawableForDisplayDensity(
                         context, com.android.internal.R.drawable.ic_corp_badge_case);
             }
+        }
+        return setBadge(badge);
+    }
+
+    /**
+     * Sets the managed badge to this user icon if the device has a device owner.
+     */
+    public UserIconDrawable setBadgeIfManagedDevice(Context context) {
+        Drawable badge = null;
+        boolean deviceOwnerExists = context.getSystemService(DevicePolicyManager.class)
+                .getDeviceOwnerComponentOnAnyUser() != null;
+        if (deviceOwnerExists) {
+            badge = getDrawableForDisplayDensity(
+                    context, com.android.internal.R.drawable.ic_corp_badge_case);
         }
         return setBadge(badge);
     }
@@ -451,5 +470,25 @@ public class UserIconDrawable extends Drawable implements Drawable.Callback {
     @Override
     public void unscheduleDrawable(@NonNull Drawable who, @NonNull Runnable what) {
         unscheduleSelf(what);
+    }
+
+    @VisibleForTesting
+    public Drawable getUserDrawable() {
+        return mUserDrawable;
+    }
+
+    @VisibleForTesting
+    public Bitmap getUserIcon() {
+        return mUserIcon;
+    }
+
+    @VisibleForTesting
+    public boolean isInvalidated() {
+        return mInvalidated;
+    }
+
+    @VisibleForTesting
+    public Drawable getBadge() {
+        return mBadge;
     }
 }

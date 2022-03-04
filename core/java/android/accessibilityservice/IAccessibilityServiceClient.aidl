@@ -21,7 +21,9 @@ import android.graphics.Region;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.accessibilityservice.AccessibilityGestureEvent;
+import android.accessibilityservice.MagnificationConfig;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 
 /**
  * Top-level interface to an accessibility service component.
@@ -42,7 +44,11 @@ import android.view.KeyEvent;
 
     void onKeyEvent(in KeyEvent event, int sequence);
 
-    void onMagnificationChanged(int displayId, in Region region, float scale, float centerX, float centerY);
+    void onMagnificationChanged(int displayId, in Region region, in MagnificationConfig config);
+
+    void onMotionEvent(in MotionEvent event);
+
+    void onTouchStateChanged(int displayId, int state);
 
     void onSoftKeyboardShowModeChanged(int showMode);
 

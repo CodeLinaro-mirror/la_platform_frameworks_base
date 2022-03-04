@@ -16,6 +16,7 @@
 package com.android.server.am;
 
 import android.annotation.Nullable;
+import android.app.usage.NetworkStatsManager;
 import android.bluetooth.BluetoothActivityEnergyInfo;
 import android.bluetooth.BluetoothAdapter;
 import android.content.Context;
@@ -45,7 +46,6 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.os.BatteryStatsImpl;
 import com.android.internal.power.MeasuredEnergyStats;
 import com.android.internal.util.FrameworkStatsLog;
-import com.android.internal.util.function.pooled.PooledLambda;
 import com.android.server.LocalServices;
 
 import libcore.util.EmptyArray;
@@ -117,6 +117,9 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
     private int mScreenState;
 
     @GuardedBy("this")
+    private int[] mPerDisplayScreenStates = null;
+
+    @GuardedBy("this")
     private boolean mUseLatestStates = true;
 
     @GuardedBy("this")
@@ -127,6 +130,9 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
 
     @GuardedBy("this")
     private Future<?> mBatteryLevelSync;
+
+    @GuardedBy("this")
+    private Future<?> mProcessStateSync;
 
     // If both mStats and mWorkerLock need to be synchronized, mWorkerLock must be acquired first.
     private final Object mWorkerLock = new Object();
@@ -257,45 +263,8 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
     }
 
     @Override
-    public Future<?> scheduleReadProcStateCpuTimes(
-            boolean onBattery, boolean onBatteryScreenOff, long delayMillis) {
-        synchronized (mStats) {
-            if (!mStats.trackPerProcStateCpuTimes()) {
-                return null;
-            }
-        }
-        synchronized (BatteryExternalStatsWorker.this) {
-            if (!mExecutorService.isShutdown()) {
-                return mExecutorService.schedule(PooledLambda.obtainRunnable(
-                        BatteryStatsImpl::updateProcStateCpuTimes,
-                        mStats, onBattery, onBatteryScreenOff).recycleOnUse(),
-                        delayMillis, TimeUnit.MILLISECONDS);
-            }
-        }
-        return null;
-    }
-
-    @Override
-    public Future<?> scheduleCopyFromAllUidsCpuTimes(
-            boolean onBattery, boolean onBatteryScreenOff) {
-        synchronized (mStats) {
-            if (!mStats.trackPerProcStateCpuTimes()) {
-                return null;
-            }
-        }
-        synchronized (BatteryExternalStatsWorker.this) {
-            if (!mExecutorService.isShutdown()) {
-                return mExecutorService.submit(PooledLambda.obtainRunnable(
-                        BatteryStatsImpl::copyFromAllUidsCpuTimes,
-                        mStats, onBattery, onBatteryScreenOff).recycleOnUse());
-            }
-        }
-        return null;
-    }
-
-    @Override
-    public Future<?> scheduleSyncDueToScreenStateChange(
-            int flags, boolean onBattery, boolean onBatteryScreenOff, int screenState) {
+    public Future<?> scheduleSyncDueToScreenStateChange(int flags, boolean onBattery,
+            boolean onBatteryScreenOff, int screenState, int[] perDisplayScreenStates) {
         synchronized (BatteryExternalStatsWorker.this) {
             if (mCurrentFuture == null || (mUpdateFlags & UPDATE_CPU) == 0) {
                 mOnBattery = onBattery;
@@ -304,6 +273,7 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
             }
             // always update screen state
             mScreenState = screenState;
+            mPerDisplayScreenStates = perDisplayScreenStates;
             return scheduleSyncLocked("screen-state", flags);
         }
     }
@@ -346,6 +316,25 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
         if (mBatteryLevelSync != null) {
             mBatteryLevelSync.cancel(false);
             mBatteryLevelSync = null;
+        }
+    }
+
+    @Override
+    public Future<?> scheduleSyncDueToProcessStateChange(long delayMillis) {
+        synchronized (BatteryExternalStatsWorker.this) {
+            mProcessStateSync = scheduleDelayedSyncLocked(mProcessStateSync,
+                    () -> scheduleSync("procstate-change", UPDATE_ON_PROC_STATE_CHANGE),
+                    delayMillis);
+            return mProcessStateSync;
+        }
+    }
+
+    public void cancelSyncDueToProcessStateChange() {
+        synchronized (BatteryExternalStatsWorker.this) {
+            if (mProcessStateSync != null) {
+                mProcessStateSync.cancel(false);
+                mProcessStateSync = null;
+            }
         }
     }
 
@@ -446,6 +435,7 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
             final boolean onBattery;
             final boolean onBatteryScreenOff;
             final int screenState;
+            final int[] displayScreenStates;
             final boolean useLatestStates;
             synchronized (BatteryExternalStatsWorker.this) {
                 updateFlags = mUpdateFlags;
@@ -454,6 +444,7 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
                 onBattery = mOnBattery;
                 onBatteryScreenOff = mOnBatteryScreenOff;
                 screenState = mScreenState;
+                displayScreenStates = mPerDisplayScreenStates;
                 useLatestStates = mUseLatestStates;
                 mUpdateFlags = 0;
                 mCurrentReason = null;
@@ -466,6 +457,9 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
                 if ((updateFlags & UPDATE_CPU) != 0) {
                     cancelCpuSyncDueToWakelockChange();
                 }
+                if ((updateFlags & UPDATE_ON_PROC_STATE_CHANGE) == UPDATE_ON_PROC_STATE_CHANGE) {
+                    cancelSyncDueToProcessStateChange();
+                }
             }
 
             try {
@@ -475,7 +469,8 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
                     }
                     try {
                         updateExternalStatsLocked(reason, updateFlags, onBattery,
-                                onBatteryScreenOff, screenState, useLatestStates);
+                                onBatteryScreenOff, screenState, displayScreenStates,
+                                useLatestStates);
                     } finally {
                         if (DEBUG) {
                             Slog.d(TAG, "end updateExternalStatsSync");
@@ -484,7 +479,7 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
                 }
 
                 if ((updateFlags & UPDATE_CPU) != 0) {
-                    mStats.copyFromAllUidsCpuTimes();
+                    mStats.updateCpuTimesForAllUids();
                 }
 
                 // Clean up any UIDs if necessary.
@@ -520,7 +515,8 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
 
     @GuardedBy("mWorkerLock")
     private void updateExternalStatsLocked(final String reason, int updateFlags, boolean onBattery,
-            boolean onBatteryScreenOff, int screenState, boolean useLatestStates) {
+            boolean onBatteryScreenOff, int screenState, int[] displayScreenStates,
+            boolean useLatestStates) {
         // We will request data from external processes asynchronously, and wait on a timeout.
         SynchronousResultReceiver wifiReceiver = null;
         SynchronousResultReceiver bluetoothReceiver = null;
@@ -675,11 +671,10 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
             if (measuredEnergyDeltas != null) {
                 final long[] displayChargeUC = measuredEnergyDeltas.displayChargeUC;
                 if (displayChargeUC != null && displayChargeUC.length > 0) {
-                    // TODO (b/194107383): pass all display ordinals to mStats.
-                    final long primaryDisplayChargeUC = displayChargeUC[0];
-                    // If updating, pass in what BatteryExternalStatsWorker thinks screenState is.
-                    mStats.updateDisplayMeasuredEnergyStatsLocked(primaryDisplayChargeUC,
-                            screenState, elapsedRealtime);
+                    // If updating, pass in what BatteryExternalStatsWorker thinks
+                    // displayScreenStates is.
+                    mStats.updateDisplayMeasuredEnergyStatsLocked(displayChargeUC,
+                            displayScreenStates, elapsedRealtime);
                 }
 
                 final long gnssChargeUC = measuredEnergyDeltas.gnssChargeUC;
@@ -718,8 +713,10 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
             if (wifiInfo.isValid()) {
                 final long wifiChargeUC = measuredEnergyDeltas != null ?
                         measuredEnergyDeltas.wifiChargeUC : MeasuredEnergySnapshot.UNAVAILABLE;
-                mStats.updateWifiState(
-                        extractDeltaLocked(wifiInfo), wifiChargeUC, elapsedRealtime, uptime);
+                final NetworkStatsManager networkStatsManager = mInjector.getSystemService(
+                        NetworkStatsManager.class);
+                mStats.updateWifiState(extractDeltaLocked(wifiInfo),
+                        wifiChargeUC, elapsedRealtime, uptime, networkStatsManager);
             } else {
                 Slog.w(TAG, "wifi info is invalid: " + wifiInfo);
             }
@@ -728,8 +725,10 @@ class BatteryExternalStatsWorker implements BatteryStatsImpl.ExternalStatsSync {
         if (modemInfo != null) {
             final long mobileRadioChargeUC = measuredEnergyDeltas != null
                     ? measuredEnergyDeltas.mobileRadioChargeUC : MeasuredEnergySnapshot.UNAVAILABLE;
+            final NetworkStatsManager networkStatsManager = mInjector.getSystemService(
+                    NetworkStatsManager.class);
             mStats.noteModemControllerActivity(modemInfo, mobileRadioChargeUC, elapsedRealtime,
-                    uptime);
+                    uptime, networkStatsManager);
         }
 
         if (updateFlags == UPDATE_ALL) {

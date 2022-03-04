@@ -1024,7 +1024,7 @@ public class Build {
          * will also enable {@link StrictMode.ThreadPolicy.Builder#detectUnbufferedIo}.</li>
          * <li>{@link android.provider.DocumentsContract}'s various methods will throw failure
          * exceptions back to the caller instead of returning null.
-         * <li>{@link View#hasFocusable View.hasFocusable} now includes auto-focusable views.</li>
+         * <li>{@link View#hasFocusable() View.hasFocusable} now includes auto-focusable views.</li>
          * <li>{@link android.view.SurfaceView} will no longer always change the underlying
          * Surface object when something about it changes; apps need to look at the current
          * state of the object to determine which things they are interested in have changed.</li>
@@ -1130,6 +1130,13 @@ public class Build {
          * S.
          */
         public static final int S = 31;
+
+        /**
+         * S V2.
+         *
+         * Once more unto the breach, dear friends, once more.
+         */
+        public static final int S_V2 = 32;
 
         /**
          * Tiramisu.
@@ -1287,6 +1294,18 @@ public class Build {
     public static class Partition {
         /** The name identifying the system partition. */
         public static final String PARTITION_NAME_SYSTEM = "system";
+        /** @hide */
+        public static final String PARTITION_NAME_BOOTIMAGE = "bootimage";
+        /** @hide */
+        public static final String PARTITION_NAME_ODM = "odm";
+        /** @hide */
+        public static final String PARTITION_NAME_OEM = "oem";
+        /** @hide */
+        public static final String PARTITION_NAME_PRODUCT = "product";
+        /** @hide */
+        public static final String PARTITION_NAME_SYSTEM_EXT = "system_ext";
+        /** @hide */
+        public static final String PARTITION_NAME_VENDOR = "vendor";
 
         private final String mName;
         private final String mFingerprint;
@@ -1343,8 +1362,12 @@ public class Build {
         ArrayList<Partition> partitions = new ArrayList();
 
         String[] names = new String[] {
-            "bootimage", "odm", "product", "system_ext", Partition.PARTITION_NAME_SYSTEM,
-            "vendor"
+                Partition.PARTITION_NAME_BOOTIMAGE,
+                Partition.PARTITION_NAME_ODM,
+                Partition.PARTITION_NAME_PRODUCT,
+                Partition.PARTITION_NAME_SYSTEM_EXT,
+                Partition.PARTITION_NAME_SYSTEM,
+                Partition.PARTITION_NAME_VENDOR
         };
         for (String name : names) {
             String fingerprint = SystemProperties.get("ro." + name + ".build.fingerprint");

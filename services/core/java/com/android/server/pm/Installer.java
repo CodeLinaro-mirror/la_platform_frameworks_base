@@ -26,7 +26,6 @@ import android.os.Build;
 import android.os.CreateAppDataArgs;
 import android.os.CreateAppDataResult;
 import android.os.IBinder;
-import android.os.IBinder.DeathRecipient;
 import android.os.IInstalld;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -101,6 +100,8 @@ public class Installer extends SystemService {
     public static final int FLAG_FREE_CACHE_V2 = IInstalld.FLAG_FREE_CACHE_V2;
     public static final int FLAG_FREE_CACHE_V2_DEFY_QUOTA = IInstalld.FLAG_FREE_CACHE_V2_DEFY_QUOTA;
     public static final int FLAG_FREE_CACHE_NOOP = IInstalld.FLAG_FREE_CACHE_NOOP;
+    public static final int FLAG_FREE_CACHE_DEFY_TARGET_FREE_BYTES =
+            IInstalld.FLAG_FREE_CACHE_DEFY_TARGET_FREE_BYTES;
 
     public static final int FLAG_USE_QUOTA = IInstalld.FLAG_USE_QUOTA;
     public static final int FLAG_FORCE = IInstalld.FLAG_FORCE;
@@ -148,12 +149,9 @@ public class Installer extends SystemService {
         IBinder binder = ServiceManager.getService("installd");
         if (binder != null) {
             try {
-                binder.linkToDeath(new DeathRecipient() {
-                    @Override
-                    public void binderDied() {
-                        Slog.w(TAG, "installd died; reconnecting");
-                        connect();
-                    }
+                binder.linkToDeath(() -> {
+                    Slog.w(TAG, "installd died; reconnecting");
+                    connect();
                 }, 0);
             } catch (RemoteException e) {
                 binder = null;
@@ -168,9 +166,7 @@ public class Installer extends SystemService {
             }
         } else {
             Slog.w(TAG, "installd not found; trying again");
-            BackgroundThread.getHandler().postDelayed(() -> {
-                connect();
-            }, DateUtils.SECOND_IN_MILLIS);
+            BackgroundThread.getHandler().postDelayed(this::connect, DateUtils.SECOND_IN_MILLIS);
         }
     }
 
@@ -192,7 +188,9 @@ public class Installer extends SystemService {
         }
     }
 
-    private static CreateAppDataArgs buildCreateAppDataArgs(String uuid, String packageName,
+    // We explicitly do NOT set previousAppId because the default value should always be 0.
+    // Manually override previousAppId after building CreateAppDataArgs for specific behaviors.
+    static CreateAppDataArgs buildCreateAppDataArgs(String uuid, String packageName,
             int userId, int flags, int appId, String seInfo, int targetSdkVersion) {
         final CreateAppDataArgs args = new CreateAppDataArgs();
         args.uuid = uuid;
@@ -211,23 +209,6 @@ public class Installer extends SystemService {
         result.exceptionCode = 0;
         result.exceptionMessage = null;
         return result;
-    }
-
-    /**
-     * @deprecated callers are encouraged to migrate to using {@link Batch} to
-     *             more efficiently handle operations in bulk.
-     */
-    @Deprecated
-    public long createAppData(String uuid, String packageName, int userId, int flags, int appId,
-            String seInfo, int targetSdkVersion) throws InstallerException {
-        final CreateAppDataArgs args = buildCreateAppDataArgs(uuid, packageName, userId, flags,
-                appId, seInfo, targetSdkVersion);
-        final CreateAppDataResult result = createAppData(args);
-        if (result.exceptionCode == 0) {
-            return result.ceDataInode;
-        } else {
-            throw new InstallerException(result.exceptionMessage);
-        }
     }
 
     public @NonNull CreateAppDataResult createAppData(@NonNull CreateAppDataArgs args)
@@ -284,13 +265,11 @@ public class Installer extends SystemService {
          * Callers of this method are not required to hold a monitor lock on an
          * {@link Installer} object.
          */
-        public synchronized @NonNull CompletableFuture<Long> createAppData(String uuid,
-                String packageName, int userId, int flags, int appId, String seInfo,
-                int targetSdkVersion) {
-            if (mExecuted) throw new IllegalStateException();
-
-            final CreateAppDataArgs args = buildCreateAppDataArgs(uuid, packageName, userId, flags,
-                    appId, seInfo, targetSdkVersion);
+        @NonNull
+        public synchronized CompletableFuture<Long> createAppData(CreateAppDataArgs args) {
+            if (mExecuted) {
+                throw new IllegalStateException();
+            }
             final CompletableFuture<Long> future = new CompletableFuture<>();
             mArgs.add(args);
             mFutures.add(future);
@@ -520,7 +499,7 @@ public class Installer extends SystemService {
      *
      * @throws InstallerException if {@code dexopt} fails.
      */
-    public boolean dexopt(String apkPath, int uid, @Nullable String pkgName, String instructionSet,
+    public boolean dexopt(String apkPath, int uid, String pkgName, String instructionSet,
             int dexoptNeeded, @Nullable String outputPath, int dexFlags,
             String compilerFilter, @Nullable String volumeUuid, @Nullable String classLoaderContext,
             @Nullable String seInfo, boolean downgrade, int targetSdkVersion,
@@ -608,11 +587,14 @@ public class Installer extends SystemService {
         }
     }
 
-    public void rmPackageDir(String packageDir) throws InstallerException {
+    /**
+     * Remove a directory belonging to a package.
+     */
+    public void rmPackageDir(String packageName, String packageDir) throws InstallerException {
         if (!checkBeforeRemote()) return;
         BlockGuard.getVmPolicy().onPathAccess(packageDir);
         try {
-            mInstalld.rmPackageDir(packageDir);
+            mInstalld.rmPackageDir(packageName, packageDir);
         } catch (Exception e) {
             throw InstallerException.from(e);
         }
@@ -655,11 +637,15 @@ public class Installer extends SystemService {
         }
     }
 
-    public void freeCache(String uuid, long targetFreeBytes, long cacheReservedBytes, int flags)
-            throws InstallerException {
+    /**
+     * Deletes cache from specified uuid until targetFreeBytes amount of space is free.
+     * flag denotes aggressive or non-aggresive mode where cache under quota is eligible or not
+     * respectively for clearing.
+     */
+    public void freeCache(String uuid, long targetFreeBytes, int flags) throws InstallerException {
         if (!checkBeforeRemote()) return;
         try {
-            mInstalld.freeCache(uuid, targetFreeBytes, cacheReservedBytes, flags);
+            mInstalld.freeCache(uuid, targetFreeBytes, flags);
         } catch (Exception e) {
             throw InstallerException.from(e);
         }
@@ -681,35 +667,44 @@ public class Installer extends SystemService {
         }
     }
 
-    public void createOatDir(String oatDir, String dexInstructionSet)
+    /**
+     * Creates an oat dir for given package and instruction set.
+     */
+    public void createOatDir(String packageName, String oatDir, String dexInstructionSet)
             throws InstallerException {
         if (!checkBeforeRemote()) return;
         try {
-            mInstalld.createOatDir(oatDir, dexInstructionSet);
+            mInstalld.createOatDir(packageName, oatDir, dexInstructionSet);
         } catch (Exception e) {
             throw InstallerException.from(e);
         }
     }
 
-    public void linkFile(String relativePath, String fromBase, String toBase)
+    /**
+     * Creates a hardlink for a path.
+     */
+    public void linkFile(String packageName, String relativePath, String fromBase, String toBase)
             throws InstallerException {
         if (!checkBeforeRemote()) return;
         BlockGuard.getVmPolicy().onPathAccess(fromBase);
         BlockGuard.getVmPolicy().onPathAccess(toBase);
         try {
-            mInstalld.linkFile(relativePath, fromBase, toBase);
+            mInstalld.linkFile(packageName, relativePath, fromBase, toBase);
         } catch (Exception e) {
             throw InstallerException.from(e);
         }
     }
 
-    public void moveAb(String apkPath, String instructionSet, String outputPath)
+    /**
+     * Moves oat/vdex/art from "B" set defined by ro.boot.slot_suffix to the default set.
+     */
+    public void moveAb(String packageName, String apkPath, String instructionSet, String outputPath)
             throws InstallerException {
         if (!checkBeforeRemote()) return;
         BlockGuard.getVmPolicy().onPathAccess(apkPath);
         BlockGuard.getVmPolicy().onPathAccess(outputPath);
         try {
-            mInstalld.moveAb(apkPath, instructionSet, outputPath);
+            mInstalld.moveAb(packageName, apkPath, instructionSet, outputPath);
         } catch (Exception e) {
             throw InstallerException.from(e);
         }
@@ -719,35 +714,41 @@ public class Installer extends SystemService {
      * Deletes the optimized artifacts generated by ART and returns the number
      * of freed bytes.
      */
-    public long deleteOdex(String apkPath, String instructionSet, String outputPath)
-            throws InstallerException {
+    public long deleteOdex(String packageName, String apkPath, String instructionSet,
+            String outputPath) throws InstallerException {
         if (!checkBeforeRemote()) return -1;
         BlockGuard.getVmPolicy().onPathAccess(apkPath);
         BlockGuard.getVmPolicy().onPathAccess(outputPath);
         try {
-            return mInstalld.deleteOdex(apkPath, instructionSet, outputPath);
+            return mInstalld.deleteOdex(packageName, apkPath, instructionSet, outputPath);
         } catch (Exception e) {
             throw InstallerException.from(e);
         }
     }
 
-    public void installApkVerity(String filePath, FileDescriptor verityInput, int contentSize)
-            throws InstallerException {
+    /**
+     * Enables legacy apk-verity for an apk.
+     */
+    public void installApkVerity(String packageName, String filePath, FileDescriptor verityInput,
+            int contentSize) throws InstallerException {
         if (!checkBeforeRemote()) return;
         BlockGuard.getVmPolicy().onPathAccess(filePath);
         try {
-            mInstalld.installApkVerity(filePath, verityInput, contentSize);
+            mInstalld.installApkVerity(packageName, filePath, verityInput, contentSize);
         } catch (Exception e) {
             throw InstallerException.from(e);
         }
     }
 
-    public void assertFsverityRootHashMatches(String filePath, @NonNull byte[] expectedHash)
-            throws InstallerException {
+    /**
+     * Checks if provided hash matches the file's fs-verity merkle tree root hash.
+     */
+    public void assertFsverityRootHashMatches(String packageName, String filePath,
+            @NonNull byte[] expectedHash) throws InstallerException {
         if (!checkBeforeRemote()) return;
         BlockGuard.getVmPolicy().onPathAccess(filePath);
         try {
-            mInstalld.assertFsverityRootHashMatches(filePath, expectedHash);
+            mInstalld.assertFsverityRootHashMatches(packageName, filePath, expectedHash);
         } catch (Exception e) {
             throw InstallerException.from(e);
         }

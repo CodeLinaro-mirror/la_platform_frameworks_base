@@ -17,14 +17,19 @@
 package com.android.server.pm.test.parsing.parcelling
 
 import android.content.pm.ActivityInfo
-import android.content.pm.parsing.component.ParsedActivity
+import com.android.server.pm.pkg.component.ParsedActivity
+import com.android.server.pm.pkg.component.ParsedActivityImpl
 import kotlin.contracts.ExperimentalContracts
 
 @ExperimentalContracts
-class ParsedActivityTest : ParsedMainComponentTest(ParsedActivity::class) {
+class ParsedActivityTest : ParsedMainComponentTest(
+    ParsedActivity::class,
+    ParsedActivityImpl::class
+) {
 
-    override val defaultImpl = ParsedActivity()
-    override val creator = ParsedActivity.CREATOR
+    override val defaultImpl =
+        ParsedActivityImpl()
+    override val creator = ParsedActivityImpl.CREATOR
 
     override val mainComponentSubclassBaseParams = listOf(
         ParsedActivity::getPermission,
@@ -54,7 +59,7 @@ class ParsedActivityTest : ParsedMainComponentTest(ParsedActivity::class) {
     override fun mainComponentSubclassExtraParams() = listOf(
         getSetByValue(
             ParsedActivity::getWindowLayout,
-            ParsedActivity::setWindowLayout,
+            ParsedActivityImpl::setWindowLayout,
             ActivityInfo.WindowLayout(1, 1f, 2, 1f, 3, 4, 5),
             compare = { first, second ->
                 equalBy(

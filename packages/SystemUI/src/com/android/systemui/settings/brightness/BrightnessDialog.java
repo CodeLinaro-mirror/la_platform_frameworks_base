@@ -41,14 +41,14 @@ import javax.inject.Inject;
 public class BrightnessDialog extends Activity {
 
     private BrightnessController mBrightnessController;
-    private final BrightnessSlider.Factory mToggleSliderFactory;
+    private final BrightnessSliderController.Factory mToggleSliderFactory;
     private final BroadcastDispatcher mBroadcastDispatcher;
     private final Handler mBackgroundHandler;
 
     @Inject
     public BrightnessDialog(
             BroadcastDispatcher broadcastDispatcher,
-            BrightnessSlider.Factory factory,
+            BrightnessSliderController.Factory factory,
             @Background Handler bgHandler) {
         mBroadcastDispatcher = broadcastDispatcher;
         mToggleSliderFactory = factory;
@@ -77,7 +77,7 @@ public class BrightnessDialog extends Activity {
         // The brightness mirror container is INVISIBLE by default.
         frame.setVisibility(View.VISIBLE);
 
-        BrightnessSlider controller = mToggleSliderFactory.create(this, frame);
+        BrightnessSliderController controller = mToggleSliderFactory.create(this, frame);
         controller.init();
         frame.addView(controller.getRootView(), MATCH_PARENT, WRAP_CONTENT);
 
@@ -90,6 +90,12 @@ public class BrightnessDialog extends Activity {
         super.onStart();
         mBrightnessController.registerCallbacks();
         MetricsLogger.visible(this, MetricsEvent.BRIGHTNESS_DIALOG);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
     }
 
     @Override

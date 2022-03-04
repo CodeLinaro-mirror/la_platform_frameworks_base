@@ -17,6 +17,13 @@
 package com.android.internal.app;
 
 import static android.Manifest.permission.INTERACT_ACROSS_PROFILES;
+import static android.app.admin.DevicePolicyResources.Strings.Core.FORWARD_INTENT_TO_PERSONAL;
+import static android.app.admin.DevicePolicyResources.Strings.Core.FORWARD_INTENT_TO_WORK;
+import static android.app.admin.DevicePolicyResources.Strings.Core.RESOLVER_PERSONAL_TAB;
+import static android.app.admin.DevicePolicyResources.Strings.Core.RESOLVER_PERSONAL_TAB_ACCESSIBILITY;
+import static android.app.admin.DevicePolicyResources.Strings.Core.RESOLVER_WORK_PROFILE_NOT_SUPPORTED;
+import static android.app.admin.DevicePolicyResources.Strings.Core.RESOLVER_WORK_TAB;
+import static android.app.admin.DevicePolicyResources.Strings.Core.RESOLVER_WORK_TAB_ACCESSIBILITY;
 import static android.content.Intent.FLAG_ACTIVITY_NEW_TASK;
 import static android.content.PermissionChecker.PID_UNKNOWN;
 import static android.view.WindowManager.LayoutParams.SYSTEM_FLAG_HIDE_NON_SYSTEM_OVERLAY_WINDOWS;
@@ -32,6 +39,7 @@ import android.app.VoiceInteractor.PickOptionRequest;
 import android.app.VoiceInteractor.PickOptionRequest.Option;
 import android.app.VoiceInteractor.Prompt;
 import android.app.admin.DevicePolicyEventLogger;
+import android.app.admin.DevicePolicyManager;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -123,7 +131,7 @@ public class ResolverActivity extends Activity implements
     protected View mProfileView;
     private int mLastSelected = AbsListView.INVALID_POSITION;
     private boolean mResolvingHome = false;
-    private int mProfileSwitchMessageId = -1;
+    private String mProfileSwitchMessage;
     private int mLayoutId;
     @VisibleForTesting
     protected final ArrayList<Intent> mIntents = new ArrayList<>();
@@ -152,7 +160,7 @@ public class ResolverActivity extends Activity implements
     /** See {@link #setRetainInOnStop}. */
     private boolean mRetainInOnStop;
 
-    private static final int REQUEST_CODE_RETURN_FROM_DELEGATE_CHOOSER = 20;
+    protected static final int REQUEST_CODE_RETURN_FROM_DELEGATE_CHOOSER = 20;
 
     private static final String EXTRA_SHOW_FRAGMENT_ARGS = ":settings:show_fragment_args";
     private static final String EXTRA_FRAGMENT_ARG_KEY = ":settings:fragment_args_key";
@@ -323,6 +331,86 @@ public class ResolverActivity extends Activity implements
         super.onCreate(savedInstanceState);
     }
 
+    /**
+     * Pass-through API to support {@link ChooserActivity} running in "headless springboard" mode
+     * where we hand over to the unbundled chooser (while violating many of the invariants of a
+     * typical ResolverActivity implementation). Subclasses running in this mode need to be able
+     * to opt-out of the normal ResolverActivity behavior.
+     *
+     * TODO: this should be removed later on in the unbundling migration, when the springboard
+     * activity no longer needs to derive from ResolverActivity. The hold-over design here is
+     * <em>not</em> good practice (e.g. there could be other events that weren't anticipated as
+     * requiring this kind of "pass-through" override, and so might fall back on ResolverActivity
+     * implementations that depend on the invariants that are violated in the headless mode). If
+     * necessary, we could instead consider using a springboard-only activity on the system side
+     * immediately, which would delegate either to the unbundled chooser, or to a
+     * (properly-inheriting) system ChooserActivity. This would have performance implications even
+     * when the unbundling experiment is disabled.
+     */
+    protected void super_onRestart() {
+        super.onRestart();
+    }
+
+    /**
+     * Pass-through API to support {@link ChooserActivity} running in "headless springboard" mode
+     * where we hand over to the unbundled chooser (while violating many of the invariants of a
+     * typical ResolverActivity implementation). Subclasses running in this mode need to be able
+     * to opt-out of the normal ResolverActivity behavior.
+     *
+     * TODO: this should be removed later on in the unbundling migration, when the springboard
+     * activity no longer needs to derive from ResolverActivity. The hold-over design here is
+     * <em>not</em> good practice (e.g. there could be other events that weren't anticipated as
+     * requiring this kind of "pass-through" override, and so might fall back on ResolverActivity
+     * implementations that depend on the invariants that are violated in the headless mode). If
+     * necessary, we could instead consider using a springboard-only activity on the system side
+     * immediately, which would delegate either to the unbundled chooser, or to a
+     * (properly-inheriting) system ChooserActivity. This would have performance implications even
+     * when the unbundling experiment is disabled.
+     */
+    protected void super_onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+    }
+
+    /**
+     * Pass-through API to support {@link ChooserActivity} running in "headless springboard" mode
+     * where we hand over to the unbundled chooser (while violating many of the invariants of a
+     * typical ResolverActivity implementation). Subclasses running in this mode need to be able
+     * to opt-out of the normal ResolverActivity behavior.
+     *
+     * TODO: this should be removed later on in the unbundling migration, when the springboard
+     * activity no longer needs to derive from ResolverActivity. The hold-over design here is
+     * <em>not</em> good practice (e.g. there could be other events that weren't anticipated as
+     * requiring this kind of "pass-through" override, and so might fall back on ResolverActivity
+     * implementations that depend on the invariants that are violated in the headless mode). If
+     * necessary, we could instead consider using a springboard-only activity on the system side
+     * immediately, which would delegate either to the unbundled chooser, or to a
+     * (properly-inheriting) system ChooserActivity. This would have performance implications even
+     * when the unbundling experiment is disabled.
+     */
+    protected void super_onRestoreInstanceState(Bundle savedInstanceState) {
+        super.onRestoreInstanceState(savedInstanceState);
+    }
+
+    /**
+     * Pass-through API to support {@link ChooserActivity} running in "headless springboard" mode
+     * where we hand over to the unbundled chooser (while violating many of the invariants of a
+     * typical ResolverActivity implementation). Subclasses running in this mode need to be able
+     * to opt-out of the normal ResolverActivity behavior.
+     *
+     * TODO: this should be removed later on in the unbundling migration, when the springboard
+     * activity no longer needs to derive from ResolverActivity. The hold-over design here is
+     * <em>not</em> good practice (e.g. there could be other events that weren't anticipated as
+     * requiring this kind of "pass-through" override, and so might fall back on ResolverActivity
+     * implementations that depend on the invariants that are violated in the headless mode). If
+     * necessary, we could instead consider using a springboard-only activity on the system side
+     * immediately, which would delegate either to the unbundled chooser, or to a
+     * (properly-inheriting) system ChooserActivity. This would have performance implications even
+     * when the unbundling experiment is disabled.
+     */
+    public void super_onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         // Use a specialized prompt when we're handling the 'Home' app startActivity()
@@ -361,7 +449,7 @@ public class ResolverActivity extends Activity implements
 
         // Determine whether we should show that intent is forwarded
         // from managed profile to owner or other way around.
-        setProfileSwitchMessageId(intent.getContentUserHint());
+        setProfileSwitchMessage(intent.getContentUserHint());
 
         mLaunchedFromUid = getLaunchedFromUid();
         if (mLaunchedFromUid < 0 || UserHandle.isIsolated(mLaunchedFromUid)) {
@@ -594,7 +682,7 @@ public class ResolverActivity extends Activity implements
         }
 
         // Do not show the profile switch message anymore.
-        mProfileSwitchMessageId = -1;
+        mProfileSwitchMessage = null;
 
         onTargetSelected(dri, false);
         if (!mAwaitingDelegateResponse) {
@@ -748,7 +836,7 @@ public class ResolverActivity extends Activity implements
         }
     }
 
-    private void setProfileSwitchMessageId(int contentUserHint) {
+    private void setProfileSwitchMessage(int contentUserHint) {
         if (contentUserHint != UserHandle.USER_CURRENT &&
                 contentUserHint != UserHandle.myUserId()) {
             UserManager userManager = (UserManager) getSystemService(Context.USER_SERVICE);
@@ -757,11 +845,23 @@ public class ResolverActivity extends Activity implements
                     : false;
             boolean targetIsManaged = userManager.isManagedProfile();
             if (originIsManaged && !targetIsManaged) {
-                mProfileSwitchMessageId = com.android.internal.R.string.forward_intent_to_owner;
+                mProfileSwitchMessage = getForwardToPersonalMsg();
             } else if (!originIsManaged && targetIsManaged) {
-                mProfileSwitchMessageId = com.android.internal.R.string.forward_intent_to_work;
+                mProfileSwitchMessage = getForwardToWorkMsg();
             }
         }
+    }
+
+    private String getForwardToPersonalMsg() {
+        return getSystemService(DevicePolicyManager.class).getString(
+                FORWARD_INTENT_TO_PERSONAL,
+                () -> getString(com.android.internal.R.string.forward_intent_to_owner));
+    }
+
+    private String getForwardToWorkMsg() {
+        return getSystemService(DevicePolicyManager.class).getString(
+                FORWARD_INTENT_TO_WORK,
+                () -> getString(com.android.internal.R.string.forward_intent_to_work));
     }
 
     /**
@@ -877,7 +977,7 @@ public class ResolverActivity extends Activity implements
         }
         final Intent intent = getIntent();
         if ((intent.getFlags() & FLAG_ACTIVITY_NEW_TASK) != 0 && !isVoiceInteraction()
-                && !mResolvingHome && !mRetainInOnStop) {
+                && !mResolvingHome && !mRetainInOnStop && !mAwaitingDelegateResponse) {
             // This resolver is in the unusual situation where it has been
             // launched at the top of a new task.  We don't let it be added
             // to the recent tasks shown to the user, and we need to make sure
@@ -1015,9 +1115,9 @@ public class ResolverActivity extends Activity implements
         ResolveInfo ri = mMultiProfilePagerAdapter.getActiveListAdapter()
                 .resolveInfoForPosition(which, hasIndexBeenFiltered);
         if (mResolvingHome && hasManagedProfile() && !supportsManagedProfiles(ri)) {
-            Toast.makeText(this, String.format(getResources().getString(
-                    com.android.internal.R.string.activity_resolver_work_profiles_support),
-                    ri.activityInfo.loadLabel(getPackageManager()).toString()),
+            Toast.makeText(this,
+                    getWorkProfileNotSupportedMsg(
+                            ri.activityInfo.loadLabel(getPackageManager()).toString()),
                     Toast.LENGTH_LONG).show();
             return;
         }
@@ -1046,6 +1146,15 @@ public class ResolverActivity extends Activity implements
                 finish();
             }
         }
+    }
+
+    private String getWorkProfileNotSupportedMsg(String launcherName) {
+        return getSystemService(DevicePolicyManager.class).getString(
+                RESOLVER_WORK_PROFILE_NOT_SUPPORTED,
+                () -> getString(
+                        com.android.internal.R.string.activity_resolver_work_profiles_support,
+                        launcherName),
+                launcherName);
     }
 
     /**
@@ -1079,11 +1188,11 @@ public class ResolverActivity extends Activity implements
         if (doPostProcessing) {
             maybeCreateHeader(listAdapter);
             resetButtonBar();
-            onListRebuilt(listAdapter);
+            onListRebuilt(listAdapter, rebuildCompleted);
         }
     }
 
-    protected void onListRebuilt(ResolverListAdapter listAdapter) {
+    protected void onListRebuilt(ResolverListAdapter listAdapter, boolean rebuildCompleted) {
         final ItemClickListener listener = new ItemClickListener();
         setupAdapterListView((ListView) mMultiProfilePagerAdapter.getActiveAdapterView(), listener);
         if (shouldShowTabs() && isIntentPicker()) {
@@ -1314,8 +1423,8 @@ public class ResolverActivity extends Activity implements
         }
         // If needed, show that intent is forwarded
         // from managed profile to owner or other way around.
-        if (mProfileSwitchMessageId != -1) {
-            Toast.makeText(this, getString(mProfileSwitchMessageId), Toast.LENGTH_LONG).show();
+        if (mProfileSwitchMessage != null) {
+            Toast.makeText(this, mProfileSwitchMessage, Toast.LENGTH_LONG).show();
         }
         if (!mSafeForwardingMode) {
             if (cti.startAsUser(this, null, user)) {
@@ -1357,11 +1466,11 @@ public class ResolverActivity extends Activity implements
         try {
             // TODO: Once this is a small springboard activity, it can move off the UI process
             // and we can move the request method to ActivityManagerInternal.
-            IBinder permissionToken = ActivityTaskManager.getService()
-                    .requestStartActivityPermissionToken(getActivityToken());
             final Intent chooserIntent = new Intent();
             final ComponentName delegateActivity = ComponentName.unflattenFromString(
                     Resources.getSystem().getString(R.string.config_chooserActivity));
+            IBinder permissionToken = ActivityTaskManager.getService()
+                    .requestStartActivityPermissionToken(delegateActivity);
             chooserIntent.setClassName(delegateActivity.getPackageName(),
                     delegateActivity.getClassName());
             chooserIntent.putExtra(ActivityTaskManager.EXTRA_PERMISSION_TOKEN, permissionToken);
@@ -1662,12 +1771,12 @@ public class ResolverActivity extends Activity implements
         viewPager.setSaveEnabled(false);
         TabHost.TabSpec tabSpec = tabHost.newTabSpec(TAB_TAG_PERSONAL)
                 .setContent(R.id.profile_pager)
-                .setIndicator(getString(R.string.resolver_personal_tab));
+                .setIndicator(getPersonalTabLabel());
         tabHost.addTab(tabSpec);
 
         tabSpec = tabHost.newTabSpec(TAB_TAG_WORK)
                 .setContent(R.id.profile_pager)
-                .setIndicator(getString(R.string.resolver_work_tab));
+                .setIndicator(getWorkTabLabel());
         tabHost.addTab(tabSpec);
 
         TabWidget tabWidget = tabHost.getTabWidget();
@@ -1719,6 +1828,16 @@ public class ResolverActivity extends Activity implements
         findViewById(R.id.resolver_tab_divider).setVisibility(View.VISIBLE);
     }
 
+    private String getPersonalTabLabel() {
+        return getSystemService(DevicePolicyManager.class).getString(
+                RESOLVER_PERSONAL_TAB, () -> getString(R.string.resolver_personal_tab));
+    }
+
+    private String getWorkTabLabel() {
+        return getSystemService(DevicePolicyManager.class).getString(
+                RESOLVER_WORK_TAB, () -> getString(R.string.resolver_work_tab));
+    }
+
     void onHorizontalSwipeStateChanged(int state) {}
 
     private void maybeHideDivider() {
@@ -1750,8 +1869,6 @@ public class ResolverActivity extends Activity implements
     }
 
     private void resetTabsHeaderStyle(TabWidget tabWidget) {
-        String workContentDescription = getString(R.string.resolver_work_tab_accessibility);
-        String personalContentDescription = getString(R.string.resolver_personal_tab_accessibility);
         for (int i = 0; i < tabWidget.getChildCount(); i++) {
             View tabView = tabWidget.getChildAt(i);
             TextView title = tabView.findViewById(android.R.id.title);
@@ -1759,12 +1876,24 @@ public class ResolverActivity extends Activity implements
             title.setTextColor(getAttrColor(this, android.R.attr.textColorTertiary));
             title.setTextSize(TypedValue.COMPLEX_UNIT_PX,
                     getResources().getDimension(R.dimen.resolver_tab_text_size));
-            if (title.getText().equals(getString(R.string.resolver_personal_tab))) {
-                tabView.setContentDescription(personalContentDescription);
-            } else if (title.getText().equals(getString(R.string.resolver_work_tab))) {
-                tabView.setContentDescription(workContentDescription);
+            if (title.getText().equals(getPersonalTabLabel())) {
+                tabView.setContentDescription(getPersonalTabAccessibilityLabel());
+            } else if (title.getText().equals(getWorkTabLabel())) {
+                tabView.setContentDescription(getWorkTabAccessibilityLabel());
             }
         }
+    }
+
+    private String getPersonalTabAccessibilityLabel() {
+        return getSystemService(DevicePolicyManager.class).getString(
+                RESOLVER_PERSONAL_TAB_ACCESSIBILITY,
+                () -> getString(R.string.resolver_personal_tab_accessibility));
+    }
+
+    private String getWorkTabAccessibilityLabel() {
+        return getSystemService(DevicePolicyManager.class).getString(
+                RESOLVER_WORK_TAB_ACCESSIBILITY,
+                () -> getString(R.string.resolver_work_tab_accessibility));
     }
 
     private static int getAttrColor(Context context, int attr) {

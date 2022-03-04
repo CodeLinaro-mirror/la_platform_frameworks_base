@@ -16,8 +16,6 @@
 
 package com.android.systemui.statusbar.phone;
 
-import static android.app.StatusBarManager.WINDOW_STATE_SHOWING;
-import static android.app.StatusBarManager.windowStateToString;
 import static android.view.InsetsState.ITYPE_STATUS_BAR;
 import static android.view.InsetsState.containsType;
 
@@ -30,11 +28,11 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
-import android.media.AudioAttributes;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.os.UserHandle;
+import android.os.VibrationAttributes;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.util.Log;
@@ -58,7 +56,6 @@ import com.android.systemui.keyguard.WakefulnessLifecycle;
 import com.android.systemui.qs.QSPanelController;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.DisableFlagsLogger;
-import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.VibratorHelper;
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController;
@@ -95,6 +92,7 @@ public class StatusBarCommandQueueCallbacks implements CommandQueue.Callbacks {
     private final SysuiStatusBarStateController mStatusBarStateController;
     private final NotificationShadeWindowView mNotificationShadeWindowView;
     private final NotificationStackScrollLayoutController mNotificationStackScrollLayoutController;
+    private final StatusBarHideIconsForBouncerManager mStatusBarHideIconsForBouncerManager;
     private final PowerManager mPowerManager;
     private final VibratorHelper mVibratorHelper;
     private final Optional<Vibrator> mVibratorOptional;
@@ -105,10 +103,8 @@ public class StatusBarCommandQueueCallbacks implements CommandQueue.Callbacks {
     private final VibrationEffect mCameraLaunchGestureVibrationEffect;
 
 
-    private static final AudioAttributes VIBRATION_ATTRIBUTES = new AudioAttributes.Builder()
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-            .build();
+    private static final VibrationAttributes HARDWARE_FEEDBACK_VIBRATION_ATTRIBUTES =
+            VibrationAttributes.createForUsage(VibrationAttributes.USAGE_HARDWARE_FEEDBACK);
 
     @Inject
     StatusBarCommandQueueCallbacks(
@@ -132,6 +128,7 @@ public class StatusBarCommandQueueCallbacks implements CommandQueue.Callbacks {
             SysuiStatusBarStateController statusBarStateController,
             NotificationShadeWindowView notificationShadeWindowView,
             NotificationStackScrollLayoutController notificationStackScrollLayoutController,
+            StatusBarHideIconsForBouncerManager statusBarHideIconsForBouncerManager,
             PowerManager powerManager,
             VibratorHelper vibratorHelper,
             Optional<Vibrator> vibratorOptional,
@@ -158,6 +155,7 @@ public class StatusBarCommandQueueCallbacks implements CommandQueue.Callbacks {
         mStatusBarStateController = statusBarStateController;
         mNotificationShadeWindowView = notificationShadeWindowView;
         mNotificationStackScrollLayoutController = notificationStackScrollLayoutController;
+        mStatusBarHideIconsForBouncerManager = statusBarHideIconsForBouncerManager;
         mPowerManager = powerManager;
         mVibratorHelper = vibratorHelper;
         mVibratorOptional = vibratorOptional;
@@ -492,7 +490,8 @@ public class StatusBarCommandQueueCallbacks implements CommandQueue.Callbacks {
     }
 
     @Override
-    public void showTransient(int displayId, @InternalInsetsType int[] types) {
+    public void showTransient(int displayId, @InternalInsetsType int[] types,
+            boolean isGestureOnSystemBar) {
         if (displayId != mDisplayId) {
             return;
         }
@@ -509,42 +508,8 @@ public class StatusBarCommandQueueCallbacks implements CommandQueue.Callbacks {
 
     @Override
     public void setTopAppHidesStatusBar(boolean topAppHidesStatusBar) {
-        mStatusBar.setTopHidesStatusBar(topAppHidesStatusBar);
-        if (!topAppHidesStatusBar && mStatusBar.getWereIconsJustHidden()) {
-            // Immediately update the icon hidden state, since that should only apply if we're
-            // staying fullscreen.
-            mStatusBar.setWereIconsJustHidden(false);
-            mCommandQueue.recomputeDisableFlags(mDisplayId, true);
-        }
-        mStatusBar.updateHideIconsForBouncer(true /* animate */);
-    }
-
-    @Override
-    public void setWindowState(
-            int displayId, @StatusBarManager.WindowType int window,
-            @StatusBarManager.WindowVisibleState int state) {
-        if (displayId != mDisplayId) {
-            return;
-        }
-        boolean showing = state == WINDOW_STATE_SHOWING;
-        if (mNotificationShadeWindowView != null
-                && window == StatusBarManager.WINDOW_STATUS_BAR
-                && !mStatusBar.isSameStatusBarState(state)) {
-            mStatusBar.setWindowState(state);
-            if (StatusBar.DEBUG_WINDOW_STATE) {
-                Log.d(StatusBar.TAG, "Status bar " + windowStateToString(state));
-            }
-            if (mStatusBar.getStatusBarView() != null) {
-                if (!showing && mStatusBarStateController.getState() == StatusBarState.SHADE) {
-                    mStatusBar.getStatusBarView().collapsePanel(
-                            false /* animate */, false /* delayed */, 1.0f /* speedUpFactor */);
-                }
-
-                mStatusBar.updateHideIconsForBouncer(false /* animate */);
-            }
-        }
-
-        mStatusBar.updateBubblesVisibility();
+        mStatusBarHideIconsForBouncerManager
+                .setTopAppHidesStatusBarAndTriggerUpdate(topAppHidesStatusBar);
     }
 
     @Override
@@ -554,16 +519,12 @@ public class StatusBarCommandQueueCallbacks implements CommandQueue.Callbacks {
 
     @Override
     public void showPinningEnterExitToast(boolean entering) {
-        if (mStatusBar.getNavigationBarView() != null) {
-            mStatusBar.getNavigationBarView().showPinningEnterExitToast(entering);
-        }
+        mStatusBar.showPinningEnterExitToast(entering);
     }
 
     @Override
     public void showPinningEscapeToast() {
-        if (mStatusBar.getNavigationBarView() != null) {
-            mStatusBar.getNavigationBarView().showPinningEscapeToast();
-        }
+        mStatusBar.showPinningEscapeToast();
     }
 
     @Override
@@ -616,9 +577,9 @@ public class StatusBarCommandQueueCallbacks implements CommandQueue.Callbacks {
     }
 
     private void vibrateForCameraGesture() {
-        // Make sure to pass -1 for repeat so VibratorService doesn't stop us when going to sleep.
         mVibratorOptional.ifPresent(
-                v -> v.vibrate(mCameraLaunchGestureVibrationEffect, VIBRATION_ATTRIBUTES));
+                v -> v.vibrate(mCameraLaunchGestureVibrationEffect,
+                        HARDWARE_FEEDBACK_VIBRATION_ATTRIBUTES));
     }
 
     private static VibrationEffect getCameraGestureVibrationEffect(
@@ -632,6 +593,8 @@ public class StatusBarCommandQueueCallbacks implements CommandQueue.Callbacks {
                     .compose();
         }
         if (vibratorOptional.isPresent() && vibratorOptional.get().hasAmplitudeControl()) {
+            // Make sure to pass -1 for repeat so VibratorManagerService doesn't stop us when going
+            // to sleep.
             return VibrationEffect.createWaveform(
                     StatusBar.CAMERA_LAUNCH_GESTURE_VIBRATION_TIMINGS,
                     StatusBar.CAMERA_LAUNCH_GESTURE_VIBRATION_AMPLITUDES,

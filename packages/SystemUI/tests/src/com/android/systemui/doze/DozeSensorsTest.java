@@ -17,6 +17,7 @@
 package com.android.systemui.doze;
 
 import static com.android.systemui.doze.DozeLog.REASON_SENSOR_TAP;
+import static com.android.systemui.doze.DozeLog.REASON_SENSOR_UDFPS_LONG_PRESS;
 import static com.android.systemui.plugins.SensorManagerPlugin.Sensor.TYPE_WAKE_LOCK_SCREEN;
 
 import static org.junit.Assert.assertEquals;
@@ -37,6 +38,7 @@ import static org.mockito.Mockito.when;
 import android.database.ContentObserver;
 import android.hardware.Sensor;
 import android.hardware.display.AmbientDisplayConfiguration;
+import android.os.UserHandle;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.testing.TestableLooper.RunWithLooper;
@@ -57,6 +59,8 @@ import com.android.systemui.util.wakelock.WakeLock;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -91,9 +95,16 @@ public class DozeSensorsTest extends SysuiTestCase {
     @Mock
     private AuthController mAuthController;
     @Mock
+    private DevicePostureController mDevicePostureController;
+    @Mock
     private ProximitySensor mProximitySensor;
-    private @DevicePostureController.DevicePostureInt int mDevicePosture =
-            DevicePostureController.DEVICE_POSTURE_UNKNOWN;
+
+    // Capture listeners so that they can be used to send events
+    @Captor
+    private ArgumentCaptor<AuthController.Callback> mAuthControllerCallbackCaptor =
+            ArgumentCaptor.forClass(AuthController.Callback.class);
+    private AuthController.Callback mAuthControllerCallback;
+
     private FakeSettings mFakeSettings = new FakeSettings();
     private SensorManagerPlugin.SensorEventListener mWakeLockScreenListener;
     private TestableLooper mTestableLooper;
@@ -104,14 +115,19 @@ public class DozeSensorsTest extends SysuiTestCase {
     public void setUp() {
         MockitoAnnotations.initMocks(this);
         mTestableLooper = TestableLooper.get(this);
+        when(mAmbientDisplayConfiguration.tapSensorTypeMapping())
+                .thenReturn(new String[]{"tapSensor"});
         when(mAmbientDisplayConfiguration.getWakeLockScreenDebounce()).thenReturn(5000L);
         when(mAmbientDisplayConfiguration.alwaysOnEnabled(anyInt())).thenReturn(true);
+        when(mAmbientDisplayConfiguration.enabled(UserHandle.USER_CURRENT)).thenReturn(true);
         doAnswer(invocation -> {
             ((Runnable) invocation.getArgument(0)).run();
             return null;
         }).when(mWakeLock).wrap(any(Runnable.class));
-        mDevicePosture = DevicePostureController.DEVICE_POSTURE_UNKNOWN;
         mDozeSensors = new TestableDozeSensors();
+
+        verify(mAuthController).addCallback(mAuthControllerCallbackCaptor.capture());
+        mAuthControllerCallback = mAuthControllerCallbackCaptor.getValue();
     }
 
     @Test
@@ -127,14 +143,14 @@ public class DozeSensorsTest extends SysuiTestCase {
 
         mWakeLockScreenListener.onSensorChanged(mock(SensorManagerPlugin.SensorEvent.class));
         mTestableLooper.processAllMessages();
-        verify(mCallback).onSensorPulse(eq(DozeLog.PULSE_REASON_SENSOR_WAKE_LOCK_SCREEN),
+        verify(mCallback).onSensorPulse(eq(DozeLog.PULSE_REASON_SENSOR_WAKE_REACH),
                 anyFloat(), anyFloat(), eq(null));
 
         mDozeSensors.requestTemporaryDisable();
         reset(mCallback);
         mWakeLockScreenListener.onSensorChanged(mock(SensorManagerPlugin.SensorEvent.class));
         mTestableLooper.processAllMessages();
-        verify(mCallback, never()).onSensorPulse(eq(DozeLog.PULSE_REASON_SENSOR_WAKE_LOCK_SCREEN),
+        verify(mCallback, never()).onSensorPulse(eq(DozeLog.PULSE_REASON_SENSOR_WAKE_REACH),
                 anyFloat(), anyFloat(), eq(null));
     }
 
@@ -269,15 +285,80 @@ public class DozeSensorsTest extends SysuiTestCase {
     }
 
     @Test
-    public void testPostureOpen_registersCorrectTapGesture() {
-        // GIVEN device posture open
-        mDevicePosture = DevicePostureController.DEVICE_POSTURE_OPENED;
+    public void testPostureStartStateClosed_registersCorrectSensor() throws Exception {
+        // GIVEN doze sensor that supports postures
+        Sensor closedSensor = createSensor(Sensor.TYPE_LIGHT, Sensor.STRING_TYPE_LIGHT);
+        Sensor openedSensor = createSensor(Sensor.TYPE_PROXIMITY, Sensor.STRING_TYPE_LIGHT);
+        TriggerSensor triggerSensor = mDozeSensors.createDozeSensor(
+                new Sensor[] {
+                        null /* unknown */,
+                        closedSensor,
+                        null /* half-opened */,
+                        openedSensor},
+                DevicePostureController.DEVICE_POSTURE_CLOSED);
 
-        // WHEN DozeSensors are initialized
-        new TestableDozeSensors();
+        // WHEN trigger sensor requests listening
+        triggerSensor.setListening(true);
 
-        // THEN we use the posture to determine which tap sensor to use
-        verify(mAmbientDisplayConfiguration).tapSensorType(eq(mDevicePosture));
+        // THEN the correct sensor is registered
+        verify(mSensorManager).requestTriggerSensor(eq(triggerSensor), eq(closedSensor));
+        verify(mSensorManager, never()).requestTriggerSensor(eq(triggerSensor), eq(openedSensor));
+    }
+
+    @Test
+    public void testPostureChange_registersCorrectSensor() throws Exception {
+        // GIVEN doze sensor that supports postures
+        Sensor closedSensor = createSensor(Sensor.TYPE_LIGHT, Sensor.STRING_TYPE_LIGHT);
+        Sensor openedSensor = createSensor(Sensor.TYPE_PROXIMITY, Sensor.STRING_TYPE_LIGHT);
+        TriggerSensor triggerSensor = mDozeSensors.createDozeSensor(
+                new Sensor[] {
+                        null /* unknown */,
+                        closedSensor,
+                        null /* half-opened */,
+                        openedSensor},
+                DevicePostureController.DEVICE_POSTURE_CLOSED);
+
+        // GIVEN sensor is listening
+        when(mSensorManager.requestTriggerSensor(any(), any())).thenReturn(true);
+        triggerSensor.setListening(true);
+        reset(mSensorManager);
+        assertTrue(triggerSensor.mRegistered);
+
+        // WHEN posture changes
+        boolean sensorChanged =
+                triggerSensor.setPosture(DevicePostureController.DEVICE_POSTURE_OPENED);
+
+        // THEN the correct sensor is registered
+        assertTrue(sensorChanged);
+        verify(mSensorManager).requestTriggerSensor(eq(triggerSensor), eq(openedSensor));
+        verify(mSensorManager, never()).requestTriggerSensor(eq(triggerSensor), eq(closedSensor));
+    }
+
+    @Test
+    public void testPostureChange_noSensorChange() throws Exception {
+        // GIVEN doze sensor that supports postures
+        Sensor closedSensor = createSensor(Sensor.TYPE_LIGHT, Sensor.STRING_TYPE_LIGHT);
+        Sensor openedSensor = createSensor(Sensor.TYPE_PROXIMITY, Sensor.STRING_TYPE_LIGHT);
+        TriggerSensor triggerSensor = mDozeSensors.createDozeSensor(
+                new Sensor[] {
+                        null /* unknown */,
+                        closedSensor,
+                        openedSensor /* half-opened uses the same sensor as opened*/,
+                        openedSensor},
+                DevicePostureController.DEVICE_POSTURE_HALF_OPENED);
+
+        // GIVEN sensor is listening
+        when(mSensorManager.requestTriggerSensor(any(), any())).thenReturn(true);
+        triggerSensor.setListening(true);
+        reset(mSensorManager);
+
+        // WHEN posture changes
+        boolean sensorChanged =
+                triggerSensor.setPosture(DevicePostureController.DEVICE_POSTURE_OPENED);
+
+        // THEN no change in sensor
+        assertFalse(sensorChanged);
+        verify(mSensorManager, never()).requestTriggerSensor(eq(triggerSensor), any());
     }
 
     @Test
@@ -309,15 +390,55 @@ public class DozeSensorsTest extends SysuiTestCase {
                         "some other name"));
     }
 
+    @Test
+    public void testUdfpsEnrollmentChanged() throws Exception {
+        // GIVEN a UDFPS_LONG_PRESS trigger sensor that's not configured
+        Sensor mockSensor = mock(Sensor.class);
+        TriggerSensor triggerSensor = mDozeSensors.createDozeSensor(
+                mockSensor,
+                REASON_SENSOR_UDFPS_LONG_PRESS,
+                /* configured */ false);
+        mDozeSensors.addSensor(triggerSensor);
+        when(mSensorManager.requestTriggerSensor(eq(triggerSensor), eq(mockSensor)))
+                .thenReturn(true);
+
+        // WHEN listening state is set to TRUE
+        mDozeSensors.setListening(true, true);
+
+        // THEN mRegistered is still false b/c !mConfigured
+        assertFalse(triggerSensor.mConfigured);
+        assertFalse(triggerSensor.mRegistered);
+
+        // WHEN enrollment changes to TRUE
+        when(mAuthController.isUdfpsEnrolled(anyInt())).thenReturn(true);
+        mAuthControllerCallback.onEnrollmentsChanged();
+
+        // THEN mConfigured = TRUE
+        assertTrue(triggerSensor.mConfigured);
+
+        // THEN mRegistered = TRUE
+        assertTrue(triggerSensor.mRegistered);
+    }
+
+    @Test
+    public void testGesturesAllInitiallyRespectSettings() {
+        DozeSensors dozeSensors = new DozeSensors(getContext(), mSensorManager, mDozeParameters,
+                mAmbientDisplayConfiguration, mWakeLock, mCallback, mProxCallback, mDozeLog,
+                mProximitySensor, mFakeSettings, mAuthController,
+                mDevicePostureController);
+
+        for (TriggerSensor sensor : dozeSensors.mTriggerSensors) {
+            assertFalse(sensor.mIgnoresSetting);
+        }
+    }
 
     private class TestableDozeSensors extends DozeSensors {
-
         TestableDozeSensors() {
             super(getContext(), mSensorManager, mDozeParameters,
                     mAmbientDisplayConfiguration, mWakeLock, mCallback, mProxCallback, mDozeLog,
                     mProximitySensor, mFakeSettings, mAuthController,
-                    mDevicePosture);
-            for (TriggerSensor sensor : mSensors) {
+                    mDevicePostureController);
+            for (TriggerSensor sensor : mTriggerSensors) {
                 if (sensor instanceof PluginSensor
                         && ((PluginSensor) sensor).mPluginSensor.getType()
                         == TYPE_WAKE_LOCK_SCREEN) {
@@ -326,7 +447,7 @@ public class DozeSensorsTest extends SysuiTestCase {
                     mSensorTap = sensor;
                 }
             }
-            mSensors = new TriggerSensor[] {mTriggerSensor, mSensorTap};
+            mTriggerSensors = new TriggerSensor[] {mTriggerSensor, mSensorTap};
         }
 
         public TriggerSensor createDozeSensor(Sensor sensor, boolean settingEnabled,
@@ -337,8 +458,50 @@ public class DozeSensorsTest extends SysuiTestCase {
                     /* configured */ true,
                     /* pulseReason*/ 0,
                     /* reportsTouchCoordinate*/ false,
-                    requiresTouchScreen,
-                    mDozeLog);
+                    /* requiresTouchscreen */ false,
+                    /* ignoresSetting */ false,
+                    requiresTouchScreen);
+        }
+
+        public TriggerSensor createDozeSensor(
+                Sensor sensor,
+                int pulseReason,
+                boolean configured
+        ) {
+            return new TriggerSensor(/* sensor */ sensor,
+                    /* setting name */ "test_setting",
+                    /* settingDefault */ true,
+                    /* configured */ configured,
+                    /* pulseReason*/ pulseReason,
+                    /* reportsTouchCoordinate*/ false,
+                    /* requiresTouchscreen */ false,
+                    /* ignoresSetting */ false,
+                    /* requiresTouchScreen */false);
+        }
+
+        /**
+         * create a doze sensor that supports postures and is enabled
+         */
+        public TriggerSensor createDozeSensor(Sensor[] sensors, int posture) {
+            return new TriggerSensor(/* sensor */ sensors,
+                    /* setting name */ "test_setting",
+                    /* settingDefault */ true,
+                    /* configured */ true,
+                    /* pulseReason*/ 0,
+                    /* reportsTouchCoordinate*/ false,
+                    /* requiresTouchscreen */ false,
+                    /* ignoresSetting */ true,
+                    /* requiresProx */false,
+                    posture);
+        }
+
+        public void addSensor(TriggerSensor sensor) {
+            TriggerSensor[] newArray = new TriggerSensor[mTriggerSensors.length + 1];
+            for (int i = 0; i < mTriggerSensors.length; i++) {
+                newArray[i] = mTriggerSensors[i];
+            }
+            newArray[mTriggerSensors.length] = sensor;
+            mTriggerSensors = newArray;
         }
     }
 

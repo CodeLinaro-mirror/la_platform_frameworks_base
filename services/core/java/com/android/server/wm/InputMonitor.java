@@ -50,18 +50,15 @@ import static com.android.server.wm.WindowManagerService.LOGTAG_INPUT_FOCUS;
 import static java.lang.Integer.MAX_VALUE;
 
 import android.annotation.Nullable;
-import android.graphics.Rect;
 import android.graphics.Region;
 import android.os.Handler;
 import android.os.IBinder;
-import android.os.Looper;
 import android.os.Trace;
 import android.os.UserHandle;
 import android.util.ArrayMap;
 import android.util.EventLog;
 import android.util.Slog;
 import android.view.InputChannel;
-import android.view.InputEventReceiver;
 import android.view.InputWindowHandle;
 import android.view.SurfaceControl;
 
@@ -111,44 +108,6 @@ final class InputMonitor {
      */
     private WeakReference<ActivityRecord> mActiveRecentsActivity = null;
     private WeakReference<ActivityRecord> mActiveRecentsLayerRef = null;
-
-    /**
-     * Representation of a input consumer that the policy has added to the window manager to consume
-     * input events going to windows below it.
-     */
-    static final class EventReceiverInputConsumer extends InputConsumerImpl {
-        private InputMonitor mInputMonitor;
-        private final InputEventReceiver mInputEventReceiver;
-
-        EventReceiverInputConsumer(WindowManagerService service, InputMonitor monitor,
-                                   Looper looper, String name,
-                                   InputEventReceiver.Factory inputEventReceiverFactory,
-                                   int clientPid, UserHandle clientUser, int displayId) {
-            super(service, null /* token */, name, null /* inputChannel */, clientPid, clientUser,
-                    displayId);
-            mInputMonitor = monitor;
-            mInputEventReceiver = inputEventReceiverFactory.createInputEventReceiver(
-                    mClientChannel, looper);
-        }
-
-        /** Removes the input consumer from the window manager. */
-        void dismiss() {
-            synchronized (mService.mGlobalLock) {
-                mInputMonitor.mInputConsumers.remove(mName);
-                hide(mInputMonitor.mInputTransaction);
-                mInputMonitor.updateInputWindowsLw(true /* force */);
-            }
-        }
-
-        /** Disposes the input consumer and input receiver from the associated thread. */
-        void dispose() {
-            synchronized (mService.mGlobalLock) {
-                disposeChannelsLw(mInputMonitor.mInputTransaction);
-                mInputEventReceiver.dispose();
-                mInputMonitor.updateInputWindowsLw(true /* force */);
-            }
-        }
-    }
 
     private class UpdateInputWindows implements Runnable {
         @Override
@@ -302,9 +261,6 @@ final class InputMonitor {
                 && !mDisableWallpaperTouchEvents;
         inputWindowHandle.setHasWallpaper(hasWallpaper);
 
-        final Rect frame = w.getFrame();
-        inputWindowHandle.setFrame(frame.left, frame.top, frame.right, frame.bottom);
-
         // Surface insets are hardcoded to be the same in all directions
         // and we could probably deprecate the "left/right/top/bottom" concept.
         // we avoid reintroducing this concept by just choosing one of them here.
@@ -314,11 +270,19 @@ final class InputMonitor {
         // what is on screen to what is actually being touched in the UI.
         inputWindowHandle.setScaleFactor(w.mGlobalScale != 1f ? (1f / w.mGlobalScale) : 1f);
 
-        final int flags = w.getSurfaceTouchableRegion(mTmpRegion, w.mAttrs.flags);
-        inputWindowHandle.setTouchableRegion(mTmpRegion);
+        // Update layout params flags to force the window to be not touch modal. We do this to
+        // restrict the window's touchable region to the task even if it request touches outside its
+        // window bounds. An example is a dialog in primary split should get touches outside its
+        // window within the primary task but should not get any touches going to the secondary
+        // task.
+        int flags = w.mAttrs.flags;
+        if (w.mAttrs.isModal()) {
+            flags = flags | FLAG_NOT_TOUCH_MODAL;
+        }
         inputWindowHandle.setLayoutParamsFlags(flags);
 
-        boolean useSurfaceCrop = false;
+        boolean useSurfaceBoundsAsTouchRegion = false;
+        SurfaceControl touchableRegionCrop = null;
         final Task task = w.getTask();
         if (task != null) {
             // TODO(b/165794636): Remove the special case for freeform window once drag resizing is
@@ -330,20 +294,22 @@ final class InputMonitor {
                 // we need to make sure that these changes in crop are reflected in the input
                 // windows, and so ensure this flag is set so that the input crop always reflects
                 // the surface hierarchy.
-                // TODO(b/168252846): we have some issues with modal-windows, so we need to cross
-                // that bridge now that we organize full-screen Tasks.
-                inputWindowHandle.setTouchableRegionCrop(null /* Use this surfaces crop */);
-                inputWindowHandle.setReplaceTouchableRegionWithCrop(true);
-                useSurfaceCrop = true;
+                useSurfaceBoundsAsTouchRegion = true;
+
+                if (w.mAttrs.isModal()) {
+                    TaskFragment parent = w.getTaskFragment();
+                    touchableRegionCrop = parent != null ? parent.getSurfaceControl() : null;
+                }
             } else if (task.cropWindowsToRootTaskBounds() && !w.inFreeformWindowingMode()) {
-                inputWindowHandle.setTouchableRegionCrop(task.getRootTask().getSurfaceControl());
-                inputWindowHandle.setReplaceTouchableRegionWithCrop(false);
-                useSurfaceCrop = true;
+                touchableRegionCrop = task.getRootTask().getSurfaceControl();
             }
         }
-        if (!useSurfaceCrop) {
-            inputWindowHandle.setReplaceTouchableRegionWithCrop(false);
-            inputWindowHandle.setTouchableRegionCrop(null);
+        inputWindowHandle.setReplaceTouchableRegionWithCrop(useSurfaceBoundsAsTouchRegion);
+        inputWindowHandle.setTouchableRegionCrop(touchableRegionCrop);
+
+        if (!useSurfaceBoundsAsTouchRegion) {
+            w.getSurfaceTouchableRegion(mTmpRegion, w.mAttrs);
+            inputWindowHandle.setTouchableRegion(mTmpRegion);
         }
     }
 
@@ -433,10 +399,11 @@ final class InputMonitor {
         if (recentsAnimationInputConsumer != null && focus != null) {
             final RecentsAnimationController recentsAnimationController =
                     mService.getRecentsAnimationController();
+            // Apply recents input consumer when the focusing window is in recents animation.
             final boolean shouldApplyRecentsInputConsumer = (recentsAnimationController != null
                     && recentsAnimationController.shouldApplyInputConsumer(focus.mActivityRecord))
                     // Shell transitions doesn't use RecentsAnimationController
-                    || getWeak(mActiveRecentsActivity) != null;
+                    || getWeak(mActiveRecentsActivity) != null && focus.inTransition();
             if (shouldApplyRecentsInputConsumer) {
                 requestFocus(recentsAnimationInputConsumer.mWindowHandle.token,
                         recentsAnimationInputConsumer.mName);
@@ -537,12 +504,16 @@ final class InputMonitor {
 
             resetInputConsumers(mInputTransaction);
             // Update recents input consumer layer if active
-            if (mAddRecentsAnimationInputConsumerHandle
-                    && getWeak(mActiveRecentsActivity) != null) {
-                final WindowContainer layer = getWeak(mActiveRecentsLayerRef);
-                mRecentsAnimationInputConsumer.show(mInputTransaction,
-                        layer != null ? layer : getWeak(mActiveRecentsActivity));
-                mAddRecentsAnimationInputConsumerHandle = false;
+            final ActivityRecord activeRecents = getWeak(mActiveRecentsActivity);
+            if (mAddRecentsAnimationInputConsumerHandle && activeRecents != null
+                    && activeRecents.getSurfaceControl() != null) {
+                WindowContainer layer = getWeak(mActiveRecentsLayerRef);
+                layer = layer != null ? layer : activeRecents;
+                // Handle edge-case for SUW where windows don't exist yet
+                if (layer.getSurfaceControl() != null) {
+                    mRecentsAnimationInputConsumer.show(mInputTransaction, layer);
+                    mAddRecentsAnimationInputConsumerHandle = false;
+                }
             }
             mDisplayContent.forAllWindows(this, true /* traverseTopToBottom */);
             updateInputFocusRequest(mRecentsAnimationInputConsumer);

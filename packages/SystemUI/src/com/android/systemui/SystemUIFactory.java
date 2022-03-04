@@ -30,7 +30,7 @@ import com.android.systemui.dagger.SysUIComponent;
 import com.android.systemui.dagger.WMComponent;
 import com.android.systemui.navigationbar.gestural.BackGestureTfClassifierProvider;
 import com.android.systemui.screenshot.ScreenshotNotificationSmartActionsProvider;
-import com.android.wm.shell.transition.Transitions;
+import com.android.wm.shell.transition.ShellTransitions;
 
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
@@ -118,7 +118,12 @@ public class SystemUIFactory {
                     .setTaskViewFactory(mWMComponent.getTaskViewFactory())
                     .setTransitions(mWMComponent.getTransitions())
                     .setStartingSurface(mWMComponent.getStartingSurface())
-                    .setTaskSurfaceHelper(mWMComponent.getTaskSurfaceHelper());
+                    .setDisplayAreaHelper(mWMComponent.getDisplayAreaHelper())
+                    .setTaskSurfaceHelper(mWMComponent.getTaskSurfaceHelper())
+                    .setRecentTasks(mWMComponent.getRecentTasks())
+                    .setCompatUI(Optional.of(mWMComponent.getCompatUI()))
+                    .setDragAndDrop(Optional.of(mWMComponent.getDragAndDrop()))
+                    .setBackAnimation(mWMComponent.getBackAnimation());
         } else {
             // TODO: Call on prepareSysUIComponentBuilder but not with real components. Other option
             // is separating this logic into newly creating SystemUITestsFactory.
@@ -132,9 +137,14 @@ public class SystemUIFactory {
                     .setShellCommandHandler(Optional.ofNullable(null))
                     .setAppPairs(Optional.ofNullable(null))
                     .setTaskViewFactory(Optional.ofNullable(null))
-                    .setTransitions(Transitions.createEmptyForTesting())
+                    .setTransitions(new ShellTransitions() {})
+                    .setDisplayAreaHelper(Optional.ofNullable(null))
                     .setStartingSurface(Optional.ofNullable(null))
-                    .setTaskSurfaceHelper(Optional.ofNullable(null));
+                    .setTaskSurfaceHelper(Optional.ofNullable(null))
+                    .setRecentTasks(Optional.ofNullable(null))
+                    .setCompatUI(Optional.ofNullable(null))
+                    .setDragAndDrop(Optional.ofNullable(null))
+                    .setBackAnimation(Optional.ofNullable(null));
         }
         mSysUIComponent = builder.build();
         if (mInitializeComponents) {

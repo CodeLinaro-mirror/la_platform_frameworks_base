@@ -28,6 +28,7 @@ import android.animation.AnimatorListenerAdapter;
 import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
 import android.os.SystemProperties;
+import android.os.Trace;
 import android.text.format.DateFormat;
 import android.util.FloatProperty;
 import android.util.Log;
@@ -96,6 +97,7 @@ public class StatusBarStateControllerImpl implements
 
     private final ArrayList<RankedListener> mListeners = new ArrayList<>();
     private final UiEventLogger mUiEventLogger;
+    private final InteractionJankMonitor mInteractionJankMonitor;
     private int mState;
     private int mLastState;
     private int mUpcomingState;
@@ -149,8 +151,10 @@ public class StatusBarStateControllerImpl implements
     private Interpolator mDozeInterpolator = Interpolators.FAST_OUT_SLOW_IN;
 
     @Inject
-    public StatusBarStateControllerImpl(UiEventLogger uiEventLogger, DumpManager dumpManager) {
+    public StatusBarStateControllerImpl(UiEventLogger uiEventLogger, DumpManager dumpManager,
+            InteractionJankMonitor interactionJankMonitor) {
         mUiEventLogger = uiEventLogger;
+        mInteractionJankMonitor = interactionJankMonitor;
         for (int i = 0; i < HISTORY_SIZE; i++) {
             mHistoricalRecords[i] = new HistoricalState();
         }
@@ -173,7 +177,7 @@ public class StatusBarStateControllerImpl implements
         }
 
         // Record the to-be mState and mLastState
-        recordHistoricalState(state, mState);
+        recordHistoricalState(state /* newState */, mState /* lastState */, false);
 
         // b/139259891
         if (mState == StatusBarState.SHADE && state == StatusBarState.SHADE_LOCKED) {
@@ -190,6 +194,7 @@ public class StatusBarStateControllerImpl implements
             mState = state;
             mUpcomingState = state;
             mUiEventLogger.log(StatusBarStateEvent.fromState(mState));
+            Trace.instantForTrack(Trace.TRACE_TAG_APP, "UI Events", "StatusBarState " + tag);
             for (RankedListener rl : new ArrayList<>(mListeners)) {
                 rl.mListener.onStateChanged(mState);
             }
@@ -206,6 +211,7 @@ public class StatusBarStateControllerImpl implements
     @Override
     public void setUpcomingState(int nextState) {
         mUpcomingState = nextState;
+        recordHistoricalState(mUpcomingState /* newState */, mState /* lastState */, true);
     }
 
     @Override
@@ -343,17 +349,23 @@ public class StatusBarStateControllerImpl implements
     }
 
     private void beginInteractionJankMonitor() {
-        if (mView != null && mView.isAttachedToWindow()) {
-            InteractionJankMonitor.getInstance().begin(mView, getCujType());
+        if (mInteractionJankMonitor != null && mView != null && mView.isAttachedToWindow()) {
+            mInteractionJankMonitor.begin(mView, getCujType());
         }
     }
 
     private void endInteractionJankMonitor() {
-        InteractionJankMonitor.getInstance().end(getCujType());
+        if (mInteractionJankMonitor == null) {
+            return;
+        }
+        mInteractionJankMonitor.end(getCujType());
     }
 
     private void cancelInteractionJankMonitor() {
-        InteractionJankMonitor.getInstance().cancel(getCujType());
+        if (mInteractionJankMonitor == null) {
+            return;
+        }
+        mInteractionJankMonitor.cancel(getCujType());
     }
 
     private int getCujType() {
@@ -505,31 +517,36 @@ public class StatusBarStateControllerImpl implements
         }
     }
 
-    private void recordHistoricalState(int currentState, int lastState) {
+    private void recordHistoricalState(int newState, int lastState, boolean upcoming) {
         mHistoryIndex = (mHistoryIndex + 1) % HISTORY_SIZE;
         HistoricalState state = mHistoricalRecords[mHistoryIndex];
-        state.mState = currentState;
+        state.mNewState = newState;
         state.mLastState = lastState;
         state.mTimestamp = System.currentTimeMillis();
+        state.mUpcoming = upcoming;
     }
 
     /**
      * For keeping track of our previous state to help with debugging
      */
     private static class HistoricalState {
-        int mState;
+        int mNewState;
         int mLastState;
         long mTimestamp;
+        boolean mUpcoming;
 
         @Override
         public String toString() {
             if (mTimestamp != 0) {
                 StringBuilder sb = new StringBuilder();
-                sb.append("state=").append(mState)
-                        .append(" (").append(describe(mState)).append(")");
-                sb.append("lastState=").append(mLastState).append(" (").append(describe(mLastState))
+                if (mUpcoming) {
+                    sb.append("upcoming-");
+                }
+                sb.append("newState=").append(mNewState)
+                        .append("(").append(describe(mNewState)).append(")");
+                sb.append(" lastState=").append(mLastState).append("(").append(describe(mLastState))
                         .append(")");
-                sb.append("timestamp=")
+                sb.append(" timestamp=")
                         .append(DateFormat.format("MM-dd HH:mm:ss", mTimestamp));
 
                 return sb.toString();

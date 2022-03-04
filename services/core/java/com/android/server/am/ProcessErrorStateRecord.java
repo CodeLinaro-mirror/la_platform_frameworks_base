@@ -16,6 +16,8 @@
 
 package com.android.server.am;
 
+import static android.os.Process.SYSTEM_UID;
+
 import static com.android.server.Watchdog.NATIVE_STACKS_OF_INTEREST;
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_ANR;
 import static com.android.server.am.ActivityManagerService.MY_PID;
@@ -49,6 +51,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.os.ProcessCpuTracker;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.server.MemoryPressureUtil;
+import com.android.server.criticalevents.CriticalEventLog;
 import com.android.server.wm.WindowProcessController;
 
 import java.io.File;
@@ -285,6 +288,7 @@ class ProcessErrorStateRecord {
                     && mService.mTraceErrorLogger.isAddErrorIdEnabled()) {
                 errorId = mService.mTraceErrorLogger.generateErrorId();
                 mService.mTraceErrorLogger.addErrorIdToTrace(mApp.processName, errorId);
+                mService.mTraceErrorLogger.addSubjectToTrace(annotation, errorId);
             } else {
                 errorId = null;
             }
@@ -330,6 +334,13 @@ class ProcessErrorStateRecord {
                 });
             }
         }
+
+        // Get critical event log before logging the ANR so that it doesn't occur in the log.
+        final String criticalEventLog =
+                CriticalEventLog.getInstance().logLinesForTraceFile(
+                        mApp.getProcessClassEnum(), mApp.processName, mApp.uid);
+        CriticalEventLog.getInstance().logAnr(annotation, mApp.getProcessClassEnum(),
+                mApp.processName, mApp.uid, mApp.mPid);
 
         // Log the ANR to the main log.
         StringBuilder info = new StringBuilder();
@@ -400,7 +411,6 @@ class ProcessErrorStateRecord {
         StringWriter tracesFileException = new StringWriter();
         // To hold the start and end offset to the ANR trace file respectively.
         final long[] offsets = new long[2];
-        final String criticalEventLog = CriticalEventLog.getInstance().logLinesForAnrFile();
         File tracesFile = ActivityManagerService.dumpStackTraces(firstPids,
                 isSilentAnr ? null : processCpuTracker, isSilentAnr ? null : lastPids,
                 nativePids, tracesFileException, offsets, annotation, criticalEventLog);
@@ -432,7 +442,7 @@ class ProcessErrorStateRecord {
         if (mApp.info != null && mApp.info.packageName != null && packageManagerInternal != null) {
             IncrementalStatesInfo incrementalStatesInfo =
                     packageManagerInternal.getIncrementalStatesInfo(
-                            mApp.info.packageName, mApp.uid, mApp.userId);
+                            mApp.info.packageName, SYSTEM_UID, mApp.userId);
             if (incrementalStatesInfo != null) {
                 loadingProgress = incrementalStatesInfo.getProgress();
             }

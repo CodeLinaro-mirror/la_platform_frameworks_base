@@ -23,6 +23,8 @@ import android.os.SystemClock;
 import android.telephony.TelephonyManager;
 import android.view.WindowManagerPolicyConstants;
 
+import androidx.annotation.Nullable;
+
 import com.android.settingslib.fuelgauge.BatteryStatus;
 import com.android.systemui.statusbar.KeyguardIndicationController;
 
@@ -201,22 +203,6 @@ public class KeyguardUpdateMonitorCallback {
     public void onFinishedGoingToSleep(int why) { }
 
     /**
-     * Called when the screen has been turned on.
-     *
-     * @deprecated use {@link com.android.systemui.keyguard.ScreenLifecycle}.
-     */
-    @Deprecated
-    public void onScreenTurnedOn() { }
-
-    /**
-     * Called when the screen has been turned off.
-     *
-     * @deprecated use {@link com.android.systemui.keyguard.ScreenLifecycle}.
-     */
-    @Deprecated
-    public void onScreenTurnedOff() { }
-
-    /**
      * Called when trust changes for a user.
      */
     public void onTrustChanged(int userId) { }
@@ -230,6 +216,11 @@ public class KeyguardUpdateMonitorCallback {
      * Called after trust was granted with non-zero flags.
      */
     public void onTrustGrantedWithFlags(int flags, int userId) { }
+
+    /**
+     * Called when setting the trust granted message.
+     */
+    public void showTrustGrantedMessage(@Nullable CharSequence message) { }
 
     /**
      * Called when a biometric has been acquired.
@@ -292,6 +283,11 @@ public class KeyguardUpdateMonitorCallback {
     public void onStrongAuthStateChanged(int userId) { }
 
     /**
+     * When the current user's locked out state changed.
+     */
+    public void onLockedOutStateChanged(BiometricSourceType biometricSourceType) { }
+
+    /**
      * Called when the dream's window state is changed.
      * @param dreaming true if the dream's window has been created and is visible
      */
@@ -323,11 +319,6 @@ public class KeyguardUpdateMonitorCallback {
      * Called when the secondary lock screen requirement changes.
      */
     public void onSecondaryLockscreenRequirementChanged(int userId) { }
-
-    /**
-     * Called to switch lock screen layout/clock layouts
-     */
-    public void onLockScreenModeChanged(int mode) { }
 
     /**
      * Called when notifying user to unlock in order to use NFC.

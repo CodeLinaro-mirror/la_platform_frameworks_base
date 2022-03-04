@@ -38,17 +38,16 @@ import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_ORIENTATION;
 import static com.android.server.wm.ActivityRecord.State.RESUMED;
 import static com.android.server.wm.ActivityTaskManagerService.TAG_ROOT_TASK;
 import static com.android.server.wm.DisplayContent.alwaysCreateRootTask;
-import static com.android.server.wm.TaskFragment.TASK_FRAGMENT_VISIBILITY_VISIBLE;
 import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_ROOT_TASK;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
-
-import static java.lang.Integer.MIN_VALUE;
 
 import android.annotation.ColorInt;
 import android.annotation.Nullable;
 import android.app.ActivityOptions;
 import android.app.WindowConfiguration;
+import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
+import android.graphics.Color;
 import android.os.UserHandle;
 import android.util.IntArray;
 import android.util.Slog;
@@ -60,7 +59,6 @@ import android.window.WindowContainerTransaction;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.protolog.common.ProtoLog;
 import com.android.internal.util.ArrayUtils;
-import com.android.internal.util.ToBooleanFunction;
 import com.android.internal.util.function.pooled.PooledLambda;
 import com.android.internal.util.function.pooled.PooledPredicate;
 import com.android.server.wm.LaunchParamsController.LaunchParams;
@@ -68,10 +66,10 @@ import com.android.server.wm.LaunchParamsController.LaunchParams;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 /**
  * {@link DisplayArea} that represents a section of a screen that contains app window containers.
@@ -83,9 +81,9 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
     DisplayContent mDisplayContent;
 
     /**
-     * A color layer that serves as a solid color background to certain animations.
+     * Keeps track of the last set color layer so that it can be reset during surface migrations.
      */
-    private SurfaceControl mColorBackgroundLayer;
+    private @ColorInt int mBackgroundColor = 0;
 
     /**
      * This counter is used to make sure we don't prematurely clear the background color in the
@@ -148,7 +146,8 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
     /**
      * A launch root task for activity launching with {@link FLAG_ACTIVITY_LAUNCH_ADJACENT} flag.
      */
-    private Task mLaunchAdjacentFlagRootTask;
+    @VisibleForTesting
+    Task mLaunchAdjacentFlagRootTask;
 
     /**
      * A focusable root task that is purposely to be positioned at the top. Although the root
@@ -358,6 +357,14 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
     }
 
     @Override
+    void setInitialSurfaceControlProperties(SurfaceControl.Builder b) {
+        // We want an effect layer instead of the default container layer so that we can set a
+        // background color on it for task animations.
+        b.setEffectLayer();
+        super.setInitialSurfaceControlProperties(b);
+    }
+
+    @Override
     void addChild(WindowContainer child, int position) {
         if (child.asTaskDisplayArea() != null) {
             if (DEBUG_ROOT_TASK) {
@@ -520,16 +527,16 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
     }
 
     @Override
-    boolean forAllTaskDisplayAreas(Function<TaskDisplayArea, Boolean> callback,
+    boolean forAllTaskDisplayAreas(Predicate<TaskDisplayArea> callback,
             boolean traverseTopToBottom) {
         // Apply the callback to all TDAs at or below this container. If the callback returns true,
         // stop early.
         if (traverseTopToBottom) {
             // When it is top to bottom, run on child TDA first as they are on top of the parent.
             return super.forAllTaskDisplayAreas(callback, traverseTopToBottom)
-                    || callback.apply(this);
+                    || callback.test(this);
         }
-        return callback.apply(this) || super.forAllTaskDisplayAreas(callback, traverseTopToBottom);
+        return callback.test(this) || super.forAllTaskDisplayAreas(callback, traverseTopToBottom);
     }
 
     @Override
@@ -686,71 +693,6 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
     }
 
     @Override
-    boolean forAllWindows(ToBooleanFunction<WindowState> callback,
-            boolean traverseTopToBottom) {
-        if (traverseTopToBottom) {
-            if (super.forAllWindows(callback, traverseTopToBottom)) {
-                return true;
-            }
-            if (forAllExitingAppTokenWindows(callback, traverseTopToBottom)) {
-                return true;
-            }
-        } else {
-            if (forAllExitingAppTokenWindows(callback, traverseTopToBottom)) {
-                return true;
-            }
-            if (super.forAllWindows(callback, traverseTopToBottom)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean forAllExitingAppTokenWindows(ToBooleanFunction<WindowState> callback,
-            boolean traverseTopToBottom) {
-        // For legacy reasons we process the RootTask.mExitingActivities first here before the
-        // app tokens.
-        // TODO: Investigate if we need to continue to do this or if we can just process them
-        // in-order.
-        if (traverseTopToBottom) {
-            for (int i = mChildren.size() - 1; i >= 0; --i) {
-                // Only run on those of direct Task child, because child TaskDisplayArea has run on
-                // its child in #forAllWindows()
-                if (mChildren.get(i).asTask() == null) {
-                    continue;
-                }
-                final List<ActivityRecord> activities =
-                        mChildren.get(i).asTask().mExitingActivities;
-                for (int j = activities.size() - 1; j >= 0; --j) {
-                    if (activities.get(j).forAllWindowsUnchecked(callback,
-                            traverseTopToBottom)) {
-                        return true;
-                    }
-                }
-            }
-        } else {
-            final int count = mChildren.size();
-            for (int i = 0; i < count; ++i) {
-                // Only run on those of direct Task child, because child TaskDisplayArea has run on
-                // its child in #forAllWindows()
-                if (mChildren.get(i).asTask() == null) {
-                    continue;
-                }
-                final List<ActivityRecord> activities =
-                        mChildren.get(i).asTask().mExitingActivities;
-                final int appTokensCount = activities.size();
-                for (int j = 0; j < appTokensCount; j++) {
-                    if (activities.get(j).forAllWindowsUnchecked(callback,
-                            traverseTopToBottom)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    @Override
     int getOrientation(int candidate) {
         mLastOrientationSource = null;
         if (mIgnoreOrientationRequest) {
@@ -864,12 +806,13 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
         int layer = 0;
         // Place root home tasks to the bottom.
         layer = adjustRootTaskLayer(t, mTmpHomeChildren, layer);
-        adjustRootTaskLayer(t, mTmpNormalChildren, layer);
-
-        // Always on top tasks layer should higher than split divider layer so set it as start.
-        t.setLayer(mSplitScreenDividerAnchor, SPLIT_DIVIDER_LAYER);
-        layer = SPLIT_DIVIDER_LAYER + 1;
+        layer = adjustRootTaskLayer(t, mTmpNormalChildren, layer);
+        // TODO(b/207185041): Remove this divider workaround after we full remove leagacy split and
+        //                    make app pair split only have single root then we can just attach the
+        //                    divider to the single root task in shell.
+        layer = Math.max(layer, SPLIT_DIVIDER_LAYER + 1);
         adjustRootTaskLayer(t, mTmpAlwaysOnTopChildren, layer);
+        t.setLayer(mSplitScreenDividerAnchor, SPLIT_DIVIDER_LAYER);
     }
 
     /**
@@ -884,19 +827,33 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
             ArrayList<WindowContainer> children, int startLayer) {
         mTmpNeedsZBoostIndexes.clear();
         final int childCount = children.size();
+        boolean hasAdjacentTask = false;
         for (int i = 0; i < childCount; i++) {
             final WindowContainer child = children.get(i);
             final TaskDisplayArea childTda = child.asTaskDisplayArea();
-
-            boolean childNeedsZBoost = childTda != null
+            final boolean childNeedsZBoost = childTda != null
                     ? childTda.childrenNeedZBoost()
                     : child.needsZBoost();
 
-            if (!childNeedsZBoost) {
-                child.assignLayer(t, startLayer++);
-            } else {
+            if (childNeedsZBoost) {
                 mTmpNeedsZBoostIndexes.add(i);
+                continue;
             }
+
+            final Task childTask = child.asTask();
+            final boolean inAdjacentTask = childTask != null
+                    && child.inMultiWindowMode()
+                    && childTask.getRootTask().getAdjacentTaskFragment() != null;
+
+            if (inAdjacentTask || child.inSplitScreenWindowingMode()) {
+                hasAdjacentTask = true;
+            } else if (hasAdjacentTask && startLayer < SPLIT_DIVIDER_LAYER) {
+                // Task on top of adjacent tasks should be higher than split divider layer so
+                // set it as start.
+                startLayer = SPLIT_DIVIDER_LAYER + 1;
+            }
+
+            child.assignLayer(t, startLayer++);
         }
 
         final int zBoostSize = mTmpNeedsZBoostIndexes.size();
@@ -930,11 +887,6 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
     void onParentChanged(ConfigurationContainer newParent, ConfigurationContainer oldParent) {
         if (getParent() != null) {
             super.onParentChanged(newParent, oldParent, () -> {
-                mColorBackgroundLayer = makeChildSurface(null)
-                        .setColorLayer()
-                        .setName("colorBackgroundLayer")
-                        .setCallsite("TaskDisplayArea.onParentChanged")
-                        .build();
                 mSplitScreenDividerAnchor = makeChildSurface(null)
                         .setName("splitScreenDividerAnchor")
                         .setCallsite("TaskDisplayArea.onParentChanged")
@@ -946,43 +898,35 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
         } else {
             super.onParentChanged(newParent, oldParent);
             mWmService.mTransactionFactory.get()
-                    .remove(mColorBackgroundLayer)
                     .remove(mSplitScreenDividerAnchor)
                     .apply();
-            mColorBackgroundLayer = null;
             mSplitScreenDividerAnchor = null;
         }
     }
 
-    void setBackgroundColor(@ColorInt int color) {
-        if (mColorBackgroundLayer == null) {
-            return;
-        }
-
-        float r = ((color >> 16) & 0xff) / 255.0f;
-        float g = ((color >>  8) & 0xff) / 255.0f;
-        float b = ((color >>  0) & 0xff) / 255.0f;
-        float a = ((color >> 24) & 0xff) / 255.0f;
-
+    void setBackgroundColor(@ColorInt int colorInt) {
+        mBackgroundColor = colorInt;
+        Color color = Color.valueOf(colorInt);
         mColorLayerCounter++;
 
-        getPendingTransaction().setLayer(mColorBackgroundLayer, MIN_VALUE)
-                .setColor(mColorBackgroundLayer, new float[]{r, g, b})
-                .setAlpha(mColorBackgroundLayer, a)
-                .setWindowCrop(mColorBackgroundLayer, getSurfaceWidth(), getSurfaceHeight())
-                .setPosition(mColorBackgroundLayer, 0, 0)
-                .show(mColorBackgroundLayer);
-
-        scheduleAnimation();
+        // Only apply the background color if the TDA is actually attached and has a valid surface
+        // to set the background color on. We still want to keep track of the background color state
+        // even if we are not showing it for when/if the TDA is reattached and gets a valid surface
+        if (mSurfaceControl != null) {
+            getPendingTransaction()
+                    .setColor(mSurfaceControl,
+                            new float[]{color.red(), color.green(), color.blue()});
+            scheduleAnimation();
+        }
     }
 
     void clearBackgroundColor() {
         mColorLayerCounter--;
 
         // Only clear the color layer if we have received the same amounts of clear as set
-        // requests.
-        if (mColorLayerCounter == 0) {
-            getPendingTransaction().hide(mColorBackgroundLayer);
+        // requests and TDA has a non null surface control (i.e. is attached)
+        if (mColorLayerCounter == 0 && mSurfaceControl != null) {
+            getPendingTransaction().unsetColor(mSurfaceControl);
             scheduleAnimation();
         }
     }
@@ -990,12 +934,16 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
     @Override
     void migrateToNewSurfaceControl(SurfaceControl.Transaction t) {
         super.migrateToNewSurfaceControl(t);
-        if (mColorBackgroundLayer == null) {
+
+        if (mColorLayerCounter > 0) {
+            setBackgroundColor(mBackgroundColor);
+        }
+
+        if (mSplitScreenDividerAnchor == null) {
             return;
         }
 
         // As TaskDisplayArea is getting a new surface, reparent and reorder the child surfaces.
-        t.reparent(mColorBackgroundLayer, mSurfaceControl);
         t.reparent(mSplitScreenDividerAnchor, mSurfaceControl);
         reassignLayer(t);
         scheduleAnimation();
@@ -1275,6 +1223,11 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
                 }
             }
         }
+        // For better split UX, If task launch by the source task which root task is created by
+        // organizer, it should also launch in that root too.
+        if (sourceTask != null && sourceTask.getRootTask().mCreatedByOrganizer) {
+            return sourceTask.getRootTask();
+        }
         return null;
     }
 
@@ -1453,9 +1406,7 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
 
             leafTask.forAllLeafTaskFragments((taskFrag) -> {
                 final ActivityRecord resumedActivity = taskFrag.getResumedActivity();
-                if (resumedActivity != null
-                        && (taskFrag.getVisibility(resuming) != TASK_FRAGMENT_VISIBILITY_VISIBLE
-                        || !taskFrag.isTopActivityFocusable())) {
+                if (resumedActivity != null && !taskFrag.canBeResumed(resuming)) {
                     if (taskFrag.startPausing(false /* uiSleeping*/, resuming, "pauseBackTasks")) {
                         someActivityPaused[0]++;
                     }
@@ -1688,13 +1639,17 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
      * Whether we can show activity requesting the given min width/height in multi window below
      * this {@link TaskDisplayArea}.
      */
-    boolean supportsActivityMinWidthHeightMultiWindow(int minWidth, int minHeight) {
-        final int configRespectsActivityMinWidthHeightMultiWindow =
-                mAtmService.mRespectsActivityMinWidthHeightMultiWindow;
+    boolean supportsActivityMinWidthHeightMultiWindow(int minWidth, int minHeight,
+            @Nullable ActivityInfo activityInfo) {
+        if (activityInfo != null && !activityInfo.shouldCheckMinWidthHeightForMultiWindow()) {
+            return true;
+        }
         if (minWidth <= 0 && minHeight <= 0) {
             // No request min width/height.
             return true;
         }
+        final int configRespectsActivityMinWidthHeightMultiWindow =
+                mAtmService.mRespectsActivityMinWidthHeightMultiWindow;
         if (configRespectsActivityMinWidthHeightMultiWindow == -1) {
             // Device override to ignore min width/height.
             return true;
@@ -1780,7 +1735,7 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
         // the locked state, the keyguard isn't locked, or we can show when locked.
         if (topRunning != null && considerKeyguardState
                 && mRootWindowContainer.mTaskSupervisor.getKeyguardController()
-                .isKeyguardLocked()
+                .isKeyguardLocked(topRunning.getDisplayId())
                 && !topRunning.canShowWhenLocked()) {
             return null;
         }

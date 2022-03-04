@@ -20,6 +20,9 @@ import static android.Manifest.permission.ACCESS_KEYGUARD_SECURE_STORAGE;
 import static android.Manifest.permission.MANAGE_BIOMETRIC;
 import static android.Manifest.permission.READ_CONTACTS;
 import static android.Manifest.permission.SET_AND_VERIFY_LOCKSCREEN_CREDENTIALS;
+import static android.app.admin.DevicePolicyResources.Strings.Core.PROFILE_ENCRYPTED_DETAIL;
+import static android.app.admin.DevicePolicyResources.Strings.Core.PROFILE_ENCRYPTED_MESSAGE;
+import static android.app.admin.DevicePolicyResources.Strings.Core.PROFILE_ENCRYPTED_TITLE;
 import static android.content.Context.KEYGUARD_SERVICE;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.os.UserHandle.USER_ALL;
@@ -39,7 +42,10 @@ import static com.android.internal.widget.LockPatternUtils.USER_FRP;
 import static com.android.internal.widget.LockPatternUtils.VERIFY_FLAG_REQUEST_GK_PW_HANDLE;
 import static com.android.internal.widget.LockPatternUtils.frpCredentialEnabled;
 import static com.android.internal.widget.LockPatternUtils.userOwnsFrpCredential;
+import static com.android.server.locksettings.SyntheticPasswordManager.TOKEN_TYPE_STRONG;
+import static com.android.server.locksettings.SyntheticPasswordManager.TOKEN_TYPE_WEAK;
 
+import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
@@ -114,6 +120,7 @@ import android.util.LongSparseArray;
 import android.util.Slog;
 import android.util.SparseArray;
 
+import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.messages.nano.SystemMessageProto.SystemMessage;
@@ -123,6 +130,8 @@ import com.android.internal.util.IndentingPrintWriter;
 import com.android.internal.util.Preconditions;
 import com.android.internal.widget.ICheckCredentialProgressCallback;
 import com.android.internal.widget.ILockSettings;
+import com.android.internal.widget.IWeakEscrowTokenActivatedListener;
+import com.android.internal.widget.IWeakEscrowTokenRemovedListener;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.internal.widget.LockSettingsInternal;
 import com.android.internal.widget.LockscreenCredential;
@@ -135,6 +144,7 @@ import com.android.server.locksettings.LockSettingsStorage.CredentialHash;
 import com.android.server.locksettings.LockSettingsStorage.PersistentData;
 import com.android.server.locksettings.SyntheticPasswordManager.AuthenticationResult;
 import com.android.server.locksettings.SyntheticPasswordManager.AuthenticationToken;
+import com.android.server.locksettings.SyntheticPasswordManager.TokenType;
 import com.android.server.locksettings.recoverablekeystore.RecoverableKeyStoreManager;
 import com.android.server.pm.UserManagerInternal;
 import com.android.server.wm.WindowManagerInternal;
@@ -636,12 +646,9 @@ public class LockSettingsService extends ILockSettings.Stub {
 
     private void showEncryptionNotificationForProfile(UserHandle user) {
         Resources r = mContext.getResources();
-        CharSequence title = r.getText(
-                com.android.internal.R.string.profile_encrypted_title);
-        CharSequence message = r.getText(
-                com.android.internal.R.string.profile_encrypted_message);
-        CharSequence detail = r.getText(
-                com.android.internal.R.string.profile_encrypted_detail);
+        CharSequence title = getEncryptionNotificationTitle();
+        CharSequence message = getEncryptionNotificationMessage();
+        CharSequence detail = getEncryptionNotificationDetail();
 
         final KeyguardManager km = (KeyguardManager) mContext.getSystemService(KEYGUARD_SERVICE);
         final Intent unlockIntent = km.createConfirmDeviceCredentialIntent(null, null,
@@ -655,6 +662,24 @@ public class LockSettingsService extends ILockSettings.Stub {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE_UNAUDITED);
 
         showEncryptionNotification(user, title, message, detail, intent);
+    }
+
+    private String getEncryptionNotificationTitle() {
+        return mInjector.getDevicePolicyManager().getString(
+                PROFILE_ENCRYPTED_TITLE,
+                () -> mContext.getString(R.string.profile_encrypted_title));
+    }
+
+    private String getEncryptionNotificationDetail() {
+        return mInjector.getDevicePolicyManager().getString(
+                PROFILE_ENCRYPTED_DETAIL,
+                () -> mContext.getString(R.string.profile_encrypted_detail));
+    }
+
+    private String getEncryptionNotificationMessage() {
+        return mInjector.getDevicePolicyManager().getString(
+                PROFILE_ENCRYPTED_MESSAGE,
+                () -> mContext.getString(R.string.profile_encrypted_message));
     }
 
     private void showEncryptionNotification(UserHandle user, CharSequence title,
@@ -1121,6 +1146,16 @@ public class LockSettingsService extends ILockSettings.Stub {
 
     private boolean hasPermission(String permission) {
         return mContext.checkCallingOrSelfPermission(permission) == PERMISSION_GRANTED;
+    }
+
+    private void checkManageWeakEscrowTokenMethodUsage() {
+        mContext.enforceCallingOrSelfPermission(
+                Manifest.permission.MANAGE_WEAK_ESCROW_TOKEN,
+                "Requires MANAGE_WEAK_ESCROW_TOKEN permission.");
+        if (!mContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
+            throw new IllegalArgumentException(
+                    "Weak escrow token are only for automotive devices.");
+        }
     }
 
     @Override
@@ -1909,6 +1944,97 @@ public class LockSettingsService extends ILockSettings.Stub {
                 Slog.e(TAG, "Error changing encryption password", e);
             }
         });
+    }
+
+    /** Register the given WeakEscrowTokenRemovedListener. */
+    @Override
+    public boolean registerWeakEscrowTokenRemovedListener(
+            @NonNull IWeakEscrowTokenRemovedListener listener) {
+        checkManageWeakEscrowTokenMethodUsage();
+        final long token = Binder.clearCallingIdentity();
+        try {
+            return mSpManager.registerWeakEscrowTokenRemovedListener(listener);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    /** Unregister the given WeakEscrowTokenRemovedListener. */
+    @Override
+    public boolean unregisterWeakEscrowTokenRemovedListener(
+            @NonNull IWeakEscrowTokenRemovedListener listener) {
+        checkManageWeakEscrowTokenMethodUsage();
+        final long token = Binder.clearCallingIdentity();
+        try {
+            return mSpManager.unregisterWeakEscrowTokenRemovedListener(listener);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    @Override
+    public long addWeakEscrowToken(byte[] token, int userId,
+            @NonNull IWeakEscrowTokenActivatedListener listener) {
+        checkManageWeakEscrowTokenMethodUsage();
+        Objects.requireNonNull(listener, "Listener can not be null.");
+        EscrowTokenStateChangeCallback internalListener = (handle, userId1) -> {
+            try {
+                listener.onWeakEscrowTokenActivated(handle, userId1);
+            } catch (RemoteException e) {
+                Slog.e(TAG, "Exception while notifying weak escrow token has been activated", e);
+            }
+        };
+        final long restoreToken = Binder.clearCallingIdentity();
+        try {
+            return addEscrowToken(token, TOKEN_TYPE_WEAK, userId, internalListener);
+        } finally {
+            Binder.restoreCallingIdentity(restoreToken);
+        }
+    }
+
+    @Override
+    public boolean removeWeakEscrowToken(long handle, int userId) {
+        checkManageWeakEscrowTokenMethodUsage();
+        final long token = Binder.clearCallingIdentity();
+        try {
+            return removeEscrowToken(handle, userId);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    @Override
+    public boolean isWeakEscrowTokenActive(long handle, int userId) {
+        checkManageWeakEscrowTokenMethodUsage();
+        final long token = Binder.clearCallingIdentity();
+        try {
+            return isEscrowTokenActive(handle, userId);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    @Override
+    public boolean isWeakEscrowTokenValid(long handle, byte[] token, int userId) {
+        checkManageWeakEscrowTokenMethodUsage();
+        final long restoreToken = Binder.clearCallingIdentity();
+        try {
+            synchronized (mSpManager) {
+                if (!mSpManager.hasEscrowData(userId)) {
+                    Slog.w(TAG, "Escrow token is disabled on the current user");
+                    return false;
+                }
+                AuthenticationResult authResult = mSpManager.unwrapWeakTokenBasedSyntheticPassword(
+                        getGateKeeperService(), handle, token, userId);
+                if (authResult.authToken == null) {
+                    Slog.w(TAG, "Invalid escrow token supplied");
+                    return false;
+                }
+                return true;
+            }
+        } finally {
+            Binder.restoreCallingIdentity(restoreToken);
+        }
     }
 
     @VisibleForTesting /** Note: this method is overridden in unit tests */
@@ -3029,6 +3155,7 @@ public class LockSettingsService extends ILockSettings.Stub {
     private long setLockCredentialWithAuthTokenLocked(LockscreenCredential credential,
             AuthenticationToken auth, int userId) {
         if (DEBUG) Slog.d(TAG, "setLockCredentialWithAuthTokenLocked: user=" + userId);
+        final int savedCredentialType = getCredentialTypeInternal(userId);
         long newHandle = mSpManager.createPasswordBasedSyntheticPassword(getGateKeeperService(),
                 credential, auth, userId);
         final Map<Integer, LockscreenCredential> profilePasswords;
@@ -3075,6 +3202,9 @@ public class LockSettingsService extends ILockSettings.Stub {
 
         setUserPasswordMetrics(credential, userId);
         mManagedProfilePasswordCache.removePassword(userId);
+        if (savedCredentialType != CREDENTIAL_TYPE_NONE) {
+            mSpManager.destroyAllWeakTokenBasedSyntheticPasswords(userId);
+        }
 
         if (profilePasswords != null) {
             for (Map.Entry<Integer, LockscreenCredential> entry : profilePasswords.entrySet()) {
@@ -3242,8 +3372,9 @@ public class LockSettingsService extends ILockSettings.Stub {
         }
     }
 
-    private long addEscrowToken(byte[] token, int userId, EscrowTokenStateChangeCallback callback) {
-        if (DEBUG) Slog.d(TAG, "addEscrowToken: user=" + userId);
+    private long addEscrowToken(@NonNull byte[] token, @TokenType int type, int userId,
+            @NonNull EscrowTokenStateChangeCallback callback) {
+        if (DEBUG) Slog.d(TAG, "addEscrowToken: user=" + userId + ", type=" + type);
         synchronized (mSpManager) {
             // Migrate to synthetic password based credentials if the user has no password,
             // the token can then be activated immediately.
@@ -3264,7 +3395,8 @@ public class LockSettingsService extends ILockSettings.Stub {
                     throw new SecurityException("Escrow token is disabled on the current user");
                 }
             }
-            long handle = mSpManager.createTokenBasedSyntheticPassword(token, userId, callback);
+            long handle = mSpManager.createTokenBasedSyntheticPassword(token, type, userId,
+                    callback);
             if (auth != null) {
                 mSpManager.activateTokenBasedSyntheticPassword(handle, auth, userId);
             }
@@ -3345,8 +3477,8 @@ public class LockSettingsService extends ILockSettings.Stub {
     private boolean setLockCredentialWithTokenInternalLocked(LockscreenCredential credential,
             long tokenHandle, byte[] token, int userId) {
         final AuthenticationResult result;
-        result = mSpManager.unwrapTokenBasedSyntheticPassword(
-                getGateKeeperService(), tokenHandle, token, userId);
+        result = mSpManager.unwrapTokenBasedSyntheticPassword(getGateKeeperService(), tokenHandle,
+                token, userId);
         if (result.authToken == null) {
             Slog.w(TAG, "Invalid escrow token supplied");
             return false;
@@ -3369,7 +3501,8 @@ public class LockSettingsService extends ILockSettings.Stub {
         AuthenticationResult authResult;
         synchronized (mSpManager) {
             if (!mSpManager.hasEscrowData(userId)) {
-                throw new SecurityException("Escrow token is disabled on the current user");
+                Slog.w(TAG, "Escrow token is disabled on the current user");
+                return false;
             }
             authResult = mSpManager.unwrapTokenBasedSyntheticPassword(getGateKeeperService(),
                     tokenHandle, token, userId);
@@ -3643,7 +3776,8 @@ public class LockSettingsService extends ILockSettings.Stub {
         @Override
         public long addEscrowToken(byte[] token, int userId,
                 EscrowTokenStateChangeCallback callback) {
-            return LockSettingsService.this.addEscrowToken(token, userId, callback);
+            return LockSettingsService.this.addEscrowToken(token, TOKEN_TYPE_STRONG, userId,
+                    callback);
         }
 
         @Override

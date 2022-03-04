@@ -1,7 +1,11 @@
 package com.android.systemui.qs
 
-import com.android.systemui.R
+import android.os.Handler
 import android.os.UserManager
+import android.provider.Settings
+import android.testing.AndroidTestingRunner
+import android.testing.TestableLooper
+import android.testing.ViewUtils
 import android.view.LayoutInflater
 import android.view.View
 import androidx.test.filters.SmallTest
@@ -9,18 +13,24 @@ import com.android.internal.logging.MetricsLogger
 import com.android.internal.logging.UiEventLogger
 import com.android.internal.logging.testing.FakeMetricsLogger
 import com.android.systemui.Dependency
+import com.android.systemui.R
 import com.android.systemui.classifier.FalsingManagerFake
 import com.android.systemui.globalactions.GlobalActionsDialogLite
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.qs.FooterActionsController.ExpansionState
+import com.android.systemui.settings.UserTracker
 import com.android.systemui.statusbar.phone.MultiUserSwitchController
 import com.android.systemui.statusbar.policy.DeviceProvisionedController
 import com.android.systemui.statusbar.policy.UserInfoController
 import com.android.systemui.tuner.TunerService
+import com.android.systemui.util.settings.FakeSettings
 import com.android.systemui.utils.leaks.FakeTunerService
 import com.android.systemui.utils.leaks.LeakCheckedTest
+import com.google.common.truth.Truth.assertThat
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
 import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentMatchers.anyBoolean
 import org.mockito.Mock
@@ -30,17 +40,19 @@ import org.mockito.MockitoAnnotations
 import org.mockito.Mockito.`when` as whenever
 
 @SmallTest
+@TestableLooper.RunWithLooper
+@RunWith(AndroidTestingRunner::class)
 class FooterActionsControllerTest : LeakCheckedTest() {
     @Mock
     private lateinit var userManager: UserManager
+    @Mock
+    private lateinit var userTracker: UserTracker
     @Mock
     private lateinit var activityStarter: ActivityStarter
     @Mock
     private lateinit var deviceProvisionedController: DeviceProvisionedController
     @Mock
     private lateinit var userInfoController: UserInfoController
-    @Mock
-    private lateinit var qsPanelController: QSPanelController
     @Mock
     private lateinit var multiUserSwitchController: MultiUserSwitchController
     @Mock
@@ -53,23 +65,35 @@ class FooterActionsControllerTest : LeakCheckedTest() {
     private val metricsLogger: MetricsLogger = FakeMetricsLogger()
     private lateinit var view: FooterActionsView
     private val falsingManager: FalsingManagerFake = FalsingManagerFake()
+    private lateinit var testableLooper: TestableLooper
+    private lateinit var fakeSettings: FakeSettings
 
     @Before
     fun setUp() {
         MockitoAnnotations.initMocks(this)
+        testableLooper = TestableLooper.get(this)
+        fakeSettings = FakeSettings()
         injectLeakCheckedDependencies(*LeakCheckedTest.ALL_SUPPORTED_CLASSES)
         val fakeTunerService = Dependency.get(TunerService::class.java) as FakeTunerService
 
         view = LayoutInflater.from(context)
                 .inflate(R.layout.footer_actions, null) as FooterActionsView
 
-        controller = FooterActionsController(view, qsPanelController, activityStarter,
-                userManager, userInfoController, multiUserSwitchController,
+        controller = FooterActionsController(view, activityStarter,
+                userManager, userTracker, userInfoController, multiUserSwitchController,
                 deviceProvisionedController, falsingManager, metricsLogger, fakeTunerService,
                 globalActionsDialog, uiEventLogger, showPMLiteButton = true,
-                buttonsVisibleState = ExpansionState.EXPANDED)
+                buttonsVisibleState = ExpansionState.EXPANDED, fakeSettings,
+                Handler(testableLooper.looper))
         controller.init()
-        controller.onViewAttached()
+        ViewUtils.attachView(view)
+        // View looper is the testable looper associated with the test
+        testableLooper.processAllMessages()
+    }
+
+    @After
+    fun tearDown() {
+        ViewUtils.detachView(view)
     }
 
     @Test
@@ -89,5 +113,40 @@ class FooterActionsControllerTest : LeakCheckedTest() {
         view.findViewById<View>(R.id.settings_button).performClick()
         // Verify Settings wasn't launched.
         verify<ActivityStarter>(activityStarter, Mockito.never()).startActivity(any(), anyBoolean())
+    }
+
+    @Test
+    fun testMultiUserSwitchUpdatedWhenExpansionStarts() {
+        // When expansion starts, listening is set to true
+        val multiUserSwitch = view.requireViewById<View>(R.id.multi_user_switch)
+
+        assertThat(multiUserSwitch.visibility).isNotEqualTo(View.VISIBLE)
+
+        whenever(multiUserSwitchController.isMultiUserEnabled).thenReturn(true)
+
+        controller.setListening(true)
+        testableLooper.processAllMessages()
+
+        assertThat(multiUserSwitch.visibility).isEqualTo(View.VISIBLE)
+    }
+
+    @Test
+    fun testMultiUserSwitchUpdatedWhenSettingChanged() {
+        // When expanded, listening is true
+        controller.setListening(true)
+        testableLooper.processAllMessages()
+
+        val multiUserSwitch = view.requireViewById<View>(R.id.multi_user_switch)
+        assertThat(multiUserSwitch.visibility).isNotEqualTo(View.VISIBLE)
+
+        // The setting is only used as an indicator for whether the view should refresh. The actual
+        // value of the setting is ignored; isMultiUserEnabled is the source of truth
+        whenever(multiUserSwitchController.isMultiUserEnabled).thenReturn(true)
+
+        // Changing the value of USER_SWITCHER_ENABLED should cause the view to update
+        fakeSettings.putIntForUser(Settings.Global.USER_SWITCHER_ENABLED, 1, userTracker.userId)
+        testableLooper.processAllMessages()
+
+        assertThat(multiUserSwitch.visibility).isEqualTo(View.VISIBLE)
     }
 }

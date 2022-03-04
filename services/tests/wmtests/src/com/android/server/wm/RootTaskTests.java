@@ -22,6 +22,7 @@ import static android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_UNDEFINED;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
+import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
 import static android.app.WindowConfiguration.WINDOWING_MODE_SPLIT_SCREEN_PRIMARY;
 import static android.app.WindowConfiguration.WINDOWING_MODE_SPLIT_SCREEN_SECONDARY;
@@ -29,6 +30,7 @@ import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.content.pm.ActivityInfo.FLAG_RESUME_WHILE_PAUSING;
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+import static android.view.Display.DEFAULT_DISPLAY;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doNothing;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
@@ -86,6 +88,7 @@ import android.platform.test.annotations.Presubmit;
 import androidx.test.filters.SmallTest;
 
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -239,7 +242,7 @@ public class RootTaskTests extends WindowTestsBase {
         final WindowConfiguration windowConfiguration =
                 task.getResolvedOverrideConfiguration().windowConfiguration;
         spyOn(windowConfiguration);
-        doReturn(WINDOWING_MODE_SPLIT_SCREEN_SECONDARY)
+        doReturn(WINDOWING_MODE_MULTI_WINDOW)
                 .when(windowConfiguration).getWindowingMode();
 
         // Prevent adjust task dimensions
@@ -322,72 +325,12 @@ public class RootTaskTests extends WindowTestsBase {
     }
 
     @Test
-    public void testPrimarySplitScreenMoveToBack() {
-        TestSplitOrganizer organizer = new TestSplitOrganizer(mAtm);
-        // We're testing an edge case here where we have primary + fullscreen rather than secondary.
-        organizer.setMoveToSecondaryOnEnter(false);
-
-        // Create primary splitscreen root task.
-        final Task primarySplitScreen = new TaskBuilder(mAtm.mTaskSupervisor)
-                .setParentTaskFragment(organizer.mPrimary)
-                .setOnTop(true)
-                .build();
-
-        // Assert windowing mode.
-        assertEquals(WINDOWING_MODE_SPLIT_SCREEN_PRIMARY, primarySplitScreen.getWindowingMode());
-
-        // Move primary to back.
-        primarySplitScreen.moveToBack("testPrimarySplitScreenToFullscreenWhenMovedToBack",
-                null /* task */);
-
-        // Assert that root task is at the bottom.
-        assertEquals(0, getTaskIndexOf(mDefaultTaskDisplayArea, primarySplitScreen));
-
-        // Ensure no longer in splitscreen.
-        assertEquals(WINDOWING_MODE_FULLSCREEN, primarySplitScreen.getWindowingMode());
-
-        // Ensure that the override mode is restored to undefined
-        assertEquals(WINDOWING_MODE_UNDEFINED,
-                primarySplitScreen.getRequestedOverrideWindowingMode());
-    }
-
-    @Test
-    public void testMoveToPrimarySplitScreenThenMoveToBack() {
-        TestSplitOrganizer organizer = new TestSplitOrganizer(mAtm);
-        // This time, start with a fullscreen activity root task.
-        final Task primarySplitScreen = mDefaultTaskDisplayArea.createRootTask(
-                WINDOWING_MODE_UNDEFINED, ACTIVITY_TYPE_STANDARD, true /* onTop */);
-
-        primarySplitScreen.reparent(organizer.mPrimary, POSITION_TOP,
-                false /*moveParents*/, "test");
-
-        // Assert windowing mode.
-        assertEquals(WINDOWING_MODE_SPLIT_SCREEN_PRIMARY, primarySplitScreen.getWindowingMode());
-
-        // Move primary to back.
-        primarySplitScreen.moveToBack("testPrimarySplitScreenToFullscreenWhenMovedToBack",
-                null /* task */);
-
-        // Assert that root task is at the bottom.
-        assertEquals(primarySplitScreen, organizer.mSecondary.getChildAt(0));
-
-        // Ensure that the override mode is restored to what it was (fullscreen)
-        assertEquals(WINDOWING_MODE_UNDEFINED,
-                primarySplitScreen.getRequestedOverrideWindowingMode());
-    }
-
-    @Test
     public void testSplitScreenMoveToBack() {
         TestSplitOrganizer organizer = new TestSplitOrganizer(mAtm);
-        // Explicitly reparent task to primary split root to enter split mode, in which implies
-        // primary on top and secondary containing the home task below another root task.
-        final Task primaryTask = mDefaultTaskDisplayArea.createRootTask(
-                WINDOWING_MODE_UNDEFINED, ACTIVITY_TYPE_STANDARD, true /* onTop */);
-        final Task secondaryTask = mDefaultTaskDisplayArea.createRootTask(
-                WINDOWING_MODE_UNDEFINED, ACTIVITY_TYPE_STANDARD, true /* onTop */);
+        final Task primaryTask = organizer.createTaskToPrimary(true /* onTop */);
+        final Task secondaryTask = organizer.createTaskToSecondary(true /* onTop */);
         final Task homeRoot = mDefaultTaskDisplayArea.getRootTask(
                 WINDOWING_MODE_FULLSCREEN, ACTIVITY_TYPE_HOME);
-        primaryTask.reparent(organizer.mPrimary, POSITION_TOP);
         mDefaultTaskDisplayArea.positionChildAt(POSITION_TOP, organizer.mPrimary,
                 false /* includingParents */);
 
@@ -396,21 +339,26 @@ public class RootTaskTests extends WindowTestsBase {
 
         // Assert that the primaryTask is now below home in its parent but primary is left alone.
         assertEquals(0, organizer.mPrimary.getChildCount());
-        assertEquals(primaryTask, organizer.mSecondary.getChildAt(0));
+        // Assert that root task is at the bottom.
+        assertEquals(0, getTaskIndexOf(mDefaultTaskDisplayArea, primaryTask));
         assertEquals(1, organizer.mPrimary.compareTo(organizer.mSecondary));
         assertEquals(1, homeRoot.compareTo(primaryTask));
         assertEquals(homeRoot.getParent(), primaryTask.getParent());
 
         // Make sure windowing modes are correct
-        assertEquals(WINDOWING_MODE_SPLIT_SCREEN_PRIMARY, organizer.mPrimary.getWindowingMode());
-        assertEquals(WINDOWING_MODE_SPLIT_SCREEN_SECONDARY, primaryTask.getWindowingMode());
+        assertEquals(WINDOWING_MODE_MULTI_WINDOW, organizer.mPrimary.getWindowingMode());
+        assertEquals(WINDOWING_MODE_MULTI_WINDOW, secondaryTask.getWindowingMode());
+        // Ensure no longer in splitscreen.
+        assertEquals(WINDOWING_MODE_FULLSCREEN, primaryTask.getWindowingMode());
+        // Ensure that the override mode is restored to undefined
+        assertEquals(WINDOWING_MODE_UNDEFINED, primaryTask.getRequestedOverrideWindowingMode());
 
         // Move secondary to back via parent (should be equivalent)
         organizer.mSecondary.moveToBack("test", secondaryTask);
 
-        // Assert that it is now in back but still in secondary split
+        // Assert that it is now in back and left in secondary split
+        assertEquals(0, organizer.mSecondary.getChildCount());
         assertEquals(1, homeRoot.compareTo(primaryTask));
-        assertEquals(secondaryTask, organizer.mSecondary.getChildAt(0));
         assertEquals(1, primaryTask.compareTo(secondaryTask));
         assertEquals(homeRoot.getParent(), secondaryTask.getParent());
     }
@@ -422,7 +370,7 @@ public class RootTaskTests extends WindowTestsBase {
                 .setTask(rootHomeTask)
                 .build();
         final Task secondaryRootTask = mAtm.mTaskOrganizerController.createRootTask(
-                rootHomeTask.getDisplayContent(), WINDOWING_MODE_SPLIT_SCREEN_SECONDARY, null);
+                rootHomeTask.getDisplayContent(), WINDOWING_MODE_MULTI_WINDOW, null);
 
         rootHomeTask.reparent(secondaryRootTask, POSITION_TOP);
         assertEquals(secondaryRootTask, rootHomeTask.getParent());
@@ -580,7 +528,9 @@ public class RootTaskTests extends WindowTestsBase {
         assertTrue(pinnedRootTask.shouldBeVisible(null /* starting */));
     }
 
+    // TODO(b/199236198): check this is unnecessary or need to migrate after remove legacy split.
     @Test
+    @Ignore
     public void testShouldBeVisible_SplitScreen() {
         // task not supporting split should be fullscreen for this test.
         final Task notSupportingSplitTask = createTaskForShouldBeVisibleTest(
@@ -699,30 +649,23 @@ public class RootTaskTests extends WindowTestsBase {
 
     @Test
     public void testGetVisibility_MultiLevel() {
-        final Task homeRootTask = createTaskForShouldBeVisibleTest(mDefaultTaskDisplayArea,
-                WINDOWING_MODE_UNDEFINED, ACTIVITY_TYPE_HOME, true /* onTop */);
+        TestSplitOrganizer organizer = new TestSplitOrganizer(mAtm);
         final Task splitPrimary = createTaskForShouldBeVisibleTest(mDefaultTaskDisplayArea,
-                WINDOWING_MODE_SPLIT_SCREEN_PRIMARY, ACTIVITY_TYPE_UNDEFINED, true /* onTop */);
-        // Creating as two-level tasks so home task can be reparented to split-secondary root task.
+                WINDOWING_MODE_UNDEFINED, ACTIVITY_TYPE_UNDEFINED, true /* onTop */);
         final Task splitSecondary = createTaskForShouldBeVisibleTest(mDefaultTaskDisplayArea,
-                WINDOWING_MODE_SPLIT_SCREEN_SECONDARY, ACTIVITY_TYPE_UNDEFINED, true /* onTop */,
-                true /* twoLevelTask */);
+                WINDOWING_MODE_UNDEFINED, ACTIVITY_TYPE_UNDEFINED, true /* onTop */);
 
-        doReturn(false).when(homeRootTask).isTranslucent(any());
         doReturn(false).when(splitPrimary).isTranslucent(any());
         doReturn(false).when(splitSecondary).isTranslucent(any());
 
-        // Re-parent home to split secondary.
-        homeRootTask.reparent(splitSecondary, POSITION_TOP);
-        // Current tasks should be visible.
+        // Re-parent tasks to split.
+        organizer.putTaskToPrimary(splitPrimary, true /* onTop */);
+        organizer.putTaskToSecondary(splitSecondary, true /* onTop */);
+        // Reparented tasks should be visible.
         assertEquals(TASK_FRAGMENT_VISIBILITY_VISIBLE,
                 splitPrimary.getVisibility(null /* starting */));
         assertEquals(TASK_FRAGMENT_VISIBILITY_VISIBLE,
                 splitSecondary.getVisibility(null /* starting */));
-        // Home task should still be visible even though it is a child of another visible task.
-        assertEquals(TASK_FRAGMENT_VISIBILITY_VISIBLE,
-                homeRootTask.getVisibility(null /* starting */));
-
 
         // Add fullscreen translucent task that partially occludes split tasks
         final Task translucentRootTask = createStandardRootTaskForVisibilityTest(
@@ -735,19 +678,12 @@ public class RootTaskTests extends WindowTestsBase {
                 splitPrimary.getVisibility(null /* starting */));
         assertEquals(TASK_FRAGMENT_VISIBILITY_VISIBLE_BEHIND_TRANSLUCENT,
                 splitSecondary.getVisibility(null /* starting */));
-        // Home task should be visible behind translucent since its parent is visible behind
-        // translucent.
-        assertEquals(TASK_FRAGMENT_VISIBILITY_VISIBLE_BEHIND_TRANSLUCENT,
-                homeRootTask.getVisibility(null /* starting */));
-
 
         // Hide split-secondary
-        splitSecondary.setForceHidden(FLAG_FORCE_HIDDEN_FOR_TASK_ORG, true /* set */);
+        organizer.mSecondary.setForceHidden(FLAG_FORCE_HIDDEN_FOR_TASK_ORG, true /* set */);
         // Home split secondary and home task should be invisible.
         assertEquals(TASK_FRAGMENT_VISIBILITY_INVISIBLE,
                 splitSecondary.getVisibility(null /* starting */));
-        assertEquals(TASK_FRAGMENT_VISIBILITY_INVISIBLE,
-                homeRootTask.getVisibility(null /* starting */));
     }
 
     @Test
@@ -1091,36 +1027,6 @@ public class RootTaskTests extends WindowTestsBase {
         alwaysOnTopRootTask2.setWindowingMode(WINDOWING_MODE_FREEFORM);
         assertTrue(alwaysOnTopRootTask2.isAlwaysOnTop());
         assertEquals(pinnedRootTask, getRootTaskAbove(alwaysOnTopRootTask2));
-    }
-
-    @Test
-    public void testSplitScreenMoveToFront() {
-        final Task splitScreenPrimary = createTaskForShouldBeVisibleTest(mDefaultTaskDisplayArea,
-                WINDOWING_MODE_SPLIT_SCREEN_PRIMARY, ACTIVITY_TYPE_STANDARD, true /* onTop */);
-        final Task splitScreenSecondary = createTaskForShouldBeVisibleTest(mDefaultTaskDisplayArea,
-                WINDOWING_MODE_SPLIT_SCREEN_SECONDARY, ACTIVITY_TYPE_STANDARD, true /* onTop */);
-        final Task assistantRootTask = createTaskForShouldBeVisibleTest(mDefaultTaskDisplayArea,
-                WINDOWING_MODE_FULLSCREEN, ACTIVITY_TYPE_ASSISTANT, true /* onTop */);
-
-        doReturn(false).when(splitScreenPrimary).isTranslucent(any());
-        doReturn(false).when(splitScreenSecondary).isTranslucent(any());
-        doReturn(false).when(assistantRootTask).isTranslucent(any());
-
-        assertFalse(splitScreenPrimary.shouldBeVisible(null /* starting */));
-        assertFalse(splitScreenSecondary.shouldBeVisible(null /* starting */));
-        assertTrue(assistantRootTask.shouldBeVisible(null /* starting */));
-
-        splitScreenSecondary.moveToFront("testSplitScreenMoveToFront");
-
-        if (isAssistantOnTop()) {
-            assertFalse(splitScreenPrimary.shouldBeVisible(null /* starting */));
-            assertFalse(splitScreenSecondary.shouldBeVisible(null /* starting */));
-            assertTrue(assistantRootTask.shouldBeVisible(null /* starting */));
-        } else {
-            assertTrue(splitScreenPrimary.shouldBeVisible(null /* starting */));
-            assertTrue(splitScreenSecondary.shouldBeVisible(null /* starting */));
-            assertFalse(assistantRootTask.shouldBeVisible(null /* starting */));
-        }
     }
 
     private Task createStandardRootTaskForVisibilityTest(int windowingMode,
@@ -1505,7 +1411,7 @@ public class RootTaskTests extends WindowTestsBase {
         final UnknownAppVisibilityController unknownAppVisibilityController =
                 mDefaultTaskDisplayArea.mDisplayContent.mUnknownAppVisibilityController;
         final KeyguardController keyguardController = mSupervisor.getKeyguardController();
-        doReturn(true).when(keyguardController).isKeyguardLocked();
+        doReturn(true).when(keyguardController).isKeyguardLocked(eq(DEFAULT_DISPLAY));
 
         // Start 2 activities that their processes have not yet started.
         final ActivityRecord[] activities = new ActivityRecord[2];
@@ -1571,7 +1477,7 @@ public class RootTaskTests extends WindowTestsBase {
         display.isDefaultDisplay = isDefaultDisplay;
 
         task.mDisplayContent = display;
-        doReturn(keyguardGoingAway).when(keyguardController).isKeyguardGoingAway();
+        doReturn(keyguardGoingAway).when(display).isKeyguardGoingAway();
         doReturn(displaySleeping).when(display).isSleeping();
         doReturn(focusedRootTask).when(task).isFocusedRootTaskOnDisplay();
 

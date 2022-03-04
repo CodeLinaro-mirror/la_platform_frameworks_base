@@ -34,13 +34,15 @@ import androidx.annotation.MainThread;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.KeyguardUpdateMonitorCallback;
 import com.android.systemui.broadcast.BroadcastDispatcher;
-import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.NotificationLockscreenUserManager;
+import com.android.systemui.statusbar.StatusBarState;
+import com.android.systemui.statusbar.notification.SectionHeaderVisibilityProvider;
 import com.android.systemui.statusbar.notification.collection.GroupEntry;
 import com.android.systemui.statusbar.notification.collection.ListEntry;
 import com.android.systemui.statusbar.notification.collection.NotifPipeline;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
+import com.android.systemui.statusbar.notification.collection.coordinator.dagger.CoordinatorScope;
 import com.android.systemui.statusbar.notification.collection.listbuilder.pluggable.NotifFilter;
 import com.android.systemui.statusbar.notification.collection.provider.HighPriorityProvider;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
@@ -48,9 +50,10 @@ import com.android.systemui.statusbar.policy.KeyguardStateController;
 import javax.inject.Inject;
 
 /**
- * Filters low priority and privacy-sensitive notifications from the lockscreen.
+ * Filters low priority and privacy-sensitive notifications from the lockscreen, and hides section
+ * headers on the lockscreen.
  */
-@SysUISingleton
+@CoordinatorScope
 public class KeyguardCoordinator implements Coordinator {
     private static final String TAG = "KeyguardCoordinator";
 
@@ -62,6 +65,7 @@ public class KeyguardCoordinator implements Coordinator {
     private final StatusBarStateController mStatusBarStateController;
     private final KeyguardUpdateMonitor mKeyguardUpdateMonitor;
     private final HighPriorityProvider mHighPriorityProvider;
+    private final SectionHeaderVisibilityProvider mSectionHeaderVisibilityProvider;
 
     private boolean mHideSilentNotificationsOnLockscreen;
 
@@ -74,7 +78,8 @@ public class KeyguardCoordinator implements Coordinator {
             BroadcastDispatcher broadcastDispatcher,
             StatusBarStateController statusBarStateController,
             KeyguardUpdateMonitor keyguardUpdateMonitor,
-            HighPriorityProvider highPriorityProvider) {
+            HighPriorityProvider highPriorityProvider,
+            SectionHeaderVisibilityProvider sectionHeaderVisibilityProvider) {
         mContext = context;
         mMainHandler = mainThreadHandler;
         mKeyguardStateController = keyguardStateController;
@@ -83,6 +88,7 @@ public class KeyguardCoordinator implements Coordinator {
         mStatusBarStateController = statusBarStateController;
         mKeyguardUpdateMonitor = keyguardUpdateMonitor;
         mHighPriorityProvider = highPriorityProvider;
+        mSectionHeaderVisibilityProvider = sectionHeaderVisibilityProvider;
     }
 
     @Override
@@ -90,6 +96,7 @@ public class KeyguardCoordinator implements Coordinator {
         readShowSilentNotificationSetting();
 
         setupInvalidateNotifListCallbacks();
+        // Filter at the "finalize" stage so that views remain bound by PreparationCoordinator
         pipeline.addFinalizeFilter(mNotifFilter);
     }
 
@@ -213,6 +220,8 @@ public class KeyguardCoordinator implements Coordinator {
     }
 
     private void invalidateListFromFilter(String reason) {
+        mSectionHeaderVisibilityProvider.setSectionHeadersVisible(
+                mStatusBarStateController.getState() != StatusBarState.KEYGUARD);
         mNotifFilter.invalidateList();
     }
 

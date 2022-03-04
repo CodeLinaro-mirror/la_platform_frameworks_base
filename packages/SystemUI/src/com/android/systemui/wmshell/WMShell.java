@@ -20,6 +20,7 @@ import static android.view.Display.DEFAULT_DISPLAY;
 
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_BOUNCER_SHOWING;
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_BUBBLES_EXPANDED;
+import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_BUBBLES_MANAGE_MENU_EXPANDED;
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_GLOBAL_ACTIONS_SHOWING;
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_NOTIFICATION_PANEL_EXPANDED;
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_ONE_HANDED_ACTIVE;
@@ -39,8 +40,8 @@ import android.view.KeyEvent;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.KeyguardUpdateMonitorCallback;
+import com.android.systemui.CoreStartable;
 import com.android.systemui.Dependency;
-import com.android.systemui.SystemUI;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.WMComponent;
 import com.android.systemui.dagger.qualifiers.Main;
@@ -55,6 +56,8 @@ import com.android.systemui.statusbar.policy.UserInfoController;
 import com.android.systemui.tracing.ProtoTracer;
 import com.android.systemui.tracing.nano.SystemUiTraceProto;
 import com.android.wm.shell.ShellCommandHandler;
+import com.android.wm.shell.compatui.CompatUI;
+import com.android.wm.shell.draganddrop.DragAndDrop;
 import com.android.wm.shell.hidedisplaycutout.HideDisplayCutout;
 import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
 import com.android.wm.shell.nano.WmShellTraceProto;
@@ -91,7 +94,7 @@ import javax.inject.Inject;
  *       -> WMShell starts and binds SysUI with Shell components via exported Shell interfaces
  */
 @SysUISingleton
-public final class WMShell extends SystemUI
+public final class WMShell extends CoreStartable
         implements CommandQueue.Callbacks, ProtoTraceable<SystemUiTraceProto> {
     private static final String TAG = WMShell.class.getName();
     private static final int INVALID_SYSUI_STATE_MASK =
@@ -101,6 +104,7 @@ public final class WMShell extends SystemUI
                     | SYSUI_STATE_BOUNCER_SHOWING
                     | SYSUI_STATE_NOTIFICATION_PANEL_EXPANDED
                     | SYSUI_STATE_BUBBLES_EXPANDED
+                    | SYSUI_STATE_BUBBLES_MANAGE_MENU_EXPANDED
                     | SYSUI_STATE_QUICK_SETTINGS_EXPANDED;
 
     // Shell interfaces
@@ -110,6 +114,8 @@ public final class WMShell extends SystemUI
     private final Optional<OneHanded> mOneHandedOptional;
     private final Optional<HideDisplayCutout> mHideDisplayCutoutOptional;
     private final Optional<ShellCommandHandler> mShellCommandHandler;
+    private final Optional<CompatUI> mCompatUIOptional;
+    private final Optional<DragAndDrop> mDragAndDropOptional;
 
     private final CommandQueue mCommandQueue;
     private final ConfigurationController mConfigurationController;
@@ -126,6 +132,7 @@ public final class WMShell extends SystemUI
     private KeyguardUpdateMonitorCallback mSplitScreenKeyguardCallback;
     private KeyguardUpdateMonitorCallback mPipKeyguardCallback;
     private KeyguardUpdateMonitorCallback mOneHandedKeyguardCallback;
+    private KeyguardUpdateMonitorCallback mCompatUIKeyguardCallback;
     private WakefulnessLifecycle.Observer mWakefulnessObserver;
 
     @Inject
@@ -136,6 +143,8 @@ public final class WMShell extends SystemUI
             Optional<OneHanded> oneHandedOptional,
             Optional<HideDisplayCutout> hideDisplayCutoutOptional,
             Optional<ShellCommandHandler> shellCommandHandler,
+            Optional<CompatUI> sizeCompatUIOptional,
+            Optional<DragAndDrop> dragAndDropOptional,
             CommandQueue commandQueue,
             ConfigurationController configurationController,
             KeyguardUpdateMonitor keyguardUpdateMonitor,
@@ -160,6 +169,8 @@ public final class WMShell extends SystemUI
         mWakefulnessLifecycle = wakefulnessLifecycle;
         mProtoTracer = protoTracer;
         mShellCommandHandler = shellCommandHandler;
+        mCompatUIOptional = sizeCompatUIOptional;
+        mDragAndDropOptional = dragAndDropOptional;
         mSysUiMainExecutor = sysUiMainExecutor;
     }
 
@@ -174,6 +185,8 @@ public final class WMShell extends SystemUI
         mSplitScreenOptional.ifPresent(this::initSplitScreen);
         mOneHandedOptional.ifPresent(this::initOneHanded);
         mHideDisplayCutoutOptional.ifPresent(this::initHideDisplayCutout);
+        mCompatUIOptional.ifPresent(this::initCompatUi);
+        mDragAndDropOptional.ifPresent(this::initDragAndDrop);
     }
 
     @VisibleForTesting
@@ -212,7 +225,7 @@ public final class WMShell extends SystemUI
             }
 
             @Override
-            public void onOverlayChanged() {
+            public void onThemeChanged() {
                 pip.onOverlayChanged();
             }
         });
@@ -245,13 +258,15 @@ public final class WMShell extends SystemUI
             public void onKeyguardVisibilityChanged(boolean showing) {
                 splitScreen.onKeyguardVisibilityChanged(showing);
             }
-
-            @Override
-            public void onKeyguardOccludedChanged(boolean occluded) {
-                splitScreen.onKeyguardOccludedChanged(occluded);
-            }
         };
         mKeyguardUpdateMonitor.registerCallback(mSplitScreenKeyguardCallback);
+
+        mWakefulnessLifecycle.addObserver(new WakefulnessLifecycle.Observer() {
+            @Override
+            public void onFinishedWakingUp() {
+                splitScreen.onFinishedWakingUp();
+            }
+        });
     }
 
     @VisibleForTesting
@@ -361,6 +376,31 @@ public final class WMShell extends SystemUI
             @Override
             public void onConfigChanged(Configuration newConfig) {
                 hideDisplayCutout.onConfigurationChanged(newConfig);
+            }
+        });
+    }
+
+    @VisibleForTesting
+    void initCompatUi(CompatUI sizeCompatUI) {
+        mCompatUIKeyguardCallback = new KeyguardUpdateMonitorCallback() {
+            @Override
+            public void onKeyguardOccludedChanged(boolean occluded) {
+                sizeCompatUI.onKeyguardOccludedChanged(occluded);
+            }
+        };
+        mKeyguardUpdateMonitor.registerCallback(mCompatUIKeyguardCallback);
+    }
+
+    void initDragAndDrop(DragAndDrop dragAndDrop) {
+        mConfigurationController.addCallback(new ConfigurationController.ConfigurationListener() {
+            @Override
+            public void onConfigChanged(Configuration newConfig) {
+                dragAndDrop.onConfigChanged(newConfig);
+            }
+
+            @Override
+            public void onThemeChanged() {
+                dragAndDrop.onThemeChanged();
             }
         });
     }

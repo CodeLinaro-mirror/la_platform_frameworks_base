@@ -47,12 +47,13 @@ import com.android.settingslib.Utils;
 import com.android.systemui.DejankUtils;
 import com.android.systemui.Dumpable;
 import com.android.systemui.R;
-import com.android.systemui.animation.Interpolators;
+import com.android.systemui.animation.ShadeInterpolation;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dock.DockManager;
 import com.android.systemui.scrim.ScrimView;
 import com.android.systemui.statusbar.notification.stack.ViewState;
+import com.android.systemui.statusbar.phone.panelstate.PanelExpansionStateManager;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.util.AlarmTimeout;
@@ -176,11 +177,14 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
     private final KeyguardVisibilityCallback mKeyguardVisibilityCallback;
     private final Handler mHandler;
     private final Executor mMainExecutor;
-    private UnlockedScreenOffAnimationController mUnlockedScreenOffAnimationController;
+    private final ScreenOffAnimationController mScreenOffAnimationController;
 
     private GradientColors mColors;
     private boolean mNeedsDrawableColorUpdate;
 
+    private float mAdditionalScrimBehindAlphaKeyguard = 0f;
+    // Combined scrim behind keyguard alpha of default scrim + additional scrim
+    // (if wallpaper dimming is applied).
     private float mScrimBehindAlphaKeyguard = KEYGUARD_SCRIM_ALPHA;
     private final float mDefaultScrimAlpha;
 
@@ -233,7 +237,8 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
             DelayedWakeLock.Builder delayedWakeLockBuilder, Handler handler,
             KeyguardUpdateMonitor keyguardUpdateMonitor, DockManager dockManager,
             ConfigurationController configurationController, @Main Executor mainExecutor,
-            UnlockedScreenOffAnimationController unlockedScreenOffAnimationController) {
+            ScreenOffAnimationController screenOffAnimationController,
+            PanelExpansionStateManager panelExpansionStateManager) {
         mScrimStateListener = lightBarController::setScrimState;
         mDefaultScrimAlpha = BUSY_SCRIM_ALPHA;
 
@@ -243,7 +248,7 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
         mKeyguardVisibilityCallback = new KeyguardVisibilityCallback();
         mHandler = handler;
         mMainExecutor = mainExecutor;
-        mUnlockedScreenOffAnimationController = unlockedScreenOffAnimationController;
+        mScreenOffAnimationController = screenOffAnimationController;
         mTimeTicker = new AlarmTimeout(alarmManager, this::onHideWallpaperTimeout,
                 "hide_aod_wallpaper", mHandler);
         mWakeLock = delayedWakeLockBuilder.setHandler(mHandler).setTag("Scrims").build();
@@ -265,15 +270,13 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
             }
 
             @Override
-            public void onOverlayChanged() {
-                ScrimController.this.onThemeChanged();
-            }
-
-            @Override
             public void onUiModeChanged() {
                 ScrimController.this.onThemeChanged();
             }
         });
+        panelExpansionStateManager.addExpansionListener(
+                (fraction, expanded, tracking) -> setRawPanelExpansionFraction(fraction)
+        );
 
         mColors = new GradientColors();
     }
@@ -437,7 +440,35 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
         return mState;
     }
 
-    protected void setScrimBehindValues(float scrimBehindAlphaKeyguard) {
+    /**
+     * Sets the additional scrim behind alpha keyguard that would be blended with the default scrim
+     * by applying alpha composition on both values.
+     *
+     * @param additionalScrimAlpha alpha value of additional scrim behind alpha keyguard.
+     */
+    protected void setAdditionalScrimBehindAlphaKeyguard(float additionalScrimAlpha) {
+        mAdditionalScrimBehindAlphaKeyguard = additionalScrimAlpha;
+    }
+
+    /**
+     * Applies alpha composition to the default scrim behind alpha keyguard and the additional
+     * scrim alpha, and sets this value to the scrim behind alpha keyguard.
+     * This is used to apply additional keyguard dimming on top of the default scrim alpha value.
+     */
+    protected void applyCompositeAlphaOnScrimBehindKeyguard() {
+        int compositeAlpha = ColorUtils.compositeAlpha(
+                (int) (255 * mAdditionalScrimBehindAlphaKeyguard),
+                (int) (255 * KEYGUARD_SCRIM_ALPHA));
+        float keyguardScrimAlpha = (float) compositeAlpha / 255;
+        setScrimBehindValues(keyguardScrimAlpha);
+    }
+
+    /**
+     * Sets the scrim behind alpha keyguard values. This is how much the keyguard will be dimmed.
+     *
+     * @param scrimBehindAlphaKeyguard alpha value of the scrim behind
+     */
+    private void setScrimBehindValues(float scrimBehindAlphaKeyguard) {
         mScrimBehindAlphaKeyguard = scrimBehindAlphaKeyguard;
         ScrimState[] states = ScrimState.values();
         for (int i = 0; i < states.length; i++) {
@@ -486,11 +517,12 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
      *
      * The expansion fraction is tied to the scrim opacity.
      *
-     * See {@link PanelBar#panelExpansionChanged}.
+     * See {@link PanelExpansionListener#onPanelExpansionChanged}.
      *
      * @param rawPanelExpansionFraction From 0 to 1 where 0 means collapsed and 1 expanded.
      */
-    public void setRawPanelExpansionFraction(
+     @VisibleForTesting
+     void setRawPanelExpansionFraction(
             @FloatRange(from = 0.0, to = 1.0) float rawPanelExpansionFraction) {
         if (isNaN(rawPanelExpansionFraction)) {
             throw new IllegalArgumentException("rawPanelExpansionFraction should not be NaN");
@@ -584,8 +616,7 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
         if (isNaN(expansionFraction)) {
             return;
         }
-        expansionFraction = Interpolators
-                .getNotificationScrimAlpha(expansionFraction, false /* notification */);
+        expansionFraction = ShadeInterpolation.getNotificationScrimAlpha(expansionFraction);
         boolean qsBottomVisible = qsPanelBottomY > 0;
         if (mQsExpansion != expansionFraction || mQsBottomVisible != qsBottomVisible) {
             mQsExpansion = expansionFraction;
@@ -668,7 +699,7 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
         if (mState == ScrimState.UNLOCKED) {
             // Darken scrim as you pull down the shade when unlocked, unless the shade is expanding
             // because we're doing the screen off animation.
-            if (!mUnlockedScreenOffAnimationController.isScreenOffAnimationPlaying()) {
+            if (!mScreenOffAnimationController.shouldExpandNotifications()) {
                 float behindFraction = getInterpolatedFraction();
                 behindFraction = (float) Math.pow(behindFraction, 0.8f);
                 if (mClipsQsScrim) {
@@ -676,10 +707,19 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
                     mNotificationsAlpha = behindFraction * mDefaultScrimAlpha;
                 } else {
                     mBehindAlpha = behindFraction * mDefaultScrimAlpha;
-                    mNotificationsAlpha = mBehindAlpha;
+                    // Delay fade-in of notification scrim a bit further, to coincide with the
+                    // view fade in. Otherwise the empty panel can be quite jarring.
+                    mNotificationsAlpha = MathUtils.constrainedMap(0f, 1f, 0.3f, 0.75f,
+                            mPanelExpansionFraction);
                 }
                 mInFrontAlpha = 0;
             }
+        } else if (mState == ScrimState.AUTH_SCRIMMED_SHADE) {
+            float behindFraction = getInterpolatedFraction();
+            behindFraction = (float) Math.pow(behindFraction, 0.8f);
+
+            mBehindAlpha = behindFraction * mDefaultScrimAlpha;
+            mNotificationsAlpha = mBehindAlpha;
         } else if (mState == ScrimState.KEYGUARD || mState == ScrimState.SHADE_LOCKED
                 || mState == ScrimState.PULSING) {
             Pair<Integer, Float> result = calculateBackStateForState(mState);
@@ -726,7 +766,7 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
             }
             if (mUnOcclusionAnimationRunning && mState == ScrimState.KEYGUARD) {
                 // We're unoccluding the keyguard and don't want to have a bright flash.
-                mNotificationsAlpha = KEYGUARD_SCRIM_ALPHA;
+                mNotificationsAlpha = mScrimBehindAlphaKeyguard;
                 mNotificationsTint = ScrimState.KEYGUARD.getNotifTint();
             }
         }
@@ -769,6 +809,12 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
                     : ScrimState.SHADE_LOCKED.getBehindTint();
             behindTint = ColorUtils.blendARGB(behindTint, stateTint, mQsExpansion);
         }
+
+        // If the keyguard is going away, we should not be opaque.
+        if (mKeyguardStateController.isKeyguardGoingAway()) {
+            behindAlpha = 0f;
+        }
+
         return new Pair<>(behindTint, behindAlpha);
     }
 
@@ -920,8 +966,7 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
     }
 
     private float getInterpolatedFraction() {
-        return Interpolators.getNotificationScrimAlpha(
-                mPanelExpansionFraction, false /* notification */);
+        return ShadeInterpolation.getNotificationScrimAlpha(mPanelExpansionFraction);
     }
 
     private void setScrimAlpha(ScrimView scrim, float alpha) {
@@ -1294,9 +1339,6 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
 
     public void setExpansionAffectsAlpha(boolean expansionAffectsAlpha) {
         mExpansionAffectsAlpha = expansionAffectsAlpha;
-        if (expansionAffectsAlpha) {
-            applyAndDispatchState();
-        }
     }
 
     public void setKeyguardOccluded(boolean keyguardOccluded) {

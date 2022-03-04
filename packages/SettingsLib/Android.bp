@@ -48,6 +48,8 @@ android_library {
         "SettingsLibCollapsingToolbarBaseActivity",
         "SettingsLibTwoTargetPreference",
         "SettingsLibSettingsTransition",
+        "SettingsLibActivityEmbedding",
+        "SettingsLibButtonPreference",
     ],
 
     // ANDROIDMK TRANSLATION ERROR: unsupported assignment to LOCAL_SHARED_JAVA_LIBRARIES

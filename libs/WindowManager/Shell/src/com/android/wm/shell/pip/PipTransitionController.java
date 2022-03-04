@@ -19,7 +19,9 @@ package com.android.wm.shell.pip;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 
 import static com.android.wm.shell.pip.PipAnimationController.TRANSITION_DIRECTION_REMOVE_STACK;
+import static com.android.wm.shell.pip.PipAnimationController.isInPipDirection;
 
+import android.annotation.Nullable;
 import android.app.PictureInPictureParams;
 import android.app.TaskInfo;
 import android.content.ComponentName;
@@ -49,6 +51,7 @@ public abstract class PipTransitionController implements Transitions.TransitionH
     protected final Transitions mTransitions;
     private final Handler mMainHandler;
     private final List<PipTransitionCallback> mPipTransitionCallbacks = new ArrayList<>();
+    protected PipTaskOrganizer mPipOrganizer;
 
     protected final PipAnimationController.PipAnimationCallback mPipAnimationCallback =
             new PipAnimationController.PipAnimationCallback() {
@@ -67,6 +70,10 @@ public abstract class PipTransitionController implements Transitions.TransitionH
                     if (direction == TRANSITION_DIRECTION_REMOVE_STACK) {
                         return;
                     }
+                    if (isInPipDirection(direction) && animator.getContentOverlay() != null) {
+                        mPipOrganizer.fadeOutAndRemoveOverlay(animator.getContentOverlay(),
+                                animator::clearContentOverlay, true /* withStartDelay*/);
+                    }
                     onFinishResize(taskInfo, animator.getDestinationBounds(), direction, tx);
                     sendOnPipTransitionFinished(direction);
                 }
@@ -74,6 +81,11 @@ public abstract class PipTransitionController implements Transitions.TransitionH
                 @Override
                 public void onPipAnimationCancel(TaskInfo taskInfo,
                         PipAnimationController.PipTransitionAnimator animator) {
+                    final int direction = animator.getTransitionDirection();
+                    if (isInPipDirection(direction) && animator.getContentOverlay() != null) {
+                        mPipOrganizer.fadeOutAndRemoveOverlay(animator.getContentOverlay(),
+                                animator::clearContentOverlay, true /* withStartDelay */);
+                    }
                     sendOnPipTransitionCancelled(animator.getTransitionDirection());
                 }
             };
@@ -97,10 +109,18 @@ public abstract class PipTransitionController implements Transitions.TransitionH
     }
 
     /**
-     * Called when the Shell wants to starts a transition/animation.
+     * Called when the Shell wants to start an exit Pip transition/animation.
      */
-    public void startTransition(Rect destinationBounds, WindowContainerTransaction out) {
+    public void startExitTransition(int type, WindowContainerTransaction out,
+            @Nullable Rect destinationBounds) {
         // Default implementation does nothing.
+    }
+
+    /**
+     * Called when the transition animation can't continue (eg. task is removed during
+     * animation)
+     */
+    public void forceFinishTransition() {
     }
 
     public PipTransitionController(PipBoundsState pipBoundsState,
@@ -117,6 +137,10 @@ public abstract class PipTransitionController implements Transitions.TransitionH
         if (Transitions.ENABLE_SHELL_TRANSITIONS) {
             transitions.addHandler(this);
         }
+    }
+
+    void setPipOrganizer(PipTaskOrganizer pto) {
+        mPipOrganizer = pto;
     }
 
     /**

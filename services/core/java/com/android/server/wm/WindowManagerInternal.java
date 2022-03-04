@@ -16,6 +16,9 @@
 
 package com.android.server.wm;
 
+import static java.lang.annotation.RetentionPolicy.SOURCE;
+
+import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.ClipData;
@@ -32,6 +35,7 @@ import android.view.IWindow;
 import android.view.InputChannel;
 import android.view.MagnificationSpec;
 import android.view.RemoteAnimationTarget;
+import android.view.SurfaceControlViewHost;
 import android.view.WindowInfo;
 import android.view.WindowManager.DisplayImePolicy;
 
@@ -39,6 +43,7 @@ import com.android.internal.policy.KeyInterceptionInfo;
 import com.android.server.input.InputManagerService;
 import com.android.server.policy.WindowManagerPolicy;
 
+import java.lang.annotation.Retention;
 import java.util.List;
 import java.util.Set;
 
@@ -104,6 +109,32 @@ public abstract class WindowManagerInternal {
         void logTrace(String where, long loggingTypeFlags, String callingParams,
                 byte[] a11yDump, int callingUid, StackTraceElement[] callStack, long timeStamp,
                 int processId, long threadId, Set<String> ignoreStackEntries);
+
+        /**
+         * Set by the accessibility related modules which want to listen the event dispatched from
+         * window manager. Accessibility modules can use these callbacks to handle some display
+         * manipulations.
+         * @param callbacks The callbacks to invoke.
+         */
+        void setUiChangesForAccessibilityCallbacks(UiChangesForAccessibilityCallbacks callbacks);
+
+        /**
+         * This interface is used by window manager to dispatch some ui change events which may
+         * affect the screen accessibility features.
+         */
+        interface UiChangesForAccessibilityCallbacks {
+            /**
+             * Called when an application requests a rectangle focus on the screen.
+             *
+             * @param displayId The logical display id
+             * @param left The rectangle left.
+             * @param top The rectangle top.
+             * @param right The rectangle right.
+             * @param bottom The rectangle bottom.
+             */
+            void onRectangleOnScreenRequested(int displayId, int left, int top, int right,
+                    int bottom);
+        }
     }
 
     /**
@@ -184,7 +215,7 @@ public abstract class WindowManagerInternal {
         /**
          * Called when a pending app transition gets cancelled.
          *
-         * @param keyguardGoingAway true if keyguard going away transition transition got cancelled.
+         * @param keyguardGoingAway true if keyguard going away transition got cancelled.
          */
         public void onAppTransitionCancelledLocked(boolean keyguardGoingAway) {}
 
@@ -197,6 +228,7 @@ public abstract class WindowManagerInternal {
          * Called when an app transition gets started
          *
          * @param keyguardGoingAway true if keyguard going away transition is started.
+         * @param keyguardOccluding true if keyguard (un)occlude transition is started.
          * @param duration the total duration of the transition
          * @param statusBarAnimationStartTime the desired start time for all visual animations in
          *        the status bar caused by this app transition in uptime millis
@@ -208,8 +240,9 @@ public abstract class WindowManagerInternal {
          * {@link WindowManagerPolicy#FINISH_LAYOUT_REDO_WALLPAPER},
          * or {@link WindowManagerPolicy#FINISH_LAYOUT_REDO_ANIM}.
          */
-        public int onAppTransitionStartingLocked(boolean keyguardGoingAway, long duration,
-                long statusBarAnimationStartTime, long statusBarAnimationDuration) {
+        public int onAppTransitionStartingLocked(boolean keyguardGoingAway,
+                boolean keyguardOccluding, long duration, long statusBarAnimationStartTime,
+                long statusBarAnimationDuration) {
             return 0;
         }
 
@@ -580,6 +613,7 @@ public abstract class WindowManagerInternal {
     /**
      * Checks whether the specified IME client has IME focus or not.
      *
+     * @param windowToken The window token of the input method client
      * @param uid UID of the process to be queried
      * @param pid PID of the process to be queried
      * @param displayId Display ID reported from the client. Note that this method also verifies
@@ -587,7 +621,22 @@ public abstract class WindowManagerInternal {
      * @return {@code true} if the IME client specified with {@code uid}, {@code pid}, and
      *         {@code displayId} has IME focus
      */
-    public abstract boolean isInputMethodClientFocus(int uid, int pid, int displayId);
+    public abstract @ImeClientFocusResult int hasInputMethodClientFocus(IBinder windowToken,
+            int uid, int pid, int displayId);
+
+    @Retention(SOURCE)
+    @IntDef({
+            ImeClientFocusResult.HAS_IME_FOCUS,
+            ImeClientFocusResult.NOT_IME_TARGET_WINDOW,
+            ImeClientFocusResult.DISPLAY_ID_MISMATCH,
+            ImeClientFocusResult.INVALID_DISPLAY_ID
+    })
+    public @interface ImeClientFocusResult {
+        int HAS_IME_FOCUS = 0;
+        int NOT_IME_TARGET_WINDOW = -1;
+        int DISPLAY_ID_MISMATCH = -2;
+        int INVALID_DISPLAY_ID = -3;
+    }
 
     /**
      * Checks whether the given {@code uid} is allowed to use the given {@code displayId} or not.
@@ -739,4 +788,16 @@ public abstract class WindowManagerInternal {
      *         {@code false} otherwise.
      */
     public abstract boolean shouldRestoreImeVisibility(IBinder imeTargetWindowToken);
+
+    /**
+     * Internal methods for other parts of SystemServer to manage
+     * SurfacePackage based overlays on tasks.
+     *
+     * Callers prepare a view hierarchy with SurfaceControlViewHost
+     * and send the package to WM here. The remote view hierarchy will receive
+     * configuration change, lifecycle events, etc, forwarded over the
+     * ISurfaceControlViewHost interface inside the SurfacePackage.
+     */
+    public abstract void addTaskOverlay(int taskId, SurfaceControlViewHost.SurfacePackage overlay);
+    public abstract void removeTaskOverlay(int taskId, SurfaceControlViewHost.SurfacePackage overlay);
 }

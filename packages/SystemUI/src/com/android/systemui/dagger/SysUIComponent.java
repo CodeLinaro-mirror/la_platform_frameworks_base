@@ -23,17 +23,29 @@ import com.android.systemui.InitController;
 import com.android.systemui.SystemUIAppComponentFactory;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.keyguard.KeyguardSliceProvider;
+import com.android.systemui.media.taptotransfer.MediaTttCommandLineHelper;
+import com.android.systemui.media.taptotransfer.receiver.MediaTttChipControllerReceiver;
+import com.android.systemui.media.taptotransfer.sender.MediaTttChipControllerSender;
 import com.android.systemui.people.PeopleProvider;
 import com.android.systemui.statusbar.policy.ConfigurationController;
-import com.android.systemui.util.InjectionInflationController;
+import com.android.systemui.unfold.FoldStateLogger;
+import com.android.systemui.unfold.FoldStateLoggingProvider;
+import com.android.systemui.unfold.SysUIUnfoldComponent;
+import com.android.systemui.unfold.UnfoldLatencyTracker;
+import com.android.systemui.unfold.util.NaturalRotationUnfoldProgressProvider;
 import com.android.wm.shell.ShellCommandHandler;
 import com.android.wm.shell.TaskViewFactory;
 import com.android.wm.shell.apppairs.AppPairs;
+import com.android.wm.shell.back.BackAnimation;
 import com.android.wm.shell.bubbles.Bubbles;
+import com.android.wm.shell.compatui.CompatUI;
+import com.android.wm.shell.displayareahelper.DisplayAreaHelper;
+import com.android.wm.shell.draganddrop.DragAndDrop;
 import com.android.wm.shell.hidedisplaycutout.HideDisplayCutout;
 import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
 import com.android.wm.shell.onehanded.OneHanded;
 import com.android.wm.shell.pip.Pip;
+import com.android.wm.shell.recents.RecentTasks;
 import com.android.wm.shell.splitscreen.SplitScreen;
 import com.android.wm.shell.startingsurface.StartingSurface;
 import com.android.wm.shell.tasksurfacehelper.TaskSurfaceHelper;
@@ -96,7 +108,22 @@ public interface SysUIComponent {
         Builder setStartingSurface(Optional<StartingSurface> s);
 
         @BindsInstance
+        Builder setDisplayAreaHelper(Optional<DisplayAreaHelper> h);
+
+        @BindsInstance
         Builder setTaskSurfaceHelper(Optional<TaskSurfaceHelper> t);
+
+        @BindsInstance
+        Builder setRecentTasks(Optional<RecentTasks> r);
+
+        @BindsInstance
+        Builder setCompatUI(Optional<CompatUI> s);
+
+        @BindsInstance
+        Builder setDragAndDrop(Optional<DragAndDrop> d);
+
+        @BindsInstance
+        Builder setBackAnimation(Optional<BackAnimation> b);
 
         SysUIComponent build();
     }
@@ -105,7 +132,21 @@ public interface SysUIComponent {
      * Initializes all the SysUI components.
      */
     default void init() {
-        // Do nothing
+        // Initialize components that have no direct tie to the dagger dependency graph,
+        // but are critical to this component's operation
+        // TODO(b/205034537): I think this is a good idea?
+        getSysUIUnfoldComponent().ifPresent(c -> {
+            c.getUnfoldLightRevealOverlayAnimation().init();
+            c.getUnfoldTransitionWallpaperController().init();
+        });
+        getNaturalRotationUnfoldProgressProvider().ifPresent(o -> o.init());
+        // No init method needed, just needs to be gotten so that it's created.
+        getMediaTttChipControllerSender();
+        getMediaTttChipControllerReceiver();
+        getMediaTttCommandLineHelper();
+        getUnfoldLatencyTracker().init();
+        getFoldStateLoggingProvider().ifPresent(FoldStateLoggingProvider::init);
+        getFoldStateLogger().ifPresent(FoldStateLogger::init);
     }
 
     /**
@@ -127,6 +168,24 @@ public interface SysUIComponent {
     ContextComponentHelper getContextComponentHelper();
 
     /**
+     * Creates a UnfoldLatencyTracker.
+     */
+    @SysUISingleton
+    UnfoldLatencyTracker getUnfoldLatencyTracker();
+
+    /**
+     * Creates a FoldStateLoggingProvider.
+     */
+    @SysUISingleton
+    Optional<FoldStateLoggingProvider> getFoldStateLoggingProvider();
+
+    /**
+     * Creates a FoldStateLogger.
+     */
+    @SysUISingleton
+    Optional<FoldStateLogger> getFoldStateLogger();
+
+    /**
      * Main dependency providing module.
      */
     @SysUISingleton
@@ -143,9 +202,23 @@ public interface SysUIComponent {
     InitController getInitController();
 
     /**
-     * ViewInstanceCreator generates all Views that need injection.
+     * For devices with a hinge: access objects within this component
      */
-    InjectionInflationController.ViewInstanceCreator.Factory createViewInstanceCreatorFactory();
+    Optional<SysUIUnfoldComponent> getSysUIUnfoldComponent();
+
+    /**
+     * For devices with a hinge: the rotation animation
+     */
+    Optional<NaturalRotationUnfoldProgressProvider> getNaturalRotationUnfoldProgressProvider();
+
+    /** */
+    Optional<MediaTttChipControllerSender> getMediaTttChipControllerSender();
+
+    /** */
+    Optional<MediaTttChipControllerReceiver> getMediaTttChipControllerReceiver();
+
+    /** */
+    Optional<MediaTttCommandLineHelper> getMediaTttCommandLineHelper();
 
     /**
      * Member injection into the supplied argument.

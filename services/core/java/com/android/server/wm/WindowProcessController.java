@@ -512,19 +512,19 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
      */
     @HotPath(caller = HotPath.START_SERVICE)
     public boolean areBackgroundFgsStartsAllowed() {
-        return areBackgroundActivityStartsAllowed(mAtm.getBalAppSwitchesAllowed(),
+        return areBackgroundActivityStartsAllowed(mAtm.getBalAppSwitchesState(),
                 true /* isCheckingForFgsStart */);
     }
 
-    boolean areBackgroundActivityStartsAllowed(boolean appSwitchAllowed) {
-        return areBackgroundActivityStartsAllowed(appSwitchAllowed,
+    boolean areBackgroundActivityStartsAllowed(int appSwitchState) {
+        return areBackgroundActivityStartsAllowed(appSwitchState,
                 false /* isCheckingForFgsStart */);
     }
 
-    private boolean areBackgroundActivityStartsAllowed(boolean appSwitchAllowed,
+    private boolean areBackgroundActivityStartsAllowed(int appSwitchState,
             boolean isCheckingForFgsStart) {
         return mBgLaunchController.areBackgroundActivityStartsAllowed(mPid, mUid, mInfo.packageName,
-                appSwitchAllowed, isCheckingForFgsStart, hasActivityInVisibleTask(),
+                appSwitchState, isCheckingForFgsStart, hasActivityInVisibleTask(),
                 mInstrumentingWithBackgroundActivityStartPrivileges,
                 mAtm.getLastStopAppSwitchesTime(),
                 mLastActivityLaunchTime, mLastActivityFinishTime);
@@ -1110,7 +1110,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     void updateProcessInfo(boolean updateServiceConnectionActivities, boolean activityChange,
             boolean updateOomAdj, boolean addPendingTopUid) {
         if (addPendingTopUid) {
-            mAtm.mAmInternal.addPendingTopUid(mUid, mPid);
+            addToPendingTop();
         }
         if (updateOomAdj) {
             prepareOomAdjustment();
@@ -1119,6 +1119,11 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         final Message m = PooledLambda.obtainMessage(WindowProcessListener::updateProcessInfo,
                 mListener, updateServiceConnectionActivities, activityChange, updateOomAdj);
         mAtm.mH.sendMessage(m);
+    }
+
+    /** Makes the process have top state before oom-adj is computed from a posted message. */
+    void addToPendingTop() {
+        mAtm.mAmInternal.addPendingTopUid(mUid, mPid);
     }
 
     void updateServiceConnectionActivities() {
@@ -1559,7 +1564,9 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
                 // activity as it could lead to incorrect display metrics. For ex, IME services
                 // expect their config to match the config of the display with the IME window
                 // showing.
+                // If the configuration has been overridden by previous activity, empty it.
                 mIsActivityConfigOverrideAllowed = false;
+                unregisterActivityConfigurationListener();
                 break;
             default:
                 break;

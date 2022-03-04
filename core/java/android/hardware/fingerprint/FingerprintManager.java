@@ -58,6 +58,7 @@ import android.os.PowerManager;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.security.identity.IdentityCredential;
+import android.security.identity.PresentationSession;
 import android.util.Slog;
 import android.view.Surface;
 
@@ -183,9 +184,16 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     }
 
     private class OnEnrollCancelListener implements OnCancelListener {
+        private final long mAuthRequestId;
+
+        private OnEnrollCancelListener(long id) {
+            mAuthRequestId = id;
+        }
+
         @Override
         public void onCancel() {
-            cancelEnrollment();
+            Slog.d(TAG, "Cancel fingerprint enrollment requested for: " + mAuthRequestId);
+            cancelEnrollment(mAuthRequestId);
         }
     }
 
@@ -264,9 +272,20 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
          * Get {@link IdentityCredential} object.
          * @return {@link IdentityCredential} object or null if this doesn't contain one.
          * @hide
+         * @deprecated Use {@link PresentationSession} instead of {@link IdentityCredential}.
          */
+        @Deprecated
         public IdentityCredential getIdentityCredential() {
             return super.getIdentityCredential();
+        }
+
+        /**
+         * Get {@link PresentationSession} object.
+         * @return {@link PresentationSession} object or null if this doesn't contain one.
+         * @hide
+         */
+        public PresentationSession getPresentationSession() {
+            return super.getPresentationSession();
         }
     }
 
@@ -531,7 +550,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     @RequiresPermission(anyOf = {USE_BIOMETRIC, USE_FINGERPRINT})
     public void authenticate(@Nullable CryptoObject crypto, @Nullable CancellationSignal cancel,
             int flags, @NonNull AuthenticationCallback callback, @Nullable Handler handler) {
-        authenticate(crypto, cancel, callback, handler, mContext.getUserId());
+        authenticate(crypto, cancel, callback, handler, SENSOR_ID_ANY, mContext.getUserId(), flags);
     }
 
     /**
@@ -541,7 +560,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
     @RequiresPermission(anyOf = {USE_BIOMETRIC, USE_FINGERPRINT})
     public void authenticate(@Nullable CryptoObject crypto, @Nullable CancellationSignal cancel,
             @NonNull AuthenticationCallback callback, Handler handler, int userId) {
-        authenticate(crypto, cancel, callback, handler, SENSOR_ID_ANY, userId);
+        authenticate(crypto, cancel, callback, handler, SENSOR_ID_ANY, userId, 0 /* flags */);
     }
 
     /**
@@ -550,7 +569,8 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
      */
     @RequiresPermission(anyOf = {USE_BIOMETRIC, USE_FINGERPRINT})
     public void authenticate(@Nullable CryptoObject crypto, @Nullable CancellationSignal cancel,
-            @NonNull AuthenticationCallback callback, Handler handler, int sensorId, int userId) {
+            @NonNull AuthenticationCallback callback, Handler handler, int sensorId, int userId,
+            int flags) {
 
         FrameworkStatsLog.write(FrameworkStatsLog.AUTH_DEPRECATED_API_USED,
                 AUTH_DEPRECATED_APIUSED__DEPRECATED_API__API_FINGERPRINT_MANAGER_AUTHENTICATE,
@@ -566,6 +586,8 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
             return;
         }
 
+        final boolean ignoreEnrollmentState = flags == 0 ? false : true;
+
         if (mService != null) {
             try {
                 useHandler(handler);
@@ -573,7 +595,7 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
                 mCryptoObject = crypto;
                 final long operationId = crypto != null ? crypto.getOpId() : 0;
                 final long authId = mService.authenticate(mToken, operationId, sensorId, userId,
-                        mServiceReceiver, mContext.getOpPackageName());
+                        mServiceReceiver, mContext.getOpPackageName(), ignoreEnrollmentState);
                 if (cancel != null) {
                     cancel.setOnCancelListener(new OnAuthenticationCancelListener(authId));
                 }
@@ -643,20 +665,19 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
             throw new IllegalArgumentException("Must supply an enrollment callback");
         }
 
-        if (cancel != null) {
-            if (cancel.isCanceled()) {
-                Slog.w(TAG, "enrollment already canceled");
-                return;
-            } else {
-                cancel.setOnCancelListener(new OnEnrollCancelListener());
-            }
+        if (cancel != null && cancel.isCanceled()) {
+            Slog.w(TAG, "enrollment already canceled");
+            return;
         }
 
         if (mService != null) {
             try {
                 mEnrollmentCallback = callback;
-                mService.enroll(mToken, hardwareAuthToken, userId, mServiceReceiver,
-                        mContext.getOpPackageName(), enrollReason);
+                final long enrollId = mService.enroll(mToken, hardwareAuthToken, userId,
+                        mServiceReceiver, mContext.getOpPackageName(), enrollReason);
+                if (cancel != null) {
+                    cancel.setOnCancelListener(new OnEnrollCancelListener(enrollId));
+                }
             } catch (RemoteException e) {
                 Slog.w(TAG, "Remote exception in enroll: ", e);
                 // Though this may not be a hardware issue, it will cause apps to give up or try
@@ -1299,9 +1320,9 @@ public class FingerprintManager implements BiometricAuthenticator, BiometricFing
         return allSensors.isEmpty() ? null : allSensors.get(0);
     }
 
-    private void cancelEnrollment() {
+    private void cancelEnrollment(long requestId) {
         if (mService != null) try {
-            mService.cancelEnrollment(mToken);
+            mService.cancelEnrollment(mToken, requestId);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

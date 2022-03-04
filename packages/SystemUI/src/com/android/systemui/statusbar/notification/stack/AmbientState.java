@@ -57,8 +57,9 @@ public class AmbientState {
     private int mTopPadding;
     private boolean mShadeExpanded;
     private float mMaxHeadsUpTranslation;
-    private boolean mDismissAllInProgress;
+    private boolean mClearAllInProgress;
     private int mLayoutMinHeight;
+    private int mLayoutMaxHeight;
     private NotificationShelf mShelf;
     private int mZDistanceBetweenElements;
     private int mBaseZHeight;
@@ -72,7 +73,6 @@ public class AmbientState {
     private boolean mPanelFullWidth;
     private boolean mPulsing;
     private boolean mUnlockHintRunning;
-    private int mIntrinsicPadding;
     private float mHideAmount;
     private boolean mAppearing;
     private float mPulseHeight = MAX_PULSE_HEIGHT;
@@ -82,6 +82,7 @@ public class AmbientState {
     private float mAppearFraction;
     private boolean mIsShadeOpening;
     private float mOverExpansion;
+    private int mStackTopMargin;
 
     /** Distance of top of notifications panel from top of screen. */
     private float mStackY = 0;
@@ -94,7 +95,6 @@ public class AmbientState {
 
     /** Height of the notifications panel without top padding when expansion completes. */
     private float mStackEndHeight;
-    private float mTransitionToFullShadeAmount;
 
     /**
      * @return Height of the notifications panel without top padding when expansion completes.
@@ -327,6 +327,14 @@ public class AmbientState {
         mLayoutHeight = layoutHeight;
     }
 
+    public void setLayoutMaxHeight(int maxLayoutHeight) {
+        mLayoutMaxHeight = maxLayoutHeight;
+    }
+
+    public int getLayoutMaxHeight() {
+        return mLayoutMaxHeight;
+    }
+
     public float getTopPadding() {
         return mTopPadding;
     }
@@ -376,12 +384,12 @@ public class AmbientState {
         return mMaxHeadsUpTranslation;
     }
 
-    public void setDismissAllInProgress(boolean dismissAllInProgress) {
-        mDismissAllInProgress = dismissAllInProgress;
+    public void setClearAllInProgress(boolean clearAllInProgress) {
+        mClearAllInProgress = clearAllInProgress;
     }
 
-    public boolean isDismissAllInProgress() {
-        return mDismissAllInProgress;
+    public boolean isClearAllInProgress() {
+        return mClearAllInProgress;
     }
 
     public void setLayoutMinHeight(int layoutMinHeight) {
@@ -493,14 +501,6 @@ public class AmbientState {
         return mUnlockHintRunning;
     }
 
-    public void setIntrinsicPadding(int intrinsicPadding) {
-        mIntrinsicPadding = intrinsicPadding;
-    }
-
-    public int getIntrinsicPadding() {
-        return mIntrinsicPadding;
-    }
-
     /**
      * @return whether a view is dozing and not pulsing right now
      */
@@ -577,27 +577,8 @@ public class AmbientState {
         mOnPulseHeightChangedListener = onPulseHeightChangedListener;
     }
 
-    public Runnable getOnPulseHeightChangedListener() {
-        return mOnPulseHeightChangedListener;
-    }
-
     public void setTrackedHeadsUpRow(ExpandableNotificationRow row) {
         mTrackedHeadsUpRow = row;
-    }
-
-    /**
-     * Set the amount of pixels we have currently dragged down if we're transitioning to the full
-     * shade. 0.0f means we're not transitioning yet.
-     */
-    public void setTransitionToFullShadeAmount(float transitionToFullShadeAmount) {
-        mTransitionToFullShadeAmount = transitionToFullShadeAmount;
-    }
-
-    /**
-     * get
-     */
-    public float getTransitionToFullShadeAmount() {
-        return mTransitionToFullShadeAmount;
     }
 
     /**
@@ -621,5 +602,13 @@ public class AmbientState {
 
     public void setHasAlertEntries(boolean hasAlertEntries) {
         mHasAlertEntries = hasAlertEntries;
+    }
+
+    public void setStackTopMargin(int stackTopMargin) {
+        mStackTopMargin = stackTopMargin;
+    }
+
+    public int getStackTopMargin() {
+        return mStackTopMargin;
     }
 }

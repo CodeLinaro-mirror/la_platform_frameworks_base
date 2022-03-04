@@ -27,6 +27,7 @@ import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_ORIENTATION;
 import static com.android.server.policy.WindowManagerPolicy.WindowManagerFuncs.LID_OPEN;
 import static com.android.server.wm.DisplayRotationProto.FIXED_TO_USER_ROTATION_MODE;
 import static com.android.server.wm.DisplayRotationProto.FROZEN_TO_USER_ROTATION;
+import static com.android.server.wm.DisplayRotationProto.IS_FIXED_TO_USER_ROTATION;
 import static com.android.server.wm.DisplayRotationProto.LAST_ORIENTATION;
 import static com.android.server.wm.DisplayRotationProto.ROTATION;
 import static com.android.server.wm.DisplayRotationProto.USER_ROTATION;
@@ -61,6 +62,7 @@ import android.util.proto.ProtoOutputStream;
 import android.view.IDisplayWindowRotationCallback;
 import android.view.IWindowManager;
 import android.view.Surface;
+import android.window.TransitionRequestInfo;
 import android.window.WindowContainerTransaction;
 
 import com.android.internal.R;
@@ -292,7 +294,7 @@ public class DisplayRotation {
                 currentUserRes.getBoolean(R.bool.config_allowSeamlessRotationDespiteNavBarMoving);
     }
 
-    void configure(int width, int height, int shortSizeDp, int longSizeDp) {
+    void configure(int width, int height) {
         final Resources res = mContext.getResources();
         if (width > height) {
             mLandscapeRotation = Surface.ROTATION_0;
@@ -507,10 +509,13 @@ public class DisplayRotation {
         mDisplayContent.setLayoutNeeded();
 
         if (useShellTransitions) {
-            final boolean wasInTransition = mDisplayContent.inTransition();
+            final boolean wasCollecting = mDisplayContent.mTransitionController.isCollecting();
+            final TransitionRequestInfo.DisplayChange change = wasCollecting ? null
+                    : new TransitionRequestInfo.DisplayChange(mDisplayContent.getDisplayId(),
+                            oldRotation, mRotation);
             mDisplayContent.requestChangeTransitionIfNeeded(
-                    ActivityInfo.CONFIG_WINDOW_CONFIGURATION);
-            if (wasInTransition) {
+                    ActivityInfo.CONFIG_WINDOW_CONFIGURATION, change);
+            if (wasCollecting) {
                 // Use remote-rotation infra since the transition has already been requested
                 // TODO(shell-transitions): Remove this once lifecycle management can cover all
                 //                          rotation cases.
@@ -594,12 +599,8 @@ public class DisplayRotation {
                 // Go through all tasks and collect them before the rotation
                 // TODO(shell-transitions): move collect() to onConfigurationChange once wallpaper
                 //       handling is synchronized.
-                mDisplayContent.forAllTasks(task -> {
-                    if (task.isVisible()) {
-                        mDisplayContent.mTransitionController.collect(task);
-                    }
-                });
-                mDisplayContent.getInsetsStateController().addProvidersToTransition();
+                mDisplayContent.mTransitionController.collectForDisplayChange(mDisplayContent,
+                        null /* use collecting transition */);
             }
             mService.mAtmService.deferWindowLayout();
             try {
@@ -637,7 +638,7 @@ public class DisplayRotation {
         }, true /* traverseTopToBottom */);
         mSeamlessRotationCount = 0;
         mRotatingSeamlessly = false;
-        mDisplayContent.finishFadeRotationAnimationIfPossible();
+        mDisplayContent.finishAsyncRotationIfPossible();
     }
 
     private void prepareSeamlessRotation() {
@@ -728,7 +729,7 @@ public class DisplayRotation {
                     "Performing post-rotate rotation after seamless rotation");
             // Finish seamless rotation.
             mRotatingSeamlessly = false;
-            mDisplayContent.finishFadeRotationAnimationIfPossible();
+            mDisplayContent.finishAsyncRotationIfPossible();
 
             updateRotationAndSendNewConfigIfChanged();
         }
@@ -1330,7 +1331,7 @@ public class DisplayRotation {
             case ActivityInfo.SCREEN_ORIENTATION_USER:
             case ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED:
                 // Works with any rotation except upside down.
-                return (preferredRotation >= 0) && (preferredRotation != mUpsideDownRotation);
+                return (preferredRotation >= 0) && (preferredRotation != Surface.ROTATION_180);
         }
 
         return false;
@@ -1527,6 +1528,7 @@ public class DisplayRotation {
         proto.write(USER_ROTATION, getUserRotation());
         proto.write(FIXED_TO_USER_ROTATION_MODE, mFixedToUserRotation);
         proto.write(LAST_ORIENTATION, mLastOrientation);
+        proto.write(IS_FIXED_TO_USER_ROTATION, isFixedToUserRotation());
         proto.end(token);
     }
 

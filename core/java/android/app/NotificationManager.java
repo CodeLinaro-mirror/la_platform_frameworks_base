@@ -2199,8 +2199,11 @@ public class NotificationManager {
                     + conversationSendersToString(priorityConversationSenders)
                     + ",suppressedVisualEffects="
                     + suppressedEffectsToString(suppressedVisualEffects)
-                    + ",areChannelsBypassingDnd=" + (((state & STATE_CHANNELS_BYPASSING_DND) != 0)
-                        ? "true" : "false")
+                    + ",areChannelsBypassingDnd=" + (state == STATE_UNSET
+                        ? "unset"
+                        : ((state & STATE_CHANNELS_BYPASSING_DND) != 0)
+                                ? "true"
+                                : "false")
                     + "]";
         }
 
@@ -2577,6 +2580,10 @@ public class NotificationManager {
      * Contacts database. See also {@link Person.Builder#setUri} and
      * {@link android.provider.ContactsContract.Contacts#CONTENT_LOOKUP_URI}
      * for more information.
+     * </p>
+     * <p>
+     * Callers of this method must have notification listener access, permission to read contacts,
+     * or have system permissions.
      * </p>
      * <p>
      * NOTE: This method calls into Contacts, which may take some time, and should not be called

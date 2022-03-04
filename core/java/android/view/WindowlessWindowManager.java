@@ -19,7 +19,6 @@ package android.view;
 import android.annotation.Nullable;
 import android.content.res.Configuration;
 import android.graphics.PixelFormat;
-import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.Region;
 import android.os.IBinder;
@@ -28,6 +27,7 @@ import android.os.RemoteException;
 import android.util.Log;
 import android.util.MergedConfiguration;
 import android.window.ClientWindowFrames;
+import android.window.IOnBackInvokedCallback;
 
 import java.util.HashMap;
 import java.util.Objects;
@@ -87,7 +87,7 @@ public class WindowlessWindowManager implements IWindowSession {
         mHostInputToken = hostInputToken;
     }
 
-    protected void setConfiguration(Configuration configuration) {
+    public void setConfiguration(Configuration configuration) {
         mConfiguration.setTo(configuration);
     }
 
@@ -263,10 +263,10 @@ public class WindowlessWindowManager implements IWindowSession {
 
     @Override
     public int relayout(IWindow window, WindowManager.LayoutParams inAttrs,
-            int requestedWidth, int requestedHeight, int viewFlags, int flags, long frameNumber,
+            int requestedWidth, int requestedHeight, int viewFlags, int flags,
             ClientWindowFrames outFrames, MergedConfiguration mergedConfiguration,
             SurfaceControl outSurfaceControl, InsetsState outInsetsState,
-            InsetsSourceControl[] outActiveControls, Point outSurfaceSize) {
+            InsetsSourceControl[] outActiveControls) {
         final State state;
         synchronized (this) {
             state = mStateForWindow.get(window.asBinder());
@@ -285,7 +285,6 @@ public class WindowlessWindowManager implements IWindowSession {
         WindowManager.LayoutParams attrs = state.mParams;
 
         if (viewFlags == View.VISIBLE) {
-            outSurfaceSize.set(getSurfaceWidth(attrs), getSurfaceHeight(attrs));
             t.setOpaque(sc, isOpaque(attrs)).show(sc).apply();
             outSurfaceControl.copyFrom(sc, "WindowlessWindowManager.relayout");
         } else {
@@ -330,6 +329,7 @@ public class WindowlessWindowManager implements IWindowSession {
     public void setInsets(android.view.IWindow window, int touchableInsets,
             android.graphics.Rect contentInsets, android.graphics.Rect visibleInsets,
             android.graphics.Region touchableRegion) {
+        setTouchRegion(window.asBinder(), touchableRegion);
     }
 
     @Override
@@ -458,6 +458,11 @@ public class WindowlessWindowManager implements IWindowSession {
     }
 
     @Override
+    public void reportKeepClearAreasChanged(android.view.IWindow window,
+            java.util.List<android.graphics.Rect> exclusionRects) {
+    }
+
+    @Override
     public void grantInputChannel(int displayId, SurfaceControl surface, IWindow window,
             IBinder hostInputToken, int flags, int privateFlags, int type,
             InputChannel outInputChannel) {
@@ -473,17 +478,6 @@ public class WindowlessWindowManager implements IWindowSession {
         return null;
     }
 
-    private int getSurfaceWidth(WindowManager.LayoutParams attrs) {
-      final Rect surfaceInsets = attrs.surfaceInsets;
-      return surfaceInsets != null
-          ? attrs.width + surfaceInsets.left + surfaceInsets.right : attrs.width;
-    }
-    private int getSurfaceHeight(WindowManager.LayoutParams attrs) {
-      final Rect surfaceInsets = attrs.surfaceInsets;
-      return surfaceInsets != null
-          ? attrs.height + surfaceInsets.top + surfaceInsets.bottom : attrs.height;
-    }
-
     @Override
     public void grantEmbeddedWindowFocus(IWindow callingWindow, IBinder targetInputToken,
                                          boolean grantFocus) {
@@ -493,6 +487,10 @@ public class WindowlessWindowManager implements IWindowSession {
     public void generateDisplayHash(IWindow window, Rect boundsInWindow, String hashAlgorithm,
             RemoteCallback callback) {
     }
+
+    @Override
+    public void setOnBackInvokedCallback(IWindow iWindow,
+            IOnBackInvokedCallback iOnBackInvokedCallback) throws RemoteException { }
 
     @Override
     public boolean dropForAccessibility(IWindow window, int x, int y) {

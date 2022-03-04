@@ -49,6 +49,7 @@ import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.ResultReceiver;
 import android.os.ShellCallback;
+import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.Log;
@@ -71,6 +72,11 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * @hide
@@ -135,15 +141,29 @@ public class ContextHubService extends IContextHubService.Stub {
     // The manager for the internal nanoapp state cache
     private final NanoAppStateManager mNanoAppStateManager = new NanoAppStateManager();
 
+    // An executor and the future object for scheduling timeout timers
+    private final ScheduledThreadPoolExecutor mDailyMetricTimer =
+            new ScheduledThreadPoolExecutor(1);
+
+
+    // The period of the recurring time
+    private static final int PERIOD_METRIC_QUERY_DAYS = 1;
+
     // True if WiFi is available for the Context Hub
     private boolean mIsWifiAvailable = false;
     private boolean mIsWifiScanningEnabled = false;
     private boolean mIsWifiMainEnabled = false;
 
+    // A hashmap used to record if a contexthub is waiting for daily query
+    private Set<Integer> mMetricQueryPendingContextHubIds =
+            Collections.newSetFromMap(new ConcurrentHashMap<Integer, Boolean>());
+
     // Lock object for sendWifiSettingUpdate()
     private final Object mSendWifiSettingUpdateLock = new Object();
 
     private final SensorPrivacyManagerInternal mSensorPrivacyManagerInternal;
+
+    private final Map<Integer, AtomicLong> mLastRestartTimestampMap = new HashMap<>();
 
     /**
      * Class extending the callback to register with a Context Hub.
@@ -184,6 +204,7 @@ public class ContextHubService extends IContextHubService.Stub {
     }
 
     public ContextHubService(Context context) {
+        long startTimeNs = SystemClock.elapsedRealtimeNanos();
         mContext = context;
 
         mContextHubWrapper = getContextHubWrapper();
@@ -205,6 +226,9 @@ public class ContextHubService extends IContextHubService.Stub {
             Log.e(TAG, "RemoteException while getting Context Hub info", e);
             hubInfo = new Pair(Collections.emptyList(), Collections.emptyList());
         }
+        long bootTimeNs = SystemClock.elapsedRealtimeNanos() - startTimeNs;
+        int numContextHubs = hubInfo.first.size();
+        ContextHubStatsLog.write(ContextHubStatsLog.CONTEXT_HUB_BOOTED, bootTimeNs, numContextHubs);
 
         mContextHubIdToInfoMap = Collections.unmodifiableMap(
                 ContextHubServiceUtil.createContextHubInfoMap(hubInfo.first));
@@ -218,6 +242,9 @@ public class ContextHubService extends IContextHubService.Stub {
 
         HashMap<Integer, IContextHubClient> defaultClientMap = new HashMap<>();
         for (int contextHubId : mContextHubIdToInfoMap.keySet()) {
+            mLastRestartTimestampMap.put(contextHubId,
+                    new AtomicLong(SystemClock.elapsedRealtimeNanos()));
+
             ContextHubInfo contextHubInfo = mContextHubIdToInfoMap.get(contextHubId);
             IContextHubClient client = mClientManager.registerClient(
                     contextHubInfo, createDefaultClientCallback(contextHubId),
@@ -305,6 +332,8 @@ public class ContextHubService extends IContextHubService.Stub {
                     });
 
         }
+
+        scheduleDailyMetricSnapshot();
     }
 
     /**
@@ -695,6 +724,13 @@ public class ContextHubService extends IContextHubService.Stub {
      */
     private void handleHubEventCallback(int contextHubId, int eventType) {
         if (eventType == CONTEXT_HUB_EVENT_RESTARTED) {
+            long now = SystemClock.elapsedRealtimeNanos();
+            long lastRestartTimeNs = mLastRestartTimestampMap.get(contextHubId).getAndSet(now);
+            ContextHubStatsLog.write(
+                    ContextHubStatsLog.CONTEXT_HUB_RESTARTED,
+                    TimeUnit.NANOSECONDS.toMillis(now - lastRestartTimeNs),
+                    contextHubId);
+
             sendLocationSettingUpdate();
             sendWifiSettingUpdate(true /* forceUpdate */);
             sendAirplaneModeSettingUpdate();
@@ -728,6 +764,18 @@ public class ContextHubService extends IContextHubService.Stub {
      * @param nanoappStateList the list of loaded nanoapps
      */
     private void handleQueryAppsCallback(int contextHubId, List<NanoAppState> nanoappStateList) {
+        if (mMetricQueryPendingContextHubIds.contains(contextHubId)) {
+            for (NanoAppState nanoappState : nanoappStateList) {
+                ContextHubStatsLog.write(
+                        ContextHubStatsLog.CONTEXT_HUB_LOADED_NANOAPP_SNAPSHOT_REPORTED,
+                        contextHubId, nanoappState.getNanoAppId(),
+                        (int) nanoappState.getNanoAppVersion());
+            }
+            mMetricQueryPendingContextHubIds.remove(contextHubId);
+            if (mMetricQueryPendingContextHubIds.isEmpty()) {
+                scheduleDailyMetricSnapshot();
+            }
+        }
         mNanoAppStateManager.updateCache(contextHubId, nanoappStateList);
         mTransactionManager.onQueryResponse(nanoappStateList);
     }
@@ -1116,6 +1164,23 @@ public class ContextHubService extends IContextHubService.Stub {
         sendMicrophoneDisableSettingUpdate(isEnabled);
     }
 
+    /**
+     *  Invokes a daily timer to query all context hubs
+     */
+    private void scheduleDailyMetricSnapshot() {
+        Runnable queryAllContextHub = () -> {
+            for (int contextHubId : mContextHubIdToInfoMap.keySet()) {
+                mMetricQueryPendingContextHubIds.add(contextHubId);
+                queryNanoAppsInternal(contextHubId);
+            }
+        };
+        try {
+            mDailyMetricTimer.schedule(queryAllContextHub, PERIOD_METRIC_QUERY_DAYS,
+                    TimeUnit.DAYS);
+        } catch (Exception e) {
+            Log.e(TAG, "Error when schedule a timer", e);
+        }
+    }
 
     private String getCallingPackageName() {
         return mContext.getPackageManager().getNameForUid(Binder.getCallingUid());

@@ -87,6 +87,7 @@ import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
+import android.view.OnBackInvokedDispatcher;
 import android.view.PendingInsetsController;
 import android.view.ThreadedRenderer;
 import android.view.View;
@@ -108,6 +109,7 @@ import android.view.animation.AnimationUtils;
 import android.view.animation.Interpolator;
 import android.widget.FrameLayout;
 import android.widget.PopupWindow;
+import android.window.WindowOnBackInvokedDispatcher;
 
 import com.android.internal.R;
 import com.android.internal.graphics.drawable.BackgroundBlurDrawable;
@@ -121,7 +123,7 @@ import com.android.internal.view.menu.MenuHelper;
 import com.android.internal.widget.ActionBarContextView;
 import com.android.internal.widget.BackgroundFallback;
 import com.android.internal.widget.DecorCaptionView;
-import com.android.internal.widget.FloatingToolbar;
+import com.android.internal.widget.floatingtoolbar.FloatingToolbar;
 
 import java.util.List;
 import java.util.function.Consumer;
@@ -270,8 +272,6 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
     private Drawable mCaptionBackgroundDrawable;
     private Drawable mUserCaptionBackgroundDrawable;
 
-    private float mAvailableWidth;
-
     String mLogTag = TAG;
     private final Rect mFloatingInsets = new Rect();
     private boolean mApplyFloatingVerticalInsets = false;
@@ -296,6 +296,7 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
         return true;
     };
     private Consumer<Boolean> mCrossWindowBlurEnabledListener;
+    private final WindowOnBackInvokedDispatcher mOnBackInvokedDispatcher;
 
     DecorView(Context context, int featureId, PhoneWindow window,
             WindowManager.LayoutParams params) {
@@ -315,8 +316,6 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
         mSemiTransparentBarColor = context.getResources().getColor(
                 R.color.system_bar_background_semi_transparent, null /* theme */);
 
-        updateAvailableWidth();
-
         setWindow(window);
 
         updateLogTag(params);
@@ -326,6 +325,7 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
         initResizingPaints();
 
         mLegacyNavigationBarBackgroundPaint.setColor(Color.BLACK);
+        mOnBackInvokedDispatcher = new WindowOnBackInvokedDispatcher();
     }
 
     void setBackgroundFallback(@Nullable Drawable fallbackDrawable) {
@@ -697,7 +697,8 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        final DisplayMetrics metrics = getContext().getResources().getDisplayMetrics();
+        final Resources res = getContext().getResources();
+        final DisplayMetrics metrics = res.getDisplayMetrics();
         final boolean isPortrait =
                 getResources().getConfiguration().orientation == ORIENTATION_PORTRAIT;
 
@@ -767,17 +768,19 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
 
         if (!fixedWidth && widthMode == AT_MOST) {
             final TypedValue tv = isPortrait ? mWindow.mMinWidthMinor : mWindow.mMinWidthMajor;
+            final float availableWidth = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
+                    res.getConfiguration().screenWidthDp, metrics);
             if (tv.type != TypedValue.TYPE_NULL) {
                 final int min;
                 if (tv.type == TypedValue.TYPE_DIMENSION) {
-                    min = (int)tv.getDimension(metrics);
+                    min = (int) tv.getDimension(metrics);
                 } else if (tv.type == TypedValue.TYPE_FRACTION) {
-                    min = (int)tv.getFraction(mAvailableWidth, mAvailableWidth);
+                    min = (int) tv.getFraction(availableWidth, availableWidth);
                 } else {
                     min = 0;
                 }
                 if (DEBUG_MEASURE) Log.d(mLogTag, "Adjust for min width: " + min + ", value::"
-                        + tv.coerceToString() + ", mAvailableWidth=" + mAvailableWidth);
+                        + tv.coerceToString() + ", mAvailableWidth=" + availableWidth);
 
                 if (width < min) {
                     widthMeasureSpec = MeasureSpec.makeMeasureSpec(min, EXACTLY);
@@ -1870,6 +1873,7 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
         }
 
         mPendingInsetsController.detach();
+        mOnBackInvokedDispatcher.detachFromWindow();
     }
 
     @Override
@@ -1912,6 +1916,11 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
     @Override
     public PendingInsetsController providePendingInsetsController() {
         return mPendingInsetsController;
+    }
+
+    @Override
+    public WindowOnBackInvokedDispatcher provideWindowOnBackInvokedDispatcher() {
+        return mOnBackInvokedDispatcher;
     }
 
     private ActionMode createActionMode(
@@ -2144,7 +2153,6 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
 
         updateDecorCaptionStatus(newConfig);
 
-        updateAvailableWidth();
         initializeElevation();
     }
 
@@ -2369,6 +2377,7 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
                 }
             }
         }
+        mOnBackInvokedDispatcher.clear();
     }
 
     @Override
@@ -2616,12 +2625,6 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
         mLogTag = TAG + "[" + getTitleSuffix(params) + "]";
     }
 
-    private void updateAvailableWidth() {
-        Resources res = getResources();
-        mAvailableWidth = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
-                res.getConfiguration().screenWidthDp, res.getDisplayMetrics());
-    }
-
     /**
      * @hide
      */
@@ -2654,6 +2657,15 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
         } else {
             return mPendingInsetsController;
         }
+    }
+
+    /**
+     * Returns the {@link OnBackInvokedDispatcher} on the decor view.
+     */
+    @Override
+    @Nullable
+    public OnBackInvokedDispatcher getOnBackInvokedDispatcher() {
+        return mOnBackInvokedDispatcher;
     }
 
     @Override

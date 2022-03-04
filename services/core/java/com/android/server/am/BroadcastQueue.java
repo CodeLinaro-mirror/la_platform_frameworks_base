@@ -20,7 +20,13 @@ import static android.os.Process.ZYGOTE_POLICY_FLAG_EMPTY;
 import static android.os.Process.ZYGOTE_POLICY_FLAG_LATENCY_SENSITIVE;
 import static android.text.TextUtils.formatSimple;
 
-import static com.android.server.am.ActivityManagerDebugConfig.*;
+import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_BROADCAST;
+import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_BROADCAST_DEFERRAL;
+import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_BROADCAST_LIGHT;
+import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_MU;
+import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_PERMISSIONS_REVIEW;
+import static com.android.server.am.ActivityManagerDebugConfig.POSTFIX_BROADCAST;
+import static com.android.server.am.ActivityManagerDebugConfig.POSTFIX_MU;
 
 import android.annotation.Nullable;
 import android.app.ActivityManager;
@@ -29,6 +35,7 @@ import android.app.AppOpsManager;
 import android.app.BroadcastOptions;
 import android.app.IApplicationThread;
 import android.app.PendingIntent;
+import android.app.RemoteServiceException.CannotDeliverBroadcastException;
 import android.app.usage.UsageEvents.Event;
 import android.content.ComponentName;
 import android.content.ContentResolver;
@@ -60,6 +67,7 @@ import android.util.SparseIntArray;
 import android.util.TimeUtils;
 import android.util.proto.ProtoOutputStream;
 
+import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.FrameworkStatsLog;
 
 import java.io.FileDescriptor;
@@ -342,6 +350,11 @@ public final class BroadcastQueue {
                 prr.removeCurReceiver(r);
             }
         }
+
+        // if something bad happens here, launch the app and try again
+        if (app.isKilled()) {
+            throw new RemoteException("app gets killed during broadcasting");
+        }
     }
 
     public boolean sendPendingBroadcastsLocked(ProcessRecord app) {
@@ -607,7 +620,8 @@ public final class BroadcastQueue {
                     synchronized (mService) {
                         Slog.w(TAG, "Can't deliver broadcast to " + app.processName
                                 + " (pid " + app.getPid() + "). Crashing it.");
-                        app.scheduleCrashLocked("can't deliver broadcast");
+                        app.scheduleCrashLocked("can't deliver broadcast",
+                                CannotDeliverBroadcastException.TYPE_ID, /* extras=*/ null);
                     }
                     throw ex;
                 }
@@ -624,6 +638,12 @@ public final class BroadcastQueue {
     private void deliverToRegisteredReceiverLocked(BroadcastRecord r,
             BroadcastFilter filter, boolean ordered, int index) {
         boolean skip = false;
+        if (r.options != null && !r.options.testRequireCompatChange(filter.owningUid)) {
+            Slog.w(TAG, "Compat change filtered: broadcasting " + r.intent.toString()
+                    + " to uid " + filter.owningUid + " due to compat change "
+                    + r.options.getRequireCompatChangeId());
+            skip = true;
+        }
         if (!mService.validateAssociationAllowedLocked(r.callerPackage, r.callingUid,
                 filter.packageName, filter.owningUid)) {
             Slog.w(TAG, "Association not allowed: broadcasting "
@@ -762,6 +782,54 @@ public final class BroadcastQueue {
                 skip = true;
             }
         }
+        // Check that the receiver does *not* have any excluded permissions
+        if (!skip && r.excludedPermissions != null && r.excludedPermissions.length > 0) {
+            for (int i = 0; i < r.excludedPermissions.length; i++) {
+                String excludedPermission = r.excludedPermissions[i];
+                final int perm = mService.checkComponentPermission(excludedPermission,
+                        filter.receiverList.pid, filter.receiverList.uid, -1, true);
+
+                int appOp = AppOpsManager.permissionToOpCode(excludedPermission);
+                if (appOp != AppOpsManager.OP_NONE) {
+                    // When there is an app op associated with the permission,
+                    // skip when both the permission and the app op are
+                    // granted.
+                    if ((perm == PackageManager.PERMISSION_GRANTED) && (
+                            mService.getAppOpsManager().checkOpNoThrow(appOp,
+                                    filter.receiverList.uid,
+                                    filter.packageName)
+                                    == AppOpsManager.MODE_ALLOWED)) {
+                        Slog.w(TAG, "Appop Denial: receiving "
+                                + r.intent.toString()
+                                + " to " + filter.receiverList.app
+                                + " (pid=" + filter.receiverList.pid
+                                + ", uid=" + filter.receiverList.uid + ")"
+                                + " excludes appop " + AppOpsManager.permissionToOp(
+                                excludedPermission)
+                                + " due to sender " + r.callerPackage
+                                + " (uid " + r.callingUid + ")");
+                        skip = true;
+                        break;
+                    }
+                } else {
+                    // When there is no app op associated with the permission,
+                    // skip when permission is granted.
+                    if (perm == PackageManager.PERMISSION_GRANTED) {
+                        Slog.w(TAG, "Permission Denial: receiving "
+                                + r.intent.toString()
+                                + " to " + filter.receiverList.app
+                                + " (pid=" + filter.receiverList.pid
+                                + ", uid=" + filter.receiverList.uid + ")"
+                                + " excludes " + excludedPermission
+                                + " due to sender " + r.callerPackage
+                                + " (uid " + r.callingUid + ")");
+                        skip = true;
+                        break;
+                    }
+                }
+            }
+        }
+
         // If the broadcast also requires an app op check that as well.
         if (!skip && r.appOp != AppOpsManager.OP_NONE
                 && mService.getAppOpsManager().noteOpNoThrow(r.appOp,
@@ -781,7 +849,7 @@ public final class BroadcastQueue {
 
         // Ensure that broadcasts are only sent to other apps if they are explicitly marked as
         // exported, or are System level broadcasts
-        if (!skip && !filter.exported && Process.SYSTEM_UID != r.callingUid
+        if (!skip && !filter.exported && !Process.isCoreUid(r.callingUid)
                 && filter.receiverList.uid != r.callingUid) {
 
             Slog.w(TAG, "Exported Denial: sending "
@@ -1399,6 +1467,13 @@ public final class BroadcastQueue {
                     + "] broadcasting " + broadcastDescription(r, component));
             skip = true;
         }
+        if (brOptions != null &&
+                !brOptions.testRequireCompatChange(info.activityInfo.applicationInfo.uid)) {
+            Slog.w(TAG, "Compat change filtered: broadcasting " + broadcastDescription(r, component)
+                    + " to uid " + info.activityInfo.applicationInfo.uid + " due to compat change "
+                    + r.options.getRequireCompatChangeId());
+            skip = true;
+        }
         if (!skip && !mService.validateAssociationAllowedLocked(r.callerPackage, r.callingUid,
                 component.getPackageName(), info.activityInfo.applicationInfo.uid)) {
             Slog.w(TAG, "Association not allowed: broadcasting "
@@ -1588,17 +1663,23 @@ public final class BroadcastQueue {
                     perm = PackageManager.PERMISSION_DENIED;
                 }
 
-                if (perm == PackageManager.PERMISSION_GRANTED) {
-                    skip = true;
-                    break;
-                }
-
                 int appOp = AppOpsManager.permissionToOpCode(excludedPermission);
                 if (appOp != AppOpsManager.OP_NONE) {
-                    if (mService.getAppOpsManager().checkOpNoThrow(appOp,
+                    // When there is an app op associated with the permission,
+                    // skip when both the permission and the app op are
+                    // granted.
+                    if ((perm == PackageManager.PERMISSION_GRANTED) && (
+                                mService.getAppOpsManager().checkOpNoThrow(appOp,
                                 info.activityInfo.applicationInfo.uid,
                                 info.activityInfo.packageName)
-                            == AppOpsManager.MODE_ALLOWED) {
+                            == AppOpsManager.MODE_ALLOWED)) {
+                        skip = true;
+                        break;
+                    }
+                } else {
+                    // When there is no app op associated with the permission,
+                    // skip when permission is granted.
+                    if (perm == PackageManager.PERMISSION_GRANTED) {
                         skip = true;
                         break;
                     }
@@ -1752,7 +1833,7 @@ public final class BroadcastQueue {
 
     private boolean noteOpForManifestReceiver(int appOp, BroadcastRecord r, ResolveInfo info,
             ComponentName component) {
-        if (info.activityInfo.attributionTags == null) {
+        if (ArrayUtils.isEmpty(info.activityInfo.attributionTags)) {
             return noteOpForManifestReceiverInner(appOp, r, info, component, null);
         } else {
             // Attribution tags provided, noteOp each tag

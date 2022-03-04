@@ -16,6 +16,8 @@
 
 package android.app;
 
+import static android.app.ActivityManager.StopUserOnSwitch;
+
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
@@ -69,6 +71,9 @@ public abstract class ActivityManagerInternal {
     }
 
     // Access modes for handleIncomingUser.
+    /**
+     * Allows access to a caller with {@link android.Manifest.permission#INTERACT_ACROSS_USERS}.
+     */
     public static final int ALLOW_NON_FULL = 0;
     /**
      * Allows access to a caller with {@link android.Manifest.permission#INTERACT_ACROSS_USERS}
@@ -76,13 +81,18 @@ public abstract class ActivityManagerInternal {
      * Otherwise, {@link android.Manifest.permission#INTERACT_ACROSS_USERS_FULL} is required.
      */
     public static final int ALLOW_NON_FULL_IN_PROFILE = 1;
+    /**
+     * Allows access to a caller only if it has the full
+     * {@link android.Manifest.permission#INTERACT_ACROSS_USERS_FULL}.
+     */
     public static final int ALLOW_FULL_ONLY = 2;
     /**
      * Allows access to a caller with {@link android.Manifest.permission#INTERACT_ACROSS_PROFILES}
-     * or {@link android.Manifest.permission#INTERACT_ACROSS_USERS} if in the same profile group.
-     * Otherwise, {@link android.Manifest.permission#INTERACT_ACROSS_USERS_FULL} is required.
+     * if in the same profile group.
+     * Otherwise, {@link android.Manifest.permission#INTERACT_ACROSS_USERS} is required and suffices
+     * as in {@link #ALLOW_NON_FULL}.
      */
-    public static final int ALLOW_ALL_PROFILE_PERMISSIONS_IN_PROFILE = 3;
+    public static final int ALLOW_PROFILES_OR_NON_FULL = 3;
 
     /**
      * Returns profile information in free form string in two separate strings.
@@ -518,6 +528,11 @@ public abstract class ActivityManagerInternal {
             Notification notification, int id, String pkg, @UserIdInt int userId);
 
     /**
+     * Un-foreground all foreground services in the given app.
+     */
+    public abstract void makeServicesNonForeground(String pkg, @UserIdInt int userId);
+
+    /**
      * If the given app has any FGSs whose notifications are in the given channel,
      * stop them.
      */
@@ -679,6 +694,12 @@ public abstract class ActivityManagerInternal {
      */
     public abstract void setVoiceInteractionManagerProvider(
             @Nullable VoiceInteractionManagerProvider provider);
+
+    /**
+     * Sets whether the current foreground user (and its profiles) should be stopped after switched
+     * out.
+     */
+    public abstract void setStopUserOnSwitch(@StopUserOnSwitch int value);
 
     /**
      * Provides the interface to communicate between voice interaction manager service and

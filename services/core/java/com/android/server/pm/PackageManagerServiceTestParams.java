@@ -91,6 +91,7 @@ public final class PackageManagerServiceTestParams {
     public ViewCompiler viewCompiler;
     public @Nullable String retailDemoPackage;
     public @Nullable String recentsPackage;
+    public @Nullable String ambientContextDetectionPackage;
     public ComponentName resolveComponentName;
     public ArrayMap<String, AndroidPackage> packages;
     public boolean enableFreeCacheV2;
@@ -100,5 +101,16 @@ public final class PackageManagerServiceTestParams {
     public boolean isEngBuild;
     public boolean isUserDebugBuild;
     public int sdkInt = Build.VERSION.SDK_INT;
+    public BackgroundDexOptService backgroundDexOptService;
     public final String incrementalVersion = Build.VERSION.INCREMENTAL;
+    public BroadcastHelper broadcastHelper;
+    public AppDataHelper appDataHelper;
+    public InstallPackageHelper installPackageHelper;
+    public RemovePackageHelper removePackageHelper;
+    public InitAndSystemPackageHelper initAndSystemPackageHelper;
+    public DeletePackageHelper deletePackageHelper;
+    public PreferredActivityHelper preferredActivityHelper;
+    public ResolveIntentHelper resolveIntentHelper;
+    public DexOptHelper dexOptHelper;
+    public SuspendPackageHelper suspendPackageHelper;
 }

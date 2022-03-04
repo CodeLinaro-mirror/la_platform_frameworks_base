@@ -90,6 +90,7 @@ import android.transition.Scene;
 import android.transition.TransitionManager;
 import android.util.ArrayMap;
 import android.util.AttributeSet;
+import android.util.Dumpable;
 import android.util.EventLog;
 import android.util.Log;
 import android.util.PrintWriterPrinter;
@@ -110,6 +111,8 @@ import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.MotionEvent;
+import android.view.OnBackInvokedDispatcher;
+import android.view.OnBackInvokedDispatcherOwner;
 import android.view.RemoteAnimationDefinition;
 import android.view.SearchEvent;
 import android.view.View;
@@ -145,6 +148,7 @@ import com.android.internal.app.IVoiceInteractor;
 import com.android.internal.app.ToolbarActionBar;
 import com.android.internal.app.WindowDecorActionBar;
 import com.android.internal.policy.PhoneWindow;
+import com.android.internal.util.dump.DumpableContainerImpl;
 
 import dalvik.system.VMRuntime;
 
@@ -734,7 +738,8 @@ public class Activity extends ContextThemeWrapper
         Window.Callback, KeyEvent.Callback,
         OnCreateContextMenuListener, ComponentCallbacks2,
         Window.OnWindowDismissedCallback,
-        ContentCaptureManager.ContentCaptureClient {
+        ContentCaptureManager.ContentCaptureClient,
+        OnBackInvokedDispatcherOwner {
     private static final String TAG = "Activity";
     private static final boolean DEBUG_LIFECYCLE = false;
 
@@ -953,6 +958,9 @@ public class Activity extends ContextThemeWrapper
     private UiTranslationController mUiTranslationController;
 
     private SplashScreen mSplashScreen;
+
+    @Nullable
+    private DumpableContainerImpl mDumpableContainer;
 
     private final WindowControllerCallback mWindowControllerCallback =
             new WindowControllerCallback() {
@@ -1516,7 +1524,10 @@ public class Activity extends ContextThemeWrapper
     }
 
     private void dispatchActivityConfigurationChanged() {
-        getApplication().dispatchActivityConfigurationChanged(this);
+        // In case the new config comes before mApplication is assigned.
+        if (getApplication() != null) {
+            getApplication().dispatchActivityConfigurationChanged(this);
+        }
         Object[] callbacks = collectActivityLifecycleCallbacks();
         if (callbacks != null) {
             for (int i = 0; i < callbacks.length; i++) {
@@ -6191,18 +6202,20 @@ public class Activity extends ContextThemeWrapper
     @Nullable
     public Uri getReferrer() {
         Intent intent = getIntent();
-        try {
-            Uri referrer = intent.getParcelableExtra(Intent.EXTRA_REFERRER);
-            if (referrer != null) {
-                return referrer;
+        if (intent != null) {
+            try {
+                Uri referrer = intent.getParcelableExtra(Intent.EXTRA_REFERRER);
+                if (referrer != null) {
+                    return referrer;
+                }
+                String referrerName = intent.getStringExtra(Intent.EXTRA_REFERRER_NAME);
+                if (referrerName != null) {
+                    return Uri.parse(referrerName);
+                }
+            } catch (BadParcelableException e) {
+                Log.w(TAG, "Cannot read referrer from intent;"
+                        + " intent extras contain unknown custom Parcelable objects");
             }
-            String referrerName = intent.getStringExtra(Intent.EXTRA_REFERRER_NAME);
-            if (referrerName != null) {
-                return Uri.parse(referrerName);
-            }
-        } catch (BadParcelableException e) {
-            Log.w(TAG, "Cannot read referrer from intent;"
-                    + " intent extras contain unknown custom Parcelable objects");
         }
         if (mReferrer != null) {
             return new Uri.Builder().scheme("android-app").authority(mReferrer).build();
@@ -7079,8 +7092,23 @@ public class Activity extends ContextThemeWrapper
         dumpInner(prefix, fd, writer, args);
     }
 
+    /**
+     * See {@link android.util.DumpableContainer#addDumpable(Dumpable)}.
+     *
+     * @hide
+     */
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+    public final boolean addDumpable(@NonNull Dumpable dumpable) {
+        if (mDumpableContainer == null) {
+            mDumpableContainer = new DumpableContainerImpl();
+        }
+        return mDumpableContainer.addDumpable(dumpable);
+    }
+
     void dumpInner(@NonNull String prefix, @Nullable FileDescriptor fd,
             @NonNull PrintWriter writer, @Nullable String[] args) {
+        String innerPrefix = prefix + "  ";
+
         if (args != null && args.length > 0) {
             // Handle special cases
             switch (args[0]) {
@@ -7093,12 +7121,33 @@ public class Activity extends ContextThemeWrapper
                 case "--translation":
                     dumpUiTranslation(prefix, writer);
                     return;
+                case "--list-dumpables":
+                    if (mDumpableContainer == null) {
+                        writer.print(prefix); writer.println("No dumpables");
+                        return;
+                    }
+                    mDumpableContainer.listDumpables(prefix, writer);
+                    return;
+                case "--dump-dumpable":
+                    if (args.length == 1) {
+                        writer.println("--dump-dumpable requires the dumpable name");
+                        return;
+                    }
+                    if (mDumpableContainer == null) {
+                        writer.println("no dumpables");
+                        return;
+                    }
+                    // Strips --dump-dumpable NAME
+                    String[] prunedArgs = new String[args.length - 2];
+                    System.arraycopy(args, 2, prunedArgs, 0, prunedArgs.length);
+                    mDumpableContainer.dumpOneDumpable(prefix, writer, args[1], prunedArgs);
+                    return;
             }
         }
+
         writer.print(prefix); writer.print("Local Activity ");
                 writer.print(Integer.toHexString(System.identityHashCode(this)));
                 writer.println(" State:");
-        String innerPrefix = prefix + "  ";
         writer.print(innerPrefix); writer.print("mResumed=");
                 writer.print(mResumed); writer.print(" mStopped=");
                 writer.print(mStopped); writer.print(" mFinished=");
@@ -7136,6 +7185,10 @@ public class Activity extends ContextThemeWrapper
         dumpUiTranslation(prefix, writer);
 
         ResourcesManager.getInstance().dump(prefix, writer);
+
+        if (mDumpableContainer != null) {
+            mDumpableContainer.dumpAllDumpables(prefix, writer, args);
+        }
     }
 
     void dumpContentCaptureManager(String prefix, PrintWriter writer) {
@@ -8624,5 +8677,23 @@ public class Activity extends ContextThemeWrapper
             final Window w = getWindow();
             return (w != null && w.peekDecorView() != null);
         }
+    }
+
+    /**
+     * Returns the {@link OnBackInvokedDispatcher} instance associated with the window that this
+     * activity is attached to.
+     *
+     * Returns null if the activity is not attached to a window with a decor.
+     */
+    @Nullable
+    @Override
+    public OnBackInvokedDispatcher getOnBackInvokedDispatcher() {
+        if (mWindow != null) {
+            View decorView = mWindow.getDecorView();
+            if (decorView != null) {
+                return decorView.getOnBackInvokedDispatcher();
+            }
+        }
+        return null;
     }
 }

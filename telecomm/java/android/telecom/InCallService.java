@@ -30,9 +30,12 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.RemoteException;
 import android.view.Surface;
 
 import com.android.internal.os.SomeArgs;
+import com.android.internal.telecom.ICallEndpointCallback;
+import com.android.internal.telecom.ICallEndpointSession;
 import com.android.internal.telecom.IInCallAdapter;
 import com.android.internal.telecom.IInCallService;
 
@@ -69,7 +72,14 @@ import java.util.List;
  * them know that the app has crashed and that their call was continued using the pre-loaded dialer
  * app.
  * <p>
- * Further, the pre-loaded dialer will ALWAYS be used when the user places an emergency call.
+ * The pre-loaded dialer will ALWAYS be used when the user places an emergency call, even if your
+ * app fills the {@link android.app.role.RoleManager#ROLE_DIALER} role.  To ensure an optimal
+ * experience when placing an emergency call, the default dialer should ALWAYS use
+ * {@link android.telecom.TelecomManager#placeCall(Uri, Bundle)} to place calls (including
+ * emergency calls).  This ensures that the platform is able to verify that the request came from
+ * the default dialer.  If a non-preloaded dialer app uses {@link Intent#ACTION_CALL} to place an
+ * emergency call, it will be raised to the preloaded dialer app using {@link Intent#ACTION_DIAL}
+ * for confirmation; this is a suboptimal user experience.
  * <p>
  * Below is an example manifest registration for an {@code InCallService}. The meta-data
  * {@link TelecomManager#METADATA_IN_CALL_SERVICE_UI} indicates that this particular
@@ -251,6 +261,10 @@ public abstract class InCallService extends Service {
     private static final int MSG_ON_RTT_INITIATION_FAILURE = 11;
     private static final int MSG_ON_HANDOVER_FAILED = 12;
     private static final int MSG_ON_HANDOVER_COMPLETE = 13;
+    private static final int MSG_ON_PUSH_FAILED = 14;
+    private static final int MSG_ON_PULL_FAILED = 15;
+    private static final int MSG_ON_ANSWER_EXTERNAL_FAILED = 16;
+    private static final int MSG_ON_CALL_ENDPOINT_ACTIVATION_REQUEST = 17;
 
     /** Default Handler used to consolidate binder method calls onto a single thread. */
     private final Handler mHandler = new Handler(Looper.getMainLooper()) {
@@ -332,6 +346,66 @@ public abstract class InCallService extends Service {
                     mPhone.internalOnHandoverComplete(callId);
                     break;
                 }
+                case MSG_ON_PUSH_FAILED: {
+                    SomeArgs args = (SomeArgs) msg.obj;
+                    try {
+                        String callId = (String) args.arg1;
+                        CallEndpoint callEndpoint = (CallEndpoint) args.arg2;
+                        int reason = (int) args.arg3;
+                        mPhone.internalOnCallPushFailed(callId, callEndpoint, reason);
+                    } finally {
+                        args.recycle();
+                    }
+                    break;
+                }
+                case MSG_ON_PULL_FAILED: {
+                    SomeArgs args = (SomeArgs) msg.obj;
+                    try {
+                        String callId = (String) args.arg1;
+                        int reason = (int) args.arg2;
+                        mPhone.internalOnCallPullFailed(callId, reason);
+                    } finally {
+                        args.recycle();
+                    }
+                    break;
+                }
+                case MSG_ON_ANSWER_EXTERNAL_FAILED: {
+                    SomeArgs args = (SomeArgs) msg.obj;
+                    try {
+                        String callId = (String) args.arg1;
+                        CallEndpoint callEndpoint = (CallEndpoint) args.arg2;
+                        int reason = (int) args.arg3;
+                        mPhone.internalOnAnswerFailed(callId, callEndpoint, reason);
+                    } finally {
+                        args.recycle();
+                    }
+                    break;
+                }
+                case MSG_ON_CALL_ENDPOINT_ACTIVATION_REQUEST: {
+                    SomeArgs args = (SomeArgs) msg.obj;
+                    try {
+                        CallEndpoint callEndpoint = (CallEndpoint) args.arg1;
+                        ICallEndpointSession iCallEndpointSession =
+                                (ICallEndpointSession) args.arg2;
+                        try {
+                            mCallEndpointCallback = onCallEndpointActivationRequested(callEndpoint,
+                                    new CallEndpointSession(iCallEndpointSession));
+                        } catch (UnsupportedOperationException e) {
+                            // This InCallService neglected to implement
+                            // onCallEndpointActivationRequested, immediately signal back to Telecom
+                            // that the activation failed.
+                            try {
+                                iCallEndpointSession.setCallEndpointSessionActivationFailed(
+                                        CallEndpointSession.ACTIVATION_FAILURE_UNAVAILABLE);
+                            } catch (RemoteException re) {
+                                // Ignore
+                            }
+                        }
+                    } finally {
+                        args.recycle();
+                    }
+                    break;
+                }
                 default:
                     break;
             }
@@ -343,6 +417,36 @@ public abstract class InCallService extends Service {
         @Override
         public void setInCallAdapter(IInCallAdapter inCallAdapter) {
             mHandler.obtainMessage(MSG_SET_IN_CALL_ADAPTER, inCallAdapter).sendToTarget();
+        }
+
+        @Override
+        public ICallEndpointCallback requestCallEndpointActivation(CallEndpoint callEndpoint,
+                ICallEndpointSession callEndpointSession) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = callEndpoint;
+            args.arg2 = callEndpointSession;
+            mHandler.obtainMessage(MSG_ON_CALL_ENDPOINT_ACTIVATION_REQUEST, args).sendToTarget();
+
+            return new ICallEndpointCallback.Stub() {
+                @Override
+                public void onCallEndpointSessionActivationTimeout() throws RemoteException {
+                    if (mCallEndpointCallback != null) {
+                        mCallEndpointCallback.onCallEndpointSessionActivationTimeout();
+                    }
+                }
+
+                @Override
+                public void onCallEndpointSessionDeactivated() throws RemoteException {
+                    if (mCallEndpointCallback != null) {
+                        mCallEndpointCallback.onCallEndpointSessionDeactivated();
+                    }
+                }
+
+                @Override
+                public IBinder asBinder() {
+                    return this;
+                }
+            };
         }
 
         @Override
@@ -417,6 +521,32 @@ public abstract class InCallService extends Service {
         public void onHandoverComplete(String callId) {
             mHandler.obtainMessage(MSG_ON_HANDOVER_COMPLETE, callId).sendToTarget();
         }
+
+        @Override
+        public void onCallPullFailed(String callId, int reason) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = callId;
+            args.arg2 = reason;
+            mHandler.obtainMessage(MSG_ON_PULL_FAILED, args).sendToTarget();
+        }
+
+        @Override
+        public void onCallPushFailed(String callId, CallEndpoint endpoint, int reason) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = callId;
+            args.arg2 = endpoint;
+            args.arg3 = reason;
+            mHandler.obtainMessage(MSG_ON_PUSH_FAILED, args).sendToTarget();
+        }
+
+        @Override
+        public void onAnswerFailed(String callId, CallEndpoint endpoint, int reason) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = callId;
+            args.arg2 = endpoint;
+            args.arg3 = reason;
+            mHandler.obtainMessage(MSG_ON_ANSWER_EXTERNAL_FAILED, args).sendToTarget();
+        }
     }
 
     private Phone.Listener mPhoneListener = new Phone.Listener() {
@@ -463,6 +593,8 @@ public abstract class InCallService extends Service {
     };
 
     private Phone mPhone;
+    private CallEndpointSession mCallEndpointSession;
+    private CallEndpointCallback mCallEndpointCallback;
 
     public InCallService() {
     }
@@ -485,6 +617,14 @@ public abstract class InCallService extends Service {
             oldPhone.removeListener(mPhoneListener);
 
             onPhoneDestroyed(oldPhone);
+        }
+
+        if (mCallEndpointCallback != null) {
+            mCallEndpointCallback = null;
+        }
+
+        if (mCallEndpointSession != null) {
+            mCallEndpointSession = null;
         }
 
         return false;
@@ -694,6 +834,21 @@ public abstract class InCallService extends Service {
      * @param extras Any associated extras.
      */
     public void onConnectionEvent(Call call, String event, Bundle extras) {
+    }
+
+    /**
+     * To handle the request from telecom to activate an endpoint session. Streaming app with
+     * meta-data {@link TelecomManager#METADATA_STREAMING_TETHERED_CALLS}.
+     * @param endpoint The endpoint which is to be activated.
+     * @param session An instance of {@link CallEndpointSession} to let streaming app report updates
+     *                of the endpoint.
+     * @return CallEndpointCallback The implementation provided by streaming app. Telecom use this
+     *                              to report events related to the call endpoint session.
+     */
+    public @NonNull CallEndpointCallback onCallEndpointActivationRequested(
+            @NonNull CallEndpoint endpoint, @NonNull CallEndpointSession session)
+            throws UnsupportedOperationException {
+        throw new UnsupportedOperationException();
     }
 
     /**

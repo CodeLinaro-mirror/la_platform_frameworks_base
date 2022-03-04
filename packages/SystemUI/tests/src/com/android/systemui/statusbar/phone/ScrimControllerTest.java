@@ -55,6 +55,7 @@ import com.android.systemui.DejankUtils;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.dock.DockManager;
 import com.android.systemui.scrim.ScrimView;
+import com.android.systemui.statusbar.phone.panelstate.PanelExpansionStateManager;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.util.concurrency.FakeExecutor;
@@ -111,7 +112,11 @@ public class ScrimControllerTest extends SysuiTestCase {
     @Mock
     private ConfigurationController mConfigurationController;
     @Mock
-    private UnlockedScreenOffAnimationController mUnlockedScreenOffAnimationController;
+    private ScreenOffAnimationController mScreenOffAnimationController;
+    // TODO(b/204991468): Use a real PanelExpansionStateManager object once this bug is fixed. (The
+    //   event-dispatch-on-registration pattern caused some of these unit tests to fail.)
+    @Mock
+    private PanelExpansionStateManager mPanelExpansionStateManager;
 
 
     private static class AnimatorListener implements Animator.AnimatorListener {
@@ -224,7 +229,8 @@ public class ScrimControllerTest extends SysuiTestCase {
                 mDozeParameters, mAlarmManager, mKeyguardStateController, mDelayedWakeLockBuilder,
                 new FakeHandler(mLooper.getLooper()), mKeyguardUpdateMonitor,
                 mDockManager, mConfigurationController, new FakeExecutor(new FakeSystemClock()),
-                mUnlockedScreenOffAnimationController);
+                mScreenOffAnimationController,
+                mPanelExpansionStateManager);
         mScrimController.setScrimVisibleListener(visible -> mScrimVisibility = visible);
         mScrimController.attachViews(mScrimBehind, mNotificationsScrim, mScrimInFront);
         mScrimController.setAnimatorListener(mAnimatorListener);
@@ -641,8 +647,15 @@ public class ScrimControllerTest extends SysuiTestCase {
         mScrimController.setRawPanelExpansionFraction(0.3f);
         assertScrimAlpha(Map.of(
                 mScrimInFront, TRANSPARENT,
-                mNotificationsScrim, SEMI_TRANSPARENT,
+                mNotificationsScrim, TRANSPARENT,
                 mScrimBehind, SEMI_TRANSPARENT));
+
+        // Then, notification scrim should fade in
+        mScrimController.setRawPanelExpansionFraction(0.7f);
+        assertScrimAlpha(Map.of(
+                mScrimInFront, TRANSPARENT,
+                mNotificationsScrim, SEMI_TRANSPARENT,
+                mScrimBehind, OPAQUE));
     }
 
 
@@ -1063,7 +1076,7 @@ public class ScrimControllerTest extends SysuiTestCase {
         HashSet<ScrimState> regularStates = new HashSet<>(Arrays.asList(
                 ScrimState.UNINITIALIZED, ScrimState.KEYGUARD, ScrimState.BOUNCER,
                 ScrimState.BOUNCER_SCRIMMED, ScrimState.BRIGHTNESS_MIRROR, ScrimState.UNLOCKED,
-                ScrimState.SHADE_LOCKED, ScrimState.AUTH_SCRIMMED));
+                ScrimState.SHADE_LOCKED, ScrimState.AUTH_SCRIMMED, ScrimState.AUTH_SCRIMMED_SHADE));
 
         for (ScrimState state : ScrimState.values()) {
             if (!lowPowerModeStates.contains(state) && !regularStates.contains(state)) {
@@ -1087,7 +1100,46 @@ public class ScrimControllerTest extends SysuiTestCase {
     }
 
     @Test
+    public void testAuthScrim_notifScrimOpaque_whenShadeFullyExpanded() {
+        // GIVEN device has an activity showing ('UNLOCKED' state can occur on the lock screen
+        // with the camera app occluding the keyguard)
+        mScrimController.transitionTo(ScrimState.UNLOCKED);
+        mScrimController.setRawPanelExpansionFraction(1);
+        // notifications scrim alpha change require calling setQsPosition
+        mScrimController.setQsPosition(0, 300);
+        finishAnimationsImmediately();
+
+        // WHEN the user triggers the auth bouncer
+        mScrimController.transitionTo(ScrimState.AUTH_SCRIMMED_SHADE);
+        finishAnimationsImmediately();
+
+        assertEquals("Behind scrim should be opaque",
+                mScrimBehind.getViewAlpha(), 1, 0.0);
+        assertEquals("Notifications scrim should be opaque",
+                mNotificationsScrim.getViewAlpha(), 1, 0.0);
+    }
+
+    @Test
+    public void testAuthScrimKeyguard() {
+        // GIVEN device is on the keyguard
+        mScrimController.transitionTo(ScrimState.KEYGUARD);
+        finishAnimationsImmediately();
+
+        // WHEN the user triggers the auth bouncer
+        mScrimController.transitionTo(ScrimState.AUTH_SCRIMMED);
+        finishAnimationsImmediately();
+
+        // THEN the front scrim is updated and the KEYGUARD scrims are the same as the
+        // KEYGUARD scrim state
+        assertScrimAlpha(Map.of(
+                mScrimInFront, SEMI_TRANSPARENT,
+                mScrimBehind, SEMI_TRANSPARENT,
+                mNotificationsScrim, TRANSPARENT));
+    }
+
+    @Test
     public void testScrimsVisible_whenShadeVisible() {
+        mScrimController.setClipsQsScrim(true);
         mScrimController.transitionTo(ScrimState.UNLOCKED);
         mScrimController.setRawPanelExpansionFraction(0.3f);
         // notifications scrim alpha change require calling setQsPosition

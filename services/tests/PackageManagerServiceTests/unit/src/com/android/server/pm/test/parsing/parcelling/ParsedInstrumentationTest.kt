@@ -16,14 +16,19 @@
 
 package com.android.server.pm.test.parsing.parcelling
 
-import android.content.pm.parsing.component.ParsedInstrumentation
+import com.android.server.pm.pkg.component.ParsedInstrumentation
+import com.android.server.pm.pkg.component.ParsedInstrumentationImpl
 import kotlin.contracts.ExperimentalContracts
 
 @ExperimentalContracts
-class ParsedInstrumentationTest : ParsedComponentTest(ParsedInstrumentation::class) {
+class ParsedInstrumentationTest : ParsedComponentTest(
+    ParsedInstrumentation::class,
+    ParsedInstrumentationImpl::class
+) {
 
-    override val defaultImpl = ParsedInstrumentation()
-    override val creator = ParsedInstrumentation.CREATOR
+    override val defaultImpl =
+        ParsedInstrumentationImpl()
+    override val creator = ParsedInstrumentationImpl.CREATOR
 
     override val subclassBaseParams = listOf(
         ParsedInstrumentation::getTargetPackage,

@@ -79,7 +79,7 @@ public abstract class InputEventReceiver {
         mReceiverPtr = nativeInit(new WeakReference<InputEventReceiver>(this),
                 inputChannel, mMessageQueue);
 
-        mCloseGuard.open("dispose");
+        mCloseGuard.open("InputEventReceiver.dispose");
     }
 
     @Override
@@ -139,11 +139,9 @@ public abstract class InputEventReceiver {
      * @param hasFocus if true, the window associated with this input channel has just received
      *                 focus
      *                 if false, the window associated with this input channel has just lost focus
-     * @param inTouchMode if true, the device is in touch mode
-     *                    if false, the device is not in touch mode
      */
     // Called from native code.
-    public void onFocusEvent(boolean hasFocus, boolean inTouchMode) {
+    public void onFocusEvent(boolean hasFocus) {
     }
 
     /**
@@ -174,10 +172,10 @@ public abstract class InputEventReceiver {
      * Called when the display for the window associated with the input channel has entered or
      * exited touch mode.
      *
-     * @param isInTouchMode {@code true} if the display showing the window associated with the
-     *                                  input channel entered touch mode.
+     * @param inTouchMode {@code true} if the display showing the window associated with the
+     *                    input channel entered touch mode or {@code false} if left touch mode
      */
-    public void onTouchModeChanged(boolean isInTouchMode) {
+    public void onTouchModeChanged(boolean inTouchMode) {
     }
 
     /**

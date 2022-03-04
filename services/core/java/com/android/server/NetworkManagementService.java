@@ -20,12 +20,12 @@ import static android.Manifest.permission.CONNECTIVITY_INTERNAL;
 import static android.Manifest.permission.NETWORK_SETTINGS;
 import static android.Manifest.permission.OBSERVE_NETWORK_POLICY;
 import static android.Manifest.permission.SHUTDOWN;
+import static android.net.ConnectivityManager.FIREWALL_CHAIN_DOZABLE;
+import static android.net.ConnectivityManager.FIREWALL_CHAIN_POWERSAVE;
+import static android.net.ConnectivityManager.FIREWALL_CHAIN_RESTRICTED;
+import static android.net.ConnectivityManager.FIREWALL_CHAIN_STANDBY;
 import static android.net.INetd.FIREWALL_ALLOWLIST;
-import static android.net.INetd.FIREWALL_CHAIN_DOZABLE;
 import static android.net.INetd.FIREWALL_CHAIN_NONE;
-import static android.net.INetd.FIREWALL_CHAIN_POWERSAVE;
-import static android.net.INetd.FIREWALL_CHAIN_RESTRICTED;
-import static android.net.INetd.FIREWALL_CHAIN_STANDBY;
 import static android.net.INetd.FIREWALL_DENYLIST;
 import static android.net.INetd.FIREWALL_RULE_ALLOW;
 import static android.net.INetd.FIREWALL_RULE_DENY;
@@ -39,11 +39,12 @@ import static android.net.NetworkStats.STATS_PER_UID;
 import static android.net.NetworkStats.TAG_NONE;
 import static android.net.TrafficStats.UID_TETHERING;
 
-import static com.android.server.NetworkManagementSocketTagger.PROP_QTAGUID_ENABLED;
+import static com.android.net.module.util.NetworkStatsUtils.LIMIT_GLOBAL_ALERT;
 
 import android.annotation.NonNull;
 import android.app.ActivityManager;
 import android.content.Context;
+import android.net.ConnectivityManager;
 import android.net.INetd;
 import android.net.INetdUnsolicitedEventListener;
 import android.net.INetworkManagementEventObserver;
@@ -59,9 +60,6 @@ import android.net.NetworkStats;
 import android.net.RouteInfo;
 import android.net.TetherStatsParcel;
 import android.net.UidRangeParcel;
-import android.net.shared.NetdUtils;
-import android.net.shared.RouteUtils;
-import android.net.shared.RouteUtils.ModifyOperation;
 import android.net.util.NetdService;
 import android.os.BatteryStats;
 import android.os.Binder;
@@ -75,7 +73,6 @@ import android.os.ServiceManager;
 import android.os.ServiceSpecificException;
 import android.os.StrictMode;
 import android.os.SystemClock;
-import android.os.SystemProperties;
 import android.os.Trace;
 import android.text.TextUtils;
 import android.util.Log;
@@ -88,6 +85,8 @@ import com.android.internal.app.IBatteryStats;
 import com.android.internal.util.DumpUtils;
 import com.android.internal.util.HexDump;
 import com.android.internal.util.Preconditions;
+import com.android.net.module.util.NetdUtils;
+import com.android.net.module.util.NetdUtils.ModifyOperation;
 
 import com.google.android.collect.Maps;
 
@@ -136,12 +135,6 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
     private static final boolean DBG = Log.isLoggable(TAG, Log.DEBUG);
 
     private static final int MAX_UID_RANGES_PER_COMMAND = 10;
-
-    /**
-     * Name representing {@link #setGlobalAlert(long)} limit when delivered to
-     * {@link INetworkManagementEventObserver#limitReached(String, String)}.
-     */
-    public static final String LIMIT_GLOBAL_ALERT = "globalAlert";
 
     static final int DAEMON_MSG_MOBILE_CONN_REAL_TIME_INFO = 1;
 
@@ -446,9 +439,6 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
 
         // push any existing quota or UID rules
         synchronized (mQuotaLock) {
-
-            // Netd unconditionally enable bandwidth control
-            SystemProperties.set(PROP_QTAGUID_ENABLED, "1");
 
             mStrictEnabled = true;
 
@@ -831,13 +821,13 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
     @Override
     public void addRoute(int netId, RouteInfo route) {
         NetworkStack.checkNetworkStackPermission(mContext);
-        RouteUtils.modifyRoute(mNetdService, ModifyOperation.ADD, netId, route);
+        NetdUtils.modifyRoute(mNetdService, ModifyOperation.ADD, netId, route);
     }
 
     @Override
     public void removeRoute(int netId, RouteInfo route) {
         NetworkStack.checkNetworkStackPermission(mContext);
-        RouteUtils.modifyRoute(mNetdService, ModifyOperation.REMOVE, netId, route);
+        NetdUtils.modifyRoute(mNetdService, ModifyOperation.REMOVE, netId, route);
     }
 
     private ArrayList<String> readRouteList(String filename) {
@@ -1169,19 +1159,12 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
             }
 
             Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "inetd bandwidth");
+            final ConnectivityManager cm = mContext.getSystemService(ConnectivityManager.class);
             try {
                 if (allowlist) {
-                    if (enable) {
-                        mNetdService.bandwidthAddNiceApp(uid);
-                    } else {
-                        mNetdService.bandwidthRemoveNiceApp(uid);
-                    }
+                    cm.updateMeteredNetworkAllowList(uid, enable);
                 } else {
-                    if (enable) {
-                        mNetdService.bandwidthAddNaughtyApp(uid);
-                    } else {
-                        mNetdService.bandwidthRemoveNaughtyApp(uid);
-                    }
+                    cm.updateMeteredNetworkDenyList(uid, enable);
                 }
                 synchronized (mRulesLock) {
                     if (enable) {
@@ -1190,7 +1173,7 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
                         quotaList.delete(uid);
                     }
                 }
-            } catch (RemoteException | ServiceSpecificException e) {
+            } catch (RuntimeException e) {
                 throw new IllegalStateException(e);
             } finally {
                 Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
@@ -1475,9 +1458,10 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
                 throw new IllegalArgumentException("Bad child chain: " + chainName);
             }
 
+            final ConnectivityManager cm = mContext.getSystemService(ConnectivityManager.class);
             try {
-                mNetdService.firewallEnableChildChain(chain, enable);
-            } catch (RemoteException | ServiceSpecificException e) {
+                cm.setFirewallChainEnabled(chain, enable);
+            } catch (RuntimeException e) {
                 throw new IllegalStateException(e);
             }
 
@@ -1549,25 +1533,10 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
                     updateFirewallUidRuleLocked(chain, uid, FIREWALL_RULE_DEFAULT);
                 }
             }
+            final ConnectivityManager cm = mContext.getSystemService(ConnectivityManager.class);
             try {
-                switch (chain) {
-                    case FIREWALL_CHAIN_DOZABLE:
-                        mNetdService.firewallReplaceUidChain("fw_dozable", true, uids);
-                        break;
-                    case FIREWALL_CHAIN_STANDBY:
-                        mNetdService.firewallReplaceUidChain("fw_standby", false, uids);
-                        break;
-                    case FIREWALL_CHAIN_POWERSAVE:
-                        mNetdService.firewallReplaceUidChain("fw_powersave", true, uids);
-                        break;
-                    case FIREWALL_CHAIN_RESTRICTED:
-                        mNetdService.firewallReplaceUidChain("fw_restricted", true, uids);
-                        break;
-                    case FIREWALL_CHAIN_NONE:
-                    default:
-                        Slog.d(TAG, "setFirewallUidRules() called on invalid chain: " + chain);
-                }
-            } catch (RemoteException e) {
+                cm.replaceFirewallChain(chain, uids);
+            } catch (RuntimeException e) {
                 Slog.w(TAG, "Error flushing firewall chain " + chain, e);
             }
         }
@@ -1583,10 +1552,10 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
 
     private void setFirewallUidRuleLocked(int chain, int uid, int rule) {
         if (updateFirewallUidRuleLocked(chain, uid, rule)) {
-            final int ruleType = getFirewallRuleType(chain, rule);
+            final ConnectivityManager cm = mContext.getSystemService(ConnectivityManager.class);
             try {
-                mNetdService.firewallSetUidRule(chain, uid, ruleType);
-            } catch (RemoteException | ServiceSpecificException e) {
+                cm.updateFirewallRule(chain, uid, isFirewallRuleAllow(chain, rule));
+            } catch (RuntimeException e) {
                 throw new IllegalStateException(e);
             }
         }
@@ -1656,12 +1625,12 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
         }
     }
 
-    private int getFirewallRuleType(int chain, int rule) {
+    // There are only two type of firewall rule: FIREWALL_RULE_ALLOW or FIREWALL_RULE_DENY.
+    private boolean isFirewallRuleAllow(int chain, int rule) {
         if (rule == NetworkPolicyManager.FIREWALL_RULE_DEFAULT) {
-            return getFirewallType(chain) == FIREWALL_ALLOWLIST
-                    ? INetd.FIREWALL_RULE_DENY : INetd.FIREWALL_RULE_ALLOW;
+            return getFirewallType(chain) == FIREWALL_DENYLIST;
         }
-        return rule;
+        return rule == INetd.FIREWALL_RULE_ALLOW;
     }
 
     private void enforceSystemUid() {
@@ -1785,7 +1754,7 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
     public void addInterfaceToLocalNetwork(String iface, List<RouteInfo> routes) {
         modifyInterfaceInNetwork(MODIFY_OPERATION_ADD, INetd.LOCAL_NET_ID, iface);
         // modifyInterfaceInNetwork already check calling permission.
-        RouteUtils.addRoutesToLocalNetwork(mNetdService, iface, routes);
+        NetdUtils.addRoutesToLocalNetwork(mNetdService, iface, routes);
     }
 
     @Override
@@ -1796,7 +1765,7 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
     @Override
     public int removeRoutesFromLocalNetwork(List<RouteInfo> routes) {
         NetworkStack.checkNetworkStackPermission(mContext);
-        return RouteUtils.removeRoutesFromLocalNetwork(mNetdService, routes);
+        return NetdUtils.removeRoutesFromLocalNetwork(mNetdService, routes);
     }
 
     @Override

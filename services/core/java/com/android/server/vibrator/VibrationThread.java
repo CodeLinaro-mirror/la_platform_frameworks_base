@@ -287,6 +287,9 @@ final class VibrationThread extends Thread implements IBinder.DeathRecipient {
                 }
                 // If we waited, the queue may have changed, so let the loop run again.
                 if (waitTime <= 0) {
+                    if (DEBUG) {
+                        Slog.d(TAG, "Play vibration consuming next step...");
+                    }
                     mStepQueue.consumeNext();
                 }
                 Vibration.Status status = mStop ? Vibration.Status.CANCELLED
@@ -1077,7 +1080,7 @@ final class VibrationThread extends Thread implements IBinder.DeathRecipient {
             newSegments.remove(segmentIndex);
             newSegments.addAll(segmentIndex, fallback.getSegments());
             if (segmentIndex < effect.getRepeatIndex()) {
-                newRepeatIndex += fallback.getSegments().size();
+                newRepeatIndex += fallback.getSegments().size() - 1;
             }
             return new VibrationEffect.Composed(newSegments, newRepeatIndex);
         }

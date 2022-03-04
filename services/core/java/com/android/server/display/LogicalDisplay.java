@@ -378,6 +378,9 @@ final class LogicalDisplay {
             if ((deviceInfo.flags & DisplayDeviceInfo.FLAG_OWN_DISPLAY_GROUP) != 0) {
                 mBaseDisplayInfo.flags |= Display.FLAG_OWN_DISPLAY_GROUP;
             }
+            if ((deviceInfo.flags & DisplayDeviceInfo.FLAG_ALWAYS_UNLOCKED) != 0) {
+                mBaseDisplayInfo.flags |= Display.FLAG_ALWAYS_UNLOCKED;
+            }
             Rect maskingInsets = getMaskingInsets(deviceInfo);
             int maskedWidth = deviceInfo.width - maskingInsets.left - maskingInsets.right;
             int maskedHeight = deviceInfo.height - maskingInsets.top - maskingInsets.bottom;
@@ -426,6 +429,7 @@ final class LogicalDisplay {
             mBaseDisplayInfo.brightnessMaximum = deviceInfo.brightnessMaximum;
             mBaseDisplayInfo.brightnessDefault = deviceInfo.brightnessDefault;
             mBaseDisplayInfo.roundedCorners = deviceInfo.roundedCorners;
+            mBaseDisplayInfo.installOrientation = deviceInfo.installOrientation;
             mPrimaryDisplayDeviceInfo = deviceInfo;
             mInfo.set(null);
         }

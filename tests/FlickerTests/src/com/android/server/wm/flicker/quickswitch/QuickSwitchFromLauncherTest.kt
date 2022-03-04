@@ -35,7 +35,6 @@ import com.android.server.wm.flicker.helpers.WindowUtils
 import com.android.server.wm.flicker.navBarLayerIsVisible
 import com.android.server.wm.flicker.navBarLayerRotatesAndScales
 import com.android.server.wm.flicker.navBarWindowIsVisible
-import com.android.server.wm.flicker.startRotation
 import com.android.server.wm.flicker.statusBarLayerIsVisible
 import com.android.server.wm.flicker.statusBarWindowIsVisible
 import com.android.server.wm.traces.common.FlickerComponentName
@@ -64,7 +63,7 @@ import org.junit.runners.Parameterized
 class QuickSwitchFromLauncherTest(private val testSpec: FlickerTestParameter) {
     private val instrumentation: Instrumentation = InstrumentationRegistry.getInstrumentation()
     private val testApp = SimpleAppHelper(instrumentation)
-    private val startDisplayBounds = WindowUtils.getDisplayBounds(testSpec.config.startRotation)
+    private val startDisplayBounds = WindowUtils.getDisplayBounds(testSpec.startRotation)
 
     @FlickerBuilderProvider
     fun buildFlicker(): FlickerBuilder {
@@ -262,7 +261,7 @@ class QuickSwitchFromLauncherTest(private val testSpec: FlickerTestParameter) {
         testSpec.assertWm {
             this.isAppWindowOnTop(LAUNCHER_COMPONENT)
                     .then()
-                    .isAppWindowVisible(FlickerComponentName.SNAPSHOT)
+                    .isAppWindowVisible(FlickerComponentName.SNAPSHOT, isOptional = true)
                     .then()
                     .isAppWindowVisible(testApp.component)
         }

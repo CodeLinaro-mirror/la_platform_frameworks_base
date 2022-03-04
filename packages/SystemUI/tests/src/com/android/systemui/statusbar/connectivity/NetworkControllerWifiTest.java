@@ -36,7 +36,6 @@ import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper.RunWithLooper;
 
 import com.android.settingslib.mobile.TelephonyIcons;
-import com.android.systemui.statusbar.connectivity.NetworkController.WifiIndicators;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -267,6 +266,21 @@ public class NetworkControllerWifiTest extends NetworkControllerBaseTest {
                     NetworkCapabilities.TRANSPORT_CELLULAR, false, true, mVcnTransportInfo);
             verifyLastMobileDataIndicatorsForVcn(true, testLevel, TelephonyIcons.ICON_CWF, false);
         }
+    }
+
+    @Test
+    public void testDisableWiFiWithVcnWithUnderlyingWifi() {
+        String testSsid = "Test VCN SSID";
+        setWifiEnabled(true);
+        verifyLastWifiIcon(false, WifiIcons.WIFI_NO_NETWORK);
+
+        mNetworkController.setNoNetworksAvailable(false);
+        setWifiStateForVcn(true, testSsid);
+        setWifiLevelForVcn(1);
+        verifyLastMobileDataIndicatorsForVcn(true, 1, TelephonyIcons.ICON_CWF, false);
+
+        setWifiEnabled(false);
+        verifyLastMobileDataIndicatorsForVcn(false, 1, 0, false);
     }
 
     @Test

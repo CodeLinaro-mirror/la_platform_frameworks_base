@@ -23,7 +23,6 @@ import android.hardware.biometrics.BiometricsProtoEnums;
 import android.os.IBinder;
 import android.util.Slog;
 
-import com.android.internal.util.FrameworkStatsLog;
 import com.android.server.biometrics.BiometricsProto;
 
 import java.util.ArrayList;
@@ -65,7 +64,7 @@ public abstract class InternalCleanupClient<S extends BiometricAuthenticator.Ide
     private final boolean mHasEnrollmentsBeforeStarting;
     private BaseClientMonitor mCurrentTask;
 
-    private final Callback mEnumerateCallback = new Callback() {
+    private final ClientMonitorCallback mEnumerateCallback = new ClientMonitorCallback() {
         @Override
         public void onClientFinished(@NonNull BaseClientMonitor clientMonitor, boolean success) {
             final List<BiometricAuthenticator.Identifier> unknownHALTemplates =
@@ -91,7 +90,7 @@ public abstract class InternalCleanupClient<S extends BiometricAuthenticator.Ide
         }
     };
 
-    private final Callback mRemoveCallback = new Callback() {
+    private final ClientMonitorCallback mRemoveCallback = new ClientMonitorCallback() {
         @Override
         public void onClientFinished(@NonNull BaseClientMonitor clientMonitor, boolean success) {
             Slog.d(TAG, "Remove onClientFinished: " + clientMonitor + ", success: " + success);
@@ -128,10 +127,9 @@ public abstract class InternalCleanupClient<S extends BiometricAuthenticator.Ide
         mCurrentTask = getRemovalClient(getContext(), mLazyDaemon, getToken(),
                 template.mIdentifier.getBiometricId(), template.mUserId,
                 getContext().getPackageName(), mBiometricUtils, getSensorId(), mAuthenticatorIds);
-        FrameworkStatsLog.write(FrameworkStatsLog.BIOMETRIC_SYSTEM_HEALTH_ISSUE_DETECTED,
-                mStatsModality,
-                BiometricsProtoEnums.ISSUE_UNKNOWN_TEMPLATE_ENROLLED_HAL,
-                -1 /* sensorId */);
+
+        getLogger().logUnknownEnrollmentInHal();
+
         mCurrentTask.start(mRemoveCallback);
     }
 
@@ -141,7 +139,7 @@ public abstract class InternalCleanupClient<S extends BiometricAuthenticator.Ide
     }
 
     @Override
-    public void start(@NonNull Callback callback) {
+    public void start(@NonNull ClientMonitorCallback callback) {
         super.start(callback);
 
         // Start enumeration. Removal will start if necessary, when enumeration is completed.

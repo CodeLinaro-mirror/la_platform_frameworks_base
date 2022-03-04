@@ -87,7 +87,7 @@ public class CachedBluetoothDeviceManager {
             }
             // Check the member devices for the coordinated set if it exists
             final Set<CachedBluetoothDevice> memberDevices = cachedDevice.getMemberDevice();
-            if (memberDevices != null) {
+            if (!memberDevices.isEmpty()) {
                 for (CachedBluetoothDevice memberDevice : memberDevices) {
                     if (memberDevice.getDevice().equals(device)) {
                         return memberDevice;
@@ -141,7 +141,7 @@ public class CachedBluetoothDeviceManager {
         final Set<CachedBluetoothDevice> memberDevices = device.getMemberDevice();
         // TODO: check the CSIP group size instead of the real member device set size, and adjust
         // the size restriction.
-        if (memberDevices.size() == 1) {
+        if (!memberDevices.isEmpty()) {
             for (CachedBluetoothDevice memberDevice : memberDevices) {
                 if (memberDevice.isConnected()) {
                     return memberDevice.getConnectionSummary();
@@ -166,7 +166,7 @@ public class CachedBluetoothDeviceManager {
             if (!cachedDevice.getDevice().equals(device)) {
                 // Check the member devices of the coordinated set if it exists
                 Set<CachedBluetoothDevice> memberDevices = cachedDevice.getMemberDevice();
-                if (memberDevices != null) {
+                if (!memberDevices.isEmpty()) {
                     for (CachedBluetoothDevice memberDevice : memberDevices) {
                         if (memberDevice.getDevice().equals(device)) {
                             return true;
@@ -230,9 +230,10 @@ public class CachedBluetoothDeviceManager {
     private void clearNonBondedSubDevices() {
         for (int i = mCachedDevices.size() - 1; i >= 0; i--) {
             CachedBluetoothDevice cachedDevice = mCachedDevices.get(i);
-            final Set<CachedBluetoothDevice> memberDevices = cachedDevice.getMemberDevice();
-            if (memberDevices != null) {
-                for (CachedBluetoothDevice memberDevice : memberDevices) {
+            Set<CachedBluetoothDevice> memberDevices = cachedDevice.getMemberDevice();
+            if (!memberDevices.isEmpty()) {
+                for (Object it : memberDevices.toArray()) {
+                    CachedBluetoothDevice memberDevice = (CachedBluetoothDevice) it;
                     // Member device exists and it is not bonded
                     if (memberDevice.getDevice().getBondState() == BluetoothDevice.BOND_NONE) {
                         cachedDevice.removeMemberDevice(memberDevice);
@@ -257,7 +258,7 @@ public class CachedBluetoothDeviceManager {
             CachedBluetoothDevice cachedDevice = mCachedDevices.get(i);
             cachedDevice.setJustDiscovered(false);
             final Set<CachedBluetoothDevice> memberDevices = cachedDevice.getMemberDevice();
-            if (memberDevices != null) {
+            if (!memberDevices.isEmpty()) {
                 for (CachedBluetoothDevice memberDevice : memberDevices) {
                     memberDevice.setJustDiscovered(false);
                 }
@@ -277,7 +278,7 @@ public class CachedBluetoothDeviceManager {
             for (int i = mCachedDevices.size() - 1; i >= 0; i--) {
                 CachedBluetoothDevice cachedDevice = mCachedDevices.get(i);
                 final Set<CachedBluetoothDevice> memberDevices = cachedDevice.getMemberDevice();
-                if (memberDevices != null) {
+                if (!memberDevices.isEmpty()) {
                     for (CachedBluetoothDevice memberDevice : memberDevices) {
                         if (memberDevice.getBondState() != BluetoothDevice.BOND_BONDED) {
                             cachedDevice.removeMemberDevice(memberDevice);
@@ -315,7 +316,7 @@ public class CachedBluetoothDeviceManager {
     public synchronized void onDeviceUnpaired(CachedBluetoothDevice device) {
         CachedBluetoothDevice mainDevice = mCsipDeviceManager.findMainDevice(device);
         final Set<CachedBluetoothDevice> memberDevices = device.getMemberDevice();
-        if (memberDevices != null) {
+        if (!memberDevices.isEmpty()) {
             // Main device is unpaired, to unpair the member device
             for (CachedBluetoothDevice memberDevice : memberDevices) {
                 memberDevice.unpair();
@@ -340,22 +341,24 @@ public class CachedBluetoothDeviceManager {
 
     /**
      * Called when we found a set member of a group. The function will check the {@code groupId} if
-     * it exists and if there is a ongoing pair, the device would be ignored.
+     * it exists and the bond state of the device is BOND_NOE, and if there isn't any ongoing pair
+     * , and then return {@code true} to pair the device automatically.
      *
      * @param device The found device
      * @param groupId The group id of the found device
+     *
+     * @return {@code true}, if the device should pair automatically; Otherwise, return
+     * {@code false}.
      */
-    public synchronized void onSetMemberAppear(BluetoothDevice device, int groupId) {
-        Log.d(TAG, "onSetMemberAppear, groupId: " + groupId + " device: " + device.toString());
-
-        if (mOngoingSetMemberPair != null) {
-            Log.d(TAG, "Ongoing set memberPairing in process, drop it!");
-            return;
+    public synchronized boolean shouldPairByCsip(BluetoothDevice device, int groupId) {
+        if (mOngoingSetMemberPair != null || device.getBondState() != BluetoothDevice.BOND_NONE
+                || !mCsipDeviceManager.isExistedGroupId(groupId)) {
+            return false;
         }
 
-        if (mCsipDeviceManager.onSetMemberAppear(device, groupId)) {
-            mOngoingSetMemberPair = device;
-        }
+        Log.d(TAG, "Bond " + device.getName() + " by CSIP");
+        mOngoingSetMemberPair = device;
+        return true;
     }
 
     /**

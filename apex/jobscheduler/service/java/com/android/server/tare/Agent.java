@@ -16,10 +16,12 @@
 
 package com.android.server.tare;
 
-import static android.text.format.DateUtils.HOUR_IN_MILLIS;
+import static android.text.format.DateUtils.DAY_IN_MILLIS;
 
 import static com.android.server.tare.EconomicPolicy.REGULATION_BASIC_INCOME;
 import static com.android.server.tare.EconomicPolicy.REGULATION_BIRTHRIGHT;
+import static com.android.server.tare.EconomicPolicy.REGULATION_DEMOTION;
+import static com.android.server.tare.EconomicPolicy.REGULATION_PROMOTION;
 import static com.android.server.tare.EconomicPolicy.REGULATION_WEALTH_RECLAMATION;
 import static com.android.server.tare.EconomicPolicy.TYPE_ACTION;
 import static com.android.server.tare.EconomicPolicy.TYPE_REWARD;
@@ -44,6 +46,7 @@ import android.util.IndentingPrintWriter;
 import android.util.Log;
 import android.util.Slog;
 import android.util.SparseArrayMap;
+import android.util.TimeUtils;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -69,12 +72,6 @@ class Agent {
     private static final boolean DEBUG = InternalResourceService.DEBUG
             || Log.isLoggable(TAG, Log.DEBUG);
 
-    /**
-     * The minimum amount of time an app must not have been used by the user before we start
-     * regularly reclaiming ARCs from it.
-     */
-    private static final long MIN_UNUSED_TIME_MS = 3 * 24 * HOUR_IN_MILLIS;
-
     private static final String ALARM_TAG_AFFORDABILITY_CHECK = "*tare.affordability_check*";
 
     private final Object mLock;
@@ -89,7 +86,7 @@ class Agent {
             mCurrentOngoingEvents = new SparseArrayMap<>();
 
     /**
-     * Set of {@link ActionAffordabilityNote}s keyed by userId-pkgName.
+     * Set of {@link ActionAffordabilityNote ActionAffordabilityNotes} keyed by userId-pkgName.
      *
      * Note: it would be nice/better to sort by base price since that doesn't change and simply
      * look at the change in the "insertion" of what would be affordable, but since CTP
@@ -550,43 +547,109 @@ class Agent {
 
     /**
      * Reclaim a percentage of unused ARCs from every app that hasn't been used recently. The
-     * reclamation will not reduce an app's balance below its minimum balance as dictated by the
-     * EconomicPolicy.
+     * reclamation will not reduce an app's balance below its minimum balance as dictated by
+     * {@code scaleMinBalance}.
      *
-     * @param percentage A value between 0 and 1 to indicate how much of the unused balance should
-     *                   be reclaimed.
+     * @param percentage      A value between 0 and 1 to indicate how much of the unused balance
+     *                        should be reclaimed.
+     * @param minUnusedTimeMs The minimum amount of time (in milliseconds) that must have
+     *                        transpired since the last user usage event before we will consider
+     *                        reclaiming ARCs from the app.
+     * @param scaleMinBalance Whether or not to used the scaled minimum app balance. If false,
+     *                        this will use the constant min balance floor given by
+     *                        {@link EconomicPolicy#getMinSatiatedBalance(int, String)}. If true,
+     *                        this will use the scaled balance given by
+     *                        {@link InternalResourceService#getMinBalanceLocked(int, String)}.
      */
     @GuardedBy("mLock")
-    void reclaimUnusedAssetsLocked(double percentage) {
+    void reclaimUnusedAssetsLocked(double percentage, long minUnusedTimeMs,
+            boolean scaleMinBalance) {
         final CompleteEconomicPolicy economicPolicy = mIrs.getCompleteEconomicPolicyLocked();
-        final List<PackageInfo> pkgs = mIrs.getInstalledPackages();
+        final SparseArrayMap<String, Ledger> ledgers = mScribe.getLedgersLocked();
         final long now = getCurrentTimeMillis();
-        for (int i = 0; i < pkgs.size(); ++i) {
-            final int userId = UserHandle.getUserId(pkgs.get(i).applicationInfo.uid);
-            final String pkgName = pkgs.get(i).packageName;
-            final Ledger ledger = mScribe.getLedgerLocked(userId, pkgName);
-            // AppStandby only counts elapsed time for things like this
-            // TODO: should we use clock time instead?
-            final long timeSinceLastUsedMs =
-                    mAppStandbyInternal.getTimeSinceLastUsedByUser(pkgName, userId);
-            if (timeSinceLastUsedMs >= MIN_UNUSED_TIME_MS) {
-                // Use a constant floor instead of the scaled floor from the IRS.
-                final long minBalance = economicPolicy.getMinSatiatedBalance(userId, pkgName);
+        for (int u = 0; u < ledgers.numMaps(); ++u) {
+            final int userId = ledgers.keyAt(u);
+            for (int p = 0; p < ledgers.numElementsForKey(userId); ++p) {
+                final Ledger ledger = ledgers.valueAt(u, p);
                 final long curBalance = ledger.getCurrentBalance();
-                long toReclaim = (long) (curBalance * percentage);
-                if (curBalance - toReclaim < minBalance) {
-                    toReclaim = curBalance - minBalance;
+                if (curBalance <= 0) {
+                    continue;
                 }
-                if (toReclaim > 0) {
-                    Slog.i(TAG, "Reclaiming unused wealth! Taking " + toReclaim
-                            + " from " + appToString(userId, pkgName));
+                final String pkgName = ledgers.keyAt(u, p);
+                // AppStandby only counts elapsed time for things like this
+                // TODO: should we use clock time instead?
+                final long timeSinceLastUsedMs =
+                        mAppStandbyInternal.getTimeSinceLastUsedByUser(pkgName, userId);
+                if (timeSinceLastUsedMs >= minUnusedTimeMs) {
+                    final long minBalance;
+                    if (!scaleMinBalance) {
+                        // Use a constant floor instead of the scaled floor from the IRS.
+                        minBalance = economicPolicy.getMinSatiatedBalance(userId, pkgName);
+                    } else {
+                        minBalance = mIrs.getMinBalanceLocked(userId, pkgName);
+                    }
+                    long toReclaim = (long) (curBalance * percentage);
+                    if (curBalance - toReclaim < minBalance) {
+                        toReclaim = curBalance - minBalance;
+                    }
+                    if (toReclaim > 0) {
+                        if (DEBUG) {
+                            Slog.i(TAG, "Reclaiming unused wealth! Taking " + toReclaim
+                                    + " from " + appToString(userId, pkgName));
+                        }
 
-                    recordTransactionLocked(userId, pkgName, ledger,
-                            new Ledger.Transaction(
-                                    now, now, REGULATION_WEALTH_RECLAMATION, null, -toReclaim),
-                            true);
+                        recordTransactionLocked(userId, pkgName, ledger,
+                                new Ledger.Transaction(
+                                        now, now, REGULATION_WEALTH_RECLAMATION, null, -toReclaim),
+                                true);
+                    }
                 }
             }
+        }
+    }
+
+    /**
+     * Reclaim a percentage of unused ARCs from an app that was just removed from an exemption list.
+     * The amount reclaimed will depend on how recently the app was used. The reclamation will not
+     * reduce an app's balance below its current minimum balance.
+     */
+    @GuardedBy("mLock")
+    void onAppUnexemptedLocked(final int userId, @NonNull final String pkgName) {
+        final long curBalance = getBalanceLocked(userId, pkgName);
+        final long minBalance = mIrs.getMinBalanceLocked(userId, pkgName);
+        if (curBalance <= minBalance) {
+            return;
+        }
+        // AppStandby only counts elapsed time for things like this
+        // TODO: should we use clock time instead?
+        final long timeSinceLastUsedMs =
+                mAppStandbyInternal.getTimeSinceLastUsedByUser(pkgName, userId);
+        // The app is no longer exempted. We should take away some of credits so it's more in line
+        // with other non-exempt apps. However, don't take away as many credits if the app was used
+        // recently.
+        final double percentageToReclaim;
+        if (timeSinceLastUsedMs < DAY_IN_MILLIS) {
+            percentageToReclaim = .25;
+        } else if (timeSinceLastUsedMs < 2 * DAY_IN_MILLIS) {
+            percentageToReclaim = .5;
+        } else if (timeSinceLastUsedMs < 3 * DAY_IN_MILLIS) {
+            percentageToReclaim = .75;
+        } else {
+            percentageToReclaim = 1;
+        }
+        final long overage = curBalance - minBalance;
+        final long toReclaim = (long) (overage * percentageToReclaim);
+        if (toReclaim > 0) {
+            if (DEBUG) {
+                Slog.i(TAG, "Reclaiming bonus wealth! Taking " + toReclaim
+                        + " from " + appToString(userId, pkgName));
+            }
+
+            final long now = getCurrentTimeMillis();
+            final Ledger ledger = mScribe.getLedgerLocked(userId, pkgName);
+            recordTransactionLocked(userId, pkgName, ledger,
+                    new Ledger.Transaction(now, now, REGULATION_DEMOTION, null, -toReclaim),
+                    true);
         }
     }
 
@@ -619,8 +682,8 @@ class Agent {
             final long minBalance = mIrs.getMinBalanceLocked(userId, pkgName);
             final double perc = batteryLevel / 100d;
             // TODO: maybe don't give credits to bankrupt apps until battery level >= 50%
-            if (ledger.getCurrentBalance() < minBalance) {
-                final long shortfall = minBalance - getBalanceLocked(userId, pkgName);
+            final long shortfall = minBalance - ledger.getCurrentBalance();
+            if (shortfall > 0) {
                 recordTransactionLocked(userId, pkgName, ledger,
                         new Ledger.Transaction(now, now, REGULATION_BASIC_INCOME,
                                 null, (long) (perc * shortfall)), true);
@@ -685,6 +748,21 @@ class Agent {
         recordTransactionLocked(userId, pkgName, ledger,
                 new Ledger.Transaction(now, now, REGULATION_BIRTHRIGHT, null,
                         Math.min(maxBirthright, mIrs.getMinBalanceLocked(userId, pkgName))), true);
+    }
+
+    @GuardedBy("mLock")
+    void onAppExemptedLocked(final int userId, @NonNull final String pkgName) {
+        final long minBalance = mIrs.getMinBalanceLocked(userId, pkgName);
+        final long missing = minBalance - getBalanceLocked(userId, pkgName);
+        if (missing <= 0) {
+            return;
+        }
+
+        final Ledger ledger = mScribe.getLedgerLocked(userId, pkgName);
+        final long now = getCurrentTimeMillis();
+
+        recordTransactionLocked(userId, pkgName, ledger,
+                new Ledger.Transaction(now, now, REGULATION_PROMOTION, null, missing), true);
     }
 
     @GuardedBy("mLock")
@@ -1093,5 +1171,57 @@ class Agent {
     void dumpLocked(IndentingPrintWriter pw) {
         pw.println();
         mBalanceThresholdAlarmQueue.dump(pw);
+
+        pw.println();
+        pw.println("Ongoing events:");
+        pw.increaseIndent();
+        boolean printedEvents = false;
+        final long nowElapsed = SystemClock.elapsedRealtime();
+        for (int u = mCurrentOngoingEvents.numMaps() - 1; u >= 0; --u) {
+            final int userId = mCurrentOngoingEvents.keyAt(u);
+            for (int p = mCurrentOngoingEvents.numElementsForKey(userId) - 1; p >= 0; --p) {
+                final String pkgName = mCurrentOngoingEvents.keyAt(u, p);
+                final SparseArrayMap<String, OngoingEvent> ongoingEvents =
+                        mCurrentOngoingEvents.get(userId, pkgName);
+
+                boolean printedApp = false;
+
+                for (int e = ongoingEvents.numMaps() - 1; e >= 0; --e) {
+                    final int eventId = ongoingEvents.keyAt(e);
+                    for (int t = ongoingEvents.numElementsForKey(eventId) - 1; t >= 0; --t) {
+                        if (!printedApp) {
+                            printedApp = true;
+                            pw.println(appToString(userId, pkgName));
+                            pw.increaseIndent();
+                        }
+                        printedEvents = true;
+
+                        OngoingEvent ongoingEvent = ongoingEvents.valueAt(e, t);
+
+                        pw.print(EconomicPolicy.eventToString(ongoingEvent.eventId));
+                        if (ongoingEvent.tag != null) {
+                            pw.print("(");
+                            pw.print(ongoingEvent.tag);
+                            pw.print(")");
+                        }
+                        pw.print(" runtime=");
+                        TimeUtils.formatDuration(nowElapsed - ongoingEvent.startTimeElapsed, pw);
+                        pw.print(" delta/sec=");
+                        pw.print(ongoingEvent.deltaPerSec);
+                        pw.print(" refCount=");
+                        pw.print(ongoingEvent.refCount);
+                        pw.println();
+                    }
+                }
+
+                if (printedApp) {
+                    pw.decreaseIndent();
+                }
+            }
+        }
+        if (!printedEvents) {
+            pw.print("N/A");
+        }
+        pw.decreaseIndent();
     }
 }

@@ -32,9 +32,13 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Slog;
 
+import com.android.server.biometrics.log.CallbackWithProbe;
+import com.android.server.biometrics.log.Probe;
 import com.android.server.biometrics.sensors.AuthenticationClient;
 import com.android.server.biometrics.sensors.BiometricNotificationUtils;
+import com.android.server.biometrics.sensors.ClientMonitorCallback;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
+import com.android.server.biometrics.sensors.ClientMonitorCompositeCallback;
 import com.android.server.biometrics.sensors.LockoutTracker;
 import com.android.server.biometrics.sensors.SensorOverlays;
 import com.android.server.biometrics.sensors.fingerprint.Udfps;
@@ -80,11 +84,11 @@ class FingerprintAuthenticationClient extends AuthenticationClient<IBiometricsFi
         mLockoutFrameworkImpl = lockoutTracker;
         mSensorOverlays = new SensorOverlays(udfpsOverlayController, sidefpsController);
         mSensorProps = sensorProps;
-        mALSProbeCallback = createALSCallback(false /* startWithClient */);
+        mALSProbeCallback = getLogger().createALSCallback(false /* startWithClient */);
     }
 
     @Override
-    public void start(@NonNull Callback callback) {
+    public void start(@NonNull ClientMonitorCallback callback) {
         super.start(callback);
 
         if (mSensorProps.isAnyUdfpsType()) {
@@ -97,8 +101,8 @@ class FingerprintAuthenticationClient extends AuthenticationClient<IBiometricsFi
 
     @NonNull
     @Override
-    protected Callback wrapCallbackForStart(@NonNull Callback callback) {
-        return new CompositeCallback(mALSProbeCallback, callback);
+    protected ClientMonitorCallback wrapCallbackForStart(@NonNull ClientMonitorCallback callback) {
+        return new ClientMonitorCompositeCallback(mALSProbeCallback, callback);
     }
 
     @Override

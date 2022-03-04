@@ -22,10 +22,12 @@ import android.content.Context;
 import android.hardware.biometrics.face.IFace;
 import android.hardware.biometrics.face.ISession;
 import android.hardware.biometrics.face.ISessionCallback;
+import android.os.Binder;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Slog;
 
+import com.android.server.biometrics.sensors.ClientMonitorCallback;
 import com.android.server.biometrics.sensors.StartUserClient;
 
 public class FaceStartUserClient extends StartUserClient<IFace, ISession> {
@@ -42,7 +44,7 @@ public class FaceStartUserClient extends StartUserClient<IFace, ISession> {
     }
 
     @Override
-    public void start(@NonNull Callback callback) {
+    public void start(@NonNull ClientMonitorCallback callback) {
         super.start(callback);
         startHalOperation();
     }
@@ -52,6 +54,7 @@ public class FaceStartUserClient extends StartUserClient<IFace, ISession> {
         try {
             final ISession newSession = getFreshDaemon().createSession(getSensorId(),
                     getTargetUserId(), mSessionCallback);
+            Binder.allowBlocking(newSession.asBinder());
             mUserStartedCallback.onUserStarted(getTargetUserId(), newSession);
             getCallback().onClientFinished(this, true /* success */);
         } catch (RemoteException e) {

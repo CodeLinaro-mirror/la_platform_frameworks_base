@@ -15,6 +15,7 @@
  */
 package com.android.settingslib.media;
 
+import static android.media.MediaRoute2Info.TYPE_BLE_HEADSET;
 import static android.media.MediaRoute2Info.TYPE_BLUETOOTH_A2DP;
 import static android.media.MediaRoute2Info.TYPE_BUILTIN_SPEAKER;
 import static android.media.MediaRoute2Info.TYPE_DOCK;
@@ -31,9 +32,6 @@ import static android.media.MediaRoute2Info.TYPE_WIRED_HEADPHONES;
 import static android.media.MediaRoute2Info.TYPE_WIRED_HEADSET;
 
 import android.content.Context;
-import android.content.res.ColorStateList;
-import android.graphics.PorterDuff;
-import android.graphics.PorterDuffColorFilter;
 import android.graphics.drawable.Drawable;
 import android.media.MediaRoute2Info;
 import android.media.MediaRouter2Manager;
@@ -42,8 +40,6 @@ import android.util.Log;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.VisibleForTesting;
-
-import com.android.settingslib.R;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -122,6 +118,7 @@ public abstract class MediaDevice implements Comparable<MediaDevice> {
                 break;
             case TYPE_HEARING_AID:
             case TYPE_BLUETOOTH_A2DP:
+            case TYPE_BLE_HEADSET:
                 mType = MediaDeviceType.TYPE_BLUETOOTH_DEVICE;
                 break;
             case TYPE_UNKNOWN:
@@ -137,14 +134,6 @@ public abstract class MediaDevice implements Comparable<MediaDevice> {
         ConnectionRecordManager.getInstance().fetchLastSelectedDevice(mContext);
         mConnectedRecord = ConnectionRecordManager.getInstance().fetchConnectionRecord(mContext,
                 getId());
-    }
-
-    void setColorFilter(Drawable drawable) {
-        final ColorStateList list =
-                mContext.getResources().getColorStateList(
-                        R.color.advanced_icon_color, mContext.getTheme());
-        drawable.setColorFilter(new PorterDuffColorFilter(list.getDefaultColor(),
-                PorterDuff.Mode.SRC_IN));
     }
 
     /**

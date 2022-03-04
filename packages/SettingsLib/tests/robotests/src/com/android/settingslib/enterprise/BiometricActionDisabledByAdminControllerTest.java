@@ -22,7 +22,6 @@ import static com.android.settingslib.enterprise.FakeDeviceAdminStringProvider.D
 
 import static junit.framework.Assert.assertNotNull;
 import static junit.framework.TestCase.assertEquals;
-import static junit.framework.TestCase.assertSame;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -32,6 +31,7 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.os.UserHandle;
+import android.provider.Settings;
 
 import com.android.settingslib.RestrictedLockUtils;
 
@@ -66,7 +66,7 @@ public class BiometricActionDisabledByAdminControllerTest {
 
     @Test
     public void buttonClicked() {
-        ComponentName componentName = mock(ComponentName.class);
+        ComponentName componentName = new ComponentName("com.android.test", "AThing");
         RestrictedLockUtils.EnforcedAdmin enforcedAdmin = new RestrictedLockUtils.EnforcedAdmin(
                 componentName, new UserHandle(UserHandle.myUserId()));
 
@@ -77,11 +77,11 @@ public class BiometricActionDisabledByAdminControllerTest {
 
         ArgumentCaptor<Intent> intentCaptor = ArgumentCaptor.forClass(Intent.class);
         verify(mContext).startActivity(intentCaptor.capture());
-        assertEquals(BiometricActionDisabledByAdminController.ACTION_LEARN_MORE,
+        assertEquals(Settings.ACTION_MANAGE_SUPERVISOR_RESTRICTED_SETTING,
                 intentCaptor.getValue().getAction());
-        assertEquals(BiometricActionDisabledByAdminController.EXTRA_SETTING_VALUE,
+        assertEquals(Settings.SUPERVISOR_VERIFICATION_SETTING_BIOMETRICS,
                 intentCaptor.getValue().getStringExtra(
-                        BiometricActionDisabledByAdminController.EXTRA_SETTING_KEY));
-        assertSame(componentName, intentCaptor.getValue().getComponent());
+                        Settings.EXTRA_SUPERVISOR_RESTRICTED_SETTING_KEY));
+        assertEquals(componentName.getPackageName(), intentCaptor.getValue().getPackage());
     }
 }

@@ -744,8 +744,9 @@ import java.util.function.Predicate;
  * To enable touch filtering, call {@link #setFilterTouchesWhenObscured(boolean)} or set the
  * android:filterTouchesWhenObscured layout attribute to true.  When enabled, the framework
  * will discard touches that are received whenever the view's window is obscured by
- * another visible window.  As a result, the view will not receive touches whenever a
- * toast, dialog or other window appears above the view's window.
+ * another visible window at the touched location.  As a result, the view will not receive touches
+ * whenever the touch passed through a toast, dialog or other window that appears above the view's
+ * window.
  * </p><p>
  * For more fine-grained control over security, consider overriding the
  * {@link #onFilterTouchEventForSecurity(MotionEvent)} method to implement your own
@@ -833,7 +834,7 @@ import java.util.function.Predicate;
  */
 @UiThread
 public class View implements Drawable.Callback, KeyEvent.Callback,
-        AccessibilityEventSource {
+        AccessibilityEventSource, OnBackInvokedDispatcherOwner {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private static final boolean DBG = false;
 
@@ -4733,15 +4734,18 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
         WindowInsetsAnimation.Callback mWindowInsetsAnimationCallback;
 
         /**
-         * This lives here since it's only valid for interactive views. This list is null until the
-         * first use.
+         * This lives here since it's only valid for interactive views. This list is null
+         * until its first use.
          */
         private List<Rect> mSystemGestureExclusionRects = null;
+        private List<Rect> mKeepClearRects = null;
+        private boolean mPreferKeepClear = false;
 
         /**
-         * Used to track {@link #mSystemGestureExclusionRects}
+         * Used to track {@link #mSystemGestureExclusionRects} and {@link #mKeepClearRects}
          */
         public RenderNode.PositionUpdateListener mPositionUpdateListener;
+        private Runnable mPositionChangedUpdate;
 
         /**
          * Allows the application to implement custom scroll capture support.
@@ -6026,6 +6030,9 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
                     break;
                 case R.styleable.View_clipToOutline:
                     setClipToOutline(a.getBoolean(attr, false));
+                    break;
+                case R.styleable.View_preferKeepClear:
+                    setPreferKeepClear(a.getBoolean(attr, false));
                     break;
             }
         }
@@ -8662,12 +8669,31 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
         if (mAttachInfo == null) {
             return;
         }
-
         RectF position = mAttachInfo.mTmpTransformRect;
-        position.set(0, 0, mRight - mLeft, mBottom - mTop);
-        mapRectFromViewToScreenCoords(position, clipToParent);
+        getBoundsToScreenInternal(position, clipToParent);
         outRect.set(Math.round(position.left), Math.round(position.top),
                 Math.round(position.right), Math.round(position.bottom));
+    }
+
+    /**
+     * Gets the location of this view in screen coordinates.
+     *
+     * @param outRect The output location
+     * @param clipToParent Whether to clip child bounds to the parent ones.
+     * @hide
+     */
+    public void getBoundsOnScreen(RectF outRect, boolean clipToParent) {
+        if (mAttachInfo == null) {
+            return;
+        }
+        RectF position = mAttachInfo.mTmpTransformRect;
+        getBoundsToScreenInternal(position, clipToParent);
+        outRect.set(position.left, position.top, position.right, position.bottom);
+    }
+
+    private void getBoundsToScreenInternal(RectF position, boolean clipToParent) {
+        position.set(0, 0, mRight - mLeft, mBottom - mTop);
+        mapRectFromViewToScreenCoords(position, clipToParent);
     }
 
     /**
@@ -11645,37 +11671,49 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
         } else {
             info.mSystemGestureExclusionRects = new ArrayList<>(rects);
         }
-        if (rects.isEmpty()) {
+
+        updatePositionUpdateListener();
+        postUpdate(this::updateSystemGestureExclusionRects);
+    }
+
+    private void updatePositionUpdateListener() {
+        final ListenerInfo info = getListenerInfo();
+        if (getSystemGestureExclusionRects().isEmpty()
+                && collectPreferKeepClearRects().isEmpty()) {
             if (info.mPositionUpdateListener != null) {
                 mRenderNode.removePositionUpdateListener(info.mPositionUpdateListener);
+                info.mPositionChangedUpdate = null;
             }
         } else {
             if (info.mPositionUpdateListener == null) {
+                info.mPositionChangedUpdate = () -> {
+                    updateSystemGestureExclusionRects();
+                    updateKeepClearRects();
+                };
                 info.mPositionUpdateListener = new RenderNode.PositionUpdateListener() {
                     @Override
                     public void positionChanged(long n, int l, int t, int r, int b) {
-                        postUpdateSystemGestureExclusionRects();
+                        postUpdate(info.mPositionChangedUpdate);
                     }
 
                     @Override
                     public void positionLost(long frameNumber) {
-                        postUpdateSystemGestureExclusionRects();
+                        postUpdate(info.mPositionChangedUpdate);
                     }
                 };
                 mRenderNode.addPositionUpdateListener(info.mPositionUpdateListener);
             }
         }
-        postUpdateSystemGestureExclusionRects();
     }
 
     /**
      * WARNING: this can be called by a hwui worker thread, not just the UI thread!
      */
-    void postUpdateSystemGestureExclusionRects() {
+    private void postUpdate(Runnable r) {
         // Potentially racey from a background thread. It's ok if it's not perfect.
         final Handler h = getHandler();
         if (h != null) {
-            h.postAtFrontOfQueue(this::updateSystemGestureExclusionRects);
+            h.postAtFrontOfQueue(r);
         }
     }
 
@@ -11703,6 +11741,106 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
                 return list;
             }
         }
+        return Collections.emptyList();
+    }
+
+    /**
+     * Set a preference to keep the bounds of this view clear from floating windows above this
+     * view's window. This informs the system that the view is considered a vital area for the
+     * user and that ideally it should not be covered. Setting this is only appropriate for UI
+     * where the user would likely take action to uncover it.
+     * <p>
+     * The system will try to respect this, but when not possible will ignore it.
+     * <p>
+     * @see #setPreferKeepClearRects
+     * @see #isPreferKeepClear
+     * @attr ref android.R.styleable#View_preferKeepClear
+     */
+    public final void setPreferKeepClear(boolean preferKeepClear) {
+        getListenerInfo().mPreferKeepClear = preferKeepClear;
+        updatePositionUpdateListener();
+        postUpdate(this::updateKeepClearRects);
+    }
+
+    /**
+     * Retrieve the preference for this view to be kept clear. This is set either by
+     * {@link #setPreferKeepClear} or via the attribute android.R.styleable#View_preferKeepClear.
+     * <p>
+     * If this is {@code true}, the system will ignore the Rects set by
+     * {@link #setPreferKeepClearRects} and try to keep the whole view clear.
+     * <p>
+     * @see #setPreferKeepClear
+     * @attr ref android.R.styleable#View_preferKeepClear
+     */
+    public final boolean isPreferKeepClear() {
+        return mListenerInfo != null && mListenerInfo.mPreferKeepClear;
+    }
+
+    /**
+     * Set a preference to keep the provided rects clear from floating windows above this
+     * view's window. This informs the system that these rects are considered vital areas for the
+     * user and that ideally they should not be covered. Setting this is only appropriate for UI
+     * where the user would likely take action to uncover it.
+     * <p>
+     * If the whole view is preferred to be clear ({@link #isPreferKeepClear}), the rects set here
+     * will be ignored.
+     * <p>
+     * The system will try to respect this preference, but when not possible will ignore it.
+     * <p>
+     * @see #setPreferKeepClear
+     * @see #getPreferKeepClearRects
+     */
+    public final void setPreferKeepClearRects(@NonNull List<Rect> rects) {
+        final ListenerInfo info = getListenerInfo();
+        if (info.mKeepClearRects != null) {
+            info.mKeepClearRects.clear();
+            info.mKeepClearRects.addAll(rects);
+        } else {
+            info.mKeepClearRects = new ArrayList<>(rects);
+        }
+        updatePositionUpdateListener();
+        postUpdate(this::updateKeepClearRects);
+    }
+
+    /**
+     * @return the list of rects, set by {@link #setPreferKeepClearRects}.
+     *
+     * @see #setPreferKeepClearRects
+     */
+    @NonNull
+    public final List<Rect> getPreferKeepClearRects() {
+        final ListenerInfo info = mListenerInfo;
+        if (info != null && info.mKeepClearRects != null) {
+            return new ArrayList(info.mKeepClearRects);
+        }
+
+        return Collections.emptyList();
+    }
+
+    void updateKeepClearRects() {
+        final AttachInfo ai = mAttachInfo;
+        if (ai != null) {
+            ai.mViewRootImpl.updateKeepClearRectsForView(this);
+        }
+    }
+
+    /**
+     * Retrieve the list of areas within this view's post-layout coordinate space which the
+     * system will try to not cover with other floating elements, like the pip window.
+     */
+    @NonNull
+    List<Rect> collectPreferKeepClearRects() {
+        final ListenerInfo info = mListenerInfo;
+        if (info != null) {
+            final List<Rect> list = new ArrayList();
+            if (info.mPreferKeepClear) {
+                list.add(new Rect(0, 0, getWidth(), getHeight()));
+            } else if (info.mKeepClearRects != null) {
+                list.addAll(info.mKeepClearRects);
+            }
+            return list;
+        }
+
         return Collections.emptyList();
     }
 
@@ -12671,7 +12809,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
 
     /**
      * Gets whether the framework should discard touches when the view's
-     * window is obscured by another visible window.
+     * window is obscured by another visible window at the touched location.
      * Refer to the {@link View} security documentation for more details.
      *
      * @return True if touch filtering is enabled.
@@ -12687,7 +12825,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
 
     /**
      * Sets whether the framework should discard touches when the view's
-     * window is obscured by another visible window.
+     * window is obscured by another visible window at the touched location.
      * Refer to the {@link View} security documentation for more details.
      *
      * @param enabled True if touch filtering should be enabled.
@@ -14247,34 +14385,34 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
                 hideTooltip();
                 return true;
             }
-        }
-
-        if (action == R.id.accessibilityActionDragDrop) {
-            if (!canAcceptAccessibilityDrop()) {
-                return false;
-            }
-            try {
-                if (mAttachInfo != null && mAttachInfo.mSession != null) {
-                    final int[] location = new int[2];
-                    getLocationInWindow(location);
-                    final int centerX = location[0] + getWidth() / 2;
-                    final int centerY = location[1] + getHeight() / 2;
-                    return mAttachInfo.mSession.dropForAccessibility(mAttachInfo.mWindow,
-                            centerX, centerY);
+            case R.id.accessibilityActionDragDrop: {
+                if (!canAcceptAccessibilityDrop()) {
+                    return false;
                 }
-            } catch (RemoteException e) {
-                Log.e(VIEW_LOG_TAG, "Unable to drop for accessibility", e);
-            }
-            return false;
-        } else if (action == R.id.accessibilityActionDragCancel) {
-            if (!startedSystemDragForAccessibility()) {
+                try {
+                    if (mAttachInfo != null && mAttachInfo.mSession != null) {
+                        final int[] location = new int[2];
+                        getLocationInWindow(location);
+                        final int centerX = location[0] + getWidth() / 2;
+                        final int centerY = location[1] + getHeight() / 2;
+                        return mAttachInfo.mSession.dropForAccessibility(mAttachInfo.mWindow,
+                                centerX, centerY);
+                    }
+                } catch (RemoteException e) {
+                    Log.e(VIEW_LOG_TAG, "Unable to drop for accessibility", e);
+                }
                 return false;
             }
-            if (mAttachInfo != null && mAttachInfo.mDragToken != null) {
-                cancelDragAndDrop();
-                return true;
+            case R.id.accessibilityActionDragCancel: {
+                if (!startedSystemDragForAccessibility()) {
+                    return false;
+                }
+                if (mAttachInfo != null && mAttachInfo.mDragToken != null) {
+                    cancelDragAndDrop();
+                    return true;
+                }
+                return false;
             }
-            return false;
         }
         return false;
     }
@@ -15011,8 +15149,10 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     /**
      * @return true if this view and all ancestors are visible as of the last
      * {@link #onVisibilityAggregated(boolean)} call.
+     *
+     * @hide
      */
-    boolean isAggregatedVisible() {
+    public boolean isAggregatedVisible() {
         return (mPrivateFlags3 & PFLAG3_AGGREGATED_VISIBLE) != 0;
     }
 
@@ -15098,7 +15238,11 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
             notifyAppearedOrDisappearedForContentCaptureIfNeeded(isVisible);
 
             if (!getSystemGestureExclusionRects().isEmpty()) {
-                postUpdateSystemGestureExclusionRects();
+                postUpdate(this::updateSystemGestureExclusionRects);
+            }
+
+            if (!collectPreferKeepClearRects().isEmpty()) {
+                postUpdate(this::updateKeepClearRects);
             }
         }
     }
@@ -15271,7 +15415,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * @param event the KeyEvent object that defines the button action
      */
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (KeyEvent.isConfirmKey(keyCode)) {
+        if (event.hasNoModifiers() && KeyEvent.isConfirmKey(keyCode)) {
             if ((mViewFlags & ENABLED_MASK) == DISABLED) {
                 return true;
             }
@@ -15328,7 +15472,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * @param event   The KeyEvent object that defines the button action.
      */
     public boolean onKeyUp(int keyCode, KeyEvent event) {
-        if (KeyEvent.isConfirmKey(keyCode)) {
+        if (event.hasNoModifiers() && KeyEvent.isConfirmKey(keyCode)) {
             if ((mViewFlags & ENABLED_MASK) == DISABLED) {
                 return true;
             }
@@ -20287,7 +20431,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      */
     @CallSuper
     protected void onAttachedToWindow() {
-        if ((mPrivateFlags & PFLAG_REQUEST_TRANSPARENT_REGIONS) != 0) {
+        if (mParent != null && (mPrivateFlags & PFLAG_REQUEST_TRANSPARENT_REGIONS) != 0) {
             mParent.requestTransparentRegion(this);
         }
 
@@ -22356,6 +22500,20 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     }
 
     /**
+     * If an attached view draws to a HW canvas, it may use its RenderNode + DisplayList.
+     *
+     * If a view is dettached, its DisplayList shouldn't exist. If the canvas isn't
+     * HW accelerated, it can't handle drawing RenderNodes.
+     *
+     * @hide
+     */
+    protected final boolean drawsWithRenderNode(Canvas canvas) {
+        return mAttachInfo != null
+                && mAttachInfo.mHardwareAccelerated
+                && canvas.isHardwareAccelerated();
+    }
+
+    /**
      * This method is called by ViewGroup.drawChild() to have each child view draw itself.
      *
      * This is where the View specializes rendering behavior based on layer type,
@@ -22364,14 +22522,8 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     boolean draw(Canvas canvas, ViewGroup parent, long drawingTime) {
 
         final boolean hardwareAcceleratedCanvas = canvas.isHardwareAccelerated();
-        /* If an attached view draws to a HW canvas, it may use its RenderNode + DisplayList.
-         *
-         * If a view is dettached, its DisplayList shouldn't exist. If the canvas isn't
-         * HW accelerated, it can't handle drawing RenderNodes.
-         */
-        boolean drawingWithRenderNode = mAttachInfo != null
-                && mAttachInfo.mHardwareAccelerated
-                && hardwareAcceleratedCanvas;
+
+        boolean drawingWithRenderNode = drawsWithRenderNode(canvas);
 
         boolean more = false;
         final boolean childHasIdentityMatrix = hasIdentityMatrix();
@@ -25061,7 +25213,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
 
         View parent = this;
 
-        while (parent.mParent != null && parent.mParent instanceof View) {
+        while (parent.mParent instanceof View) {
             parent = (View) parent.mParent;
         }
 
@@ -26968,44 +27120,38 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * Handles drag events sent by the system following a call to
      * {@link android.view.View#startDragAndDrop(ClipData,DragShadowBuilder,Object,int)
      * startDragAndDrop()}.
-     *<p>
-     * When the system calls this method, it passes a
-     * {@link android.view.DragEvent} object. A call to
-     * {@link android.view.DragEvent#getAction()} returns one of the action type constants defined
-     * in DragEvent. The method uses these to determine what is happening in the drag and drop
-     * operation.
-     * </p>
      * <p>
-     * The default implementation returns false, except if an {@link OnReceiveContentListener}
-     * is {@link #setOnReceiveContentListener set} for this view. If an
-     * {@link OnReceiveContentListener} is set, the default implementation...
+     * The system calls this method and passes a {@link DragEvent} object in response to drag and
+     * drop events. This method can then call {@link DragEvent#getAction()} to determine the state
+     * of the drag and drop operation.
+     * <p>
+     * The default implementation returns {@code false} unless an {@link OnReceiveContentListener}
+     * has been set for this view (see {@link #setOnReceiveContentListener}), in which case
+     * the default implementation does the following:
      * <ul>
-     * <li>returns true for an
-     * {@link android.view.DragEvent#ACTION_DRAG_STARTED ACTION_DRAG_STARTED} event
-     * <li>calls {@link #performReceiveContent} for an
-     * {@link android.view.DragEvent#ACTION_DROP ACTION_DROP} event
-     * <li>returns true for an {@link android.view.DragEvent#ACTION_DROP ACTION_DROP} event, if
-     * the listener consumed some or all of the content
+     *   <li>Returns {@code true} for an
+     *     {@link DragEvent#ACTION_DRAG_STARTED ACTION_DRAG_STARTED} event
+     *   <li>Calls {@link #performReceiveContent} for an
+     *     {@link DragEvent#ACTION_DROP ACTION_DROP} event
+     *   <li>Returns {@code true} for an {@link DragEvent#ACTION_DROP ACTION_DROP} event if the
+     *     {@code OnReceiveContentListener} consumed some or all of the content
      * </ul>
-     * </p>
      *
-     * @param event The {@link android.view.DragEvent} sent by the system.
-     * The {@link android.view.DragEvent#getAction()} method returns an action type constant defined
-     * in DragEvent, indicating the type of drag event represented by this object.
-     * @return {@code true} if the method was successful, otherwise {@code false}.
-     * <p>
-     *  The method should return {@code true} in response to an action type of
-     *  {@link android.view.DragEvent#ACTION_DRAG_STARTED} to receive drag events for the current
-     *  operation.
-     * </p>
-     * <p>
-     *  The method should also return {@code true} in response to an action type of
-     *  {@link android.view.DragEvent#ACTION_DROP} if it consumed the drop, or
-     *  {@code false} if it didn't.
-     * </p>
-     * <p>
-     *  For all other events, the return value is ignored.
-     * </p>
+     * @param event The {@link DragEvent} object sent by the system. The
+     *   {@link DragEvent#getAction()} method returns an action type constant that indicates the
+     *   type of drag event represented by this object.
+     * @return {@code true} if the method successfully handled the drag event, otherwise
+     *   {@code false}.
+     *   <p>
+     *     The method must return {@code true} in response to an
+     *     {@link DragEvent#ACTION_DRAG_STARTED ACTION_DRAG_STARTED} action type to continue to
+     *     receive drag events for the current drag and drop operation.
+     *   <p>
+     *     The method should return {@code true} in response to an
+     *     {@link DragEvent#ACTION_DROP ACTION_DROP} action type if the dropped data was consumed
+     *     (at least partially); {@code false}, if none of the data was consumed.
+     *   <p>
+     *     For all other events, the return value is {@code false}.
      */
     public boolean onDragEvent(DragEvent event) {
         if (mListenerInfo == null || mListenerInfo.mOnReceiveContentListener == null) {
@@ -27077,7 +27223,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
 
         switch (event.mAction) {
             case DragEvent.ACTION_DRAG_STARTED: {
-                if (result && li.mOnDragListener != null) {
+                if (result && li != null && li.mOnDragListener != null) {
                     sendWindowContentChangedAccessibilityEvent(
                             AccessibilityEvent.CONTENT_CHANGE_TYPE_UNDEFINED);
                 }
@@ -27091,7 +27237,8 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
                 refreshDrawableState();
             } break;
             case DragEvent.ACTION_DROP: {
-                if (result && (li.mOnDragListener != null | li.mOnReceiveContentListener != null)) {
+                if (result && li != null && (li.mOnDragListener != null
+                        || li.mOnReceiveContentListener != null)) {
                     sendWindowContentChangedAccessibilityEvent(
                             AccessibilityEvent.CONTENT_CHANGE_TYPE_DRAG_DROPPED);
                 }
@@ -28993,27 +29140,27 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     }
 
     /**
-     * Interface definition for a callback to be invoked when a drag is being dispatched
-     * to this view.  The callback will be invoked before the hosting view's own
-     * onDrag(event) method.  If the listener wants to fall back to the hosting view's
-     * onDrag(event) behavior, it should return 'false' from this callback.
+     * Interface definition for a listener that's invoked when a drag event is dispatched to this
+     * view. The listener is invoked before the view's own
+     * {@link #onDragEvent(DragEvent)} method. To fall back to the view's
+     * {@code onDragEvent(DragEvent)} behavior, return {@code false} from the listener method.
      *
      * <div class="special reference">
-     * <h3>Developer Guides</h3>
-     * <p>For a guide to implementing drag and drop features, read the
-     * <a href="{@docRoot}guide/topics/ui/drag-drop.html">Drag and Drop</a> developer guide.</p>
+     *   <h3>Developer Guides</h3>
+     *   <p>For a guide to implementing drag and drop features, see the
+     *   <a href="{@docRoot}guide/topics/ui/drag-drop.html">Drag and drop</a> developer guide.</p>
      * </div>
      */
     public interface OnDragListener {
         /**
-         * Called when a drag event is dispatched to a view. This allows listeners
-         * to get a chance to override base View behavior.
+         * Called when a drag event is dispatched to a view. Enables listeners to override the
+         * base behavior provided by {@link #onDragEvent(DragEvent)}.
          *
-         * @param v The View that received the drag event.
-         * @param event The {@link android.view.DragEvent} object for the drag event.
-         * @return {@code true} if the drag event was handled successfully, or {@code false}
-         * if the drag event was not handled. Note that {@code false} will trigger the View
-         * to call its {@link #onDragEvent(DragEvent) onDragEvent()} handler.
+         * @param v The {@code View} that received the drag event.
+         * @param event The event object for the drag event.
+         * @return {@code true} if the drag event was handled successfully; {@code false}, if the
+         *   drag event was not handled. <b>Note:</b> A {@code false} return value triggers the
+         *   view's {@link #onDragEvent(DragEvent)} handler.
          */
         boolean onDrag(View v, DragEvent event);
     }
@@ -31248,6 +31395,25 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     public @Nullable AttachedSurfaceControl getRootSurfaceControl() {
         if (mAttachInfo != null) {
           return mAttachInfo.getRootSurfaceControl();
+        }
+        return null;
+    }
+
+    /**
+     * Returns the {@link OnBackInvokedDispatcher} instance of the window this view is attached to.
+     *
+     * @return The {@link OnBackInvokedDispatcher} or {@code null} if the view is neither attached
+     *         to a window or a view tree with a decor.
+     */
+    @Nullable
+    public OnBackInvokedDispatcher getOnBackInvokedDispatcher() {
+        ViewParent parent = getParent();
+        if (parent instanceof View) {
+            return ((View) parent).getOnBackInvokedDispatcher();
+        } else if (parent instanceof ViewRootImpl) {
+            // Get the fallback dispatcher on {@link ViewRootImpl} if the view tree doesn't have
+            // a {@link com.android.internal.policy.DecorView}.
+            return ((ViewRootImpl) parent).getOnBackInvokedDispatcher();
         }
         return null;
     }

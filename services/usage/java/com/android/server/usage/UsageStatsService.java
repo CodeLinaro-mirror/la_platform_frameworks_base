@@ -29,8 +29,11 @@ import static android.app.usage.UsageEvents.Event.USER_STOPPED;
 import static android.app.usage.UsageEvents.Event.USER_UNLOCKED;
 import static android.app.usage.UsageStatsManager.USAGE_SOURCE_CURRENT_ACTIVITY;
 import static android.app.usage.UsageStatsManager.USAGE_SOURCE_TASK_ROOT_ACTIVITY;
+import static android.text.format.DateUtils.HOUR_IN_MILLIS;
 
 import android.Manifest;
+import android.annotation.CurrentTimeMillisLong;
+import android.annotation.ElapsedRealtimeLong;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
@@ -39,6 +42,7 @@ import android.app.AppOpsManager;
 import android.app.IUidObserver;
 import android.app.PendingIntent;
 import android.app.admin.DevicePolicyManagerInternal;
+import android.app.usage.AppLaunchEstimateInfo;
 import android.app.usage.AppStandbyInfo;
 import android.app.usage.ConfigurationStats;
 import android.app.usage.EventStats;
@@ -84,6 +88,7 @@ import android.util.Slog;
 import android.util.SparseArray;
 import android.util.SparseIntArray;
 
+import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.content.PackageMonitor;
 import com.android.internal.os.BackgroundThread;
@@ -94,6 +99,7 @@ import com.android.internal.util.IndentingPrintWriter;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
 import com.android.server.usage.AppStandbyInternal.AppIdleStateChangeListener;
+import com.android.server.utils.AlarmQueue;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -134,8 +140,15 @@ public class UsageStatsService extends SystemService implements
 
     private static final long TEN_SECONDS = 10 * 1000;
     private static final long TWENTY_MINUTES = 20 * 60 * 1000;
+    private static final long ONE_DAY = 24 * HOUR_IN_MILLIS;
+    private static final long ONE_WEEK = 7 * ONE_DAY;
     private static final long FLUSH_INTERVAL = COMPRESS_TIME ? TEN_SECONDS : TWENTY_MINUTES;
     static final long TIME_CHANGE_THRESHOLD_MILLIS = 2 * 1000; // Two seconds.
+    /**
+     * Used when we can't determine the next app launch time. Assume the app will get launched
+     * this amount of time in the future.
+     */
+    private static final long UNKNOWN_LAUNCH_TIME_DELAY_MS = 365 * ONE_DAY;
 
     private static final boolean ENABLE_KERNEL_UPDATES = true;
     private static final File KERNEL_COUNTER_FILE = new File("/proc/uid_procstat/set");
@@ -160,6 +173,9 @@ public class UsageStatsService extends SystemService implements
     static final int MSG_UNLOCKED_USER = 5;
     static final int MSG_PACKAGE_REMOVED = 6;
     static final int MSG_ON_START = 7;
+    static final int MSG_HANDLE_LAUNCH_TIME_ON_USER_UNLOCK = 8;
+    static final int MSG_NOTIFY_ESTIMATED_LAUNCH_TIME_CHANGED = 9;
+    static final int MSG_NOTIFY_ESTIMATED_LAUNCH_TIMES_CHANGED = 10;
 
     private final Object mLock = new Object();
     Handler mHandler;
@@ -194,8 +210,12 @@ public class UsageStatsService extends SystemService implements
     private final SparseArray<LinkedList<Event>> mReportedEvents = new SparseArray<>();
     final SparseArray<ArraySet<String>> mUsageReporters = new SparseArray();
     final SparseArray<ActivityData> mVisibleActivities = new SparseArray();
+    @GuardedBy("mLock")
+    private final SparseArray<LaunchTimeAlarmQueue> mLaunchTimeAlarmQueues = new SparseArray<>();
     private final ArraySet<UsageStatsManagerInternal.UsageEventListener> mUsageEventListeners =
             new ArraySet<>();
+    private final CopyOnWriteArraySet<UsageStatsManagerInternal.EstimatedLaunchTimeChangedListener>
+            mEstimatedLaunchTimeChangedListeners = new CopyOnWriteArraySet<>();
 
     private static class ActivityData {
         private final String mTaskRootPackage;
@@ -369,6 +389,11 @@ public class UsageStatsService extends SystemService implements
             }
             mUserUnlockedStates.remove(userId);
             mUserState.put(userId, null); // release the service (mainly for GC)
+            LaunchTimeAlarmQueue alarmQueue = mLaunchTimeAlarmQueues.get(userId);
+            if (alarmQueue != null) {
+                alarmQueue.removeAllAlarms();
+                mLaunchTimeAlarmQueues.remove(userId);
+            }
         }
     }
 
@@ -380,6 +405,7 @@ public class UsageStatsService extends SystemService implements
         if (userId == UserHandle.USER_SYSTEM) {
             UsageStatsIdleService.scheduleUpdateMappingsJob(getContext());
         }
+        final boolean deleteObsoleteData = shouldDeleteObsoleteData(UserHandle.of(userId));
         synchronized (mLock) {
             // This should be safe to add this early. Other than reportEventOrAddToQueue and
             // getBackupPayload, every other user grabs the lock before accessing
@@ -402,7 +428,7 @@ public class UsageStatsService extends SystemService implements
             boolean needToFlush = !pendingEvents.isEmpty();
 
             initializeUserUsageStatsServiceLocked(userId, System.currentTimeMillis(),
-                    installedPackages);
+                    installedPackages, deleteObsoleteData);
             final UserUsageStatsService userService = getUserUsageStatsServiceLocked(userId);
             if (userService == null) {
                 Slog.i(TAG, "Attempted to unlock stopped or removed user " + userId);
@@ -414,6 +440,8 @@ public class UsageStatsService extends SystemService implements
                 reportEvent(pendingEvents.poll(), userId);
             }
             reportEvent(unlockEvent, userId);
+
+            mHandler.obtainMessage(MSG_HANDLE_LAUNCH_TIME_ON_USER_UNLOCK, userId, 0).sendToTarget();
 
             // Remove all the stats stored in memory and in system DE.
             mReportedEvents.remove(userId);
@@ -437,6 +465,7 @@ public class UsageStatsService extends SystemService implements
      * <br/>
      * Note: DO NOT call this while holding the usage stats lock ({@code mLock}).
      */
+    @Nullable
     private HashMap<String, Long> getInstalledPackages(int userId) {
         if (mPackageManager == null) {
             return null;
@@ -469,6 +498,33 @@ public class UsageStatsService extends SystemService implements
         synchronized (mLock) {
             mUsageSource = Settings.Global.getInt(getContext().getContentResolver(),
                     Settings.Global.APP_TIME_LIMIT_USAGE_SOURCE, USAGE_SOURCE_TASK_ROOT_ACTIVITY);
+        }
+    }
+
+    private class LaunchTimeAlarmQueue extends AlarmQueue<String> {
+        private final int mUserId;
+
+        LaunchTimeAlarmQueue(int userId, @NonNull Context context, @NonNull Looper looper) {
+            super(context, looper, "*usage.launchTime*", "Estimated launch times", true, 30_000L);
+            mUserId = userId;
+        }
+
+        @Override
+        protected boolean isForUser(@NonNull String key, int userId) {
+            return mUserId == userId;
+        }
+
+        @Override
+        protected void processExpiredAlarms(@NonNull ArraySet<String> expired) {
+            if (DEBUG) {
+                Slog.d(TAG, "Processing " + expired.size() + " expired alarms: "
+                        + expired.toString());
+            }
+            if (expired.size() > 0) {
+                mHandler.obtainMessage(
+                        MSG_NOTIFY_ESTIMATED_LAUNCH_TIMES_CHANGED, mUserId, 0, expired)
+                        .sendToTarget();
+            }
         }
     }
 
@@ -522,6 +578,8 @@ public class UsageStatsService extends SystemService implements
 
     @Override
     public void onStatsReloaded() {
+        // This method ends up being called with the lock held, so we need to be careful how we
+        // call into other things.
         mAppStandby.postOneTimeCheckIdleStates();
     }
 
@@ -556,7 +614,7 @@ public class UsageStatsService extends SystemService implements
     /**
      * Obfuscate both {@link UsageEvents.Event#NOTIFICATION_SEEN} and
      * {@link UsageEvents.Event#NOTIFICATION_INTERRUPTION} events if the provided calling uid does
-     * not hold the {@link android.Manifest.permission.MANAGE_NOTIFICATIONS} permission.
+     * not hold the {@link android.Manifest.permission#MANAGE_NOTIFICATIONS} permission.
      */
     private boolean shouldObfuscateNotificationEvents(int callingPid, int callingUid) {
         if (callingUid == Process.SYSTEM_UID) {
@@ -596,13 +654,13 @@ public class UsageStatsService extends SystemService implements
      * when the user is initially unlocked.
      */
     private void initializeUserUsageStatsServiceLocked(int userId, long currentTimeMillis,
-            HashMap<String, Long> installedPackages) {
+            HashMap<String, Long> installedPackages, boolean deleteObsoleteData) {
         final File usageStatsDir = new File(Environment.getDataSystemCeDirectory(userId),
                 "usagestats");
         final UserUsageStatsService service = new UserUsageStatsService(getContext(), userId,
                 usageStatsDir, this);
         try {
-            service.init(currentTimeMillis, installedPackages);
+            service.init(currentTimeMillis, installedPackages, deleteObsoleteData);
             mUserState.put(userId, service);
         } catch (Exception e) {
             if (mUserManager.isUserUnlocked(userId)) {
@@ -953,6 +1011,23 @@ public class UsageStatsService extends SystemService implements
                             event.mTaskRootClass, usageSourcePackage);
                     resumedData.lastEvent = Event.ACTIVITY_RESUMED;
                     mVisibleActivities.put(event.mInstanceId, resumedData);
+                    final long estimatedLaunchTime =
+                            mAppStandby.getEstimatedLaunchTime(event.mPackage, userId);
+                    final long now = System.currentTimeMillis();
+                    if (estimatedLaunchTime < now || estimatedLaunchTime > now + ONE_WEEK) {
+                        // If the estimated launch time is in the past or more than a week into
+                        // the future, then we re-estimate a future launch time of less than a week
+                        // from now, so notify listeners of an estimated launch time change.
+                        // Clear the cached value.
+                        if (DEBUG) {
+                            Slog.d(TAG, event.getPackageName()
+                                    + " app launch resetting future launch estimate");
+                        }
+                        mAppStandby.setEstimatedLaunchTime(event.mPackage, userId, 0);
+                        mHandler.obtainMessage(
+                                MSG_NOTIFY_ESTIMATED_LAUNCH_TIME_CHANGED, userId, 0, event.mPackage)
+                                .sendToTarget();
+                    }
                     break;
                 case Event.ACTIVITY_PAUSED:
                     ActivityData pausedData = mVisibleActivities.get(event.mInstanceId);
@@ -1110,6 +1185,11 @@ public class UsageStatsService extends SystemService implements
             Slog.i(TAG, "Removing user " + userId + " and all data.");
             mUserState.remove(userId);
             mAppTimeLimit.onUserRemoved(userId);
+            final LaunchTimeAlarmQueue alarmQueue = mLaunchTimeAlarmQueues.get(userId);
+            if (alarmQueue != null) {
+                alarmQueue.removeAllAlarms();
+                mLaunchTimeAlarmQueues.remove(userId);
+            }
         }
         mAppStandby.onUserRemoved(userId);
         // Cancel any scheduled jobs for this user since the user is being removed.
@@ -1128,6 +1208,10 @@ public class UsageStatsService extends SystemService implements
                 // If user is not unlocked and a package is removed for them, we will handle it
                 // when the user service is initialized and package manager is queried.
                 return;
+            }
+            final LaunchTimeAlarmQueue alarmQueue = mLaunchTimeAlarmQueues.get(userId);
+            if (alarmQueue != null) {
+                alarmQueue.removeAlarmForKey(packageName);
             }
             final UserUsageStatsService userService = mUserState.get(userId);
             if (userService == null) {
@@ -1165,6 +1249,10 @@ public class UsageStatsService extends SystemService implements
      * Called by the Binder stub.
      */
     private boolean updatePackageMappingsData() {
+        // don't update the mappings if a profile user is defined
+        if (!shouldDeleteObsoleteData(UserHandle.SYSTEM)) {
+            return true; // return true so job scheduler doesn't reschedule the job
+        }
         // fetch the installed packages outside the lock so it doesn't block package manager.
         final HashMap<String, Long> installedPkgs = getInstalledPackages(UserHandle.USER_SYSTEM);
         synchronized (mLock) {
@@ -1274,6 +1362,7 @@ public class UsageStatsService extends SystemService implements
     /**
      * Called by the Binder stub.
      */
+    @Nullable
     UsageEvents queryEventsForPackage(int userId, long beginTime, long endTime,
             String packageName, boolean includeTaskRoot) {
         synchronized (mLock) {
@@ -1287,6 +1376,229 @@ public class UsageStatsService extends SystemService implements
                 return null; // user was stopped or removed
             }
             return service.queryEventsForPackage(beginTime, endTime, packageName, includeTaskRoot);
+        }
+    }
+
+    @Nullable
+    private UsageEvents queryEarliestAppEvents(int userId, long beginTime, long endTime,
+            int eventType) {
+        synchronized (mLock) {
+            if (!mUserUnlockedStates.contains(userId)) {
+                Slog.w(TAG, "Failed to query earliest events for locked user " + userId);
+                return null;
+            }
+
+            final UserUsageStatsService service = getUserUsageStatsServiceLocked(userId);
+            if (service == null) {
+                return null; // user was stopped or removed
+            }
+            return service.queryEarliestAppEvents(beginTime, endTime, eventType);
+        }
+    }
+
+    @Nullable
+    private UsageEvents queryEarliestEventsForPackage(int userId, long beginTime, long endTime,
+            @NonNull String packageName, int eventType) {
+        synchronized (mLock) {
+            if (!mUserUnlockedStates.contains(userId)) {
+                Slog.w(TAG, "Failed to query earliset package events for locked user " + userId);
+                return null;
+            }
+
+            final UserUsageStatsService service = getUserUsageStatsServiceLocked(userId);
+            if (service == null) {
+                return null; // user was stopped or removed
+            }
+            return service.queryEarliestEventsForPackage(
+                    beginTime, endTime, packageName, eventType);
+        }
+    }
+
+    @CurrentTimeMillisLong
+    long getEstimatedPackageLaunchTime(int userId, String packageName) {
+        long estimatedLaunchTime = mAppStandby.getEstimatedLaunchTime(packageName, userId);
+        final long now = System.currentTimeMillis();
+        if (estimatedLaunchTime < now || estimatedLaunchTime == Long.MAX_VALUE) {
+            estimatedLaunchTime = calculateEstimatedPackageLaunchTime(userId, packageName);
+            mAppStandby.setEstimatedLaunchTime(packageName, userId, estimatedLaunchTime);
+
+            synchronized (mLock) {
+                LaunchTimeAlarmQueue alarmQueue = mLaunchTimeAlarmQueues.get(userId);
+                if (alarmQueue == null) {
+                    alarmQueue = new LaunchTimeAlarmQueue(
+                            userId, getContext(), BackgroundThread.get().getLooper());
+                    mLaunchTimeAlarmQueues.put(userId, alarmQueue);
+                }
+                alarmQueue.addAlarm(packageName,
+                        SystemClock.elapsedRealtime() + (estimatedLaunchTime - now));
+            }
+        }
+        return estimatedLaunchTime;
+    }
+
+    @CurrentTimeMillisLong
+    private long calculateEstimatedPackageLaunchTime(int userId, String packageName) {
+        synchronized (mLock) {
+            final long endTime = System.currentTimeMillis();
+            final long beginTime = endTime - ONE_WEEK;
+            final long unknownTime = endTime + UNKNOWN_LAUNCH_TIME_DELAY_MS;
+            final UsageEvents events = queryEarliestEventsForPackage(
+                    userId, beginTime, endTime, packageName, Event.ACTIVITY_RESUMED);
+            if (events == null) {
+                if (DEBUG) {
+                    Slog.d(TAG, "No events for " + userId + ":" + packageName);
+                }
+                return unknownTime;
+            }
+            final UsageEvents.Event event = new UsageEvents.Event();
+            final boolean hasMoreThan24HoursOfHistory;
+            if (events.getNextEvent(event)) {
+                hasMoreThan24HoursOfHistory = endTime - event.getTimeStamp() > ONE_DAY;
+                if (DEBUG) {
+                    Slog.d(TAG, userId + ":" + packageName + " history > 24 hours="
+                            + hasMoreThan24HoursOfHistory);
+                }
+            } else {
+                if (DEBUG) {
+                    Slog.d(TAG, userId + ":" + packageName + " has no events");
+                }
+                return unknownTime;
+            }
+            do {
+                if (event.getEventType() == Event.ACTIVITY_RESUMED) {
+                    final long timestamp = event.getTimeStamp();
+                    final long nextLaunch =
+                            calculateNextLaunchTime(hasMoreThan24HoursOfHistory, timestamp);
+                    if (nextLaunch > endTime) {
+                        return nextLaunch;
+                    }
+                }
+            } while (events.getNextEvent(event));
+            return unknownTime;
+        }
+    }
+
+    @CurrentTimeMillisLong
+    private static long calculateNextLaunchTime(
+            boolean hasMoreThan24HoursOfHistory, long eventTimestamp) {
+        // For our estimates, we assume the user opens an app at consistent times
+        // (ie. like clockwork).
+        // If the app has more than 24 hours of history, then we assume the user will
+        // reopen the app at the same time on a specific day.
+        // If the app has less than 24 hours of history (meaning it was likely just
+        // installed), then we assume the user will open it at exactly the same time
+        // on the following day.
+        if (hasMoreThan24HoursOfHistory) {
+            return eventTimestamp + ONE_WEEK;
+        } else {
+            return eventTimestamp + ONE_DAY;
+        }
+    }
+
+    private void handleEstimatedLaunchTimesOnUserUnlock(int userId) {
+        synchronized (mLock) {
+            final long nowElapsed = SystemClock.elapsedRealtime();
+            final long now = System.currentTimeMillis();
+            final long beginTime = now - ONE_WEEK;
+            final UsageEvents events = queryEarliestAppEvents(
+                    userId, beginTime, now, Event.ACTIVITY_RESUMED);
+            if (events == null) {
+                return;
+            }
+            final ArrayMap<String, Boolean> hasMoreThan24HoursOfHistory = new ArrayMap<>();
+            final UsageEvents.Event event = new UsageEvents.Event();
+            LaunchTimeAlarmQueue alarmQueue = mLaunchTimeAlarmQueues.get(userId);
+            if (alarmQueue == null) {
+                alarmQueue = new LaunchTimeAlarmQueue(
+                        userId, getContext(), BackgroundThread.get().getLooper());
+                mLaunchTimeAlarmQueues.put(userId, alarmQueue);
+            }
+            final ArraySet<String> changedTimes = new ArraySet<>();
+            for (boolean unprocessedEvent = events.getNextEvent(event); unprocessedEvent;
+                    unprocessedEvent = events.getNextEvent(event)) {
+                final String packageName = event.getPackageName();
+                if (!hasMoreThan24HoursOfHistory.containsKey(packageName)) {
+                    boolean hasHistory = now - event.getTimeStamp() > ONE_DAY;
+                    if (DEBUG) {
+                        Slog.d(TAG,
+                                userId + ":" + packageName + " history > 24 hours=" + hasHistory);
+                    }
+                    hasMoreThan24HoursOfHistory.put(packageName, hasHistory);
+                }
+                if (event.getEventType() == Event.ACTIVITY_RESUMED) {
+                    long estimatedLaunchTime =
+                            mAppStandby.getEstimatedLaunchTime(packageName, userId);
+                    if (estimatedLaunchTime < now || estimatedLaunchTime == Long.MAX_VALUE) {
+                        //noinspection ConstantConditions
+                        estimatedLaunchTime = calculateNextLaunchTime(
+                                hasMoreThan24HoursOfHistory.get(packageName), event.getTimeStamp());
+                        mAppStandby.setEstimatedLaunchTime(
+                                packageName, userId, estimatedLaunchTime);
+                    }
+                    if (estimatedLaunchTime < now + ONE_WEEK) {
+                        // Before a user is unlocked, we don't know when the app will be launched,
+                        // so we give callers the UNKNOWN time. Now that we have a better estimate,
+                        // we should notify them of the change.
+                        if (DEBUG) {
+                            Slog.d(TAG, "User " + userId + " unlock resulting in"
+                                    + " estimated launch time change for " + packageName);
+                        }
+                        changedTimes.add(packageName);
+                    }
+                    alarmQueue.addAlarm(packageName, nowElapsed + (estimatedLaunchTime - now));
+                }
+            }
+            if (changedTimes.size() > 0) {
+                mHandler.obtainMessage(
+                        MSG_NOTIFY_ESTIMATED_LAUNCH_TIMES_CHANGED, userId, 0, changedTimes)
+                        .sendToTarget();
+            }
+        }
+    }
+
+    private void setEstimatedLaunchTime(int userId, String packageName,
+            @CurrentTimeMillisLong long estimatedLaunchTime) {
+        final long now = System.currentTimeMillis();
+        if (estimatedLaunchTime <= now) {
+            if (DEBUG) {
+                Slog.w(TAG, "Ignoring new estimate for "
+                        + userId + ":" + packageName + " because it's old");
+            }
+            return;
+        }
+        final long oldEstimatedLaunchTime = mAppStandby.getEstimatedLaunchTime(packageName, userId);
+        if (estimatedLaunchTime != oldEstimatedLaunchTime) {
+            mAppStandby.setEstimatedLaunchTime(packageName, userId, estimatedLaunchTime);
+            mHandler.obtainMessage(
+                    MSG_NOTIFY_ESTIMATED_LAUNCH_TIME_CHANGED, userId, 0, packageName)
+                    .sendToTarget();
+        }
+    }
+
+    private void setEstimatedLaunchTimes(int userId, List<AppLaunchEstimateInfo> launchEstimates) {
+        final ArraySet<String> changedTimes = new ArraySet<>();
+        final long now = System.currentTimeMillis();
+        for (int i = launchEstimates.size() - 1; i >= 0; --i) {
+            AppLaunchEstimateInfo estimate = launchEstimates.get(i);
+            if (estimate.estimatedLaunchTime <= now) {
+                if (DEBUG) {
+                    Slog.w(TAG, "Ignoring new estimate for "
+                            + userId + ":" + estimate.packageName + " because it's old");
+                }
+                continue;
+            }
+            final long oldEstimatedLaunchTime =
+                    mAppStandby.getEstimatedLaunchTime(estimate.packageName, userId);
+            if (estimate.estimatedLaunchTime != oldEstimatedLaunchTime) {
+                mAppStandby.setEstimatedLaunchTime(
+                        estimate.packageName, userId, estimate.estimatedLaunchTime);
+                changedTimes.add(estimate.packageName);
+            }
+        }
+        if (changedTimes.size() > 0) {
+            mHandler.obtainMessage(
+                    MSG_NOTIFY_ESTIMATED_LAUNCH_TIMES_CHANGED, userId, 0, changedTimes)
+                    .sendToTarget();
         }
     }
 
@@ -1307,6 +1619,29 @@ public class UsageStatsService extends SystemService implements
         synchronized (mLock) {
             mUsageEventListeners.remove(listener);
         }
+    }
+
+    /**
+     * Called via the local interface.
+     */
+    private void registerLaunchTimeChangedListener(
+            @NonNull UsageStatsManagerInternal.EstimatedLaunchTimeChangedListener listener) {
+        mEstimatedLaunchTimeChangedListeners.add(listener);
+    }
+
+    /**
+     * Called via the local interface.
+     */
+    private void unregisterLaunchTimeChangedListener(
+            @NonNull UsageStatsManagerInternal.EstimatedLaunchTimeChangedListener listener) {
+        mEstimatedLaunchTimeChangedListeners.remove(listener);
+    }
+
+    private boolean shouldDeleteObsoleteData(UserHandle userHandle) {
+        final DevicePolicyManagerInternal dpmInternal = getDpmInternal();
+        // If a profile owner is not defined for the given user, obsolete data should be deleted
+        return dpmInternal == null
+                || dpmInternal.getProfileOwnerOrDeviceOwnerSupervisionComponent(userHandle) == null;
     }
 
     private String buildFullToken(String packageName, String token) {
@@ -1564,6 +1899,44 @@ public class UsageStatsService extends SystemService implements
                         loadGlobalComponentUsageLocked();
                     }
                     break;
+                case MSG_HANDLE_LAUNCH_TIME_ON_USER_UNLOCK: {
+                    final int userId = msg.arg1;
+                    handleEstimatedLaunchTimesOnUserUnlock(userId);
+                }
+                break;
+                case MSG_NOTIFY_ESTIMATED_LAUNCH_TIME_CHANGED: {
+                    final int userId = msg.arg1;
+                    final String pkgName = (String) msg.obj;
+                    final long nextEstimatedLaunchTime =
+                            getEstimatedPackageLaunchTime(userId, pkgName);
+                    if (DEBUG) {
+                        Slog.d(TAG, "Notifying listener for " + userId + ":" + pkgName);
+                    }
+                    for (UsageStatsManagerInternal.EstimatedLaunchTimeChangedListener listener :
+                            mEstimatedLaunchTimeChangedListeners) {
+                        listener.onEstimatedLaunchTimeChanged(
+                                userId, pkgName, nextEstimatedLaunchTime);
+                    }
+                }
+                break;
+                case MSG_NOTIFY_ESTIMATED_LAUNCH_TIMES_CHANGED: {
+                    final int userId = msg.arg1;
+                    final ArraySet<String> pkgNames = (ArraySet<String>) msg.obj;
+                    if (DEBUG) {
+                        Slog.d(TAG, "Notifying listeners for " + userId + "-->" + pkgNames);
+                    }
+                    for (int p = pkgNames.size() - 1; p >= 0; --p) {
+                        final String pkgName = pkgNames.valueAt(p);
+                        final long nextEstimatedLaunchTime =
+                                getEstimatedPackageLaunchTime(userId, pkgName);
+                        for (UsageStatsManagerInternal.EstimatedLaunchTimeChangedListener listener :
+                                mEstimatedLaunchTimeChangedListeners) {
+                            listener.onEstimatedLaunchTimeChanged(
+                                    userId, pkgName, nextEstimatedLaunchTime);
+                        }
+                    }
+                }
+                break;
                 default:
                     super.handleMessage(msg);
                     break;
@@ -1962,6 +2335,37 @@ public class UsageStatsService extends SystemService implements
             try {
                 mAppStandby.setAppStandbyBuckets(appBuckets.getList(), userId,
                         callingUid, callingPid);
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public void setEstimatedLaunchTime(String packageName, long estimatedLaunchTime,
+                int userId) {
+            getContext().enforceCallingPermission(
+                    Manifest.permission.CHANGE_APP_LAUNCH_TIME_ESTIMATE,
+                    "No permission to change app launch estimates");
+
+            final long token = Binder.clearCallingIdentity();
+            try {
+                UsageStatsService.this
+                        .setEstimatedLaunchTime(userId, packageName, estimatedLaunchTime);
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        @Override
+        public void setEstimatedLaunchTimes(ParceledListSlice estimatedLaunchTimes, int userId) {
+            getContext().enforceCallingPermission(
+                    Manifest.permission.CHANGE_APP_LAUNCH_TIME_ESTIMATE,
+                    "No permission to change app launch estimates");
+
+            final long token = Binder.clearCallingIdentity();
+            try {
+                UsageStatsService.this
+                        .setEstimatedLaunchTimes(userId, estimatedLaunchTimes.getList());
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
@@ -2463,6 +2867,11 @@ public class UsageStatsService extends SystemService implements
         }
 
         @Override
+        public long getEstimatedPackageLaunchTime(String packageName, int userId) {
+            return UsageStatsService.this.getEstimatedPackageLaunchTime(userId, packageName);
+        }
+
+        @Override
         public long getTimeSinceLastJobRun(String packageName, int userId) {
             return mAppStandby.getTimeSinceLastJobRun(packageName, userId);
         }
@@ -2527,13 +2936,50 @@ public class UsageStatsService extends SystemService implements
         public void unregisterListener(@NonNull UsageEventListener listener) {
             UsageStatsService.this.unregisterListener(listener);
         }
+
+        @Override
+        public void registerLaunchTimeChangedListener(
+                @NonNull EstimatedLaunchTimeChangedListener listener) {
+            UsageStatsService.this.registerLaunchTimeChangedListener(listener);
+        }
+
+        @Override
+        public void unregisterLaunchTimeChangedListener(
+                @NonNull EstimatedLaunchTimeChangedListener listener) {
+            UsageStatsService.this.unregisterLaunchTimeChangedListener(listener);
+        }
+
+        @Override
+        public void reportBroadcastDispatched(int sourceUid, @NonNull String targetPackage,
+                @NonNull UserHandle targetUser, long idForResponseEvent,
+                @ElapsedRealtimeLong long timestampMs) {
+        }
+
+        @Override
+        public void reportNotificationPosted(@NonNull String packageName,
+                @NonNull UserHandle user, @ElapsedRealtimeLong long timestampMs) {
+        }
+
+        @Override
+        public void reportNotificationUpdated(@NonNull String packageName,
+                @NonNull UserHandle user, @ElapsedRealtimeLong long timestampMs) {
+        }
+
+        @Override
+        public void reportNotificationRemoved(@NonNull String packageName,
+                @NonNull UserHandle user, @ElapsedRealtimeLong long timestampMs) {
+        }
     }
 
     private class MyPackageMonitor extends PackageMonitor {
         @Override
         public void onPackageRemoved(String packageName, int uid) {
-            mHandler.obtainMessage(MSG_PACKAGE_REMOVED, getChangingUserId(), 0, packageName)
-                    .sendToTarget();
+            final int changingUserId = getChangingUserId();
+            // Only remove the package's data if a profile owner is not defined for the user
+            if (shouldDeleteObsoleteData(UserHandle.of(changingUserId))) {
+                mHandler.obtainMessage(MSG_PACKAGE_REMOVED, changingUserId, 0, packageName)
+                        .sendToTarget();
+            }
             super.onPackageRemoved(packageName, uid);
         }
     }

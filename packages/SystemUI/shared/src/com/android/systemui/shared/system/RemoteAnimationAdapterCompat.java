@@ -26,6 +26,7 @@ import static android.view.WindowManager.TransitionOldType;
 import static android.window.TransitionInfo.FLAG_IS_WALLPAPER;
 
 import android.annotation.SuppressLint;
+import android.app.IApplicationThread;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.ArrayMap;
@@ -51,10 +52,10 @@ public class RemoteAnimationAdapterCompat {
     private final RemoteTransitionCompat mRemoteTransition;
 
     public RemoteAnimationAdapterCompat(RemoteAnimationRunnerCompat runner, long duration,
-            long statusBarTransitionDelay) {
+            long statusBarTransitionDelay, IApplicationThread appThread) {
         mWrapped = new RemoteAnimationAdapter(wrapRemoteAnimationRunner(runner), duration,
                 statusBarTransitionDelay);
-        mRemoteTransition = buildRemoteTransition(runner);
+        mRemoteTransition = buildRemoteTransition(runner, appThread);
     }
 
     RemoteAnimationAdapter getWrapped() {
@@ -62,9 +63,10 @@ public class RemoteAnimationAdapterCompat {
     }
 
     /** Helper to just build a remote transition. Use this if the legacy adapter isn't needed. */
-    public static RemoteTransitionCompat buildRemoteTransition(RemoteAnimationRunnerCompat runner) {
+    public static RemoteTransitionCompat buildRemoteTransition(RemoteAnimationRunnerCompat runner,
+            IApplicationThread appThread) {
         return new RemoteTransitionCompat(
-                new RemoteTransition(wrapRemoteTransition(runner)));
+                new RemoteTransition(wrapRemoteTransition(runner), appThread));
     }
 
     public RemoteTransitionCompat getRemoteTransition() {
@@ -181,8 +183,8 @@ public class RemoteAnimationAdapterCompat {
                     }
                     // Make wallpaper visible immediately since launcher apparently won't do this.
                     for (int i = wallpapersCompat.length - 1; i >= 0; --i) {
-                        t.show(wallpapersCompat[i].leash.getSurfaceControl());
-                        t.setAlpha(wallpapersCompat[i].leash.getSurfaceControl(), 1.f);
+                        t.show(wallpapersCompat[i].leash);
+                        t.setAlpha(wallpapersCompat[i].leash, 1.f);
                     }
                 } else {
                     if (launcherTask != null) {
@@ -203,21 +205,20 @@ public class RemoteAnimationAdapterCompat {
                     @Override
                     @SuppressLint("NewApi")
                     public void run() {
+                        final SurfaceControl.Transaction finishTransaction =
+                                new SurfaceControl.Transaction();
+                        counterLauncher.cleanUp(finishTransaction);
+                        counterWallpaper.cleanUp(finishTransaction);
+                        // Release surface references now. This is apparently to free GPU memory
+                        // while doing quick operations (eg. during CTS).
+                        for (int i = info.getChanges().size() - 1; i >= 0; --i) {
+                            info.getChanges().get(i).getLeash().release();
+                        }
+                        for (int i = leashMap.size() - 1; i >= 0; --i) {
+                            leashMap.valueAt(i).release();
+                        }
                         try {
-                            counterLauncher.cleanUp(info.getRootLeash());
-                            counterWallpaper.cleanUp(info.getRootLeash());
-                            // Release surface references now. This is apparently to free GPU
-                            // memory while doing quick operations (eg. during CTS).
-                            for (int i = 0; i < info.getChanges().size(); ++i) {
-                                info.getChanges().get(i).getLeash().release();
-                            }
-                            SurfaceControl.Transaction t = new SurfaceControl.Transaction();
-                            for (int i = 0; i < leashMap.size(); ++i) {
-                                if (leashMap.keyAt(i) == leashMap.valueAt(i)) continue;
-                                t.remove(leashMap.valueAt(i));
-                            }
-                            t.apply();
-                            finishCallback.onTransitionFinished(null /* wct */, null /* sct */);
+                            finishCallback.onTransitionFinished(null /* wct */, finishTransaction);
                         } catch (RemoteException e) {
                             Log.e("ActivityOptionsCompat", "Failed to call app controlled animation"
                                     + " finished callback", e);

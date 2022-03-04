@@ -17,43 +17,48 @@
 package com.android.systemui.unfold
 
 import android.content.Context
-import android.hardware.SensorManager
-import android.hardware.devicestate.DeviceStateManager
-import android.os.Handler
-import com.android.systemui.dagger.qualifiers.Main
+import android.view.IWindowManager
 import com.android.systemui.keyguard.LifecycleScreenStatusProvider
 import com.android.systemui.unfold.config.UnfoldTransitionConfig
+import com.android.systemui.unfold.updates.FoldStateProvider
+import com.android.systemui.unfold.updates.screen.ScreenStatusProvider
+import com.android.systemui.unfold.util.NaturalRotationUnfoldProgressProvider
+import com.android.systemui.unfold.util.ScopedUnfoldTransitionProgressProvider
+import com.android.systemui.unfold.util.UnfoldTransitionATracePrefix
+import com.android.systemui.util.time.SystemClockImpl
 import com.android.wm.shell.unfold.ShellUnfoldProgressProvider
 import dagger.Lazy
 import dagger.Module
 import dagger.Provides
 import java.util.Optional
-import java.util.concurrent.Executor
+import javax.inject.Named
 import javax.inject.Singleton
 
-@Module
+@Module(includes = [UnfoldSharedModule::class])
 class UnfoldTransitionModule {
+
+    @Provides @UnfoldTransitionATracePrefix fun tracingTagPrefix() = "systemui"
 
     @Provides
     @Singleton
-    fun provideUnfoldTransitionProgressProvider(
-        context: Context,
+    fun providesFoldStateLoggingProvider(
         config: UnfoldTransitionConfig,
-        screenStatusProvider: LifecycleScreenStatusProvider,
-        deviceStateManager: DeviceStateManager,
-        sensorManager: SensorManager,
-        @Main executor: Executor,
-        @Main handler: Handler
-    ): UnfoldTransitionProgressProvider =
-        createUnfoldTransitionProgressProvider(
-            context,
-            config,
-            screenStatusProvider,
-            deviceStateManager,
-            sensorManager,
-            handler,
-            executor
-        )
+        foldStateProvider: Lazy<FoldStateProvider>
+    ): Optional<FoldStateLoggingProvider> =
+        if (config.isHingeAngleEnabled) {
+            Optional.of(FoldStateLoggingProviderImpl(foldStateProvider.get(), SystemClockImpl()))
+        } else {
+            Optional.empty()
+        }
+
+    @Provides
+    @Singleton
+    fun providesFoldStateLogger(
+        optionalFoldStateLoggingProvider: Optional<FoldStateLoggingProvider>
+    ): Optional<FoldStateLogger> =
+        optionalFoldStateLoggingProvider.map { FoldStateLoggingProvider ->
+            FoldStateLogger(FoldStateLoggingProvider)
+        }
 
     @Provides
     @Singleton
@@ -62,13 +67,37 @@ class UnfoldTransitionModule {
 
     @Provides
     @Singleton
+    fun provideNaturalRotationProgressProvider(
+        context: Context,
+        windowManager: IWindowManager,
+        unfoldTransitionProgressProvider: Optional<UnfoldTransitionProgressProvider>
+    ): Optional<NaturalRotationUnfoldProgressProvider> =
+        unfoldTransitionProgressProvider.map { provider ->
+            NaturalRotationUnfoldProgressProvider(context, windowManager, provider)
+        }
+
+    @Provides
+    @Named(UNFOLD_STATUS_BAR)
+    @Singleton
+    fun provideStatusBarScopedTransitionProvider(
+        source: Optional<NaturalRotationUnfoldProgressProvider>
+    ): Optional<ScopedUnfoldTransitionProgressProvider> =
+        source.map { provider -> ScopedUnfoldTransitionProgressProvider(provider) }
+
+    @Provides
+    @Singleton
     fun provideShellProgressProvider(
         config: UnfoldTransitionConfig,
-        provider: Lazy<UnfoldTransitionProgressProvider>
-    ): Optional<ShellUnfoldProgressProvider> =
-        if (config.isEnabled) {
-            Optional.ofNullable(ShellUnfoldProgressProvider(provider.get()))
+        provider: Optional<UnfoldTransitionProgressProvider>
+    ): ShellUnfoldProgressProvider =
+        if (config.isEnabled && provider.isPresent) {
+            UnfoldProgressProvider(provider.get())
         } else {
-            Optional.empty()
+            ShellUnfoldProgressProvider.NO_PROVIDER
         }
+
+    @Provides
+    fun screenStatusProvider(impl: LifecycleScreenStatusProvider): ScreenStatusProvider = impl
 }
+
+const val UNFOLD_STATUS_BAR = "unfold_status_bar"

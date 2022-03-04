@@ -44,15 +44,21 @@ public class FeatureFlagUtils {
     public static final String SETTINGS_DO_NOT_RESTORE_PRESERVED =
             "settings_do_not_restore_preserved";
     /** @hide */
-    public static final String SETTINGS_PROVIDER_MODEL = "settings_provider_model";
-    /** @hide */
     public static final String SETTINGS_USE_NEW_BACKUP_ELIGIBILITY_RULES
             = "settings_use_new_backup_eligibility_rules";
     /** @hide */
     public static final String SETTINGS_ENABLE_SECURITY_HUB = "settings_enable_security_hub";
-
     /** @hide */
     public static final String SETTINGS_SUPPORT_LARGE_SCREEN = "settings_support_large_screen";
+    /**
+     * Support per app's language selection
+     * @hide
+     */
+    public static final String SETTINGS_APP_LANGUAGE_SELECTION = "settings_app_language_selection";
+
+    /** @hide */
+    public static final String SETTINGS_ENABLE_MONITOR_PHANTOM_PROCS =
+            "settings_enable_monitor_phantom_procs";
 
     private static final Map<String, String> DEFAULT_FLAGS;
 
@@ -72,17 +78,20 @@ public class FeatureFlagUtils {
 
         DEFAULT_FLAGS.put("settings_tether_all_in_one", "false");
         DEFAULT_FLAGS.put("settings_contextual_home", "false");
-        DEFAULT_FLAGS.put(SETTINGS_PROVIDER_MODEL, "true");
         DEFAULT_FLAGS.put(SETTINGS_USE_NEW_BACKUP_ELIGIBILITY_RULES, "true");
         DEFAULT_FLAGS.put(SETTINGS_ENABLE_SECURITY_HUB, "true");
-        DEFAULT_FLAGS.put(SETTINGS_SUPPORT_LARGE_SCREEN, "false");
+        DEFAULT_FLAGS.put(SETTINGS_SUPPORT_LARGE_SCREEN, "true");
+        DEFAULT_FLAGS.put("settings_search_always_expand", "false");
+        DEFAULT_FLAGS.put(SETTINGS_APP_LANGUAGE_SELECTION, "false");
+        DEFAULT_FLAGS.put(SETTINGS_ENABLE_MONITOR_PHANTOM_PROCS, "true");
     }
 
     private static final Set<String> PERSISTENT_FLAGS;
     static {
         PERSISTENT_FLAGS = new HashSet<>();
-        PERSISTENT_FLAGS.add(SETTINGS_PROVIDER_MODEL);
+        PERSISTENT_FLAGS.add(SETTINGS_APP_LANGUAGE_SELECTION);
         PERSISTENT_FLAGS.add(SETTINGS_SUPPORT_LARGE_SCREEN);
+        PERSISTENT_FLAGS.add(SETTINGS_ENABLE_MONITOR_PHANTOM_PROCS);
     }
 
     /**

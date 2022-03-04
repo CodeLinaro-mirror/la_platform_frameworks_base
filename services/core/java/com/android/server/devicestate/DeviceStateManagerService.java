@@ -20,6 +20,7 @@ import static android.Manifest.permission.CONTROL_DEVICE_STATE;
 import static android.hardware.devicestate.DeviceStateManager.MAXIMUM_DEVICE_STATE;
 import static android.hardware.devicestate.DeviceStateManager.MINIMUM_DEVICE_STATE;
 
+import static com.android.server.devicestate.DeviceState.FLAG_CANCEL_OVERRIDE_REQUESTS;
 import static com.android.server.devicestate.OverrideRequestController.STATUS_ACTIVE;
 import static com.android.server.devicestate.OverrideRequestController.STATUS_CANCELED;
 import static com.android.server.devicestate.OverrideRequestController.STATUS_SUSPENDED;
@@ -50,7 +51,6 @@ import com.android.internal.util.FrameworkStatsLog;
 import com.android.server.DisplayThread;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
-import com.android.server.policy.DeviceStatePolicyImpl;
 import com.android.server.wm.ActivityTaskManagerInternal;
 import com.android.server.wm.WindowProcessController;
 
@@ -141,7 +141,9 @@ public final class DeviceStateManagerService extends SystemService {
     private final SparseArray<ProcessRecord> mProcessRecords = new SparseArray<>();
 
     public DeviceStateManagerService(@NonNull Context context) {
-        this(context, new DeviceStatePolicyImpl(context));
+        this(context, DeviceStatePolicy.Provider
+                .fromResources(context.getResources())
+                .instantiate(context));
     }
 
     @VisibleForTesting
@@ -273,14 +275,14 @@ public final class DeviceStateManagerService extends SystemService {
         synchronized (mLock) {
             final int[] oldStateIdentifiers = getSupportedStateIdentifiersLocked();
 
-            // Whether or not at least one device state has the flag FLAG_CANCEL_STICKY_REQUESTS
+            // Whether or not at least one device state has the flag FLAG_CANCEL_OVERRIDE_REQUESTS
             // set. If set to true, the OverrideRequestController will be configured to allow sticky
             // requests.
             boolean hasTerminalDeviceState = false;
             mDeviceStates.clear();
             for (int i = 0; i < supportedDeviceStates.length; i++) {
                 DeviceState state = supportedDeviceStates[i];
-                if ((state.getFlags() & DeviceState.FLAG_CANCEL_STICKY_REQUESTS) != 0) {
+                if (state.hasFlag(FLAG_CANCEL_OVERRIDE_REQUESTS)) {
                     hasTerminalDeviceState = true;
                 }
                 mDeviceStates.put(state.getIdentifier(), state);
@@ -345,8 +347,8 @@ public final class DeviceStateManagerService extends SystemService {
             }
             mBaseState = Optional.of(baseState);
 
-            if ((baseState.getFlags() & DeviceState.FLAG_CANCEL_STICKY_REQUESTS) != 0) {
-                mOverrideRequestController.cancelStickyRequests();
+            if (baseState.hasFlag(FLAG_CANCEL_OVERRIDE_REQUESTS)) {
+                mOverrideRequestController.cancelOverrideRequests();
             }
             mOverrideRequestController.handleBaseStateChanged();
             updatePendingStateLocked();

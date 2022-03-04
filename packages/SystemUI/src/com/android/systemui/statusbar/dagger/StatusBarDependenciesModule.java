@@ -20,11 +20,11 @@ import android.app.IActivityManager;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.os.Handler;
+import android.service.dreams.IDreamManager;
 
 import com.android.internal.statusbar.IStatusBarService;
 import com.android.systemui.animation.ActivityLaunchAnimator;
 import com.android.systemui.animation.DialogLaunchAnimator;
-import com.android.systemui.animation.LaunchAnimator;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dump.DumpManager;
@@ -43,20 +43,24 @@ import com.android.systemui.statusbar.NotificationMediaManager;
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.NotificationViewHierarchyManager;
+import com.android.systemui.statusbar.RemoteInputNotificationRebuilder;
 import com.android.systemui.statusbar.SmartReplyController;
 import com.android.systemui.statusbar.StatusBarStateControllerImpl;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.commandline.CommandRegistry;
+import com.android.systemui.statusbar.gesture.SwipeStatusBarAwayGestureHandler;
 import com.android.systemui.statusbar.notification.AssistantFeedbackController;
 import com.android.systemui.statusbar.notification.DynamicChildBindController;
 import com.android.systemui.statusbar.notification.DynamicPrivacyController;
+import com.android.systemui.statusbar.notification.NotifPipelineFlags;
 import com.android.systemui.statusbar.notification.NotificationEntryManager;
 import com.android.systemui.statusbar.notification.collection.NotifCollection;
 import com.android.systemui.statusbar.notification.collection.NotifPipeline;
-import com.android.systemui.statusbar.notification.collection.inflation.LowPriorityInflationHelper;
+import com.android.systemui.statusbar.notification.collection.legacy.LowPriorityInflationHelper;
 import com.android.systemui.statusbar.notification.collection.legacy.NotificationGroupManagerLegacy;
 import com.android.systemui.statusbar.notification.collection.legacy.VisualStabilityManager;
 import com.android.systemui.statusbar.notification.collection.notifcollection.CommonNotifCollection;
+import com.android.systemui.statusbar.notification.collection.render.NotificationVisibilityProvider;
 import com.android.systemui.statusbar.notification.stack.ForegroundServiceSectionController;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.statusbar.phone.ManagedProfileController;
@@ -65,12 +69,11 @@ import com.android.systemui.statusbar.phone.StatusBar;
 import com.android.systemui.statusbar.phone.StatusBarIconController;
 import com.android.systemui.statusbar.phone.StatusBarIconControllerImpl;
 import com.android.systemui.statusbar.phone.StatusBarRemoteInputCallback;
-import com.android.systemui.statusbar.phone.StatusBarWindowController;
-import com.android.systemui.statusbar.phone.SystemUIHostDialogProvider;
 import com.android.systemui.statusbar.phone.ongoingcall.OngoingCallController;
+import com.android.systemui.statusbar.phone.ongoingcall.OngoingCallFlags;
 import com.android.systemui.statusbar.phone.ongoingcall.OngoingCallLogger;
-import com.android.systemui.statusbar.phone.ongoingcall.SwipeStatusBarAwayGestureHandler;
 import com.android.systemui.statusbar.policy.RemoteInputUriController;
+import com.android.systemui.statusbar.window.StatusBarWindowController;
 import com.android.systemui.tracing.ProtoTracer;
 import com.android.systemui.util.concurrency.DelayableExecutor;
 import com.android.systemui.util.time.SystemClock;
@@ -96,9 +99,12 @@ public interface StatusBarDependenciesModule {
     @Provides
     static NotificationRemoteInputManager provideNotificationRemoteInputManager(
             Context context,
+            NotifPipelineFlags notifPipelineFlags,
             NotificationLockscreenUserManager lockscreenUserManager,
             SmartReplyController smartReplyController,
+            NotificationVisibilityProvider visibilityProvider,
             NotificationEntryManager notificationEntryManager,
+            RemoteInputNotificationRebuilder rebuilder,
             Lazy<Optional<StatusBar>> statusBarOptionalLazy,
             StatusBarStateController statusBarStateController,
             Handler mainHandler,
@@ -108,9 +114,12 @@ public interface StatusBarDependenciesModule {
             DumpManager dumpManager) {
         return new NotificationRemoteInputManager(
                 context,
+                notifPipelineFlags,
                 lockscreenUserManager,
                 smartReplyController,
+                visibilityProvider,
                 notificationEntryManager,
+                rebuilder,
                 statusBarOptionalLazy,
                 statusBarStateController,
                 mainHandler,
@@ -127,12 +136,13 @@ public interface StatusBarDependenciesModule {
             Context context,
             Lazy<Optional<StatusBar>> statusBarOptionalLazy,
             Lazy<NotificationShadeWindowController> notificationShadeWindowController,
+            NotificationVisibilityProvider visibilityProvider,
             NotificationEntryManager notificationEntryManager,
             MediaArtworkProcessor mediaArtworkProcessor,
             KeyguardBypassController keyguardBypassController,
             NotifPipeline notifPipeline,
             NotifCollection notifCollection,
-            FeatureFlags featureFlags,
+            NotifPipelineFlags notifPipelineFlags,
             @Main DelayableExecutor mainExecutor,
             MediaDataManager mediaDataManager,
             DumpManager dumpManager) {
@@ -140,12 +150,13 @@ public interface StatusBarDependenciesModule {
                 context,
                 statusBarOptionalLazy,
                 notificationShadeWindowController,
+                visibilityProvider,
                 notificationEntryManager,
                 mediaArtworkProcessor,
                 keyguardBypassController,
                 notifPipeline,
                 notifCollection,
-                featureFlags,
+                notifPipelineFlags,
                 mainExecutor,
                 mediaDataManager,
                 dumpManager);
@@ -157,19 +168,25 @@ public interface StatusBarDependenciesModule {
     static NotificationListener provideNotificationListener(
             Context context,
             NotificationManager notificationManager,
-            @Main Handler mainHandler) {
+            SystemClock systemClock,
+            @Main Executor mainExecutor) {
         return new NotificationListener(
-                context, notificationManager, mainHandler);
+                context, notificationManager, systemClock, mainExecutor);
     }
 
     /** */
     @SysUISingleton
     @Provides
     static SmartReplyController provideSmartReplyController(
-            NotificationEntryManager entryManager,
+            DumpManager dumpManager,
+            NotificationVisibilityProvider visibilityProvider,
             IStatusBarService statusBarService,
             NotificationClickNotifier clickNotifier) {
-        return new SmartReplyController(entryManager, statusBarService, clickNotifier);
+        return new SmartReplyController(
+                dumpManager,
+                visibilityProvider,
+                statusBarService,
+                clickNotifier);
     }
 
 
@@ -184,6 +201,7 @@ public interface StatusBarDependenciesModule {
     static NotificationViewHierarchyManager provideNotificationViewHierarchyManager(
             Context context,
             @Main Handler mainHandler,
+            FeatureFlags featureFlags,
             NotificationLockscreenUserManager notificationLockscreenUserManager,
             NotificationGroupManagerLegacy groupManager,
             VisualStabilityManager visualStabilityManager,
@@ -195,10 +213,12 @@ public interface StatusBarDependenciesModule {
             ForegroundServiceSectionController fgsSectionController,
             DynamicChildBindController dynamicChildBindController,
             LowPriorityInflationHelper lowPriorityInflationHelper,
-            AssistantFeedbackController assistantFeedbackController) {
+            AssistantFeedbackController assistantFeedbackController,
+            NotifPipelineFlags notifPipelineFlags) {
         return new NotificationViewHierarchyManager(
                 context,
                 mainHandler,
+                featureFlags,
                 notificationLockscreenUserManager,
                 groupManager,
                 visualStabilityManager,
@@ -210,7 +230,8 @@ public interface StatusBarDependenciesModule {
                 fgsSectionController,
                 dynamicChildBindController,
                 lowPriorityInflationHelper,
-                assistantFeedbackController);
+                assistantFeedbackController,
+                notifPipelineFlags);
     }
 
     /**
@@ -249,7 +270,6 @@ public interface StatusBarDependenciesModule {
     @SysUISingleton
     static OngoingCallController provideOngoingCallController(
             CommonNotifCollection notifCollection,
-            FeatureFlags featureFlags,
             SystemClock systemClock,
             ActivityStarter activityStarter,
             @Main Executor mainExecutor,
@@ -257,19 +277,23 @@ public interface StatusBarDependenciesModule {
             OngoingCallLogger logger,
             DumpManager dumpManager,
             StatusBarWindowController statusBarWindowController,
-            SwipeStatusBarAwayGestureHandler swipeStatusBarAwayGestureHandler) {
+            SwipeStatusBarAwayGestureHandler swipeStatusBarAwayGestureHandler,
+            StatusBarStateController statusBarStateController,
+            OngoingCallFlags ongoingCallFlags) {
+
+        boolean ongoingCallInImmersiveEnabled = ongoingCallFlags.isInImmersiveEnabled();
         Optional<StatusBarWindowController> windowController =
-                featureFlags.isOngoingCallInImmersiveEnabled()
+                ongoingCallInImmersiveEnabled
                         ? Optional.of(statusBarWindowController)
                         : Optional.empty();
         Optional<SwipeStatusBarAwayGestureHandler> gestureHandler =
-                featureFlags.isOngoingCallInImmersiveEnabled()
+                ongoingCallInImmersiveEnabled
                         ? Optional.of(swipeStatusBarAwayGestureHandler)
                         : Optional.empty();
         OngoingCallController ongoingCallController =
                 new OngoingCallController(
                         notifCollection,
-                        featureFlags,
+                        ongoingCallFlags,
                         systemClock,
                         activityStarter,
                         mainExecutor,
@@ -277,8 +301,8 @@ public interface StatusBarDependenciesModule {
                         logger,
                         dumpManager,
                         windowController,
-                        gestureHandler
-                );
+                        gestureHandler,
+                        statusBarStateController);
         ongoingCallController.init();
         return ongoingCallController;
     }
@@ -292,24 +316,15 @@ public interface StatusBarDependenciesModule {
      */
     @Provides
     @SysUISingleton
-    static LaunchAnimator provideLaunchAnimator(Context context) {
-        return new LaunchAnimator(context);
+    static ActivityLaunchAnimator provideActivityLaunchAnimator() {
+        return new ActivityLaunchAnimator();
     }
 
     /**
      */
     @Provides
     @SysUISingleton
-    static ActivityLaunchAnimator provideActivityLaunchAnimator(LaunchAnimator launchAnimator) {
-        return new ActivityLaunchAnimator(launchAnimator);
-    }
-
-    /**
-     */
-    @Provides
-    @SysUISingleton
-    static DialogLaunchAnimator provideDialogLaunchAnimator(Context context,
-            LaunchAnimator launchAnimator) {
-        return new DialogLaunchAnimator(context, launchAnimator, new SystemUIHostDialogProvider());
+    static DialogLaunchAnimator provideDialogLaunchAnimator(IDreamManager dreamManager) {
+        return new DialogLaunchAnimator(dreamManager);
     }
 }

@@ -25,6 +25,7 @@ import android.app.WallpaperManager;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
+import android.os.UserHandle;
 import android.util.Log;
 import android.util.Size;
 
@@ -64,6 +65,13 @@ public class ImageWallpaperRenderer implements GLWallpaperRenderer {
      */
     public void setOnBitmapChanged(Consumer<Bitmap> c) {
         mOnBitmapUpdated = c;
+    }
+
+    /**
+     * @hide
+     */
+    public void use(Consumer<Bitmap> c) {
+        mTexture.use(c);
     }
 
     @Override
@@ -135,7 +143,8 @@ public class ImageWallpaperRenderer implements GLWallpaperRenderer {
             mRefCount.incrementAndGet();
             synchronized (mRefCount) {
                 if (mBitmap == null) {
-                    mBitmap = mWallpaperManager.getBitmap(false /* hardware */);
+                    mBitmap = mWallpaperManager.getBitmapAsUser(UserHandle.USER_CURRENT,
+                            false /* hardware */);
                     mWcgContent = mWallpaperManager.wallpaperSupportsWcg(
                             WallpaperManager.FLAG_SYSTEM);
                     mWallpaperManager.forgetLoadedWallpaper();

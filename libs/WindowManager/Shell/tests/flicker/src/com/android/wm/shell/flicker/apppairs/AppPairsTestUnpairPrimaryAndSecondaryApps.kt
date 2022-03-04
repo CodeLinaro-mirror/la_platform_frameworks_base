@@ -47,9 +47,9 @@ import org.junit.runners.Parameterized
 class AppPairsTestUnpairPrimaryAndSecondaryApps(
     testSpec: FlickerTestParameter
 ) : AppPairsTransition(testSpec) {
-    override val transition: FlickerBuilder.(Map<String, Any?>) -> Unit
+    override val transition: FlickerBuilder.() -> Unit
         get() = {
-            super.transition(this, it)
+            super.transition(this)
             setup {
                 eachRun {
                     executeShellCommand(
@@ -69,7 +69,7 @@ class AppPairsTestUnpairPrimaryAndSecondaryApps(
     @Test
     override fun navBarLayerRotatesAndScales() = super.navBarLayerRotatesAndScales()
 
-    @FlakyTest
+    @FlakyTest(bugId = 206753786)
     @Test
     override fun statusBarLayerRotatesScales() = super.statusBarLayerRotatesScales()
 

@@ -16,18 +16,23 @@
 
 package com.android.server.pm.test.parsing.parcelling
 
-import android.content.pm.parsing.component.ParsedProcess
+import com.android.server.pm.pkg.component.ParsedProcess
+import com.android.server.pm.pkg.component.ParsedProcessImpl
+import android.util.ArrayMap
 import kotlin.contracts.ExperimentalContracts
 
 @ExperimentalContracts
-class ParsedProcessTest : ParcelableComponentTest(ParsedProcess::class) {
+class ParsedProcessTest : ParcelableComponentTest(ParsedProcess::class, ParsedProcessImpl::class) {
 
-    override val defaultImpl = ParsedProcess()
-    override val creator = ParsedProcess.CREATOR
+    override val defaultImpl =
+        ParsedProcessImpl()
+    override val creator = ParsedProcessImpl.CREATOR
 
     override val excludedMethods = listOf(
         // Copying method
         "addStateFrom",
+        // Utility method
+        "putAppClassNameForPackage",
     )
 
     override val baseParams = listOf(
@@ -38,6 +43,9 @@ class ParsedProcessTest : ParcelableComponentTest(ParsedProcess::class) {
     )
 
     override fun extraParams() = listOf(
-        getter(ParsedProcess::getDeniedPermissions, setOf("testDeniedPermission"))
+        getter(ParsedProcess::getDeniedPermissions, setOf("testDeniedPermission")),
+        getter(ParsedProcess::getAppClassNamesByPackage, ArrayMap<String, String>().apply {
+            put("package1", "classname1");
+        }),
     )
 }

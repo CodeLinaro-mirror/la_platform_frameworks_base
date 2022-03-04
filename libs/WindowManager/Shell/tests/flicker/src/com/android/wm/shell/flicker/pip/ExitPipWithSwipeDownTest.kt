@@ -16,7 +16,6 @@
 
 package com.android.wm.shell.flicker.pip
 
-import android.platform.test.annotations.Presubmit
 import android.view.Surface
 import androidx.test.filters.FlakyTest
 import androidx.test.filters.RequiresDevice
@@ -55,36 +54,20 @@ import org.junit.runners.Parameterized
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 @Group3
 class ExitPipWithSwipeDownTest(testSpec: FlickerTestParameter) : ExitPipTransition(testSpec) {
-    override val transition: FlickerBuilder.(Map<String, Any?>) -> Unit
-        get() = { args ->
-            super.transition(this, args)
+    override val transition: FlickerBuilder.() -> Unit
+        get() = {
+            super.transition(this)
             transitions {
                 val pipRegion = wmHelper.getWindowRegion(pipApp.component).bounds
                 val pipCenterX = pipRegion.centerX()
                 val pipCenterY = pipRegion.centerY()
                 val displayCenterX = device.displayWidth / 2
                 device.swipe(pipCenterX, pipCenterY, displayCenterX, device.displayHeight, 10)
-                wmHelper.waitFor("!hasPipWindow") { !it.wmState.hasPipWindow() }
+                wmHelper.waitPipGone()
                 wmHelper.waitForWindowSurfaceDisappeared(pipApp.component)
                 wmHelper.waitForAppTransitionIdle()
             }
         }
-
-    @Presubmit
-    @Test
-    override fun navBarLayerIsVisible() = super.navBarLayerIsVisible()
-
-    @Presubmit
-    @Test
-    override fun statusBarLayerIsVisible() = super.statusBarLayerIsVisible()
-
-    @Presubmit
-    @Test
-    override fun navBarWindowIsVisible() = super.navBarWindowIsVisible()
-
-    @Presubmit
-    @Test
-    override fun statusBarWindowIsVisible() = super.statusBarWindowIsVisible()
 
     @FlakyTest
     @Test
@@ -94,17 +77,9 @@ class ExitPipWithSwipeDownTest(testSpec: FlickerTestParameter) : ExitPipTransiti
     @Test
     override fun pipLayerBecomesInvisible() = super.pipLayerBecomesInvisible()
 
-    @Presubmit
+    @FlakyTest(bugId = 206753786)
     @Test
     override fun statusBarLayerRotatesScales() = testSpec.statusBarLayerRotatesScales()
-
-    @Presubmit
-    @Test
-    override fun entireScreenCovered() = super.entireScreenCovered()
-
-    @Presubmit
-    @Test
-    override fun navBarLayerRotatesAndScales() = super.navBarLayerRotatesAndScales()
 
     companion object {
         /**

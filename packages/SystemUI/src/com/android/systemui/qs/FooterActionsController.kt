@@ -17,8 +17,10 @@
 package com.android.systemui.qs
 
 import android.content.Intent
+import android.os.Handler
 import android.os.UserManager
 import android.provider.Settings
+import android.provider.Settings.Global.USER_SWITCHER_ENABLED
 import android.view.View
 import android.widget.Toast
 import androidx.annotation.VisibleForTesting
@@ -35,6 +37,7 @@ import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.qs.FooterActionsController.ExpansionState.COLLAPSED
 import com.android.systemui.qs.FooterActionsController.ExpansionState.EXPANDED
 import com.android.systemui.qs.dagger.QSFlagsModule.PM_LITE_ENABLED
+import com.android.systemui.settings.UserTracker
 import com.android.systemui.statusbar.phone.MultiUserSwitchController
 import com.android.systemui.statusbar.phone.SettingsButton
 import com.android.systemui.statusbar.policy.DeviceProvisionedController
@@ -42,6 +45,7 @@ import com.android.systemui.statusbar.policy.UserInfoController
 import com.android.systemui.statusbar.policy.UserInfoController.OnUserInfoChangedListener
 import com.android.systemui.tuner.TunerService
 import com.android.systemui.util.ViewController
+import com.android.systemui.util.settings.GlobalSettings
 import javax.inject.Inject
 import javax.inject.Named
 
@@ -52,9 +56,9 @@ import javax.inject.Named
  */
 class FooterActionsController @Inject constructor(
     view: FooterActionsView,
-    private val qsPanelController: QSPanelController,
     private val activityStarter: ActivityStarter,
     private val userManager: UserManager,
+    private val userTracker: UserTracker,
     private val userInfoController: UserInfoController,
     private val multiUserSwitchController: MultiUserSwitchController,
     private val deviceProvisionedController: DeviceProvisionedController,
@@ -64,7 +68,9 @@ class FooterActionsController @Inject constructor(
     private val globalActionsDialog: GlobalActionsDialogLite,
     private val uiEventLogger: UiEventLogger,
     @Named(PM_LITE_ENABLED) private val showPMLiteButton: Boolean,
-    private val buttonsVisibleState: ExpansionState
+    private val buttonsVisibleState: ExpansionState,
+    private val globalSetting: GlobalSettings,
+    private val handler: Handler
 ) : ViewController<FooterActionsView>(view) {
 
     enum class ExpansionState { COLLAPSED, EXPANDED }
@@ -72,22 +78,25 @@ class FooterActionsController @Inject constructor(
     private var listening: Boolean = false
 
     var expanded = false
-        set(value) {
-            if (field != value) {
-                field = value
-                updateView()
-            }
-        }
 
     private val settingsButton: SettingsButton = view.findViewById(R.id.settings_button)
     private val settingsButtonContainer: View? = view.findViewById(R.id.settings_button_container)
-    private val editButton: View = view.findViewById(android.R.id.edit)
     private val powerMenuLite: View = view.findViewById(R.id.pm_lite)
 
     private val onUserInfoChangedListener = OnUserInfoChangedListener { _, picture, _ ->
         val isGuestUser: Boolean = userManager.isGuestUser(KeyguardUpdateMonitor.getCurrentUser())
         mView.onUserInfoChanged(picture, isGuestUser)
     }
+
+    private val multiUserSetting =
+            object : SettingObserver(
+                    globalSetting, handler, USER_SWITCHER_ENABLED, userTracker.userId) {
+                override fun handleValueChanged(value: Int, observedChange: Boolean) {
+                    if (observedChange) {
+                        updateView()
+                    }
+                }
+            }
 
     private val onClickListener = View.OnClickListener { v ->
         // Don't do anything until views are unhidden. Don't do anything if the tap looks
@@ -122,7 +131,7 @@ class FooterActionsController @Inject constructor(
             }
         } else if (v === powerMenuLite) {
             uiEventLogger.log(GlobalActionsDialogLite.GlobalActionsEvent.GA_OPEN_QS)
-            globalActionsDialog.showOrHideDialog(false, true)
+            globalActionsDialog.showOrHideDialog(false, true, v)
         }
     }
 
@@ -165,19 +174,11 @@ class FooterActionsController @Inject constructor(
             powerMenuLite.visibility = View.GONE
         }
         settingsButton.setOnClickListener(onClickListener)
-        editButton.setOnClickListener(View.OnClickListener { view: View? ->
-            if (falsingManager.isFalseTap(FalsingManager.LOW_PENALTY)) {
-                return@OnClickListener
-            }
-            activityStarter.postQSRunnableDismissingKeyguard { qsPanelController.showEdit(view) }
-        })
-
         updateView()
     }
 
     private fun updateView() {
-        mView.updateEverything(buttonsVisible(), isTunerEnabled(),
-                multiUserSwitchController.isMultiUserEnabled)
+        mView.updateEverything(isTunerEnabled(), multiUserSwitchController.isMultiUserEnabled)
     }
 
     override fun onViewDetached() {
@@ -189,16 +190,17 @@ class FooterActionsController @Inject constructor(
             return
         }
         this.listening = listening
+        multiUserSetting.isListening = listening
         if (this.listening) {
             userInfoController.addCallback(onUserInfoChangedListener)
+            updateView()
         } else {
             userInfoController.removeCallback(onUserInfoChangedListener)
         }
     }
 
     fun disable(state2: Int) {
-        mView.disable(buttonsVisible(), state2, isTunerEnabled(),
-                multiUserSwitchController.isMultiUserEnabled)
+        mView.disable(state2, isTunerEnabled(), multiUserSwitchController.isMultiUserEnabled)
     }
 
     fun setExpansion(headerExpansionFraction: Float) {

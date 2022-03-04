@@ -79,7 +79,9 @@ import android.content.res.Configuration;
 import android.content.res.ObbInfo;
 import android.database.ContentObserver;
 import android.net.Uri;
+import android.os.BatteryManager;
 import android.os.Binder;
+import android.os.Build;
 import android.os.DropBoxManager;
 import android.os.Environment;
 import android.os.Handler;
@@ -169,6 +171,8 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.PrintWriter;
 import java.math.BigInteger;
 import java.security.GeneralSecurityException;
@@ -339,7 +343,44 @@ class StorageManagerService extends IStorageManager.Stub
 
     @Nullable public static String sMediaStoreAuthorityProcessName;
 
+    // Run period in hour for smart idle maintenance
+    static final int SMART_IDLE_MAINT_PERIOD = 1;
+
     private final AtomicFile mSettingsFile;
+    private final AtomicFile mHourlyWriteFile;
+
+    private static final int MAX_HOURLY_WRITE_RECORDS = 72;
+
+    /**
+     * Default config values for smart idle maintenance
+     * Actual values will be controlled by DeviceConfig
+     */
+    // Decide whether smart idle maintenance is enabled or not
+    private static final boolean DEFAULT_SMART_IDLE_MAINT_ENABLED = false;
+    // Storage lifetime percentage threshold to decide to turn off the feature
+    private static final int DEFAULT_LIFETIME_PERCENT_THRESHOLD = 70;
+    // Minimum required number of dirty + free segments to trigger GC
+    private static final int DEFAULT_MIN_SEGMENTS_THRESHOLD = 512;
+    // Determine how much portion of current dirty segments will be GCed
+    private static final float DEFAULT_DIRTY_RECLAIM_RATE = 0.5F;
+    // Multiplier to amplify the target segment number for GC
+    private static final float DEFAULT_SEGMENT_RECLAIM_WEIGHT = 1.0F;
+    // Low battery level threshold to decide to turn off the feature
+    private static final float DEFAULT_LOW_BATTERY_LEVEL = 20F;
+    // Decide whether charging is required to turn on the feature
+    private static final boolean DEFAULT_CHARGING_REQUIRED = true;
+
+    private volatile int mLifetimePercentThreshold;
+    private volatile int mMinSegmentsThreshold;
+    private volatile float mDirtyReclaimRate;
+    private volatile float mSegmentReclaimWeight;
+    private volatile float mLowBatteryLevel;
+    private volatile boolean mChargingRequired;
+    private volatile boolean mNeedGC;
+
+    private volatile boolean mPassedLifetimeThresh;
+    // Tracking storage hourly write amounts
+    private volatile int[] mStorageHourlyWrites;
 
     /**
      * <em>Never</em> hold the lock while performing downcalls into vold, since
@@ -895,6 +936,10 @@ class StorageManagerService extends IStorageManager.Stub
     }
 
     private void handleSystemReady() {
+        if (prepareSmartIdleMaint()) {
+            SmartStorageMaintIdler.scheduleSmartIdlePass(mContext, SMART_IDLE_MAINT_PERIOD);
+        }
+
         // Start scheduling nominally-daily fstrim operations
         MountServiceIdler.scheduleIdlePass(mContext);
 
@@ -1223,7 +1268,7 @@ class StorageManagerService extends IStorageManager.Stub
             }
             for (int i = 0; i < mVolumes.size(); i++) {
                 final VolumeInfo vol = mVolumes.valueAt(i);
-                if (vol.isVisibleForRead(userId) && vol.isMountedReadable()) {
+                if (vol.isVisibleForUser(userId) && vol.isMountedReadable()) {
                     final StorageVolume userVol = vol.buildStorageVolume(mContext, userId, false);
                     mHandler.obtainMessage(H_VOLUME_BROADCAST, userVol).sendToTarget();
 
@@ -1570,7 +1615,7 @@ class StorageManagerService extends IStorageManager.Stub
                     || Objects.equals(privateVol.fsUuid, mPrimaryStorageUuid)) {
                 Slog.v(TAG, "Found primary storage at " + vol);
                 vol.mountFlags |= VolumeInfo.MOUNT_FLAG_PRIMARY;
-                vol.mountFlags |= VolumeInfo.MOUNT_FLAG_VISIBLE;
+                vol.mountFlags |= VolumeInfo.MOUNT_FLAG_VISIBLE_FOR_WRITE;
                 mHandler.obtainMessage(H_VOLUME_MOUNT, vol).sendToTarget();
             }
 
@@ -1580,13 +1625,13 @@ class StorageManagerService extends IStorageManager.Stub
                     && vol.disk.isDefaultPrimary()) {
                 Slog.v(TAG, "Found primary storage at " + vol);
                 vol.mountFlags |= VolumeInfo.MOUNT_FLAG_PRIMARY;
-                vol.mountFlags |= VolumeInfo.MOUNT_FLAG_VISIBLE;
+                vol.mountFlags |= VolumeInfo.MOUNT_FLAG_VISIBLE_FOR_WRITE;
             }
 
             // Adoptable public disks are visible to apps, since they meet
             // public API requirement of being in a stable location.
             if (vol.disk.isAdoptable()) {
-                vol.mountFlags |= VolumeInfo.MOUNT_FLAG_VISIBLE;
+                vol.mountFlags |= VolumeInfo.MOUNT_FLAG_VISIBLE_FOR_WRITE;
             }
 
             vol.mountUserId = mCurrentUserId;
@@ -1597,7 +1642,9 @@ class StorageManagerService extends IStorageManager.Stub
 
         } else if (vol.type == VolumeInfo.TYPE_STUB) {
             if (vol.disk.isStubVisible()) {
-                vol.mountFlags |= VolumeInfo.MOUNT_FLAG_VISIBLE;
+                vol.mountFlags |= VolumeInfo.MOUNT_FLAG_VISIBLE_FOR_WRITE;
+            } else {
+                vol.mountFlags |= VolumeInfo.MOUNT_FLAG_VISIBLE_FOR_READ;
             }
             vol.mountUserId = mCurrentUserId;
             mHandler.obtainMessage(H_VOLUME_MOUNT, vol).sendToTarget();
@@ -1646,7 +1693,8 @@ class StorageManagerService extends IStorageManager.Stub
                     // obb data to its new location. This may take time depending on the size of
                     // the data to be copied so it's done on the StorageManager worker thread.
                     // This needs to be finished before start mounting obb directories.
-                    if (userId == 0) {
+                    if (userId == 0
+                            && Build.VERSION.DEVICE_INITIAL_SDK_INT < Build.VERSION_CODES.Q) {
                         mPmInternal.migrateLegacyObbData();
                     }
 
@@ -1744,7 +1792,7 @@ class StorageManagerService extends IStorageManager.Stub
                 // started after this point will trigger additional
                 // user-specific broadcasts.
                 for (int userId : mSystemUnlockedUsers) {
-                    if (vol.isVisibleForRead(userId)) {
+                    if (vol.isVisibleForUser(userId)) {
                         final StorageVolume userVol = vol.buildStorageVolume(mContext, userId,
                                 false);
                         mHandler.obtainMessage(H_VOLUME_BROADCAST, userVol).sendToTarget();
@@ -1908,6 +1956,10 @@ class StorageManagerService extends IStorageManager.Stub
 
         mSettingsFile = new AtomicFile(
                 new File(Environment.getDataSystemDirectory(), "storage.xml"), "storage-settings");
+        mHourlyWriteFile = new AtomicFile(
+                new File(Environment.getDataSystemDirectory(), "storage-hourly-writes"));
+
+        mStorageHourlyWrites = new int[MAX_HOURLY_WRITE_RECORDS];
 
         synchronized (mLock) {
             readSettingsLocked();
@@ -2570,7 +2622,7 @@ class StorageManagerService extends IStorageManager.Stub
             // fstrim time is still updated. If file based checkpoints are used, we run
             // idle maintenance (GC + fstrim) regardless of checkpoint status.
             if (!needsCheckpoint() || !supportsBlockCheckpoint()) {
-                mVold.runIdleMaint(new IVoldTaskListener.Stub() {
+                mVold.runIdleMaint(mNeedGC, new IVoldTaskListener.Stub() {
                     @Override
                     public void onStatus(int status, PersistableBundle extras) {
                         // Not currently used
@@ -2619,6 +2671,176 @@ class StorageManagerService extends IStorageManager.Stub
     @Override
     public void abortIdleMaintenance() {
         abortIdleMaint(null);
+    }
+
+    private boolean prepareSmartIdleMaint() {
+        /**
+         * We can choose whether going with a new storage smart idle maintenance job
+         * or falling back to the traditional way using DeviceConfig
+         */
+        boolean smartIdleMaintEnabled = DeviceConfig.getBoolean(
+            DeviceConfig.NAMESPACE_STORAGE_NATIVE_BOOT,
+            "smart_idle_maint_enabled",
+            DEFAULT_SMART_IDLE_MAINT_ENABLED);
+        if (smartIdleMaintEnabled) {
+            mLifetimePercentThreshold = DeviceConfig.getInt(
+                DeviceConfig.NAMESPACE_STORAGE_NATIVE_BOOT,
+                "lifetime_threshold", DEFAULT_LIFETIME_PERCENT_THRESHOLD);
+            mMinSegmentsThreshold = DeviceConfig.getInt(DeviceConfig.NAMESPACE_STORAGE_NATIVE_BOOT,
+                "min_segments_threshold", DEFAULT_MIN_SEGMENTS_THRESHOLD);
+            mDirtyReclaimRate = DeviceConfig.getFloat(DeviceConfig.NAMESPACE_STORAGE_NATIVE_BOOT,
+                "dirty_reclaim_rate", DEFAULT_DIRTY_RECLAIM_RATE);
+            mSegmentReclaimWeight = DeviceConfig.getFloat(
+                DeviceConfig.NAMESPACE_STORAGE_NATIVE_BOOT,
+                "segment_reclaim_weight", DEFAULT_SEGMENT_RECLAIM_WEIGHT);
+            mLowBatteryLevel = DeviceConfig.getFloat(DeviceConfig.NAMESPACE_STORAGE_NATIVE_BOOT,
+                "low_battery_level", DEFAULT_LOW_BATTERY_LEVEL);
+            mChargingRequired = DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_STORAGE_NATIVE_BOOT,
+                "charging_required", DEFAULT_CHARGING_REQUIRED);
+
+            // If we use the smart idle maintenance, we need to turn off GC in the traditional idle
+            // maintenance to avoid the conflict
+            mNeedGC = false;
+
+            loadStorageHourlyWrites();
+            try {
+                mVold.refreshLatestWrite();
+            } catch (Exception e) {
+                Slog.wtf(TAG, e);
+            }
+            refreshLifetimeConstraint();
+        }
+        return smartIdleMaintEnabled;
+    }
+
+    // Return whether storage lifetime exceeds the threshold
+    public boolean isPassedLifetimeThresh() {
+        return mPassedLifetimeThresh;
+    }
+
+    private void loadStorageHourlyWrites() {
+        FileInputStream fis = null;
+
+        try {
+            fis = mHourlyWriteFile.openRead();
+            ObjectInputStream ois = new ObjectInputStream(fis);
+            mStorageHourlyWrites = (int[])ois.readObject();
+        } catch (FileNotFoundException e) {
+            // Missing data is okay, probably first boot
+        } catch (Exception e) {
+            Slog.wtf(TAG, "Failed reading write records", e);
+        } finally {
+            IoUtils.closeQuietly(fis);
+        }
+    }
+
+    private int getAverageHourlyWrite() {
+        return Arrays.stream(mStorageHourlyWrites).sum() / MAX_HOURLY_WRITE_RECORDS;
+    }
+
+    private void updateStorageHourlyWrites(int latestWrite) {
+        FileOutputStream fos = null;
+
+        System.arraycopy(mStorageHourlyWrites,0, mStorageHourlyWrites, 1,
+                     MAX_HOURLY_WRITE_RECORDS - 1);
+        mStorageHourlyWrites[0] = latestWrite;
+        try {
+            fos = mHourlyWriteFile.startWrite();
+            ObjectOutputStream oos = new ObjectOutputStream(fos);
+            oos.writeObject(mStorageHourlyWrites);
+            mHourlyWriteFile.finishWrite(fos);
+        } catch (IOException e) {
+            if (fos != null) {
+                mHourlyWriteFile.failWrite(fos);
+            }
+        }
+    }
+
+    private boolean checkChargeStatus() {
+        IntentFilter ifilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        Intent batteryStatus = mContext.registerReceiver(null, ifilter);
+
+        if (mChargingRequired) {
+            int status = batteryStatus.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+            if (status != BatteryManager.BATTERY_STATUS_CHARGING &&
+                status != BatteryManager.BATTERY_STATUS_FULL) {
+                Slog.w(TAG, "Battery is not being charged");
+                return false;
+            }
+        }
+
+        int level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+        int scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+        float chargePercent = level * 100f / (float)scale;
+
+        if (chargePercent < mLowBatteryLevel) {
+            Slog.w(TAG, "Battery level is " + chargePercent + ", which is lower than threshold: " +
+                        mLowBatteryLevel);
+            return false;
+        }
+        return true;
+    }
+
+    private boolean refreshLifetimeConstraint() {
+        int storageLifeTime = 0;
+
+        try {
+            storageLifeTime = mVold.getStorageLifeTime();
+        } catch (Exception e) {
+            Slog.wtf(TAG, e);
+            return false;
+        }
+
+        if (storageLifeTime == -1) {
+            Slog.w(TAG, "Failed to get storage lifetime");
+            return false;
+        } else if (storageLifeTime > mLifetimePercentThreshold) {
+            Slog.w(TAG, "Ended smart idle maintenance, because of lifetime(" + storageLifeTime +
+                        ")" + ", lifetime threshold(" + mLifetimePercentThreshold + ")");
+            mPassedLifetimeThresh = true;
+            return false;
+        }
+        Slog.i(TAG, "Storage lifetime: " + storageLifeTime);
+        return true;
+    }
+
+    void runSmartIdleMaint(Runnable callback) {
+        enforcePermission(android.Manifest.permission.MOUNT_FORMAT_FILESYSTEMS);
+
+        try {
+            // Block based checkpoint process runs fstrim. So, if checkpoint is in progress
+            // (first boot after OTA), We skip the smart idle maintenance
+            if (!needsCheckpoint() || !supportsBlockCheckpoint()) {
+                if (!refreshLifetimeConstraint() || !checkChargeStatus()) {
+                    return;
+                }
+
+                int latestHourlyWrite = mVold.getWriteAmount();
+                if (latestHourlyWrite == -1) {
+                    Slog.w(TAG, "Failed to get storage hourly write");
+                    return;
+                }
+
+                updateStorageHourlyWrites(latestHourlyWrite);
+                int avgHourlyWrite = getAverageHourlyWrite();
+
+                Slog.i(TAG, "Set smart idle maintenance: " + "latest hourly write: " +
+                            latestHourlyWrite + ", average hourly write: " + avgHourlyWrite +
+                            ", min segment threshold: " + mMinSegmentsThreshold +
+                            ", dirty reclaim rate: " + mDirtyReclaimRate +
+                            ", segment reclaim weight:" + mSegmentReclaimWeight);
+                mVold.setGCUrgentPace(avgHourlyWrite, mMinSegmentsThreshold, mDirtyReclaimRate,
+                                      mSegmentReclaimWeight);
+            } else {
+                Slog.i(TAG, "Skipping smart idle maintenance - block based checkpoint in progress");
+            }
+        } catch (Exception e) {
+            Slog.wtf(TAG, e);
+        } finally {
+            if (callback != null) {
+                callback.run();
+            }
+        }
     }
 
     @Override
@@ -3476,16 +3698,29 @@ class StorageManagerService extends IStorageManager.Stub
     @Nullable
     public PendingIntent getManageSpaceActivityIntent(
             @NonNull String packageName, int requestCode) {
-        // Only Apps with MANAGE_EXTERNAL_STORAGE permission should be able to call this API.
-        enforcePermission(android.Manifest.permission.MANAGE_EXTERNAL_STORAGE);
-
-        // We want to call the manageSpaceActivity as a SystemService and clear identity
-        // of the calling App
+        // Only Apps with MANAGE_EXTERNAL_STORAGE permission which have package visibility for
+        // packageName should be able to call this API.
         int originalUid = Binder.getCallingUidOrThrow();
-        final long token = Binder.clearCallingIdentity();
-
         try {
-            ApplicationInfo appInfo = mIPackageManager.getApplicationInfo(packageName, 0,
+            // Get package name for calling app and verify it has MANAGE_EXTERNAL_STORAGE permission
+            final String[] packagesFromUid = mIPackageManager.getPackagesForUid(originalUid);
+            if (packagesFromUid == null) {
+                throw new SecurityException("Unknown uid " + originalUid);
+            }
+            // Checking first entry in packagesFromUid is enough as using "sharedUserId"
+            // mechanism is rare and discouraged. Also, Apps that share same UID share the same
+            // permissions.
+            if (!mStorageManagerInternal.hasExternalStorageAccess(originalUid,
+                    packagesFromUid[0])) {
+                throw new SecurityException("Only File Manager Apps permitted");
+            }
+        } catch (RemoteException re) {
+            throw new SecurityException("Unknown uid " + originalUid, re);
+        }
+
+        ApplicationInfo appInfo;
+        try {
+            appInfo = mIPackageManager.getApplicationInfo(packageName, 0,
                     UserHandle.getUserId(originalUid));
             if (appInfo == null) {
                 throw new IllegalArgumentException(
@@ -3495,8 +3730,15 @@ class StorageManagerService extends IStorageManager.Stub
                 Log.i(TAG, packageName + " doesn't have a manageSpaceActivity");
                 return null;
             }
-            Context targetAppContext = mContext.createPackageContext(packageName, 0);
+        } catch (RemoteException e) {
+            throw new SecurityException("Only File Manager Apps permitted");
+        }
 
+        // We want to call the manageSpaceActivity as a SystemService and clear identity
+        // of the calling App
+        final long token = Binder.clearCallingIdentity();
+        try {
+            Context targetAppContext = mContext.createPackageContext(packageName, 0);
             Intent intent = new Intent(Intent.ACTION_DEFAULT);
             intent.setClassName(packageName,
                     appInfo.manageSpaceActivityName);
@@ -3506,8 +3748,6 @@ class StorageManagerService extends IStorageManager.Stub
                     intent,
                     FLAG_ONE_SHOT | FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE);
             return activity;
-        } catch (RemoteException e) {
-            throw e.rethrowAsRuntimeException();
         } catch (PackageManager.NameNotFoundException e) {
             throw new IllegalArgumentException(
                     "packageName not found");
@@ -3565,24 +3805,24 @@ class StorageManagerService extends IStorageManager.Stub
         }
 
         @Override
-        public ParcelFileDescriptor open() throws NativeDaemonConnectorException {
+        public ParcelFileDescriptor open() throws AppFuseMountException {
             try {
                 final FileDescriptor fd = mVold.mountAppFuse(uid, mountId);
                 mMounted = true;
                 return new ParcelFileDescriptor(fd);
             } catch (Exception e) {
-                throw new NativeDaemonConnectorException("Failed to mount", e);
+                throw new AppFuseMountException("Failed to mount", e);
             }
         }
 
         @Override
         public ParcelFileDescriptor openFile(int mountId, int fileId, int flags)
-                throws NativeDaemonConnectorException {
+                throws AppFuseMountException {
             try {
                 return new ParcelFileDescriptor(
                         mVold.openAppFuseFile(uid, mountId, fileId, flags));
             } catch (Exception e) {
-                throw new NativeDaemonConnectorException("Failed to open", e);
+                throw new AppFuseMountException("Failed to open", e);
             }
         }
 
@@ -3622,7 +3862,7 @@ class StorageManagerService extends IStorageManager.Stub
                         // It seems the thread of mAppFuseBridge has already been terminated.
                         mAppFuseBridge = null;
                     }
-                } catch (NativeDaemonConnectorException e) {
+                } catch (AppFuseMountException e) {
                     throw e.rethrowAsParcelableException();
                 }
             }
@@ -3713,8 +3953,19 @@ class StorageManagerService extends IStorageManager.Stub
     }
 
     @Override
-    public StorageVolume[] getVolumeList(int uid, String packageName, int flags) {
-        final int userId = UserHandle.getUserId(uid);
+    public StorageVolume[] getVolumeList(int userId, String callingPackage, int flags) {
+        final int callingUid = Binder.getCallingUid();
+        final int callingUserId = UserHandle.getUserId(callingUid);
+
+        if (!isUidOwnerOfPackageOrSystem(callingPackage, callingUid)) {
+            throw new SecurityException("callingPackage does not match UID");
+        }
+        if (callingUserId != userId) {
+            // Callers can ask for volumes of different users, but only with the correct permissions
+            mContext.enforceCallingOrSelfPermission(
+                    android.Manifest.permission.INTERACT_ACROSS_USERS,
+                    "Need INTERACT_ACROSS_USERS to get volumes for another user");
+        }
 
         final boolean forWrite = (flags & StorageManager.FLAG_FOR_WRITE) != 0;
         final boolean realState = (flags & StorageManager.FLAG_REAL_STATE) != 0;
@@ -3730,7 +3981,7 @@ class StorageManagerService extends IStorageManager.Stub
         // should never attempt to augment the actual storage volume state,
         // otherwise we risk confusing it with race conditions as users go
         // through various unlocked states
-        final boolean callerIsMediaStore = UserHandle.isSameApp(Binder.getCallingUid(),
+        final boolean callerIsMediaStore = UserHandle.isSameApp(callingUid,
                 mMediaStoreAuthorityAppId);
 
         final boolean userIsDemo;
@@ -3740,8 +3991,9 @@ class StorageManagerService extends IStorageManager.Stub
         try {
             userIsDemo = LocalServices.getService(UserManagerInternal.class)
                     .getUserInfo(userId).isDemo();
+            storagePermission = mStorageManagerInternal.hasExternalStorage(callingUid,
+                    callingPackage);
             userKeyUnlocked = isUserKeyUnlocked(userId);
-            storagePermission = mStorageManagerInternal.hasExternalStorage(uid, packageName);
         } finally {
             Binder.restoreCallingIdentity(token);
         }
@@ -3771,7 +4023,7 @@ class StorageManagerService extends IStorageManager.Stub
                 if (forWrite) {
                     match = vol.isVisibleForWrite(userId);
                 } else {
-                    match = vol.isVisibleForRead(userId)
+                    match = vol.isVisibleForUser(userId)
                             || (includeInvisible && vol.getPath() != null);
                 }
                 if (!match) continue;
@@ -3830,14 +4082,16 @@ class StorageManagerService extends IStorageManager.Stub
             final boolean primary = false;
             final boolean removable = false;
             final boolean emulated = true;
+            final boolean externallyManaged = false;
             final boolean allowMassStorage = false;
             final long maxFileSize = 0;
             final UserHandle user = new UserHandle(userId);
             final String envState = Environment.MEDIA_MOUNTED_READ_ONLY;
             final String description = mContext.getString(android.R.string.unknownName);
 
-            res.add(new StorageVolume(id, path, path, description, primary, removable,
-                    emulated, allowMassStorage, maxFileSize, user, null /*uuid */, id, envState));
+            res.add(new StorageVolume(id, path, path, description, primary, removable, emulated,
+                    externallyManaged, allowMassStorage, maxFileSize, user, null /*uuid */, id,
+                    envState));
         }
 
         if (!foundPrimary) {
@@ -3852,6 +4106,7 @@ class StorageManagerService extends IStorageManager.Stub
             final boolean primary = true;
             final boolean removable = primaryPhysical;
             final boolean emulated = !primaryPhysical;
+            final boolean externallyManaged = false;
             final boolean allowMassStorage = false;
             final long maxFileSize = 0L;
             final UserHandle owner = new UserHandle(userId);
@@ -3860,7 +4115,7 @@ class StorageManagerService extends IStorageManager.Stub
             final String state = Environment.MEDIA_REMOVED;
 
             res.add(0, new StorageVolume(id, path, path,
-                    description, primary, removable, emulated,
+                    description, primary, removable, emulated, externallyManaged,
                     allowMassStorage, maxFileSize, owner, uuid, fsUuid, state));
         }
 
@@ -4718,19 +4973,17 @@ class StorageManagerService extends IStorageManager.Stub
         @Override
         public boolean hasExternalStorageAccess(int uid, String packageName) {
             try {
-                if (mIPackageManager.checkUidPermission(
-                                MANAGE_EXTERNAL_STORAGE, uid) == PERMISSION_GRANTED) {
-                    return true;
+                final int opMode = mIAppOpsService.checkOperation(
+                        OP_MANAGE_EXTERNAL_STORAGE, uid, packageName);
+                if (opMode == AppOpsManager.MODE_DEFAULT) {
+                    return mIPackageManager.checkUidPermission(
+                            MANAGE_EXTERNAL_STORAGE, uid) == PERMISSION_GRANTED;
                 }
 
-                if (mIAppOpsService.checkOperation(
-                                OP_MANAGE_EXTERNAL_STORAGE, uid, packageName) == MODE_ALLOWED) {
-                    return true;
-                }
+                return opMode == AppOpsManager.MODE_ALLOWED;
             } catch (RemoteException e) {
                 Slog.w("Failed to check MANAGE_EXTERNAL_STORAGE access for " + packageName, e);
             }
-
             return false;
         }
 

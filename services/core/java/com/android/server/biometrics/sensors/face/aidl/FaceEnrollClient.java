@@ -41,7 +41,9 @@ import com.android.server.biometrics.Utils;
 import com.android.server.biometrics.sensors.BaseClientMonitor;
 import com.android.server.biometrics.sensors.BiometricNotificationUtils;
 import com.android.server.biometrics.sensors.BiometricUtils;
+import com.android.server.biometrics.sensors.ClientMonitorCallback;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
+import com.android.server.biometrics.sensors.ClientMonitorCompositeCallback;
 import com.android.server.biometrics.sensors.EnrollClient;
 import com.android.server.biometrics.sensors.face.FaceService;
 import com.android.server.biometrics.sensors.face.FaceUtils;
@@ -67,8 +69,8 @@ public class FaceEnrollClient extends EnrollClient<ISession> {
     private final int mMaxTemplatesPerUser;
     private final boolean mDebugConsent;
 
-    private final BaseClientMonitor.Callback mPreviewHandleDeleterCallback =
-            new BaseClientMonitor.Callback() {
+    private final ClientMonitorCallback mPreviewHandleDeleterCallback =
+            new ClientMonitorCallback() {
                 @Override
                 public void onClientStarted(@NonNull BaseClientMonitor clientMonitor) {
                 }
@@ -82,13 +84,14 @@ public class FaceEnrollClient extends EnrollClient<ISession> {
 
     FaceEnrollClient(@NonNull Context context, @NonNull LazyDaemon<ISession> lazyDaemon,
             @NonNull IBinder token, @NonNull ClientMonitorCallbackConverter listener, int userId,
-            @NonNull byte[] hardwareAuthToken, @NonNull String opPackageName,
+            @NonNull byte[] hardwareAuthToken, @NonNull String opPackageName, long requestId,
             @NonNull BiometricUtils<Face> utils, @NonNull int[] disabledFeatures, int timeoutSec,
             @Nullable Surface previewSurface, int sensorId, int maxTemplatesPerUser,
             boolean debugConsent) {
         super(context, lazyDaemon, token, listener, userId, hardwareAuthToken, opPackageName, utils,
                 timeoutSec, BiometricsProtoEnums.MODALITY_FACE, sensorId,
                 false /* shouldVibrate */);
+        setRequestId(requestId);
         mEnrollIgnoreList = getContext().getResources()
                 .getIntArray(R.array.config_face_acquire_enroll_ignorelist);
         mEnrollIgnoreListVendor = getContext().getResources()
@@ -100,7 +103,7 @@ public class FaceEnrollClient extends EnrollClient<ISession> {
     }
 
     @Override
-    public void start(@NonNull Callback callback) {
+    public void start(@NonNull ClientMonitorCallback callback) {
         super.start(callback);
 
         BiometricNotificationUtils.cancelReEnrollNotification(getContext());
@@ -108,9 +111,9 @@ public class FaceEnrollClient extends EnrollClient<ISession> {
 
     @NonNull
     @Override
-    protected Callback wrapCallbackForStart(@NonNull Callback callback) {
-        return new CompositeCallback(mPreviewHandleDeleterCallback,
-                createALSCallback(true /* startWithClient */), callback);
+    protected ClientMonitorCallback wrapCallbackForStart(@NonNull ClientMonitorCallback callback) {
+        return new ClientMonitorCompositeCallback(mPreviewHandleDeleterCallback,
+                getLogger().createALSCallback(true /* startWithClient */), callback);
     }
 
     @Override

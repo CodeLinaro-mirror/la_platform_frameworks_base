@@ -82,6 +82,8 @@ public class DozeScreenStateTest extends SysuiTestCase {
     private UdfpsController mUdfpsController;
     @Mock
     private DozeLog mDozeLog;
+    @Mock
+    private DozeScreenBrightness mDozeScreenBrightness;
 
     @Before
     public void setUp() throws Exception {
@@ -96,7 +98,8 @@ public class DozeScreenStateTest extends SysuiTestCase {
         mHandlerFake = new FakeHandler(Looper.getMainLooper());
         mWakeLock = new WakeLockFake();
         mScreen = new DozeScreenState(mServiceFake, mHandlerFake, mDozeHost, mDozeParameters,
-                mWakeLock, mAuthController, mUdfpsControllerProvider, mDozeLog);
+                mWakeLock, mAuthController, mUdfpsControllerProvider, mDozeLog,
+                mDozeScreenBrightness);
     }
 
     @Test
@@ -189,7 +192,7 @@ public class DozeScreenStateTest extends SysuiTestCase {
     public void test_holdsWakeLockWhenGoingToLowPowerDelayed() {
         // Transition to low power mode will be delayed to let
         // animations play at 60 fps.
-        when(mDozeParameters.shouldControlScreenOff()).thenReturn(true);
+        when(mDozeParameters.shouldDelayDisplayDozeTransition()).thenReturn(true);
         mHandlerFake.setMode(QUEUEING);
 
         mScreen.transitionTo(UNINITIALIZED, INITIALIZED);
@@ -206,7 +209,7 @@ public class DozeScreenStateTest extends SysuiTestCase {
     public void test_releasesWakeLock_abortingLowPowerDelayed() {
         // Transition to low power mode will be delayed to let
         // animations play at 60 fps.
-        when(mDozeParameters.shouldControlScreenOff()).thenReturn(true);
+        when(mDozeParameters.shouldDelayDisplayDozeTransition()).thenReturn(true);
         mHandlerFake.setMode(QUEUEING);
 
         mScreen.transitionTo(UNINITIALIZED, INITIALIZED);

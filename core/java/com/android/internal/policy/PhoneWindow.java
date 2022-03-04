@@ -1841,8 +1841,9 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
     @Override
     public void setLocalFocus(boolean hasFocus, boolean inTouchMode) {
-        getViewRootImpl().windowFocusChanged(hasFocus, inTouchMode);
-
+        ViewRootImpl viewRoot = getViewRootImpl();
+        viewRoot.windowFocusChanged(hasFocus);
+        viewRoot.touchModeChanged(inTouchMode);
     }
 
     @Override

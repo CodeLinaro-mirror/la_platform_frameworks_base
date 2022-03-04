@@ -17,7 +17,7 @@
 package android.media.audio.common;
 
 import android.media.audio.common.AudioGain;
-import android.media.audio.common.AudioPortConfig;
+import android.media.audio.common.AudioIoFlags;
 import android.media.audio.common.AudioPortExt;
 import android.media.audio.common.AudioProfile;
 import android.media.audio.common.ExtraAudioDescriptor;
@@ -32,7 +32,7 @@ import android.media.audio.common.ExtraAudioDescriptor;
 @VintfStability
 parcelable AudioPort {
     /**
-     * Unique identifier of the port within this HAL service.
+     * Unique identifier of the port within a HAL module.
      */
     int id;
     /**
@@ -45,6 +45,10 @@ parcelable AudioPort {
      */
     AudioProfile[] profiles;
     /**
+     * I/O feature flags.
+     */
+    AudioIoFlags flags;
+    /**
      * ExtraAudioDescriptors supported by this port. Used for formats not
      * recognized by the platform. The audio capability is described by a
      * hardware descriptor.
@@ -52,8 +56,6 @@ parcelable AudioPort {
     ExtraAudioDescriptor[] extraAudioDescriptors;
     /** Gain controllers. */
     AudioGain[] gains;
-    /** Current audio port configuration. */
-    AudioPortConfig activeConfig;
     /** Extra parameters depending on the port role. */
     AudioPortExt ext;
 }

@@ -31,6 +31,7 @@ import android.view.inputmethod.ExtractedTextRequest;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputContentInfo;
 import android.view.inputmethod.SurroundingText;
+import android.view.inputmethod.TextAttribute;
 
 import com.android.internal.inputmethod.CancellationGroup;
 import com.android.internal.inputmethod.CompletableFutureUtil;
@@ -100,6 +101,17 @@ final class RemoteInputConnection implements InputConnection {
         mImsInternal = new InputMethodServiceInternalHolder(inputMethodService);
         mInvoker = IInputContextInvoker.create(inputContext);
         mCancellationGroup = cancellationGroup;
+    }
+
+    @AnyThread
+    public boolean isSameConnection(@NonNull IInputContext inputContext) {
+        return mInvoker.isSameConnection(inputContext);
+    }
+
+    RemoteInputConnection(@NonNull RemoteInputConnection original, int sessionId) {
+        mImsInternal = original.mImsInternal;
+        mInvoker = original.mInvoker.cloneWithSessionId(sessionId);
+        mCancellationGroup = original.mCancellationGroup;
     }
 
     /**
@@ -272,6 +284,17 @@ final class RemoteInputConnection implements InputConnection {
     }
 
     @AnyThread
+    public boolean commitText(@NonNull CharSequence text, int newCursorPosition,
+            @Nullable TextAttribute textAttribute) {
+        final boolean handled =
+                mInvoker.commitText(text, newCursorPosition, textAttribute);
+        if (handled) {
+            notifyUserActionIfNecessary();
+        }
+        return handled;
+    }
+
+    @AnyThread
     private void notifyUserActionIfNecessary() {
         final InputMethodServiceInternal imsInternal = mImsInternal.getAndWarnIfNull();
         if (imsInternal == null) {
@@ -311,8 +334,23 @@ final class RemoteInputConnection implements InputConnection {
     }
 
     @AnyThread
+    public boolean setComposingRegion(int start, int end, @Nullable TextAttribute textAttribute) {
+        return mInvoker.setComposingRegion(start, end, textAttribute);
+    }
+
+    @AnyThread
     public boolean setComposingText(CharSequence text, int newCursorPosition) {
         final boolean handled = mInvoker.setComposingText(text, newCursorPosition);
+        if (handled) {
+            notifyUserActionIfNecessary();
+        }
+        return handled;
+    }
+
+    @AnyThread
+    public boolean setComposingText(CharSequence text, int newCursorPosition,
+            @Nullable TextAttribute textAttribute) {
+        final boolean handled = mInvoker.setComposingText(text, newCursorPosition, textAttribute);
         if (handled) {
             notifyUserActionIfNecessary();
         }

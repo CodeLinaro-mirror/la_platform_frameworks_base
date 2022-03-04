@@ -249,7 +249,7 @@ public class FingerprintService extends SystemService {
         }
 
         @Override // Binder call
-        public void enroll(final IBinder token, @NonNull final byte[] hardwareAuthToken,
+        public long enroll(final IBinder token, @NonNull final byte[] hardwareAuthToken,
                 final int userId, final IFingerprintServiceReceiver receiver,
                 final String opPackageName, @FingerprintManager.EnrollReason int enrollReason) {
             Utils.checkPermission(getContext(), MANAGE_FINGERPRINT);
@@ -257,15 +257,15 @@ public class FingerprintService extends SystemService {
             final Pair<Integer, ServiceProvider> provider = getSingleProvider();
             if (provider == null) {
                 Slog.w(TAG, "Null provider for enroll");
-                return;
+                return -1;
             }
 
-            provider.second.scheduleEnroll(provider.first, token, hardwareAuthToken, userId,
+            return provider.second.scheduleEnroll(provider.first, token, hardwareAuthToken, userId,
                     receiver, opPackageName, enrollReason);
         }
 
         @Override // Binder call
-        public void cancelEnrollment(final IBinder token) {
+        public void cancelEnrollment(final IBinder token, long requestId) {
             Utils.checkPermission(getContext(), MANAGE_FINGERPRINT);
 
             final Pair<Integer, ServiceProvider> provider = getSingleProvider();
@@ -274,14 +274,14 @@ public class FingerprintService extends SystemService {
                 return;
             }
 
-            provider.second.cancelEnrollment(provider.first, token);
+            provider.second.cancelEnrollment(provider.first, token, requestId);
         }
 
         @SuppressWarnings("deprecation")
         @Override // Binder call
         public long authenticate(final IBinder token, final long operationId,
                 final int sensorId, final int userId, final IFingerprintServiceReceiver receiver,
-                final String opPackageName) {
+                final String opPackageName, boolean ignoreEnrollmentState) {
             final int callingUid = Binder.getCallingUid();
             final int callingPid = Binder.getCallingPid();
             final int callingUserId = UserHandle.getCallingUserId();
@@ -333,7 +333,8 @@ public class FingerprintService extends SystemService {
                     && sensorProps != null && sensorProps.isAnyUdfpsType()) {
                 final long identity2 = Binder.clearCallingIdentity();
                 try {
-                    return authenticateWithPrompt(operationId, sensorProps, userId, receiver);
+                    return authenticateWithPrompt(operationId, sensorProps, userId, receiver,
+                            ignoreEnrollmentState);
                 } finally {
                     Binder.restoreCallingIdentity(identity2);
                 }
@@ -347,7 +348,8 @@ public class FingerprintService extends SystemService {
                 final long operationId,
                 @NonNull final FingerprintSensorPropertiesInternal props,
                 final int userId,
-                final IFingerprintServiceReceiver receiver) {
+                final IFingerprintServiceReceiver receiver,
+                boolean ignoreEnrollmentState) {
 
             final Context context = getUiContext();
             final Executor executor = context.getMainExecutor();
@@ -368,6 +370,7 @@ public class FingerprintService extends SystemService {
                             })
                     .setAllowedSensorIds(new ArrayList<>(
                             Collections.singletonList(props.sensorId)))
+                    .setIgnoreEnrollmentState(ignoreEnrollmentState)
                     .build();
 
             final BiometricPrompt.AuthenticationCallback promptCallback =
@@ -815,7 +818,7 @@ public class FingerprintService extends SystemService {
                             mLockoutResetDispatcher, mGestureAvailabilityDispatcher);
                 } else {
                     fingerprint21 = Fingerprint21.newInstance(getContext(),
-                            mFingerprintStateCallback, hidlSensor,
+                            mFingerprintStateCallback, hidlSensor, mHandler,
                             mLockoutResetDispatcher, mGestureAvailabilityDispatcher);
                 }
                 mServiceProviders.add(fingerprint21);

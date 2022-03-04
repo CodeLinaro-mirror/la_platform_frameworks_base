@@ -26,6 +26,7 @@ import static junit.framework.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyInt;
+import static org.mockito.Matchers.anyLong;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -379,6 +380,7 @@ public class ManagedServicesTest extends UiServiceTestCase {
     /** Test that restore correctly parses the user_set attribute. */
     @Test
     public void testReadXml_restoresUserSet() throws Exception {
+        mVersionString = "4";
         for (int approvalLevel : new int[] {APPROVAL_BY_COMPONENT, APPROVAL_BY_PACKAGE}) {
             ManagedServices service =
                     new TestManagedServices(
@@ -808,7 +810,7 @@ public class ManagedServicesTest extends UiServiceTestCase {
                     service.isComponentEnabledForCurrentProfiles(
                             unapprovedAdditionalComponent));
             verify(mIpm, never()).getServiceInfo(
-                    eq(unapprovedAdditionalComponent), anyInt(), anyInt());
+                    eq(unapprovedAdditionalComponent), anyLong(), anyInt());
         }
     }
 
@@ -952,7 +954,7 @@ public class ManagedServicesTest extends UiServiceTestCase {
                     service.isComponentEnabledForCurrentProfiles(
                             unapprovedAdditionalComponent));
             verify(mIpm, never()).getServiceInfo(
-                    eq(unapprovedAdditionalComponent), anyInt(), anyInt());
+                    eq(unapprovedAdditionalComponent), anyLong(), anyInt());
         }
     }
 
@@ -1361,6 +1363,66 @@ public class ManagedServicesTest extends UiServiceTestCase {
     }
 
     @Test
+    public void testSetComponentState() throws Exception {
+        Context context = mock(Context.class);
+        PackageManager pm = mock(PackageManager.class);
+        ApplicationInfo ai = new ApplicationInfo();
+        ai.targetSdkVersion = Build.VERSION_CODES.CUR_DEVELOPMENT;
+
+        when(context.getPackageName()).thenReturn(mContext.getPackageName());
+        when(context.getUserId()).thenReturn(mContext.getUserId());
+        when(context.getPackageManager()).thenReturn(pm);
+        when(pm.getApplicationInfo(anyString(), anyInt())).thenReturn(ai);
+
+        ManagedServices service = new TestManagedServices(context, mLock, mUserProfiles, mIpm,
+                APPROVAL_BY_COMPONENT);
+        ComponentName cn = ComponentName.unflattenFromString("a/a");
+
+        service.registerSystemService(cn, 0);
+        when(context.bindServiceAsUser(any(), any(), anyInt(), any())).thenAnswer(invocation -> {
+            Object[] args = invocation.getArguments();
+            ServiceConnection sc = (ServiceConnection) args[1];
+            sc.onServiceConnected(cn, mock(IBinder.class));
+            return true;
+        });
+
+        service.registerSystemService(cn, mZero.id);
+
+        service.setComponentState(cn, mZero.id, false);
+        verify(context).unbindService(any());
+    }
+
+    @Test
+    public void testSetComponentState_workProfile() throws Exception {
+        Context context = mock(Context.class);
+        PackageManager pm = mock(PackageManager.class);
+        ApplicationInfo ai = new ApplicationInfo();
+        ai.targetSdkVersion = Build.VERSION_CODES.CUR_DEVELOPMENT;
+
+        when(context.getPackageName()).thenReturn(mContext.getPackageName());
+        when(context.getUserId()).thenReturn(mContext.getUserId());
+        when(context.getPackageManager()).thenReturn(pm);
+        when(pm.getApplicationInfo(anyString(), anyInt())).thenReturn(ai);
+
+        ManagedServices service = new TestManagedServices(context, mLock, mUserProfiles, mIpm,
+                APPROVAL_BY_COMPONENT);
+        ComponentName cn = ComponentName.unflattenFromString("a/a");
+
+        service.registerSystemService(cn, 0);
+        when(context.bindServiceAsUser(any(), any(), anyInt(), any())).thenAnswer(invocation -> {
+            Object[] args = invocation.getArguments();
+            ServiceConnection sc = (ServiceConnection) args[1];
+            sc.onServiceConnected(cn, mock(IBinder.class));
+            return true;
+        });
+
+        service.registerSystemService(cn, mZero.id);
+
+        service.setComponentState(cn, mTen.id, false);
+        verify(context, never()).unbindService(any());
+    }
+
+    @Test
     public void testOnPackagesChanged_nullValuesPassed_noNullPointers() {
         for (int approvalLevel : new int[] {APPROVAL_BY_COMPONENT, APPROVAL_BY_PACKAGE}) {
             ManagedServices service = new TestManagedServices(getContext(), mLock, mUserProfiles,
@@ -1513,7 +1575,8 @@ public class ManagedServicesTest extends UiServiceTestCase {
         for (int userId : mExpectedPrimary.get(service.mApprovalLevel).keySet()) {
             String pkgOrCmp = mExpectedPrimary.get(service.mApprovalLevel).get(userId);
             xml.append(getXmlEntry(
-                    pkgOrCmp, userId, true, !(pkgOrCmp.startsWith("non.user.set.package"))));
+                    pkgOrCmp, userId, true,
+                    !(pkgOrCmp.startsWith("non.user.set.package"))));
         }
         for (int userId : mExpectedSecondary.get(service.mApprovalLevel).keySet()) {
             xml.append(getXmlEntry(
@@ -1541,7 +1604,9 @@ public class ManagedServicesTest extends UiServiceTestCase {
     private TypedXmlPullParser getParserWithEntries(ManagedServices service, String... xmlEntries)
             throws Exception {
         final StringBuffer xml = new StringBuffer();
-        xml.append("<" + service.getConfig().xmlTag + ">\n");
+        xml.append("<" + service.getConfig().xmlTag
+                + (mVersionString != null ? " version=\"" + mVersionString + "\" " : "")
+                + ">\n");
         for (String xmlEntry : xmlEntries) {
             xml.append(xmlEntry);
         }
@@ -1638,14 +1703,14 @@ public class ManagedServicesTest extends UiServiceTestCase {
                             assertTrue(service.isComponentEnabledForCurrentProfiles(
                                     componentName));
                             verify(mIpm, times(1)).getServiceInfo(
-                                    eq(componentName), anyInt(), anyInt());
+                                    eq(componentName), anyLong(), anyInt());
                         }
                     } else {
                         ComponentName componentName =
                                 ComponentName.unflattenFromString(packageOrComponent);
                         assertTrue(service.isComponentEnabledForCurrentProfiles(componentName));
                         verify(mIpm, times(1)).getServiceInfo(
-                                eq(componentName), anyInt(), anyInt());
+                                eq(componentName), anyLong(), anyInt());
                     }
                 }
             }
@@ -1726,12 +1791,19 @@ public class ManagedServicesTest extends UiServiceTestCase {
     }
 
     private String getXmlEntry(String approved, int userId, boolean isPrimary, boolean userSet) {
+        String userSetString = "";
+        if (mVersionString.equals("4")) {
+            userSetString =
+                    ManagedServices.ATT_USER_CHANGED + "=\"" + String.valueOf(userSet) + "\" ";
+        } else if (mVersionString.equals("3")) {
+            userSetString =
+                    ManagedServices.ATT_USER_SET + "=\"" + (userSet ? approved : "") + "\" ";
+        }
         return "<" + ManagedServices.TAG_MANAGED_SERVICES + " "
                 + ManagedServices.ATT_USER_ID + "=\"" + userId +"\" "
                 + ManagedServices.ATT_IS_PRIMARY + "=\"" + isPrimary +"\" "
                 + ManagedServices.ATT_APPROVED_LIST + "=\"" + approved +"\" "
-                + ManagedServices.ATT_USER_SET + "=\"" + (userSet ? approved : "") + "\" "
-                + "/>\n";
+                + userSetString + "/>\n";
     }
 
     class TestManagedServices extends ManagedServices {

@@ -19,6 +19,7 @@ package com.android.server.wm;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
+import android.app.ActivityManager;
 import android.app.AppProtoEnums;
 import android.app.IActivityManager;
 import android.app.IApplicationThread;
@@ -242,21 +243,6 @@ public abstract class ActivityTaskManagerInternal {
             int startFlags, @Nullable Bundle options, int userId);
 
     /**
-     * Called when Keyguard flags might have changed.
-     *
-     * @param callback Callback to run after activity visibilities have been reevaluated. This can
-     *                 be used from window manager so that when the callback is called, it's
-     *                 guaranteed that all apps have their visibility updated accordingly.
-     * @param displayId The id of the display where the keyguard flags changed.
-     */
-    public abstract void notifyKeyguardFlagsChanged(@Nullable Runnable callback, int displayId);
-
-    /**
-     * Called when the trusted state of Keyguard has changed.
-     */
-    public abstract void notifyKeyguardTrustedChanged();
-
-    /**
      * Called after virtual display Id is updated by
      * {@link com.android.server.vr.Vr2dDisplay} with a specific
      * {@param vr2dDisplayId}.
@@ -265,7 +251,7 @@ public abstract class ActivityTaskManagerInternal {
 
     /**
      * Set focus on an activity.
-     * @param token The IApplicationToken for the activity
+     * @param token The activity token.
      */
     public abstract void setFocusedActivity(IBinder token);
 
@@ -341,8 +327,8 @@ public abstract class ActivityTaskManagerInternal {
     public abstract void onProcessMapped(int pid, WindowProcessController proc);
     public abstract void onProcessUnMapped(int pid);
 
-    public abstract void onPackageDataCleared(String name);
-    public abstract void onPackageUninstalled(String name);
+    public abstract void onPackageDataCleared(String name, int userId);
+    public abstract void onPackageUninstalled(String name, int userId);
     public abstract void onPackageAdded(String name, boolean replacing);
     public abstract void onPackageReplaced(ApplicationInfo aInfo);
 
@@ -663,13 +649,23 @@ public abstract class ActivityTaskManagerInternal {
          * This setting is persisted and will overlay on top of the system locales for
          * the said application.
          * @return the current {@link PackageConfigurationUpdater} updated with the provided locale.
+         *
+         * <p>NOTE: This method should not be called by clients directly to set app locales,
+         * instead use the {@link LocaleManagerService#setApplicationLocales}
          */
         PackageConfigurationUpdater setLocales(LocaleList locales);
 
         /**
          * Commit changes.
+         * @return true if the configuration changes were persisted,
+         * false if there were no changes, or if erroneous inputs were provided, such as:
+         * <ui>
+         *     <li>Invalid packageName</li>
+         *     <li>Invalid userId</li>
+         *     <li>no WindowProcessController found for the package</li>
+         * </ui>
          */
-        void commit();
+        boolean commit();
     }
 
     /**
@@ -688,4 +684,10 @@ public abstract class ActivityTaskManagerInternal {
     public abstract void registerActivityStartInterceptor(
             @ActivityInterceptorCallback.OrderedId int id,
             ActivityInterceptorCallback callback);
+
+    /** Get the most recent task excluding the first running task (the one on the front most). */
+    public abstract ActivityManager.RecentTaskInfo getMostRecentTaskFromBackground();
+
+    /** Get the app tasks for a package */
+    public abstract List<ActivityManager.AppTask> getAppTasks(String pkgName, int uid);
 }

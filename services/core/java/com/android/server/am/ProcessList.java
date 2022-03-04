@@ -136,6 +136,7 @@ import com.android.server.am.ActivityManagerService.ProcessChangeItem;
 import com.android.server.compat.PlatformCompat;
 import com.android.server.pm.dex.DexManager;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
+import com.android.server.pm.pkg.PackageStateInternal;
 import com.android.server.wm.ActivityServiceConnectionsHolder;
 import com.android.server.wm.WindowManagerService;
 import com.android.server.wm.WindowProcessController;
@@ -369,6 +370,16 @@ public final class ProcessList {
     @ChangeId
     @EnabledAfter(targetSdkVersion = Build.VERSION_CODES.Q)
     private static final long NATIVE_HEAP_POINTER_TAGGING = 135754954; // This is a bug id.
+
+    /**
+     * Native heap allocations in AppZygote process and its descendants will now have a
+     * non-zero tag in the most significant byte.
+     * @see <a href="https://source.android.com/devices/tech/debug/tagged-pointers">Tagged
+     * Pointers</a>
+     */
+    @ChangeId
+    @EnabledAfter(targetSdkVersion = Build.VERSION_CODES.S)
+    private static final long NATIVE_HEAP_POINTER_TAGGING_APP_ZYGOTE = 207557677;
 
     /**
      * Enable asynchronous (ASYNC) memory tag checking in this process. This
@@ -1741,6 +1752,16 @@ public final class ProcessList {
         return level;
     }
 
+    private int decideTaggingLevelForAppZygote(ProcessRecord app) {
+        int level = decideTaggingLevel(app);
+        // TBI ("fake" pointer tagging) in AppZygote is controlled by a separate compat feature.
+        if (!mPlatformCompat.isChangeEnabled(NATIVE_HEAP_POINTER_TAGGING_APP_ZYGOTE, app.info)
+                && level == Zygote.MEMORY_TAG_LEVEL_TBI) {
+            level = Zygote.MEMORY_TAG_LEVEL_NONE;
+        }
+        return level;
+    }
+
     private int decideGwpAsanLevel(ProcessRecord app) {
         // Look at the process attribute first.
        if (app.processInfo != null
@@ -1793,13 +1814,14 @@ public final class ProcessList {
         if (app.isPendingStart()) {
             return true;
         }
-        long startTime = SystemClock.uptimeMillis();
+        final long startUptime = SystemClock.uptimeMillis();
+        final long startElapsedTime = SystemClock.elapsedRealtime();
         if (app.getPid() > 0 && app.getPid() != ActivityManagerService.MY_PID) {
-            checkSlow(startTime, "startProcess: removing from pids map");
+            checkSlow(startUptime, "startProcess: removing from pids map");
             mService.removePidLocked(app.getPid(), app);
             app.setBindMountPending(false);
             mService.mHandler.removeMessages(PROC_START_TIMEOUT_MSG, app);
-            checkSlow(startTime, "startProcess: done removing from pids map");
+            checkSlow(startUptime, "startProcess: done removing from pids map");
             app.setPid(0);
             app.setStartSeq(0);
         }
@@ -1812,9 +1834,9 @@ public final class ProcessList {
                 "startProcessLocked removing on hold: " + app);
         mService.mProcessesOnHold.remove(app);
 
-        checkSlow(startTime, "startProcess: starting to update cpu stats");
+        checkSlow(startUptime, "startProcess: starting to update cpu stats");
         mService.updateCpuStats();
-        checkSlow(startTime, "startProcess: done updating cpu stats");
+        checkSlow(startUptime, "startProcess: done updating cpu stats");
 
         try {
             final int userId = UserHandle.getUserId(app.uid);
@@ -1831,7 +1853,7 @@ public final class ProcessList {
             if (!app.isolated) {
                 int[] permGids = null;
                 try {
-                    checkSlow(startTime, "startProcess: getting gids from package manager");
+                    checkSlow(startUptime, "startProcess: getting gids from package manager");
                     final IPackageManager pm = AppGlobals.getPackageManager();
                     permGids = pm.getPackageGids(app.info.packageName,
                             MATCH_DIRECT_BOOT_AUTO, app.userId);
@@ -1869,7 +1891,7 @@ public final class ProcessList {
                 gids = computeGidsForProcess(mountExternal, uid, permGids, externalStorageAccess);
             }
             app.setMountMode(mountExternal);
-            checkSlow(startTime, "startProcess: building args");
+            checkSlow(startUptime, "startProcess: building args");
             if (mService.mAtmInternal.isFactoryTestProcess(app.getWindowProcessController())) {
                 uid = 0;
             }
@@ -2027,7 +2049,7 @@ public final class ProcessList {
 
             return startProcessLocked(hostingRecord, entryPoint, app, uid, gids,
                     runtimeFlags, zygotePolicyFlags, mountExternal, seInfo, requiredAbi,
-                    instructionSet, invokeWith, startTime);
+                    instructionSet, invokeWith, startUptime, startElapsedTime);
         } catch (RuntimeException e) {
             Slog.e(ActivityManagerService.TAG, "Failure starting process " + app.processName, e);
 
@@ -2047,7 +2069,7 @@ public final class ProcessList {
     boolean startProcessLocked(HostingRecord hostingRecord, String entryPoint, ProcessRecord app,
             int uid, int[] gids, int runtimeFlags, int zygotePolicyFlags, int mountExternal,
             String seInfo, String requiredAbi, String instructionSet, String invokeWith,
-            long startTime) {
+            long startUptime, long startElapsedTime) {
         app.setPendingStart(true);
         app.setRemoved(false);
         synchronized (mProcLock) {
@@ -2068,7 +2090,7 @@ public final class ProcessList {
         }
         final long startSeq = ++mProcStartSeqCounter;
         app.setStartSeq(startSeq);
-        app.setStartParams(uid, hostingRecord, seInfo, startTime);
+        app.setStartParams(uid, hostingRecord, seInfo, startUptime, startElapsedTime);
         app.setUsingWrapper(invokeWith != null
                 || Zygote.getWrapProperty(app.processName) != null);
         mPendingStarts.put(startSeq, app);
@@ -2085,7 +2107,7 @@ public final class ProcessList {
                 final Process.ProcessStartResult startResult = startProcess(hostingRecord,
                         entryPoint, app,
                         uid, gids, runtimeFlags, zygotePolicyFlags, mountExternal, seInfo,
-                        requiredAbi, instructionSet, invokeWith, startTime);
+                        requiredAbi, instructionSet, invokeWith, startUptime);
                 handleProcessStartedLocked(app, startResult.pid, startResult.usingWrapper,
                         startSeq, false);
             } catch (RuntimeException e) {
@@ -2270,7 +2292,8 @@ public final class ProcessList {
                 // not the calling one.
                 appInfo.packageName = app.getHostingRecord().getDefiningPackageName();
                 appInfo.uid = uid;
-                appZygote = new AppZygote(appInfo, uid, firstUid, lastUid);
+                int runtimeFlags = decideTaggingLevelForAppZygote(app);
+                appZygote = new AppZygote(appInfo, uid, firstUid, lastUid, runtimeFlags);
                 mAppZygotes.put(app.info.processName, uid, appZygote);
                 zygoteProcessList = new ArrayList<ProcessRecord>();
                 mAppZygoteProcesses.put(appZygote, zygoteProcessList);
@@ -2296,13 +2319,13 @@ public final class ProcessList {
         Map<String, Pair<String, Long>> result = new ArrayMap<>(packages.length);
         int userId = UserHandle.getUserId(uid);
         for (String packageName : packages) {
-            AndroidPackage androidPackage = pmInt.getPackage(packageName);
-            if (androidPackage == null) {
+            final PackageStateInternal packageState = pmInt.getPackageStateInternal(packageName);
+            if (packageState == null) {
                 Slog.w(TAG, "Unknown package:" + packageName);
                 continue;
             }
-            String volumeUuid = androidPackage.getVolumeUuid();
-            long inode = pmInt.getCeDataInode(packageName, userId);
+            String volumeUuid = packageState.getVolumeUuid();
+            long inode = packageState.getUserStateOrDefault(userId).getCeDataInode();
             if (inode == 0) {
                 Slog.w(TAG, packageName + " inode == 0 (b/152760674)");
                 return null;
@@ -2357,6 +2380,8 @@ public final class ProcessList {
             final String[] targetPackagesList = sharedPackages.length == 0
                     ? new String[]{app.info.packageName} : sharedPackages;
 
+            final boolean hasAppStorage = hasAppStorage(pmInt, app.info.packageName);
+
             pkgDataInfoMap = getPackageAppDataInfoMap(pmInt, targetPackagesList, uid);
             if (pkgDataInfoMap == null) {
                 // TODO(b/152760674): Handle inode == 0 case properly, now we just give it a
@@ -2377,6 +2402,12 @@ public final class ProcessList {
                 // TODO(b/152760674): Handle inode == 0 case properly, now we just give it a
                 // tmp free pass.
                 bindMountAppsData = false;
+            }
+
+            if (!hasAppStorage) {
+                bindMountAppsData = false;
+                pkgDataInfoMap = null;
+                allowlistedAppDataInfoMap = null;
             }
 
             int userId = UserHandle.getUserId(uid);
@@ -2464,6 +2495,17 @@ public final class ProcessList {
         } finally {
             Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
         }
+    }
+
+    private boolean hasAppStorage(PackageManagerInternal pmInt, String packageName) {
+        final AndroidPackage pkg = pmInt.getPackage(packageName);
+        if (pkg == null) {
+            Slog.w(TAG, "Unknown package " + packageName);
+            return false;
+        }
+        final PackageManager.Property noAppStorageProp =
+                    pkg.getProperties().get(PackageManager.PROPERTY_NO_APP_DATA_STORAGE);
+        return noAppStorageProp == null || !noAppStorageProp.getBoolean();
     }
 
     @GuardedBy("mService")
@@ -2792,8 +2834,8 @@ public final class ProcessList {
             int reasonCode, int subReason, String reason) {
         return killPackageProcessesLSP(packageName, appId, userId, minOomAdj,
                 false /* callerWillRestart */, true /* allowRestart */, true /* doit */,
-                false /* evenPersistent */, false /* setRemoved */, reasonCode,
-                subReason, reason);
+                false /* evenPersistent */, false /* setRemoved */, false /* uninstalling */,
+                reasonCode, subReason, reason);
     }
 
     @GuardedBy("mService")
@@ -2826,9 +2868,10 @@ public final class ProcessList {
     @GuardedBy({"mService", "mProcLock"})
     boolean killPackageProcessesLSP(String packageName, int appId,
             int userId, int minOomAdj, boolean callerWillRestart, boolean allowRestart,
-            boolean doit, boolean evenPersistent, boolean setRemoved, int reasonCode,
-            int subReason, String reason) {
-        ArrayList<ProcessRecord> procs = new ArrayList<>();
+            boolean doit, boolean evenPersistent, boolean setRemoved, boolean uninstalling,
+            int reasonCode, int subReason, String reason) {
+        final PackageManagerInternal pm = mService.getPackageManagerInternal();
+        final ArrayList<Pair<ProcessRecord, Boolean>> procs = new ArrayList<>();
 
         // Remove all processes this package may have touched: all with the
         // same UID (except for the system or root user), and all whose name
@@ -2845,7 +2888,18 @@ public final class ProcessList {
                 }
                 if (app.isRemoved()) {
                     if (doit) {
-                        procs.add(app);
+                        boolean shouldAllowRestart = false;
+                        if (!uninstalling && packageName != null) {
+                            // This package has a dependency on the given package being stopped,
+                            // while it's not being frozen nor uninstalled, allow to restart it.
+                            shouldAllowRestart = !app.getPkgList().containsKey(packageName)
+                                    && app.getPkgDeps() != null
+                                    && app.getPkgDeps().contains(packageName)
+                                    && app.info != null
+                                    && !pm.isPackageFrozen(app.info.packageName, app.uid,
+                                            app.userId);
+                        }
+                        procs.add(new Pair<>(app, shouldAllowRestart));
                     }
                     continue;
                 }
@@ -2859,6 +2913,8 @@ public final class ProcessList {
                     // may be scheduled to unbind and become an executing service (oom adj 0).
                     continue;
                 }
+
+                boolean shouldAllowRestart = false;
 
                 // If no package is specified, we call all processes under the
                 // give user id.
@@ -2881,8 +2937,15 @@ public final class ProcessList {
                     if (userId != UserHandle.USER_ALL && app.userId != userId) {
                         continue;
                     }
-                    if (!app.getPkgList().containsKey(packageName) && !isDep) {
+                    final boolean isInPkgList = app.getPkgList().containsKey(packageName);
+                    if (!isInPkgList && !isDep) {
                         continue;
+                    }
+                    if (!isInPkgList && isDep && !uninstalling && app.info != null
+                            && !pm.isPackageFrozen(app.info.packageName, app.uid, app.userId)) {
+                        // This package has a dependency on the given package being stopped,
+                        // while it's not being frozen nor uninstalled, allow to restart it.
+                        shouldAllowRestart = true;
                     }
                 }
 
@@ -2893,13 +2956,14 @@ public final class ProcessList {
                 if (setRemoved) {
                     app.setRemoved(true);
                 }
-                procs.add(app);
+                procs.add(new Pair<>(app, shouldAllowRestart));
             }
         }
 
         int N = procs.size();
         for (int i=0; i<N; i++) {
-            removeProcessLocked(procs.get(i), callerWillRestart, allowRestart,
+            final Pair<ProcessRecord, Boolean> proc = procs.get(i);
+            removeProcessLocked(proc.first, callerWillRestart, allowRestart || proc.second,
                     reasonCode, subReason, reason);
         }
         killAppZygotesLocked(packageName, appId, userId, false /* force */);
@@ -5143,7 +5207,8 @@ public final class ProcessList {
         }
 
         Watchdog.getInstance().processDied(app.processName, app.getPid());
-        if (app.getDeathRecipient() == null) {
+        if (app.getDeathRecipient() == null
+                && mDyingProcesses.get(app.processName, app.uid) == app) {
             // If we've done unlinkDeathRecipient before calling into this, remove from dying list.
             mDyingProcesses.remove(app.processName, app.uid);
             app.setDyingPid(0);

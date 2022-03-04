@@ -22,6 +22,7 @@ import static java.util.Collections.emptySet;
 import android.annotation.CheckResult;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.SuppressLint;
 import android.annotation.UserIdInt;
 import android.compat.annotation.ChangeId;
 import android.content.Context;
@@ -30,9 +31,6 @@ import android.content.pm.IntentFilterVerificationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.ResolveInfo;
-import android.content.pm.parsing.component.ParsedActivity;
-import android.content.pm.pkg.PackageUserState;
-import android.content.pm.pkg.PackageUserStateUtils;
 import android.content.pm.verify.domain.DomainOwner;
 import android.content.pm.verify.domain.DomainVerificationInfo;
 import android.content.pm.verify.domain.DomainVerificationManager;
@@ -58,9 +56,13 @@ import com.android.internal.util.FunctionalUtils;
 import com.android.server.SystemConfig;
 import com.android.server.SystemService;
 import com.android.server.compat.PlatformCompat;
-import com.android.server.pm.PackageSetting;
 import com.android.server.pm.Settings;
 import com.android.server.pm.parsing.pkg.AndroidPackage;
+import com.android.server.pm.pkg.PackageStateInternal;
+import com.android.server.pm.pkg.PackageStateUtils;
+import com.android.server.pm.pkg.PackageUserStateInternal;
+import com.android.server.pm.pkg.PackageUserStateUtils;
+import com.android.server.pm.pkg.component.ParsedActivity;
 import com.android.server.pm.verify.domain.models.DomainVerificationInternalUserState;
 import com.android.server.pm.verify.domain.models.DomainVerificationPkgState;
 import com.android.server.pm.verify.domain.models.DomainVerificationStateMap;
@@ -81,6 +83,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
+@SuppressLint("MissingPermission")
 public class DomainVerificationService extends SystemService
         implements DomainVerificationManagerInternal, DomainVerificationShell.Callback {
 
@@ -263,7 +266,7 @@ public class DomainVerificationService extends SystemService
         mEnforcer.assertApprovedQuerent(mConnection.getCallingUid(), mProxy);
         return mConnection.withPackageSettingsSnapshotReturningThrowing(pkgSettings -> {
             synchronized (mLock) {
-                PackageSetting pkgSetting = pkgSettings.apply(packageName);
+                PackageStateInternal pkgSetting = pkgSettings.apply(packageName);
                 AndroidPackage pkg = pkgSetting == null ? null : pkgSetting.getPkg();
                 if (pkg == null) {
                     throw DomainVerificationUtils.throwPackageUnavailable(packageName);
@@ -385,7 +388,7 @@ public class DomainVerificationService extends SystemService
                     for (int index = 0; index < size; index++) {
                         DomainVerificationPkgState pkgState = mAttachedPkgStates.valueAt(index);
                         String pkgName = pkgState.getPackageName();
-                        PackageSetting pkgSetting = pkgSettings.apply(pkgName);
+                        PackageStateInternal pkgSetting = pkgSettings.apply(pkgName);
                         if (pkgSetting == null || pkgSetting.getPkg() == null) {
                             continue;
                         }
@@ -419,7 +422,7 @@ public class DomainVerificationService extends SystemService
                         throw DomainVerificationUtils.throwPackageUnavailable(packageName);
                     }
 
-                    PackageSetting pkgSetting = pkgSettings.apply(packageName);
+                    PackageStateInternal pkgSetting = pkgSettings.apply(packageName);
                     if (pkgSetting == null || pkgSetting.getPkg() == null) {
                         throw DomainVerificationUtils.throwPackageUnavailable(packageName);
                     }
@@ -596,7 +599,7 @@ public class DomainVerificationService extends SystemService
                     throw DomainVerificationUtils.throwPackageUnavailable(packageName);
                 }
 
-                PackageSetting pkgSetting = pkgSettings.apply(packageName);
+                PackageStateInternal pkgSetting = pkgSettings.apply(packageName);
                 AndroidPackage pkg = pkgSetting == null ? null : pkgSetting.getPkg();
                 if (pkg == null) {
                     throw DomainVerificationUtils.throwPackageUnavailable(packageName);
@@ -639,7 +642,7 @@ public class DomainVerificationService extends SystemService
     private int revokeOtherUserSelectionsLocked(
             @NonNull DomainVerificationInternalUserState userState, @UserIdInt int userId,
             @NonNull Set<String> domains,
-            @NonNull Function<String, PackageSetting> pkgSettingFunction) {
+            @NonNull Function<String, PackageStateInternal> pkgSettingFunction) {
         // Cache the approved packages from the 1st pass because the search is expensive
         ArrayMap<String, List<String>> domainToApprovedPackages = new ArrayMap<>();
 
@@ -697,7 +700,7 @@ public class DomainVerificationService extends SystemService
 
         return mConnection.withPackageSettingsSnapshotReturningThrowing(pkgSettings -> {
             synchronized (mLock) {
-                PackageSetting pkgSetting = pkgSettings.apply(packageName);
+                PackageStateInternal pkgSetting = pkgSettings.apply(packageName);
                 AndroidPackage pkg = pkgSetting == null ? null : pkgSetting.getPkg();
                 if (pkg == null) {
                     throw DomainVerificationUtils.throwPackageUnavailable(packageName);
@@ -772,15 +775,15 @@ public class DomainVerificationService extends SystemService
     }
 
     /**
-     * @param includeNegative See {@link #approvalLevelForDomain(PackageSetting, String, boolean,
-     *                        int, Object)}.
+     * @param includeNegative See
+     * {@link #approvalLevelForDomain(PackageStateInternal, String, boolean, int, Object)}.
      * @return Mapping of approval level to packages; packages are sorted by firstInstallTime. Null
      * if no owners were found.
      */
     @NonNull
     private SparseArray<List<String>> getOwnersForDomainInternal(@NonNull String domain,
             boolean includeNegative, @UserIdInt int userId,
-            @NonNull Function<String, PackageSetting> pkgSettingFunction) {
+            @NonNull Function<String, PackageStateInternal> pkgSettingFunction) {
         SparseArray<List<String>> levelToPackages = new SparseArray<>();
         // First, collect the raw approval level values
         synchronized (mLock) {
@@ -788,7 +791,7 @@ public class DomainVerificationService extends SystemService
             for (int index = 0; index < size; index++) {
                 DomainVerificationPkgState pkgState = mAttachedPkgStates.valueAt(index);
                 String packageName = pkgState.getPackageName();
-                PackageSetting pkgSetting = pkgSettingFunction.apply(packageName);
+                PackageStateInternal pkgSetting = pkgSettingFunction.apply(packageName);
                 if (pkgSetting == null) {
                     continue;
                 }
@@ -815,13 +818,14 @@ public class DomainVerificationService extends SystemService
         // Then sort them ascending by first installed time, with package name as tie breaker
         for (int index = 0; index < size; index++) {
             levelToPackages.valueAt(index).sort((first, second) -> {
-                PackageSetting firstPkgSetting = pkgSettingFunction.apply(first);
-                PackageSetting secondPkgSetting = pkgSettingFunction.apply(second);
+                PackageStateInternal firstPkgSetting = pkgSettingFunction.apply(first);
+                PackageStateInternal secondPkgSetting = pkgSettingFunction.apply(second);
 
-                long firstInstallTime =
-                        firstPkgSetting == null ? -1L : firstPkgSetting.getFirstInstallTime();
-                long secondInstallTime =
-                        secondPkgSetting == null ? -1L : secondPkgSetting.getFirstInstallTime();
+                long firstInstallTime = firstPkgSetting == null
+                        ? -1L : firstPkgSetting.getUserStateOrDefault(userId).getFirstInstallTime();
+                long secondInstallTime = secondPkgSetting == null
+                        ? -1L
+                        : secondPkgSetting.getUserStateOrDefault(userId).getFirstInstallTime();
 
                 if (firstInstallTime != secondInstallTime) {
                     return (int) (firstInstallTime - secondInstallTime);
@@ -842,8 +846,8 @@ public class DomainVerificationService extends SystemService
     }
 
     @Override
-    public void migrateState(@NonNull PackageSetting oldPkgSetting,
-            @NonNull PackageSetting newPkgSetting) {
+    public void migrateState(@NonNull PackageStateInternal oldPkgSetting,
+            @NonNull PackageStateInternal newPkgSetting) {
         String pkgName = newPkgSetting.getPackageName();
         boolean sendBroadcast;
 
@@ -897,7 +901,7 @@ public class DomainVerificationService extends SystemService
                     oldPkgState.getUserStates();
             int oldUserStatesSize = oldUserStates.size();
             if (oldUserStatesSize > 0) {
-                ArraySet<String> newWebDomains = mCollector.collectValidAutoVerifyDomains(newPkg);
+                ArraySet<String> newWebDomains = mCollector.collectAllWebDomains(newPkg);
                 for (int oldUserStatesIndex = 0; oldUserStatesIndex < oldUserStatesSize;
                         oldUserStatesIndex++) {
                     int userId = oldUserStates.keyAt(oldUserStatesIndex);
@@ -929,9 +933,9 @@ public class DomainVerificationService extends SystemService
         }
     }
 
-    // TODO(b/159952358): Handle valid domainSetIds for PackageSettings with no AndroidPackage
+    // TODO(b/159952358): Handle valid domainSetIds for PackageStateInternals with no AndroidPackage
     @Override
-    public void addPackage(@NonNull PackageSetting newPkgSetting) {
+    public void addPackage(@NonNull PackageStateInternal newPkgSetting) {
         // TODO(b/159952358): Optimize packages without any domains. Those wouldn't have to be in
         //  the state map, but it would require handling the "migration" case where an app either
         //  gains or loses all domains.
@@ -1030,7 +1034,7 @@ public class DomainVerificationService extends SystemService
      *
      * @return whether or not a broadcast is necessary for this package
      */
-    private boolean applyImmutableState(@NonNull PackageSetting pkgSetting,
+    private boolean applyImmutableState(@NonNull PackageStateInternal pkgSetting,
             @NonNull ArrayMap<String, Integer> stateMap,
             @NonNull ArraySet<String> autoVerifyDomains) {
         if (pkgSetting.isSystem()
@@ -1064,7 +1068,7 @@ public class DomainVerificationService extends SystemService
                 Function<String, String> pkgNameToSignature = null;
                 if (includeSignatures) {
                     pkgNameToSignature = pkgName -> {
-                        PackageSetting pkgSetting = pkgSettings.apply(pkgName);
+                        PackageStateInternal pkgSetting = pkgSettings.apply(pkgName);
                         if (pkgSetting == null) {
                             // If querying for a user restored package that isn't installed on the
                             // device yet, there will be no signature to write out. In that case,
@@ -1193,8 +1197,9 @@ public class DomainVerificationService extends SystemService
     @Override
     public void printState(@NonNull IndentingPrintWriter writer, @Nullable String packageName,
             @Nullable @UserIdInt Integer userId,
-            @NonNull Function<String, PackageSetting> pkgSettingFunction)
+            @NonNull Function<String, PackageStateInternal> pkgSettingFunction)
             throws NameNotFoundException {
+        mEnforcer.assertApprovedQuerent(mConnection.getCallingUid(), mProxy);
         synchronized (mLock) {
             mDebug.printState(writer, packageName, userId, pkgSettingFunction, mAttachedPkgStates);
         }
@@ -1226,9 +1231,9 @@ public class DomainVerificationService extends SystemService
 
     private void printOwnersForPackage(@NonNull IndentingPrintWriter writer,
             @NonNull String packageName, @Nullable @UserIdInt Integer userId,
-            @NonNull Function<String, PackageSetting> pkgSettingFunction)
+            @NonNull Function<String, PackageStateInternal> pkgSettingFunction)
             throws NameNotFoundException {
-        PackageSetting pkgSetting = pkgSettingFunction.apply(packageName);
+        PackageStateInternal pkgSetting = pkgSettingFunction.apply(packageName);
         AndroidPackage pkg = pkgSetting == null ? null : pkgSetting.getPkg();
         if (pkg == null) {
             throw DomainVerificationUtils.throwPackageUnavailable(packageName);
@@ -1265,7 +1270,7 @@ public class DomainVerificationService extends SystemService
 
     private void printOwnersForDomain(@NonNull IndentingPrintWriter writer, @NonNull String domain,
             @Nullable @UserIdInt Integer userId,
-            @NonNull Function<String, PackageSetting> pkgSettingFunction) {
+            @NonNull Function<String, PackageStateInternal> pkgSettingFunction) {
         SparseArray<SparseArray<List<String>>> userIdToApprovalLevelToOwners =
                 new SparseArray<>();
 
@@ -1326,7 +1331,7 @@ public class DomainVerificationService extends SystemService
     private GetAttachedResult getAndValidateAttachedLocked(@NonNull UUID domainSetId,
             @NonNull Set<String> domains, boolean forAutoVerify, int callingUid,
             @Nullable Integer userIdForFilter,
-            @NonNull Function<String, PackageSetting> pkgSettingFunction)
+            @NonNull Function<String, PackageStateInternal> pkgSettingFunction)
             throws NameNotFoundException {
         if (domainSetId == null) {
             throw new IllegalArgumentException("domainSetId cannot be null");
@@ -1344,7 +1349,7 @@ public class DomainVerificationService extends SystemService
             return GetAttachedResult.error(DomainVerificationManager.ERROR_DOMAIN_SET_ID_INVALID);
         }
 
-        PackageSetting pkgSetting = pkgSettingFunction.apply(pkgName);
+        PackageStateInternal pkgSetting = pkgSettingFunction.apply(pkgName);
         if (pkgSetting == null || pkgSetting.getPkg() == null) {
             throw DomainVerificationUtils.throwPackageUnavailable(pkgName);
         }
@@ -1439,7 +1444,7 @@ public class DomainVerificationService extends SystemService
                     for (int index = 0; index < size; index++) {
                         DomainVerificationPkgState pkgState = mAttachedPkgStates.valueAt(index);
                         String pkgName = pkgState.getPackageName();
-                        PackageSetting pkgSetting = pkgSettings.apply(pkgName);
+                        PackageStateInternal pkgSetting = pkgSettings.apply(pkgName);
                         if (pkgSetting == null || pkgSetting.getPkg() == null) {
                             continue;
                         }
@@ -1450,7 +1455,7 @@ public class DomainVerificationService extends SystemService
                     for (int index = 0; index < size; index++) {
                         String pkgName = packageNames.get(index);
                         DomainVerificationPkgState pkgState = mAttachedPkgStates.get(pkgName);
-                        PackageSetting pkgSetting = pkgSettings.apply(pkgName);
+                        PackageStateInternal pkgSetting = pkgSettings.apply(pkgName);
                         if (pkgSetting == null || pkgSetting.getPkg() == null) {
                             continue;
                         }
@@ -1467,7 +1472,7 @@ public class DomainVerificationService extends SystemService
      * Reset states that are mutable by the domain verification agent.
      */
     private void resetDomainState(@NonNull ArrayMap<String, Integer> stateMap,
-            @NonNull PackageSetting pkgSetting) {
+            @NonNull PackageStateInternal pkgSetting) {
         int size = stateMap.size();
         for (int index = size - 1; index >= 0; index--) {
             Integer state = stateMap.valueAt(index);
@@ -1539,7 +1544,7 @@ public class DomainVerificationService extends SystemService
     @Override
     public Pair<List<ResolveInfo>, Integer> filterToApprovedApp(@NonNull Intent intent,
             @NonNull List<ResolveInfo> infos, @UserIdInt int userId,
-            @NonNull Function<String, PackageSetting> pkgSettingFunction) {
+            @NonNull Function<String, PackageStateInternal> pkgSettingFunction) {
         String domain = intent.getData().getHost();
 
         // Collect valid infos
@@ -1597,7 +1602,7 @@ public class DomainVerificationService extends SystemService
     @ApprovalLevel
     private int fillMapWithApprovalLevels(@NonNull ArrayMap<ResolveInfo, Integer> inputMap,
             @NonNull String domain, @UserIdInt int userId,
-            @NonNull Function<String, PackageSetting> pkgSettingFunction) {
+            @NonNull Function<String, PackageStateInternal> pkgSettingFunction) {
         int highestApproval = APPROVAL_LEVEL_NONE;
         int size = inputMap.size();
         for (int index = 0; index < size; index++) {
@@ -1608,7 +1613,7 @@ public class DomainVerificationService extends SystemService
 
             ResolveInfo info = inputMap.keyAt(index);
             final String packageName = info.getComponentInfo().packageName;
-            PackageSetting pkgSetting = pkgSettingFunction.apply(packageName);
+            PackageStateInternal pkgSetting = pkgSettingFunction.apply(packageName);
             if (pkgSetting == null) {
                 fillInfoMapForSamePackage(inputMap, packageName, APPROVAL_LEVEL_NONE);
                 continue;
@@ -1634,7 +1639,7 @@ public class DomainVerificationService extends SystemService
 
     @NonNull
     private void filterToLastFirstInstalled(@NonNull ArrayMap<ResolveInfo, Integer> inputMap,
-            @NonNull Function<String, PackageSetting> pkgSettingFunction) {
+            @NonNull Function<String, PackageStateInternal> pkgSettingFunction) {
         // First, find the package with the latest first install time
         String targetPackageName = null;
         long latestInstall = Long.MIN_VALUE;
@@ -1642,12 +1647,13 @@ public class DomainVerificationService extends SystemService
         for (int index = 0; index < size; index++) {
             ResolveInfo info = inputMap.keyAt(index);
             String packageName = info.getComponentInfo().packageName;
-            PackageSetting pkgSetting = pkgSettingFunction.apply(packageName);
+            PackageStateInternal pkgSetting = pkgSettingFunction.apply(packageName);
             if (pkgSetting == null) {
                 continue;
             }
 
-            long installTime = pkgSetting.getFirstInstallTime();
+            long installTime = PackageStateUtils.getEarliestFirstInstallTime(
+                    pkgSetting.getUserStates());
             if (installTime > latestInstall) {
                 latestInstall = installTime;
                 targetPackageName = packageName;
@@ -1665,12 +1671,12 @@ public class DomainVerificationService extends SystemService
 
     @NonNull
     private void filterToLastDeclared(@NonNull List<ResolveInfo> inputList,
-            @NonNull Function<String, PackageSetting> pkgSettingFunction) {
+            @NonNull Function<String, PackageStateInternal> pkgSettingFunction) {
         // Must call size each time as the size of the list will decrease
         for (int index = 0; index < inputList.size(); index++) {
             ResolveInfo info = inputList.get(index);
             String targetPackageName = info.getComponentInfo().packageName;
-            PackageSetting pkgSetting = pkgSettingFunction.apply(targetPackageName);
+            PackageStateInternal pkgSetting = pkgSettingFunction.apply(targetPackageName);
             AndroidPackage pkg = pkgSetting == null ? null : pkgSetting.getPkg();
             if (pkg == null) {
                 continue;
@@ -1718,8 +1724,9 @@ public class DomainVerificationService extends SystemService
     }
 
     @Override
-    public int approvalLevelForDomain(@NonNull PackageSetting pkgSetting, @NonNull Intent intent,
-            @PackageManager.ResolveInfoFlags int resolveInfoFlags, @UserIdInt int userId) {
+    public int approvalLevelForDomain(@NonNull PackageStateInternal pkgSetting,
+            @NonNull Intent intent, @PackageManager.ResolveInfoFlagsBits long resolveInfoFlags,
+            @UserIdInt int userId) {
         String packageName = pkgSetting.getPackageName();
         if (!DomainVerificationUtils.isDomainVerificationIntent(intent, resolveInfoFlags)) {
             if (DEBUG_APPROVAL) {
@@ -1738,12 +1745,13 @@ public class DomainVerificationService extends SystemService
      * @param debugObject       Should be an {@link Intent} if checking for resolution or a
      *                          {@link String} otherwise.
      */
-    private int approvalLevelForDomain(@NonNull PackageSetting pkgSetting, @NonNull String host,
-            boolean includeNegative, @UserIdInt int userId, @NonNull Object debugObject) {
+    private int approvalLevelForDomain(@NonNull PackageStateInternal pkgSetting,
+            @NonNull String host, boolean includeNegative, @UserIdInt int userId,
+            @NonNull Object debugObject) {
         int approvalLevel = approvalLevelForDomainInternal(pkgSetting, host, includeNegative,
                 userId, debugObject);
         if (includeNegative && approvalLevel == APPROVAL_LEVEL_NONE) {
-            PackageUserState pkgUserState = pkgSetting.readUserState(userId);
+            PackageUserStateInternal pkgUserState = pkgSetting.getUserStateOrDefault(userId);
             if (!pkgUserState.isInstalled()) {
                 return APPROVAL_LEVEL_NOT_INSTALLED;
             }
@@ -1761,7 +1769,7 @@ public class DomainVerificationService extends SystemService
         return approvalLevel;
     }
 
-    private int approvalLevelForDomainInternal(@NonNull PackageSetting pkgSetting,
+    private int approvalLevelForDomainInternal(@NonNull PackageStateInternal pkgSetting,
             @NonNull String host, boolean includeNegative, @UserIdInt int userId,
             @NonNull Object debugObject) {
         String packageName = pkgSetting.getPackageName();
@@ -1775,7 +1783,7 @@ public class DomainVerificationService extends SystemService
             return APPROVAL_LEVEL_UNDECLARED;
         }
 
-        final PackageUserState pkgUserState = pkgSetting.readUserState(userId);
+        final PackageUserStateInternal pkgUserState = pkgSetting.getUserStates().get(userId);
         if (pkgUserState == null) {
             if (DEBUG_APPROVAL) {
                 debugApproval(packageName, debugObject, userId, false,
@@ -1849,7 +1857,7 @@ public class DomainVerificationService extends SystemService
             if (pkg != null) {
                 // To allow an instant app to immediately open domains after being installed by the
                 // user, auto approve them for any declared autoVerify domains.
-                if (pkgSetting.getInstantApp(userId)
+                if (pkgSetting.getUserStateOrDefault(userId).isInstantApp()
                         && mCollector.collectValidAutoVerifyDomains(pkg).contains(host)) {
                     return APPROVAL_LEVEL_INSTANT_APP;
                 }
@@ -1928,7 +1936,7 @@ public class DomainVerificationService extends SystemService
     @NonNull
     private Pair<List<String>, Integer> getApprovedPackagesLocked(@NonNull String domain,
             @UserIdInt int userId, int minimumApproval,
-            @NonNull Function<String, PackageSetting> pkgSettingFunction) {
+            @NonNull Function<String, PackageStateInternal> pkgSettingFunction) {
         boolean includeNegative = minimumApproval < APPROVAL_LEVEL_NONE;
         int highestApproval = minimumApproval;
         List<String> approvedPackages = emptyList();
@@ -1938,7 +1946,7 @@ public class DomainVerificationService extends SystemService
             for (int index = 0; index < size; index++) {
                 DomainVerificationPkgState pkgState = mAttachedPkgStates.valueAt(index);
                 String packageName = pkgState.getPackageName();
-                PackageSetting pkgSetting = pkgSettingFunction.apply(packageName);
+                PackageStateInternal pkgSetting = pkgSettingFunction.apply(packageName);
                 if (pkgSetting == null) {
                     continue;
                 }
@@ -1968,11 +1976,11 @@ public class DomainVerificationService extends SystemService
         final int approvedSize = approvedPackages.size();
         for (int index = 0; index < approvedSize; index++) {
             String packageName = approvedPackages.get(index);
-            PackageSetting pkgSetting = pkgSettingFunction.apply(packageName);
+            PackageStateInternal pkgSetting = pkgSettingFunction.apply(packageName);
             if (pkgSetting == null) {
                 continue;
             }
-            long installTime = pkgSetting.getFirstInstallTime();
+            long installTime = pkgSetting.getUserStateOrDefault(userId).getFirstInstallTime();
             if (installTime > latestInstall) {
                 latestInstall = installTime;
                 filteredPackages.clear();
@@ -2029,7 +2037,7 @@ public class DomainVerificationService extends SystemService
     }
 
     /**
-     * Wraps a {@link Connection} to verify that the {@link PackageSetting} calls do not hold
+     * Wraps a {@link Connection} to verify that the {@link PackageStateInternal} calls do not hold
      * {@link #mLock}, as that can cause deadlock when {@link Settings} tries to serialize state to
      * disk. Only enabled if {@link Build#IS_USERDEBUG} or {@link Build#IS_ENG} is true.
      */
@@ -2050,23 +2058,24 @@ public class DomainVerificationService extends SystemService
 
         @Override
         public void withPackageSettingsSnapshot(
-                @NonNull Consumer<Function<String, PackageSetting>> block) {
+                @NonNull Consumer<Function<String, PackageStateInternal>> block) {
             enforceLocking();
             mConnection.withPackageSettingsSnapshot(block);
         }
 
         @Override
         public <Output> Output withPackageSettingsSnapshotReturning(
-                @NonNull FunctionalUtils.ThrowingFunction<Function<String, PackageSetting>, Output>
-                        block) {
+                @NonNull FunctionalUtils.ThrowingFunction<Function<String, PackageStateInternal>,
+                        Output> block) {
             enforceLocking();
             return mConnection.withPackageSettingsSnapshotReturning(block);
         }
 
         @Override
         public <ExceptionType extends Exception> void withPackageSettingsSnapshotThrowing(
-                @NonNull FunctionalUtils.ThrowingCheckedConsumer<Function<String, PackageSetting>,
-                        ExceptionType> block) throws ExceptionType {
+                @NonNull FunctionalUtils.ThrowingCheckedConsumer<
+                        Function<String, PackageStateInternal>, ExceptionType> block)
+                throws ExceptionType {
             enforceLocking();
             mConnection.withPackageSettingsSnapshotThrowing(block);
         }
@@ -2075,7 +2084,8 @@ public class DomainVerificationService extends SystemService
         public <ExceptionOne extends Exception, ExceptionTwo extends Exception> void
                 withPackageSettingsSnapshotThrowing2(
                         @NonNull FunctionalUtils.ThrowingChecked2Consumer<
-                                Function<String, PackageSetting>, ExceptionOne, ExceptionTwo> block)
+                                Function<String, PackageStateInternal>, ExceptionOne,
+                                ExceptionTwo> block)
                 throws ExceptionOne, ExceptionTwo {
             enforceLocking();
             mConnection.withPackageSettingsSnapshotThrowing2(block);
@@ -2085,7 +2095,8 @@ public class DomainVerificationService extends SystemService
         public <Output, ExceptionType extends Exception> Output
                 withPackageSettingsSnapshotReturningThrowing(
                         @NonNull FunctionalUtils.ThrowingCheckedFunction<
-                                Function<String, PackageSetting>, Output, ExceptionType> block)
+                                Function<String, PackageStateInternal>, Output,
+                                ExceptionType> block)
                 throws ExceptionType {
             enforceLocking();
             return mConnection.withPackageSettingsSnapshotReturningThrowing(block);

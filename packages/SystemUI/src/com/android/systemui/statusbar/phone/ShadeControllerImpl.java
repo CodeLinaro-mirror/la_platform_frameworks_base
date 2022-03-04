@@ -123,12 +123,14 @@ public class ShadeControllerImpl implements ShadeController {
                 + " canPanelBeCollapsed(): "
                 + getNotificationPanelViewController().canPanelBeCollapsed());
         if (getNotificationShadeWindowView() != null
-                && getNotificationPanelViewController().canPanelBeCollapsed()) {
+                && getNotificationPanelViewController().canPanelBeCollapsed()
+                && (flags & CommandQueue.FLAG_EXCLUDE_NOTIFICATION_PANEL) == 0) {
             // release focus immediately to kick off focus change transition
             mNotificationShadeWindowController.setNotificationShadeFocusable(false);
 
             getStatusBar().getNotificationShadeWindowViewController().cancelExpandHelper();
-            getStatusBarView().collapsePanel(true /* animate */, delayed, speedUpFactor);
+            getNotificationPanelViewController()
+                    .collapsePanel(true /* animate */, delayed, speedUpFactor);
         } else if (mBubblesOptional.isPresent()) {
             mBubblesOptional.get().collapseStack();
         }
@@ -144,6 +146,13 @@ public class ShadeControllerImpl implements ShadeController {
             mAssistManagerLazy.get().hideAssist();
         }
         return false;
+    }
+
+    @Override
+    public boolean isShadeOpen() {
+        NotificationPanelViewController controller =
+                getNotificationPanelViewController();
+        return controller.isExpanding() || controller.isFullyExpanded();
     }
 
     @Override
@@ -215,10 +224,6 @@ public class ShadeControllerImpl implements ShadeController {
 
     protected NotificationShadeWindowView getNotificationShadeWindowView() {
         return getStatusBar().getNotificationShadeWindowView();
-    }
-
-    protected PhoneStatusBarView getStatusBarView() {
-        return (PhoneStatusBarView) getStatusBar().getStatusBarView();
     }
 
     private NotificationPanelViewController getNotificationPanelViewController() {

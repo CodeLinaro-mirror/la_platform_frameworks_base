@@ -17,6 +17,7 @@
 package com.android.systemui.recents;
 
 import static android.content.pm.PackageManager.MATCH_SYSTEM_ONLY;
+import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.MotionEvent.ACTION_CANCEL;
 import static android.view.MotionEvent.ACTION_DOWN;
 import static android.view.MotionEvent.ACTION_UP;
@@ -24,14 +25,15 @@ import static android.view.WindowManager.ScreenshotSource.SCREENSHOT_OVERVIEW;
 import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_3BUTTON;
 
 import static com.android.internal.accessibility.common.ShortcutConstants.CHOOSER_PACKAGE_NAME;
+import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_RECENT_TASKS;
 import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_SHELL_ONE_HANDED;
 import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_SHELL_PIP;
 import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_SHELL_SHELL_TRANSITIONS;
 import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_SHELL_SPLIT_SCREEN;
 import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_SHELL_STARTING_WINDOW;
-import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_SMARTSPACE_TRANSITION_CONTROLLER;
 import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_SUPPORTS_WINDOW_CORNERS;
 import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_SYSUI_PROXY;
+import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_UNLOCK_ANIMATION_CONTROLLER;
 import static com.android.systemui.shared.system.QuickStepContract.KEY_EXTRA_WINDOW_CORNER_RADIUS;
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_BOUNCER_SHOWING;
 import static com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_DEVICE_DOZING;
@@ -68,23 +70,27 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.accessibility.AccessibilityManager;
+import android.view.inputmethod.InputMethodManager;
 
 import androidx.annotation.NonNull;
 
 import com.android.internal.accessibility.dialog.AccessibilityButtonChooserActivity;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.logging.UiEventLogger;
 import com.android.internal.policy.ScreenDecorationsUtils;
 import com.android.internal.util.ScreenshotHelper;
 import com.android.systemui.Dumpable;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dump.DumpManager;
+import com.android.systemui.keyguard.KeyguardUnlockAnimationController;
 import com.android.systemui.keyguard.ScreenLifecycle;
 import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.NavigationBar;
 import com.android.systemui.navigationbar.NavigationBarController;
 import com.android.systemui.navigationbar.NavigationBarView;
 import com.android.systemui.navigationbar.NavigationModeController;
+import com.android.systemui.navigationbar.buttons.KeyButtonView;
 import com.android.systemui.recents.OverviewProxyService.OverviewProxyListener;
 import com.android.systemui.settings.CurrentUserTracker;
 import com.android.systemui.shared.recents.IOverviewProxy;
@@ -92,7 +98,6 @@ import com.android.systemui.shared.recents.ISystemUiProxy;
 import com.android.systemui.shared.recents.model.Task;
 import com.android.systemui.shared.system.ActivityManagerWrapper;
 import com.android.systemui.shared.system.QuickStepContract;
-import com.android.systemui.shared.system.smartspace.SmartspaceTransitionController;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.phone.NotificationPanelViewController;
@@ -103,6 +108,7 @@ import com.android.wm.shell.legacysplitscreen.LegacySplitScreen;
 import com.android.wm.shell.onehanded.OneHanded;
 import com.android.wm.shell.pip.Pip;
 import com.android.wm.shell.pip.PipAnimationController;
+import com.android.wm.shell.recents.RecentTasks;
 import com.android.wm.shell.splitscreen.SplitScreen;
 import com.android.wm.shell.startingsurface.StartingSurface;
 import com.android.wm.shell.transition.ShellTransitions;
@@ -155,7 +161,9 @@ public class OverviewProxyService extends CurrentUserTracker implements
     private final CommandQueue mCommandQueue;
     private final ShellTransitions mShellTransitions;
     private final Optional<StartingSurface> mStartingSurface;
-    private final SmartspaceTransitionController mSmartspaceTransitionController;
+    private final KeyguardUnlockAnimationController mSysuiUnlockAnimationController;
+    private final Optional<RecentTasks> mRecentTasks;
+    private final UiEventLogger mUiEventLogger;
 
     private Region mActiveNavBarRegion;
 
@@ -237,6 +245,16 @@ public class OverviewProxyService extends CurrentUserTracker implements
         }
 
         @Override
+        public void onImeSwitcherPressed() throws RemoteException {
+            // TODO(b/204901476) We're intentionally using DEFAULT_DISPLAY for now since
+            // Launcher/Taskbar isn't display aware.
+            mContext.getSystemService(InputMethodManager.class)
+                    .showInputMethodPickerFromSystem(true /* showAuxiliarySubtypes */,
+                            DEFAULT_DISPLAY);
+            mUiEventLogger.log(KeyButtonView.NavBarButtonEvent.NAVBAR_IME_SWITCHER_BUTTON_TAP);
+        }
+
+        @Override
         public void setHomeRotationEnabled(boolean enabled) {
             verifyCallerAndClearCallingIdentityPostMain("setHomeRotationEnabled", () ->
                     mHandler.post(() -> notifyHomeRotationEnabled(enabled)));
@@ -246,6 +264,12 @@ public class OverviewProxyService extends CurrentUserTracker implements
         public void notifyTaskbarStatus(boolean visible, boolean stashed) {
             verifyCallerAndClearCallingIdentityPostMain("notifyTaskbarStatus", () ->
                     onTaskbarStatusUpdated(visible, stashed));
+        }
+
+        @Override
+        public void notifyTaskbarAutohideSuspend(boolean suspend) {
+            verifyCallerAndClearCallingIdentityPostMain("notifyTaskbarAutohideSuspend", () ->
+                    onTaskbarAutohideSuspend(suspend));
         }
 
         private boolean sendEvent(int action, int code) {
@@ -380,6 +404,13 @@ public class OverviewProxyService extends CurrentUserTracker implements
                     () -> mCommandQueue.handleSystemKey(KeyEvent.KEYCODE_SYSTEM_NAVIGATION_DOWN));
         }
 
+        @Override
+        public void toggleNotificationPanel() {
+            verifyCallerAndClearCallingIdentityPostMain("toggleNotificationPanel", () ->
+                    mStatusBarOptionalLazy.get().ifPresent(StatusBar::togglePanel));
+        }
+
+
         private boolean verifyCaller(String reason) {
             final int callerId = Binder.getCallingUserHandle().getIdentifier();
             if (callerId != mCurrentBoundedUserId) {
@@ -472,8 +503,11 @@ public class OverviewProxyService extends CurrentUserTracker implements
                     KEY_EXTRA_SHELL_STARTING_WINDOW,
                     startingwindow.createExternalInterface().asBinder()));
             params.putBinder(
-                    KEY_EXTRA_SMARTSPACE_TRANSITION_CONTROLLER,
-                    mSmartspaceTransitionController.createExternalInterface().asBinder());
+                    KEY_EXTRA_UNLOCK_ANIMATION_CONTROLLER,
+                    mSysuiUnlockAnimationController.asBinder());
+            mRecentTasks.ifPresent(recentTasks -> params.putBinder(
+                    KEY_EXTRA_RECENT_TASKS,
+                    recentTasks.createExternalInterface().asBinder()));
 
             try {
                 mOverviewProxy.onInitialize(params);
@@ -524,18 +558,20 @@ public class OverviewProxyService extends CurrentUserTracker implements
     @Inject
     public OverviewProxyService(Context context, CommandQueue commandQueue,
             Lazy<NavigationBarController> navBarControllerLazy,
+            Lazy<Optional<StatusBar>> statusBarOptionalLazy,
             NavigationModeController navModeController,
             NotificationShadeWindowController statusBarWinController, SysUiState sysUiState,
             Optional<Pip> pipOptional,
             Optional<LegacySplitScreen> legacySplitScreenOptional,
             Optional<SplitScreen> splitScreenOptional,
-            Lazy<Optional<StatusBar>> statusBarOptionalLazy,
             Optional<OneHanded> oneHandedOptional,
+            Optional<RecentTasks> recentTasks,
+            Optional<StartingSurface> startingSurface,
             BroadcastDispatcher broadcastDispatcher,
             ShellTransitions shellTransitions,
             ScreenLifecycle screenLifecycle,
-            Optional<StartingSurface> startingSurface,
-            SmartspaceTransitionController smartspaceTransitionController,
+            UiEventLogger uiEventLogger,
+            KeyguardUnlockAnimationController sysuiUnlockAnimationController,
             DumpManager dumpManager) {
         super(broadcastDispatcher);
         mContext = context;
@@ -556,6 +592,8 @@ public class OverviewProxyService extends CurrentUserTracker implements
         mSysUiState.addCallback(this::notifySystemUiStateFlags);
         mOneHandedOptional = oneHandedOptional;
         mShellTransitions = shellTransitions;
+        mRecentTasks = recentTasks;
+        mUiEventLogger = uiEventLogger;
 
         // Assumes device always starts with back button until launcher tells it that it does not
         mNavBarButtonAlpha = 1.0f;
@@ -606,7 +644,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
         updateEnabledState();
         startConnectionToCurrentUser();
         mStartingSurface = startingSurface;
-        mSmartspaceTransitionController = smartspaceTransitionController;
+        mSysuiUnlockAnimationController = sysuiUnlockAnimationController;
     }
 
     @Override
@@ -818,6 +856,12 @@ public class OverviewProxyService extends CurrentUserTracker implements
         }
     }
 
+    private void onTaskbarAutohideSuspend(boolean suspend) {
+        for (int i = mConnectionCallbacks.size() - 1; i >= 0; --i) {
+            mConnectionCallbacks.get(i).onTaskbarAutohideSuspend(suspend);
+        }
+    }
+
     private void notifyConnectionChanged() {
         for (int i = mConnectionCallbacks.size() - 1; i >= 0; --i) {
             mConnectionCallbacks.get(i).onConnectionChanged(mOverviewProxy != null);
@@ -955,6 +999,18 @@ public class OverviewProxyService extends CurrentUserTracker implements
         }
     }
 
+    public void onNavButtonsDarkIntensityChanged(float darkIntensity) {
+        try {
+            if (mOverviewProxy != null) {
+                mOverviewProxy.onNavButtonsDarkIntensityChanged(darkIntensity);
+            } else {
+                Log.e(TAG_OPS, "Failed to get overview proxy to update nav buttons dark intensity");
+            }
+        } catch (RemoteException e) {
+            Log.e(TAG_OPS, "Failed to call onNavButtonsDarkIntensityChanged()", e);
+        }
+    }
+
     private void updateEnabledState() {
         final int currentUser = ActivityManagerWrapper.getInstance().getCurrentUserId();
         mIsEnabled = mContext.getPackageManager().resolveServiceAsUser(mQuickStepIntent,
@@ -1000,6 +1056,7 @@ public class OverviewProxyService extends CurrentUserTracker implements
         default void onNavBarButtonAlphaChanged(float alpha, boolean animate) {}
         default void onHomeRotationEnabled(boolean enabled) {}
         default void onTaskbarStatusUpdated(boolean visible, boolean stashed) {}
+        default void onTaskbarAutohideSuspend(boolean suspend) {}
         default void onSystemUiStateChanged(int sysuiStateFlags) {}
         default void onAssistantProgress(@FloatRange(from = 0.0, to = 1.0) float progress) {}
         default void onAssistantGestureCompletion(float velocity) {}

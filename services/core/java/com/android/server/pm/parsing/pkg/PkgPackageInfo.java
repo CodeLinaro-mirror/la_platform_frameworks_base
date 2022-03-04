@@ -17,7 +17,7 @@
 package com.android.server.pm.parsing.pkg;
 
 import android.content.pm.PackageInfo;
-import android.content.pm.parsing.PkgWithoutStatePackageInfo;
+import com.android.server.pm.pkg.parsing.PkgWithoutStatePackageInfo;
 
 import com.android.server.pm.PackageManagerService;
 
@@ -31,16 +31,11 @@ import com.android.server.pm.PackageManagerService;
 public interface PkgPackageInfo extends PkgWithoutStatePackageInfo {
 
     /**
-     * For marking packages required for a minimal boot state, through the "coreApp" manifest
-     * attribute.
-     *
      * @see PackageInfo#coreApp
      */
     boolean isCoreApp();
 
     /**
-     * Whether or not the package is a stub and must be replaced by the full version.
-     *
      * @see PackageInfo#isStub
      */
     boolean isStub();

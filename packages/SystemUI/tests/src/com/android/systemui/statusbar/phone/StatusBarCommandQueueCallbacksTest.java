@@ -81,6 +81,7 @@ public class StatusBarCommandQueueCallbacksTest extends SysuiTestCase {
     @Mock private VibratorHelper mVibratorHelper;
     @Mock private Vibrator mVibrator;
     @Mock private LightBarController mLightBarController;
+    @Mock private StatusBarHideIconsForBouncerManager mStatusBarHideIconsForBouncerManager;
 
     StatusBarCommandQueueCallbacks mSbcqCallbacks;
 
@@ -109,6 +110,7 @@ public class StatusBarCommandQueueCallbacksTest extends SysuiTestCase {
                 mStatusBarStateController,
                 mNotificationShadeWindowView,
                 mNotificationStackScrollLayoutController,
+                mStatusBarHideIconsForBouncerManager,
                 mPowerManager,
                 mVibratorHelper,
                 Optional.of(mVibrator),

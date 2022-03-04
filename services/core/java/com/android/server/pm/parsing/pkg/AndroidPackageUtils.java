@@ -23,12 +23,12 @@ import android.content.pm.PackageManager;
 import android.content.pm.SharedLibraryInfo;
 import android.content.pm.VersionedPackage;
 import android.content.pm.dex.DexMetadataHelper;
-import android.content.pm.parsing.ParsingPackageRead;
-import android.content.pm.parsing.ParsingPackageUtils;
-import android.content.pm.parsing.component.ParsedActivity;
-import android.content.pm.parsing.component.ParsedInstrumentation;
-import android.content.pm.parsing.component.ParsedProvider;
-import android.content.pm.parsing.component.ParsedService;
+import com.android.server.pm.pkg.parsing.ParsingPackageRead;
+import com.android.server.pm.pkg.parsing.ParsingPackageUtils;
+import com.android.server.pm.pkg.component.ParsedActivity;
+import com.android.server.pm.pkg.component.ParsedInstrumentation;
+import com.android.server.pm.pkg.component.ParsedProvider;
+import com.android.server.pm.pkg.component.ParsedService;
 import android.content.pm.parsing.result.ParseResult;
 import android.content.pm.parsing.result.ParseTypeImpl;
 import android.os.incremental.IncrementalManager;
@@ -38,7 +38,7 @@ import com.android.internal.content.NativeLibraryHelper;
 import com.android.internal.util.ArrayUtils;
 import com.android.server.SystemConfig;
 import com.android.server.pm.PackageManagerException;
-import com.android.server.pm.PackageSetting;
+import com.android.server.pm.pkg.PackageStateInternal;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -85,6 +85,17 @@ public class AndroidPackageUtils {
             Collections.addAll(paths, splitCodePaths);
         }
         return paths;
+    }
+
+    public static SharedLibraryInfo createSharedLibraryForSdk(AndroidPackage pkg) {
+        return new SharedLibraryInfo(null, pkg.getPackageName(),
+                AndroidPackageUtils.getAllCodePaths(pkg),
+                pkg.getSdkLibName(),
+                pkg.getSdkLibVersionMajor(),
+                SharedLibraryInfo.TYPE_SDK,
+                new VersionedPackage(pkg.getManifestPackageName(),
+                        pkg.getLongVersionCode()),
+                null, null, false /* isNative */);
     }
 
     public static SharedLibraryInfo createSharedLibraryForStatic(AndroidPackage pkg) {
@@ -218,15 +229,16 @@ public class AndroidPackageUtils {
 
     public static boolean isLibrary(AndroidPackage pkg) {
         // TODO(b/135203078): Can parsing just enforce these always match?
-        return pkg.getStaticSharedLibName() != null || !pkg.getLibraryNames().isEmpty();
+        return pkg.getSdkLibName() != null || pkg.getStaticSharedLibName() != null
+                || !pkg.getLibraryNames().isEmpty();
     }
 
     public static int getHiddenApiEnforcementPolicy(AndroidPackage pkg,
-            @NonNull PackageSetting pkgSetting) {
+            @NonNull PackageStateInternal pkgSetting) {
         boolean isAllowedToUseHiddenApis;
         if (pkg.isSignedWithPlatformKey()) {
             isAllowedToUseHiddenApis = true;
-        } else if (pkg.isSystem() || pkgSetting.getPkgState().isUpdatedSystemApp()) {
+        } else if (pkg.isSystem() || pkgSetting.getTransientState().isUpdatedSystemApp()) {
             isAllowedToUseHiddenApis = pkg.isUsesNonSdkApi()
                     || SystemConfig.getInstance().getHiddenApiWhitelistedApps().contains(
                     pkg.getPackageName());
@@ -256,14 +268,15 @@ public class AndroidPackageUtils {
      * Returns false iff the provided flags include the {@link PackageManager#MATCH_SYSTEM_ONLY}
      * flag and the provided package is not a system package. Otherwise returns {@code true}.
      */
-    public static boolean isMatchForSystemOnly(AndroidPackage pkg, int flags) {
+    public static boolean isMatchForSystemOnly(AndroidPackage pkg, long flags) {
         if ((flags & PackageManager.MATCH_SYSTEM_ONLY) != 0) {
             return pkg.isSystem();
         }
         return true;
     }
 
-    public static String getPrimaryCpuAbi(AndroidPackage pkg, @Nullable PackageSetting pkgSetting) {
+    public static String getPrimaryCpuAbi(AndroidPackage pkg,
+            @Nullable PackageStateInternal pkgSetting) {
         if (pkgSetting == null || TextUtils.isEmpty(pkgSetting.getPrimaryCpuAbi())) {
             return getRawPrimaryCpuAbi(pkg);
         }
@@ -272,7 +285,7 @@ public class AndroidPackageUtils {
     }
 
     public static String getSecondaryCpuAbi(AndroidPackage pkg,
-            @Nullable PackageSetting pkgSetting) {
+            @Nullable PackageStateInternal pkgSetting) {
         if (pkgSetting == null || TextUtils.isEmpty(pkgSetting.getSecondaryCpuAbi())) {
             return getRawSecondaryCpuAbi(pkg);
         }
@@ -282,7 +295,7 @@ public class AndroidPackageUtils {
 
     /**
      * Returns the primary ABI as parsed from the package. Used only during parsing and derivation.
-     * Otherwise prefer {@link #getPrimaryCpuAbi(AndroidPackage, PackageSetting)}.
+     * Otherwise prefer {@link #getPrimaryCpuAbi(AndroidPackage, PackageStateInternal)}.
      */
     public static String getRawPrimaryCpuAbi(AndroidPackage pkg) {
         return ((AndroidPackageHidden) pkg).getPrimaryCpuAbi();
@@ -290,15 +303,16 @@ public class AndroidPackageUtils {
 
     /**
      * Returns the secondary ABI as parsed from the package. Used only during parsing and
-     * derivation. Otherwise prefer {@link #getSecondaryCpuAbi(AndroidPackage, PackageSetting)}.
+     * derivation. Otherwise prefer
+     * {@link #getSecondaryCpuAbi(AndroidPackage, PackageStateInternal)}.
      */
     public static String getRawSecondaryCpuAbi(AndroidPackage pkg) {
         return ((AndroidPackageHidden) pkg).getSecondaryCpuAbi();
     }
 
-    public static String getSeInfo(AndroidPackage pkg, @Nullable PackageSetting pkgSetting) {
+    public static String getSeInfo(AndroidPackage pkg, @Nullable PackageStateInternal pkgSetting) {
         if (pkgSetting != null) {
-            String overrideSeInfo = pkgSetting.getPkgState().getOverrideSeInfo();
+            String overrideSeInfo = pkgSetting.getTransientState().getOverrideSeInfo();
             if (!TextUtils.isEmpty(overrideSeInfo)) {
                 return overrideSeInfo;
             }

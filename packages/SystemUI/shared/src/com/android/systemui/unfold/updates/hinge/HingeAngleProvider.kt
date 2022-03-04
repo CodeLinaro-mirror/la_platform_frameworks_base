@@ -5,11 +5,12 @@ import com.android.systemui.statusbar.policy.CallbackController
 
 /**
  * Emits device hinge angle values (angle between two integral parts of the device).
- * The hinge angle could be from 0 to 360 degrees inclusive.
- * For foldable devices usually 0 corresponds to fully closed (folded) state and
- * 180 degrees corresponds to fully open (flat) state
+ *
+ * The hinge angle could be from 0 to 360 degrees inclusive. For foldable devices usually 0
+ * corresponds to fully closed (folded) state and 180 degrees corresponds to fully open (flat)
+ * state.
  */
-internal interface HingeAngleProvider : CallbackController<Consumer<Float>> {
+interface HingeAngleProvider : CallbackController<Consumer<Float>> {
     fun start()
     fun stop()
 }

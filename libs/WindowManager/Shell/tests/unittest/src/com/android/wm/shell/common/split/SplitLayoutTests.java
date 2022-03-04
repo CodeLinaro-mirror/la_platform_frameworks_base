@@ -24,6 +24,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
@@ -68,7 +69,8 @@ public class SplitLayoutTests extends ShellTestCase {
                 mSplitLayoutHandler,
                 mCallbacks,
                 mDisplayImeController,
-                mTaskOrganizer));
+                mTaskOrganizer,
+                false /* applyDismissingParallax */));
     }
 
     @Test
@@ -95,13 +97,26 @@ public class SplitLayoutTests extends ShellTestCase {
     @Test
     public void testUpdateDivideBounds() {
         mSplitLayout.updateDivideBounds(anyInt());
-        verify(mSplitLayoutHandler).onLayoutChanging(any(SplitLayout.class));
+        verify(mSplitLayoutHandler).onLayoutSizeChanging(any(SplitLayout.class));
     }
 
     @Test
     public void testSetDividePosition() {
-        mSplitLayout.setDividePosition(anyInt());
-        verify(mSplitLayoutHandler).onLayoutChanged(any(SplitLayout.class));
+        mSplitLayout.setDividePosition(100, false /* applyLayoutChange */);
+        assertThat(mSplitLayout.getDividePosition()).isEqualTo(100);
+        verify(mSplitLayoutHandler, never()).onLayoutSizeChanged(any(SplitLayout.class));
+
+        mSplitLayout.setDividePosition(200, true /* applyLayoutChange */);
+        assertThat(mSplitLayout.getDividePosition()).isEqualTo(200);
+        verify(mSplitLayoutHandler).onLayoutSizeChanged(any(SplitLayout.class));
+    }
+
+    @Test
+    public void testSetDivideRatio() {
+        mSplitLayout.setDividePosition(200, false /* applyLayoutChange */);
+        mSplitLayout.setDivideRatio(0.5f);
+        assertThat(mSplitLayout.getDividePosition()).isEqualTo(
+                mSplitLayout.mDividerSnapAlgorithm.getMiddleTarget().position);
     }
 
     @Test

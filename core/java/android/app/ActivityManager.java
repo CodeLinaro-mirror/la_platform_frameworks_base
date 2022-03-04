@@ -1903,7 +1903,7 @@ public class ActivityManager {
         public void readFromParcel(Parcel source) {
             id = source.readInt();
             persistentId = source.readInt();
-            childrenTaskInfos = source.readArrayList(RecentTaskInfo.class.getClassLoader());
+            childrenTaskInfos = source.readArrayList(RecentTaskInfo.class.getClassLoader(), android.app.ActivityManager.RecentTaskInfo.class);
             lastSnapshotData.taskSize = source.readTypedObject(Point.CREATOR);
             lastSnapshotData.contentInsets = source.readTypedObject(Rect.CREATOR);
             lastSnapshotData.bufferSize = source.readTypedObject(Point.CREATOR);
@@ -4079,6 +4079,85 @@ public class ActivityManager {
             throw new IllegalArgumentException("UserHandle cannot be null.");
         }
         return switchUser(user.getIdentifier());
+    }
+
+    /**
+     * Gets the message that is shown when a user is switched from.
+     *
+     * @hide
+     */
+    @RequiresPermission(Manifest.permission.MANAGE_USERS)
+    public @Nullable String getSwitchingFromUserMessage() {
+        try {
+            return getService().getSwitchingFromUserMessage();
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Gets the message that is shown when a user is switched to.
+     *
+     * @hide
+     */
+    @RequiresPermission(Manifest.permission.MANAGE_USERS)
+    public @Nullable String getSwitchingToUserMessage() {
+        try {
+            return getService().getSwitchingToUserMessage();
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Uses the value defined by the platform.
+     *
+     * @hide
+     */
+    @TestApi
+    public static final int STOP_USER_ON_SWITCH_DEFAULT = -1;
+
+    /**
+     * Overrides value defined by the platform and stop user on switch.
+     *
+     * @hide
+     */
+    @TestApi
+    public static final int STOP_USER_ON_SWITCH_TRUE = 1;
+
+    /**
+     * Overrides value defined by the platform and don't stop user on switch.
+     *
+     * @hide
+     */
+    @TestApi
+    public static final int STOP_USER_ON_SWITCH_FALSE = 0;
+
+    /** @hide */
+    @IntDef(prefix = { "STOP_USER_ON_SWITCH_" }, value = {
+            STOP_USER_ON_SWITCH_DEFAULT,
+            STOP_USER_ON_SWITCH_TRUE,
+            STOP_USER_ON_SWITCH_FALSE
+    })
+    public @interface StopUserOnSwitch {}
+
+    /**
+     * Sets whether the current foreground user (and its profiles) should be stopped after switched
+     * out.
+     *
+     * <p>Should only be used on tests. Doesn't apply to {@link UserHandle#SYSTEM system user}.
+     *
+     * @hide
+     */
+    @TestApi
+    @RequiresPermission(anyOf = {android.Manifest.permission.MANAGE_USERS,
+            android.Manifest.permission.INTERACT_ACROSS_USERS})
+    public void setStopUserOnSwitch(@StopUserOnSwitch int value) {
+        try {
+            getService().setStopUserOnSwitch(value);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
     }
 
     /**

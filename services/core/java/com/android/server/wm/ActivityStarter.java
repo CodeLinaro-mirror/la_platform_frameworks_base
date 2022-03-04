@@ -30,8 +30,6 @@ import static android.app.ActivityManager.START_SUCCESS;
 import static android.app.ActivityManager.START_TASK_TO_FRONT;
 import static android.app.ActivityTaskManager.INVALID_TASK_ID;
 import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
-import static android.app.WindowConfiguration.WINDOWING_MODE_SPLIT_SCREEN_PRIMARY;
-import static android.app.WindowConfiguration.WINDOWING_MODE_SPLIT_SCREEN_SECONDARY;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK;
 import static android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP;
@@ -72,6 +70,8 @@ import static com.android.server.wm.ActivityTaskManagerDebugConfig.POSTFIX_USER_
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_ATM;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.ActivityTaskManagerService.ANIMATE;
+import static com.android.server.wm.ActivityTaskManagerService.APP_SWITCH_ALLOW;
+import static com.android.server.wm.ActivityTaskManagerService.APP_SWITCH_FG_ONLY;
 import static com.android.server.wm.ActivityTaskSupervisor.DEFER_RESUME;
 import static com.android.server.wm.ActivityTaskSupervisor.ON_TOP;
 import static com.android.server.wm.ActivityTaskSupervisor.PRESERVE_WINDOWS;
@@ -88,6 +88,7 @@ import android.app.IApplicationThread;
 import android.app.PendingIntent;
 import android.app.ProfilerInfo;
 import android.app.WaitResult;
+import android.app.WindowConfiguration;
 import android.app.compat.CompatChanges;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledSince;
@@ -1287,7 +1288,7 @@ class ActivityStarter {
 
         // This is used to block background activity launch even if the app is still
         // visible to user after user clicking home button.
-        final boolean appSwitchAllowed = mService.getBalAppSwitchesAllowed();
+        final int appSwitchState = mService.getBalAppSwitchesState();
 
         // don't abort if the callingUid has a visible window or is a persistent system process
         final int callingUidProcState = mService.mActiveUids.getUidState(callingUid);
@@ -1300,7 +1301,9 @@ class ActivityStarter {
 
         // Normal apps with visible app window will be allowed to start activity if app switching
         // is allowed, or apps like live wallpaper with non app visible window will be allowed.
-        if (((appSwitchAllowed || mService.mActiveUids.hasNonAppVisibleWindow(callingUid))
+        final boolean appSwitchAllowedOrFg =
+                appSwitchState == APP_SWITCH_ALLOW || appSwitchState == APP_SWITCH_FG_ONLY;
+        if (((appSwitchAllowedOrFg || mService.mActiveUids.hasNonAppVisibleWindow(callingUid))
                 && callingUidHasAnyVisibleWindow)
                 || isCallingUidPersistentSystemProcess) {
             if (DEBUG_ACTIVITY_STARTS) {
@@ -1327,26 +1330,23 @@ class ActivityStarter {
                 : (realCallingAppId == Process.SYSTEM_UID)
                         || realCallingUidProcState <= ActivityManager.PROCESS_STATE_PERSISTENT_UI;
 
-        // If caller a legacy app, we won't check if caller has BAL permission.
-        final boolean isPiBalOptionEnabled = CompatChanges.isChangeEnabled(
-                ENABLE_PENDING_INTENT_BAL_OPTION, callingUid);
-
         // Legacy behavior allows to use caller foreground state to bypass BAL restriction.
         final boolean balAllowedByPiSender =
                 PendingIntentRecord.isPendingIntentBalAllowedByCaller(checkedOptions);
 
         if (balAllowedByPiSender && realCallingUid != callingUid) {
-            if (isPiBalOptionEnabled) {
-                if (ActivityManager.checkComponentPermission(
-                        android.Manifest.permission.START_ACTIVITIES_FROM_BACKGROUND,
-                        realCallingUid, -1, true)
-                        == PackageManager.PERMISSION_GRANTED) {
-                    if (DEBUG_ACTIVITY_STARTS) {
-                        Slog.d(TAG, "Activity start allowed: realCallingUid (" + realCallingUid
-                                + ") has BAL permission.");
-                    }
-                    return false;
+            // If the caller is a legacy app, we won't check if the caller has BAL permission.
+            final boolean isPiBalOptionEnabled = CompatChanges.isChangeEnabled(
+                    ENABLE_PENDING_INTENT_BAL_OPTION, realCallingUid);
+            if (isPiBalOptionEnabled && ActivityManager.checkComponentPermission(
+                    android.Manifest.permission.START_ACTIVITIES_FROM_BACKGROUND,
+                    realCallingUid, -1, true)
+                    == PackageManager.PERMISSION_GRANTED) {
+                if (DEBUG_ACTIVITY_STARTS) {
+                    Slog.d(TAG, "Activity start allowed: realCallingUid (" + realCallingUid
+                            + ") has BAL permission.");
                 }
+                return false;
             }
 
             // don't abort if the realCallingUid has a visible window
@@ -1432,7 +1432,7 @@ class ActivityStarter {
         // don't abort if the callerApp or other processes of that uid are allowed in any way
         if (callerApp != null) {
             // first check the original calling process
-            if (callerApp.areBackgroundActivityStartsAllowed(appSwitchAllowed)) {
+            if (callerApp.areBackgroundActivityStartsAllowed(appSwitchState)) {
                 if (DEBUG_ACTIVITY_STARTS) {
                     Slog.d(TAG, "Background activity start allowed: callerApp process (pid = "
                             + callerApp.getPid() + ", uid = " + callerAppUid + ") is allowed");
@@ -1446,7 +1446,7 @@ class ActivityStarter {
                 for (int i = uidProcesses.size() - 1; i >= 0; i--) {
                     final WindowProcessController proc = uidProcesses.valueAt(i);
                     if (proc != callerApp
-                            && proc.areBackgroundActivityStartsAllowed(appSwitchAllowed)) {
+                            && proc.areBackgroundActivityStartsAllowed(appSwitchState)) {
                         if (DEBUG_ACTIVITY_STARTS) {
                             Slog.d(TAG,
                                     "Background activity start allowed: process " + proc.getPid()
@@ -1460,7 +1460,7 @@ class ActivityStarter {
         // anything that has fallen through would currently be aborted
         Slog.w(TAG, "Background activity start [callingPackage: " + callingPackage
                 + "; callingUid: " + callingUid
-                + "; appSwitchAllowed: " + appSwitchAllowed
+                + "; appSwitchState: " + appSwitchState
                 + "; isCallingUidForeground: " + isCallingUidForeground
                 + "; callingUidHasAnyVisibleWindow: " + callingUidHasAnyVisibleWindow
                 + "; callingUidProcState: " + DebugUtils.valueToString(ActivityManager.class,
@@ -1561,6 +1561,10 @@ class ActivityStarter {
             mService.getTaskChangeNotificationController().notifyActivityRestartAttempt(
                     targetTask.getTaskInfo(), homeTaskVisible, clearedTask, visible);
         }
+
+        if (ActivityManager.isStartResultSuccessful(result)) {
+            mInterceptor.onActivityLaunched(targetTask.getTaskInfo(), r.info);
+        }
     }
 
     /**
@@ -1599,7 +1603,7 @@ class ActivityStarter {
         // transition based on a sub-action.
         // Only do the create here (and defer requestStart) since startActivityInner might abort.
         final TransitionController transitionController = r.mTransitionController;
-        final Transition newTransition = (!transitionController.isCollecting()
+        Transition newTransition = (!transitionController.isCollecting()
                 && transitionController.getTransitionPlayer() != null)
                 ? transitionController.createTransition(TRANSIT_OPEN) : null;
         RemoteTransition remoteTransition = r.takeRemoteTransition();
@@ -1654,6 +1658,10 @@ class ActivityStarter {
                     // The activity is started new rather than just brought forward, so record
                     // it as an existence change.
                     transitionController.collectExistenceChange(r);
+                } else if (result == START_DELIVERED_TO_TOP && newTransition != null) {
+                    // We just delivered to top, so there isn't an actual transition here
+                    newTransition.abort();
+                    newTransition = null;
                 }
                 if (isTransient) {
                     // `r` isn't guaranteed to be the actual relevant activity, so we must wait
@@ -1662,7 +1670,8 @@ class ActivityStarter {
                 }
                 if (newTransition != null) {
                     transitionController.requestStartTransition(newTransition,
-                            mTargetTask, remoteTransition);
+                            mTargetTask == null ? r.getTask() : mTargetTask,
+                            remoteTransition, null /* displayChange */);
                 } else if (started) {
                     // Make the collecting transition wait until this request is ready.
                     transitionController.setReady(r, false);
@@ -1741,6 +1750,16 @@ class ActivityStarter {
 
         mIntent.setFlags(mLaunchFlags);
 
+        boolean dreamStopping = false;
+
+        for (ActivityRecord stoppingActivity : mSupervisor.mStoppingActivities) {
+            if (stoppingActivity.getActivityType()
+                    == WindowConfiguration.ACTIVITY_TYPE_DREAM) {
+                dreamStopping = true;
+                break;
+            }
+        }
+
         // Get top task at beginning because the order may be changed when reusing existing task.
         final Task prevTopTask = mPreferredTaskDisplayArea.getFocusedRootTask();
         final Task reusedTask = getReusableTask();
@@ -1801,7 +1820,8 @@ class ActivityStarter {
 
         if (!mAvoidMoveToFront && mDoResume) {
             mTargetRootTask.getRootTask().moveToFront("reuseOrNewTask", targetTask);
-            if (!mTargetRootTask.isTopRootTaskInDisplayArea() && mService.mInternal.isDreaming()) {
+            if (!mTargetRootTask.isTopRootTaskInDisplayArea() && mService.mInternal.isDreaming()
+                    && !dreamStopping) {
                 // Launching underneath dream activity (fullscreen, always-on-top). Run the launch-
                 // -behind transition so the Activity gets created and starts in visible state.
                 mLaunchTaskBehind = true;
@@ -1904,27 +1924,6 @@ class ActivityStarter {
 
     private void computeLaunchParams(ActivityRecord r, ActivityRecord sourceRecord,
             Task targetTask) {
-        final Task sourceRootTask = mSourceRootTask != null ? mSourceRootTask
-                : mRootWindowContainer.getTopDisplayFocusedRootTask();
-        if (sourceRootTask != null && sourceRootTask.inSplitScreenWindowingMode()
-                && (mOptions == null
-                        || mOptions.getLaunchWindowingMode() == WINDOWING_MODE_UNDEFINED)) {
-            int windowingMode =
-                    targetTask != null ? targetTask.getWindowingMode() : WINDOWING_MODE_UNDEFINED;
-            if ((mLaunchFlags & FLAG_ACTIVITY_LAUNCH_ADJACENT) != 0) {
-                if (sourceRootTask.inSplitScreenPrimaryWindowingMode()) {
-                    windowingMode = WINDOWING_MODE_SPLIT_SCREEN_SECONDARY;
-                } else if (sourceRootTask.inSplitScreenSecondaryWindowingMode()) {
-                    windowingMode = WINDOWING_MODE_SPLIT_SCREEN_PRIMARY;
-                }
-            }
-
-            if (mOptions == null) {
-                mOptions = ActivityOptions.makeBasic();
-            }
-            mOptions.setLaunchWindowingMode(windowingMode);
-        }
-
         mSupervisor.getLaunchParamsController().calculate(targetTask, r.info.windowLayout, r,
                 sourceRecord, mOptions, mRequest, PHASE_BOUNDS, mLaunchParams);
         mPreferredTaskDisplayArea = mLaunchParams.hasPreferredTaskDisplayArea()
@@ -2771,9 +2770,11 @@ class ActivityStarter {
         // If it exist, we need to reparent target root task from TDA to launch root task.
         final TaskDisplayArea tda = mTargetRootTask.getDisplayArea();
         final Task launchRootTask = tda.getLaunchRootTask(mTargetRootTask.getWindowingMode(),
-                mTargetRootTask.getActivityType(), null /** options */, null /** sourceTask */,
-                0 /** launchFlags */);
-        if (launchRootTask != null && launchRootTask != mTargetRootTask) {
+                mTargetRootTask.getActivityType(), null /** options */, mSourceRootTask,
+                mLaunchFlags);
+        // If target root task is created by organizer, let organizer handle reparent itself.
+        if (!mTargetRootTask.mCreatedByOrganizer && launchRootTask != null
+                && launchRootTask != mTargetRootTask) {
             mTargetRootTask.reparent(launchRootTask, POSITION_TOP);
             mTargetRootTask = launchRootTask;
         }

@@ -6,6 +6,7 @@ import android.content.res.Resources;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.os.Bundle;
+import android.os.Trace;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.FrameLayout;
@@ -38,6 +39,7 @@ import com.android.systemui.statusbar.notification.PropertyAnimator;
 import com.android.systemui.statusbar.notification.collection.ListEntry;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.stack.AnimationProperties;
+import com.android.systemui.statusbar.window.StatusBarWindowController;
 import com.android.wm.shell.bubbles.Bubbles;
 
 import java.util.ArrayList;
@@ -71,7 +73,7 @@ public class NotificationIconAreaController implements
     private final DozeParameters mDozeParameters;
     private final Optional<Bubbles> mBubblesOptional;
     private final StatusBarWindowController mStatusBarWindowController;
-    private final UnlockedScreenOffAnimationController mUnlockedScreenOffAnimationController;
+    private final ScreenOffAnimationController mScreenOffAnimationController;
 
     private int mIconSize;
     private int mIconHPadding;
@@ -121,7 +123,7 @@ public class NotificationIconAreaController implements
             DemoModeController demoModeController,
             DarkIconDispatcher darkIconDispatcher,
             StatusBarWindowController statusBarWindowController,
-            UnlockedScreenOffAnimationController unlockedScreenOffAnimationController) {
+            ScreenOffAnimationController screenOffAnimationController) {
         mContrastColorUtil = ContrastColorUtil.getInstance(context);
         mContext = context;
         mStatusBarStateController = statusBarStateController;
@@ -135,7 +137,7 @@ public class NotificationIconAreaController implements
         mDemoModeController = demoModeController;
         mDemoModeController.addCallback(this);
         mStatusBarWindowController = statusBarWindowController;
-        mUnlockedScreenOffAnimationController = unlockedScreenOffAnimationController;
+        mScreenOffAnimationController = screenOffAnimationController;
         notificationListener.addNotificationSettingsListener(mSettingsListener);
 
         initializeNotificationAreaViews(context);
@@ -336,15 +338,20 @@ public class NotificationIconAreaController implements
     }
 
     private void updateNotificationIcons() {
+        Trace.beginSection("NotificationIconAreaController.updateNotificationIcons");
         updateStatusBarIcons();
         updateShelfIcons();
         updateCenterIcon();
         updateAodNotificationIcons();
 
         applyNotificationIconsTint();
+        Trace.endSection();
     }
 
     private void updateShelfIcons() {
+        if (mShelfIcons == null) {
+            return;
+        }
         updateIconsForLayout(entry -> entry.getIcons().getShelfIcon(), mShelfIcons,
                 true /* showAmbient */,
                 true /* showLowPriority */,
@@ -613,7 +620,7 @@ public class NotificationIconAreaController implements
         if (mAodIcons == null) {
             return;
         }
-        if (mDozeParameters.shouldControlScreenOff()) {
+        if (mScreenOffAnimationController.shouldAnimateAodIcons()) {
             mAodIcons.setTranslationY(-mAodIconAppearTranslation);
             mAodIcons.setAlpha(0);
             animateInAodIconTranslation();
@@ -685,7 +692,7 @@ public class NotificationIconAreaController implements
         // playing, in which case we want them to be visible since we're animating in the AOD UI and
         // will be switching to KEYGUARD shortly.
         if (mStatusBarStateController.getState() != StatusBarState.KEYGUARD
-                && !mUnlockedScreenOffAnimationController.isScreenOffAnimationPlaying()) {
+                && !mScreenOffAnimationController.shouldShowAodIconsWhenShade()) {
             visible = false;
         }
         if (visible && mWakeUpCoordinator.isPulseExpanding()

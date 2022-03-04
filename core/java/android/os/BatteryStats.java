@@ -58,6 +58,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Formatter;
@@ -460,6 +461,12 @@ public abstract class BatteryStats implements Parcelable {
         public abstract long getCountLocked(int which);
 
         /**
+         * Returns the count accumulated by this Counter for the specified process state.
+         * If the counter does not support per-procstate tracking, returns 0.
+         */
+        public abstract long getCountForProcessState(@BatteryConsumer.ProcessState int procState);
+
+        /**
          * Temporary for debugging.
          */
         public abstract void logState(Printer pw, String prefix);
@@ -633,7 +640,7 @@ public abstract class BatteryStats implements Parcelable {
      */
     public static int mapToInternalProcessState(int procState) {
         if (procState == ActivityManager.PROCESS_STATE_NONEXISTENT) {
-            return ActivityManager.PROCESS_STATE_NONEXISTENT;
+            return Uid.PROCESS_STATE_NONEXISTENT;
         } else if (procState == ActivityManager.PROCESS_STATE_TOP) {
             return Uid.PROCESS_STATE_TOP;
         } else if (ActivityManager.isForegroundService(procState)) {
@@ -652,6 +659,30 @@ public abstract class BatteryStats implements Parcelable {
             return Uid.PROCESS_STATE_CACHED;
         }
     }
+
+    /**
+     * Maps BatteryStats.Uid process state to the BatteryConsumer process state.
+     */
+    public static @BatteryConsumer.ProcessState int
+            mapUidProcessStateToBatteryConsumerProcessState(int processState) {
+        switch (processState) {
+            case BatteryStats.Uid.PROCESS_STATE_TOP:
+            case BatteryStats.Uid.PROCESS_STATE_FOREGROUND:
+                return BatteryConsumer.PROCESS_STATE_FOREGROUND;
+            case BatteryStats.Uid.PROCESS_STATE_BACKGROUND:
+            case BatteryStats.Uid.PROCESS_STATE_TOP_SLEEPING:
+                return BatteryConsumer.PROCESS_STATE_BACKGROUND;
+            case BatteryStats.Uid.PROCESS_STATE_FOREGROUND_SERVICE:
+                return BatteryConsumer.PROCESS_STATE_FOREGROUND_SERVICE;
+            default:
+                return BatteryConsumer.PROCESS_STATE_UNSPECIFIED;
+        }
+    }
+
+    /**
+     * Returns true if battery consumption is tracked on a per-process-state basis.
+     */
+    public abstract boolean isProcessStateDataAvailable();
 
     /**
      * The statistics associated with a particular uid.
@@ -821,6 +852,12 @@ public abstract class BatteryStats implements Parcelable {
          * Returns cpu active time of an uid.
          */
         public abstract long getCpuActiveTime();
+
+        /**
+         * Returns cpu active time of a UID while in the specified process state.
+         */
+        public abstract long getCpuActiveTime(int procState);
+
         /**
          * Returns cpu times of an uid on each cluster
          */
@@ -829,11 +866,13 @@ public abstract class BatteryStats implements Parcelable {
         /**
          * Returns cpu times of an uid at a particular process state.
          */
-        public abstract long[] getCpuFreqTimes(int which, int procState);
+        public abstract boolean getCpuFreqTimes(@NonNull long[] timesInFreqMs, int procState);
+
         /**
          * Returns cpu times of an uid while the screen if off at a particular process state.
          */
-        public abstract long[] getScreenOffCpuFreqTimes(int which, int procState);
+        public abstract boolean getScreenOffCpuFreqTimes(@NonNull long[] timesInFreqMs,
+                int procState);
 
         // Note: the following times are disjoint.  They can be added together to find the
         // total time a uid has had any processes running at all.
@@ -878,6 +917,11 @@ public abstract class BatteryStats implements Parcelable {
          * Total number of process states we track.
          */
         public static final int NUM_PROCESS_STATE = 7;
+        /**
+         * State of the UID when it has no running processes.  It is intentionally out of
+         * bounds 0..NUM_PROCESS_STATE.
+         */
+        public static final int PROCESS_STATE_NONEXISTENT = NUM_PROCESS_STATE;
 
         // Used in dump
         static final String[] PROCESS_STATE_NAMES = {
@@ -895,16 +939,6 @@ public abstract class BatteryStats implements Parcelable {
                 "TS", // TOP_SLEEPING
                 "HW",  // HEAVY_WEIGHT
                 "C"   // CACHED
-        };
-
-        /**
-         * When the process exits one of these states, we need to make sure cpu time in this state
-         * is not attributed to any non-critical process states.
-         */
-        public static final int[] CRITICAL_PROC_STATES = {
-                Uid.PROCESS_STATE_TOP,
-                Uid.PROCESS_STATE_FOREGROUND_SERVICE,
-                Uid.PROCESS_STATE_FOREGROUND
         };
 
         public abstract long getProcessStateTime(int state, long elapsedRealtimeUs, int which);
@@ -935,6 +969,13 @@ public abstract class BatteryStats implements Parcelable {
         public abstract long getNetworkActivityPackets(int type, int which);
         @UnsupportedAppUsage
         public abstract long getMobileRadioActiveTime(int which);
+
+        /**
+         * Returns the amount of time (in microseconds) this UID was in the specified processState.
+         */
+        public abstract long getMobileRadioActiveTimeInProcessState(
+                @BatteryConsumer.ProcessState int processState);
+
         public abstract int getMobileRadioActiveCount(int which);
 
         /**
@@ -996,6 +1037,16 @@ public abstract class BatteryStats implements Parcelable {
         public abstract long getBluetoothMeasuredBatteryConsumptionUC();
 
         /**
+         * Returns the battery consumption (in microcoulombs) of the uid's bluetooth usage
+         * when in the specified process state.
+         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+         *
+         * {@hide}
+         */
+        public abstract long getBluetoothMeasuredBatteryConsumptionUC(
+                @BatteryConsumer.ProcessState int processState);
+
+        /**
          * Returns the battery consumption (in microcoulombs) of the uid's cpu usage, derived from
          * on device power measurement data.
          * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
@@ -1003,6 +1054,16 @@ public abstract class BatteryStats implements Parcelable {
          * {@hide}
          */
         public abstract long getCpuMeasuredBatteryConsumptionUC();
+
+        /**
+         * Returns the battery consumption (in microcoulombs) of the uid's cpu usage when in the
+         * specified process state.
+         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+         *
+         * {@hide}
+         */
+        public abstract long getCpuMeasuredBatteryConsumptionUC(
+                @BatteryConsumer.ProcessState int processState);
 
         /**
          * Returns the battery consumption (in microcoulombs) of the uid's GNSS usage, derived from
@@ -1023,6 +1084,16 @@ public abstract class BatteryStats implements Parcelable {
         public abstract long getMobileRadioMeasuredBatteryConsumptionUC();
 
         /**
+         * Returns the battery consumption (in microcoulombs) of the uid's radio usage when in the
+         * specified process state.
+         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+         *
+         * {@hide}
+         */
+        public abstract long getMobileRadioMeasuredBatteryConsumptionUC(
+                @BatteryConsumer.ProcessState int processState);
+
+        /**
          * Returns the battery consumption (in microcoulombs) of the screen while on and uid active,
          * derived from on device power measurement data.
          * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
@@ -1039,6 +1110,17 @@ public abstract class BatteryStats implements Parcelable {
          * {@hide}
          */
         public abstract long getWifiMeasuredBatteryConsumptionUC();
+
+        /**
+         * Returns the battery consumption (in microcoulombs) of the uid's wifi usage when in the
+         * specified process state.
+         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
+         *
+         * {@hide}
+         */
+        public abstract long getWifiMeasuredBatteryConsumptionUC(
+                @BatteryConsumer.ProcessState int processState);
+
 
         /**
          * Returns the battery consumption (in microcoulombs) used by this uid for each
@@ -1534,6 +1616,11 @@ public abstract class BatteryStats implements Parcelable {
     public abstract long getNextMinDailyDeadline();
 
     public abstract long getNextMaxDailyDeadline();
+
+    /**
+     * Returns the total number of frequencies across all CPU clusters.
+     */
+    public abstract int getCpuFreqCount();
 
     public abstract long[] getCpuFreqs();
 
@@ -2307,6 +2394,38 @@ public abstract class BatteryStats implements Parcelable {
      * {@hide}
      */
     public abstract Timer getScreenBrightnessTimer(int brightnessBin);
+
+    /**
+     * Returns the number of physical displays on the device.
+     *
+     * {@hide}
+     */
+    public abstract int getDisplayCount();
+
+    /**
+     * Returns the time in microseconds that the screen has been on for a display while the
+     * device was running on battery.
+     *
+     * {@hide}
+     */
+    public abstract long getDisplayScreenOnTime(int display, long elapsedRealtimeUs);
+
+    /**
+     * Returns the time in microseconds that a display has been dozing while the device was
+     * running on battery.
+     *
+     * {@hide}
+     */
+    public abstract long getDisplayScreenDozeTime(int display, long elapsedRealtimeUs);
+
+    /**
+     * Returns the time in microseconds that a display has been on with the given brightness
+     * level while the device was running on battery.
+     *
+     * {@hide}
+     */
+    public abstract long getDisplayScreenBrightnessTime(int display, int brightnessBin,
+            long elapsedRealtimeUs);
 
     /**
      * Returns the time in microseconds that power save mode has been enabled while the device was
@@ -3280,6 +3399,16 @@ public abstract class BatteryStats implements Parcelable {
     public abstract Map<String, ? extends Timer> getWakeupReasonStats();
 
     public abstract Map<String, ? extends Timer> getKernelWakelockStats();
+
+    /**
+     * Returns aggregated wake lock stats.
+     */
+    public abstract WakeLockStats getWakeLockStats();
+
+    /**
+     * Returns aggregated Bluetooth stats.
+     */
+    public abstract BluetoothBatteryStats getBluetoothBatteryStats();
 
     /**
      * Returns Timers tracking the total time of each Resource Power Manager state and voter.
@@ -4554,27 +4683,26 @@ public abstract class BatteryStats implements Parcelable {
                             cpuFreqTimeMs.length, sb.toString());
                 }
 
+                final long[] timesInFreqMs = new long[getCpuFreqCount()];
                 for (int procState = 0; procState < Uid.NUM_PROCESS_STATE; ++procState) {
-                    final long[] timesMs = u.getCpuFreqTimes(which, procState);
-                    if (timesMs != null && timesMs.length == cpuFreqs.length) {
+                    if (u.getCpuFreqTimes(timesInFreqMs, procState)) {
                         sb.setLength(0);
-                        for (int i = 0; i < timesMs.length; ++i) {
+                        for (int i = 0; i < timesInFreqMs.length; ++i) {
                             if (i != 0) sb.append(',');
-                            sb.append(timesMs[i]);
+                            sb.append(timesInFreqMs[i]);
                         }
-                        final long[] screenOffTimesMs = u.getScreenOffCpuFreqTimes(
-                                which, procState);
-                        if (screenOffTimesMs != null) {
-                            for (int i = 0; i < screenOffTimesMs.length; ++i) {
-                                sb.append(',').append(screenOffTimesMs[i]);
+                        if (u.getScreenOffCpuFreqTimes(timesInFreqMs, procState)) {
+                            for (int i = 0; i < timesInFreqMs.length; ++i) {
+                                sb.append(',').append(timesInFreqMs[i]);
                             }
                         } else {
-                            for (int i = 0; i < timesMs.length; ++i) {
+                            for (int i = 0; i < timesInFreqMs.length; ++i) {
                                 sb.append(",0");
                             }
                         }
                         dumpLine(pw, uid, category, CPU_TIMES_AT_FREQ_DATA,
-                                Uid.UID_PROCESS_TYPES[procState], timesMs.length, sb.toString());
+                                Uid.UID_PROCESS_TYPES[procState], timesInFreqMs.length,
+                                sb.toString());
                     }
                 }
             }
@@ -5044,6 +5172,71 @@ public abstract class BatteryStats implements Parcelable {
             pw.println(sb.toString());
         }
 
+        final int numDisplays = getDisplayCount();
+        if (numDisplays > 1) {
+            pw.println("");
+            pw.print(prefix);
+            sb.setLength(0);
+            sb.append(prefix);
+            sb.append("  MULTI-DISPLAY POWER SUMMARY START");
+            pw.println(sb.toString());
+
+            for (int display = 0; display < numDisplays; display++) {
+                sb.setLength(0);
+                sb.append(prefix);
+                sb.append("  Display ");
+                sb.append(display);
+                sb.append(" Statistics:");
+                pw.println(sb.toString());
+
+                final long displayScreenOnTime = getDisplayScreenOnTime(display, rawRealtime);
+                sb.setLength(0);
+                sb.append(prefix);
+                sb.append("    Screen on: ");
+                formatTimeMs(sb, displayScreenOnTime / 1000);
+                sb.append("(");
+                sb.append(formatRatioLocked(displayScreenOnTime, whichBatteryRealtime));
+                sb.append(") ");
+                pw.println(sb.toString());
+
+                sb.setLength(0);
+                sb.append("    Screen brightness levels:");
+                didOne = false;
+                for (int bin = 0; bin < NUM_SCREEN_BRIGHTNESS_BINS; bin++) {
+                    final long timeUs = getDisplayScreenBrightnessTime(display, bin, rawRealtime);
+                    if (timeUs == 0) {
+                        continue;
+                    }
+                    didOne = true;
+                    sb.append("\n      ");
+                    sb.append(prefix);
+                    sb.append(SCREEN_BRIGHTNESS_NAMES[bin]);
+                    sb.append(" ");
+                    formatTimeMs(sb, timeUs / 1000);
+                    sb.append("(");
+                    sb.append(formatRatioLocked(timeUs, displayScreenOnTime));
+                    sb.append(")");
+                }
+                if (!didOne) sb.append(" (no activity)");
+                pw.println(sb.toString());
+
+                final long displayScreenDozeTimeUs = getDisplayScreenDozeTime(display, rawRealtime);
+                sb.setLength(0);
+                sb.append(prefix);
+                sb.append("    Screen Doze: ");
+                formatTimeMs(sb, displayScreenDozeTimeUs / 1000);
+                sb.append("(");
+                sb.append(formatRatioLocked(displayScreenDozeTimeUs, whichBatteryRealtime));
+                sb.append(") ");
+                pw.println(sb.toString());
+            }
+            pw.print(prefix);
+            sb.setLength(0);
+            sb.append(prefix);
+            sb.append("  MULTI-DISPLAY POWER SUMMARY END");
+            pw.println(sb.toString());
+        }
+
         pw.println("");
         pw.print(prefix);
         sb.setLength(0);
@@ -5309,6 +5502,7 @@ public abstract class BatteryStats implements Parcelable {
                 new BatteryUsageStatsQuery.Builder()
                         .setMaxStatsAgeMs(0)
                         .includePowerModels()
+                        .includeProcessStateData()
                         .build());
         stats.dump(pw, prefix);
 
@@ -6105,25 +6299,24 @@ public abstract class BatteryStats implements Parcelable {
                 pw.println(sb.toString());
             }
 
+            final long[] timesInFreqMs = new long[getCpuFreqCount()];
             for (int procState = 0; procState < Uid.NUM_PROCESS_STATE; ++procState) {
-                final long[] cpuTimes = u.getCpuFreqTimes(which, procState);
-                if (cpuTimes != null) {
+                if (u.getCpuFreqTimes(timesInFreqMs, procState)) {
                     sb.setLength(0);
                     sb.append("    Cpu times per freq at state ")
                             .append(Uid.PROCESS_STATE_NAMES[procState]).append(':');
-                    for (int i = 0; i < cpuTimes.length; ++i) {
-                        sb.append(" " + cpuTimes[i]);
+                    for (int i = 0; i < timesInFreqMs.length; ++i) {
+                        sb.append(" ").append(timesInFreqMs[i]);
                     }
                     pw.println(sb.toString());
                 }
 
-                final long[] screenOffCpuTimes = u.getScreenOffCpuFreqTimes(which, procState);
-                if (screenOffCpuTimes != null) {
+                if (u.getScreenOffCpuFreqTimes(timesInFreqMs, procState)) {
                     sb.setLength(0);
                     sb.append("   Screen-off cpu times per freq at state ")
                             .append(Uid.PROCESS_STATE_NAMES[procState]).append(':');
-                    for (int i = 0; i < screenOffCpuTimes.length; ++i) {
-                        sb.append(" " + screenOffCpuTimes[i]);
+                    for (int i = 0; i < timesInFreqMs.length; ++i) {
+                        sb.append(" ").append(timesInFreqMs[i]);
                     }
                     pw.println(sb.toString());
                 }
@@ -7210,9 +7403,11 @@ public abstract class BatteryStats implements Parcelable {
                         pw.print(getHistoryTagPoolUid(i));
                         pw.print(",\"");
                         String str = getHistoryTagPoolString(i);
-                        str = str.replace("\\", "\\\\");
-                        str = str.replace("\"", "\\\"");
-                        pw.print(str);
+                        if (str != null) {
+                            str = str.replace("\\", "\\\\");
+                            str = str.replace("\"", "\\\"");
+                            pw.print(str);
+                        }
                         pw.print("\"");
                         pw.println();
                     }
@@ -7489,22 +7684,22 @@ public abstract class BatteryStats implements Parcelable {
                 }
             }
 
+            final long[] timesInFreqMs = new long[getCpuFreqCount()];
+            final long[] timesInFreqScreenOffMs = new long[getCpuFreqCount()];
             for (int procState = 0; procState < Uid.NUM_PROCESS_STATE; ++procState) {
-                final long[] timesMs = u.getCpuFreqTimes(which, procState);
-                if (timesMs != null && timesMs.length == cpuFreqs.length) {
-                    long[] screenOffTimesMs = u.getScreenOffCpuFreqTimes(which, procState);
-                    if (screenOffTimesMs == null) {
-                        screenOffTimesMs = new long[timesMs.length];
+                if (u.getCpuFreqTimes(timesInFreqMs, procState)) {
+                    if (!u.getScreenOffCpuFreqTimes(timesInFreqScreenOffMs, procState)) {
+                        Arrays.fill(timesInFreqScreenOffMs, 0);
                     }
                     final long procToken = proto.start(UidProto.Cpu.BY_PROCESS_STATE);
                     proto.write(UidProto.Cpu.ByProcessState.PROCESS_STATE, procState);
-                    for (int ic = 0; ic < timesMs.length; ++ic) {
+                    for (int ic = 0; ic < timesInFreqMs.length; ++ic) {
                         long cToken = proto.start(UidProto.Cpu.ByProcessState.BY_FREQUENCY);
                         proto.write(UidProto.Cpu.ByFrequency.FREQUENCY_INDEX, ic + 1);
                         proto.write(UidProto.Cpu.ByFrequency.TOTAL_DURATION_MS,
-                                timesMs[ic]);
+                                timesInFreqMs[ic]);
                         proto.write(UidProto.Cpu.ByFrequency.SCREEN_OFF_DURATION_MS,
-                                screenOffTimesMs[ic]);
+                                timesInFreqScreenOffMs[ic]);
                         proto.end(cToken);
                     }
                     proto.end(procToken);

@@ -25,11 +25,14 @@ import static android.view.WindowManager.TRANSIT_TO_BACK;
 import static android.view.WindowManager.TRANSIT_TO_FRONT;
 import static android.window.TransitionFilter.CONTAINER_ORDER_TOP;
 
+import static com.android.systemui.shared.system.RemoteAnimationTargetCompat.ACTIVITY_TYPE_RECENTS;
+
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SuppressLint;
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
+import android.app.IApplicationThread;
 import android.content.ComponentName;
 import android.graphics.Rect;
 import android.os.IBinder;
@@ -52,6 +55,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.DataClass;
 import com.android.systemui.shared.recents.model.ThumbnailData;
 
+import java.util.ArrayList;
 import java.util.concurrent.Executor;
 
 /**
@@ -72,7 +76,7 @@ public class RemoteTransitionCompat implements Parcelable {
     }
 
     public RemoteTransitionCompat(@NonNull RemoteTransitionRunner runner,
-            @NonNull Executor executor) {
+            @NonNull Executor executor, @Nullable IApplicationThread appThread) {
         IRemoteTransition remote = new IRemoteTransition.Stub() {
             @Override
             public void startAnimation(IBinder transition, TransitionInfo info,
@@ -103,12 +107,12 @@ public class RemoteTransitionCompat implements Parcelable {
                         finishAdapter));
             }
         };
-        mTransition = new RemoteTransition(remote);
+        mTransition = new RemoteTransition(remote, appThread);
     }
 
     /** Constructor specifically for recents animation */
     public RemoteTransitionCompat(RecentsAnimationListener recents,
-            RecentsAnimationControllerCompat controller) {
+            RecentsAnimationControllerCompat controller, IApplicationThread appThread) {
         IRemoteTransition remote = new IRemoteTransition.Stub() {
             final RecentsControllerWrap mRecentsSession = new RecentsControllerWrap();
             IBinder mToken = null;
@@ -126,7 +130,7 @@ public class RemoteTransitionCompat implements Parcelable {
                 mToken = transition;
                 // This transition is for opening recents, so recents is on-top. We want to draw
                 // the current going-away task on top of recents, though, so move it to front
-                WindowContainerToken pausingTask = null;
+                final ArrayList<WindowContainerToken> pausingTasks = new ArrayList<>();
                 WindowContainerToken pipTask = null;
                 for (int i = info.getChanges().size() - 1; i >= 0; --i) {
                     final TransitionInfo.Change change = info.getChanges().get(i);
@@ -137,19 +141,25 @@ public class RemoteTransitionCompat implements Parcelable {
                         if (taskInfo == null) {
                             continue;
                         }
-                        pausingTask = taskInfo.token;
+                        // Add to front since we are iterating backwards.
+                        pausingTasks.add(0, taskInfo.token);
                         if (taskInfo.pictureInPictureParams != null
                                 && taskInfo.pictureInPictureParams.isAutoEnterEnabled()) {
                             pipTask = taskInfo.token;
                         }
+                    } else if (change.getTaskInfo() != null
+                            && change.getTaskInfo().topActivityType == ACTIVITY_TYPE_RECENTS) {
+                        // This task is for recents, keep it on top.
+                        t.setLayer(leashMap.get(change.getLeash()),
+                                info.getChanges().size() * 3 - i);
                     }
                 }
                 // Also make all the wallpapers opaque since we want the visible from the start
                 for (int i = wallpapers.length - 1; i >= 0; --i) {
-                    t.setAlpha(wallpapers[i].leash.mSurfaceControl, 1);
+                    t.setAlpha(wallpapers[i].leash, 1);
                 }
                 t.apply();
-                mRecentsSession.setup(controller, info, finishedCallback, pausingTask, pipTask,
+                mRecentsSession.setup(controller, info, finishedCallback, pausingTasks, pipTask,
                         leashMap, mToken);
                 recents.onAnimationStart(mRecentsSession, apps, wallpapers, new Rect(0, 0, 0, 0),
                         new Rect());
@@ -168,7 +178,7 @@ public class RemoteTransitionCompat implements Parcelable {
                 }
             }
         };
-        mTransition = new RemoteTransition(remote);
+        mTransition = new RemoteTransition(remote, appThread);
     }
 
     /** Adds a filter check that restricts this remote transition to home open transitions. */
@@ -197,18 +207,18 @@ public class RemoteTransitionCompat implements Parcelable {
     static class RecentsControllerWrap extends RecentsAnimationControllerCompat {
         private RecentsAnimationControllerCompat mWrapped = null;
         private IRemoteTransitionFinishedCallback mFinishCB = null;
-        private WindowContainerToken mPausingTask = null;
+        private ArrayList<WindowContainerToken> mPausingTasks = null;
         private WindowContainerToken mPipTask = null;
         private TransitionInfo mInfo = null;
-        private SurfaceControl mOpeningLeash = null;
+        private ArrayList<SurfaceControl> mOpeningLeashes = null;
         private ArrayMap<SurfaceControl, SurfaceControl> mLeashMap = null;
         private PictureInPictureSurfaceTransaction mPipTransaction = null;
         private IBinder mTransition = null;
 
         void setup(RecentsAnimationControllerCompat wrapped, TransitionInfo info,
-                IRemoteTransitionFinishedCallback finishCB, WindowContainerToken pausingTask,
-                WindowContainerToken pipTask, ArrayMap<SurfaceControl, SurfaceControl> leashMap,
-                IBinder transition) {
+                IRemoteTransitionFinishedCallback finishCB,
+                ArrayList<WindowContainerToken> pausingTasks, WindowContainerToken pipTask,
+                ArrayMap<SurfaceControl, SurfaceControl> leashMap, IBinder transition) {
             if (mInfo != null) {
                 throw new IllegalStateException("Trying to run a new recents animation while"
                         + " recents is already active.");
@@ -216,7 +226,7 @@ public class RemoteTransitionCompat implements Parcelable {
             mWrapped = wrapped;
             mInfo = info;
             mFinishCB = finishCB;
-            mPausingTask = pausingTask;
+            mPausingTasks = pausingTasks;
             mPipTask = pipTask;
             mLeashMap = leashMap;
             mTransition = transition;
@@ -225,36 +235,52 @@ public class RemoteTransitionCompat implements Parcelable {
         @SuppressLint("NewApi")
         boolean merge(TransitionInfo info, SurfaceControl.Transaction t,
                 RecentsAnimationListener recents) {
-            TransitionInfo.Change openingTask = null;
+            ArrayList<TransitionInfo.Change> openingTasks = null;
             for (int i = info.getChanges().size() - 1; i >= 0; --i) {
                 final TransitionInfo.Change change = info.getChanges().get(i);
                 if (change.getMode() == TRANSIT_OPEN || change.getMode() == TRANSIT_TO_FRONT) {
                     if (change.getTaskInfo() != null) {
-                        if (openingTask != null) {
-                            Log.w(TAG, " Expecting to merge a task-open, but got >1 opening "
-                                    + "tasks");
+                        if (openingTasks == null) {
+                            openingTasks = new ArrayList<>();
                         }
-                        openingTask = change;
+                        openingTasks.add(change);
                     }
                 }
             }
-            if (openingTask == null) return false;
-            mOpeningLeash = openingTask.getLeash();
-            if (openingTask.getContainer().equals(mPausingTask)) {
-                // In this case, we are "returning" to the already running app, so just consume
+            if (openingTasks == null) return false;
+            int pauseMatches = 0;
+            for (int i = 0; i < openingTasks.size(); ++i) {
+                if (mPausingTasks.contains(openingTasks.get(i).getContainer())) {
+                    ++pauseMatches;
+                }
+            }
+            if (pauseMatches > 0) {
+                if (pauseMatches != mPausingTasks.size()) {
+                    // We are not really "returning" properly... something went wrong.
+                    throw new IllegalStateException("\"Concelling\" a recents transitions by "
+                            + "unpausing " + pauseMatches + " apps after pausing "
+                            + mPausingTasks.size() + " apps.");
+                }
+                // In this case, we are "returning" to an already running app, so just consume
                 // the merge and do nothing.
                 return true;
             }
-            // We are receiving a new opening task, so convert to onTaskAppeared.
             final int layer = mInfo.getChanges().size() * 3;
-            final RemoteAnimationTargetCompat target = new RemoteAnimationTargetCompat(
-                    openingTask, layer, mInfo, t);
-            mLeashMap.put(mOpeningLeash, target.leash.mSurfaceControl);
-            t.reparent(target.leash.mSurfaceControl, mInfo.getRootLeash());
-            t.setLayer(target.leash.mSurfaceControl, layer);
-            t.hide(target.leash.mSurfaceControl);
+            mOpeningLeashes = new ArrayList<>();
+            final RemoteAnimationTargetCompat[] targets =
+                    new RemoteAnimationTargetCompat[openingTasks.size()];
+            for (int i = 0; i < openingTasks.size(); ++i) {
+                mOpeningLeashes.add(openingTasks.get(i).getLeash());
+                // We are receiving new opening tasks, so convert to onTasksAppeared.
+                final RemoteAnimationTargetCompat target = new RemoteAnimationTargetCompat(
+                        openingTasks.get(i), layer, info, t);
+                mLeashMap.put(mOpeningLeashes.get(i), target.leash);
+                t.reparent(target.leash, mInfo.getRootLeash());
+                t.setLayer(target.leash, layer);
+                targets[i] = target;
+            }
             t.apply();
-            recents.onTaskAppeared(target);
+            recents.onTasksAppeared(targets);
             return true;
         }
 
@@ -290,57 +316,50 @@ public class RemoteTransitionCompat implements Parcelable {
                 return;
             }
             if (mWrapped != null) mWrapped.finish(toHome, sendUserLeaveHint);
-            try {
-                if (!toHome && mPausingTask != null && mOpeningLeash == null) {
-                    // The gesture went back to opening the app rather than continuing with
-                    // recents, so end the transition by moving the app back to the top (and also
-                    // re-showing it's task).
-                    final WindowContainerTransaction wct = new WindowContainerTransaction();
-                    wct.reorder(mPausingTask, true /* onTop */);
-                    final SurfaceControl.Transaction t = new SurfaceControl.Transaction();
-                    t.show(mInfo.getChange(mPausingTask).getLeash());
-                    mFinishCB.onTransitionFinished(wct, t);
-                } else {
-                    if (mOpeningLeash != null) {
-                        // TODO: the launcher animation should handle this
-                        final SurfaceControl.Transaction t = new SurfaceControl.Transaction();
-                        t.show(mOpeningLeash);
-                        t.setAlpha(mOpeningLeash, 1.f);
-                        t.apply();
-                    }
-                    if (mPipTask != null && mPipTransaction != null) {
-                        final SurfaceControl.Transaction t = new SurfaceControl.Transaction();
-                        t.show(mInfo.getChange(mPipTask).getLeash());
-                        PictureInPictureSurfaceTransaction.apply(mPipTransaction,
-                                mInfo.getChange(mPipTask).getLeash(), t);
-                        mPipTask = null;
-                        mPipTransaction = null;
-                        mFinishCB.onTransitionFinished(null /* wct */, t);
-                    } else {
-                        mFinishCB.onTransitionFinished(null /* wct */, null /* sct */);
-                    }
+            final SurfaceControl.Transaction t = new SurfaceControl.Transaction();
+            final WindowContainerTransaction wct;
 
+            if (!toHome && mPausingTasks != null && mOpeningLeashes == null) {
+                // The gesture went back to opening the app rather than continuing with
+                // recents, so end the transition by moving the app back to the top (and also
+                // re-showing it's task).
+                wct = new WindowContainerTransaction();
+                for (int i = mPausingTasks.size() - 1; i >= 0; --i) {
+                    // reverse order so that index 0 ends up on top
+                    wct.reorder(mPausingTasks.get(i), true /* onTop */);
+                    t.show(mInfo.getChange(mPausingTasks.get(i)).getLeash());
                 }
-            } catch (RemoteException e) {
-                Log.e("RemoteTransitionCompat", "Failed to call animation finish callback", e);
+            } else {
+                wct = null;
+                if (mPipTask != null && mPipTransaction != null) {
+                    t.show(mInfo.getChange(mPipTask).getLeash());
+                    PictureInPictureSurfaceTransaction.apply(mPipTransaction,
+                            mInfo.getChange(mPipTask).getLeash(), t);
+                    mPipTask = null;
+                    mPipTransaction = null;
+                }
             }
             // Release surface references now. This is apparently to free GPU
             // memory while doing quick operations (eg. during CTS).
-            SurfaceControl.Transaction t = new SurfaceControl.Transaction();
             for (int i = 0; i < mLeashMap.size(); ++i) {
                 if (mLeashMap.keyAt(i) == mLeashMap.valueAt(i)) continue;
                 t.remove(mLeashMap.valueAt(i));
             }
-            t.apply();
+            try {
+                mFinishCB.onTransitionFinished(wct, t);
+            } catch (RemoteException e) {
+                Log.e("RemoteTransitionCompat", "Failed to call animation finish callback", e);
+                t.apply();
+            }
             for (int i = 0; i < mInfo.getChanges().size(); ++i) {
                 mInfo.getChanges().get(i).getLeash().release();
             }
             // Reset all members.
             mWrapped = null;
             mFinishCB = null;
-            mPausingTask = null;
+            mPausingTasks = null;
             mInfo = null;
-            mOpeningLeash = null;
+            mOpeningLeashes = null;
             mLeashMap = null;
             mTransition = null;
         }

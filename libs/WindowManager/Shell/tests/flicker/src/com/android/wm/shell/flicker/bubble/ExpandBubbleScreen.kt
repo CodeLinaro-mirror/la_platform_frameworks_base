@@ -16,6 +16,7 @@
 
 package com.android.wm.shell.flicker.bubble
 
+import android.platform.test.annotations.Presubmit
 import androidx.test.filters.RequiresDevice
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
@@ -23,7 +24,11 @@ import com.android.server.wm.flicker.FlickerParametersRunnerFactory
 import com.android.server.wm.flicker.FlickerTestParameter
 import com.android.server.wm.flicker.annotation.Group4
 import com.android.server.wm.flicker.dsl.FlickerBuilder
+import com.android.wm.shell.flicker.helpers.BaseAppHelper
+import org.junit.Assume
+import org.junit.Before
 import org.junit.runner.RunWith
+import org.junit.Test
 import org.junit.runners.Parameterized
 
 /**
@@ -42,18 +47,32 @@ import org.junit.runners.Parameterized
 @Group4
 class ExpandBubbleScreen(testSpec: FlickerTestParameter) : BaseBubbleScreen(testSpec) {
 
-    override val transition: FlickerBuilder.(Map<String, Any?>) -> Unit
-        get() = buildTransition() {
+    override val transition: FlickerBuilder.() -> Unit
+        get() = buildTransition {
             setup {
                 test {
-                    addBubbleBtn?.run { addBubbleBtn.click() } ?: error("Bubble widget not found")
+                    val addBubbleBtn = waitAndGetAddBubbleBtn()
+                    addBubbleBtn?.click() ?: error("Add Bubble not found")
                 }
             }
             transitions {
                 val showBubble = device.wait(Until.findObject(
                         By.res("com.android.systemui", "bubble_view")), FIND_OBJECT_TIMEOUT)
                 showBubble?.run { showBubble.click() } ?: error("Bubble notify not found")
-                device.pressBack()
             }
         }
+
+    @Before
+    fun setup() {
+        // This test doesn't work in shell transitions because of b/205288792
+        Assume.assumeFalse(BaseAppHelper.isShellTransitionsEnabled())
+    }
+
+    @Presubmit
+    @Test
+    fun testAppIsAlwaysVisible() {
+        testSpec.assertLayers {
+            this.isVisible(testApp.component)
+        }
+    }
 }

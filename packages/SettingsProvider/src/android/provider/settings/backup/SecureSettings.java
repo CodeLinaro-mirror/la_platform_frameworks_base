@@ -42,6 +42,7 @@ public class SecureSettings {
         Settings.Secure.AUTOFILL_SERVICE,
         Settings.Secure.ACCESSIBILITY_DISPLAY_MAGNIFICATION_SCALE,
         Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+        Settings.Secure.ENABLED_ACCESSIBILITY_AUDIO_DESCRIPTION_BY_DEFAULT,
         Settings.Secure.ENABLED_VR_LISTENERS,
         Settings.Secure.TOUCH_EXPLORATION_GRANTED_ACCESSIBILITY_SERVICES,
         Settings.Secure.TOUCH_EXPLORATION_ENABLED,
@@ -172,6 +173,7 @@ public class SecureSettings {
         Settings.Secure.ACCESSIBILITY_MAGNIFICATION_MODE,
         Settings.Secure.ACCESSIBILITY_BUTTON_TARGETS,
         Settings.Secure.ACCESSIBILITY_MAGNIFICATION_CAPABILITY,
+        Settings.Secure.ACCESSIBILITY_MAGNIFICATION_FOLLOW_TYPING_ENABLED,
         Settings.Secure.ONE_HANDED_MODE_ACTIVATED,
         Settings.Secure.ONE_HANDED_MODE_ENABLED,
         Settings.Secure.ONE_HANDED_MODE_TIMEOUT,
@@ -187,9 +189,12 @@ public class SecureSettings {
         Settings.Secure.ACCESSIBILITY_FLOATING_MENU_ICON_TYPE,
         Settings.Secure.ACCESSIBILITY_FLOATING_MENU_OPACITY,
         Settings.Secure.ACCESSIBILITY_FLOATING_MENU_FADE_ENABLED,
+        Settings.Secure.ODI_CAPTIONS_VOLUME_UI_ENABLED,
         Settings.Secure.NOTIFICATION_BUBBLES,
         Settings.Secure.LOCATION_TIME_ZONE_DETECTION_ENABLED,
         Settings.Secure.LOCKSCREEN_SHOW_CONTROLS,
         Settings.Secure.LOCKSCREEN_SHOW_WALLET,
+        Settings.Secure.LOCK_SCREEN_SHOW_QR_CODE_SCANNER,
+        Settings.Secure.LOCKSCREEN_USE_DOUBLE_LINE_CLOCK,
     };
 }

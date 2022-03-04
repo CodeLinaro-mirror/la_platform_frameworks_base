@@ -86,6 +86,7 @@ import androidx.constraintlayout.widget.ConstraintLayout;
 import com.android.internal.logging.UiEventLogger;
 import com.android.systemui.R;
 import com.android.systemui.screenshot.ScreenshotController.SavedImageData.ActionTransition;
+import com.android.systemui.shared.system.InputChannelCompat;
 import com.android.systemui.shared.system.InputMonitorCompat;
 import com.android.systemui.shared.system.QuickStepContract;
 
@@ -162,7 +163,9 @@ public class ScreenshotView extends FrameLayout implements
     private GestureDetector mSwipeDetector;
     private SwipeDismissHandler mSwipeDismissHandler;
     private InputMonitorCompat mInputMonitor;
+    private InputChannelCompat.InputEventReceiver mInputEventReceiver;
     private boolean mShowScrollablePreview;
+    private String mPackageName = "";
 
     private final ArrayList<ScreenshotActionChip> mSmartChips = new ArrayList<>();
     private PendingInteraction mPendingInteraction;
@@ -219,7 +222,6 @@ public class ScreenshotView extends FrameLayout implements
                     }
                 });
         mSwipeDetector.setIsLongpressEnabled(false);
-        mSwipeDismissHandler = new SwipeDismissHandler();
         addOnAttachStateChangeListener(new OnAttachStateChangeListener() {
             @Override
             public void onViewAttachedToWindow(View v) {
@@ -241,7 +243,7 @@ public class ScreenshotView extends FrameLayout implements
      * Called to display the scroll action chip when support is detected.
      *
      * @param packageName the owning package of the window to be captured
-     * @param onClick the action to take when the chip is clicked.
+     * @param onClick     the action to take when the chip is clicked.
      */
     public void showScrollChip(String packageName, Runnable onClick) {
         if (DEBUG_SCROLL) {
@@ -270,10 +272,12 @@ public class ScreenshotView extends FrameLayout implements
 
         final Rect tmpRect = new Rect();
         mScreenshotPreview.getBoundsOnScreen(tmpRect);
-        tmpRect.inset((int) dpToPx(-SWIPE_PADDING_DP), (int) dpToPx(-SWIPE_PADDING_DP));
+        tmpRect.inset((int) FloatingWindowUtil.dpToPx(mDisplayMetrics, -SWIPE_PADDING_DP),
+                (int) FloatingWindowUtil.dpToPx(mDisplayMetrics, -SWIPE_PADDING_DP));
         touchRegion.op(tmpRect, Region.Op.UNION);
         mActionsContainerBackground.getBoundsOnScreen(tmpRect);
-        tmpRect.inset((int) dpToPx(-SWIPE_PADDING_DP), (int) dpToPx(-SWIPE_PADDING_DP));
+        tmpRect.inset((int) FloatingWindowUtil.dpToPx(mDisplayMetrics, -SWIPE_PADDING_DP),
+                (int) FloatingWindowUtil.dpToPx(mDisplayMetrics, -SWIPE_PADDING_DP));
         touchRegion.op(tmpRect, Region.Op.UNION);
         mDismissButton.getBoundsOnScreen(tmpRect);
         touchRegion.op(tmpRect, Region.Op.UNION);
@@ -301,8 +305,8 @@ public class ScreenshotView extends FrameLayout implements
     private void startInputListening() {
         stopInputListening();
         mInputMonitor = new InputMonitorCompat("Screenshot", Display.DEFAULT_DISPLAY);
-        mInputMonitor.getInputReceiver(Looper.getMainLooper(), Choreographer.getInstance(),
-                ev -> {
+        mInputEventReceiver = mInputMonitor.getInputReceiver(
+                Looper.getMainLooper(), Choreographer.getInstance(), ev -> {
                     if (ev instanceof MotionEvent) {
                         MotionEvent event = (MotionEvent) ev;
                         if (event.getActionMasked() == MotionEvent.ACTION_DOWN
@@ -314,10 +318,14 @@ public class ScreenshotView extends FrameLayout implements
                 });
     }
 
-    private void stopInputListening() {
+    void stopInputListening() {
         if (mInputMonitor != null) {
             mInputMonitor.dispose();
             mInputMonitor = null;
+        }
+        if (mInputEventReceiver != null) {
+            mInputEventReceiver.dispose();
+            mInputEventReceiver = null;
         }
     }
 
@@ -358,7 +366,7 @@ public class ScreenshotView extends FrameLayout implements
         mEditChip = requireNonNull(mActionsContainer.findViewById(R.id.screenshot_edit_chip));
         mScrollChip = requireNonNull(mActionsContainer.findViewById(R.id.screenshot_scroll_chip));
 
-        int swipePaddingPx = (int) dpToPx(SWIPE_PADDING_DP);
+        int swipePaddingPx = (int) FloatingWindowUtil.dpToPx(mDisplayMetrics, SWIPE_PADDING_DP);
         TouchDelegate previewDelegate = new TouchDelegate(
                 new Rect(swipePaddingPx, swipePaddingPx, swipePaddingPx, swipePaddingPx),
                 mScreenshotPreview);
@@ -383,6 +391,24 @@ public class ScreenshotView extends FrameLayout implements
         // Get focus so that the key events go to the layout.
         setFocusableInTouchMode(true);
         requestFocus();
+
+        mSwipeDismissHandler = new SwipeDismissHandler(mContext, mScreenshotStatic,
+                new SwipeDismissHandler.SwipeDismissCallbacks() {
+                    @Override
+                    public void onInteraction() {
+                        mCallbacks.onUserInteraction();
+                    }
+
+                    @Override
+                    public void onDismiss() {
+                        if (DEBUG_DISMISS) {
+                            Log.d(ScreenshotView.TAG, "dismiss triggered via swipe gesture");
+                        }
+                        mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_SWIPE_DISMISSED, 0,
+                                mPackageName);
+                        mCallbacks.onDismiss();
+                    }
+                });
     }
 
     View getScreenshotPreview() {
@@ -408,6 +434,10 @@ public class ScreenshotView extends FrameLayout implements
 
     void setScreenshot(Bitmap bitmap, Insets screenInsets) {
         mScreenshotPreview.setImageDrawable(createScreenDrawable(mResources, bitmap, screenInsets));
+    }
+
+    void setPackageName(String packageName) {
+        mPackageName = packageName;
     }
 
     void updateInsets(WindowInsets insets) {
@@ -586,7 +616,8 @@ public class ScreenshotView extends FrameLayout implements
                     if (DEBUG_INPUT) {
                         Log.d(TAG, "dismiss button clicked");
                     }
-                    mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_EXPLICIT_DISMISSAL);
+                    mUiEventLogger.log(
+                            ScreenshotEvent.SCREENSHOT_EXPLICIT_DISMISSAL, 0, mPackageName);
                     animateDismissal();
                 });
                 mDismissButton.setAlpha(1);
@@ -622,7 +653,7 @@ public class ScreenshotView extends FrameLayout implements
 
         ArrayList<ScreenshotActionChip> chips = new ArrayList<>();
 
-        mShareChip.setContentDescription(mContext.getString(com.android.internal.R.string.share));
+        mShareChip.setContentDescription(mContext.getString(R.string.screenshot_share_description));
         mShareChip.setIcon(Icon.createWithResource(mContext, R.drawable.ic_screenshot_share), true);
         mShareChip.setOnClickListener(v -> {
             mShareChip.setIsPending(true);
@@ -634,7 +665,7 @@ public class ScreenshotView extends FrameLayout implements
         });
         chips.add(mShareChip);
 
-        mEditChip.setContentDescription(mContext.getString(R.string.screenshot_edit_label));
+        mEditChip.setContentDescription(mContext.getString(R.string.screenshot_edit_description));
         mEditChip.setIcon(Icon.createWithResource(mContext, R.drawable.ic_screenshot_edit), true);
         mEditChip.setOnClickListener(v -> {
             mEditChip.setIsPending(true);
@@ -699,24 +730,25 @@ public class ScreenshotView extends FrameLayout implements
 
     void setChipIntents(ScreenshotController.SavedImageData imageData) {
         mShareChip.setOnClickListener(v -> {
-            mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_SHARE_TAPPED);
+            mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_SHARE_TAPPED, 0, mPackageName);
             startSharedTransition(
                     imageData.shareTransition.get());
         });
         mEditChip.setOnClickListener(v -> {
-            mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_EDIT_TAPPED);
+            mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_EDIT_TAPPED, 0, mPackageName);
             startSharedTransition(
                     imageData.editTransition.get());
         });
         mScreenshotPreview.setOnClickListener(v -> {
-            mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_PREVIEW_TAPPED);
+            mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_PREVIEW_TAPPED, 0, mPackageName);
             startSharedTransition(
                     imageData.editTransition.get());
         });
         if (mQuickShareChip != null) {
             mQuickShareChip.setPendingIntent(imageData.quickShareAction.actionIntent,
                     () -> {
-                        mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_SMART_ACTION_TAPPED);
+                        mUiEventLogger.log(
+                                ScreenshotEvent.SCREENSHOT_SMART_ACTION_TAPPED, 0, mPackageName);
                         animateDismissal();
                     });
         }
@@ -746,7 +778,8 @@ public class ScreenshotView extends FrameLayout implements
                 actionChip.setIcon(smartAction.getIcon(), false);
                 actionChip.setPendingIntent(smartAction.actionIntent,
                         () -> {
-                            mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_SMART_ACTION_TAPPED);
+                            mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_SMART_ACTION_TAPPED,
+                                    0, mPackageName);
                             animateDismissal();
                         });
                 actionChip.setAlpha(1);
@@ -845,8 +878,8 @@ public class ScreenshotView extends FrameLayout implements
             @Override
             public void onAnimationEnd(Animator animation) {
                 super.onAnimationEnd(animation);
-                        mCallbacks.onDismiss();
-                    }
+                mCallbacks.onDismiss();
+            }
         });
         animSet.start();
     }
@@ -920,38 +953,7 @@ public class ScreenshotView extends FrameLayout implements
     }
 
     void animateDismissal() {
-        animateDismissal(createScreenshotTranslateDismissAnimation());
-    }
-
-    private void animateDismissal(Animator dismissAnimation) {
-        mDismissAnimation = dismissAnimation;
-        mDismissAnimation.addListener(new AnimatorListenerAdapter() {
-            private boolean mCancelled = false;
-
-            @Override
-            public void onAnimationCancel(Animator animation) {
-                super.onAnimationCancel(animation);
-                if (DEBUG_ANIM) {
-                    Log.d(TAG, "Cancelled dismiss animation");
-                }
-                mCancelled = true;
-            }
-
-            @Override
-            public void onAnimationEnd(Animator animation) {
-                super.onAnimationEnd(animation);
-                if (!mCancelled) {
-                    if (DEBUG_ANIM) {
-                        Log.d(TAG, "after dismiss animation, calling onDismissRunnable.run()");
-                    }
-                    mCallbacks.onDismiss();
-                }
-            }
-        });
-        if (DEBUG_ANIM) {
-            Log.d(TAG, "Starting dismiss animation");
-        }
-        mDismissAnimation.start();
+        mSwipeDismissHandler.dismiss();
     }
 
     void reset() {
@@ -965,6 +967,7 @@ public class ScreenshotView extends FrameLayout implements
             }
             mDismissAnimation.cancel();
         }
+        mSwipeDismissHandler.cancel();
         if (DEBUG_WINDOW) {
             Log.d(TAG, "removing OnComputeInternalInsetsListener");
         }
@@ -1028,8 +1031,8 @@ public class ScreenshotView extends FrameLayout implements
         xAnim.setInterpolator(mAccelerateInterpolator);
         xAnim.setDuration(SCREENSHOT_DISMISS_X_DURATION_MS);
         float deltaX = mDirectionLTR
-                    ? -1 * (mScreenshotPreviewBorder.getX() + mScreenshotPreviewBorder.getWidth())
-                    : (mDisplayMetrics.widthPixels - mScreenshotPreviewBorder.getX());
+                ? -1 * (mScreenshotPreviewBorder.getX() + mScreenshotPreviewBorder.getWidth())
+                : (mDisplayMetrics.widthPixels - mScreenshotPreviewBorder.getX());
         xAnim.addUpdateListener(animation -> {
             float currXDelta = MathUtils.lerp(0, deltaX, animation.getAnimatedFraction());
             mScreenshotStatic.setTranslationX(currXDelta);
@@ -1084,132 +1087,6 @@ public class ScreenshotView extends FrameLayout implements
                     new ColorDrawable(Color.BLACK), insetDrawable});
         } else {
             return insetDrawable;
-        }
-    }
-
-    private float dpToPx(float dp) {
-        return dp * mDisplayMetrics.densityDpi / (float) DisplayMetrics.DENSITY_DEFAULT;
-    }
-
-    class SwipeDismissHandler implements OnTouchListener {
-        // distance needed to register a dismissal
-        private static final float DISMISS_DISTANCE_THRESHOLD_DP = 20;
-
-        private final GestureDetector mGestureDetector;
-
-        private float mStartX;
-        // Keeps track of the most recent direction (between the last two move events).
-        // -1 for left; +1 for right.
-        private int mDirectionX;
-        private float mPreviousX;
-
-        SwipeDismissHandler() {
-            GestureDetector.OnGestureListener gestureListener = new SwipeDismissGestureListener();
-            mGestureDetector = new GestureDetector(mContext, gestureListener);
-        }
-
-        @Override
-        public boolean onTouch(View view, MotionEvent event) {
-            boolean gestureResult = mGestureDetector.onTouchEvent(event);
-            mCallbacks.onUserInteraction();
-            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                mStartX = event.getRawX();
-                mPreviousX = mStartX;
-                return true;
-            } else if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-                if (mDismissAnimation != null && mDismissAnimation.isRunning()) {
-                    return true;
-                }
-                if (isPastDismissThreshold()) {
-                    if (DEBUG_DISMISS) {
-                        Log.d(TAG, "dismiss triggered via swipe gesture");
-                    }
-                    mUiEventLogger.log(ScreenshotEvent.SCREENSHOT_SWIPE_DISMISSED);
-                    animateDismissal(createSwipeDismissAnimation());
-                } else {
-                    // if we've moved, but not past the threshold, start the return animation
-                    if (DEBUG_DISMISS) {
-                        Log.d(TAG, "swipe gesture abandoned");
-                    }
-                    createSwipeReturnAnimation().start();
-                }
-                return true;
-            }
-            return gestureResult;
-        }
-
-        class SwipeDismissGestureListener extends GestureDetector.SimpleOnGestureListener {
-            @Override
-            public boolean onScroll(
-                    MotionEvent ev1, MotionEvent ev2, float distanceX, float distanceY) {
-                mScreenshotStatic.setTranslationX(ev2.getRawX() - mStartX);
-                mDirectionX = (ev2.getRawX() < mPreviousX) ? -1 : 1;
-                mPreviousX = ev2.getRawX();
-                return true;
-            }
-
-            @Override
-            public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX,
-                    float velocityY) {
-                if (mScreenshotStatic.getTranslationX() * velocityX > 0
-                        && (mDismissAnimation == null || !mDismissAnimation.isRunning())) {
-                    animateDismissal(createSwipeDismissAnimation(velocityX / (float) 1000));
-                    return true;
-                }
-                return false;
-            }
-        }
-
-        private boolean isPastDismissThreshold() {
-            float translationX = mScreenshotStatic.getTranslationX();
-            // Determines whether the absolute translation from the start is in the same direction
-            // as the current movement. For example, if the user moves most of the way to the right,
-            // but then starts dragging back left, we do not dismiss even though the absolute
-            // distance is greater than the threshold.
-            if (translationX * mDirectionX > 0) {
-                return Math.abs(translationX) >= dpToPx(DISMISS_DISTANCE_THRESHOLD_DP);
-            }
-            return false;
-        }
-
-        private ValueAnimator createSwipeDismissAnimation() {
-            return createSwipeDismissAnimation(1);
-        }
-
-        private ValueAnimator createSwipeDismissAnimation(float velocity) {
-            // velocity is measured in pixels per millisecond
-            velocity = Math.min(3, Math.max(1, velocity));
-            ValueAnimator anim = ValueAnimator.ofFloat(0, 1);
-            float startX = mScreenshotStatic.getTranslationX();
-            // make sure the UI gets all the way off the screen in the direction of movement
-            // (the actions container background is guaranteed to be both the leftmost and
-            // rightmost UI element in LTR and RTL)
-            float finalX = startX < 0
-                    ? -1 * mActionsContainerBackground.getRight()
-                    : mDisplayMetrics.widthPixels;
-            float distance = Math.abs(finalX - startX);
-
-            anim.addUpdateListener(animation -> {
-                float translation = MathUtils.lerp(startX, finalX, animation.getAnimatedFraction());
-                mScreenshotStatic.setTranslationX(translation);
-                setAlpha(1 - animation.getAnimatedFraction());
-            });
-            anim.setDuration((long) (distance / Math.abs(velocity)));
-            return anim;
-        }
-
-        private ValueAnimator createSwipeReturnAnimation() {
-            ValueAnimator anim = ValueAnimator.ofFloat(0, 1);
-            float startX = mScreenshotStatic.getTranslationX();
-            float finalX = 0;
-
-            anim.addUpdateListener(animation -> {
-                float translation = MathUtils.lerp(
-                        startX, finalX, animation.getAnimatedFraction());
-                mScreenshotStatic.setTranslationX(translation);
-            });
-
-            return anim;
         }
     }
 }

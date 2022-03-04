@@ -61,6 +61,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Map;
 
 @SmallTest
 @Presubmit
@@ -127,6 +128,17 @@ public class ApexManagerTest {
                 ParallelPackageParser.makeExecutorService());
 
         assertThat(mApexManager.getPackageInfo(TEST_APEX_PKG, 0)).isNull();
+    }
+
+    @Test
+    public void testGetApexSystemServices() throws RemoteException {
+        when(mApexService.getAllPackages()).thenReturn(createApexInfoForTestPkg(true, false));
+        mApexManager.scanApexPackagesTraced(mPackageParser2,
+                ParallelPackageParser.makeExecutorService());
+
+        Map<String, String> services = mApexManager.getApexSystemServices();
+        assertThat(services).hasSize(1);
+        assertThat(services).containsKey("com.android.apex.test.ApexSystemService");
     }
 
     @Test
@@ -345,24 +357,6 @@ public class ApexManagerTest {
         PackageManagerException e = expectThrows(PackageManagerException.class,
                 () -> mApexManager.installPackage(apex, mPackageParser2));
         assertThat(e).hasMessageThat().contains("It is forbidden to install new APEX packages");
-    }
-
-    @Test
-    public void testInstallPackageDowngrade() throws Exception {
-        File activeApex = extractResource("test.apex_rebootless_v2",
-                "test.rebootless_apex_v2.apex");
-        ApexInfo activeApexInfo = createApexInfo("test.apex_rebootless", 2, /* isActive= */ true,
-                /* isFactory= */ false, activeApex);
-        when(mApexService.getAllPackages()).thenReturn(new ApexInfo[]{activeApexInfo});
-        mApexManager.scanApexPackagesTraced(mPackageParser2,
-                ParallelPackageParser.makeExecutorService());
-
-        File installedApex = extractResource("test.apex_rebootless_v1",
-                "test.rebootless_apex_v1.apex");
-        PackageManagerException e = expectThrows(PackageManagerException.class,
-                () -> mApexManager.installPackage(installedApex, mPackageParser2));
-        assertThat(e).hasMessageThat().contains(
-                "Downgrade of APEX package test.apex.rebootless is not allowed");
     }
 
     @Test

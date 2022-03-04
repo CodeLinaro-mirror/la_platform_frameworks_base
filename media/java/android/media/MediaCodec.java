@@ -60,10 +60,10 @@ import java.util.concurrent.locks.ReentrantLock;
  with {@link MediaExtractor}, {@link MediaSync}, {@link MediaMuxer}, {@link MediaCrypto},
  {@link MediaDrm}, {@link Image}, {@link Surface}, and {@link AudioTrack}.)
  <p>
- <center><object style="width: 540px; height: 205px;" type="image/svg+xml"
-   data="../../../images/media/mediacodec_buffers.svg"><img
-   src="../../../images/media/mediacodec_buffers.png" style="width: 540px; height: 205px"
-   alt="MediaCodec buffer flow diagram"></object></center>
+ <center>
+   <img src="../../../images/media/mediacodec_buffers.svg" style="width: 540px; height: 205px"
+       alt="MediaCodec buffer flow diagram">
+ </center>
  <p>
  In broad terms, a codec processes input data to generate output data. It processes data
  asynchronously and uses a set of input and output buffers. At a simplistic level, you request
@@ -268,10 +268,10 @@ import java.util.concurrent.locks.ReentrantLock;
  Uninitialized, Configured and Error, whereas the Executing state conceptually progresses through
  three sub-states: Flushed, Running and End-of-Stream.
  <p>
- <center><object style="width: 516px; height: 353px;" type="image/svg+xml"
-   data="../../../images/media/mediacodec_states.svg"><img
-   src="../../../images/media/mediacodec_states.png" style="width: 519px; height: 356px"
-   alt="MediaCodec state diagram"></object></center>
+ <center>
+   <img src="../../../images/media/mediacodec_states.svg" style="width: 519px; height: 356px"
+       alt="MediaCodec state diagram">
+ </center>
  <p>
  When you create a codec using one of the factory methods, the codec is in the Uninitialized
  state. First, you need to configure it via {@link #configure configure(&hellip;)}, which brings
@@ -513,10 +513,10 @@ import java.util.concurrent.locks.ReentrantLock;
  Similarly, upon an initial call to {@code start} the codec will move directly to the Running
  sub-state and start passing available input buffers via the callback.
  <p>
- <center><object style="width: 516px; height: 353px;" type="image/svg+xml"
-   data="../../../images/media/mediacodec_async_states.svg"><img
-   src="../../../images/media/mediacodec_async_states.png" style="width: 516px; height: 353px"
-   alt="MediaCodec state diagram for asynchronous operation"></object></center>
+ <center>
+   <img src="../../../images/media/mediacodec_async_states.svg" style="width: 516px; height: 353px"
+       alt="MediaCodec state diagram for asynchronous operation">
+ </center>
  <p>
  MediaCodec is typically used like this in asynchronous mode:
  <pre class=prettyprint>
@@ -5106,7 +5106,6 @@ final public class MediaCodec {
         public MediaImage(
                 @NonNull ByteBuffer buffer, @NonNull ByteBuffer info, boolean readOnly,
                 long timestamp, int xOffset, int yOffset, @Nullable Rect cropRect) {
-            mFormat = ImageFormat.YUV_420_888;
             mTimestamp = timestamp;
             mIsImageValid = true;
             mIsReadOnly = buffer.isReadOnly();
@@ -5118,6 +5117,11 @@ final public class MediaCodec {
             mInfo = info;
 
             mBufferContext = 0;
+
+            int cbPlaneOffset = -1;
+            int crPlaneOffset = -1;
+            int planeOffsetInc = -1;
+            int pixelStride = -1;
 
             // read media-info.  See MediaImage2
             if (info.remaining() == 104) {
@@ -5136,14 +5140,27 @@ final public class MediaCodec {
                             "unsupported size: " + mWidth + "x" + mHeight);
                 }
                 int bitDepth = info.getInt();
-                if (bitDepth != 8) {
+                if (bitDepth != 8 && bitDepth != 10) {
                     throw new UnsupportedOperationException("unsupported bit depth: " + bitDepth);
                 }
                 int bitDepthAllocated = info.getInt();
-                if (bitDepthAllocated != 8) {
+                if (bitDepthAllocated != 8 && bitDepthAllocated != 16) {
                     throw new UnsupportedOperationException(
                             "unsupported allocated bit depth: " + bitDepthAllocated);
                 }
+                if (bitDepth == 8 && bitDepthAllocated == 8) {
+                    mFormat = ImageFormat.YUV_420_888;
+                    planeOffsetInc = 1;
+                    pixelStride = 2;
+                } else if (bitDepth == 10 && bitDepthAllocated == 16) {
+                    mFormat = ImageFormat.YCBCR_P010;
+                    planeOffsetInc = 2;
+                    pixelStride = 4;
+                } else {
+                    throw new UnsupportedOperationException("couldn't infer ImageFormat"
+                      + " bitDepth: " + bitDepth + " bitDepthAllocated: " + bitDepthAllocated);
+                }
+
                 mPlanes = new MediaPlane[numPlanes];
                 for (int ix = 0; ix < numPlanes; ix++) {
                     int planeOffset = info.getInt();
@@ -5165,10 +5182,29 @@ final public class MediaCodec {
                     buffer.limit(buffer.position() + Utils.divUp(bitDepth, 8)
                             + (mHeight / vert - 1) * rowInc + (mWidth / horiz - 1) * colInc);
                     mPlanes[ix] = new MediaPlane(buffer.slice(), rowInc, colInc);
+                    if ((mFormat == ImageFormat.YUV_420_888 || mFormat == ImageFormat.YCBCR_P010)
+                            && ix == 1) {
+                        cbPlaneOffset = planeOffset;
+                    } else if ((mFormat == ImageFormat.YUV_420_888
+                            || mFormat == ImageFormat.YCBCR_P010) && ix == 2) {
+                        crPlaneOffset = planeOffset;
+                    }
                 }
             } else {
                 throw new UnsupportedOperationException(
                         "unsupported info length: " + info.remaining());
+            }
+
+            // Validate chroma semiplanerness.
+            if (mFormat == ImageFormat.YCBCR_P010) {
+                if (crPlaneOffset != cbPlaneOffset + planeOffsetInc) {
+                    throw new UnsupportedOperationException("Invalid plane offsets"
+                    + " cbPlaneOffset: " + cbPlaneOffset + " crPlaneOffset: " + crPlaneOffset);
+                }
+                if (mPlanes[1].getPixelStride() != pixelStride
+                        || mPlanes[2].getPixelStride() != pixelStride) {
+                    throw new UnsupportedOperationException("Invalid pixelStride");
+                }
             }
 
             if (cropRect == null) {

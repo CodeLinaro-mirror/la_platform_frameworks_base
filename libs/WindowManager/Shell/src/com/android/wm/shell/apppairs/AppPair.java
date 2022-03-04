@@ -21,9 +21,9 @@ import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.view.WindowManagerPolicyConstants.SPLIT_DIVIDER_LAYER;
 
-import static com.android.wm.shell.common.split.SplitLayout.SPLIT_POSITION_BOTTOM_OR_RIGHT;
-import static com.android.wm.shell.common.split.SplitLayout.SPLIT_POSITION_TOP_OR_LEFT;
-import static com.android.wm.shell.common.split.SplitLayout.SPLIT_POSITION_UNDEFINED;
+import static com.android.wm.shell.common.split.SplitScreenConstants.SPLIT_POSITION_BOTTOM_OR_RIGHT;
+import static com.android.wm.shell.common.split.SplitScreenConstants.SPLIT_POSITION_TOP_OR_LEFT;
+import static com.android.wm.shell.common.split.SplitScreenConstants.SPLIT_POSITION_UNDEFINED;
 import static com.android.wm.shell.protolog.ShellProtoLogGroup.WM_SHELL_TASK_ORG;
 
 import android.app.ActivityManager;
@@ -131,7 +131,8 @@ class AppPair implements ShellTaskOrganizer.TaskListener, SplitLayout.SplitLayou
         mSplitLayout = new SplitLayout(TAG + "SplitDivider",
                 mDisplayController.getDisplayContext(mRootTaskInfo.displayId),
                 mRootTaskInfo.configuration, this /* layoutChangeListener */,
-                mParentContainerCallbacks, mDisplayImeController, mController.getTaskOrganizer());
+                mParentContainerCallbacks, mDisplayImeController, mController.getTaskOrganizer(),
+                true /* applyDismissingParallax */);
         mDisplayInsetsController.addInsetsChangedListener(mRootTaskInfo.displayId, mSplitLayout);
 
         final WindowContainerToken token1 = task1.token;
@@ -232,7 +233,7 @@ class AppPair implements ShellTaskOrganizer.TaskListener, SplitLayout.SplitLayou
 
             if (mSplitLayout != null
                     && mSplitLayout.updateConfiguration(mRootTaskInfo.configuration)) {
-                onLayoutChanged(mSplitLayout);
+                onLayoutSizeChanged(mSplitLayout);
             }
         } else if (taskInfo.taskId == getTaskId1()) {
             mTaskInfo1 = taskInfo;
@@ -290,8 +291,10 @@ class AppPair implements ShellTaskOrganizer.TaskListener, SplitLayout.SplitLayou
         final String innerPrefix = prefix + "  ";
         final String childPrefix = innerPrefix + "  ";
         pw.println(prefix + this);
-        pw.println(innerPrefix + "Root taskId=" + getRootTaskId()
-                + " winMode=" + mRootTaskInfo.getWindowingMode());
+        if (mRootTaskInfo != null) {
+            pw.println(innerPrefix + "Root taskId=" + mRootTaskInfo.taskId
+                    + " winMode=" + mRootTaskInfo.getWindowingMode());
+        }
         if (mTaskInfo1 != null) {
             pw.println(innerPrefix + "1 taskId=" + mTaskInfo1.taskId
                     + " winMode=" + mTaskInfo1.getWindowingMode());
@@ -313,13 +316,19 @@ class AppPair implements ShellTaskOrganizer.TaskListener, SplitLayout.SplitLayou
     }
 
     @Override
-    public void onLayoutChanging(SplitLayout layout) {
+    public void onLayoutPositionChanging(SplitLayout layout) {
         mSyncQueue.runInSync(t ->
                 layout.applySurfaceChanges(t, mTaskLeash1, mTaskLeash2, mDimLayer1, mDimLayer2));
     }
 
     @Override
-    public void onLayoutChanged(SplitLayout layout) {
+    public void onLayoutSizeChanging(SplitLayout layout) {
+        mSyncQueue.runInSync(t ->
+                layout.applySurfaceChanges(t, mTaskLeash1, mTaskLeash2, mDimLayer1, mDimLayer2));
+    }
+
+    @Override
+    public void onLayoutSizeChanged(SplitLayout layout) {
         final WindowContainerTransaction wct = new WindowContainerTransaction();
         layout.applyTaskChanges(wct, mTaskInfo1, mTaskInfo2);
         mSyncQueue.queue(wct);
@@ -328,9 +337,9 @@ class AppPair implements ShellTaskOrganizer.TaskListener, SplitLayout.SplitLayou
     }
 
     @Override
-    public void onLayoutShifted(int offsetX, int offsetY, SplitLayout layout) {
+    public void setLayoutOffsetTarget(int offsetX, int offsetY, SplitLayout layout) {
         final WindowContainerTransaction wct = new WindowContainerTransaction();
-        layout.applyLayoutShifted(wct, offsetX, offsetY, mTaskInfo1, mTaskInfo2);
+        layout.applyLayoutOffsetTarget(wct, offsetX, offsetY, mTaskInfo1, mTaskInfo2);
         mController.getTaskOrganizer().applyTransaction(wct);
     }
 }

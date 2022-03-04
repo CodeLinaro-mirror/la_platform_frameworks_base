@@ -181,6 +181,22 @@ public final class DeviceConfig {
     public static final String NAMESPACE_CONNECTIVITY = "connectivity";
 
     /**
+     * Namespace for CaptivePortalLogin module.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_CAPTIVEPORTALLOGIN = "captive_portal_login";
+
+    /**
+     * Namespace for Tethering module.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_TETHERING = "tethering";
+
+    /**
      * Namespace for content capture feature used by on-device machine intelligence
      * to provide suggestions in a privacy-safe manner.
      *
@@ -296,6 +312,14 @@ public final class DeviceConfig {
      */
     @SystemApi
     public static final String NAMESPACE_NETD_NATIVE = "netd_native";
+
+    /**
+     * Namespace for all Android NNAPI related features.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_NNAPI_NATIVE = "nnapi_native";
 
     /**
      * Namespace for features related to the Package Manager Service.
@@ -440,6 +464,13 @@ public final class DeviceConfig {
     public static final String NAMESPACE_STORAGE_NATIVE_BOOT = "storage_native_boot";
 
     /**
+     * Namespace for all Supplemental Api related features.
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_SUPPLEMENTAL_API = "supplemental_api";
+
+    /**
      * Namespace for all SurfaceFlinger features that are used at the native level.
      * These features are applied on boot or after reboot.
      *
@@ -473,6 +504,13 @@ public final class DeviceConfig {
      */
     @SystemApi
     public static final String NAMESPACE_SYSTEM_TIME = "system_time";
+
+    /**
+     * Namespace for TARE configurations.
+     *
+     * @hide
+     */
+    public static final String NAMESPACE_TARE = "tare";
 
     /**
      * Telephony related properties.
@@ -533,6 +571,14 @@ public final class DeviceConfig {
     public static final String NAMESPACE_WINDOW_MANAGER_NATIVE_BOOT = "window_manager_native_boot";
 
     /**
+     * Definitions for selection toolbar related functions.
+     *
+     * @hide
+     */
+    @TestApi
+    public static final String NAMESPACE_SELECTION_TOOLBAR = "selection_toolbar";
+
+    /**
      * List of namespaces which can be read without READ_DEVICE_CONFIG permission
      *
      * @hide
@@ -540,7 +586,7 @@ public final class DeviceConfig {
     @NonNull
     private static final List<String> PUBLIC_NAMESPACES =
             Arrays.asList(NAMESPACE_TEXTCLASSIFIER, NAMESPACE_RUNTIME, NAMESPACE_STATSD_JAVA,
-                    NAMESPACE_STATSD_JAVA_BOOT);
+                    NAMESPACE_STATSD_JAVA_BOOT, NAMESPACE_SELECTION_TOOLBAR);
     /**
      * Privacy related properties definitions.
      *
@@ -617,6 +663,14 @@ public final class DeviceConfig {
     public static final String NAMESPACE_GAME_OVERLAY = "game_overlay";
 
     /**
+     * Namespace for Android Virtualization Framework related features accessible by native code.
+     *
+     * @hide
+     */
+    public static final String NAMESPACE_VIRTUALIZATION_FRAMEWORK_NATIVE =
+            "virtualization_framework_native";
+
+    /**
      * Namespace for Constrain Display APIs related features.
      *
      * @hide
@@ -631,6 +685,23 @@ public final class DeviceConfig {
      */
     @TestApi
     public static final String NAMESPACE_APP_COMPAT_OVERRIDES = "app_compat_overrides";
+
+    /**
+     * Namespace for all ultra wideband (uwb) related features.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_UWB = "uwb";
+
+    /**
+     * Namespace for AmbientContextEventManagerService related features.
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String NAMESPACE_AMBIENT_CONTEXT_MANAGER_SERVICE =
+            "ambient_context_manager_service";
 
     private static final Object sLock = new Object();
     @GuardedBy("sLock")
@@ -714,7 +785,7 @@ public final class DeviceConfig {
      * @param name      The name of the property to look up.
      * @param defaultValue The value to return if the property does not exist or has no non-null
      *                     value.
-     * @return the correspondfing value, or defaultValue if none exists.
+     * @return the corresponding value, or defaultValue if none exists.
      * @hide
      */
     @SystemApi

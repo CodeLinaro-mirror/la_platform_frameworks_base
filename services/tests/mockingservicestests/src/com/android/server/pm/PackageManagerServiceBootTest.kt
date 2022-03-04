@@ -33,6 +33,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
+import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentMatchers.anyBoolean
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.ArgumentMatchers.argThat
@@ -62,7 +63,8 @@ class PackageManagerServiceBootTest {
                 false /*isEngBuild*/,
                 false /*isUserDebugBuild*/,
                 Build.VERSION_CODES.CUR_DEVELOPMENT,
-                Build.VERSION.INCREMENTAL)
+                Build.VERSION.INCREMENTAL,
+                false /*snapshotEnabled*/)
     }
 
     @Test
@@ -120,7 +122,8 @@ class PackageManagerServiceBootTest {
         whenever(rule.mocks().packageParser.parsePackage(
                 argThat { path: File -> path.path.contains("a.data.package") },
                 anyInt(),
-                anyBoolean()))
+                anyBoolean(),
+                any()))
                 .thenThrow(PackageManagerException(
                         PackageManager.INSTALL_FAILED_INVALID_APK, "Oh no!"))
         val pm = createPackageManagerService()

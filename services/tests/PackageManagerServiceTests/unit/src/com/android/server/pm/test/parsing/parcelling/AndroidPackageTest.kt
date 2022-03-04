@@ -23,18 +23,7 @@ import android.content.pm.FeatureGroupInfo
 import android.content.pm.FeatureInfo
 import android.content.pm.PackageManager
 import android.content.pm.SigningDetails
-import android.content.pm.parsing.ParsingPackage
-import android.content.pm.parsing.component.ParsedActivity
-import android.content.pm.parsing.component.ParsedAttribution
-import android.content.pm.parsing.component.ParsedComponent
-import android.content.pm.parsing.component.ParsedInstrumentation
-import android.content.pm.parsing.component.ParsedIntentInfo
-import android.content.pm.parsing.component.ParsedPermission
-import android.content.pm.parsing.component.ParsedPermissionGroup
-import android.content.pm.parsing.component.ParsedProcess
-import android.content.pm.parsing.component.ParsedProvider
-import android.content.pm.parsing.component.ParsedService
-import android.content.pm.parsing.component.ParsedUsesPermission
+import com.android.server.pm.pkg.parsing.ParsingPackage
 import android.net.Uri
 import android.os.Bundle
 import android.os.Parcelable
@@ -43,14 +32,24 @@ import android.util.SparseArray
 import android.util.SparseIntArray
 import com.android.internal.R
 import com.android.server.pm.parsing.pkg.AndroidPackage
-import com.android.server.pm.parsing.pkg.AndroidPackageUtils
 import com.android.server.pm.parsing.pkg.PackageImpl
+import com.android.server.pm.pkg.component.ParsedActivityImpl
+import com.android.server.pm.pkg.component.ParsedApexSystemServiceImpl
+import com.android.server.pm.pkg.component.ParsedAttributionImpl
+import com.android.server.pm.pkg.component.ParsedComponentImpl
+import com.android.server.pm.pkg.component.ParsedInstrumentationImpl
+import com.android.server.pm.pkg.component.ParsedIntentInfoImpl
+import com.android.server.pm.pkg.component.ParsedPermissionGroupImpl
+import com.android.server.pm.pkg.component.ParsedPermissionImpl
+import com.android.server.pm.pkg.component.ParsedProcessImpl
+import com.android.server.pm.pkg.component.ParsedProviderImpl
+import com.android.server.pm.pkg.component.ParsedServiceImpl
+import com.android.server.pm.pkg.component.ParsedUsesPermissionImpl
 import com.android.server.testutils.mockThrowOnUnmocked
 import com.android.server.testutils.whenever
 import java.security.KeyPairGenerator
 import java.security.PublicKey
 import kotlin.contracts.ExperimentalContracts
-import kotlin.reflect.KFunction1
 
 @ExperimentalContracts
 class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, PackageImpl::class) {
@@ -108,6 +107,16 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
         "setSplitCodePaths",
         "setSplitClassLoaderName",
         "setSplitHasCode",
+        // Tested through addUsesSdkLibrary
+        "addUsesSdkLibrary",
+        "getUsesSdkLibraries",
+        "getUsesSdkLibrariesVersionsMajor",
+        "getUsesSdkLibrariesCertDigests",
+        // Tested through addUsesStaticLibrary
+        "addUsesStaticLibrary",
+        "getUsesStaticLibraries",
+        "getUsesStaticLibrariesVersions",
+        "getUsesStaticLibrariesCertDigests"
     )
 
     override val baseParams = listOf(
@@ -132,6 +141,7 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
         AndroidPackage::getLabelRes,
         AndroidPackage::getLargestWidthLimitDp,
         AndroidPackage::getLogo,
+        AndroidPackage::getLocaleConfigRes,
         AndroidPackage::getManageSpaceActivityName,
         AndroidPackage::getMemtagMode,
         AndroidPackage::getMinSdkVersion,
@@ -159,6 +169,8 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
         AndroidPackage::getSecondaryNativeLibraryDir,
         AndroidPackage::getSharedUserId,
         AndroidPackage::getSharedUserLabel,
+        AndroidPackage::getSdkLibName,
+        AndroidPackage::getSdkLibVersionMajor,
         AndroidPackage::getStaticSharedLibName,
         AndroidPackage::getStaticSharedLibVersion,
         AndroidPackage::getTargetSandboxVersion,
@@ -212,6 +224,7 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
         AndroidPackage::isResizeableActivityViaSdkVersion,
         AndroidPackage::isRestoreAnyVersion,
         AndroidPackage::isSignedWithPlatformKey,
+        AndroidPackage::isSdkLibrary,
         AndroidPackage::isStaticSharedLibrary,
         AndroidPackage::isStub,
         AndroidPackage::isSupportsRtl,
@@ -225,11 +238,12 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
         AndroidPackage::isVendor,
         AndroidPackage::isVisibleToInstantApps,
         AndroidPackage::isVmSafeMode,
+        AndroidPackage::isResetEnabledSettingsOnAppDataCleared,
         AndroidPackage::getMaxAspectRatio,
         AndroidPackage::getMinAspectRatio,
         AndroidPackage::hasPreserveLegacyExternalStorage,
         AndroidPackage::hasRequestForegroundServiceExemption,
-        AndroidPackage::hasRequestRawExternalStorageAccess,
+        AndroidPackage::hasRequestRawExternalStorageAccess
     )
 
     override fun extraParams() = listOf(
@@ -255,13 +269,6 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
         adder(AndroidPackage::getUsesNativeLibraries, "testUsesNativeLibrary"),
         adder(AndroidPackage::getUsesOptionalLibraries, "testUsesOptionalLibrary"),
         adder(AndroidPackage::getUsesOptionalNativeLibraries, "testUsesOptionalNativeLibrary"),
-        adder(AndroidPackage::getUsesStaticLibraries, "testUsesStaticLibrary"),
-        getSetByValue(
-            AndroidPackage::getUsesStaticLibrariesVersions,
-            PackageImpl::addUsesStaticLibraryVersion,
-            (testCounter++).toLong(),
-            transformGet = { it?.singleOrNull() }
-        ),
         getSetByValue(
             AndroidPackage::areAttributionsUserVisible,
             ParsingPackage::setAttributionsAreUserVisible,
@@ -285,35 +292,46 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
             PackageImpl::addAttribution,
             Triple("testTag", 13, listOf("testInherit")),
             transformGet = { it.singleOrNull()?.let { Triple(it.tag, it.label, it.inheritFrom) } },
-            transformSet = { it?.let { ParsedAttribution(it.first, it.second, it.third) } }
+            transformSet = { it?.let {
+                ParsedAttributionImpl(
+                    it.first,
+                    it.second,
+                    it.third
+                )
+            } }
         ),
         getSetByValue2(
             AndroidPackage::getKeySetMapping,
             PackageImpl::addKeySet,
             "testKeySetName" to testKey(),
-            transformGet = { "testKeySetName" to it["testKeySetName"]?.singleOrNull() },
+            transformGet = { "testKeySetName" to it["testKeySetName"]?.singleOrNull() }
         ),
         getSetByValue(
             AndroidPackage::getPermissionGroups,
             PackageImpl::addPermissionGroup,
             "test.permission.GROUP",
             transformGet = { it.singleOrNull()?.name },
-            transformSet = { ParsedPermissionGroup().apply { setName(it) } }
+            transformSet = { ParsedPermissionGroupImpl()
+                .apply { setName(it) } }
         ),
         getSetByValue2(
             AndroidPackage::getPreferredActivityFilters,
             PackageImpl::addPreferredActivityFilter,
-            "TestClassName" to ParsedIntentInfo().apply {
-                addDataScheme("http")
-                addDataAuthority("test.pm.server.android.com", null)
+            "TestClassName" to ParsedIntentInfoImpl()
+                .apply {
+                intentFilter.apply {
+                    addDataScheme("http")
+                    addDataAuthority("test.pm.server.android.com", null)
+                }
             },
             transformGet = { it.singleOrNull()?.let { it.first to it.second } },
             compare = { first, second ->
                 equalBy(
                     first, second,
                     { it.first },
-                    { it.second.schemesIterator().asSequence().singleOrNull() },
-                    { it.second.authoritiesIterator().asSequence().singleOrNull()?.host },
+                    { it.second.intentFilter.schemesIterator().asSequence().singleOrNull() },
+                    { it.second.intentFilter.authoritiesIterator().asSequence()
+                        .singleOrNull()?.host }
                 )
             }
         ),
@@ -322,7 +340,7 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
             PackageImpl::addQueriesIntent,
             Intent(Intent.ACTION_VIEW, Uri.parse("https://test.pm.server.android.com")),
             transformGet = { it.singleOrNull() },
-            compare = { first, second -> first?.filterEquals(second) },
+            compare = { first, second -> first?.filterEquals(second) }
         ),
         getSetByValue(
             AndroidPackage::getRestrictUpdateHash,
@@ -345,46 +363,52 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
             }
         ),
         getSetByValue(
-            AndroidPackage::getUsesStaticLibrariesCertDigests,
-            PackageImpl::addUsesStaticLibraryCertDigests,
-            arrayOf("testCertDigest"),
-            transformGet = { it?.singleOrNull() },
-            compare = Array<String?>?::contentEquals
-        ),
-        getSetByValue(
             AndroidPackage::getActivities,
             PackageImpl::addActivity,
             "TestActivityName",
             transformGet = { it.singleOrNull()?.name.orEmpty() },
-            transformSet = { ParsedActivity().apply { name = it }.withMimeGroups() }
+            transformSet = { ParsedActivityImpl()
+                .apply { name = it }.withMimeGroups() }
+        ),
+        getSetByValue(
+            AndroidPackage::getApexSystemServices,
+            PackageImpl::addApexSystemService,
+            "TestApexSystemServiceName",
+            transformGet = { it.singleOrNull()?.name.orEmpty() },
+            transformSet = { ParsedApexSystemServiceImpl()
+                .apply { name = it } }
         ),
         getSetByValue(
             AndroidPackage::getReceivers,
             PackageImpl::addReceiver,
             "TestReceiverName",
             transformGet = { it.singleOrNull()?.name.orEmpty() },
-            transformSet = { ParsedActivity().apply { name = it }.withMimeGroups() }
+            transformSet = { ParsedActivityImpl()
+                .apply { name = it }.withMimeGroups() }
         ),
         getSetByValue(
             AndroidPackage::getServices,
             PackageImpl::addService,
             "TestServiceName",
             transformGet = { it.singleOrNull()?.name.orEmpty() },
-            transformSet = { ParsedService().apply { name = it }.withMimeGroups() }
+            transformSet = { ParsedServiceImpl()
+                .apply { name = it }.withMimeGroups() }
         ),
         getSetByValue(
             AndroidPackage::getProviders,
             PackageImpl::addProvider,
             "TestProviderName",
             transformGet = { it.singleOrNull()?.name.orEmpty() },
-            transformSet = { ParsedProvider().apply { name = it }.withMimeGroups() }
+            transformSet = { ParsedProviderImpl()
+                .apply { name = it }.withMimeGroups() }
         ),
         getSetByValue(
             AndroidPackage::getInstrumentations,
             PackageImpl::addInstrumentation,
             "TestInstrumentationName",
             transformGet = { it.singleOrNull()?.name.orEmpty() },
-            transformSet = { ParsedInstrumentation().apply { name = it } }
+            transformSet = { ParsedInstrumentationImpl()
+                .apply { name = it } }
         ),
         getSetByValue(
             AndroidPackage::getConfigPreferences,
@@ -409,7 +433,8 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
             PackageImpl::addPermission,
             "test.PERMISSION",
             transformGet = { it.singleOrNull()?.name.orEmpty() },
-            transformSet = { ParsedPermission().apply { name = it } }
+            transformSet = { ParsedPermissionImpl()
+                .apply { name = it } }
         ),
         getSetByValue(
             AndroidPackage::getUsesPermissions,
@@ -420,7 +445,12 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
                 it.filterNot { it.name == "test.implicit.PERMISSION" }
                     .singleOrNull()?.name.orEmpty()
             },
-            transformSet = { ParsedUsesPermission(it, 0) }
+            transformSet = {
+                ParsedUsesPermissionImpl(
+                    it,
+                    0
+                )
+            }
         ),
         getSetByValue(
             AndroidPackage::getRequestedFeatures,
@@ -438,18 +468,19 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
                     first, second,
                     { it.size() },
                     { it.keyAt(0) },
-                    { it.valueAt(0) },
+                    { it.valueAt(0) }
                 )
             }
         ),
         getSetByValue(
             AndroidPackage::getProcesses,
             PackageImpl::setProcesses,
-            mapOf("testProcess" to ParsedProcess().apply { name = "testProcessName" }),
+            mapOf("testProcess" to ParsedProcessImpl()
+                .apply { name = "testProcessName" }),
             compare = { first, second ->
                 equalBy(
                     first, second,
-                    { it["testProcess"]?.name },
+                    { it["testProcess"]?.name }
                 )
             }
         ),
@@ -469,10 +500,15 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
                     PackageManager.Property::getName,
                     PackageManager.Property::getClassName,
                     PackageManager.Property::getPackageName,
-                    PackageManager.Property::getString,
+                    PackageManager.Property::getString
                 )
             }
         ),
+        getSetByValue(
+            AndroidPackage::shouldInheritKeyStoreKeys,
+            ParsingPackage::setInheritKeyStoreKeys,
+            true
+        )
     )
 
     override fun initialObject() = PackageImpl.forParsing(
@@ -516,6 +552,9 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
         .setSplitClassLoaderName(0, "testSplitClassLoaderNameZero")
         .setSplitClassLoaderName(1, "testSplitClassLoaderNameOne")
 
+        .addUsesSdkLibrary("testSdk", 2L, arrayOf("testCertDigest1"))
+        .addUsesStaticLibrary("testStatic", 3L, arrayOf("testCertDigest2"))
+
     override fun extraAssertions(before: Parcelable, after: Parcelable) {
         super.extraAssertions(before, after)
         after as PackageImpl
@@ -556,16 +595,30 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
             expect.that(it.get(0)).asList().containsExactly(-1)
             expect.that(it.get(1)).asList().containsExactly(0)
         }
+
+        expect.that(after.usesSdkLibraries).containsExactly("testSdk")
+        expect.that(after.usesSdkLibrariesVersionsMajor).asList().containsExactly(2L)
+        expect.that(after.usesSdkLibrariesCertDigests!!.size).isEqualTo(1)
+        expect.that(after.usesSdkLibrariesCertDigests!![0]).asList()
+                .containsExactly("testCertDigest1")
+
+        expect.that(after.usesStaticLibraries).containsExactly("testStatic")
+        expect.that(after.usesStaticLibrariesVersions).asList().containsExactly(3L)
+        expect.that(after.usesStaticLibrariesCertDigests!!.size).isEqualTo(1)
+        expect.that(after.usesStaticLibrariesCertDigests!![0]).asList()
+                .containsExactly("testCertDigest2")
     }
 
     private fun testKey() = KeyPairGenerator.getInstance("RSA")
         .generateKeyPair()
         .public
 
-    private fun <T : ParsedComponent> T.withMimeGroups() = apply {
+    private fun <T : ParsedComponentImpl> T.withMimeGroups() = apply {
         val componentName = name
-        addIntent(ParsedIntentInfo().apply {
-            addMimeGroup("$componentName/mimeGroup")
+        addIntent(ParsedIntentInfoImpl().apply {
+            intentFilter.apply {
+                addMimeGroup("$componentName/mimeGroup")
+            }
         })
     }
 }

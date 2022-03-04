@@ -44,7 +44,7 @@ public final class SingleKeyGestureDetector {
     private static final int MSG_KEY_VERY_LONG_PRESS = 1;
     private static final int MSG_KEY_DELAYED_PRESS = 2;
 
-    private volatile int mKeyPressCounter;
+    private int mKeyPressCounter;
     private boolean mBeganFromNonInteractive = false;
 
     private final ArrayList<SingleKeyRule> mRules = new ArrayList();
@@ -222,7 +222,6 @@ public final class SingleKeyGestureDetector {
             reset();
         }
         mDownKeyCode = keyCode;
-        mLastDownTime = event.getDownTime();
 
         // Picks a new rule, return if no rule picked.
         if (mActiveRule == null) {
@@ -237,12 +236,21 @@ public final class SingleKeyGestureDetector {
                     break;
                 }
             }
+            mLastDownTime = 0;
         }
         if (mActiveRule == null) {
             return;
         }
 
-        if (mKeyPressCounter == 0) {
+        final long keyDownInterval = event.getDownTime() - mLastDownTime;
+        mLastDownTime = event.getDownTime();
+        if (keyDownInterval >= MULTI_PRESS_TIMEOUT) {
+            mKeyPressCounter = 1;
+        } else {
+            mKeyPressCounter++;
+        }
+
+        if (mKeyPressCounter == 1) {
             if (mActiveRule.supportLongPress()) {
                 final Message msg = mHandler.obtainMessage(MSG_KEY_LONG_PRESS, keyCode, 0,
                         mActiveRule);
@@ -262,16 +270,16 @@ public final class SingleKeyGestureDetector {
             mHandler.removeMessages(MSG_KEY_DELAYED_PRESS);
 
             // Trigger multi press immediately when reach max count.( > 1)
-            if (mKeyPressCounter == mActiveRule.getMaxMultiPressCount() - 1) {
+            if (mActiveRule.getMaxMultiPressCount() > 1
+                    && mKeyPressCounter == mActiveRule.getMaxMultiPressCount()) {
                 if (DEBUG) {
                     Log.i(TAG, "Trigger multi press " + mActiveRule.toString() + " for it"
-                            + " reached the max count " + (mKeyPressCounter + 1));
+                            + " reached the max count " + mKeyPressCounter);
                 }
                 final Message msg = mHandler.obtainMessage(MSG_KEY_DELAYED_PRESS, keyCode,
-                        mKeyPressCounter + 1, mActiveRule);
+                        mKeyPressCounter, mActiveRule);
                 msg.setAsynchronous(true);
                 mHandler.sendMessage(msg);
-                mKeyPressCounter = 0;
             }
         }
     }
@@ -287,6 +295,7 @@ public final class SingleKeyGestureDetector {
         if (mHandledByLongPress) {
             mHandledByLongPress = false;
             mKeyPressCounter = 0;
+            mActiveRule = null;
             return true;
         }
 
@@ -300,16 +309,17 @@ public final class SingleKeyGestureDetector {
                         1, mActiveRule);
                 msg.setAsynchronous(true);
                 mHandler.sendMessage(msg);
-                reset();
+                mActiveRule = null;
                 return true;
             }
 
             // This could be a multi-press.  Wait a little bit longer to confirm.
-            mKeyPressCounter++;
-            Message msg = mHandler.obtainMessage(MSG_KEY_DELAYED_PRESS, mActiveRule.mKeyCode,
-                    mKeyPressCounter, mActiveRule);
-            msg.setAsynchronous(true);
-            mHandler.sendMessageDelayed(msg, MULTI_PRESS_TIMEOUT);
+            if (mKeyPressCounter < mActiveRule.getMaxMultiPressCount()) {
+                Message msg = mHandler.obtainMessage(MSG_KEY_DELAYED_PRESS, mActiveRule.mKeyCode,
+                        mKeyPressCounter, mActiveRule);
+                msg.setAsynchronous(true);
+                mHandler.sendMessageDelayed(msg, MULTI_PRESS_TIMEOUT);
+            }
             return true;
         }
         reset();
@@ -369,9 +379,6 @@ public final class SingleKeyGestureDetector {
                 Log.wtf(TAG, "No active rule.");
                 return;
             }
-            // We count the press count when interceptKeyUp. Reset the counter here to prevent if
-            // the multi-press or press happened but the count is less than max multi-press count.
-            mKeyPressCounter = 0;
 
             final int keyCode = msg.arg1;
             final int pressCount = msg.arg2;

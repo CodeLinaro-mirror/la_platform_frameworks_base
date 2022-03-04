@@ -42,6 +42,7 @@ import com.android.systemui.statusbar.AlertingNotificationManager;
 import com.android.systemui.statusbar.AlertingNotificationManagerTest;
 import com.android.systemui.statusbar.notification.collection.NotificationEntryBuilder;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -60,7 +61,7 @@ public class HeadsUpManagerTest extends AlertingNotificationManagerTest {
 
     private final class TestableHeadsUpManager extends HeadsUpManager {
         TestableHeadsUpManager(Context context) {
-            super(context);
+            super(context, mock(HeadsUpManagerLogger.class));
             mMinimumDisplayTime = TEST_MINIMUM_DISPLAY_TIME;
             mAutoDismissNotificationDecay = TEST_AUTO_DISMISS_TIME;
         }
@@ -77,7 +78,13 @@ public class HeadsUpManagerTest extends AlertingNotificationManagerTest {
 
         mHeadsUpManager = new TestableHeadsUpManager(mContext);
         super.setUp();
+        mHeadsUpManager.mHandler.removeCallbacksAndMessages(null);
         mHeadsUpManager.mHandler = mTestHandler;
+    }
+
+    @After
+    public void tearDown() {
+        mTestHandler.removeCallbacksAndMessages(null);
     }
 
     @Test

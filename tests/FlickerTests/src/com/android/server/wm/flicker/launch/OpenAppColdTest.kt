@@ -16,7 +16,6 @@
 
 package com.android.server.wm.flicker.launch
 
-import android.platform.test.annotations.Postsubmit
 import android.platform.test.annotations.Presubmit
 import androidx.test.filters.FlakyTest
 import androidx.test.filters.RequiresDevice
@@ -25,7 +24,6 @@ import com.android.server.wm.flicker.FlickerTestParameter
 import com.android.server.wm.flicker.FlickerTestParameterFactory
 import com.android.server.wm.flicker.annotation.Group1
 import com.android.server.wm.flicker.helpers.setRotation
-import com.android.server.wm.flicker.startRotation
 import com.android.server.wm.flicker.dsl.FlickerBuilder
 import com.android.server.wm.flicker.rules.RemoveAllTasksButHomeRule.Companion.removeAllTasksButHome
 import org.junit.FixMethodOrder
@@ -60,13 +58,13 @@ class OpenAppColdTest(testSpec: FlickerTestParameter) : OpenAppTransition(testSp
     /**
      * Defines the transition used to run the test
      */
-    override val transition: FlickerBuilder.(Map<String, Any?>) -> Unit
+    override val transition: FlickerBuilder.() -> Unit
         get() = {
-            super.transition(this, it)
+            super.transition(this)
             setup {
                 eachRun {
                     removeAllTasksButHome()
-                    this.setRotation(testSpec.config.startRotation)
+                    this.setRotation(testSpec.startRotation)
                 }
             }
             teardown {
@@ -81,6 +79,11 @@ class OpenAppColdTest(testSpec: FlickerTestParameter) : OpenAppTransition(testSp
         }
 
     /** {@inheritDoc} */
+    @FlakyTest(bugId = 206753786)
+    @Test
+    override fun statusBarLayerRotatesScales() = super.statusBarLayerRotatesScales()
+
+    /** {@inheritDoc} */
     @FlakyTest
     @Test
     override fun navBarLayerRotatesAndScales() {
@@ -88,12 +91,12 @@ class OpenAppColdTest(testSpec: FlickerTestParameter) : OpenAppTransition(testSp
     }
 
     /** {@inheritDoc} */
-    @Postsubmit
+    @Presubmit
     @Test
     override fun appLayerReplacesLauncher() = super.appLayerReplacesLauncher()
 
     /** {@inheritDoc} */
-    @Postsubmit
+    @Presubmit
     @Test
     override fun appWindowReplacesLauncherAsTopWindow() =
         super.appWindowReplacesLauncherAsTopWindow()
@@ -112,6 +115,11 @@ class OpenAppColdTest(testSpec: FlickerTestParameter) : OpenAppTransition(testSp
     @Presubmit
     @Test
     override fun navBarWindowIsVisible() = super.navBarWindowIsVisible()
+
+    /** {@inheritDoc} */
+    @FlakyTest(bugId = 213852103)
+    @Test
+    override fun entireScreenCovered() = super.entireScreenCovered()
 
     companion object {
         /**

@@ -22,6 +22,7 @@ import android.annotation.StyleRes;
 import android.annotation.SuppressLint;
 import android.annotation.UiThread;
 import android.app.Activity;
+import android.app.ActivityOptions;
 import android.app.ActivityThread;
 import android.app.AppGlobals;
 import android.content.Context;
@@ -43,18 +44,24 @@ import java.util.ArrayList;
  */
 public interface SplashScreen {
     /**
-     * Force splash screen to be empty.
+     * The splash screen style is not defined.
      * @hide
+     */
+    int SPLASH_SCREEN_STYLE_UNDEFINED = -1;
+    /**
+     * Flag to be used with {@link ActivityOptions#setSplashScreenStyle}, to avoid showing the
+     * splash screen icon of the launched activity
      */
     int SPLASH_SCREEN_STYLE_EMPTY = 0;
     /**
-     * Force splash screen to show icon.
-     * @hide
+     * Flag to be used with {@link ActivityOptions#setSplashScreenStyle}, to show the splash screen
+     * icon of the launched activity.
      */
     int SPLASH_SCREEN_STYLE_ICON = 1;
 
     /** @hide */
     @IntDef(prefix = { "SPLASH_SCREEN_STYLE_" }, value = {
+            SPLASH_SCREEN_STYLE_UNDEFINED,
             SPLASH_SCREEN_STYLE_EMPTY,
             SPLASH_SCREEN_STYLE_ICON
     })
@@ -92,6 +99,9 @@ public interface SplashScreen {
      * overrides and persists the theme used for the {@link SplashScreen} of this application.
      * <p>
      * To reset to the default theme, set this the themeId to {@link Resources#ID_NULL}.
+     * <p>
+     * <b>Note:</b> The theme name must be stable across versions, otherwise it won't be found
+     * after your application is updated.
      */
     void setSplashScreenTheme(@StyleRes int themeId);
 

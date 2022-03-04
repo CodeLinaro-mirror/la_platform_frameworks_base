@@ -113,7 +113,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.content.pm.PermissionInfo;
 import android.content.pm.UserInfo;
-import android.content.pm.parsing.component.ParsedAttribution;
+import com.android.server.pm.pkg.component.ParsedAttribution;
 import android.database.ContentObserver;
 import android.hardware.camera2.CameraDevice.CAMERA_AUDIO_RESTRICTION;
 import android.net.Uri;
@@ -1314,6 +1314,7 @@ public class AppOpsService extends IAppOpsService.Stub {
                                     event.getAttributionFlags(), event.getAttributionChainId());
                         }
 
+                        events = isRunning ? mInProgressEvents : mPausedInProgressEvents;
                         InProgressStartOpEvent newEvent = events.get(binders.get(i));
                         if (newEvent != null) {
                             newEvent.numUnfinishedStarts += numPreviousUnfinishedStarts - 1;
@@ -2375,7 +2376,13 @@ public class AppOpsService extends IAppOpsService.Stub {
                 return;
             }
 
-            if (!isCallerSystem && !isCallerInstrumented && !isCallerPermissionController) {
+            boolean doesCallerHavePermission = mContext.checkPermission(
+                    android.Manifest.permission.GET_HISTORICAL_APP_OPS_STATS,
+                    Binder.getCallingPid(), Binder.getCallingUid())
+                    == PackageManager.PERMISSION_GRANTED;
+
+            if (!isCallerSystem && !isCallerInstrumented && !isCallerPermissionController
+                    && !doesCallerHavePermission) {
                 mHandler.post(() -> callback.sendResult(new Bundle()));
                 return;
             }
@@ -3307,13 +3314,21 @@ public class AppOpsService extends IAppOpsService.Stub {
         Objects.requireNonNull(packageName);
         try {
             verifyAndGetBypass(uid, packageName, null);
-            if (filterAppAccessUnlocked(packageName)) {
-                return AppOpsManager.MODE_ERRORED;
+            // When the caller is the system, it's possible that the packageName is the special
+            // one (e.g., "root") which isn't actually existed.
+            if (resolveUid(packageName) == uid
+                    || (isPackageExisted(packageName) && !filterAppAccessUnlocked(packageName))) {
+                return AppOpsManager.MODE_ALLOWED;
             }
-            return AppOpsManager.MODE_ALLOWED;
+            return AppOpsManager.MODE_ERRORED;
         } catch (SecurityException ignored) {
             return AppOpsManager.MODE_ERRORED;
         }
+    }
+
+    private boolean isPackageExisted(String packageName) {
+        return LocalServices.getService(PackageManagerInternal.class)
+                .getPackageStateInternal(packageName) != null;
     }
 
     /**

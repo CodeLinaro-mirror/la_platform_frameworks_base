@@ -87,6 +87,17 @@ public enum ScrimState {
         }
     },
 
+    AUTH_SCRIMMED_SHADE {
+        @Override
+        public void prepare(ScrimState previousState) {
+            // notif & behind scrim alpha values are determined by ScrimController#applyState
+            // based on the shade expansion
+
+            mFrontTint = Color.BLACK;
+            mFrontAlpha = .66f;
+        }
+    },
+
     AUTH_SCRIMMED {
         @Override
         public void prepare(ScrimState previousState) {
@@ -142,7 +153,7 @@ public enum ScrimState {
         // to make sure correct color is returned before "prepare" is called
         @Override
         public int getBehindTint() {
-            return Color.BLACK;
+            return DEBUG_MODE ? DEBUG_BEHIND_TINT : Color.BLACK;
         }
     },
 
@@ -180,7 +191,7 @@ public enum ScrimState {
             // by animating the screen off via the LightRevelScrim. In either case we just need to
             // set our state.
             mAnimateChange = mDozeParameters.shouldControlScreenOff()
-                    && !mDozeParameters.shouldControlUnlockedScreenOff();
+                    && !mDozeParameters.shouldShowLightRevealScrim();
         }
 
         @Override
@@ -253,6 +264,12 @@ public enum ScrimState {
         }
     };
 
+    private static final boolean DEBUG_MODE = false;
+
+    private static final int DEBUG_NOTIFICATIONS_TINT = Color.RED;
+    private static final int DEBUG_FRONT_TINT = Color.GREEN;
+    private static final int DEBUG_BEHIND_TINT = Color.BLUE;
+
     boolean mBlankScreen = false;
     long mAnimationDuration = ScrimController.ANIMATION_DURATION;
     int mFrontTint = Color.TRANSPARENT;
@@ -312,15 +329,15 @@ public enum ScrimState {
     }
 
     public int getFrontTint() {
-        return mFrontTint;
+        return DEBUG_MODE ? DEBUG_FRONT_TINT : mFrontTint;
     }
 
     public int getBehindTint() {
-        return mBehindTint;
+        return DEBUG_MODE ? DEBUG_BEHIND_TINT : mBehindTint;
     }
 
     public int getNotifTint() {
-        return mNotifTint;
+        return DEBUG_MODE ? DEBUG_NOTIFICATIONS_TINT : mNotifTint;
     }
 
     public long getAnimationDuration() {

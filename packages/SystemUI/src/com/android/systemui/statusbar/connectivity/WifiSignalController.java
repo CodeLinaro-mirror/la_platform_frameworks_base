@@ -26,34 +26,24 @@ import android.net.NetworkCapabilities;
 import android.net.NetworkScoreManager;
 import android.net.wifi.WifiManager;
 import android.text.Html;
-import android.text.TextUtils;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.settingslib.SignalIcon.IconGroup;
 import com.android.settingslib.SignalIcon.MobileIconGroup;
-import com.android.settingslib.SignalIcon.State;
 import com.android.settingslib.graph.SignalDrawable;
 import com.android.settingslib.mobile.TelephonyIcons;
 import com.android.settingslib.wifi.WifiStatusTracker;
 import com.android.systemui.R;
-import com.android.systemui.flags.FeatureFlags;
-import com.android.systemui.statusbar.connectivity.NetworkController.IconState;
-import com.android.systemui.statusbar.connectivity.NetworkController.MobileDataIndicators;
-import com.android.systemui.statusbar.connectivity.NetworkController.SignalCallback;
-import com.android.systemui.statusbar.connectivity.NetworkController.WifiIndicators;
 
 import java.io.PrintWriter;
-import java.util.Objects;
 
 /** */
-public class WifiSignalController extends
-        SignalController<WifiSignalController.WifiState, IconGroup> {
+public class WifiSignalController extends SignalController<WifiState, IconGroup> {
     private final boolean mHasMobileDataFeature;
     private final WifiStatusTracker mWifiTracker;
     private final IconGroup mUnmergedWifiIconGroup = WifiIcons.UNMERGED_WIFI;
     private final MobileIconGroup mCarrierMergedWifiIconGroup = TelephonyIcons.CARRIER_MERGED_WIFI;
     private final WifiManager mWifiManager;
-    private final boolean mProviderModelSetting;
 
     public WifiSignalController(
             Context context,
@@ -62,8 +52,7 @@ public class WifiSignalController extends
             NetworkControllerImpl networkController,
             WifiManager wifiManager,
             ConnectivityManager connectivityManager,
-            NetworkScoreManager networkScoreManager,
-            FeatureFlags featureFlags) {
+            NetworkScoreManager networkScoreManager) {
         super("WifiSignalController", context, NetworkCapabilities.TRANSPORT_WIFI,
                 callbackHandler, networkController);
         mWifiManager = wifiManager;
@@ -76,7 +65,6 @@ public class WifiSignalController extends
                     new WifiTrafficStateCallback());
         }
         mCurrentState.iconGroup = mLastState.iconGroup = mUnmergedWifiIconGroup;
-        mProviderModelSetting = featureFlags.isProviderModelSettingEnabled();
     }
 
     @Override
@@ -91,7 +79,7 @@ public class WifiSignalController extends
     @Override
     public void notifyListeners(SignalCallback callback) {
         if (mCurrentState.isCarrierMerged) {
-            if (mCurrentState.isDefault) {
+            if (mCurrentState.isDefault || !mNetworkController.isRadioOn()) {
                 notifyListenersForCarrierWifi(callback);
             }
         } else {
@@ -113,37 +101,22 @@ public class WifiSignalController extends
         if (mCurrentState.inetCondition == 0) {
             contentDescription += ("," + mContext.getString(R.string.data_connection_no_internet));
         }
-        if (mProviderModelSetting) {
-            IconState statusIcon = new IconState(
-                    wifiVisible, getCurrentIconId(), contentDescription);
-            IconState qsIcon = null;
-            if (mCurrentState.isDefault || (!mNetworkController.isRadioOn()
-                    && !mNetworkController.isEthernetDefault())) {
-                qsIcon = new IconState(mCurrentState.connected,
-                        mWifiTracker.isCaptivePortal ? R.drawable.ic_qs_wifi_disconnected
-                                : getQsCurrentIconId(), contentDescription);
-            }
-            WifiIndicators wifiIndicators = new WifiIndicators(
-                    mCurrentState.enabled, statusIcon, qsIcon,
-                    ssidPresent && mCurrentState.activityIn,
-                    ssidPresent && mCurrentState.activityOut,
-                    wifiDesc, mCurrentState.isTransient, mCurrentState.statusLabel
-            );
-            callback.setWifiIndicators(wifiIndicators);
-        } else {
-            IconState statusIcon = new IconState(
-                    wifiVisible, getCurrentIconId(), contentDescription);
-            IconState qsIcon = new IconState(mCurrentState.connected,
+        IconState statusIcon = new IconState(
+                wifiVisible, getCurrentIconId(), contentDescription);
+        IconState qsIcon = null;
+        if (mCurrentState.isDefault || (!mNetworkController.isRadioOn()
+                && !mNetworkController.isEthernetDefault())) {
+            qsIcon = new IconState(mCurrentState.connected,
                     mWifiTracker.isCaptivePortal ? R.drawable.ic_qs_wifi_disconnected
                             : getQsCurrentIconId(), contentDescription);
-            WifiIndicators wifiIndicators = new WifiIndicators(
-                    mCurrentState.enabled, statusIcon, qsIcon,
-                    ssidPresent && mCurrentState.activityIn,
-                    ssidPresent && mCurrentState.activityOut,
-                    wifiDesc, mCurrentState.isTransient, mCurrentState.statusLabel
-            );
-            callback.setWifiIndicators(wifiIndicators);
         }
+        WifiIndicators wifiIndicators = new WifiIndicators(
+                mCurrentState.enabled, statusIcon, qsIcon,
+                ssidPresent && mCurrentState.activityIn,
+                ssidPresent && mCurrentState.activityOut,
+                wifiDesc, mCurrentState.isTransient, mCurrentState.statusLabel
+        );
+        callback.setWifiIndicators(wifiIndicators);
     }
 
     private void notifyListenersForCarrierWifi(SignalCallback callback) {
@@ -270,52 +243,6 @@ public class WifiSignalController extends
         @Override
         public void onStateChanged(int state) {
             setActivity(state);
-        }
-    }
-
-    static class WifiState extends State {
-        public String ssid;
-        public boolean isTransient;
-        public boolean isDefault;
-        public String statusLabel;
-        public boolean isCarrierMerged;
-        public int subId;
-
-        @Override
-        public void copyFrom(State s) {
-            super.copyFrom(s);
-            WifiState state = (WifiState) s;
-            ssid = state.ssid;
-            isTransient = state.isTransient;
-            isDefault = state.isDefault;
-            statusLabel = state.statusLabel;
-            isCarrierMerged = state.isCarrierMerged;
-            subId = state.subId;
-        }
-
-        @Override
-        protected void toString(StringBuilder builder) {
-            super.toString(builder);
-            builder.append(",ssid=").append(ssid)
-                .append(",isTransient=").append(isTransient)
-                .append(",isDefault=").append(isDefault)
-                .append(",statusLabel=").append(statusLabel)
-                .append(",isCarrierMerged=").append(isCarrierMerged)
-                .append(",subId=").append(subId);
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (!super.equals(o)) {
-                return false;
-            }
-            WifiState other = (WifiState) o;
-            return Objects.equals(other.ssid, ssid)
-                    && other.isTransient == isTransient
-                    && other.isDefault == isDefault
-                    && TextUtils.equals(other.statusLabel, statusLabel)
-                    && other.isCarrierMerged == isCarrierMerged
-                    && other.subId == subId;
         }
     }
 }

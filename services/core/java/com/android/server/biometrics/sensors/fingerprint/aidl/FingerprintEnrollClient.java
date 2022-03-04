@@ -37,7 +37,9 @@ import android.util.Slog;
 import com.android.server.biometrics.HardwareAuthTokenUtils;
 import com.android.server.biometrics.sensors.BiometricNotificationUtils;
 import com.android.server.biometrics.sensors.BiometricUtils;
+import com.android.server.biometrics.sensors.ClientMonitorCallback;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
+import com.android.server.biometrics.sensors.ClientMonitorCompositeCallback;
 import com.android.server.biometrics.sensors.EnrollClient;
 import com.android.server.biometrics.sensors.SensorOverlays;
 import com.android.server.biometrics.sensors.fingerprint.FingerprintUtils;
@@ -57,7 +59,7 @@ class FingerprintEnrollClient extends EnrollClient<ISession> implements Udfps {
     private boolean mIsPointerDown;
 
     FingerprintEnrollClient(@NonNull Context context,
-            @NonNull LazyDaemon<ISession> lazyDaemon, @NonNull IBinder token,
+            @NonNull LazyDaemon<ISession> lazyDaemon, @NonNull IBinder token, long requestId,
             @NonNull ClientMonitorCallbackConverter listener, int userId,
             @NonNull byte[] hardwareAuthToken, @NonNull String owner,
             @NonNull BiometricUtils<Fingerprint> utils, int sensorId,
@@ -69,20 +71,22 @@ class FingerprintEnrollClient extends EnrollClient<ISession> implements Udfps {
         super(context, lazyDaemon, token, listener, userId, hardwareAuthToken, owner, utils,
                 0 /* timeoutSec */, BiometricsProtoEnums.MODALITY_FINGERPRINT, sensorId,
                 !sensorProps.isAnyUdfpsType() /* shouldVibrate */);
+        setRequestId(requestId);
         mSensorProps = sensorProps;
         mSensorOverlays = new SensorOverlays(udfpsOverlayController, sidefpsController);
         mMaxTemplatesPerUser = maxTemplatesPerUser;
 
         mEnrollReason = enrollReason;
         if (enrollReason == FingerprintManager.ENROLL_FIND_SENSOR) {
-            setShouldLog(false);
+            getLogger().disableMetrics();
         }
     }
 
     @NonNull
     @Override
-    protected Callback wrapCallbackForStart(@NonNull Callback callback) {
-        return new CompositeCallback(createALSCallback(true /* startWithClient */), callback);
+    protected ClientMonitorCallback wrapCallbackForStart(@NonNull ClientMonitorCallback callback) {
+        return new ClientMonitorCompositeCallback(
+                getLogger().createALSCallback(true /* startWithClient */), callback);
     }
 
     @Override

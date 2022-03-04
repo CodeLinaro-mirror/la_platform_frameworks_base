@@ -20,16 +20,18 @@ import static com.android.systemui.Dependency.TIME_TICK_HANDLER_NAME;
 
 import android.app.WallpaperManager;
 import android.content.Context;
+import android.hardware.devicestate.DeviceStateManager;
 import android.os.Handler;
 import android.os.PowerManager;
 import android.util.DisplayMetrics;
 
+import com.android.internal.jank.InteractionJankMonitor;
 import com.android.internal.logging.MetricsLogger;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.ViewMediatorCallback;
 import com.android.systemui.InitController;
+import com.android.systemui.accessibility.floatingmenu.AccessibilityFloatingMenuController;
 import com.android.systemui.animation.ActivityLaunchAnimator;
-import com.android.systemui.animation.DialogLaunchAnimator;
 import com.android.systemui.assist.AssistManager;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.classifier.FalsingCollector;
@@ -38,8 +40,8 @@ import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dagger.qualifiers.UiBackground;
 import com.android.systemui.demomode.DemoModeController;
-import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.FeatureFlags;
+import com.android.systemui.fragments.FragmentService;
 import com.android.systemui.keyguard.KeyguardUnlockAnimationController;
 import com.android.systemui.keyguard.KeyguardViewMediator;
 import com.android.systemui.keyguard.ScreenLifecycle;
@@ -48,7 +50,7 @@ import com.android.systemui.navigationbar.NavigationBarController;
 import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.PluginDependencyProvider;
 import com.android.systemui.recents.ScreenPinningRequest;
-import com.android.systemui.settings.brightness.BrightnessSlider;
+import com.android.systemui.settings.brightness.BrightnessSliderController;
 import com.android.systemui.shared.plugins.PluginManager;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.KeyguardIndicationController;
@@ -59,23 +61,21 @@ import com.android.systemui.statusbar.NotificationRemoteInputManager;
 import com.android.systemui.statusbar.NotificationShadeDepthController;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.NotificationViewHierarchyManager;
-import com.android.systemui.statusbar.OperatorNameViewController;
 import com.android.systemui.statusbar.PulseExpansionHandler;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.connectivity.NetworkController;
-import com.android.systemui.statusbar.events.SystemStatusAnimationScheduler;
 import com.android.systemui.statusbar.notification.DynamicPrivacyController;
+import com.android.systemui.statusbar.notification.NotifPipelineFlags;
 import com.android.systemui.statusbar.notification.NotificationEntryManager;
 import com.android.systemui.statusbar.notification.NotificationWakeUpCoordinator;
 import com.android.systemui.statusbar.notification.collection.legacy.VisualStabilityManager;
+import com.android.systemui.statusbar.notification.collection.render.NotifShadeEventSource;
 import com.android.systemui.statusbar.notification.init.NotificationsController;
-import com.android.systemui.statusbar.notification.interruption.BypassHeadsUpNotifier;
 import com.android.systemui.statusbar.notification.interruption.NotificationInterruptStateProvider;
 import com.android.systemui.statusbar.notification.logging.NotificationLogger;
 import com.android.systemui.statusbar.notification.row.NotificationGutsManager;
 import com.android.systemui.statusbar.phone.AutoHideController;
 import com.android.systemui.statusbar.phone.BiometricUnlockController;
-import com.android.systemui.statusbar.phone.CollapsedStatusBarFragmentLogger;
 import com.android.systemui.statusbar.phone.DozeParameters;
 import com.android.systemui.statusbar.phone.DozeScrimController;
 import com.android.systemui.statusbar.phone.DozeServiceHost;
@@ -83,23 +83,21 @@ import com.android.systemui.statusbar.phone.HeadsUpManagerPhone;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.statusbar.phone.KeyguardDismissUtil;
 import com.android.systemui.statusbar.phone.LightBarController;
-import com.android.systemui.statusbar.phone.LightsOutNotifController;
 import com.android.systemui.statusbar.phone.LockscreenGestureLogger;
 import com.android.systemui.statusbar.phone.LockscreenWallpaper;
 import com.android.systemui.statusbar.phone.NotificationIconAreaController;
 import com.android.systemui.statusbar.phone.PhoneStatusBarPolicy;
+import com.android.systemui.statusbar.phone.ScreenOffAnimationController;
 import com.android.systemui.statusbar.phone.ScrimController;
 import com.android.systemui.statusbar.phone.ShadeController;
 import com.android.systemui.statusbar.phone.StatusBar;
-import com.android.systemui.statusbar.phone.StatusBarIconController;
+import com.android.systemui.statusbar.phone.StatusBarHideIconsForBouncerManager;
 import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager;
-import com.android.systemui.statusbar.phone.StatusBarLocationPublisher;
-import com.android.systemui.statusbar.phone.StatusBarMoveFromCenterAnimationController;
 import com.android.systemui.statusbar.phone.StatusBarNotificationActivityStarter;
+import com.android.systemui.statusbar.phone.StatusBarSignalPolicy;
 import com.android.systemui.statusbar.phone.StatusBarTouchableRegionManager;
-import com.android.systemui.statusbar.phone.StatusBarWindowView;
-import com.android.systemui.statusbar.phone.UnlockedScreenOffAnimationController;
 import com.android.systemui.statusbar.phone.ongoingcall.OngoingCallController;
+import com.android.systemui.statusbar.phone.panelstate.PanelExpansionStateManager;
 import com.android.systemui.statusbar.policy.BatteryController;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
@@ -107,10 +105,8 @@ import com.android.systemui.statusbar.policy.ExtensionController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.UserInfoControllerImpl;
 import com.android.systemui.statusbar.policy.UserSwitcherController;
-import com.android.systemui.tuner.TunerService;
-import com.android.systemui.unfold.UnfoldLightRevealOverlayAnimation;
-import com.android.systemui.unfold.UnfoldTransitionWallpaperController;
-import com.android.systemui.unfold.config.UnfoldTransitionConfig;
+import com.android.systemui.statusbar.window.StatusBarWindowController;
+import com.android.systemui.statusbar.window.StatusBarWindowStateController;
 import com.android.systemui.util.WallpaperController;
 import com.android.systemui.util.concurrency.DelayableExecutor;
 import com.android.systemui.util.concurrency.MessageRouter;
@@ -142,24 +138,29 @@ public interface StatusBarPhoneModule {
     static StatusBar provideStatusBar(
             Context context,
             NotificationsController notificationsController,
+            FragmentService fragmentService,
             LightBarController lightBarController,
             AutoHideController autoHideController,
+            StatusBarWindowController statusBarWindowController,
+            StatusBarWindowStateController statusBarWindowStateController,
             KeyguardUpdateMonitor keyguardUpdateMonitor,
+            StatusBarSignalPolicy statusBarSignalPolicy,
             PulseExpansionHandler pulseExpansionHandler,
             NotificationWakeUpCoordinator notificationWakeUpCoordinator,
             KeyguardBypassController keyguardBypassController,
             KeyguardStateController keyguardStateController,
             HeadsUpManagerPhone headsUpManagerPhone,
             DynamicPrivacyController dynamicPrivacyController,
-            BypassHeadsUpNotifier bypassHeadsUpNotifier,
             FalsingManager falsingManager,
             FalsingCollector falsingCollector,
             BroadcastDispatcher broadcastDispatcher,
+            NotifShadeEventSource notifShadeEventSource,
             NotificationEntryManager notificationEntryManager,
             NotificationGutsManager notificationGutsManager,
             NotificationLogger notificationLogger,
             NotificationInterruptStateProvider notificationInterruptStateProvider,
             NotificationViewHierarchyManager notificationViewHierarchyManager,
+            PanelExpansionStateManager panelExpansionStateManager,
             KeyguardViewMediator keyguardViewMediator,
             DisplayMetrics displayMetrics,
             MetricsLogger metricsLogger,
@@ -179,6 +180,7 @@ public interface StatusBarPhoneModule {
             VisualStabilityManager visualStabilityManager,
             DeviceProvisionedController deviceProvisionedController,
             NavigationBarController navigationBarController,
+            AccessibilityFloatingMenuController accessibilityFloatingMenuController,
             Lazy<AssistManager> assistManagerLazy,
             ConfigurationController configurationController,
             NotificationShadeWindowController notificationShadeWindowController,
@@ -193,15 +195,12 @@ public interface StatusBarPhoneModule {
             DozeScrimController dozeScrimController,
             VolumeComponent volumeComponent,
             CommandQueue commandQueue,
-            CollapsedStatusBarFragmentLogger collapsedStatusBarFragmentLogger,
             StatusBarComponent.Factory statusBarComponentFactory,
             PluginManager pluginManager,
             Optional<LegacySplitScreen> splitScreenOptional,
-            LightsOutNotifController lightsOutNotifController,
             StatusBarNotificationActivityStarter.Builder
                     statusBarNotificationActivityStarterBuilder,
             ShadeController shadeController,
-            StatusBarWindowView statusBarWindowView,
             StatusBarKeyguardViewManager statusBarKeyguardViewManager,
             ViewMediatorCallback viewMediatorCallback,
             InitController initController,
@@ -210,23 +209,17 @@ public interface StatusBarPhoneModule {
             KeyguardDismissUtil keyguardDismissUtil,
             ExtensionController extensionController,
             UserInfoControllerImpl userInfoControllerImpl,
-            OperatorNameViewController.Factory operatorNameViewControllerFactory,
             PhoneStatusBarPolicy phoneStatusBarPolicy,
             KeyguardIndicationController keyguardIndicationController,
             DemoModeController demoModeController,
             Lazy<NotificationShadeDepthController> notificationShadeDepthController,
             StatusBarTouchableRegionManager statusBarTouchableRegionManager,
             NotificationIconAreaController notificationIconAreaController,
-            BrightnessSlider.Factory brightnessSliderFactory,
-            UnfoldTransitionConfig unfoldTransitionConfig,
-            Lazy<UnfoldLightRevealOverlayAnimation> unfoldLightRevealOverlayAnimation,
-            Lazy<UnfoldTransitionWallpaperController> unfoldTransitionWallpaperController,
-            Lazy<StatusBarMoveFromCenterAnimationController> statusBarMoveFromCenterAnimation,
+            BrightnessSliderController.Factory brightnessSliderFactory,
+            ScreenOffAnimationController screenOffAnimationController,
             WallpaperController wallpaperController,
             OngoingCallController ongoingCallController,
-            SystemStatusAnimationScheduler animationScheduler,
-            StatusBarLocationPublisher locationPublisher,
-            StatusBarIconController statusBarIconController,
+            StatusBarHideIconsForBouncerManager statusBarHideIconsForBouncerManager,
             LockscreenShadeTransitionController transitionController,
             FeatureFlags featureFlags,
             KeyguardUnlockAnimationController keyguardUnlockAnimationController,
@@ -234,33 +227,37 @@ public interface StatusBarPhoneModule {
             @Main DelayableExecutor delayableExecutor,
             @Main MessageRouter messageRouter,
             WallpaperManager wallpaperManager,
-            UnlockedScreenOffAnimationController unlockedScreenOffAnimationController,
             Optional<StartingSurface> startingSurfaceOptional,
-            TunerService tunerService,
-            DumpManager dumpManager,
             ActivityLaunchAnimator activityLaunchAnimator,
-            DialogLaunchAnimator dialogLaunchAnimator) {
+            NotifPipelineFlags notifPipelineFlags,
+            InteractionJankMonitor jankMonitor,
+            DeviceStateManager deviceStateManager) {
         return new StatusBar(
                 context,
                 notificationsController,
+                fragmentService,
                 lightBarController,
                 autoHideController,
+                statusBarWindowController,
+                statusBarWindowStateController,
                 keyguardUpdateMonitor,
+                statusBarSignalPolicy,
                 pulseExpansionHandler,
                 notificationWakeUpCoordinator,
                 keyguardBypassController,
                 keyguardStateController,
                 headsUpManagerPhone,
                 dynamicPrivacyController,
-                bypassHeadsUpNotifier,
                 falsingManager,
                 falsingCollector,
                 broadcastDispatcher,
+                notifShadeEventSource,
                 notificationEntryManager,
                 notificationGutsManager,
                 notificationLogger,
                 notificationInterruptStateProvider,
                 notificationViewHierarchyManager,
+                panelExpansionStateManager,
                 keyguardViewMediator,
                 displayMetrics,
                 metricsLogger,
@@ -280,6 +277,7 @@ public interface StatusBarPhoneModule {
                 visualStabilityManager,
                 deviceProvisionedController,
                 navigationBarController,
+                accessibilityFloatingMenuController,
                 assistManagerLazy,
                 configurationController,
                 notificationShadeWindowController,
@@ -294,14 +292,11 @@ public interface StatusBarPhoneModule {
                 dozeScrimController,
                 volumeComponent,
                 commandQueue,
-                collapsedStatusBarFragmentLogger,
                 statusBarComponentFactory,
                 pluginManager,
                 splitScreenOptional,
-                lightsOutNotifController,
                 statusBarNotificationActivityStarterBuilder,
                 shadeController,
-                statusBarWindowView,
                 statusBarKeyguardViewManager,
                 viewMediatorCallback,
                 initController,
@@ -310,7 +305,6 @@ public interface StatusBarPhoneModule {
                 keyguardDismissUtil,
                 extensionController,
                 userInfoControllerImpl,
-                operatorNameViewControllerFactory,
                 phoneStatusBarPolicy,
                 keyguardIndicationController,
                 demoModeController,
@@ -318,15 +312,10 @@ public interface StatusBarPhoneModule {
                 statusBarTouchableRegionManager,
                 notificationIconAreaController,
                 brightnessSliderFactory,
-                unfoldTransitionConfig,
-                unfoldLightRevealOverlayAnimation,
-                unfoldTransitionWallpaperController,
-                statusBarMoveFromCenterAnimation,
+                screenOffAnimationController,
                 wallpaperController,
                 ongoingCallController,
-                animationScheduler,
-                locationPublisher,
-                statusBarIconController,
+                statusBarHideIconsForBouncerManager,
                 transitionController,
                 featureFlags,
                 keyguardUnlockAnimationController,
@@ -334,11 +323,11 @@ public interface StatusBarPhoneModule {
                 delayableExecutor,
                 messageRouter,
                 wallpaperManager,
-                unlockedScreenOffAnimationController,
                 startingSurfaceOptional,
-                tunerService,
-                dumpManager,
                 activityLaunchAnimator,
-                dialogLaunchAnimator);
+                notifPipelineFlags,
+                jankMonitor,
+                deviceStateManager
+        );
     }
 }

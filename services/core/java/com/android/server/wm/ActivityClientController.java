@@ -49,6 +49,7 @@ import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
 import android.app.IActivityClientController;
+import android.app.ICompatCameraControlCallback;
 import android.app.IRequestFinishCallback;
 import android.app.PictureInPictureParams;
 import android.app.PictureInPictureUiState;
@@ -558,7 +559,7 @@ class ActivityClientController extends IActivityClientController.Stub {
                 final ActivityRecord below = ar.getTask().getActivity((r) -> !r.finishing,
                         ar, false /*includeBoundary*/, true /*traverseTopToBottom*/);
                 if (below != null && below.getUid() == ar.getUid()) {
-                    return below.appToken.asBinder();
+                    return below.token;
                 }
             }
         } finally {
@@ -764,6 +765,22 @@ class ActivityClientController extends IActivityClientController.Stub {
             ActivityRecord.splashScreenAttachedLocked(token);
         }
         Binder.restoreCallingIdentity(origId);
+    }
+
+    @Override
+    public void requestCompatCameraControl(IBinder token, boolean showControl,
+            boolean transformationApplied, ICompatCameraControlCallback callback) {
+        final long origId = Binder.clearCallingIdentity();
+        try {
+            synchronized (mGlobalLock) {
+                final ActivityRecord r = ActivityRecord.isInRootTaskLocked(token);
+                if (r != null) {
+                    r.updateCameraCompatState(showControl, transformationApplied, callback);
+                }
+            }
+        } finally {
+            Binder.restoreCallingIdentity(origId);
+        }
     }
 
     /**

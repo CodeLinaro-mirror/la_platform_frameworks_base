@@ -16,7 +16,6 @@
 
 package com.android.server.wm;
 
-import static android.Manifest.permission.DEVICE_POWER;
 import static android.Manifest.permission.HIDE_NON_SYSTEM_OVERLAY_WINDOWS;
 import static android.Manifest.permission.HIDE_OVERLAY_WINDOWS;
 import static android.Manifest.permission.INTERNAL_SYSTEM_WINDOW;
@@ -46,7 +45,6 @@ import android.content.ClipDescription;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ShortcutServiceInternal;
-import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.Region;
 import android.os.Binder;
@@ -74,6 +72,7 @@ import android.view.SurfaceControl;
 import android.view.SurfaceSession;
 import android.view.WindowManager;
 import android.window.ClientWindowFrames;
+import android.window.IOnBackInvokedCallback;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.os.logging.MetricsLoggerWrapper;
@@ -107,7 +106,6 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
 
     final boolean mCanCreateSystemApplicationOverlay;
     final boolean mCanHideNonSystemOverlayWindows;
-    final boolean mCanAcquireSleepToken;
     private AlertWindowNotification mAlertWindowNotification;
     private boolean mShowingAlertWindowNotificationAllowed;
     private boolean mClientDead = false;
@@ -134,8 +132,6 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
                         == PERMISSION_GRANTED;
         mCanStartTasksFromRecents = service.mContext.checkCallingOrSelfPermission(
                 START_TASKS_FROM_RECENTS) == PERMISSION_GRANTED;
-        mCanAcquireSleepToken = service.mContext.checkCallingOrSelfPermission(DEVICE_POWER)
-                == PERMISSION_GRANTED;
         mShowingAlertWindowNotificationAllowed = mService.mShowAlertWindowNotifications;
         mDragDropController = mService.mDragDropController;
         StringBuilder sb = new StringBuilder();
@@ -225,17 +221,17 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
 
     @Override
     public int relayout(IWindow window, WindowManager.LayoutParams attrs,
-            int requestedWidth, int requestedHeight, int viewFlags, int flags, long frameNumber,
+            int requestedWidth, int requestedHeight, int viewFlags, int flags,
             ClientWindowFrames outFrames, MergedConfiguration mergedConfiguration,
             SurfaceControl outSurfaceControl, InsetsState outInsetsState,
-            InsetsSourceControl[] outActiveControls, Point outSurfaceSize) {
+            InsetsSourceControl[] outActiveControls) {
         if (false) Slog.d(TAG_WM, ">>>>>> ENTERED relayout from "
                 + Binder.getCallingPid());
         Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, mRelayoutTag);
         int res = mService.relayoutWindow(this, window, attrs,
-                requestedWidth, requestedHeight, viewFlags, flags, frameNumber,
+                requestedWidth, requestedHeight, viewFlags, flags,
                 outFrames, mergedConfiguration, outSurfaceControl, outInsetsState,
-                outActiveControls, outSurfaceSize);
+                outActiveControls);
         Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
         if (false) Slog.d(TAG_WM, "<<<<<< EXITING relayout to "
                 + Binder.getCallingPid());
@@ -391,7 +387,7 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
                 final ShortcutServiceInternal shortcutService =
                         LocalServices.getService(ShortcutServiceInternal.class);
                 final Intent[] shortcutIntents = shortcutService.createShortcutIntents(
-                        callingUid, callingPackage, packageName, shortcutId,
+                        UserHandle.getUserId(callingUid), callingPackage, packageName, shortcutId,
                         user.getIdentifier(), callingPid, callingUid);
                 if (shortcutIntents == null || shortcutIntents.length == 0) {
                     throw new IllegalArgumentException("Invalid shortcut id");
@@ -489,6 +485,16 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
         final long ident = Binder.clearCallingIdentity();
         try {
             mService.reportSystemGestureExclusionChanged(this, window, exclusionRects);
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    @Override
+    public void reportKeepClearAreasChanged(IWindow window, List<Rect> keepClearAreas) {
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            mService.reportKeepClearAreasChanged(this, window, keepClearAreas);
         } finally {
             Binder.restoreCallingIdentity(ident);
         }
@@ -866,5 +872,11 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
         } finally {
             Binder.restoreCallingIdentity(origId);
         }
+    }
+
+    @Override
+    public void setOnBackInvokedCallback(IWindow iWindow,
+            IOnBackInvokedCallback iOnBackInvokedCallback) throws RemoteException {
+        // TODO: Set the callback to the WindowState of the window.
     }
 }

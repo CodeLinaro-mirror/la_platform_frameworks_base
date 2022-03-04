@@ -23,6 +23,9 @@ import static com.android.internal.inputmethod.InputConnectionProtoDumper.buildG
 import static com.android.internal.inputmethod.InputConnectionProtoDumper.buildGetTextAfterCursorProto;
 import static com.android.internal.inputmethod.InputConnectionProtoDumper.buildGetTextBeforeCursorProto;
 
+import static java.lang.annotation.RetentionPolicy.SOURCE;
+
+import android.annotation.AnyThread;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.os.Bundle;
@@ -33,6 +36,7 @@ import android.util.Log;
 import android.util.proto.ProtoOutputStream;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.ViewRootImpl;
 import android.view.inputmethod.CompletionInfo;
 import android.view.inputmethod.CorrectionInfo;
 import android.view.inputmethod.DumpableInputConnection;
@@ -40,12 +44,17 @@ import android.view.inputmethod.ExtractedTextRequest;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputContentInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.TextAttribute;
+import android.view.inputmethod.TextSnapshot;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.infra.AndroidFuture;
 import com.android.internal.view.IInputContext;
 
+import java.lang.annotation.Retention;
 import java.lang.ref.WeakReference;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -62,6 +71,87 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
     private static final String TAG = "RemoteInputConnectionImpl";
     private static final boolean DEBUG = false;
 
+    /**
+     * An upper limit of calling {@link InputConnection#endBatchEdit()}.
+     *
+     * <p>This is a safeguard against broken {@link InputConnection#endBatchEdit()} implementations,
+     * which are real as we've seen in Bug 208941904.  If the retry count reaches to the number
+     * defined here, we fall back into {@link InputMethodManager#restartInput(View)} as a
+     * workaround.</p>
+     */
+    private static final int MAX_END_BATCH_EDIT_RETRY = 16;
+
+    /**
+     * A lightweight per-process type cache to remember classes that never returns {@code false}
+     * from {@link InputConnection#endBatchEdit()}.  The implementation is optimized for simplicity
+     * and speed with accepting false-negatives in {@link #contains(Class)}.
+     */
+    private static final class KnownAlwaysTrueEndBatchEditCache {
+        @Nullable
+        private static volatile Class<?> sElement;
+        @Nullable
+        private static volatile Class<?>[] sArray;
+
+        /**
+         * Query if the specified {@link InputConnection} implementation is known to be broken, with
+         * allowing false-negative results.
+         *
+         * @param klass An implementation class of {@link InputConnection} to be tested.
+         * @return {@code true} if the specified type was passed to {@link #add(Class)}.
+         *         Note that there is a chance that you still receive {@code false} even if you
+         *         called {@link #add(Class)} (false-negative).
+         */
+        @AnyThread
+        static boolean contains(@NonNull Class<? extends InputConnection> klass) {
+            if (klass == sElement) {
+                return true;
+            }
+            final Class<?>[] array = sArray;
+            if (array == null) {
+                return false;
+            }
+            for (Class<?> item : array) {
+                if (item == klass) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Try to remember the specified {@link InputConnection} implementation as a known bad.
+         *
+         * <p>There is a chance that calling this method can accidentally overwrite existing
+         * cache entries. See the document of {@link #contains(Class)} for details.</p>
+         *
+         * @param klass The implementation class of {@link InputConnection} to be remembered.
+         */
+        @AnyThread
+        static void add(@NonNull Class<? extends InputConnection> klass) {
+            if (sElement == null) {
+                // OK to accidentally overwrite an existing element that was set by another thread.
+                sElement = klass;
+                return;
+            }
+
+            final Class<?>[] array = sArray;
+            final int arraySize = array != null ? array.length : 0;
+            final Class<?>[] newArray = new Class<?>[arraySize + 1];
+            for (int i = 0; i < arraySize; ++i) {
+                newArray[i] = array[i];
+            }
+            newArray[arraySize] = klass;
+
+            // OK to accidentally overwrite an existing array that was set by another thread.
+            sArray = newArray;
+        }
+    }
+
+    @Retention(SOURCE)
+    private @interface Dispatching {
+        boolean cancellable();
+    }
+
     @GuardedBy("mLock")
     @Nullable
     private InputConnection mInputConnection;
@@ -76,6 +166,9 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
 
     private final InputMethodManager mParentInputMethodManager;
     private final WeakReference<View> mServedView;
+
+    private final AtomicInteger mCurrentSessionId = new AtomicInteger(0);
+    private final AtomicBoolean mHasPendingInvalidation = new AtomicBoolean();
 
     public RemoteInputConnectionImpl(@NonNull Looper looper,
             @NonNull InputConnection inputConnection,
@@ -98,6 +191,14 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
     }
 
     /**
+     * @return {@code true} if there is a pending {@link InputMethodManager#invalidateInput(View)}
+     * call.
+     */
+    public boolean hasPendingInvalidation() {
+        return mHasPendingInvalidation.get();
+    }
+
+    /**
      * @return {@code true} until the target {@link InputConnection} receives
      * {@link InputConnection#closeConnection()} as a result of {@link #deactivate()}.
      */
@@ -116,10 +217,92 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
     }
 
     /**
+     * Schedule a task to execute
+     * {@link InputMethodManager#doInvalidateInput(RemoteInputConnectionImpl, TextSnapshot, int)}
+     * on the associated Handler if not yet scheduled.
+     *
+     * <p>By calling {@link InputConnection#takeSnapshot()} directly from the message loop, we can
+     * make sure that application code is not modifying text context in a reentrant manner.</p>
+     */
+    public void scheduleInvalidateInput() {
+        if (mHasPendingInvalidation.compareAndSet(false, true)) {
+            final int nextSessionId = mCurrentSessionId.incrementAndGet();
+            // By calling InputConnection#takeSnapshot() directly from the message loop, we can make
+            // sure that application code is not modifying text context in a reentrant manner.
+            // e.g. We may see methods like EditText#setText() in the callstack here.
+            mH.post(() -> {
+                try {
+                    if (isFinished()) {
+                        // This is a stale request, which can happen.  No need to show a warning
+                        // because this situation itself is not an error.
+                        return;
+                    }
+                    final InputConnection ic = getInputConnection();
+                    if (ic == null) {
+                        // This is a stale request, which can happen.  No need to show a warning
+                        // because this situation itself is not an error.
+                        return;
+                    }
+                    final View view = getServedView();
+                    if (view == null) {
+                        // This is a stale request, which can happen.  No need to show a warning
+                        // because this situation itself is not an error.
+                        return;
+                    }
+
+                    final Class<? extends InputConnection> icClass = ic.getClass();
+
+                    boolean alwaysTrueEndBatchEditDetected =
+                            KnownAlwaysTrueEndBatchEditCache.contains(icClass);
+
+                    if (!alwaysTrueEndBatchEditDetected) {
+                        // Clean up composing text and batch edit.
+                        final boolean supportsBatchEdit = ic.beginBatchEdit();
+                        ic.finishComposingText();
+                        if (supportsBatchEdit) {
+                            // Also clean up batch edit.
+                            int retryCount = 0;
+                            while (true) {
+                                if (!ic.endBatchEdit()) {
+                                    break;
+                                }
+                                ++retryCount;
+                                if (retryCount > MAX_END_BATCH_EDIT_RETRY) {
+                                    Log.e(TAG, icClass.getTypeName() + "#endBatchEdit() still"
+                                            + " returns true even after retrying "
+                                            + MAX_END_BATCH_EDIT_RETRY + " times.  Falling back to"
+                                            + " InputMethodManager#restartInput(View)");
+                                    alwaysTrueEndBatchEditDetected = true;
+                                    KnownAlwaysTrueEndBatchEditCache.add(icClass);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!alwaysTrueEndBatchEditDetected) {
+                        final TextSnapshot textSnapshot = ic.takeSnapshot();
+                        if (textSnapshot != null) {
+                            mParentInputMethodManager.doInvalidateInput(this, textSnapshot,
+                                    nextSessionId);
+                            return;
+                        }
+                    }
+
+                    mParentInputMethodManager.restartInput(view);
+                } finally {
+                    mHasPendingInvalidation.set(false);
+                }
+            });
+        }
+    }
+
+    /**
      * Called when this object needs to be permanently deactivated.
      *
      * <p>Multiple invocations will be simply ignored.</p>
      */
+    @Dispatching(cancellable = false)
     public void deactivate() {
         if (isFinished()) {
             // This is a small performance optimization.  Still only the 1st call of
@@ -168,8 +351,19 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
                     }
                     if (handler.getLooper().isCurrentThread()) {
                         servedView.onInputConnectionClosedInternal();
+                        final ViewRootImpl viewRoot = servedView.getViewRootImpl();
+                        if (viewRoot != null) {
+                            viewRoot.getHandwritingInitiator().onInputConnectionClosed(servedView);
+                        }
                     } else {
                         handler.post(servedView::onInputConnectionClosedInternal);
+                        handler.post(() -> {
+                            final ViewRootImpl viewRoot = servedView.getViewRootImpl();
+                            if (viewRoot != null) {
+                                viewRoot.getHandwritingInitiator()
+                                        .onInputConnectionClosed(servedView);
+                            }
+                        });
                     }
                 }
             }
@@ -214,6 +408,7 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
      * @param enabled the parameter to be passed to
      *                {@link InputConnection#reportFullscreenMode(boolean)}.
      */
+    @Dispatching(cancellable = false)
     public void dispatchReportFullscreenMode(boolean enabled) {
         dispatch(() -> {
             final InputConnection ic = getInputConnection();
@@ -224,10 +419,14 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void getTextAfterCursor(int length, int flags,
+    public void getTextAfterCursor(InputConnectionCommandHeader header, int length, int flags,
             AndroidFuture future /* T=CharSequence */) {
         dispatchWithTracing("getTextAfterCursor", future, () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return null;  // cancelled
+            }
             final InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "getTextAfterCursor on inactive InputConnection");
@@ -242,10 +441,14 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         }, useImeTracing() ? result -> buildGetTextAfterCursorProto(length, flags, result) : null);
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void getTextBeforeCursor(int length, int flags,
+    public void getTextBeforeCursor(InputConnectionCommandHeader header, int length, int flags,
             AndroidFuture future /* T=CharSequence */) {
         dispatchWithTracing("getTextBeforeCursor", future, () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return null;  // cancelled
+            }
             final InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "getTextBeforeCursor on inactive InputConnection");
@@ -260,9 +463,14 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         }, useImeTracing() ? result -> buildGetTextBeforeCursorProto(length, flags, result) : null);
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void getSelectedText(int flags, AndroidFuture future /* T=CharSequence */) {
+    public void getSelectedText(InputConnectionCommandHeader header, int flags,
+            AndroidFuture future /* T=CharSequence */) {
         dispatchWithTracing("getSelectedText", future, () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return null;  // cancelled
+            }
             final InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "getSelectedText on inactive InputConnection");
@@ -277,10 +485,14 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         }, useImeTracing() ? result -> buildGetSelectedTextProto(flags, result) : null);
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void getSurroundingText(int beforeLength, int afterLength, int flags,
-            AndroidFuture future /* T=SurroundingText */) {
+    public void getSurroundingText(InputConnectionCommandHeader header, int beforeLength,
+            int afterLength, int flags, AndroidFuture future /* T=SurroundingText */) {
         dispatchWithTracing("getSurroundingText", future, () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return null;  // cancelled
+            }
             final InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "getSurroundingText on inactive InputConnection");
@@ -301,9 +513,14 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
                 beforeLength, afterLength, flags, result) : null);
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void getCursorCapsMode(int reqModes, AndroidFuture future /* T=Integer */) {
+    public void getCursorCapsMode(InputConnectionCommandHeader header, int reqModes,
+            AndroidFuture future /* T=Integer */) {
         dispatchWithTracing("getCursorCapsMode", future, () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return 0;  // cancelled
+            }
             final InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "getCursorCapsMode on inactive InputConnection");
@@ -313,10 +530,14 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         }, useImeTracing() ? result -> buildGetCursorCapsModeProto(reqModes, result) : null);
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void getExtractedText(ExtractedTextRequest request, int flags,
-            AndroidFuture future /* T=ExtractedText */) {
+    public void getExtractedText(InputConnectionCommandHeader header, ExtractedTextRequest request,
+            int flags, AndroidFuture future /* T=ExtractedText */) {
         dispatchWithTracing("getExtractedText", future, () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return null;  // cancelled
+            }
             final InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "getExtractedText on inactive InputConnection");
@@ -326,9 +547,14 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         }, useImeTracing() ? result -> buildGetExtractedTextProto(request, flags, result) : null);
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void commitText(CharSequence text, int newCursorPosition) {
+    public void commitText(InputConnectionCommandHeader header, CharSequence text,
+            int newCursorPosition) {
         dispatchWithTracing("commitText", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "commitText on inactive InputConnection");
@@ -338,9 +564,30 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void commitCompletion(CompletionInfo text) {
+    public void commitTextWithTextAttribute(InputConnectionCommandHeader header, CharSequence text,
+            int newCursorPosition, @Nullable TextAttribute textAttribute) {
+        dispatchWithTracing("commitTextWithTextAttribute", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
+            InputConnection ic = getInputConnection();
+            if (ic == null || !isActive()) {
+                Log.w(TAG, "commitText on inactive InputConnection");
+                return;
+            }
+            ic.commitText(text, newCursorPosition, textAttribute);
+        });
+    }
+
+    @Dispatching(cancellable = true)
+    @Override
+    public void commitCompletion(InputConnectionCommandHeader header, CompletionInfo text) {
         dispatchWithTracing("commitCompletion", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "commitCompletion on inactive InputConnection");
@@ -350,9 +597,13 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void commitCorrection(CorrectionInfo info) {
+    public void commitCorrection(InputConnectionCommandHeader header, CorrectionInfo info) {
         dispatchWithTracing("commitCorrection", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "commitCorrection on inactive InputConnection");
@@ -366,9 +617,13 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void setSelection(int start, int end) {
+    public void setSelection(InputConnectionCommandHeader header, int start, int end) {
         dispatchWithTracing("setSelection", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "setSelection on inactive InputConnection");
@@ -378,9 +633,13 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void performEditorAction(int id) {
+    public void performEditorAction(InputConnectionCommandHeader header, int id) {
         dispatchWithTracing("performEditorAction", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "performEditorAction on inactive InputConnection");
@@ -390,9 +649,13 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void performContextMenuAction(int id) {
+    public void performContextMenuAction(InputConnectionCommandHeader header, int id) {
         dispatchWithTracing("performContextMenuAction", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "performContextMenuAction on inactive InputConnection");
@@ -402,9 +665,13 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void setComposingRegion(int start, int end) {
+    public void setComposingRegion(InputConnectionCommandHeader header, int start, int end) {
         dispatchWithTracing("setComposingRegion", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "setComposingRegion on inactive InputConnection");
@@ -418,9 +685,31 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void setComposingText(CharSequence text, int newCursorPosition) {
+    public void setComposingRegionWithTextAttribute(InputConnectionCommandHeader header, int start,
+            int end, @Nullable TextAttribute textAttribute) {
+        dispatchWithTracing("setComposingRegionWithTextAttribute", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
+            InputConnection ic = getInputConnection();
+            if (ic == null || !isActive()) {
+                Log.w(TAG, "setComposingRegion on inactive InputConnection");
+                return;
+            }
+            ic.setComposingRegion(start, end, textAttribute);
+        });
+    }
+
+    @Dispatching(cancellable = true)
+    @Override
+    public void setComposingText(InputConnectionCommandHeader header, CharSequence text,
+            int newCursorPosition) {
         dispatchWithTracing("setComposingText", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "setComposingText on inactive InputConnection");
@@ -430,8 +719,59 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void finishComposingText() {
+    public void setComposingTextWithTextAttribute(InputConnectionCommandHeader header,
+            CharSequence text, int newCursorPosition, @Nullable TextAttribute textAttribute) {
+        dispatchWithTracing("setComposingTextWithTextAttribute", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
+            InputConnection ic = getInputConnection();
+            if (ic == null || !isActive()) {
+                Log.w(TAG, "setComposingText on inactive InputConnection");
+                return;
+            }
+            ic.setComposingText(text, newCursorPosition, textAttribute);
+        });
+    }
+
+    /**
+     * Dispatches {@link InputConnection#finishComposingText()}.
+     *
+     * <p>This method is intended to be called only from {@link InputMethodManager}.</p>
+     */
+    @Dispatching(cancellable = true)
+    public void finishComposingTextFromImm() {
+        final int currentSessionId = mCurrentSessionId.get();
+        dispatchWithTracing("finishComposingTextFromImm", () -> {
+            if (isFinished()) {
+                // In this case, #finishComposingText() is guaranteed to be called already.
+                // There should be no negative impact if we ignore this call silently.
+                if (DEBUG) {
+                    Log.w(TAG, "Bug 35301295: Redundant finishComposingTextFromImm.");
+                }
+                return;
+            }
+            if (currentSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
+            InputConnection ic = getInputConnection();
+            // Note we do NOT check isActive() here, because this is safe
+            // for an IME to call at any time, and we need to allow it
+            // through to clean up our state after the IME has switched to
+            // another client.
+            if (ic == null) {
+                Log.w(TAG, "finishComposingTextFromImm on inactive InputConnection");
+                return;
+            }
+            ic.finishComposingText();
+        });
+    }
+
+    @Dispatching(cancellable = true)
+    @Override
+    public void finishComposingText(InputConnectionCommandHeader header) {
         dispatchWithTracing("finishComposingText", () -> {
             if (isFinished()) {
                 // In this case, #finishComposingText() is guaranteed to be called already.
@@ -440,6 +780,9 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
                     Log.w(TAG, "Bug 35301295: Redundant finishComposingText.");
                 }
                 return;
+            }
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
             }
             InputConnection ic = getInputConnection();
             // Note we do NOT check isActive() here, because this is safe
@@ -454,9 +797,13 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void sendKeyEvent(KeyEvent event) {
+    public void sendKeyEvent(InputConnectionCommandHeader header, KeyEvent event) {
         dispatchWithTracing("sendKeyEvent", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "sendKeyEvent on inactive InputConnection");
@@ -466,9 +813,13 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void clearMetaKeyStates(int states) {
+    public void clearMetaKeyStates(InputConnectionCommandHeader header, int states) {
         dispatchWithTracing("clearMetaKeyStates", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "clearMetaKeyStates on inactive InputConnection");
@@ -478,9 +829,14 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void deleteSurroundingText(int beforeLength, int afterLength) {
+    public void deleteSurroundingText(InputConnectionCommandHeader header, int beforeLength,
+            int afterLength) {
         dispatchWithTracing("deleteSurroundingText", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "deleteSurroundingText on inactive InputConnection");
@@ -490,9 +846,14 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void deleteSurroundingTextInCodePoints(int beforeLength, int afterLength) {
+    public void deleteSurroundingTextInCodePoints(InputConnectionCommandHeader header,
+            int beforeLength, int afterLength) {
         dispatchWithTracing("deleteSurroundingTextInCodePoints", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "deleteSurroundingTextInCodePoints on inactive InputConnection");
@@ -506,9 +867,13 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void beginBatchEdit() {
+    public void beginBatchEdit(InputConnectionCommandHeader header) {
         dispatchWithTracing("beginBatchEdit", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "beginBatchEdit on inactive InputConnection");
@@ -518,9 +883,13 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void endBatchEdit() {
+    public void endBatchEdit(InputConnectionCommandHeader header) {
         dispatchWithTracing("endBatchEdit", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "endBatchEdit on inactive InputConnection");
@@ -530,9 +899,13 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void performSpellCheck() {
+    public void performSpellCheck(InputConnectionCommandHeader header) {
         dispatchWithTracing("performSpellCheck", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "performSpellCheck on inactive InputConnection");
@@ -542,9 +915,14 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void performPrivateCommand(String action, Bundle data) {
+    public void performPrivateCommand(InputConnectionCommandHeader header, String action,
+            Bundle data) {
         dispatchWithTracing("performPrivateCommand", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "performPrivateCommand on inactive InputConnection");
@@ -554,32 +932,63 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
-    @Override
-    public void requestCursorUpdates(int cursorUpdateMode, int imeDisplayId,
-            AndroidFuture future /* T=Boolean */) {
-        dispatchWithTracing("requestCursorUpdates", future, () -> {
-            final InputConnection ic = getInputConnection();
-            if (ic == null || !isActive()) {
-                Log.w(TAG, "requestCursorAnchorInfo on inactive InputConnection");
-                return false;
+    /**
+     * Dispatches {@link InputConnection#requestCursorUpdates(int)}.
+     *
+     * <p>This method is intended to be called only from {@link InputMethodManager}.</p>
+     * @param cursorUpdateMode the mode for {@link InputConnection#requestCursorUpdates(int)}
+     * @param imeDisplayId displayId on which IME is displayed.
+     */
+    @Dispatching(cancellable = true)
+    public void requestCursorUpdatesFromImm(int cursorUpdateMode, int imeDisplayId) {
+        final int currentSessionId = mCurrentSessionId.get();
+        dispatchWithTracing("requestCursorUpdatesFromImm", () -> {
+            if (currentSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
             }
-            if (mParentInputMethodManager.getDisplayId() != imeDisplayId) {
-                // requestCursorUpdates() is not currently supported across displays.
-                return false;
-            }
-            try {
-                return ic.requestCursorUpdates(cursorUpdateMode);
-            } catch (AbstractMethodError ignored) {
-                // TODO(b/199934664): See if we can remove this by providing a default impl.
-                return false;
-            }
+            requestCursorUpdatesInternal(cursorUpdateMode, imeDisplayId);
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void commitContent(InputContentInfo inputContentInfo, int flags, Bundle opts,
+    public void requestCursorUpdates(InputConnectionCommandHeader header, int cursorUpdateMode,
+            int imeDisplayId, AndroidFuture future /* T=Boolean */) {
+        dispatchWithTracing("requestCursorUpdates", future, () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return false;  // cancelled
+            }
+            return requestCursorUpdatesInternal(cursorUpdateMode, imeDisplayId);
+        });
+    }
+
+    private boolean requestCursorUpdatesInternal(int cursorUpdateMode, int imeDisplayId) {
+        final InputConnection ic = getInputConnection();
+        if (ic == null || !isActive()) {
+            Log.w(TAG, "requestCursorAnchorInfo on inactive InputConnection");
+            return false;
+        }
+        if (mParentInputMethodManager.getDisplayId() != imeDisplayId) {
+            // requestCursorUpdates() is not currently supported across displays.
+            return false;
+        }
+        try {
+            return ic.requestCursorUpdates(cursorUpdateMode);
+        } catch (AbstractMethodError ignored) {
+            // TODO(b/199934664): See if we can remove this by providing a default impl.
+            return false;
+        }
+    }
+
+    @Dispatching(cancellable = true)
+    @Override
+    public void commitContent(InputConnectionCommandHeader header,
+            InputContentInfo inputContentInfo, int flags, Bundle opts,
             AndroidFuture future /* T=Boolean */) {
         dispatchWithTracing("commitContent", future, () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return false;  // cancelled
+            }
             final InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "commitContent on inactive InputConnection");
@@ -598,9 +1007,13 @@ public final class RemoteInputConnectionImpl extends IInputContext.Stub {
         });
     }
 
+    @Dispatching(cancellable = true)
     @Override
-    public void setImeConsumesInput(boolean imeConsumesInput) {
+    public void setImeConsumesInput(InputConnectionCommandHeader header, boolean imeConsumesInput) {
         dispatchWithTracing("setImeConsumesInput", () -> {
+            if (header.mSessionId != mCurrentSessionId.get()) {
+                return;  // cancelled
+            }
             InputConnection ic = getInputConnection();
             if (ic == null || !isActive()) {
                 Log.w(TAG, "setImeConsumesInput on inactive InputConnection");

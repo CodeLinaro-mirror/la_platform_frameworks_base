@@ -26,6 +26,7 @@ import android.hardware.biometrics.BiometricSourceType;
  */
 interface ITrustManager {
     void reportUnlockAttempt(boolean successful, int userId);
+    void reportUserRequestedUnlock(int userId);
     void reportUnlockLockout(int timeoutMs, int userId);
     void reportEnabledTrustAgentsChanged(int userId);
     void registerTrustListener(in ITrustListener trustListener);
@@ -36,5 +37,5 @@ interface ITrustManager {
     boolean isDeviceSecure(int userId);
     boolean isTrustUsuallyManaged(int userId);
     void unlockedByBiometricForUser(int userId, in BiometricSourceType source);
-    void clearAllBiometricRecognized(in BiometricSourceType target);
+    void clearAllBiometricRecognized(in BiometricSourceType target, int unlockedUser);
 }

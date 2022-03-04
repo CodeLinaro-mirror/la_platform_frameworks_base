@@ -180,6 +180,11 @@ public class LocationManager {
      * <p>If present, this provider determines location using GNSS satellites. The responsiveness
      * and accuracy of location fixes may depend on GNSS signal conditions.
      *
+     * <p>Locations returned from this provider are with respect to the primary GNSS antenna
+     * position within the device. {@link #getGnssAntennaInfos()} may be used to determine the GNSS
+     * antenna position with respect to the Android Coordinate System, and convert between them if
+     * necessary. This is generally only necessary for high accuracy applications.
+     *
      * <p>The extras Bundle for locations derived by this location provider may contain the
      * following key/value pairs:
      * <ul>
@@ -750,6 +755,51 @@ public class LocationManager {
             @NonNull String provider, boolean enabled, @NonNull UserHandle userHandle) {
         Preconditions.checkArgument(provider != null, "invalid null provider");
         return false;
+    }
+
+    /**
+     * Set whether GNSS requests are suspended on the device.
+     *
+     * This method was added to help support power management use cases on automotive devices. More
+     * specifically, it is being added to fix a suspend to RAM issue where the SoC can't go into
+     * a lower power state when applications are actively requesting GNSS updates.
+     *
+     * Ideally, the issue should be fixed at a lower layer in the stack, but this API introduces a
+     * workaround in the platform layer. This API allows car specific services to halt GNSS requests
+     * based on changes to the car power policy, which will in turn enable the device to go into
+     * suspend.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.AUTOMOTIVE_GNSS_CONTROLS)
+    public void setAutoGnssSuspended(boolean suspended) {
+        try {
+            mService.setAutoGnssSuspended(suspended);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Return whether GNSS requests are suspended or not.
+     *
+     * This method was added to help support power management use cases on automotive devices. More
+     * specifically, it is being added as part of the fix for a suspend to RAM issue where the SoC
+     * can't go into a lower power state when applications are actively requesting GNSS updates.
+     *
+     * @return true if GNSS requests are suspended and false if they aren't.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.AUTOMOTIVE_GNSS_CONTROLS)
+    public boolean isAutoGnssSuspended() {
+        try {
+            return mService.isAutoGnssSuspended();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
     }
 
     /**
@@ -1450,6 +1500,11 @@ public class LocationManager {
      * <p>In case the provider you have selected is disabled, location updates will cease, and a
      * provider availability update will be sent. As soon as the provider is enabled again, another
      * provider availability update will be sent and location updates will resume.
+     *
+     * <p>Locations returned from {@link #GPS_PROVIDER} are with respect to the primary GNSS antenna
+     * position within the device. {@link #getGnssAntennaInfos()} may be used to determine the GNSS
+     * antenna position with respect to the Android Coordinate System, and convert between them if
+     * necessary. This is generally only necessary for high accuracy applications.
      *
      * <p>When location callbacks are invoked, the system will hold a wakelock on your
      * application's behalf for some period of time, but not indefinitely. If your application
@@ -3585,7 +3640,7 @@ public class LocationManager {
         }
 
         @Override
-        protected Boolean recompute(Integer userId) {
+        public Boolean recompute(Integer userId) {
             Preconditions.checkArgument(userId >= 0);
 
             if (mManager == null) {

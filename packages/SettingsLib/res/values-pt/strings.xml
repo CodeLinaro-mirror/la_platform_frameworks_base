@@ -122,7 +122,9 @@
     <string name="bluetooth_profile_a2dp_high_quality" msgid="4739440941324792775">"Áudio HD: <xliff:g id="CODEC_NAME">%1$s</xliff:g>"</string>
     <string name="bluetooth_profile_a2dp_high_quality_unknown_codec" msgid="2477639096903834374">"Áudio HD"</string>
     <string name="bluetooth_profile_hearing_aid" msgid="58154575573984914">"Aparelhos auditivos"</string>
+    <string name="bluetooth_profile_le_audio" msgid="5158149987518342036">"LE_AUDIO"</string>
     <string name="bluetooth_hearing_aid_profile_summary_connected" msgid="8191273236809964030">"Conectado a aparelhos auditivos"</string>
+    <string name="bluetooth_le_audio_profile_summary_connected" msgid="3162538609379333442">"Conectado a LE_AUDIO"</string>
     <string name="bluetooth_a2dp_profile_summary_connected" msgid="7422607970115444153">"Conectado ao áudio da mídia"</string>
     <string name="bluetooth_headset_profile_summary_connected" msgid="2420981566026949688">"Conectado ao áudio do smartphone"</string>
     <string name="bluetooth_opp_profile_summary_connected" msgid="2393521801478157362">"Conectado ao servidor de transferência de arquivo"</string>
@@ -140,6 +142,7 @@
     <string name="bluetooth_opp_profile_summary_use_for" msgid="461981154387015457">"Usado para transferência de arquivo"</string>
     <string name="bluetooth_hid_profile_summary_use_for" msgid="4289460627406490952">"Usar para entrada"</string>
     <string name="bluetooth_hearing_aid_profile_summary_use_for" msgid="7689393730163320483">"Usar para aparelhos auditivos"</string>
+    <string name="bluetooth_le_audio_profile_summary_use_for" msgid="2778318636027348572">"Usar para LE_AUDIO"</string>
     <string name="bluetooth_pairing_accept" msgid="2054232610815498004">"Parear"</string>
     <string name="bluetooth_pairing_accept_all_caps" msgid="2734383073450506220">"PAREAR"</string>
     <string name="bluetooth_pairing_decline" msgid="6483118841204885890">"Cancelar"</string>
@@ -549,7 +552,7 @@
     <string name="zen_mode_duration_always_prompt_title" msgid="3212996860498119555">"Perguntar sempre"</string>
     <string name="zen_mode_forever" msgid="3339224497605461291">"Até você desativar"</string>
     <string name="time_unit_just_now" msgid="3006134267292728099">"Agora"</string>
-    <string name="media_transfer_this_device_name" msgid="2716555073132169240">"Alto-falante do smartphone"</string>
+    <string name="media_transfer_this_device_name" msgid="2357329267148436433">"Este smartphone"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"Este smartphone"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Ocorreu um problema na conexão. Desligue o dispositivo e ligue-o novamente"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Dispositivo de áudio com fio"</string>

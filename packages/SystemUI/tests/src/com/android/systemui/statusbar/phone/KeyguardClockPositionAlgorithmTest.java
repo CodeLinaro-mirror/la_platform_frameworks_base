@@ -58,11 +58,11 @@ public class KeyguardClockPositionAlgorithmTest extends SysuiTestCase {
     private KeyguardClockPositionAlgorithm.Result mClockPosition;
 
     private MockitoSession mStaticMockSession;
-    private int mNotificationStackHeight;
 
     private float mPanelExpansion;
     private int mKeyguardStatusBarHeaderHeight;
     private int mKeyguardStatusHeight;
+    private int mUserSwitchHeight;
     private float mDark;
     private float mQsExpansion;
     private int mCutoutTopInset = 0;
@@ -264,6 +264,83 @@ public class KeyguardClockPositionAlgorithmTest extends SysuiTestCase {
     }
 
     @Test
+    public void clockPositionedDependingOnMarginInSplitShade() {
+        setSplitShadeTopMargin(400);
+        mClockPositionAlgorithm.loadDimens(mResources);
+        givenLockScreen();
+        mIsSplitShade = true;
+        // WHEN the position algorithm is run
+        positionClock();
+
+        assertThat(mClockPosition.clockY).isEqualTo(400);
+    }
+
+    @Test
+    public void notifPaddingMakesUpToFullMarginInSplitShade() {
+        when(mResources.getDimensionPixelSize(R.dimen.keyguard_split_shade_top_margin))
+                .thenReturn(100);
+        when(mResources.getDimensionPixelSize(R.dimen.split_shade_header_height))
+                .thenReturn(70);
+        mClockPositionAlgorithm.loadDimens(mResources);
+        givenLockScreen();
+        mIsSplitShade = true;
+        // WHEN the position algorithm is run
+        positionClock();
+        // THEN the notif padding makes up lacking margin (margin - header height = 30).
+        assertThat(mClockPosition.stackScrollerPadding).isEqualTo(30);
+    }
+
+    @Test
+    public void notifPaddingAccountsForMultiUserSwitcherInSplitShade() {
+        setSplitShadeTopMargin(100);
+        mUserSwitchHeight = 150;
+        mClockPositionAlgorithm.loadDimens(mResources);
+        givenLockScreen();
+        mIsSplitShade = true;
+        // WHEN the position algorithm is run
+        positionClock();
+        // THEN the notif padding is split shade top margin + user switch height
+        assertThat(mClockPosition.stackScrollerPadding).isEqualTo(250);
+    }
+
+    @Test
+    public void clockDoesntAccountForMultiUserSwitcherInSplitShade() {
+        setSplitShadeTopMargin(100);
+        mUserSwitchHeight = 150;
+        mClockPositionAlgorithm.loadDimens(mResources);
+        givenLockScreen();
+        mIsSplitShade = true;
+        // WHEN the position algorithm is run
+        positionClock();
+        // THEN clockY = split shade top margin
+        assertThat(mClockPosition.clockY).isEqualTo(100);
+    }
+
+    @Test
+    public void notifPaddingExpandedAlignedWithClockInSplitShadeMode() {
+        givenLockScreen();
+        mIsSplitShade = true;
+        mKeyguardStatusHeight = 200;
+        // WHEN the position algorithm is run
+        positionClock();
+        // THEN the padding DOESN'T adjust for keyguard status height.
+        assertThat(mClockPosition.stackScrollerPaddingExpanded)
+                .isEqualTo(mClockPosition.clockY);
+    }
+
+    @Test
+    public void notifMinPaddingAlignedWithClockInSplitShadeMode() {
+        givenLockScreen();
+        mIsSplitShade = true;
+        mKeyguardStatusHeight = 200;
+        // WHEN the position algorithm is run
+        positionClock();
+        // THEN the padding DOESN'T adjust for keyguard status height.
+        assertThat(mClockPositionAlgorithm.getMinStackScrollerPadding())
+                .isEqualTo(mKeyguardStatusBarHeaderHeight);
+    }
+
+    @Test
     public void notifPositionWithLargeClockOnLockScreen() {
         // GIVEN on lock screen and clock has a nonzero height
         givenLockScreen();
@@ -444,6 +521,11 @@ public class KeyguardClockPositionAlgorithmTest extends SysuiTestCase {
         assertThat(mClockPosition.clockY).isEqualTo(mCutoutTopInset);
     }
 
+    private void setSplitShadeTopMargin(int value) {
+        when(mResources.getDimensionPixelSize(R.dimen.keyguard_split_shade_top_margin))
+                .thenReturn(value);
+    }
+
     private void givenHighestBurnInOffset() {
         when(BurnInHelperKt.getBurnInOffset(anyInt(), anyBoolean())).then(returnsFirstArg());
     }
@@ -478,7 +560,7 @@ public class KeyguardClockPositionAlgorithmTest extends SysuiTestCase {
                 mKeyguardStatusBarHeaderHeight,
                 mPanelExpansion,
                 mKeyguardStatusHeight,
-                0 /* userSwitchHeight */,
+                mUserSwitchHeight,
                 0 /* userSwitchPreferredY */,
                 mDark,
                 ZERO_DRAG,

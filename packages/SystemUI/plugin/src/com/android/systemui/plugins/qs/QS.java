@@ -34,7 +34,7 @@ public interface QS extends FragmentBase {
 
     String ACTION = "com.android.systemui.action.PLUGIN_QS";
 
-    int VERSION = 11;
+    int VERSION = 13;
 
     String TAG = "QS";
 
@@ -46,6 +46,8 @@ public interface QS extends FragmentBase {
     void setHeightOverride(int desiredHeight);
     void setHeaderClickable(boolean qsExpansionEnabled);
     boolean isCustomizing();
+    /** Close the QS customizer, if it is open. */
+    void closeCustomizer();
     void setOverscrolling(boolean overscrolling);
     void setExpanded(boolean qsExpanded);
     void setListening(boolean listening);
@@ -55,17 +57,23 @@ public interface QS extends FragmentBase {
 
     /**
      * Asks QS to update its presentation, according to {@code NotificationPanelViewController}.
-     *
      * @param qsExpansionFraction How much each UI element in QS should be expanded (QQS to QS.)
      * @param panelExpansionFraction Whats the expansion of the whole shade.
      * @param headerTranslation How much we should vertically translate QS.
+     * @param squishinessFraction Fraction that affects tile height. 0 when collapsed,
+     *                            1 when expanded.
      */
     void setQsExpansion(float qsExpansionFraction, float panelExpansionFraction,
-            float headerTranslation);
+            float headerTranslation, float squishinessFraction);
     void setHeaderListening(boolean listening);
     void notifyCustomizeChanged();
     void setContainerController(QSContainerController controller);
     void setExpandClickListener(OnClickListener onClickListener);
+
+    /**
+     * Returns the height difference between the QSPanel container and the QuickQSPanel container
+     */
+    int getHeightDiff();
 
     View getHeader();
 

@@ -27,11 +27,11 @@ import android.graphics.PointF;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 
 import com.android.systemui.Dumpable;
 import com.android.systemui.R;
 import com.android.systemui.qs.customize.QSCustomizer;
+import com.android.systemui.util.Utils;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -52,7 +52,6 @@ public class QSContainerImpl extends FrameLayout implements Dumpable {
     private float mQsExpansion;
     private QSCustomizer mQSCustomizer;
     private NonInterceptingScrollView mQSPanelContainer;
-    private ImageView mDragHandle;
 
     private int mSideMargins;
     private boolean mQsDisabled;
@@ -70,7 +69,6 @@ public class QSContainerImpl extends FrameLayout implements Dumpable {
         mQSDetail = findViewById(R.id.qs_detail);
         mHeader = findViewById(R.id.header);
         mQSCustomizer = findViewById(R.id.qs_customize);
-        mDragHandle = findViewById(R.id.qs_drag_handle);
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     }
 
@@ -155,8 +153,7 @@ public class QSContainerImpl extends FrameLayout implements Dumpable {
             QuickStatusBarHeaderController quickStatusBarHeaderController) {
         mQSPanelContainer.setPaddingRelative(
                 getPaddingStart(),
-                mContext.getResources()
-                        .getDimensionPixelSize(R.dimen.qs_header_system_icons_area_height),
+                Utils.getQsHeaderSystemIconsAreaHeight(mContext),
                 getPaddingEnd(),
                 getPaddingBottom()
         );
@@ -190,23 +187,14 @@ public class QSContainerImpl extends FrameLayout implements Dumpable {
         mQSDetail.setBottom(getTop() + scrollBottom);
         int qsDetailBottomMargin = ((MarginLayoutParams) mQSDetail.getLayoutParams()).bottomMargin;
         mQSDetail.setBottom(getTop() + scrollBottom - qsDetailBottomMargin);
-        // Pin the drag handle to the bottom of the panel.
-        mDragHandle.setTranslationY(scrollBottom - mDragHandle.getHeight());
     }
 
     protected int calculateContainerHeight() {
         int heightOverride = mHeightOverride != -1 ? mHeightOverride : getMeasuredHeight();
         // Need to add the dragHandle height so touches will be intercepted by it.
-        int dragHandleHeight;
-        if (mDragHandle.getVisibility() == VISIBLE) {
-            dragHandleHeight = Math.round((1 - mQsExpansion) * mDragHandle.getHeight());
-        } else {
-            dragHandleHeight = 0;
-        }
         return mQSCustomizer.isCustomizing() ? mQSCustomizer.getHeight()
                 : Math.round(mQsExpansion * (heightOverride - mHeader.getHeight()))
-                + mHeader.getHeight()
-                + dragHandleHeight;
+                + mHeader.getHeight();
     }
 
     int calculateContainerBottom() {
@@ -221,8 +209,6 @@ public class QSContainerImpl extends FrameLayout implements Dumpable {
     public void setExpansion(float expansion) {
         mQsExpansion = expansion;
         mQSPanelContainer.setScrollingEnabled(expansion > 0f);
-        mDragHandle.setAlpha(1.0f - expansion);
-        mDragHandle.setClickable(expansion == 0f); // Only clickable when fully collapsed
         updateExpansion();
     }
 

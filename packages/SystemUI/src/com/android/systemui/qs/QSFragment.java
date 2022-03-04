@@ -18,12 +18,14 @@ import static android.app.StatusBarManager.DISABLE2_QUICK_SETTINGS;
 
 import static com.android.systemui.media.dagger.MediaModule.QS_PANEL;
 import static com.android.systemui.media.dagger.MediaModule.QUICK_QS_PANEL;
+import static com.android.systemui.statusbar.DisableFlagsLogger.DisableState;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.os.Bundle;
+import android.os.Trace;
 import android.util.Log;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
@@ -32,14 +34,13 @@ import android.view.View.OnClickListener;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.widget.FrameLayout.LayoutParams;
-import android.widget.ImageView;
 
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
-import com.android.systemui.Dumpable;
 import com.android.systemui.R;
 import com.android.systemui.animation.Interpolators;
+import com.android.systemui.animation.ShadeInterpolation;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.media.MediaHost;
 import com.android.systemui.plugins.FalsingManager;
@@ -54,7 +55,6 @@ import com.android.systemui.statusbar.notification.stack.StackStateAnimator;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.statusbar.policy.BrightnessMirrorController;
 import com.android.systemui.statusbar.policy.RemoteInputQuickSettingsDisabler;
-import com.android.systemui.util.InjectionInflationController;
 import com.android.systemui.util.LifecycleFragment;
 import com.android.systemui.util.Utils;
 
@@ -82,6 +82,7 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
 
     private QSAnimator mQSAnimator;
     private HeightListener mPanelView;
+    private QSSquishinessController mQSSquishinessController;
     protected QuickStatusBarHeader mHeader;
     protected NonInterceptingScrollView mQSPanelScrollView;
     private QSDetail mQSDetail;
@@ -91,16 +92,16 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
     private QSFooter mFooter;
     private float mLastQSExpansion = -1;
     private float mLastPanelFraction;
+    private float mSquishinessFraction = 1;
     private boolean mQsDisabled;
-    private ImageView mQsDragHandler;
 
     private final RemoteInputQuickSettingsDisabler mRemoteInputQuickSettingsDisabler;
-    private final InjectionInflationController mInjectionInflater;
     private final CommandQueue mCommandQueue;
     private final QSDetailDisplayer mQsDetailDisplayer;
     private final MediaHost mQsMediaHost;
     private final MediaHost mQqsMediaHost;
     private final QSFragmentComponent.Factory mQsComponentFactory;
+    private final QSFragmentDisableFlagsLogger mQsFragmentDisableFlagsLogger;
     private final QSTileHost mHost;
     private boolean mShowCollapsedOnKeyguard;
     private boolean mLastKeyguardAndExpanded;
@@ -117,6 +118,7 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
     private QSPanelController mQSPanelController;
     private QuickQSPanelController mQuickQSPanelController;
     private QSCustomizerController mQSCustomizerController;
+    @Nullable
     private ScrollListener mScrollListener;
     /**
      * When true, QS will translate from outside the screen. It will be clipped with parallax
@@ -145,20 +147,21 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
 
     @Inject
     public QSFragment(RemoteInputQuickSettingsDisabler remoteInputQsDisabler,
-            InjectionInflationController injectionInflater, QSTileHost qsTileHost,
+            QSTileHost qsTileHost,
             StatusBarStateController statusBarStateController, CommandQueue commandQueue,
             QSDetailDisplayer qsDetailDisplayer, @Named(QS_PANEL) MediaHost qsMediaHost,
             @Named(QUICK_QS_PANEL) MediaHost qqsMediaHost,
             KeyguardBypassController keyguardBypassController,
             QSFragmentComponent.Factory qsComponentFactory,
+            QSFragmentDisableFlagsLogger qsFragmentDisableFlagsLogger,
             FalsingManager falsingManager, DumpManager dumpManager) {
         mRemoteInputQuickSettingsDisabler = remoteInputQsDisabler;
-        mInjectionInflater = injectionInflater;
         mCommandQueue = commandQueue;
         mQsDetailDisplayer = qsDetailDisplayer;
         mQsMediaHost = qsMediaHost;
         mQqsMediaHost = qqsMediaHost;
         mQsComponentFactory = qsComponentFactory;
+        mQsFragmentDisableFlagsLogger = qsFragmentDisableFlagsLogger;
         commandQueue.observe(getLifecycle(), this);
         mHost = qsTileHost;
         mFalsingManager = falsingManager;
@@ -170,10 +173,14 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
     @Override
     public View onCreateView(LayoutInflater inflater, @Nullable ViewGroup container,
             Bundle savedInstanceState) {
-        inflater = mInjectionInflater.injectable(
-                inflater.cloneInContext(new ContextThemeWrapper(getContext(),
-                        R.style.Theme_SystemUI_QuickSettings)));
-        return inflater.inflate(R.layout.qs_panel, container, false);
+        try {
+            Trace.beginSection("QSFragment#onCreateView");
+            inflater = inflater.cloneInContext(new ContextThemeWrapper(getContext(),
+                    R.style.Theme_SystemUI_QuickSettings));
+            return inflater.inflate(R.layout.qs_panel, container, false);
+        } finally {
+            Trace.endSection();
+        }
     }
 
     @Override
@@ -203,7 +210,6 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
         mHeader = view.findViewById(R.id.header);
         mQSPanelController.setHeaderContainer(view.findViewById(R.id.header_text_container));
         mFooter = qsFragmentComponent.getQSFooter();
-        mQsDragHandler = view.findViewById(R.id.qs_drag_handle);
 
         mQsDetailDisplayer.setQsPanelController(mQSPanelController);
 
@@ -214,6 +220,7 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
 
         mQSDetail.setQsPanel(mQSPanelController, mHeader, mFooter, mFalsingManager);
         mQSAnimator = qsFragmentComponent.getQSAnimator();
+        mQSSquishinessController = qsFragmentComponent.getQSSquishinessController();
 
         mQSCustomizerController = qsFragmentComponent.getQSCustomizerController();
         mQSCustomizerController.init();
@@ -235,7 +242,7 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
                     boolean sizeChanged = (oldTop - oldBottom) != (top - bottom);
                     if (sizeChanged) {
                         setQsExpansion(mLastQSExpansion, mLastPanelFraction,
-                                mLastHeaderTranslation);
+                                mLastHeaderTranslation, mSquishinessFraction);
                     }
                 });
         mQSPanelController.setUsingHorizontalLayoutChangeListener(
@@ -246,11 +253,6 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
                     mQSPanelController.getMediaHost().getHostView().setAlpha(1.0f);
                     mQSAnimator.requestAnimatorUpdate();
                 });
-
-        mQsDragHandler.setOnClickListener(v -> {
-            Log.d(TAG, "drag handler clicked");
-            mCommandQueue.animateExpandSettingsPanel(null);
-        });
     }
 
     @Override
@@ -364,7 +366,13 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
         if (displayId != getContext().getDisplayId()) {
             return;
         }
+        int state2BeforeAdjustment = state2;
         state2 = mRemoteInputQuickSettingsDisabler.adjustDisableFlags(state2);
+
+        mQsFragmentDisableFlagsLogger.logDisableFlagChange(
+                /* new= */ new DisableState(state1, state2BeforeAdjustment),
+                /* newAfterLocalModification= */ new DisableState(state1, state2)
+        );
 
         final boolean disabled = (state2 & DISABLE2_QUICK_SETTINGS) != 0;
         if (disabled == mQsDisabled) return;
@@ -376,30 +384,26 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
     }
 
     private void updateQsState() {
-        final boolean expandVisually = mQsExpanded || mStackScrollerOverscrolling
+        final boolean expanded = mQsExpanded || mInSplitShade;
+        final boolean expandVisually = expanded || mStackScrollerOverscrolling
                 || mHeaderAnimating;
-        mQSPanelController.setExpanded(mQsExpanded);
-        mQSDetail.setExpanded(mQsExpanded);
+        mQSPanelController.setExpanded(expanded);
+        mQSDetail.setExpanded(expanded);
         boolean keyguardShowing = isKeyguardState();
-        mHeader.setVisibility((mQsExpanded || !keyguardShowing || mHeaderAnimating
+        mHeader.setVisibility((expanded || !keyguardShowing || mHeaderAnimating
                 || mShowCollapsedOnKeyguard)
                 ? View.VISIBLE
                 : View.INVISIBLE);
         mHeader.setExpanded((keyguardShowing && !mHeaderAnimating && !mShowCollapsedOnKeyguard)
-                || (mQsExpanded && !mStackScrollerOverscrolling), mQuickQSPanelController);
-        mFooter.setVisibility(!mQsDisabled && (mQsExpanded || !keyguardShowing || mHeaderAnimating
+                || (expanded && !mStackScrollerOverscrolling), mQuickQSPanelController);
+        mFooter.setVisibility(!mQsDisabled && (expanded || !keyguardShowing || mHeaderAnimating
                 || mShowCollapsedOnKeyguard)
                 ? View.VISIBLE
                 : View.INVISIBLE);
         mFooter.setExpanded((keyguardShowing && !mHeaderAnimating && !mShowCollapsedOnKeyguard)
-                || (mQsExpanded && !mStackScrollerOverscrolling));
+                || (expanded && !mStackScrollerOverscrolling));
         mQSPanelController.setVisibility(
                 !mQsDisabled && expandVisually ? View.VISIBLE : View.INVISIBLE);
-        mQsDragHandler.setVisibility((mQsExpanded || !keyguardShowing || mHeaderAnimating
-                || mShowCollapsedOnKeyguard)
-                && Utils.shouldUseSplitNotificationShade(getResources())
-                ? View.VISIBLE
-                : View.GONE);
     }
 
     private boolean isKeyguardState() {
@@ -409,7 +413,8 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
     }
 
     private void updateShowCollapsedOnKeyguard() {
-        boolean showCollapsed = mBypassController.getBypassEnabled() || mTransitioningToFullShade;
+        boolean showCollapsed = mBypassController.getBypassEnabled()
+                || (mTransitioningToFullShade && !mInSplitShade);
         if (showCollapsed != mShowCollapsedOnKeyguard) {
             mShowCollapsedOnKeyguard = showCollapsed;
             updateQsState();
@@ -417,7 +422,8 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
                 mQSAnimator.setShowCollapsedOnKeyguard(showCollapsed);
             }
             if (!showCollapsed && isKeyguardState()) {
-                setQsExpansion(mLastQSExpansion, mLastPanelFraction, 0);
+                setQsExpansion(mLastQSExpansion, mLastPanelFraction, 0,
+                        mSquishinessFraction);
             }
         }
     }
@@ -488,6 +494,8 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
     public void setInSplitShade(boolean inSplitShade) {
         mInSplitShade = inSplitShade;
         mQSAnimator.setTranslateWhileExpanding(inSplitShade);
+        updateShowCollapsedOnKeyguard();
+        updateQsState();
     }
 
     @Override
@@ -498,14 +506,22 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
             updateShowCollapsedOnKeyguard();
         }
         mFullShadeProgress = progress;
-        setQsExpansion(mLastQSExpansion, mLastPanelFraction, mLastHeaderTranslation);
+        setQsExpansion(mLastQSExpansion, mLastPanelFraction, mLastHeaderTranslation,
+                isTransitioningToFullShade ? progress : mSquishinessFraction);
+    }
+
+    @Override
+    public int getHeightDiff() {
+        return mQSPanelScrollView.getBottom() - mHeader.getBottom()
+                + mHeader.getPaddingBottom();
     }
 
     @Override
     public void setQsExpansion(float expansion, float panelExpansionFraction,
-            float proposedTranslation) {
+            float proposedTranslation, float squishinessFraction) {
         float headerTranslation = mTransitioningToFullShade ? 0 : proposedTranslation;
-        float progress = mTransitioningToFullShade ? mFullShadeProgress : panelExpansionFraction;
+        float progress = mTransitioningToFullShade || mState == StatusBarState.KEYGUARD
+                ? mFullShadeProgress : panelExpansionFraction;
         setAlphaAnimationProgress(mInSplitShade ? progress : 1);
         mContainer.setExpansion(expansion);
         final float translationScaleY = (mInSplitShade
@@ -521,19 +537,20 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
         if (expansion == mLastQSExpansion
                 && mLastKeyguardAndExpanded == onKeyguardAndExpanded
                 && mLastViewHeight == currentHeight
-                && mLastHeaderTranslation == headerTranslation) {
+                && mLastHeaderTranslation == headerTranslation
+                && mSquishinessFraction == squishinessFraction) {
             return;
         }
         mLastHeaderTranslation = headerTranslation;
         mLastPanelFraction = panelExpansionFraction;
+        mSquishinessFraction = squishinessFraction;
         mLastQSExpansion = expansion;
         mLastKeyguardAndExpanded = onKeyguardAndExpanded;
         mLastViewHeight = currentHeight;
 
         boolean fullyExpanded = expansion == 1;
         boolean fullyCollapsed = expansion == 0.0f;
-        int heightDiff = mQSPanelScrollView.getBottom() - mHeader.getBottom()
-                + mHeader.getPaddingBottom();
+        int heightDiff = getHeightDiff();
         float panelTranslationY = translationScaleY * heightDiff;
 
         // Let the views animate their contents correctly by giving them the necessary context.
@@ -561,6 +578,9 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
         }
         updateQsBounds();
 
+        if (mQSSquishinessController != null) {
+            mQSSquishinessController.setSquishiness(mSquishinessFraction);
+        }
         if (mQSAnimator != null) {
             mQSAnimator.setPosition(expansion);
         }
@@ -574,7 +594,7 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
         } else if (progress > 0 && view.getVisibility() != View.VISIBLE) {
             view.setVisibility((View.VISIBLE));
         }
-        float alpha = Interpolators.getNotificationScrimAlpha(progress, true /* uiContent */);
+        float alpha = ShadeInterpolation.getContentAlpha(progress);
         view.setAlpha(alpha);
     }
 
@@ -680,6 +700,11 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
         mQSPanelController.closeDetail();
     }
 
+    @Override
+    public void closeCustomizer() {
+        mQSCustomizerController.hide();
+    }
+
     public void notifyCustomizeChanged() {
         // The customize state changed, so our height changed.
         mContainer.updateExpansion();
@@ -749,6 +774,8 @@ public class QSFragment extends LifecycleFragment implements QS, CommandQueue.Ca
         public void onAnimationEnd(Animator animation) {
             mHeaderAnimating = false;
             updateQsState();
+            // Unset the listener, otherwise this may persist for another view property animation
+            getView().animate().setListener(null);
         }
     };
 

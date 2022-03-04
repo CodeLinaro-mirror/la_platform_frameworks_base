@@ -42,6 +42,7 @@ import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.plugins.statusbar.StatusBarStateController.StateListener
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.flags.FeatureFlags
+import com.android.systemui.flags.Flags
 import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.statusbar.policy.ConfigurationController.ConfigurationListener
 import com.android.systemui.statusbar.policy.DeviceProvisionedController
@@ -144,7 +145,7 @@ class LockscreenSmartspaceControllerTest : SysuiTestCase() {
     fun setUp() {
         MockitoAnnotations.initMocks(this)
 
-        `when`(featureFlags.isSmartspaceEnabled).thenReturn(true)
+        `when`(featureFlags.isEnabled(Flags.SMARTSPACE)).thenReturn(true)
 
         `when`(secureSettings.getUriFor(PRIVATE_LOCKSCREEN_SETTING))
                 .thenReturn(fakePrivateLockscreenSettingUri)
@@ -185,7 +186,7 @@ class LockscreenSmartspaceControllerTest : SysuiTestCase() {
     @Test(expected = RuntimeException::class)
     fun testThrowsIfFlagIsDisabled() {
         // GIVEN the feature flag is disabled
-        `when`(featureFlags.isSmartspaceEnabled).thenReturn(false)
+        `when`(featureFlags.isEnabled(Flags.SMARTSPACE)).thenReturn(false)
 
         // WHEN we try to build the view
         controller.buildAndConnectView(fakeParent)
@@ -213,6 +214,8 @@ class LockscreenSmartspaceControllerTest : SysuiTestCase() {
 
         // THEN the session is created
         verify(smartspaceManager).createSmartspaceSession(any())
+        // THEN an event notifier is registered
+        verify(plugin).registerSmartspaceEventNotifier(any())
     }
 
     @Test
@@ -240,16 +243,18 @@ class LockscreenSmartspaceControllerTest : SysuiTestCase() {
     }
 
     @Test
-    fun testEmptyListIsEmittedAfterDisconnect() {
+    fun testEmptyListIsEmittedAndNotifierRemovedAfterDisconnect() {
         // GIVEN a registered listener on an active session
         connectSession()
         clearInvocations(plugin)
 
         // WHEN the session is closed
+        controller.stateChangeListener.onViewDetachedFromWindow(smartspaceView as View)
         controller.disconnect()
 
-        // THEN the listener receives an empty list of targets
+        // THEN the listener receives an empty list of targets and unregisters the notifier
         verify(plugin).onTargetsAvailable(emptyList())
+        verify(plugin).registerSmartspaceEventNotifier(null)
     }
 
     @Test
@@ -417,6 +422,7 @@ class LockscreenSmartspaceControllerTest : SysuiTestCase() {
         connectSession()
 
         // WHEN we are told to cleanup
+        controller.stateChangeListener.onViewDetachedFromWindow(smartspaceView as View)
         controller.disconnect()
 
         // THEN we disconnect from the session and unregister any listeners
@@ -444,6 +450,20 @@ class LockscreenSmartspaceControllerTest : SysuiTestCase() {
         // THEN the existing session is reused and views are registered
         verify(smartspaceManager, never()).createSmartspaceSession(any())
         verify(smartspaceView2).registerDataProvider(plugin)
+    }
+
+    @Test
+    fun testConnectAttemptBeforeInitializationShouldNotCreateSession() {
+        // GIVEN an uninitalized smartspaceView
+        // WHEN the device is provisioned
+        `when`(deviceProvisionedController.isDeviceProvisioned()).thenReturn(true)
+        `when`(deviceProvisionedController.isCurrentUserSetup()).thenReturn(true)
+        deviceProvisionedListener.onDeviceProvisionedChanged()
+
+        // THEN no calls to createSmartspaceSession should occur
+        verify(smartspaceManager, never()).createSmartspaceSession(any())
+        // THEN no listeners should be registered
+        verify(configurationController, never()).addCallback(any())
     }
 
     private fun connectSession() {
@@ -540,6 +560,10 @@ class LockscreenSmartspaceControllerTest : SysuiTestCase() {
             }
 
             override fun setMediaTarget(target: SmartspaceTarget?) {
+            }
+
+            override fun getSelectedPage(): Int {
+                return -1
             }
         })
     }

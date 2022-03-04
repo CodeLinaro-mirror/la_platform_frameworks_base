@@ -122,7 +122,9 @@
     <string name="bluetooth_profile_a2dp_high_quality" msgid="4739440941324792775">"Audio HD: <xliff:g id="CODEC_NAME">%1$s</xliff:g>"</string>
     <string name="bluetooth_profile_a2dp_high_quality_unknown_codec" msgid="2477639096903834374">"Audio HD"</string>
     <string name="bluetooth_profile_hearing_aid" msgid="58154575573984914">"Aparate auditive"</string>
+    <string name="bluetooth_profile_le_audio" msgid="5158149987518342036">"LE_AUDIO"</string>
     <string name="bluetooth_hearing_aid_profile_summary_connected" msgid="8191273236809964030">"Conectat la aparatul auditiv"</string>
+    <string name="bluetooth_le_audio_profile_summary_connected" msgid="3162538609379333442">"Conectat la LE_AUDIO"</string>
     <string name="bluetooth_a2dp_profile_summary_connected" msgid="7422607970115444153">"Conectat la profilul pentru conținut media audio"</string>
     <string name="bluetooth_headset_profile_summary_connected" msgid="2420981566026949688">"Conectat la componenta audio a telefonului"</string>
     <string name="bluetooth_opp_profile_summary_connected" msgid="2393521801478157362">"Conectat la serverul de transfer de fișiere"</string>
@@ -140,6 +142,7 @@
     <string name="bluetooth_opp_profile_summary_use_for" msgid="461981154387015457">"Utilizați pentru transferul de fișiere"</string>
     <string name="bluetooth_hid_profile_summary_use_for" msgid="4289460627406490952">"Utilizați pentru introducere date"</string>
     <string name="bluetooth_hearing_aid_profile_summary_use_for" msgid="7689393730163320483">"Folosiți pentru aparatele auditive"</string>
+    <string name="bluetooth_le_audio_profile_summary_use_for" msgid="2778318636027348572">"Folosiți pentru LE_AUDIO"</string>
     <string name="bluetooth_pairing_accept" msgid="2054232610815498004">"Asociați"</string>
     <string name="bluetooth_pairing_accept_all_caps" msgid="2734383073450506220">"CONECTAȚI"</string>
     <string name="bluetooth_pairing_decline" msgid="6483118841204885890">"Anulați"</string>
@@ -550,7 +553,7 @@
     <string name="zen_mode_duration_always_prompt_title" msgid="3212996860498119555">"Întreabă de fiecare dată"</string>
     <string name="zen_mode_forever" msgid="3339224497605461291">"Până când dezactivați"</string>
     <string name="time_unit_just_now" msgid="3006134267292728099">"Chiar acum"</string>
-    <string name="media_transfer_this_device_name" msgid="2716555073132169240">"Difuzorul telefonului"</string>
+    <string name="media_transfer_this_device_name" msgid="2357329267148436433">"Acest telefon"</string>
     <string name="media_transfer_this_phone" msgid="7194341457812151531">"Acest telefon"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Problemă la conectare. Opriți și reporniți dispozitivul."</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Dispozitiv audio cu fir"</string>

@@ -17,6 +17,7 @@
 package com.android.server.pm;
 
 import android.app.ActivityManagerInternal;
+import android.app.backup.IBackupManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.os.Handler;
@@ -134,6 +135,9 @@ public class PackageManagerServiceInjector {
     private final Singleton<DomainVerificationManagerInternal>
             mDomainVerificationManagerInternalProducer;
     private final Singleton<Handler> mHandlerProducer;
+    private final Singleton<BackgroundDexOptService> mBackgroundDexOptService;
+    private final Singleton<IBackupManager> mIBackupManager;
+    private final Singleton<SharedLibrariesImpl> mSharedLibrariesProducer;
 
     PackageManagerServiceInjector(Context context, PackageManagerTracedLock lock,
             Installer installer, Object installLock, PackageAbiHelper abiHelper,
@@ -168,7 +172,10 @@ public class PackageManagerServiceInjector {
             Producer<Handler> handlerProducer,
             SystemWrapper systemWrapper,
             ServiceProducer getLocalServiceProducer,
-            ServiceProducer getSystemServiceProducer) {
+            ServiceProducer getSystemServiceProducer,
+            Producer<BackgroundDexOptService> backgroundDexOptService,
+            Producer<IBackupManager> iBackupManager,
+            Producer<SharedLibrariesImpl> sharedLibrariesProducer) {
         mContext = context;
         mLock = lock;
         mInstaller = installer;
@@ -217,6 +224,9 @@ public class PackageManagerServiceInjector {
                 new Singleton<>(
                         domainVerificationManagerInternalProducer);
         mHandlerProducer = new Singleton<>(handlerProducer);
+        mBackgroundDexOptService = new Singleton<>(backgroundDexOptService);
+        mIBackupManager = new Singleton<>(iBackupManager);
+        mSharedLibrariesProducer = new Singleton<>(sharedLibrariesProducer);
     }
 
     /**
@@ -375,6 +385,18 @@ public class PackageManagerServiceInjector {
 
     public ActivityManagerInternal getActivityManagerInternal() {
         return getLocalService(ActivityManagerInternal.class);
+    }
+
+    public BackgroundDexOptService getBackgroundDexOptService() {
+        return mBackgroundDexOptService.get(this, mPackageManager);
+    }
+
+    public IBackupManager getIBackupManager() {
+        return mIBackupManager.get(this, mPackageManager);
+    }
+
+    public SharedLibrariesImpl getSharedLibrariesImpl() {
+        return mSharedLibrariesProducer.get(this, mPackageManager);
     }
 
     /** Provides an abstraction to static access to system state. */

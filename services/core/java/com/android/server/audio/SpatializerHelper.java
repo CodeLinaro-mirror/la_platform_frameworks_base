@@ -31,6 +31,7 @@ import android.media.ISpatializerCallback;
 import android.media.ISpatializerHeadToSoundStagePoseCallback;
 import android.media.ISpatializerHeadTrackingCallback;
 import android.media.ISpatializerHeadTrackingModeCallback;
+import android.media.ISpatializerOutputCallback;
 import android.media.SpatializationLevel;
 import android.media.Spatializer;
 import android.media.SpatializerHeadTrackingMode;
@@ -38,9 +39,11 @@ import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.util.Log;
 
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 /**
  * A helper class to manage Spatializer related functionality
@@ -62,6 +65,14 @@ public class SpatializerHelper {
     private @Nullable SensorManager mSensorManager;
 
     //------------------------------------------------------------
+    /** head tracker sensor name */
+    // TODO: replace with generic head tracker sensor name.
+    //       the current implementation refers to the "google" namespace but will be replaced
+    //       by an android name at the next API level revision, it is not Google-specific.
+    //       Also see "TODO-HT" in onInitSensors() method
+    private static final String HEADTRACKER_SENSOR =
+            "com.google.hardware.sensor.hid_dynamic.headtracker";
+
     // Spatializer state machine
     private static final int STATE_UNINITIALIZED = 0;
     private static final int STATE_NOT_SUPPORTED = 1;
@@ -75,11 +86,12 @@ public class SpatializerHelper {
     private int mSpatLevel = Spatializer.SPATIALIZER_IMMERSIVE_LEVEL_NONE;
     private int mCapableSpatLevel = Spatializer.SPATIALIZER_IMMERSIVE_LEVEL_NONE;
     private int mActualHeadTrackingMode = Spatializer.HEAD_TRACKING_MODE_UNSUPPORTED;
-    private int mDesiredHeadTrackingMode = Spatializer.HEAD_TRACKING_MODE_UNSUPPORTED;
+    private int mDesiredHeadTrackingMode = Spatializer.HEAD_TRACKING_MODE_RELATIVE_WORLD;
+    private int mSpatOutput = 0;
     private @Nullable ISpatializer mSpat;
     private @Nullable SpatializerCallback mSpatCallback;
     private @Nullable SpatializerHeadTrackingCallback mSpatHeadTrackingCallback;
-
+    private @Nullable HelperDynamicSensorCallback mDynSensorCallback;
 
     // default attributes and format that determine basic availability of spatialization
     private static final AudioAttributes DEFAULT_ATTRIBUTES = new AudioAttributes.Builder()
@@ -157,6 +169,7 @@ public class SpatializerHelper {
             return;
         }
         mState = STATE_DISABLED_UNAVAILABLE;
+        mASA.getDevicesForAttributes(DEFAULT_ATTRIBUTES).toArray(ROUTING_DEVICES);
         // note at this point mSpat is still not instantiated
     }
 
@@ -193,6 +206,11 @@ public class SpatializerHelper {
         logd("onRoutingUpdated: can spatialize media 5.1:" + able
                 + " on device:" + ROUTING_DEVICES[0]);
         setDispatchAvailableState(able);
+
+        if (mDesiredHeadTrackingMode != Spatializer.HEAD_TRACKING_MODE_UNSUPPORTED
+                && mDesiredHeadTrackingMode != Spatializer.HEAD_TRACKING_MODE_DISABLED) {
+            postInitSensors();
+        }
     }
 
     //------------------------------------------------------
@@ -207,14 +225,23 @@ public class SpatializerHelper {
             // TODO use reported spat level to change state
 
             // init sensors
-            if (level == SpatializationLevel.NONE) {
-                initSensors(/*init*/false);
-            } else {
-                postInitSensors(true);
+            postInitSensors();
+        }
+
+        public void onOutputChanged(int output) {
+            logd("SpatializerCallback.onOutputChanged output:" + output);
+            int oldOutput;
+            synchronized (SpatializerHelper.this) {
+                oldOutput = mSpatOutput;
+                mSpatOutput = output;
+            }
+            if (oldOutput != output) {
+                dispatchOutputUpdate(output);
             }
         }
     };
 
+    //------------------------------------------------------
     // spatializer head tracking callback from native
     private final class SpatializerHeadTrackingCallback
             extends ISpatializerHeadTrackingCallback.Stub {
@@ -253,6 +280,20 @@ public class SpatializerHelper {
             dispatchPoseUpdate(headToStage);
         }
     };
+
+    //------------------------------------------------------
+    // dynamic sensor callback
+    private final class HelperDynamicSensorCallback extends SensorManager.DynamicSensorCallback {
+        @Override
+        public void onDynamicSensorConnected(Sensor sensor) {
+            postInitSensors();
+        }
+
+        @Override
+        public void onDynamicSensorDisconnected(Sensor sensor) {
+            postInitSensors();
+        }
+    }
 
     //------------------------------------------------------
     // compatible devices
@@ -518,9 +559,9 @@ public class SpatializerHelper {
                 logd("canBeSpatialized false due to usage:" + attributes.getUsage());
                 return false;
         }
-        AudioDeviceAttributes[] devices =
-                // going through adapter to take advantage of routing cache
-                (AudioDeviceAttributes[]) mASA.getDevicesForAttributes(attributes).toArray();
+        AudioDeviceAttributes[] devices = new AudioDeviceAttributes[1];
+        // going through adapter to take advantage of routing cache
+        mASA.getDevicesForAttributes(attributes).toArray(devices);
         final boolean able = AudioSystem.canBeSpatialized(attributes, format, devices);
         logd("canBeSpatialized returning " + able);
         return able;
@@ -648,12 +689,13 @@ public class SpatializerHelper {
             return;
         }
         try {
-            if (mode != mDesiredHeadTrackingMode) {
-                mSpat.setDesiredHeadTrackingMode(spatializerIntToHeadTrackingModeType(mode));
+            if (mDesiredHeadTrackingMode != mode) {
                 mDesiredHeadTrackingMode = mode;
                 dispatchDesiredHeadTrackingMode(mode);
             }
-
+            if (mode != headTrackingModeTypeToSpatializerInt(mSpat.getActualHeadTrackingMode())) {
+                mSpat.setDesiredHeadTrackingMode(spatializerIntToHeadTrackingModeType(mode));
+            }
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling setDesiredHeadTrackingMode", e);
         }
@@ -782,49 +824,67 @@ public class SpatializerHelper {
     }
 
     //------------------------------------------------------
-    // sensors
-    private void initSensors(boolean init) {
-        if (mSensorManager == null) {
-            mSensorManager = (SensorManager)
-                    mAudioService.mContext.getSystemService(Context.SENSOR_SERVICE);
+    // output
+
+    /** @see Spatializer#getOutput */
+    synchronized int getOutput() {
+        switch (mState) {
+            case STATE_UNINITIALIZED:
+            case STATE_NOT_SUPPORTED:
+                throw (new IllegalStateException(
+                        "Can't get output without a spatializer"));
+            case STATE_ENABLED_UNAVAILABLE:
+            case STATE_DISABLED_UNAVAILABLE:
+            case STATE_DISABLED_AVAILABLE:
+            case STATE_ENABLED_AVAILABLE:
+                if (mSpat == null) {
+                    throw (new IllegalStateException(
+                            "null Spatializer for getOutput"));
+                }
+                break;
         }
-        final int headHandle;
-        final int screenHandle;
-        if (init) {
-            if (mSensorManager == null) {
-                Log.e(TAG, "Null SensorManager, can't init sensors");
-                return;
+        // mSpat != null
+        try {
+            return mSpat.getOutput();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error in getOutput", e);
+            return 0;
+        }
+    }
+
+    final RemoteCallbackList<ISpatializerOutputCallback> mOutputCallbacks =
+            new RemoteCallbackList<ISpatializerOutputCallback>();
+
+    synchronized void registerSpatializerOutputCallback(
+            @NonNull ISpatializerOutputCallback callback) {
+        mOutputCallbacks.register(callback);
+    }
+
+    synchronized void unregisterSpatializerOutputCallback(
+            @NonNull ISpatializerOutputCallback callback) {
+        mOutputCallbacks.unregister(callback);
+    }
+
+    private void dispatchOutputUpdate(int output) {
+        final int nbCallbacks = mOutputCallbacks.beginBroadcast();
+        for (int i = 0; i < nbCallbacks; i++) {
+            try {
+                mOutputCallbacks.getBroadcastItem(i).dispatchSpatializerOutputChanged(output);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error in dispatchOutputUpdate", e);
             }
-            // TODO replace with dynamic association of sensor for headtracker
-            Sensor headSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
-            headHandle = headSensor.getHandle();
-            //Sensor screenSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
-            //screenHandle = deviceSensor.getHandle();
-            screenHandle = -1;
-        } else {
-            // -1 is disable value
-            screenHandle = -1;
-            headHandle = -1;
         }
-        try {
-            Log.i(TAG, "setScreenSensor:" + screenHandle);
-            mSpat.setScreenSensor(screenHandle);
-        } catch (Exception e) {
-            Log.e(TAG, "Error calling setScreenSensor:" + screenHandle, e);
-        }
-        try {
-            Log.i(TAG, "setHeadSensor:" + headHandle);
-            mSpat.setHeadSensor(headHandle);
-        } catch (Exception e) {
-            Log.e(TAG, "Error calling setHeadSensor:" + headHandle, e);
-        }
+        mOutputCallbacks.finishBroadcast();
     }
 
-    private void postInitSensors(boolean init) {
-        mAudioService.postInitSpatializerHeadTrackingSensors(init);
+    //------------------------------------------------------
+    // sensors
+    private void postInitSensors() {
+        mAudioService.postInitSpatializerHeadTrackingSensors();
     }
 
-    synchronized void onInitSensors(boolean init) {
+    synchronized void onInitSensors() {
+        final boolean init = (mSpatLevel != SpatializationLevel.NONE);
         final String action = init ? "initializing" : "releasing";
         if (mSpat == null) {
             Log.e(TAG, "not " + action + " sensors, null spatializer");
@@ -839,7 +899,63 @@ public class SpatializerHelper {
             Log.e(TAG, "not " + action + " sensors, error querying headtracking", e);
             return;
         }
-        initSensors(init);
+        int headHandle = -1;
+        int screenHandle = -1;
+        if (init) {
+            if (mSensorManager == null) {
+                try {
+                    mSensorManager = (SensorManager)
+                            mAudioService.mContext.getSystemService(Context.SENSOR_SERVICE);
+                    mDynSensorCallback = new HelperDynamicSensorCallback();
+                    mSensorManager.registerDynamicSensorCallback(mDynSensorCallback);
+                } catch (Exception e) {
+                    Log.e(TAG, "Error with SensorManager, can't initialize sensors", e);
+                    mSensorManager = null;
+                    mDynSensorCallback = null;
+                    return;
+                }
+            }
+            // initialize sensor handles
+            UUID routingDeviceUuid = mAudioService.getDeviceSensorUuid(ROUTING_DEVICES[0]);
+            List<Sensor> sensors = new ArrayList<Sensor>(0);
+            sensors.addAll(mSensorManager.getDynamicSensorList(Sensor.TYPE_HEAD_TRACKER));
+            sensors.addAll(mSensorManager.getDynamicSensorList(Sensor.TYPE_DEVICE_PRIVATE_BASE));
+            for (Sensor sensor : sensors) {
+                if (sensor.getType() == Sensor.TYPE_HEAD_TRACKER
+                        || sensor.getStringType().equals(HEADTRACKER_SENSOR)) {
+                    UUID uuid = sensor.getUuid();
+                    if (uuid.equals(routingDeviceUuid)) {
+                        headHandle = sensor.getHandle();
+                        break;
+                    }
+                    if (uuid.equals(UuidUtils.STANDALONE_UUID)) {
+                        headHandle = sensor.getHandle();
+                    }
+                }
+            }
+            Sensor screenSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+            screenHandle = screenSensor.getHandle();
+        } else {
+            if (mSensorManager != null && mDynSensorCallback != null) {
+                mSensorManager.unregisterDynamicSensorCallback(mDynSensorCallback);
+                mSensorManager = null;
+                mDynSensorCallback = null;
+            }
+            // -1 is disable value for both screen and head tracker handles
+        }
+        try {
+            Log.i(TAG, "setScreenSensor:" + screenHandle);
+            mSpat.setScreenSensor(screenHandle);
+        } catch (Exception e) {
+            Log.e(TAG, "Error calling setScreenSensor:" + screenHandle, e);
+        }
+        try {
+            Log.i(TAG, "setHeadSensor:" + headHandle);
+            mSpat.setHeadSensor(headHandle);
+        } catch (Exception e) {
+            Log.e(TAG, "Error calling setHeadSensor:" + headHandle, e);
+        }
+        setDesiredHeadTrackingMode(mDesiredHeadTrackingMode);
     }
 
     //------------------------------------------------------
@@ -885,5 +1001,23 @@ public class SpatializerHelper {
             default:
                 throw(new IllegalArgumentException("Unexpected spatializer level:" + level));
         }
+    }
+
+    void dump(PrintWriter pw) {
+        pw.println("SpatializerHelper:");
+        pw.println("\tmState:" + mState);
+        pw.println("\tmSpatLevel:" + mSpatLevel);
+        pw.println("\tmCapableSpatLevel:" + mCapableSpatLevel);
+        pw.println("\tmActualHeadTrackingMode:"
+                + Spatializer.headtrackingModeToString(mActualHeadTrackingMode));
+        pw.println("\tmDesiredHeadTrackingMode:"
+                + Spatializer.headtrackingModeToString(mDesiredHeadTrackingMode));
+        String modesString = "";
+        int[] modes = getSupportedHeadTrackingModes();
+        for (int mode : modes) {
+            modesString += Spatializer.headtrackingModeToString(mode) + " ";
+        }
+        pw.println("\tsupported head tracking modes:" + modesString);
+        pw.println("\tmSpatOutput:" + mSpatOutput);
     }
 }

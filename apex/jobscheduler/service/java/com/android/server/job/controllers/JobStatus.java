@@ -22,6 +22,7 @@ import static com.android.server.job.JobSchedulerService.RESTRICTED_INDEX;
 import static com.android.server.job.JobSchedulerService.WORKING_INDEX;
 import static com.android.server.job.JobSchedulerService.sElapsedRealtimeClock;
 
+import android.annotation.ElapsedRealtimeLong;
 import android.app.AppGlobals;
 import android.app.job.JobInfo;
 import android.app.job.JobParameters;
@@ -266,7 +267,7 @@ public final class JobStatus {
     private final boolean mHasMediaBackupExemption;
 
     // Set to true if doze constraint was satisfied due to app being whitelisted.
-    public boolean dozeWhitelisted;
+    boolean appHasDozeExemption;
 
     // Set to true when the app is "active" per AppStateTracker
     public boolean uidActive;
@@ -328,8 +329,8 @@ public final class JobStatus {
     public Network network;
     public ServiceInfo serviceInfo;
 
-    /** The evaluated priority of the job when it started running. */
-    public int lastEvaluatedPriority;
+    /** The evaluated bias of the job when it started running. */
+    public int lastEvaluatedBias;
 
     /**
      * Whether or not this particular JobStatus instance was treated as an EJ when it started
@@ -349,6 +350,7 @@ public final class JobStatus {
     public int overrideState = JobStatus.OVERRIDE_NONE;
 
     // When this job was enqueued, for ordering.  (in elapsedRealtimeMillis)
+    @ElapsedRealtimeLong
     public long enqueueTime;
 
     // Metrics about queue latency.  (in uptimeMillis)
@@ -924,8 +926,32 @@ public final class JobStatus {
         return tag;
     }
 
-    public int getPriority() {
-        return job.getPriority();
+    public int getBias() {
+        return job.getBias();
+    }
+
+    /**
+     * Returns the priority of the job, which may be adjusted due to various factors.
+     * @see JobInfo.Builder#setPriority(int)
+     */
+    @JobInfo.Priority
+    public int getEffectivePriority() {
+        final int rawPriority = job.getPriority();
+        if (numFailures < 2) {
+            return rawPriority;
+        }
+        // Slowly decay priority of jobs to prevent starvation of other jobs.
+        if (isRequestedExpeditedJob()) {
+            // EJs can't fall below HIGH priority.
+            return JobInfo.PRIORITY_HIGH;
+        }
+        // Set a maximum priority based on the number of failures.
+        final int dropPower = numFailures / 2;
+        switch (dropPower) {
+            case 1: return Math.min(JobInfo.PRIORITY_DEFAULT, rawPriority);
+            case 2: return Math.min(JobInfo.PRIORITY_LOW, rawPriority);
+            default: return JobInfo.PRIORITY_MIN;
+        }
     }
 
     public int getFlags() {
@@ -1153,7 +1179,8 @@ public final class JobStatus {
      * in Doze.
      */
     public boolean canRunInDoze() {
-        return (getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) != 0
+        return appHasDozeExemption
+                || (getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) != 0
                 || ((shouldTreatAsExpeditedJob() || startedAsExpeditedJob)
                 && (mDynamicConstraints & CONSTRAINT_DEVICE_NOT_DOZING) == 0);
     }
@@ -1217,7 +1244,7 @@ public final class JobStatus {
     /** @return true if the constraint was changed, false otherwise. */
     boolean setDeviceNotDozingConstraintSatisfied(final long nowElapsed,
             boolean state, boolean whitelisted) {
-        dozeWhitelisted = whitelisted;
+        appHasDozeExemption = whitelisted;
         if (setConstraintSatisfied(CONSTRAINT_DEVICE_NOT_DOZING, nowElapsed, state)) {
             // The constraint was changed. Update the ready flag.
             mReadyNotDozing = state || canRunInDoze();
@@ -1947,10 +1974,18 @@ public final class JobStatus {
             if (job.isPersisted()) {
                 pw.println("PERSISTED");
             }
-            if (job.getPriority() != 0) {
-                pw.print("Priority: ");
-                pw.println(JobInfo.getPriorityString(job.getPriority()));
+            if (job.getBias() != 0) {
+                pw.print("Bias: ");
+                pw.println(JobInfo.getBiasString(job.getBias()));
             }
+            pw.print("Priority: ");
+            pw.print(JobInfo.getPriorityString(job.getPriority()));
+            final int effectivePriority = getEffectivePriority();
+            if (effectivePriority != job.getPriority()) {
+                pw.print(" effective=");
+                pw.print(JobInfo.getPriorityString(effectivePriority));
+            }
+            pw.println();
             if (job.getFlags() != 0) {
                 pw.print("Flags: ");
                 pw.println(Integer.toHexString(job.getFlags()));
@@ -2076,7 +2111,7 @@ public final class JobStatus {
             }
             pw.decreaseIndent();
 
-            if (dozeWhitelisted) {
+            if (appHasDozeExemption) {
                 pw.println("Doze whitelisted: true");
             }
             if (uidActive) {
@@ -2217,7 +2252,7 @@ public final class JobStatus {
             proto.write(JobStatusDumpProto.JobInfo.PERIOD_FLEX_MS, job.getFlexMillis());
 
             proto.write(JobStatusDumpProto.JobInfo.IS_PERSISTED, job.isPersisted());
-            proto.write(JobStatusDumpProto.JobInfo.PRIORITY, job.getPriority());
+            proto.write(JobStatusDumpProto.JobInfo.PRIORITY, job.getBias());
             proto.write(JobStatusDumpProto.JobInfo.FLAGS, job.getFlags());
             proto.write(JobStatusDumpProto.INTERNAL_FLAGS, getInternalFlags());
             // Foreground exemption can be determined from internal flags value.
@@ -2289,7 +2324,7 @@ public final class JobStatus {
             dumpConstraints(proto, JobStatusDumpProto.SATISFIED_CONSTRAINTS, satisfiedConstraints);
             dumpConstraints(proto, JobStatusDumpProto.UNSATISFIED_CONSTRAINTS,
                     ((requiredConstraints | CONSTRAINT_WITHIN_QUOTA) & ~satisfiedConstraints));
-            proto.write(JobStatusDumpProto.IS_DOZE_WHITELISTED, dozeWhitelisted);
+            proto.write(JobStatusDumpProto.IS_DOZE_WHITELISTED, appHasDozeExemption);
             proto.write(JobStatusDumpProto.IS_UID_ACTIVE, uidActive);
             proto.write(JobStatusDumpProto.IS_EXEMPTED_FROM_APP_STANDBY,
                     job.isExemptedFromAppStandby());

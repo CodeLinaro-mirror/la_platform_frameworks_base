@@ -97,7 +97,7 @@ class EnsureActivitiesVisibleHelper {
         // activities are actually behind other fullscreen activities, but still required
         // to be visible (such as performing Recents animation).
         final boolean resumeTopActivity = mTop != null && !mTop.mLaunchTaskBehind
-                && mTaskFragment.isTopActivityFocusable()
+                && mTaskFragment.canBeResumed(starting)
                 && (starting == null || !starting.isDescendantOf(mTaskFragment));
 
         ArrayList<TaskFragment> adjacentTaskFragments = null;
@@ -119,8 +119,12 @@ class EnsureActivitiesVisibleHelper {
 
                 if (adjacentTaskFragments != null && adjacentTaskFragments.contains(
                         childTaskFragment)) {
-                    // Everything behind two adjacent TaskFragments are occluded.
-                    mBehindFullyOccludedContainer = true;
+                    if (!childTaskFragment.isTranslucent(starting)
+                            && !childTaskFragment.getAdjacentTaskFragment().isTranslucent(
+                                    starting)) {
+                        // Everything behind two adjacent TaskFragments are occluded.
+                        mBehindFullyOccludedContainer = true;
+                    }
                     continue;
                 }
 
@@ -134,9 +138,6 @@ class EnsureActivitiesVisibleHelper {
             } else if (child.asActivityRecord() != null) {
                 setActivityVisibilityState(child.asActivityRecord(), starting, resumeTopActivity);
             }
-        }
-        if (mTaskFragment.mTransitionController.isShellTransitionsEnabled()) {
-            mTaskFragment.getDisplayContent().mWallpaperController.adjustWallpaperWindows();
         }
     }
 

@@ -295,7 +295,8 @@ public class KeyEvent extends InputEvent implements Parcelable {
     /** Key code constant: Fast Forward media key. */
     public static final int KEYCODE_MEDIA_FAST_FORWARD = 90;
     /** Key code constant: Mute key.
-     * Mutes the microphone, unlike {@link #KEYCODE_VOLUME_MUTE}. */
+     * Mute key for the microphone (unlike {@link #KEYCODE_VOLUME_MUTE}, which is the speaker mute
+     * key). */
     public static final int KEYCODE_MUTE            = 91;
     /** Key code constant: Page Up key. */
     public static final int KEYCODE_PAGE_UP         = 92;
@@ -482,9 +483,10 @@ public class KeyEvent extends InputEvent implements Parcelable {
     /** Key code constant: Numeric keypad ')' key. */
     public static final int KEYCODE_NUMPAD_RIGHT_PAREN = 163;
     /** Key code constant: Volume Mute key.
-     * Mutes the speaker, unlike {@link #KEYCODE_MUTE}.
-     * This key should normally be implemented as a toggle such that the first press
-     * mutes the speaker and the second press restores the original volume. */
+     * Mute key for speaker (unlike {@link #KEYCODE_MUTE}, which is the mute key for the
+     * microphone). This key should normally be implemented as a toggle such that the first press
+     * mutes the speaker and the second press restores the original volume.
+     */
     public static final int KEYCODE_VOLUME_MUTE     = 164;
     /** Key code constant: Info key.
      * Common on TV remotes to show additional information related to what is
@@ -832,13 +834,45 @@ public class KeyEvent extends InputEvent implements Parcelable {
      * consuming content. May be consumed by system to set account globally.
      */
     public static final int KEYCODE_PROFILE_SWITCH = 288;
+    /** Key code constant: Video Application key #1. */
+    public static final int KEYCODE_VIDEO_APP_1 = 289;
+    /** Key code constant: Video Application key #2. */
+    public static final int KEYCODE_VIDEO_APP_2 = 290;
+    /** Key code constant: Video Application key #3. */
+    public static final int KEYCODE_VIDEO_APP_3 = 291;
+    /** Key code constant: Video Application key #4. */
+    public static final int KEYCODE_VIDEO_APP_4 = 292;
+    /** Key code constant: Video Application key #5. */
+    public static final int KEYCODE_VIDEO_APP_5 = 293;
+    /** Key code constant: Video Application key #6. */
+    public static final int KEYCODE_VIDEO_APP_6 = 294;
+    /** Key code constant: Video Application key #7. */
+    public static final int KEYCODE_VIDEO_APP_7 = 295;
+    /** Key code constant: Video Application key #8. */
+    public static final int KEYCODE_VIDEO_APP_8 = 296;
+    /** Key code constant: Featured Application key #1. */
+    public static final int KEYCODE_FEATURED_APP_1 = 297;
+    /** Key code constant: Featured Application key #2. */
+    public static final int KEYCODE_FEATURED_APP_2 = 298;
+    /** Key code constant: Featured Application key #3. */
+    public static final int KEYCODE_FEATURED_APP_3 = 299;
+    /** Key code constant: Featured Application key #4. */
+    public static final int KEYCODE_FEATURED_APP_4 = 300;
+    /** Key code constant: Demo Application key #1. */
+    public static final int KEYCODE_DEMO_APP_1 = 301;
+    /** Key code constant: Demo Application key #2. */
+    public static final int KEYCODE_DEMO_APP_2 = 302;
+    /** Key code constant: Demo Application key #3. */
+    public static final int KEYCODE_DEMO_APP_3 = 303;
+    /** Key code constant: Demo Application key #4. */
+    public static final int KEYCODE_DEMO_APP_4 = 304;
 
-    /**
+   /**
      * Integer value of the last KEYCODE. Increases as new keycodes are added to KeyEvent.
      * @hide
      */
     @TestApi
-    public static final int LAST_KEYCODE = KEYCODE_PROFILE_SWITCH;
+    public static final int LAST_KEYCODE = KEYCODE_DEMO_APP_4;
 
     // NOTE: If you add a new keycode here you must also add it to:
     //  isSystem()

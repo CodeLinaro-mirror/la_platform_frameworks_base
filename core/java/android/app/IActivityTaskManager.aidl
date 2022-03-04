@@ -68,9 +68,11 @@ import android.os.StrictMode;
 import android.os.WorkSource;
 import android.service.voice.IVoiceInteractionSession;
 import android.view.IRecentsAnimationRunner;
+import android.view.IRemoteAnimationRunner;
 import android.view.RemoteAnimationDefinition;
 import android.view.RemoteAnimationAdapter;
 import android.window.IWindowOrganizerController;
+import android.window.BackNavigationInfo;
 import android.window.SplashScreenView;
 import com.android.internal.app.IVoiceInteractor;
 import com.android.internal.os.IResultReceiver;
@@ -177,17 +179,16 @@ interface IActivityTaskManager {
     Point getAppTaskThumbnailSize();
     /**
      * Only callable from the system. This token grants a temporary permission to call
-     * #startActivityAsCallerWithToken. The token will time out after
-     * START_AS_CALLER_TOKEN_TIMEOUT if it is not used.
+     * #startActivityAsCaller. The token will time out after START_AS_CALLER_TOKEN_TIMEOUT
+     * if it is not used.
      *
-     * @param delegatorToken The Binder token referencing the system Activity that wants to delegate
-     *        the #startActivityAsCaller to another app. The "caller" will be the caller of this
-     *        activity's token, not the delegate's caller (which is probably the delegator itself).
+     * @param componentName The component name of the delegated component that is allowed to
+     *                      call #startActivityAsCaller with the returned token.
      *
      * @return Returns a token that can be given to a "delegate" app that may call
      *         #startActivityAsCaller
      */
-    IBinder requestStartActivityPermissionToken(in IBinder delegatorToken);
+    IBinder requestStartActivityPermissionToken(in ComponentName componentName);
 
     oneway void releaseSomeActivities(in IApplicationThread app);
     Bitmap getTaskDescriptionIcon(in String filename, int userId);
@@ -344,4 +345,10 @@ interface IActivityTaskManager {
      * @param caller is the IApplicationThread representing the calling process.
      */
     void setRunningRemoteTransitionDelegate(in IApplicationThread caller);
+
+    /**
+     * Prepare the back navigation in the server. This setups the leashed for sysui to animate
+     * the back gesture and returns the data needed for the animation.
+     */
+    android.window.BackNavigationInfo startBackNavigation();
 }

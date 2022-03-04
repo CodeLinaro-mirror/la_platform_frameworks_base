@@ -45,14 +45,15 @@ public class NotificationRoundnessManager {
     private ExpandableNotificationRow mTrackedHeadsUp;
     private float mAppearFraction;
     private boolean mRoundForPulsingViews;
-    private boolean mIsDismissAllInProgress;
+    private boolean mIsClearAllInProgress;
 
     private ExpandableView mSwipedView = null;
     private ExpandableView mViewBeforeSwipedView = null;
     private ExpandableView mViewAfterSwipedView = null;
 
     @Inject
-    NotificationRoundnessManager(NotificationSectionsFeatureManager sectionsFeatureManager) {
+    NotificationRoundnessManager(
+            NotificationSectionsFeatureManager sectionsFeatureManager) {
         int numberOfSections = sectionsFeatureManager.getNumberOfBuckets();
         mFirstInSectionViews = new ExpandableView[numberOfSections];
         mLastInSectionViews = new ExpandableView[numberOfSections];
@@ -118,11 +119,7 @@ public class NotificationRoundnessManager {
     void setViewsAffectedBySwipe(
             ExpandableView viewBefore,
             ExpandableView viewSwiped,
-            ExpandableView viewAfter,
-            boolean cornerAnimationsEnabled) {
-        if (!cornerAnimationsEnabled) {
-            return;
-        }
+            ExpandableView viewAfter) {
         final boolean animate = true;
 
         ExpandableView oldViewBefore = mViewBeforeSwipedView;
@@ -159,8 +156,8 @@ public class NotificationRoundnessManager {
         }
     }
 
-    void setDismissAllInProgress(boolean isClearingAll) {
-        mIsDismissAllInProgress = isClearingAll;
+    void setClearAllInProgress(boolean isClearingAll) {
+        mIsClearAllInProgress = isClearingAll;
     }
 
     private float getRoundnessFraction(ExpandableView view, boolean top) {
@@ -173,8 +170,8 @@ public class NotificationRoundnessManager {
             return 1f;
         }
         if (view instanceof ExpandableNotificationRow
-                && ((ExpandableNotificationRow) view).canViewBeDismissed()
-                && mIsDismissAllInProgress) {
+                && ((ExpandableNotificationRow) view).canViewBeCleared()
+                && mIsClearAllInProgress) {
             return 1.0f;
         }
         if ((view.isPinned()

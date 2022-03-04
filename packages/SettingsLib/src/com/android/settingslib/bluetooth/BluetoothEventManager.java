@@ -22,6 +22,7 @@ import android.bluetooth.BluetoothCsipSetCoordinator;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothHeadset;
 import android.bluetooth.BluetoothHearingAid;
+import android.bluetooth.BluetoothLeAudio;
 import android.bluetooth.BluetoothProfile;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -116,6 +117,8 @@ public class BluetoothEventManager {
         addHandler(BluetoothHeadset.ACTION_ACTIVE_DEVICE_CHANGED, new ActiveDeviceChangedHandler());
         addHandler(BluetoothHearingAid.ACTION_ACTIVE_DEVICE_CHANGED,
                 new ActiveDeviceChangedHandler());
+        addHandler(BluetoothLeAudio.ACTION_LE_AUDIO_ACTIVE_DEVICE_CHANGED,
+                   new ActiveDeviceChangedHandler());
 
         // Headset state changed broadcasts
         addHandler(BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED,
@@ -126,9 +129,6 @@ public class BluetoothEventManager {
         // ACL connection changed broadcasts
         addHandler(BluetoothDevice.ACTION_ACL_CONNECTED, new AclStateChangedHandler());
         addHandler(BluetoothDevice.ACTION_ACL_DISCONNECTED, new AclStateChangedHandler());
-
-        addHandler(BluetoothCsipSetCoordinator.ACTION_CSIS_SET_MEMBER_AVAILABLE,
-                new SetMemberAvailableHandler());
 
         registerAdapterIntentReceiver();
     }
@@ -160,10 +160,12 @@ public class BluetoothEventManager {
     private void registerIntentReceiver(BroadcastReceiver receiver, IntentFilter filter) {
         if (mUserHandle == null) {
             // If userHandle has not been provided, simply call registerReceiver.
-            mContext.registerReceiver(receiver, filter, null, mReceiverHandler);
+            mContext.registerReceiver(receiver, filter, null, mReceiverHandler,
+                    Context.RECEIVER_EXPORTED);
         } else {
             // userHandle was explicitly specified, so need to call multi-user aware API.
-            mContext.registerReceiverAsUser(receiver, mUserHandle, filter, null, mReceiverHandler);
+            mContext.registerReceiverAsUser(receiver, mUserHandle, filter, null, mReceiverHandler,
+                    Context.RECEIVER_EXPORTED);
         }
     }
 
@@ -305,7 +307,8 @@ public class BluetoothEventManager {
             CachedBluetoothDevice cachedDevice = mDeviceManager.findDevice(device);
             if (cachedDevice == null) {
                 cachedDevice = mDeviceManager.addDevice(device);
-                Log.d(TAG, "DeviceFoundHandler created new CachedBluetoothDevice");
+                Log.d(TAG, "DeviceFoundHandler created new CachedBluetoothDevice "
+                        + cachedDevice.getDevice().getAnonymizedAddress());
             } else if (cachedDevice.getBondState() == BluetoothDevice.BOND_BONDED
                     && !cachedDevice.getDevice().isConnected()) {
                 // Dispatch device add callback to show bonded but
@@ -455,6 +458,9 @@ public class BluetoothEventManager {
                 bluetoothProfile = BluetoothProfile.HEADSET;
             } else if (Objects.equals(action, BluetoothHearingAid.ACTION_ACTIVE_DEVICE_CHANGED)) {
                 bluetoothProfile = BluetoothProfile.HEARING_AID;
+            } else if (Objects.equals(action,
+                        BluetoothLeAudio.ACTION_LE_AUDIO_ACTIVE_DEVICE_CHANGED)) {
+                bluetoothProfile = BluetoothProfile.LE_AUDIO;
             } else {
                 Log.w(TAG, "ActiveDeviceChangedHandler: unknown action " + action);
                 return;
@@ -513,31 +519,6 @@ public class BluetoothEventManager {
                 return;
             }
             dispatchAudioModeChanged();
-        }
-    }
-
-    private class SetMemberAvailableHandler implements Handler {
-        @Override
-        public void onReceive(Context context, Intent intent, BluetoothDevice device) {
-            final String action = intent.getAction();
-            if (device == null) {
-                Log.e(TAG, "SetMemberAvailableHandler: device is null");
-                return;
-            }
-
-            if (action == null) {
-                Log.e(TAG, "SetMemberAvailableHandler: action is null");
-                return;
-            }
-
-            final int groupId = intent.getIntExtra(BluetoothCsipSetCoordinator.EXTRA_CSIS_GROUP_ID,
-                    BluetoothCsipSetCoordinator.GROUP_ID_INVALID);
-            if (groupId == BluetoothCsipSetCoordinator.GROUP_ID_INVALID) {
-                Log.e(TAG, "SetMemberAvailableHandler: Invalid group id");
-                return;
-            }
-
-            mDeviceManager.onSetMemberAppear(device, groupId);
         }
     }
 }

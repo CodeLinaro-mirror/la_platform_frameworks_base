@@ -41,9 +41,8 @@ import android.content.pm.ApexStagedEvent;
 import android.content.pm.IStagedApexObserver;
 import android.content.pm.PackageInstaller;
 import android.content.pm.PackageInstaller.SessionInfo;
-import android.content.pm.PackageInstaller.SessionInfo.StagedSessionErrorCode;
+import android.content.pm.PackageInstaller.SessionInfo.SessionErrorCode;
 import android.content.pm.StagedApexInfo;
-import android.os.Message;
 import android.os.SystemProperties;
 import android.os.storage.IStorageManager;
 import android.platform.test.annotations.Presubmit;
@@ -113,7 +112,7 @@ public class StagingManagerTest {
         when(SystemProperties.get(eq("ro.apex.updatable"), anyString())).thenReturn("true");
 
         mTmpDir = mTemporaryFolder.newFolder("StagingManagerTest");
-        mStagingManager = new StagingManager(mContext, null, mApexManager);
+        mStagingManager = new StagingManager(mContext, mApexManager);
     }
 
     @After
@@ -121,32 +120,6 @@ public class StagingManagerTest {
         if (mMockitoSession != null) {
             mMockitoSession.finishMocking();
         }
-    }
-
-    /**
-     * Tests that sessions committed later shouldn't cause earlier ones to fail the overlapping
-     * check.
-     */
-    @Test
-    public void checkNonOverlappingWithStagedSessions_laterSessionShouldNotFailEarlierOnes()
-            throws Exception {
-        // Create 2 sessions with overlapping packages
-        StagingManager.StagedSession session1 = createSession(111, "com.foo", 1);
-        StagingManager.StagedSession session2 = createSession(222, "com.foo", 2);
-
-        mStagingManager.createSession(session1);
-        mStagingManager.createSession(session2);
-        // Session1 should not fail in spite of the overlapping packages
-        mStagingManager.checkNonOverlappingWithStagedSessions(session1);
-        // setSessionFailed() should've been called when doing overlapping checks on session1
-        verify(session2, times(1)).setSessionFailed(anyInt(), anyString());
-
-        // Yet another session with overlapping packages
-        StagingManager.StagedSession session3 = createSession(333, "com.foo", 3);
-        mStagingManager.createSession(session3);
-        assertThrows(PackageManagerException.class,
-                () -> mStagingManager.checkNonOverlappingWithStagedSessions(session3));
-        verify(session3, never()).setSessionFailed(anyInt(), anyString());
     }
 
     @Test
@@ -185,10 +158,10 @@ public class StagingManagerTest {
 
         mStagingManager.restoreSessions(Arrays.asList(session1, session2), true);
 
-        assertThat(session1.getErrorCode()).isEqualTo(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED);
+        assertThat(session1.getErrorCode()).isEqualTo(SessionInfo.SESSION_ACTIVATION_FAILED);
         assertThat(session1.getErrorMessage()).isEqualTo("Build fingerprint has changed");
 
-        assertThat(session2.getErrorCode()).isEqualTo(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED);
+        assertThat(session2.getErrorCode()).isEqualTo(SessionInfo.SESSION_ACTIVATION_FAILED);
         assertThat(session2.getErrorMessage()).isEqualTo("Build fingerprint has changed");
     }
 
@@ -274,12 +247,12 @@ public class StagingManagerTest {
         verify(mStorageManager, never()).abortChanges(eq("abort-staged-install"), eq(false));
 
         assertThat(apexSession.getErrorCode())
-                .isEqualTo(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED);
+                .isEqualTo(SessionInfo.SESSION_ACTIVATION_FAILED);
         assertThat(apexSession.getErrorMessage()).isEqualTo("apexd did not know anything about a "
                 + "staged session supposed to be activated");
 
         assertThat(apkSession.getErrorCode())
-                .isEqualTo(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED);
+                .isEqualTo(SessionInfo.SESSION_ACTIVATION_FAILED);
         assertThat(apkSession.getErrorMessage()).isEqualTo("Another apex session failed");
     }
 
@@ -330,22 +303,22 @@ public class StagingManagerTest {
         verify(mStorageManager, never()).abortChanges(eq("abort-staged-install"), eq(false));
 
         assertThat(apexSession1.getErrorCode())
-                .isEqualTo(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED);
+                .isEqualTo(SessionInfo.SESSION_ACTIVATION_FAILED);
         assertThat(apexSession1.getErrorMessage()).isEqualTo("APEX activation failed. "
                 + "Error: Failed for test");
 
         assertThat(apexSession2.getErrorCode())
-                .isEqualTo(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED);
+                .isEqualTo(SessionInfo.SESSION_ACTIVATION_FAILED);
         assertThat(apexSession2.getErrorMessage()).isEqualTo("Staged session 101 at boot didn't "
                 + "activate nor fail. Marking it as failed anyway.");
 
         assertThat(apexSession3.getErrorCode())
-                .isEqualTo(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED);
+                .isEqualTo(SessionInfo.SESSION_ACTIVATION_FAILED);
         assertThat(apexSession3.getErrorMessage()).isEqualTo("apexd did not know anything about a "
                 + "staged session supposed to be activated");
 
         assertThat(apkSession.getErrorCode())
-                .isEqualTo(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED);
+                .isEqualTo(SessionInfo.SESSION_ACTIVATION_FAILED);
         assertThat(apkSession.getErrorMessage()).isEqualTo("Another apex session failed");
     }
 
@@ -378,12 +351,12 @@ public class StagingManagerTest {
         verify(mStorageManager, never()).abortChanges(eq("abort-staged-install"), eq(false));
 
         assertThat(apexSession.getErrorCode())
-                .isEqualTo(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED);
+                .isEqualTo(SessionInfo.SESSION_ACTIVATION_FAILED);
         assertThat(apexSession.getErrorMessage()).isEqualTo("Staged session 1543 at boot didn't "
                 + "activate nor fail. Marking it as failed anyway.");
 
         assertThat(apkSession.getErrorCode())
-                .isEqualTo(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED);
+                .isEqualTo(SessionInfo.SESSION_ACTIVATION_FAILED);
         assertThat(apkSession.getErrorMessage()).isEqualTo("Another apex session failed");
     }
 
@@ -472,72 +445,12 @@ public class StagingManagerTest {
         verify(mStorageManager, never()).abortChanges(eq("abort-staged-install"), eq(false));
 
         assertThat(apexSession.getErrorCode())
-                .isEqualTo(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED);
+                .isEqualTo(SessionInfo.SESSION_ACTIVATION_FAILED);
         assertThat(apexSession.getErrorMessage()).isEqualTo("Impossible state");
 
         assertThat(apkSession.getErrorCode())
-                .isEqualTo(SessionInfo.STAGED_SESSION_ACTIVATION_FAILED);
+                .isEqualTo(SessionInfo.SESSION_ACTIVATION_FAILED);
         assertThat(apkSession.getErrorMessage()).isEqualTo("Another apex session failed");
-    }
-
-    @Test
-    public void getSessionIdByPackageName() throws Exception {
-        FakeStagedSession session = new FakeStagedSession(239);
-        session.setCommitted(true);
-        session.setSessionReady();
-        session.setPackageName("com.foo");
-
-        mStagingManager.createSession(session);
-        assertThat(mStagingManager.getSessionIdByPackageName("com.foo")).isEqualTo(239);
-    }
-
-    @Test
-    public void getSessionIdByPackageName_appliedSession_ignores() throws Exception {
-        FakeStagedSession session = new FakeStagedSession(37);
-        session.setCommitted(true);
-        session.setSessionApplied();
-        session.setPackageName("com.foo");
-
-        mStagingManager.createSession(session);
-        assertThat(mStagingManager.getSessionIdByPackageName("com.foo")).isEqualTo(-1);
-    }
-
-    @Test
-    public void getSessionIdByPackageName_failedSession_ignores() throws Exception {
-        FakeStagedSession session = new FakeStagedSession(73);
-        session.setCommitted(true);
-        session.setSessionFailed(1, "whatevs");
-        session.setPackageName("com.foo");
-
-        mStagingManager.createSession(session);
-        assertThat(mStagingManager.getSessionIdByPackageName("com.foo")).isEqualTo(-1);
-    }
-
-    @Test
-    public void getSessionIdByPackageName_destroyedSession_ignores() throws Exception {
-        FakeStagedSession session = new FakeStagedSession(23);
-        session.setCommitted(true);
-        session.setDestroyed(true);
-        session.setPackageName("com.foo");
-
-        mStagingManager.createSession(session);
-        assertThat(mStagingManager.getSessionIdByPackageName("com.foo")).isEqualTo(-1);
-    }
-
-    @Test
-    public void getSessionIdByPackageName_noSessions() throws Exception {
-        assertThat(mStagingManager.getSessionIdByPackageName("com.foo")).isEqualTo(-1);
-    }
-
-    @Test
-    public void getSessionIdByPackageName_noSessionHasThisPackage() throws Exception {
-        FakeStagedSession session = new FakeStagedSession(37);
-        session.setCommitted(true);
-        session.setSessionApplied();
-        session.setPackageName("com.foo");
-
-        mStagingManager.createSession(session);
-        assertThat(mStagingManager.getSessionIdByPackageName("com.bar")).isEqualTo(-1);
     }
 
     @Test
@@ -726,10 +639,9 @@ public class StagingManagerTest {
         {
             FakeStagedSession session = new FakeStagedSession(239);
             session.setIsApex(true);
-            mStagingManager.createSession(session);
-
+            session.setSessionReady();
             mockApexManagerGetStagedApexInfoWithSessionId();
-            triggerEndOfPreRebootVerification(session);
+            mStagingManager.commitSession(session);
 
             assertThat(session.isSessionReady()).isTrue();
             ArgumentCaptor<ApexStagedEvent> argumentCaptor = ArgumentCaptor.forClass(
@@ -744,9 +656,8 @@ public class StagingManagerTest {
             Mockito.clearInvocations(observer);
             FakeStagedSession session = new FakeStagedSession(240);
             session.setIsApex(true);
-            mStagingManager.createSession(session);
-
-            triggerEndOfPreRebootVerification(session);
+            session.setSessionReady();
+            mStagingManager.commitSession(session);
 
             assertThat(session.isSessionReady()).isTrue();
             ArgumentCaptor<ApexStagedEvent> argumentCaptor = ArgumentCaptor.forClass(
@@ -762,9 +673,8 @@ public class StagingManagerTest {
             Mockito.clearInvocations(observer);
             FakeStagedSession session = new FakeStagedSession(241);
             session.setIsApex(true);
-            mStagingManager.createSession(session);
-
-            triggerEndOfPreRebootVerification(session);
+            session.setSessionReady();
+            mStagingManager.commitSession(session);
 
             assertThat(session.isSessionReady()).isTrue();
             verify(observer, never()).onApexStaged(any());
@@ -800,19 +710,11 @@ public class StagingManagerTest {
 
         //  Trigger end of pre-reboot verification
         FakeStagedSession session = new FakeStagedSession(239);
-        mStagingManager.createSession(session);
+        session.setSessionReady();
+        mStagingManager.commitSession(session);
 
-        triggerEndOfPreRebootVerification(session);
         assertThat(session.isSessionReady()).isTrue();
         verify(observer, never()).onApexStaged(any());
-    }
-
-    private void triggerEndOfPreRebootVerification(StagingManager.StagedSession session) {
-        StagingManager.PreRebootVerificationHandler handler =
-                mStagingManager.mPreRebootVerificationHandler;
-        Message msg =  handler.obtainMessage(
-                handler.MSG_PRE_REBOOT_VERIFICATION_END, session.sessionId(), -1, session);
-        handler.handleMessage(msg);
     }
 
     private StagingManager.StagedSession createSession(int sessionId, String packageName,
@@ -852,7 +754,7 @@ public class StagingManagerTest {
                 /* isReady */ false,
                 /* isFailed */ false,
                 /* isApplied */false,
-                /* stagedSessionErrorCode */ PackageInstaller.SessionInfo.STAGED_SESSION_NO_ERROR,
+                /* stagedSessionErrorCode */ PackageInstaller.SessionInfo.SESSION_NO_ERROR,
                 /* stagedSessionErrorMessage */ "no error");
 
         StagingManager.StagedSession stagedSession = spy(session.mStagedSession);
@@ -872,7 +774,7 @@ public class StagingManagerTest {
         private boolean mIsReady = false;
         private boolean mIsApplied = false;
         private boolean mIsFailed = false;
-        private @StagedSessionErrorCode int mErrorCode = -1;
+        private @SessionErrorCode int mErrorCode = -1;
         private String mErrorMessage;
         private boolean mIsDestroyed = false;
         private int mParentSessionId = -1;
@@ -925,7 +827,7 @@ public class StagingManagerTest {
             return this;
         }
 
-        private @StagedSessionErrorCode int getErrorCode() {
+        private @SessionErrorCode int getErrorCode() {
             return mErrorCode;
         }
 
@@ -1037,7 +939,7 @@ public class StagingManagerTest {
         }
 
         @Override
-        public void setSessionFailed(@StagedSessionErrorCode int errorCode, String errorMessage) {
+        public void setSessionFailed(@SessionErrorCode int errorCode, String errorMessage) {
             Preconditions.checkState(!mIsApplied, "Already marked as applied");
             mIsFailed = true;
             mErrorCode = errorCode;
@@ -1069,9 +971,6 @@ public class StagingManagerTest {
         public void abandon() {
             mIsAbandonded = true;
         }
-
-        @Override
-        public void notifyEndPreRebootVerification() {}
 
         @Override
         public void verifySession() {

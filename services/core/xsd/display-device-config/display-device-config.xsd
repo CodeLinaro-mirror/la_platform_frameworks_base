@@ -26,6 +26,10 @@
     <xs:element name="displayConfiguration">
         <xs:complexType>
             <xs:sequence>
+                <xs:element type="densityMap" name="densityMap" minOccurs="0" maxOccurs="1">
+                    <xs:annotation name="nullable"/>
+                    <xs:annotation name="final"/>
+                </xs:element>
                 <xs:element type="nitsMap" name="screenBrightnessMap">
                     <xs:annotation name="nonnull"/>
                     <xs:annotation name="final"/>
@@ -34,7 +38,8 @@
                     <xs:annotation name="nonnull"/>
                     <xs:annotation name="final"/>
                 </xs:element>
-                <xs:element type="highBrightnessMode" name="highBrightnessMode" minOccurs="0" maxOccurs="1"/>
+                <xs:element type="highBrightnessMode" name="highBrightnessMode" minOccurs="0"
+                            maxOccurs="1"/>
                 <xs:element type="displayQuirks" name="quirks" minOccurs="0" maxOccurs="1" />
                 <xs:element type="nonNegativeDecimal" name="screenBrightnessRampFastDecrease">
                     <xs:annotation name="final"/>
@@ -54,6 +59,28 @@
                 <xs:element type="sensorDetails" name="proxSensor">
                     <xs:annotation name="final"/>
                 </xs:element>
+
+                <!-- Length of the ambient light horizon used to calculate the long & short term
+                estimates of ambient light in milliseconds.-->
+                <xs:element type="xs:nonNegativeInteger" name="ambientLightHorizonLong">
+                    <xs:annotation name="final"/>
+                </xs:element>
+                <xs:element type="xs:nonNegativeInteger" name="ambientLightHorizonShort">
+                    <xs:annotation name="final"/>
+                </xs:element>
+
+                <!-- Set of thresholds that dictate the change needed for screen brightness
+                adaptations -->
+                <xs:element type="thresholds" name="displayBrightnessChangeThresholds">
+                    <xs:annotation name="nonnull"/>
+                    <xs:annotation name="final"/>
+                </xs:element>
+                <!-- Set of thresholds that dictate the change needed for ambient brightness
+                adaptations -->
+                <xs:element type="thresholds" name="ambientBrightnessChangeThresholds">
+                    <xs:annotation name="nonnull"/>
+                    <xs:annotation name="final"/>
+                </xs:element>
             </xs:sequence>
         </xs:complexType>
     </xs:element>
@@ -68,7 +95,8 @@
 
     <xs:complexType name="highBrightnessMode">
         <xs:all>
-            <xs:element name="transitionPoint" type="nonNegativeDecimal" minOccurs="1" maxOccurs="1">
+            <xs:element name="transitionPoint" type="nonNegativeDecimal" minOccurs="1"
+                        maxOccurs="1">
                 <xs:annotation name="nonnull"/>
                 <xs:annotation name="final"/>
             </xs:element>
@@ -97,7 +125,8 @@
 
     <xs:complexType name="hbmTiming">
         <xs:all>
-            <xs:element name="timeWindowSecs" type="xs:nonNegativeInteger" minOccurs="1" maxOccurs="1">
+            <xs:element name="timeWindowSecs" type="xs:nonNegativeInteger" minOccurs="1"
+                        maxOccurs="1">
                 <xs:annotation name="nonnull"/>
                 <xs:annotation name="final"/>
             </xs:element>
@@ -181,5 +210,55 @@
         </xs:sequence>
     </xs:complexType>
 
+    <xs:complexType name="densityMap">
+        <xs:sequence>
+            <xs:element name="density" type="density" maxOccurs="unbounded" minOccurs="1">
+            </xs:element>
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:complexType name="density">
+        <xs:sequence>
+            <xs:element type="xs:nonNegativeInteger" name="width">
+                <xs:annotation name="nonnull"/>
+                <xs:annotation name="final"/>
+            </xs:element>
+            <xs:element type="xs:nonNegativeInteger" name="height">
+                <xs:annotation name="nonnull"/>
+                <xs:annotation name="final"/>
+            </xs:element>
+            <xs:element type="xs:nonNegativeInteger" name="density">
+                <xs:annotation name="nonnull"/>
+                <xs:annotation name="final"/>
+            </xs:element>
+        </xs:sequence>
+      </xs:complexType>
+
+    <!-- Thresholds for brightness changes. -->
+    <xs:complexType name="thresholds">
+        <xs:sequence>
+            <!-- Brightening thresholds. -->
+            <xs:element name="brighteningThresholds" type="brightnessThresholds" minOccurs="0"
+                        maxOccurs="1" >
+                <xs:annotation name="nonnull"/>
+                <xs:annotation name="final"/>
+            </xs:element>
+            <!-- Darkening thresholds. -->
+            <xs:element name="darkeningThresholds" type="brightnessThresholds" minOccurs="0"
+                        maxOccurs="1" >
+                <xs:annotation name="nonnull"/>
+                <xs:annotation name="final"/>
+            </xs:element>
+        </xs:sequence>
+    </xs:complexType>
+
+    <!-- Brightening and darkening minimum change thresholds. -->
+    <xs:complexType name="brightnessThresholds">
+        <!-- Minimum brightness change needed. -->
+        <xs:element name="minimum" type="nonNegativeDecimal" minOccurs="0" maxOccurs="1" >
+            <xs:annotation name="nonnull"/>
+            <xs:annotation name="final"/>
+        </xs:element>
+    </xs:complexType>
 
 </xs:schema>

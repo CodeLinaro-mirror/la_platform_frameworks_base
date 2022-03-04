@@ -17,6 +17,7 @@
 package com.android.server.hdmi;
 
 import android.annotation.CallSuper;
+import android.hardware.hdmi.DeviceFeatures;
 import android.hardware.hdmi.HdmiControlManager;
 import android.hardware.hdmi.HdmiDeviceInfo;
 import android.hardware.hdmi.IHdmiControlCallback;
@@ -151,6 +152,7 @@ abstract class HdmiCecLocalDevice {
     private int mActiveRoutingPath;
 
     protected final HdmiCecMessageCache mCecMessageCache = new HdmiCecMessageCache();
+    @VisibleForTesting
     protected final Object mLock;
 
     // A collection of FeatureAction.
@@ -207,6 +209,12 @@ abstract class HdmiCecLocalDevice {
     void init() {
         assertRunOnServiceThread();
         mPreferredAddress = getPreferredAddress();
+        if (mHandler.hasMessages(MSG_DISABLE_DEVICE_TIMEOUT)) {
+            // Remove and trigger the queued message for clearing all actions when going to standby.
+            // This is necessary because the device may wake up before the message is triggered.
+            mHandler.removeMessages(MSG_DISABLE_DEVICE_TIMEOUT);
+            handleDisableDeviceTimeout();
+        }
         mPendingActionClearedCallback = null;
     }
 
@@ -627,7 +635,34 @@ abstract class HdmiCecLocalDevice {
 
     protected abstract List<Integer> getRcFeatures();
 
-    protected abstract List<Integer> getDeviceFeatures();
+    /**
+     * Computes the set of supported device features. To update local state with changes in
+     * the set of supported device features, use {@link #getDeviceFeatures} instead.
+     */
+    protected DeviceFeatures computeDeviceFeatures() {
+        return DeviceFeatures.NO_FEATURES_SUPPORTED;
+    }
+
+    /**
+     * Computes the set of supported device features, and updates local state to match.
+     */
+    private void updateDeviceFeatures() {
+        synchronized (mLock) {
+            setDeviceInfo(getDeviceInfo().toBuilder()
+                    .setDeviceFeatures(computeDeviceFeatures())
+                    .build());
+        }
+    }
+
+    /**
+     * Computes and returns the set of supported device features. Updates local state to match.
+     */
+    protected final DeviceFeatures getDeviceFeatures() {
+        updateDeviceFeatures();
+        synchronized (mLock) {
+            return getDeviceInfo().getDeviceFeatures();
+        }
+    }
 
     @Constants.HandleMessageResult
     protected int handleGiveFeatures(HdmiCecMessage message) {
@@ -648,11 +683,17 @@ abstract class HdmiCecLocalDevice {
 
         int rcProfile = getRcProfile();
         List<Integer> rcFeatures = getRcFeatures();
-        List<Integer> deviceFeatures = getDeviceFeatures();
+        DeviceFeatures deviceFeatures = getDeviceFeatures();
+
+
+        int logicalAddress;
+        synchronized (mLock) {
+            logicalAddress = mDeviceInfo.getLogicalAddress();
+        }
 
         mService.sendCecCommand(
-                HdmiCecMessageBuilder.buildReportFeatures(
-                        mDeviceInfo.getLogicalAddress(),
+                ReportFeaturesMessage.build(
+                        logicalAddress,
                         mService.getCecVersion(),
                         localDeviceTypes,
                         rcProfile,
@@ -915,6 +956,7 @@ abstract class HdmiCecLocalDevice {
     final void handleAddressAllocated(int logicalAddress, int reason) {
         assertRunOnServiceThread();
         mPreferredAddress = logicalAddress;
+        updateDeviceFeatures();
         if (mService.getCecVersion() >= HdmiControlManager.HDMI_CEC_VERSION_2_0) {
             reportFeatures();
         }

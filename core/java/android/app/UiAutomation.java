@@ -22,6 +22,7 @@ import android.accessibilityservice.AccessibilityService.IAccessibilityServiceCl
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.accessibilityservice.IAccessibilityServiceClient;
 import android.accessibilityservice.IAccessibilityServiceConnection;
+import android.accessibilityservice.MagnificationConfig;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -49,6 +50,7 @@ import android.util.SparseArray;
 import android.view.Display;
 import android.view.InputEvent;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceControl;
 import android.view.View;
@@ -637,7 +639,7 @@ public final class UiAutomation {
         final IAccessibilityServiceConnection connection;
         synchronized (mLock) {
             throwIfNotConnectedLocked();
-            AccessibilityInteractionClient.getInstance().clearCache();
+            AccessibilityInteractionClient.getInstance().clearCache(mConnectionId);
             connection = AccessibilityInteractionClient.getInstance()
                     .getConnection(mConnectionId);
         }
@@ -1174,7 +1176,9 @@ public final class UiAutomation {
      * @see android.view.WindowAnimationFrameStats
      * @see #getWindowAnimationFrameStats()
      * @see android.R.styleable#WindowAnimation
+     * @deprecated animation-frames are no-longer used.
      */
+    @Deprecated
     public void clearWindowAnimationFrameStats() {
         try {
             if (DEBUG) {
@@ -1213,7 +1217,9 @@ public final class UiAutomation {
      * @see android.view.WindowAnimationFrameStats
      * @see #clearWindowAnimationFrameStats()
      * @see android.R.styleable#WindowAnimation
+     * @deprecated animation-frames are no-longer used.
      */
+    @Deprecated
     public WindowAnimationFrameStats getWindowAnimationFrameStats() {
         try {
             if (DEBUG) {
@@ -1538,6 +1544,15 @@ public final class UiAutomation {
                     return false;
                 }
 
+                public void onMotionEvent(MotionEvent event) {
+                    /* do nothing */
+                }
+
+                @Override
+                public void onTouchStateChanged(int displayId, int state) {
+                    /* do nothing */
+                }
+
                 @Override
                 public void onAccessibilityEvent(AccessibilityEvent event) {
                     final OnAccessibilityEventListener listener;
@@ -1567,7 +1582,7 @@ public final class UiAutomation {
 
                 @Override
                 public void onMagnificationChanged(int displayId, @NonNull Region region,
-                        float scale, float centerX, float centerY) {
+                        MagnificationConfig config) {
                     /* do nothing */
                 }
 

@@ -22,13 +22,12 @@ import android.util.Slog;
 import com.android.keyguard.KeyguardClockSwitch.ClockSize;
 import com.android.systemui.communal.CommunalStateController;
 import com.android.systemui.keyguard.KeyguardUnlockAnimationController;
-import com.android.systemui.shared.system.smartspace.SmartspaceTransitionController;
 import com.android.systemui.statusbar.notification.AnimatableProperty;
 import com.android.systemui.statusbar.notification.PropertyAnimator;
 import com.android.systemui.statusbar.notification.stack.AnimationProperties;
 import com.android.systemui.statusbar.notification.stack.StackStateAnimator;
 import com.android.systemui.statusbar.phone.DozeParameters;
-import com.android.systemui.statusbar.phone.UnlockedScreenOffAnimationController;
+import com.android.systemui.statusbar.phone.ScreenOffAnimationController;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.util.ViewController;
@@ -55,7 +54,6 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
     private final KeyguardVisibilityHelper mKeyguardVisibilityHelper;
     private final KeyguardUnlockAnimationController mKeyguardUnlockAnimationController;
     private final KeyguardStateController mKeyguardStateController;
-    private SmartspaceTransitionController mSmartspaceTransitionController;
     private final Rect mClipBounds = new Rect();
 
     @Inject
@@ -69,8 +67,7 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
             ConfigurationController configurationController,
             DozeParameters dozeParameters,
             KeyguardUnlockAnimationController keyguardUnlockAnimationController,
-            SmartspaceTransitionController smartspaceTransitionController,
-            UnlockedScreenOffAnimationController unlockedScreenOffAnimationController) {
+            ScreenOffAnimationController screenOffAnimationController) {
         super(keyguardStatusView);
         mKeyguardSliceViewController = keyguardSliceViewController;
         mKeyguardClockSwitchController = keyguardClockSwitchController;
@@ -79,10 +76,9 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
         mDozeParameters = dozeParameters;
         mKeyguardStateController = keyguardStateController;
         mKeyguardVisibilityHelper = new KeyguardVisibilityHelper(mView, communalStateController,
-                keyguardStateController, dozeParameters, unlockedScreenOffAnimationController,
+                keyguardStateController, dozeParameters, screenOffAnimationController,
                 /* animateYPos= */ true, /* visibleOnCommunal= */ false);
         mKeyguardUnlockAnimationController = keyguardUnlockAnimationController;
-        mSmartspaceTransitionController = smartspaceTransitionController;
     }
 
     @Override
@@ -123,8 +119,17 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
      * Set which clock should be displayed on the keyguard. The other one will be automatically
      * hidden.
      */
-    public void displayClock(@ClockSize int clockSize) {
-        mKeyguardClockSwitchController.displayClock(clockSize);
+    public void displayClock(@ClockSize int clockSize, boolean animate) {
+        mKeyguardClockSwitchController.displayClock(clockSize, animate);
+    }
+
+    /**
+     * Performs fold to aod animation of the clocks (changes font weight from bold to thin).
+     * This animation is played when AOD is enabled and foldable device is fully folded, it is
+     * displayed on the outer screen
+     */
+    public void animateFoldToAod() {
+        mKeyguardClockSwitchController.animateFoldToAod();
     }
 
     /**
@@ -251,11 +256,6 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
     };
 
     private KeyguardUpdateMonitorCallback mInfoCallback = new KeyguardUpdateMonitorCallback() {
-        @Override
-        public void onLockScreenModeChanged(int mode) {
-            mKeyguardSliceViewController.updateLockScreenMode(mode);
-        }
-
         @Override
         public void onTimeChanged() {
             refreshTime();

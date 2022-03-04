@@ -46,7 +46,7 @@ oneway interface IStatusBar
     void showWirelessChargingAnimation(int batteryLevel);
 
     void setImeWindowStatus(int displayId, in IBinder token, int vis, int backDisposition,
-            boolean showImeSwitcher, boolean isMultiClientImeEnabled);
+            boolean showImeSwitcher);
     void setWindowState(int display, int window, int state);
 
     void showRecentApps(boolean triggeredFromAltTab);
@@ -207,8 +207,10 @@ oneway interface IStatusBar
      *
      * @param displayId the ID of the display to notify.
      * @param types the internal insets types of the bars are about to show transiently.
+     * @param isGestureOnSystemBar whether the gesture to show the transient bar was a gesture on
+     *        one of the bars itself.
      */
-    void showTransient(int displayId, in int[] types);
+    void showTransient(int displayId, in int[] types, boolean isGestureOnSystemBar);
 
     /**
      * Notifies System UI to abort the transient state of system bars, which prevents the bars being
@@ -290,4 +292,5 @@ oneway interface IStatusBar
     void runGcForTest();
 
     void requestAddTile(in ComponentName componentName, in CharSequence appName, in CharSequence label, in Icon icon, in IAddTileResultCallback callback);
+    void cancelRequestAddTile(in String packageName);
 }

@@ -18,7 +18,11 @@ package com.android.server.statusbar;
 
 import static android.app.StatusBarManager.DISABLE2_GLOBAL_ACTIONS;
 import static android.app.StatusBarManager.DISABLE2_NOTIFICATION_SHADE;
+import static android.app.StatusBarManager.NAV_BAR_MODE_OVERRIDE_KIDS;
+import static android.app.StatusBarManager.NAV_BAR_MODE_OVERRIDE_NONE;
+import static android.app.StatusBarManager.NavBarModeOverride;
 import static android.view.Display.DEFAULT_DISPLAY;
+import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_3BUTTON_OVERLAY;
 
 import android.Manifest;
 import android.annotation.NonNull;
@@ -35,6 +39,7 @@ import android.compat.annotation.EnabledSince;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.om.IOverlayManager;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.content.pm.ResolveInfo;
@@ -57,13 +62,16 @@ import android.os.PowerManager;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.ResultReceiver;
+import android.os.ServiceManager;
 import android.os.ShellCallback;
 import android.os.UserHandle;
+import android.provider.Settings;
 import android.service.notification.NotificationStats;
 import android.service.quicksettings.TileService;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
+import android.util.IndentingPrintWriter;
 import android.util.Pair;
 import android.util.Slog;
 import android.util.SparseArray;
@@ -74,6 +82,7 @@ import android.view.WindowInsetsController.Behavior;
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.inputmethod.SoftInputShowHideReason;
 import com.android.internal.os.TransferPipe;
 import com.android.internal.statusbar.IAddTileResultCallback;
@@ -97,6 +106,7 @@ import com.android.server.wm.ActivityTaskManagerInternal;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.concurrent.TimeUnit;
 
 /**
  * A note on locking:  We rely on the fact that calls onto mBar are oneway or
@@ -138,9 +148,17 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
     private int mCurrentUserId;
     private boolean mTracingEnabled;
 
+    private final TileRequestTracker mTileRequestTracker;
+
     private final SparseArray<UiState> mDisplayUiState = new SparseArray<>();
     @GuardedBy("mLock")
     private IUdfpsHbmListener mUdfpsHbmListener;
+
+    @GuardedBy("mCurrentRequestAddTilePackages")
+    private final ArrayMap<String, Long> mCurrentRequestAddTilePackages = new ArrayMap<>();
+    private static final long REQUEST_TIME_OUT = TimeUnit.MINUTES.toNanos(5);
+
+    private IOverlayManager mOverlayManager;
 
     private class DeathRecipient implements IBinder.DeathRecipient {
         public void binderDied() {
@@ -240,6 +258,20 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         mActivityTaskManager = LocalServices.getService(ActivityTaskManagerInternal.class);
         mPackageManagerInternal = LocalServices.getService(PackageManagerInternal.class);
         mActivityManagerInternal = LocalServices.getService(ActivityManagerInternal.class);
+
+        mTileRequestTracker = new TileRequestTracker(mContext);
+    }
+
+    private IOverlayManager getOverlayManager() {
+        // No need to synchronize; worst-case scenario it will be fetched twice.
+        if (mOverlayManager == null) {
+            mOverlayManager = IOverlayManager.Stub.asInterface(
+                    ServiceManager.getService(Context.OVERLAY_SERVICE));
+            if (mOverlayManager == null) {
+                Slog.w("StatusBarManager", "warning: no OVERLAY_SERVICE");
+            }
+        }
+        return mOverlayManager;
     }
 
     @Override
@@ -553,11 +585,12 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         }
 
         @Override
-        public void showTransient(int displayId, @InternalInsetsType int[] types) {
+        public void showTransient(int displayId, @InternalInsetsType int[] types,
+                boolean isGestureOnSystemBar) {
             getUiState(displayId).showTransient(types);
             if (mBar != null) {
                 try {
-                    mBar.showTransient(displayId, types);
+                    mBar.showTransient(displayId, types, isGestureOnSystemBar);
                 } catch (RemoteException ex) { }
             }
         }
@@ -1060,8 +1093,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
 
     @Override
     public void setImeWindowStatus(int displayId, final IBinder token, final int vis,
-            final int backDisposition, final boolean showImeSwitcher,
-            boolean isMultiClientImeEnabled) {
+            final int backDisposition, final boolean showImeSwitcher) {
         enforceStatusBar();
 
         if (SPEW) {
@@ -1078,8 +1110,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 if (mBar == null) return;
                 try {
                     mBar.setImeWindowStatus(
-                            displayId, token, vis, backDisposition, showImeSwitcher,
-                            isMultiClientImeEnabled);
+                            displayId, token, vis, backDisposition, showImeSwitcher);
                 } catch (RemoteException ex) { }
             });
         }
@@ -1281,6 +1312,11 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 setUdfpsHbmListener(mUdfpsHbmListener);
             }
         });
+    }
+
+    @VisibleForTesting
+    void registerOverlayManager(IOverlayManager overlayManager) {
+        mOverlayManager = overlayManager;
     }
 
     /**
@@ -1742,13 +1778,54 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
             return;
         }
 
+        synchronized (mCurrentRequestAddTilePackages) {
+            Long lastTime = mCurrentRequestAddTilePackages.get(packageName);
+            final long currentTime = System.nanoTime();
+            if (lastTime != null && currentTime - lastTime < REQUEST_TIME_OUT) {
+                try {
+                    callback.onTileRequest(
+                            StatusBarManager.TILE_ADD_REQUEST_ERROR_REQUEST_IN_PROGRESS);
+                } catch (RemoteException e) {
+                    Slog.e(TAG, "requestAddTile", e);
+                }
+                return;
+            } else {
+                if (lastTime != null) {
+                    cancelRequestAddTileInternal(packageName);
+                }
+            }
+
+            mCurrentRequestAddTilePackages.put(packageName, currentTime);
+        }
+
+        if (mTileRequestTracker.shouldBeDenied(userId, componentName)) {
+            if (clearTileAddRequest(packageName)) {
+                try {
+                    callback.onTileRequest(StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED);
+                } catch (RemoteException e) {
+                    Slog.e(TAG, "requestAddTile - callback", e);
+                }
+            }
+            return;
+        }
+
         IAddTileResultCallback proxyCallback = new IAddTileResultCallback.Stub() {
             @Override
-            public void onTileRequest(int i) throws RemoteException {
+            public void onTileRequest(int i) {
                 if (i == StatusBarManager.TILE_ADD_REQUEST_RESULT_DIALOG_DISMISSED) {
                     i = StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED;
+                } else if (i == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED) {
+                    mTileRequestTracker.addDenial(userId, componentName);
+                } else if (i == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED) {
+                    mTileRequestTracker.resetRequests(userId, componentName);
                 }
-                callback.onTileRequest(i);
+                if (clearTileAddRequest(packageName)) {
+                    try {
+                        callback.onTileRequest(i);
+                    } catch (RemoteException e) {
+                        Slog.e(TAG, "requestAddTile - callback", e);
+                    }
+                }
             }
         };
 
@@ -1757,11 +1834,12 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         if (mBar != null) {
             try {
                 mBar.requestAddTile(componentName, appName, label, icon, proxyCallback);
+                return;
             } catch (RemoteException e) {
                 Slog.e(TAG, "requestAddTile", e);
             }
-            return;
         }
+        clearTileAddRequest(packageName);
         try {
             callback.onTileRequest(StatusBarManager.TILE_ADD_REQUEST_ERROR_NO_STATUS_BAR_SERVICE);
         } catch (RemoteException e) {
@@ -1769,8 +1847,99 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         }
     }
 
+    @Override
+    public void cancelRequestAddTile(@NonNull String packageName) {
+        enforceStatusBar();
+        cancelRequestAddTileInternal(packageName);
+    }
+
+    private void cancelRequestAddTileInternal(String packageName) {
+        clearTileAddRequest(packageName);
+        if (mBar != null) {
+            try {
+                mBar.cancelRequestAddTile(packageName);
+            } catch (RemoteException e) {
+                Slog.e(TAG, "requestAddTile", e);
+            }
+        }
+    }
+
+    private boolean clearTileAddRequest(String packageName) {
+        synchronized (mCurrentRequestAddTilePackages) {
+            return mCurrentRequestAddTilePackages.remove(packageName) != null;
+        }
+    }
+
     public String[] getStatusBarIcons() {
         return mContext.getResources().getStringArray(R.array.config_statusBarIcons);
+    }
+
+    /**
+     * Sets or removes the navigation bar mode override.
+     *
+     * @param navBarModeOverride the mode of the navigation bar override to be set.
+     */
+    public void setNavBarModeOverride(@NavBarModeOverride int navBarModeOverride) {
+        enforceStatusBar();
+        if (navBarModeOverride != NAV_BAR_MODE_OVERRIDE_NONE
+                && navBarModeOverride != NAV_BAR_MODE_OVERRIDE_KIDS) {
+            throw new UnsupportedOperationException(
+                    "Supplied navBarModeOverride not supported: " + navBarModeOverride);
+        }
+
+        final int userId = mCurrentUserId;
+        final long userIdentity = Binder.clearCallingIdentity();
+        try {
+            Settings.Secure.putIntForUser(mContext.getContentResolver(),
+                    Settings.Secure.NAV_BAR_KIDS_MODE, navBarModeOverride, userId);
+
+            IOverlayManager overlayManager = getOverlayManager();
+            if (overlayManager != null && navBarModeOverride == NAV_BAR_MODE_OVERRIDE_KIDS
+                    && isPackageSupported(NAV_BAR_MODE_3BUTTON_OVERLAY)) {
+                overlayManager.setEnabledExclusiveInCategory(NAV_BAR_MODE_3BUTTON_OVERLAY, userId);
+            }
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        } finally {
+            Binder.restoreCallingIdentity(userIdentity);
+        }
+    }
+
+    /**
+     * Gets the navigation bar mode override. Returns default value if no override is set.
+     *
+     * @hide
+     */
+    public @NavBarModeOverride int getNavBarModeOverride() {
+        enforceStatusBar();
+
+        int navBarKidsMode = NAV_BAR_MODE_OVERRIDE_NONE;
+        final int userId = mCurrentUserId;
+        final long userIdentity = Binder.clearCallingIdentity();
+        try {
+            navBarKidsMode = Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                    Settings.Secure.NAV_BAR_KIDS_MODE, userId);
+        } catch (Settings.SettingNotFoundException ex) {
+            return navBarKidsMode;
+        } finally {
+            Binder.restoreCallingIdentity(userIdentity);
+        }
+        return navBarKidsMode;
+    }
+
+    private boolean isPackageSupported(String packageName) {
+        if (packageName == null) {
+            return false;
+        }
+        try {
+            return mContext.getPackageManager().getPackageInfo(packageName,
+                    PackageManager.PackageInfoFlags.of(0)) != null;
+        } catch (PackageManager.NameNotFoundException ignored) {
+            if (SPEW) {
+                Slog.d(TAG, "Package not found: " + packageName);
+            }
+        }
+        return false;
     }
 
     /** @hide */
@@ -1898,6 +2067,18 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 }
                 pw.println();
             }
+            ArrayList<String> requests;
+            synchronized (mCurrentRequestAddTilePackages) {
+                requests = new ArrayList<>(mCurrentRequestAddTilePackages.keySet());
+            }
+            pw.println("  mCurrentRequestAddTilePackages=[");
+            final int reqN = requests.size();
+            for (int i = 0; i < reqN; i++) {
+                pw.println("    " + requests.get(i) + ",");
+            }
+            pw.println("  ]");
+            IndentingPrintWriter ipw = new IndentingPrintWriter(pw, "  ");
+            mTileRequestTracker.dump(fd, ipw.increaseIndent(), args);
         }
     }
 

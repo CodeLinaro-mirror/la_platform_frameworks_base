@@ -22,7 +22,7 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.hardware.camera2.impl.CameraMetadataNative;
 import android.hardware.camera2.impl.PublicKey;
 import android.hardware.camera2.impl.SyntheticKey;
-import android.hardware.camera2.params.DeviceStateOrientationMap;
+import android.hardware.camera2.params.DeviceStateSensorOrientationMap;
 import android.hardware.camera2.params.RecommendedStreamConfigurationMap;
 import android.hardware.camera2.params.SessionConfiguration;
 import android.hardware.camera2.utils.TypeReference;
@@ -258,11 +258,12 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
     private <T> T overrideProperty(Key<T> key) {
         if (CameraCharacteristics.SENSOR_ORIENTATION.equals(key) && (mFoldStateListener != null) &&
                 (mProperties.get(CameraCharacteristics.INFO_DEVICE_STATE_ORIENTATIONS) != null)) {
-            DeviceStateOrientationMap deviceStateOrientationMap =
-                    mProperties.get(CameraCharacteristics.INFO_DEVICE_STATE_ORIENTATION_MAP);
+            DeviceStateSensorOrientationMap deviceStateSensorOrientationMap =
+                    mProperties.get(CameraCharacteristics.INFO_DEVICE_STATE_SENSOR_ORIENTATION_MAP);
             synchronized (mLock) {
-                Integer ret = deviceStateOrientationMap.getSensorOrientation(mFoldedDeviceState ?
-                        DeviceStateOrientationMap.FOLDED : DeviceStateOrientationMap.NORMAL);
+                Integer ret = deviceStateSensorOrientationMap.getSensorOrientation(
+                        mFoldedDeviceState ? DeviceStateSensorOrientationMap.FOLDED :
+                                DeviceStateSensorOrientationMap.NORMAL);
                 if (ret >= 0) {
                     return (T) ret;
                 } else {
@@ -460,7 +461,7 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
     public @Nullable RecommendedStreamConfigurationMap getRecommendedStreamConfigurationMap(
             @RecommendedStreamConfigurationMap.RecommendedUsecase int usecase) {
         if (((usecase >= RecommendedStreamConfigurationMap.USECASE_PREVIEW) &&
-                (usecase <= RecommendedStreamConfigurationMap.USECASE_LOW_LATENCY_SNAPSHOT)) ||
+                (usecase <= RecommendedStreamConfigurationMap.USECASE_10BIT_OUTPUT)) ||
                 ((usecase >= RecommendedStreamConfigurationMap.USECASE_VENDOR_START) &&
                 (usecase < RecommendedStreamConfigurationMap.MAX_USECASE_COUNT))) {
             if (mRecommendedConfigurations == null) {
@@ -1319,6 +1320,43 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
             new Key<Boolean>("android.flash.info.available", boolean.class);
 
     /**
+     * <p>Maximum flashlight brightness level.</p>
+     * <p>If this value is greater than 1, then the device supports controlling the
+     * flashlight brightness level via
+     * {android.hardware.camera2.CameraManager#turnOnTorchWithStrengthLevel}.
+     * If this value is equal to 1, flashlight brightness control is not supported.
+     * The value for this key will be null for devices with no flash unit.</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     */
+    @PublicKey
+    @NonNull
+    public static final Key<Integer> FLASH_INFO_STRENGTH_MAXIMUM_LEVEL =
+            new Key<Integer>("android.flash.info.strengthMaximumLevel", int.class);
+
+    /**
+     * <p>Default flashlight brightness level to be set via
+     * {android.hardware.camera2.CameraManager#turnOnTorchWithStrengthLevel}.</p>
+     * <p>If flash unit is available this will be greater than or equal to 1 and less
+     * or equal to <code>{@link CameraCharacteristics#FLASH_INFO_STRENGTH_MAXIMUM_LEVEL android.flash.info.strengthMaximumLevel}</code>.</p>
+     * <p>Setting flashlight brightness above the default level
+     * (i.e.<code>{@link CameraCharacteristics#FLASH_INFO_STRENGTH_DEFAULT_LEVEL android.flash.info.strengthDefaultLevel}</code>) may make the device more
+     * likely to reach thermal throttling conditions and slow down, or drain the
+     * battery quicker than normal. To minimize such issues, it is recommended to
+     * start the flashlight at this default brightness until a user explicitly requests
+     * a brighter level.
+     * Note that the value for this key will be null for devices with no flash unit.
+     * The default level should always be &gt; 0.</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     *
+     * @see CameraCharacteristics#FLASH_INFO_STRENGTH_DEFAULT_LEVEL
+     * @see CameraCharacteristics#FLASH_INFO_STRENGTH_MAXIMUM_LEVEL
+     */
+    @PublicKey
+    @NonNull
+    public static final Key<Integer> FLASH_INFO_STRENGTH_DEFAULT_LEVEL =
+            new Key<Integer>("android.flash.info.strengthDefaultLevel", int.class);
+
+    /**
      * <p>List of hot pixel correction modes for {@link CaptureRequest#HOT_PIXEL_MODE android.hotPixel.mode} that are supported by this
      * camera device.</p>
      * <p>FULL mode camera devices will always support FAST.</p>
@@ -2175,6 +2213,7 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      *   <li>{@link #REQUEST_AVAILABLE_CAPABILITIES_OFFLINE_PROCESSING OFFLINE_PROCESSING}</li>
      *   <li>{@link #REQUEST_AVAILABLE_CAPABILITIES_ULTRA_HIGH_RESOLUTION_SENSOR ULTRA_HIGH_RESOLUTION_SENSOR}</li>
      *   <li>{@link #REQUEST_AVAILABLE_CAPABILITIES_REMOSAIC_REPROCESSING REMOSAIC_REPROCESSING}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT DYNAMIC_RANGE_TEN_BIT}</li>
      * </ul>
      *
      * <p>This key is available on all devices.</p>
@@ -2198,6 +2237,7 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      * @see #REQUEST_AVAILABLE_CAPABILITIES_OFFLINE_PROCESSING
      * @see #REQUEST_AVAILABLE_CAPABILITIES_ULTRA_HIGH_RESOLUTION_SENSOR
      * @see #REQUEST_AVAILABLE_CAPABILITIES_REMOSAIC_REPROCESSING
+     * @see #REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT
      */
     @PublicKey
     @NonNull
@@ -2339,6 +2379,86 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      */
     public static final Key<int[]> REQUEST_CHARACTERISTIC_KEYS_NEEDING_PERMISSION =
             new Key<int[]>("android.request.characteristicKeysNeedingPermission", int[].class);
+
+    /**
+     * <p>Devices supporting the 10-bit output capability
+     * {@link android.hardware.camera2.CameraCharacteristics#REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT }
+     * must list their supported dynamic range profiles along with capture request
+     * constraints for specific profile combinations.</p>
+     * <p>Camera clients can retrieve the list of supported 10-bit dynamic range profiles by calling
+     * {@link android.hardware.camera2.params.DynamicRangeProfiles#getSupportedProfiles }.
+     * Any of them can be configured by setting OutputConfiguration dynamic range profile in
+     * {@link android.hardware.camera2.params.OutputConfiguration#setDynamicRangeProfile }.
+     * Clients can also check if there are any constraints that limit the combination
+     * of supported profiles that can be referenced within a single capture request by calling
+     * {@link android.hardware.camera2.params.DynamicRangeProfiles#getProfileCaptureRequestConstraints }.</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     */
+    @PublicKey
+    @NonNull
+    @SyntheticKey
+    public static final Key<android.hardware.camera2.params.DynamicRangeProfiles> REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES =
+            new Key<android.hardware.camera2.params.DynamicRangeProfiles>("android.request.availableDynamicRangeProfiles", android.hardware.camera2.params.DynamicRangeProfiles.class);
+
+    /**
+     * <p>A map of all available 10-bit dynamic range profiles along with their
+     * capture request constraints.</p>
+     * <p>Devices supporting the 10-bit output capability
+     * {@link android.hardware.camera2.CameraCharacteristics#REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT }
+     * must list their supported dynamic range profiles. In case the camera is not able to
+     * support every possible profile combination within a single capture request, then the
+     * constraints must be listed here as well.</p>
+     * <p><b>Possible values:</b></p>
+     * <ul>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_STANDARD STANDARD}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_HLG10 HLG10}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_HDR10 HDR10}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_HDR10_PLUS HDR10_PLUS}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_10B_HDR_REF DOLBY_VISION_10B_HDR_REF}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_10B_HDR_REF_PO DOLBY_VISION_10B_HDR_REF_PO}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_10B_HDR_OEM DOLBY_VISION_10B_HDR_OEM}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_10B_HDR_OEM_PO DOLBY_VISION_10B_HDR_OEM_PO}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_8B_HDR_REF DOLBY_VISION_8B_HDR_REF}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_8B_HDR_REF_PO DOLBY_VISION_8B_HDR_REF_PO}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_8B_HDR_OEM DOLBY_VISION_8B_HDR_OEM}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_8B_HDR_OEM_PO DOLBY_VISION_8B_HDR_OEM_PO}</li>
+     *   <li>{@link #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_MAX MAX}</li>
+     * </ul>
+     *
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_STANDARD
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_HLG10
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_HDR10
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_HDR10_PLUS
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_10B_HDR_REF
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_10B_HDR_REF_PO
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_10B_HDR_OEM
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_10B_HDR_OEM_PO
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_8B_HDR_REF
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_8B_HDR_REF_PO
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_8B_HDR_OEM
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_DOLBY_VISION_8B_HDR_OEM_PO
+     * @see #REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_MAX
+     * @hide
+     */
+    public static final Key<int[]> REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP =
+            new Key<int[]>("android.request.availableDynamicRangeProfilesMap", int[].class);
+
+    /**
+     * <p>Recommended 10-bit dynamic range profile.</p>
+     * <p>Devices supporting the 10-bit output capability
+     * {@link android.hardware.camera2.CameraCharacteristics#REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT }
+     * must list a 10-bit supported dynamic range profile that is expected to perform
+     * optimally in terms of image quality, power and performance.
+     * The value advertised can be used as a hint by camera clients when configuring the dynamic
+     * range profile when calling
+     * {@link android.hardware.camera2.params.OutputConfiguration#setDynamicRangeProfile }.</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     */
+    @PublicKey
+    @NonNull
+    public static final Key<Integer> REQUEST_RECOMMENDED_TEN_BIT_DYNAMIC_RANGE_PROFILE =
+            new Key<Integer>("android.request.recommendedTenBitDynamicRangeProfile", int.class);
 
     /**
      * <p>The list of image formats that are supported by this
@@ -2631,7 +2751,8 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      * </tbody>
      * </table>
      * <p>For applications targeting SDK version 31 or newer, if the mobile device declares to be
-     * {@link android.os.Build.VERSION_CDOES.MEDIA_PERFORMANCE_CLASS media performance class} S,
+     * media performance class 12 or higher by setting
+     * {@link android.os.Build.VERSION_CDOES.MEDIA_PERFORMANCE_CLASS } to be 31 or larger,
      * the primary camera devices (first rear/front camera in the camera ID list) will not
      * support JPEG sizes smaller than 1080p. If the application configures a JPEG stream
      * smaller than 1080p, the camera device will round up the JPEG image size to at least
@@ -2704,9 +2825,11 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      * </tbody>
      * </table>
      * <p>For applications targeting SDK version 31 or newer, if the mobile device doesn't declare
-     * to be media performance class S, or if the camera device isn't a primary rear/front
-     * camera, the minimum required output stream configurations are the same as for applications
-     * targeting SDK version older than 31.</p>
+     * to be media performance class 12 or better by setting
+     * {@link android.os.Build.VERSION_CDOES.MEDIA_PERFORMANCE_CLASS } to be 31 or larger,
+     * or if the camera device isn't a primary rear/front camera, the minimum required output
+     * stream configurations are the same as for applications targeting SDK version older than
+     * 31.</p>
      * <p>Refer to {@link CameraCharacteristics#REQUEST_AVAILABLE_CAPABILITIES android.request.availableCapabilities} for additional
      * mandatory stream configurations on a per-capability basis.</p>
      * <p>Exception on 176x144 (QCIF) resolution: camera devices usually have a fixed capability for
@@ -3297,6 +3420,32 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
     @SyntheticKey
     public static final Key<android.hardware.camera2.params.MandatoryStreamCombination[]> SCALER_MANDATORY_MAXIMUM_RESOLUTION_STREAM_COMBINATIONS =
             new Key<android.hardware.camera2.params.MandatoryStreamCombination[]>("android.scaler.mandatoryMaximumResolutionStreamCombinations", android.hardware.camera2.params.MandatoryStreamCombination[].class);
+
+    /**
+     * <p>An array of mandatory stream combinations which are applicable when device support the
+     * 10-bit output capability
+     * {@link android.hardware.camera2.CameraCharacteristics#REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT }
+     * This is an app-readable conversion of the maximum resolution mandatory stream combination
+     * {@link android.hardware.camera2.CameraDevice#createCaptureSession tables}.</p>
+     * <p>The array of
+     * {@link android.hardware.camera2.params.MandatoryStreamCombination combinations} is
+     * generated according to the documented
+     * {@link android.hardware.camera2.CameraDevice#createCaptureSession guideline} for each
+     * device which has the
+     * {@link android.hardware.camera2.CameraCharacteristics#REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT }
+     * capability.
+     * Clients can use the array as a quick reference to find an appropriate camera stream
+     * combination.
+     * The mandatory stream combination array will be {@code null} in case the device is not an
+     * {@link android.hardware.camera2.CameraCharacteristics#REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT }
+     * device.</p>
+     * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
+     */
+    @PublicKey
+    @NonNull
+    @SyntheticKey
+    public static final Key<android.hardware.camera2.params.MandatoryStreamCombination[]> SCALER_MANDATORY_TEN_BIT_OUTPUT_STREAM_COMBINATIONS =
+            new Key<android.hardware.camera2.params.MandatoryStreamCombination[]>("android.scaler.mandatoryTenBitOutputStreamCombinations", android.hardware.camera2.params.MandatoryStreamCombination[].class);
 
     /**
      * <p>Whether the camera device supports multi-resolution input or output streams</p>
@@ -4056,7 +4205,7 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      * Clients are advised to not cache or store the orientation value of such logical sensors.
      * In case repeated queries to CameraCharacteristics are not preferred, then clients can
      * also access the entire mapping from device state to sensor orientation in
-     * {@link android.hardware.camera2.params.DeviceStateOrientationMap }.
+     * {@link android.hardware.camera2.params.DeviceStateSensorOrientationMap }.
      * Do note that a dynamically changing sensor orientation value in camera characteristics
      * will not be the best way to establish the orientation per frame. Clients that want to
      * know the sensor orientation of a particular captured frame should query the
@@ -4384,7 +4533,7 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      * values. The orientation value may need to change depending on the specific folding
      * state. Information about the mapping between the device folding state and the
      * sensor orientation can be obtained in
-     * {@link android.hardware.camera2.params.DeviceStateOrientationMap }.
+     * {@link android.hardware.camera2.params.DeviceStateSensorOrientationMap }.
      * Device state orientation maps are optional and maybe present on devices that support
      * {@link CaptureRequest#SCALER_ROTATE_AND_CROP android.scaler.rotateAndCrop}.</p>
      * <p><b>Optional</b> - The value for this key may be {@code null} on some devices.</p>
@@ -4398,8 +4547,8 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
     @PublicKey
     @NonNull
     @SyntheticKey
-    public static final Key<android.hardware.camera2.params.DeviceStateOrientationMap> INFO_DEVICE_STATE_ORIENTATION_MAP =
-            new Key<android.hardware.camera2.params.DeviceStateOrientationMap>("android.info.deviceStateOrientationMap", android.hardware.camera2.params.DeviceStateOrientationMap.class);
+    public static final Key<android.hardware.camera2.params.DeviceStateSensorOrientationMap> INFO_DEVICE_STATE_SENSOR_ORIENTATION_MAP =
+            new Key<android.hardware.camera2.params.DeviceStateSensorOrientationMap>("android.info.deviceStateSensorOrientationMap", android.hardware.camera2.params.DeviceStateSensorOrientationMap.class);
 
     /**
      * <p>HAL must populate the array with

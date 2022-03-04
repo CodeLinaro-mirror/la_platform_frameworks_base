@@ -41,6 +41,8 @@ import android.text.TextUtils;
 import android.util.EventLog;
 import android.view.View;
 
+import androidx.annotation.VisibleForTesting;
+
 import com.android.internal.jank.InteractionJankMonitor;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.statusbar.NotificationVisibility;
@@ -52,7 +54,6 @@ import com.android.systemui.assist.AssistManager;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dagger.qualifiers.UiBackground;
-import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.CommandQueue;
@@ -60,6 +61,7 @@ import com.android.systemui.statusbar.NotificationClickNotifier;
 import com.android.systemui.statusbar.NotificationLockscreenUserManager;
 import com.android.systemui.statusbar.NotificationPresenter;
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
+import com.android.systemui.statusbar.notification.NotifPipelineFlags;
 import com.android.systemui.statusbar.notification.NotificationActivityStarter;
 import com.android.systemui.statusbar.notification.NotificationEntryListener;
 import com.android.systemui.statusbar.notification.NotificationEntryManager;
@@ -68,8 +70,8 @@ import com.android.systemui.statusbar.notification.collection.NotifPipeline;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.collection.notifcollection.NotifCollectionListener;
 import com.android.systemui.statusbar.notification.collection.render.GroupMembershipManager;
+import com.android.systemui.statusbar.notification.collection.render.NotificationVisibilityProvider;
 import com.android.systemui.statusbar.notification.interruption.NotificationInterruptStateProvider;
-import com.android.systemui.statusbar.notification.logging.NotificationLogger;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRowDragController;
 import com.android.systemui.statusbar.notification.row.OnUserInteractionCallback;
@@ -97,6 +99,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
 
     private final NotificationEntryManager mEntryManager;
     private final NotifPipeline mNotifPipeline;
+    private final NotificationVisibilityProvider mVisibilityProvider;
     private final HeadsUpManagerPhone mHeadsUpManager;
     private final ActivityStarter mActivityStarter;
     private final NotificationClickNotifier mClickNotifier;
@@ -116,7 +119,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
     private final StatusBarRemoteInputCallback mStatusBarRemoteInputCallback;
     private final ActivityIntentHelper mActivityIntentHelper;
 
-    private final FeatureFlags mFeatureFlags;
+    private final NotifPipelineFlags mNotifPipelineFlags;
     private final MetricsLogger mMetricsLogger;
     private final StatusBarNotificationActivityStarterLogger mLogger;
 
@@ -136,6 +139,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
             Executor uiBgExecutor,
             NotificationEntryManager entryManager,
             NotifPipeline notifPipeline,
+            NotificationVisibilityProvider visibilityProvider,
             HeadsUpManagerPhone headsUpManager,
             ActivityStarter activityStarter,
             NotificationClickNotifier clickNotifier,
@@ -154,12 +158,10 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
             LockPatternUtils lockPatternUtils,
             StatusBarRemoteInputCallback remoteInputCallback,
             ActivityIntentHelper activityIntentHelper,
-
-            FeatureFlags featureFlags,
+            NotifPipelineFlags notifPipelineFlags,
             MetricsLogger metricsLogger,
             StatusBarNotificationActivityStarterLogger logger,
             OnUserInteractionCallback onUserInteractionCallback,
-
             StatusBar statusBar,
             NotificationPresenter presenter,
             NotificationPanelViewController panel,
@@ -171,6 +173,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
         mUiBgExecutor = uiBgExecutor;
         mEntryManager = entryManager;
         mNotifPipeline = notifPipeline;
+        mVisibilityProvider = visibilityProvider;
         mHeadsUpManager = headsUpManager;
         mActivityStarter = activityStarter;
         mClickNotifier = clickNotifier;
@@ -190,7 +193,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
         mStatusBarRemoteInputCallback = remoteInputCallback;
         mActivityIntentHelper = activityIntentHelper;
 
-        mFeatureFlags = featureFlags;
+        mNotifPipelineFlags = notifPipelineFlags;
         mMetricsLogger = metricsLogger;
         mLogger = logger;
         mOnUserInteractionCallback = onUserInteractionCallback;
@@ -202,7 +205,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
         mActivityLaunchAnimator = activityLaunchAnimator;
         mNotificationAnimationProvider = notificationAnimationProvider;
 
-        if (!mFeatureFlags.isNewNotifPipelineRenderingEnabled()) {
+        if (!mNotifPipelineFlags.isNewPipelineEnabled()) {
             mEntryManager.addNotificationEntryListener(new NotificationEntryListener() {
                 @Override
                 public void onPendingEntryAdded(NotificationEntry entry) {
@@ -366,10 +369,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
             mAssistManagerLazy.get().hideAssist();
         }
 
-        NotificationVisibility.NotificationLocation location =
-                NotificationLogger.getNotificationLocation(entry);
-        final NotificationVisibility nv = NotificationVisibility.obtain(entry.getKey(),
-                entry.getRanking().getRank(), getVisibleNotificationsCount(), true, location);
+        final NotificationVisibility nv = mVisibilityProvider.obtain(entry, true);
 
         // retrieve the group summary to remove with this entry before we tell NMS the
         // notification was clicked to avoid a race condition
@@ -414,10 +414,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
     public void onDragSuccess(NotificationEntry entry) {
         // this method is not responsible for intent sending.
         // will focus follow operation only after drag-and-drop that notification.
-        NotificationVisibility.NotificationLocation location =
-                NotificationLogger.getNotificationLocation(entry);
-        final NotificationVisibility nv = NotificationVisibility.obtain(entry.getKey(),
-                entry.getRanking().getRank(), getVisibleNotificationsCount(), true, location);
+        final NotificationVisibility nv = mVisibilityProvider.obtain(entry, true);
 
         // retrieve the group summary to remove with this entry before we tell NMS the
         // notification was clicked to avoid a race condition
@@ -593,7 +590,8 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
         }
     }
 
-    private void handleFullScreenIntent(NotificationEntry entry) {
+    @VisibleForTesting
+    void handleFullScreenIntent(NotificationEntry entry) {
         if (mNotificationInterruptStateProvider.shouldLaunchFullScreenIntentWhenAdded(entry)) {
             if (shouldSuppressFullScreenIntent(entry)) {
                 mLogger.logFullScreenIntentSuppressedByDnD(entry.getKey());
@@ -617,6 +615,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
                 try {
                     EventLog.writeEvent(EventLogTags.SYSUI_FULLSCREEN_NOTIFICATION,
                             entry.getKey());
+                    mStatusBar.wakeUpForFullScreenIntent();
                     fullscreenIntent.send();
                     entry.notifyFullScreenIntentLaunched();
                     mMetricsLogger.count("note_fullscreen", 1);
@@ -661,14 +660,6 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
 
     // --------------------- NotificationEntryManager/NotifPipeline methods ------------------------
 
-    private int getVisibleNotificationsCount() {
-        if (mFeatureFlags.isNewNotifPipelineRenderingEnabled()) {
-            return mNotifPipeline.getShadeListCount();
-        } else {
-            return mEntryManager.getActiveNotificationsCount();
-        }
-    }
-
     /**
      * Public builder for {@link StatusBarNotificationActivityStarter}.
      */
@@ -681,6 +672,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
         private final Executor mUiBgExecutor;
         private final NotificationEntryManager mEntryManager;
         private final NotifPipeline mNotifPipeline;
+        private final NotificationVisibilityProvider mVisibilityProvider;
         private final HeadsUpManagerPhone mHeadsUpManager;
         private final ActivityStarter mActivityStarter;
         private final NotificationClickNotifier mClickNotifier;
@@ -698,13 +690,11 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
         private final NotificationInterruptStateProvider mNotificationInterruptStateProvider;
         private final LockPatternUtils mLockPatternUtils;
         private final StatusBarRemoteInputCallback mRemoteInputCallback;
-        private final ActivityIntentHelper mActivityIntentHelper;
-
-        private final FeatureFlags mFeatureFlags;
+        private final ActivityIntentHelper mActivityIntentHelper;;
         private final MetricsLogger mMetricsLogger;
         private final StatusBarNotificationActivityStarterLogger mLogger;
         private final OnUserInteractionCallback mOnUserInteractionCallback;
-
+        private final NotifPipelineFlags mNotifPipelineFlags;
         private StatusBar mStatusBar;
         private NotificationPresenter mNotificationPresenter;
         private NotificationPanelViewController mNotificationPanelViewController;
@@ -719,6 +709,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
                 @UiBackground Executor uiBgExecutor,
                 NotificationEntryManager entryManager,
                 NotifPipeline notifPipeline,
+                NotificationVisibilityProvider visibilityProvider,
                 HeadsUpManagerPhone headsUpManager,
                 ActivityStarter activityStarter,
                 NotificationClickNotifier clickNotifier,
@@ -737,8 +728,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
                 LockPatternUtils lockPatternUtils,
                 StatusBarRemoteInputCallback remoteInputCallback,
                 ActivityIntentHelper activityIntentHelper,
-
-                FeatureFlags featureFlags,
+                NotifPipelineFlags notifPipelineFlags,
                 MetricsLogger metricsLogger,
                 StatusBarNotificationActivityStarterLogger logger,
                 OnUserInteractionCallback onUserInteractionCallback) {
@@ -749,6 +739,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
             mUiBgExecutor = uiBgExecutor;
             mEntryManager = entryManager;
             mNotifPipeline = notifPipeline;
+            mVisibilityProvider = visibilityProvider;
             mHeadsUpManager = headsUpManager;
             mActivityStarter = activityStarter;
             mClickNotifier = clickNotifier;
@@ -767,8 +758,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
             mLockPatternUtils = lockPatternUtils;
             mRemoteInputCallback = remoteInputCallback;
             mActivityIntentHelper = activityIntentHelper;
-
-            mFeatureFlags = featureFlags;
+            mNotifPipelineFlags = notifPipelineFlags;
             mMetricsLogger = metricsLogger;
             mLogger = logger;
             mOnUserInteractionCallback = onUserInteractionCallback;
@@ -813,6 +803,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
                     mUiBgExecutor,
                     mEntryManager,
                     mNotifPipeline,
+                    mVisibilityProvider,
                     mHeadsUpManager,
                     mActivityStarter,
                     mClickNotifier,
@@ -831,7 +822,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
                     mLockPatternUtils,
                     mRemoteInputCallback,
                     mActivityIntentHelper,
-                    mFeatureFlags,
+                    mNotifPipelineFlags,
                     mMetricsLogger,
                     mLogger,
                     mOnUserInteractionCallback,

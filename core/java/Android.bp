@@ -121,6 +121,11 @@ filegroup {
     ],
 }
 
+filegroup {
+    name: "ILogcatManagerService_aidl",
+    srcs: ["android/os/logcat/ILogcatManagerService.aidl"],
+}
+
 genrule {
     name: "statslog-framework-java-gen",
     tools: ["stats-log-api-gen"],
@@ -158,10 +163,7 @@ filegroup {
         "android/util/LocalLog.java",
         // This should be android.util.IndentingPrintWriter, but it's not available in all branches.
         "com/android/internal/util/IndentingPrintWriter.java",
-        "com/android/internal/util/IState.java",
         "com/android/internal/util/MessageUtils.java",
-        "com/android/internal/util/State.java",
-        "com/android/internal/util/StateMachine.java",
         "com/android/internal/util/WakeupMessage.java",
     ],
 }
@@ -304,6 +306,17 @@ cc_library {
     ],
 }
 
+cc_library {
+    name: "libactivity_manager_procstate_aidl-cpp",
+    host_supported: true,
+    srcs: [
+        ":activity_manager_procstate_aidl",
+    ],
+    aidl: {
+        export_aidl_headers: true,
+    },
+}
+
 // Build Rust bindings for PermissionController. Needed by keystore2.
 aidl_interface {
     name: "android.os.permissions_aidl",
@@ -346,7 +359,6 @@ aidl_interface {
 filegroup {
     name: "framework-telephony-common-shared-srcs",
     srcs: [
-        ":modules-utils-preconditions-srcs",
         "android/os/RegistrantList.java",
         "android/os/Registrant.java",
         "android/util/IndentingPrintWriter.java",
@@ -358,10 +370,7 @@ filegroup {
         "com/android/internal/util/BitwiseInputStream.java",
         "com/android/internal/util/FastXmlSerializer.java",
         "com/android/internal/util/HexDump.java",
-        "com/android/internal/util/IState.java",
         "com/android/internal/util/IndentingPrintWriter.java",
-        "com/android/internal/util/State.java",
-        "com/android/internal/util/StateMachine.java",
         "com/android/internal/util/UserIcons.java",
     ],
 }
@@ -404,6 +413,21 @@ filegroup {
         "android/os/Registrant.java",
         "com/android/internal/os/SomeArgs.java",
     ],
+}
+
+aidl_interface {
+    name: "android.os.statsbootstrap_aidl",
+    unstable: true,
+    srcs: [
+        "android/os/IStatsBootstrapAtomService.aidl",
+        "android/os/StatsBootstrapAtom.aidl",
+        "android/os/StatsBootstrapAtomValue.aidl",
+    ],
+    backend: {
+        cpp: {
+            enabled: true,
+        },
+    },
 }
 
 // utility classes statically linked into wifi-service

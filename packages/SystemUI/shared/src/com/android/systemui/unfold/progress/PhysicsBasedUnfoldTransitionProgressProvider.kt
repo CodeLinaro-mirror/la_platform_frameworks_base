@@ -15,7 +15,7 @@
  */
 package com.android.systemui.unfold.progress
 
-import android.os.Handler
+import android.util.Log
 import android.util.MathUtils.saturate
 import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.dynamicanimation.animation.FloatPropertyCompat
@@ -25,32 +25,22 @@ import com.android.systemui.unfold.UnfoldTransitionProgressProvider
 import com.android.systemui.unfold.UnfoldTransitionProgressProvider.TransitionProgressListener
 import com.android.systemui.unfold.updates.FOLD_UPDATE_FINISH_CLOSED
 import com.android.systemui.unfold.updates.FOLD_UPDATE_FINISH_FULL_OPEN
+import com.android.systemui.unfold.updates.FOLD_UPDATE_FINISH_HALF_OPEN
 import com.android.systemui.unfold.updates.FOLD_UPDATE_START_CLOSING
 import com.android.systemui.unfold.updates.FOLD_UPDATE_UNFOLDED_SCREEN_AVAILABLE
 import com.android.systemui.unfold.updates.FoldStateProvider
 import com.android.systemui.unfold.updates.FoldStateProvider.FoldUpdate
 import com.android.systemui.unfold.updates.FoldStateProvider.FoldUpdatesListener
 
-/**
- * Maps fold updates to unfold transition progress using DynamicAnimation.
- *
- * TODO(b/193793338) Current limitations:
- *  - doesn't handle postures
- */
+/** Maps fold updates to unfold transition progress using DynamicAnimation. */
 internal class PhysicsBasedUnfoldTransitionProgressProvider(
-    private val handler: Handler,
     private val foldStateProvider: FoldStateProvider
-) :
-    UnfoldTransitionProgressProvider,
-    FoldUpdatesListener,
-    DynamicAnimation.OnAnimationEndListener {
+) : UnfoldTransitionProgressProvider, FoldUpdatesListener, DynamicAnimation.OnAnimationEndListener {
 
-    private val springAnimation = SpringAnimation(this, AnimationProgressProperty)
-        .apply {
+    private val springAnimation =
+        SpringAnimation(this, AnimationProgressProperty).apply {
             addEndListener(this@PhysicsBasedUnfoldTransitionProgressProvider)
         }
-
-    private val timeoutRunnable = TimeoutRunnable()
 
     private var isTransitionRunning = false
     private var isAnimatedCancelRunning = false
@@ -91,21 +81,34 @@ internal class PhysicsBasedUnfoldTransitionProgressProvider(
                     cancelTransition(endValue = 1f, animate = true)
                 }
             }
-            FOLD_UPDATE_FINISH_FULL_OPEN -> {
-                cancelTransition(endValue = 1f, animate = true)
+            FOLD_UPDATE_FINISH_FULL_OPEN, FOLD_UPDATE_FINISH_HALF_OPEN -> {
+                // Do not cancel if we haven't started the transition yet.
+                // This could happen when we fully unfolded the device before the screen
+                // became available. In this case we start and immediately cancel the animation
+                // in FOLD_UPDATE_UNFOLDED_SCREEN_AVAILABLE event handler, so we don't need to
+                // cancel it here.
+                if (isTransitionRunning) {
+                    cancelTransition(endValue = 1f, animate = true)
+                }
             }
             FOLD_UPDATE_FINISH_CLOSED -> {
                 cancelTransition(endValue = 0f, animate = false)
             }
             FOLD_UPDATE_START_CLOSING -> {
-                startTransition(startValue = 1f)
+                // The transition might be already running as the device might start closing several
+                // times before reaching an end state.
+                if (!isTransitionRunning) {
+                    startTransition(startValue = 1f)
+                }
             }
+        }
+
+        if (DEBUG) {
+            Log.d(TAG, "onFoldUpdate = $update")
         }
     }
 
     private fun cancelTransition(endValue: Float, animate: Boolean) {
-        handler.removeCallbacks(timeoutRunnable)
-
         if (isTransitionRunning && animate) {
             isAnimatedCancelRunning = true
             springAnimation.animateToFinalPosition(endValue)
@@ -115,8 +118,10 @@ internal class PhysicsBasedUnfoldTransitionProgressProvider(
             isTransitionRunning = false
             springAnimation.cancel()
 
-            listeners.forEach {
-                it.onTransitionFinished()
+            listeners.forEach { it.onTransitionFinished() }
+
+            if (DEBUG) {
+                Log.d(TAG, "onTransitionFinished")
             }
         }
     }
@@ -133,21 +138,24 @@ internal class PhysicsBasedUnfoldTransitionProgressProvider(
     }
 
     private fun onStartTransition() {
-        listeners.forEach {
-            it.onTransitionStarted()
-        }
+        listeners.forEach { it.onTransitionStarted() }
         isTransitionRunning = true
+
+        if (DEBUG) {
+            Log.d(TAG, "onTransitionStarted")
+        }
     }
 
     private fun startTransition(startValue: Float) {
         if (!isTransitionRunning) onStartTransition()
 
         springAnimation.apply {
-            spring = SpringForce().apply {
-                finalPosition = startValue
-                dampingRatio = SpringForce.DAMPING_RATIO_NO_BOUNCY
-                stiffness = SPRING_STIFFNESS
-            }
+            spring =
+                SpringForce().apply {
+                    finalPosition = startValue
+                    dampingRatio = SpringForce.DAMPING_RATIO_NO_BOUNCY
+                    stiffness = SPRING_STIFFNESS
+                }
             minimumVisibleChange = MINIMAL_VISIBLE_CHANGE
             setStartValue(startValue)
             setMinValue(0f)
@@ -155,8 +163,6 @@ internal class PhysicsBasedUnfoldTransitionProgressProvider(
         }
 
         springAnimation.start()
-
-        handler.postDelayed(timeoutRunnable, TRANSITION_TIMEOUT_MILLIS)
     }
 
     override fun addCallback(listener: TransitionProgressListener) {
@@ -165,13 +171,6 @@ internal class PhysicsBasedUnfoldTransitionProgressProvider(
 
     override fun removeCallback(listener: TransitionProgressListener) {
         listeners.remove(listener)
-    }
-
-    private inner class TimeoutRunnable : Runnable {
-
-        override fun run() {
-            cancelTransition(endValue = 1f, animate = true)
-        }
     }
 
     private object AnimationProgressProperty :
@@ -189,7 +188,9 @@ internal class PhysicsBasedUnfoldTransitionProgressProvider(
     }
 }
 
-private const val TRANSITION_TIMEOUT_MILLIS = 2000L
+private const val TAG = "PhysicsBasedUnfoldTransitionProgressProvider"
+private const val DEBUG = true
+
 private const val SPRING_STIFFNESS = 200.0f
 private const val MINIMAL_VISIBLE_CHANGE = 0.001f
 private const val FINAL_HINGE_ANGLE_POSITION = 165f

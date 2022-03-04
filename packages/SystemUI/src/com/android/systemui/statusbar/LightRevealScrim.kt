@@ -92,6 +92,8 @@ class LinearLightRevealEffect(private val isVertical: Boolean) : LightRevealEffe
     override fun setRevealAmountOnScrim(amount: Float, scrim: LightRevealScrim) {
         val interpolatedAmount = INTERPOLATOR.getInterpolation(amount)
 
+        scrim.interpolatedRevealAmount = interpolatedAmount
+
         scrim.startColorAlpha =
             getPercentPastThreshold(1 - interpolatedAmount,
                 threshold = 1 - START_COLOR_REVEAL_PERCENTAGE)
@@ -152,6 +154,7 @@ class CircleReveal(
         // non-interpolated amount
         val fadeAmount = getPercentPastThreshold(amount, 0.5f)
         val radius = startRadius + ((endRadius - startRadius) * amount)
+        scrim.interpolatedRevealAmount = amount
         scrim.revealGradientEndColorAlpha = 1f - fadeAmount
         scrim.setRevealGradientBounds(
             centerX - radius /* left */,
@@ -182,6 +185,7 @@ class PowerButtonReveal(
 
         with(scrim) {
             revealGradientEndColorAlpha = 1f - fadeAmount
+            interpolatedRevealAmount = interpolatedAmount
             setRevealGradientBounds(
                     width * (1f + OFF_SCREEN_START_AMOUNT) -
                             width * WIDTH_INCREASE_MULTIPLIER * interpolatedAmount,
@@ -208,11 +212,6 @@ class LightRevealScrim(context: Context?, attrs: AttributeSet?) : View(context, 
     lateinit var isScrimOpaqueChangedListener: Consumer<Boolean>
 
     /**
-     * A runnable to call when the scrim has been fully revealed. This is only invoked once
-     */
-    var fullyRevealedRunnable: Runnable? = null
-
-    /**
      * How much of the underlying views are revealed, in percent. 0 means they will be completely
      * obscured and 1 means they'll be fully visible.
      */
@@ -223,19 +222,9 @@ class LightRevealScrim(context: Context?, attrs: AttributeSet?) : View(context, 
 
                 revealEffect.setRevealAmountOnScrim(value, this)
                 updateScrimOpaque()
-                maybeTriggerFullyRevealedRunnable()
                 invalidate()
             }
         }
-
-    private fun maybeTriggerFullyRevealedRunnable() {
-        if (revealAmount == 1.0f) {
-            fullyRevealedRunnable?.let {
-                it.run()
-                fullyRevealedRunnable = null
-            }
-        }
-    }
 
     /**
      * The [LightRevealEffect] used to manipulate the radial gradient whenever [revealAmount]
@@ -299,6 +288,14 @@ class LightRevealScrim(context: Context?, attrs: AttributeSet?) : View(context, 
             }
         }
 
+    var interpolatedRevealAmount: Float = 1f
+
+    val isScrimAlmostOccludes: Boolean
+        get() {
+            // if the interpolatedRevealAmount less than 0.1, over 90% of the screen is black.
+            return interpolatedRevealAmount < 0.1f
+        }
+
     private fun updateScrimOpaque() {
         isScrimOpaque = revealAmount == 0.0f && alpha == 1.0f && visibility == VISIBLE
     }
@@ -358,7 +355,8 @@ class LightRevealScrim(context: Context?, attrs: AttributeSet?) : View(context, 
     }
 
     override fun onDraw(canvas: Canvas?) {
-        if (canvas == null || revealGradientWidth <= 0 || revealGradientHeight <= 0) {
+        if (canvas == null || revealGradientWidth <= 0 || revealGradientHeight <= 0
+            || revealAmount == 0f) {
             if (revealAmount < 1f) {
                 canvas?.drawColor(revealGradientEndColor)
             }

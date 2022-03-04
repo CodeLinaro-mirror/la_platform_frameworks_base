@@ -20,6 +20,7 @@ import static java.util.Objects.requireNonNull;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.SuppressLint;
 import android.annotation.TestApi;
 import android.app.AppOpsManager;
 import android.compat.annotation.UnsupportedAppUsage;
@@ -61,6 +62,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.function.IntFunction;
 import java.util.function.Supplier;
 
 /**
@@ -177,8 +180,12 @@ import java.util.function.Supplier;
  * {@link #writeStrongInterface(IInterface)}, {@link #readStrongBinder()},
  * {@link #writeBinderArray(IBinder[])}, {@link #readBinderArray(IBinder[])},
  * {@link #createBinderArray()},
+ * {@link #writeInterfaceArray(T[])}, {@link #readInterfaceArray(T[], Function)},
+ * {@link #createInterfaceArray(IntFunction, Function)},
  * {@link #writeBinderList(List)}, {@link #readBinderList(List)},
- * {@link #createBinderArrayList()}.</p>
+ * {@link #createBinderArrayList()},
+ * {@link #writeInterfaceList(List)}, {@link #readInterfaceList(List, Function)},
+ * {@link #createInterfaceArrayList(Function)}.</p>
  *
  * <p>FileDescriptor objects, representing raw Linux file descriptor identifiers,
  * can be written and {@link ParcelFileDescriptor} objects returned to operate
@@ -380,10 +387,14 @@ public final class Parcel {
     private static native void nativeUnmarshall(
             long nativePtr, byte[] data, int offset, int length);
     private static native int nativeCompareData(long thisNativePtr, long otherNativePtr);
+    private static native boolean nativeCompareDataInRange(
+            long ptrA, int offsetA, long ptrB, int offsetB, int length);
     private static native void nativeAppendFrom(
             long thisNativePtr, long otherNativePtr, int offset, int length);
     @CriticalNative
     private static native boolean nativeHasFileDescriptors(long nativePtr);
+    private static native boolean nativeHasFileDescriptorsInRange(
+            long nativePtr, int offset, int length);
     private static native void nativeWriteInterfaceToken(long nativePtr, String interfaceName);
     private static native void nativeEnforceInterface(long nativePtr, String interfaceName);
 
@@ -399,7 +410,7 @@ public final class Parcel {
     private static final int WRITE_EXCEPTION_STACK_TRACE_THRESHOLD_MS = 1000;
 
     @CriticalNative
-    private static native long nativeGetBlobAshmemSize(long nativePtr);
+    private static native long nativeGetOpenAshmemSize(long nativePtr);
 
     public final static Parcelable.Creator<String> STRING_CREATOR
              = new Parcelable.Creator<String>() {
@@ -675,8 +686,13 @@ public final class Parcel {
     }
 
     /** @hide */
-    public final int compareData(Parcel other) {
+    public int compareData(Parcel other) {
         return nativeCompareData(mNativePtr, other.mNativePtr);
+    }
+
+    /** @hide */
+    public static boolean compareData(Parcel a, int offsetA, Parcel b, int offsetB, int length) {
+        return nativeCompareDataInRange(a.mNativePtr, offsetA, b.mNativePtr, offsetB, length);
     }
 
     /** @hide */
@@ -717,62 +733,90 @@ public final class Parcel {
     /**
      * Report whether the parcel contains any marshalled file descriptors.
      */
-    public final boolean hasFileDescriptors() {
+    public boolean hasFileDescriptors() {
         return nativeHasFileDescriptors(mNativePtr);
     }
 
     /**
-     * Check if the object used in {@link #readValue(ClassLoader)} / {@link #writeValue(Object)}
-     * has file descriptors.
+     * Report whether the parcel contains any marshalled file descriptors in the range defined by
+     * {@code offset} and {@code length}.
+     *
+     * @param offset The offset from which the range starts. Should be between 0 and
+     *     {@link #dataSize()}.
+     * @param length The length of the range. Should be between 0 and {@link #dataSize()} - {@code
+     *     offset}.
+     * @return whether there are file descriptors or not.
+     * @throws IllegalArgumentException if the parameters are out of the permitted ranges.
+     */
+    public boolean hasFileDescriptors(int offset, int length) {
+        return nativeHasFileDescriptorsInRange(mNativePtr, offset, length);
+    }
+
+    /**
+     * Check if the object has file descriptors.
+     *
+     * <p>Objects supported are {@link Parcel} and objects that can be passed to {@link
+     * #writeValue(Object)}}
      *
      * <p>For most cases, it will use the self-reported {@link Parcelable#describeContents()} method
      * for that.
      *
-     * @throws IllegalArgumentException if you provide any object not supported by above methods.
-     *         Most notably, if you pass {@link Parcel}, this method will throw, for that check
-     *         {@link Parcel#hasFileDescriptors()}
+     * @throws IllegalArgumentException if you provide any object not supported by above methods
+     *     (including if the unsupported object is inside a nested container).
      *
      * @hide
      */
     public static boolean hasFileDescriptors(Object value) {
-        if (value instanceof LazyValue) {
-            return ((LazyValue) value).hasFileDescriptors();
-        } else if (value instanceof Parcelable) {
-            if ((((Parcelable) value).describeContents()
-                    & Parcelable.CONTENTS_FILE_DESCRIPTOR) != 0) {
+        if (value instanceof Parcel) {
+            Parcel parcel = (Parcel) value;
+            if (parcel.hasFileDescriptors()) {
                 return true;
             }
-        } else if (value instanceof Parcelable[]) {
-            Parcelable[] array = (Parcelable[]) value;
-            for (int n = array.length - 1; n >= 0; n--) {
-                Parcelable p = array[n];
-                if (p != null && ((p.describeContents()
-                        & Parcelable.CONTENTS_FILE_DESCRIPTOR) != 0)) {
+        } else if (value instanceof LazyValue) {
+            LazyValue lazy = (LazyValue) value;
+            if (lazy.hasFileDescriptors()) {
+                return true;
+            }
+        } else if (value instanceof Parcelable) {
+            Parcelable parcelable = (Parcelable) value;
+            if ((parcelable.describeContents() & Parcelable.CONTENTS_FILE_DESCRIPTOR) != 0) {
+                return true;
+            }
+        } else if (value instanceof ArrayMap<?, ?>) {
+            ArrayMap<?, ?> map = (ArrayMap<?, ?>) value;
+            for (int i = 0, n = map.size(); i < n; i++) {
+                if (hasFileDescriptors(map.keyAt(i))
+                        || hasFileDescriptors(map.valueAt(i))) {
+                    return true;
+                }
+            }
+        } else if (value instanceof Map<?, ?>) {
+            Map<?, ?> map = (Map<?, ?>) value;
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (hasFileDescriptors(entry.getKey())
+                        || hasFileDescriptors(entry.getValue())) {
+                    return true;
+                }
+            }
+        } else if (value instanceof List<?>) {
+            List<?> list = (List<?>) value;
+            for (int i = 0, n = list.size(); i < n; i++) {
+                if (hasFileDescriptors(list.get(i))) {
                     return true;
                 }
             }
         } else if (value instanceof SparseArray<?>) {
             SparseArray<?> array = (SparseArray<?>) value;
-            for (int n = array.size() - 1; n >= 0; n--) {
-                Object object = array.valueAt(n);
-                if (object instanceof Parcelable) {
-                    Parcelable p = (Parcelable) object;
-                    if (p != null && (p.describeContents()
-                            & Parcelable.CONTENTS_FILE_DESCRIPTOR) != 0) {
-                        return true;
-                    }
+            for (int i = 0, n = array.size(); i < n; i++) {
+                if (hasFileDescriptors(array.valueAt(i))) {
+                    return true;
                 }
             }
-        } else if (value instanceof ArrayList<?>) {
-            ArrayList<?> array = (ArrayList<?>) value;
-            for (int n = array.size() - 1; n >= 0; n--) {
-                Object object = array.get(n);
-                if (object instanceof Parcelable) {
-                    Parcelable p = (Parcelable) object;
-                    if (p != null && ((p.describeContents()
-                            & Parcelable.CONTENTS_FILE_DESCRIPTOR) != 0)) {
-                        return true;
-                    }
+        } else if (value instanceof Object[]) {
+            Object[] array = (Object[]) value;
+            for (int i = 0, n = array.length; i < n; i++) {
+                if (hasFileDescriptors(array[i])) {
+                    return true;
                 }
             }
         } else {
@@ -799,6 +843,19 @@ public final class Parcel {
      */
     public final void enforceInterface(@NonNull String interfaceName) {
         nativeEnforceInterface(mNativePtr, interfaceName);
+    }
+
+    /**
+     * Verify there are no bytes left to be read on the Parcel.
+     *
+     * @throws BadParcelableException If the current position hasn't reached the end of the Parcel.
+     * When used over binder, this exception should propagate to the caller.
+     */
+    public void enforceNoDataAvail() {
+        final int n = dataAvail();
+        if (n > 0) {
+            throw new BadParcelableException("Parcel data not fully consumed, unread size: " + n);
+        }
     }
 
     /**
@@ -858,11 +915,15 @@ public final class Parcel {
     /**
      * Write a blob of data into the parcel at the current {@link #dataPosition},
      * growing {@link #dataCapacity} if needed.
+     *
+     * <p> If the blob is small, then it is stored in-place, otherwise it is transferred by way of
+     * an anonymous shared memory region. If you prefer send in-place, please use
+     * {@link #writeByteArray(byte[])}.
+     *
      * @param b Bytes to place into the parcel.
-     * {@hide}
-     * {@SystemApi}
+     *
+     * @see #readBlob()
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public final void writeBlob(@Nullable byte[] b) {
         writeBlob(b, 0, (b != null) ? b.length : 0);
     }
@@ -870,11 +931,16 @@ public final class Parcel {
     /**
      * Write a blob of data into the parcel at the current {@link #dataPosition},
      * growing {@link #dataCapacity} if needed.
+     *
+     * <p> If the blob is small, then it is stored in-place, otherwise it is transferred by way of
+     * an anonymous shared memory region. If you prefer send in-place, please use
+     * {@link #writeByteArray(byte[], int, int)}.
+     *
      * @param b Bytes to place into the parcel.
      * @param offset Index of first byte to be written.
      * @param len Number of bytes to write.
-     * {@hide}
-     * {@SystemApi}
+     *
+     * @see #readBlob()
      */
     public final void writeBlob(@Nullable byte[] b, int offset, int len) {
         if (b == null) {
@@ -1692,6 +1758,30 @@ public final class Parcel {
     }
 
     /**
+     * Flatten a homogeneous array containing an IInterface type into the parcel,
+     * at the current dataPosition() and growing dataCapacity() if needed.  The
+     * type of the objects in the array must be one that implements IInterface.
+     *
+     * @param val The array of objects to be written.
+     *
+     * @see #createInterfaceArray
+     * @see #readInterfaceArray
+     * @see IInterface
+     */
+    public final <T extends IInterface> void writeInterfaceArray(
+            @SuppressLint("ArrayReturn") @Nullable T[] val) {
+        if (val != null) {
+            int N = val.length;
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeStrongInterface(val[i]);
+            }
+        } else {
+            writeInt(-1);
+        }
+    }
+
+    /**
      * @hide
      */
     public final void writeCharSequenceArray(@Nullable CharSequence[] val) {
@@ -1743,6 +1833,50 @@ public final class Parcel {
             }
         } else {
             throw new RuntimeException("bad array lengths");
+        }
+    }
+
+    /**
+     * Read and return a new array of T (IInterface) from the parcel.
+     *
+     * @return the IInterface array of type T
+     * @param newArray a function to create an array of T with a given length
+     * @param asInterface a function to convert IBinder object into T (IInterface)
+     */
+    @SuppressLint({"ArrayReturn", "NullableCollection", "SamShouldBeLast"})
+    @Nullable
+    public final <T extends IInterface> T[] createInterfaceArray(
+            @NonNull IntFunction<T[]> newArray, @NonNull Function<IBinder, T> asInterface) {
+        int N = readInt();
+        if (N >= 0) {
+            T[] val = newArray.apply(N);
+            for (int i=0; i<N; i++) {
+                val[i] = asInterface.apply(readStrongBinder());
+            }
+            return val;
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * Read an array of T (IInterface) from a parcel.
+     *
+     * @param asInterface a function to convert IBinder object into T (IInterface)
+     *
+     * @throws BadParcelableException Throws BadParcelableException if the length of `val`
+     *    mismatches the number of items in the parcel.
+     */
+    public final <T extends IInterface> void readInterfaceArray(
+            @SuppressLint("ArrayReturn") @NonNull T[] val,
+            @NonNull Function<IBinder, T> asInterface) {
+        int N = readInt();
+        if (N == val.length) {
+            for (int i=0; i<N; i++) {
+                val[i] = asInterface.apply(readStrongBinder());
+            }
+        } else {
+            throw new BadParcelableException("bad array lengths");
         }
     }
 
@@ -1855,6 +1989,28 @@ public final class Parcel {
         writeInt(N);
         while (i < N) {
             writeStrongBinder(val.get(i));
+            i++;
+        }
+    }
+
+    /**
+     * Flatten a {@code List} containing T (IInterface) objects into this parcel
+     * at the current position. They can later be retrieved with
+     * {@link #createInterfaceArrayList} or {@link #readInterfaceList}.
+     *
+     * @see #createInterfaceArrayList
+     * @see #readInterfaceList
+     */
+    public final <T extends IInterface> void writeInterfaceList(@Nullable List<T> val) {
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+        int N = val.size();
+        int i=0;
+        writeInt(N);
+        while (i < N) {
+            writeStrongInterface(val.get(i));
             i++;
         }
     }
@@ -2423,9 +2579,9 @@ public final class Parcel {
 
             writeByteArray(baos.toByteArray());
         } catch (IOException ioe) {
-            throw new RuntimeException("Parcelable encountered " +
-                "IOException writing serializable object (name = " + name +
-                ")", ioe);
+            throw new BadParcelableException("Parcelable encountered "
+                    + "IOException writing serializable object (name = "
+                    + name + ")", ioe);
         }
     }
 
@@ -2856,17 +3012,45 @@ public final class Parcel {
      * Please use {@link #readBundle(ClassLoader)} instead (whose data must have
      * been written with {@link #writeBundle}.  Read into an existing Map object
      * from the parcel at the current dataPosition().
+     *
+     * @deprecated Consider using {@link #readBundle(ClassLoader)} as stated above, in case this
+     *      method is still preferred use the type-safer version {@link #readMap(Map, ClassLoader,
+     *      Class, Class)} starting from Android {@link Build.VERSION_CODES#TIRAMISU}.
      */
+    @Deprecated
     public final void readMap(@NonNull Map outVal, @Nullable ClassLoader loader) {
-        int N = readInt();
-        readMapInternal(outVal, N, loader);
+        int n = readInt();
+        readMapInternal(outVal, n, loader, /* clazzKey */ null, /* clazzValue */ null);
+    }
+
+    /**
+     * Same as {@link #readMap(Map, ClassLoader)} but accepts {@code clazzKey} and
+     * {@code clazzValue} parameter as the types required for each key and value pair.
+     *
+     * @throws BadParcelableException If the item to be deserialized is not an instance of that
+     * class or any of its children class
+     */
+    public <K, V> void readMap(@NonNull Map<? super K, ? super V> outVal,
+            @Nullable ClassLoader loader, @NonNull Class<K> clazzKey,
+            @NonNull Class<V> clazzValue) {
+        Objects.requireNonNull(clazzKey);
+        Objects.requireNonNull(clazzValue);
+        int n = readInt();
+        readMapInternal(outVal, n, loader, clazzKey, clazzValue);
     }
 
     /**
      * Read into an existing List object from the parcel at the current
      * dataPosition(), using the given class loader to load any enclosed
      * Parcelables.  If it is null, the default class loader is used.
+     *
+     * @deprecated Use the type-safer version {@link #readList(List, ClassLoader, Class)} starting
+     *      from Android {@link Build.VERSION_CODES#TIRAMISU}. Also consider changing the format to
+     *      use {@link #readTypedList(List, Parcelable.Creator)} if possible (eg. if the items'
+     *      class is final) since this is also more performant. Note that changing to the latter
+     *      also requires changing the writes.
      */
+    @Deprecated
     public final void readList(@NonNull List outVal, @Nullable ClassLoader loader) {
         int N = readInt();
         readListInternal(outVal, N, loader, /* clazz */ null);
@@ -2874,9 +3058,11 @@ public final class Parcel {
 
     /**
      * Same as {@link #readList(List, ClassLoader)} but accepts {@code clazz} parameter as
-     * the type required for each item. If the item to be deserialized is not an instance
-     * of that class or any of its children class
-     * a {@link BadParcelableException} will be thrown.
+     * the type required for each item.
+     *
+     * @throws BadParcelableException Throws BadParcelableException if the item to be deserialized
+     * is not an instance of that class or any of its children classes or there was an error
+     * trying to instantiate an element.
      */
     public <T> void readList(@NonNull List<? super T> outVal,
             @Nullable ClassLoader loader, @NonNull Class<T> clazz) {
@@ -2891,17 +3077,43 @@ public final class Parcel {
      * object from the parcel at the current dataPosition(), using the given
      * class loader to load any enclosed Parcelables.  Returns null if
      * the previously written map object was null.
+     *
+     * @deprecated Consider using {@link #readBundle(ClassLoader)} as stated above, in case this
+     *      method is still preferred use the type-safer version {@link #readHashMap(ClassLoader,
+     *      Class, Class)} starting from Android {@link Build.VERSION_CODES#TIRAMISU}.
      */
+    @Deprecated
     @Nullable
-    public final HashMap readHashMap(@Nullable ClassLoader loader)
-    {
-        int N = readInt();
-        if (N < 0) {
+    public HashMap readHashMap(@Nullable ClassLoader loader) {
+        int n = readInt();
+        if (n < 0) {
             return null;
         }
-        HashMap m = new HashMap(N);
-        readMapInternal(m, N, loader);
+        HashMap m = new HashMap(n);
+        readMapInternal(m, n, loader, /* clazzKey */ null, /* clazzValue */ null);
         return m;
+    }
+
+    /**
+     * Same as {@link #readHashMap(ClassLoader)} but accepts {@code clazzKey} and
+     * {@code clazzValue} parameter as the types required for each key and value pair.
+     *
+     * @throws BadParcelableException if the item to be deserialized is not an instance of that
+     * class or any of its children class
+     */
+    @SuppressLint({"ConcreteCollection", "NullableCollection"})
+    @Nullable
+    public <K, V> HashMap<K, V> readHashMap(@Nullable ClassLoader loader,
+            @NonNull Class<? extends K> clazzKey, @NonNull Class<? extends V> clazzValue) {
+        Objects.requireNonNull(clazzKey);
+        Objects.requireNonNull(clazzValue);
+        int n = readInt();
+        if (n < 0) {
+            return null;
+        }
+        HashMap<K, V> map = new HashMap<>(n);
+        readMapInternal(map, n, loader, clazzKey, clazzValue);
+        return map;
     }
 
     /**
@@ -3007,10 +3219,8 @@ public final class Parcel {
 
     /**
      * Read a blob of data from the parcel and return it as a byte array.
-     * {@hide}
-     * {@SystemApi}
+     * @see #writeBlob(byte[], int, int)
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @Nullable
     public final byte[] readBlob() {
         return nativeReadBlob(mNativePtr);
@@ -3073,16 +3283,33 @@ public final class Parcel {
      * dataPosition().  Returns null if the previously written list object was
      * null.  The given class loader will be used to load any enclosed
      * Parcelables.
+     *
+     * @deprecated Use the type-safer version {@link #readArrayList(ClassLoader, Class)} starting
+     *      from Android {@link Build.VERSION_CODES#TIRAMISU}. Also consider changing the format to
+     *      use {@link #createTypedArrayList(Parcelable.Creator)} if possible (eg. if the items'
+     *      class is final) since this is also more performant. Note that changing to the latter
+     *      also requires changing the writes.
      */
+    @Deprecated
     @Nullable
-    public final ArrayList readArrayList(@Nullable ClassLoader loader) {
-        int N = readInt();
-        if (N < 0) {
-            return null;
-        }
-        ArrayList l = new ArrayList(N);
-        readListInternal(l, N, loader, /* clazz */ null);
-        return l;
+    public ArrayList readArrayList(@Nullable ClassLoader loader) {
+        return readArrayListInternal(loader, /* clazz */ null);
+    }
+
+    /**
+     * Same as {@link #readArrayList(ClassLoader)} but accepts {@code clazz} parameter as
+     * the type required for each item.
+     *
+     * @throws BadParcelableException Throws BadParcelableException if the item to be deserialized
+     * is not an instance of that class or any of its children classes or there was an error
+     * trying to instantiate an element.
+     */
+    @SuppressLint({"ConcreteCollection", "NullableCollection"})
+    @Nullable
+    public <T> ArrayList<T> readArrayList(@Nullable ClassLoader loader,
+            @NonNull Class<? extends T> clazz) {
+        Objects.requireNonNull(clazz);
+        return readArrayListInternal(loader, clazz);
     }
 
     /**
@@ -3090,16 +3317,32 @@ public final class Parcel {
      * dataPosition().  Returns null if the previously written array was
      * null.  The given class loader will be used to load any enclosed
      * Parcelables.
+     *
+     * @deprecated Use the type-safer version {@link #readArray(ClassLoader, Class)} starting from
+     *      Android {@link Build.VERSION_CODES#TIRAMISU}. Also consider changing the format to use
+     *      {@link #createTypedArray(Parcelable.Creator)} if possible (eg. if the items' class is
+     *      final) since this is also more performant. Note that changing to the latter also
+     *      requires changing the writes.
      */
+    @Deprecated
     @Nullable
-    public final Object[] readArray(@Nullable ClassLoader loader) {
-        int N = readInt();
-        if (N < 0) {
-            return null;
-        }
-        Object[] l = new Object[N];
-        readArrayInternal(l, N, loader);
-        return l;
+    public Object[] readArray(@Nullable ClassLoader loader) {
+        return readArrayInternal(loader, /* clazz */ null);
+    }
+
+    /**
+     * Same as {@link #readArray(ClassLoader)} but accepts {@code clazz} parameter as
+     * the type required for each item.
+     *
+     * @throws BadParcelableException Throws BadParcelableException if the item to be deserialized
+     * is not an instance of that class or any of its children classes or there was an error
+     * trying to instantiate an element.
+     */
+    @SuppressLint({"ArrayReturn", "NullableCollection"})
+    @Nullable
+    public <T> T[] readArray(@Nullable ClassLoader loader, @NonNull Class<T> clazz) {
+        Objects.requireNonNull(clazz);
+        return readArrayInternal(loader, clazz);
     }
 
     /**
@@ -3107,16 +3350,32 @@ public final class Parcel {
      * dataPosition().  Returns null if the previously written list object was
      * null.  The given class loader will be used to load any enclosed
      * Parcelables.
+     *
+     * @deprecated Use the type-safer version {@link #readSparseArray(ClassLoader, Class)} starting
+     *      from Android {@link Build.VERSION_CODES#TIRAMISU}. Also consider changing the format to
+     *      use {@link #createTypedSparseArray(Parcelable.Creator)} if possible (eg. if the items'
+     *      class is final) since this is also more performant. Note that changing to the latter
+     *      also requires changing the writes.
+     */
+    @Deprecated
+    @Nullable
+    public <T> SparseArray<T> readSparseArray(@Nullable ClassLoader loader) {
+        return readSparseArrayInternal(loader, /* clazz */ null);
+    }
+
+    /**
+     * Same as {@link #readSparseArray(ClassLoader)} but accepts {@code clazz} parameter as
+     * the type required for each item.
+     *
+     * @throws BadParcelableException Throws BadParcelableException if the item to be deserialized
+     * is not an instance of that class or any of its children classes or there was an error
+     * trying to instantiate an element.
      */
     @Nullable
-    public final <T> SparseArray<T> readSparseArray(@Nullable ClassLoader loader) {
-        int N = readInt();
-        if (N < 0) {
-            return null;
-        }
-        SparseArray sa = new SparseArray(N);
-        readSparseArrayInternal(sa, N, loader);
-        return sa;
+    public <T> SparseArray<T> readSparseArray(@Nullable ClassLoader loader,
+            @NonNull Class<? extends T> clazz) {
+        Objects.requireNonNull(clazz);
+        return readSparseArrayInternal(loader, clazz);
     }
 
     /**
@@ -3312,6 +3571,32 @@ public final class Parcel {
     }
 
     /**
+     * Read and return a new ArrayList containing T (IInterface) objects from
+     * the parcel that was written with {@link #writeInterfaceList} at the
+     * current dataPosition().  Returns null if the
+     * previously written list object was null.
+     *
+     * @return A newly created ArrayList containing T (IInterface)
+     *
+     * @see #writeInterfaceList
+     */
+    @SuppressLint({"ConcreteCollection", "NullableCollection"})
+    @Nullable
+    public final <T extends IInterface> ArrayList<T> createInterfaceArrayList(
+            @NonNull Function<IBinder, T> asInterface) {
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        ArrayList<T> l = new ArrayList<T>(N);
+        while (N > 0) {
+            l.add(asInterface.apply(readStrongBinder()));
+            N--;
+        }
+        return l;
+    }
+
+    /**
      * Read into the given List items String objects that were written with
      * {@link #writeStringList} at the current dataPosition().
      *
@@ -3354,31 +3639,85 @@ public final class Parcel {
     }
 
     /**
+     * Read into the given List items IInterface objects that were written with
+     * {@link #writeInterfaceList} at the current dataPosition().
+     *
+     * @see #writeInterfaceList
+     */
+    public final <T extends IInterface> void readInterfaceList(@NonNull List<T> list,
+            @NonNull Function<IBinder, T> asInterface) {
+        int M = list.size();
+        int N = readInt();
+        int i = 0;
+        for (; i < M && i < N; i++) {
+            list.set(i, asInterface.apply(readStrongBinder()));
+        }
+        for (; i<N; i++) {
+            list.add(asInterface.apply(readStrongBinder()));
+        }
+        for (; i<M; i++) {
+            list.remove(N);
+        }
+    }
+
+    /**
      * Read the list of {@code Parcelable} objects at the current data position into the
      * given {@code list}. The contents of the {@code list} are replaced. If the serialized
      * list was {@code null}, {@code list} is cleared.
      *
      * @see #writeParcelableList(List, int)
+     *
+     * @deprecated Use the type-safer version {@link #readParcelableList(List, ClassLoader, Class)}
+     *      starting from Android {@link Build.VERSION_CODES#TIRAMISU}. Also consider changing the
+     *      format to use {@link #readTypedList(List, Parcelable.Creator)} if possible (eg. if the
+     *      items' class is final) since this is also more performant. Note that changing to the
+     *      latter also requires changing the writes.
      */
+    @Deprecated
     @NonNull
     public final <T extends Parcelable> List<T> readParcelableList(@NonNull List<T> list,
             @Nullable ClassLoader cl) {
-        final int N = readInt();
-        if (N == -1) {
+        return readParcelableListInternal(list, cl, /*clazz*/ null);
+    }
+
+    /**
+     * Same as {@link #readParcelableList(List, ClassLoader)} but accepts {@code clazz} parameter as
+     * the type required for each item.
+     *
+     * @throws BadParcelableException Throws BadParcelableException if the item to be deserialized
+     * is not an instance of that class or any of its children classes or there was an error
+     * trying to instantiate an element.
+     */
+    @NonNull
+    public <T> List<T> readParcelableList(@NonNull List<T> list,
+            @Nullable ClassLoader cl, @NonNull Class<T> clazz) {
+        Objects.requireNonNull(list);
+        Objects.requireNonNull(clazz);
+        return readParcelableListInternal(list, cl, clazz);
+    }
+
+    /**
+     * @param clazz The type of the object expected or {@code null} for performing no checks.
+     */
+    @NonNull
+    private <T> List<T> readParcelableListInternal(@NonNull List<T> list,
+            @Nullable ClassLoader cl, @Nullable Class<T> clazz) {
+        final int n = readInt();
+        if (n == -1) {
             list.clear();
             return list;
         }
 
-        final int M = list.size();
+        final int m = list.size();
         int i = 0;
-        for (; i < M && i < N; i++) {
-            list.set(i, (T) readParcelable(cl));
+        for (; i < m && i < n; i++) {
+            list.set(i, readParcelableInternal(cl, clazz));
         }
-        for (; i<N; i++) {
-            list.add((T) readParcelable(cl));
+        for (; i < n; i++) {
+            list.add(readParcelableInternal(cl, clazz));
         }
-        for (; i<M; i++) {
-            list.remove(N);
+        for (; i < m; i++) {
+            list.remove(n);
         }
         return list;
     }
@@ -3536,21 +3875,31 @@ public final class Parcel {
         int start = dataPosition();
         int type = readInt();
         if (isLengthPrefixed(type)) {
-            int length = readInt();
-            setDataPosition(MathUtils.addOrThrow(dataPosition(), length));
-            return new LazyValue(this, start, length, type, loader);
+            int objectLength = readInt();
+            int end = MathUtils.addOrThrow(dataPosition(), objectLength);
+            int valueLength = end - start;
+            setDataPosition(end);
+            return new LazyValue(this, start, valueLength, type, loader);
         } else {
             return readValue(type, loader, /* clazz */ null);
         }
     }
 
+
     private static final class LazyValue implements Supplier<Object> {
+        /**
+         *                      |   4B   |   4B   |
+         * mSource = Parcel{... |  type  | length | object | ...}
+         *                      a        b        c        d
+         * length = d - c
+         * mPosition = a
+         * mLength = d - a
+         */
         private final int mPosition;
         private final int mLength;
         private final int mType;
         @Nullable private final ClassLoader mLoader;
         @Nullable private Object mObject;
-        @Nullable private volatile Parcel mValueParcel;
 
         /**
          * This goes from non-null to null once. Always check the nullability of this object before
@@ -3592,7 +3941,7 @@ public final class Parcel {
         public void writeToParcel(Parcel out) {
             Parcel source = mSource;
             if (source != null) {
-                out.appendFrom(source, mPosition, mLength + 8);
+                out.appendFrom(source, mPosition, mLength);
             } else {
                 out.writeValue(mObject);
             }
@@ -3601,7 +3950,7 @@ public final class Parcel {
         public boolean hasFileDescriptors() {
             Parcel source = mSource;
             return (source != null)
-                    ? getValueParcel(source).hasFileDescriptors()
+                    ? source.hasFileDescriptors(mPosition, mLength)
                     : Parcel.hasFileDescriptors(mObject);
         }
 
@@ -3648,27 +3997,13 @@ public final class Parcel {
                 return false;
             }
             // Finally we compare the payload.
-            return getValueParcel(source).compareData(value.getValueParcel(otherSource)) == 0;
+            return Parcel.compareData(source, mPosition, otherSource, value.mPosition, mLength);
         }
 
         @Override
         public int hashCode() {
             // Accessing mSource first to provide memory barrier for mObject
             return Objects.hash(mSource == null, mObject, mLoader, mType, mLength);
-        }
-
-        /** This extracts the parcel section responsible for the object and returns it. */
-        private Parcel getValueParcel(Parcel source) {
-            Parcel parcel = mValueParcel;
-            if (parcel == null) {
-                parcel = Parcel.obtain();
-                // mLength is the length of object representation, excluding the type and length.
-                // mPosition is the position of the entire value container, right before the type.
-                // So, we add 4 bytes for the type + 4 bytes for the length written.
-                parcel.appendFrom(source, mPosition, mLength + 8);
-                mValueParcel = parcel;
-            }
-            return parcel;
         }
     }
 
@@ -3767,7 +4102,7 @@ public final class Parcel {
                 break;
 
             case VAL_SERIALIZABLE:
-                object = readSerializable(loader);
+                object = readSerializableInternal(loader, clazz);
                 break;
 
             case VAL_PARCELABLEARRAY:
@@ -3824,7 +4159,7 @@ public final class Parcel {
                     "Parcel " + this + ": Unmarshalling unknown type code " + type
                             + " at offset " + off);
         }
-        if (clazz != null && !clazz.isInstance(object)) {
+        if (object != null && clazz != null && !clazz.isInstance(object)) {
             throw new BadParcelableException("Unparcelled object " + object
                     + " is not an instance of required class " + clazz.getName()
                     + " provided in the parameter");
@@ -3861,7 +4196,13 @@ public final class Parcel {
      * object has been written.
      * @throws BadParcelableException Throws BadParcelableException if there
      * was an error trying to instantiate the Parcelable.
+     *
+     * @deprecated Use the type-safer version {@link #readParcelable(ClassLoader, Class)} starting
+     *      from Android {@link Build.VERSION_CODES#TIRAMISU}. Also consider changing the format to
+     *      use {@link Parcelable.Creator#createFromParcel(Parcel)} if possible since this is also
+     *      more performant. Note that changing to the latter also requires changing the writes.
      */
+    @Deprecated
     @Nullable
     public final <T extends Parcelable> T readParcelable(@Nullable ClassLoader loader) {
         return readParcelableInternal(loader, /* clazz */ null);
@@ -3869,27 +4210,26 @@ public final class Parcel {
 
     /**
      * Same as {@link #readParcelable(ClassLoader)} but accepts {@code clazz} parameter as the type
-     * required for each item. If the item to be deserialized is not an instance of that class or
-     * any of its children classes a {@link BadParcelableException} will be thrown.
+     * required for each item.
+     *
+     * @throws BadParcelableException Throws BadParcelableException if the item to be deserialized
+     * is not an instance of that class or any of its children classes or there was an error
+     * trying to instantiate an element.
      */
     @Nullable
     public <T extends Parcelable> T readParcelable(@Nullable ClassLoader loader,
-            @NonNull Class<T> clazz) {
+            @NonNull Class<? super T> clazz) {
         Objects.requireNonNull(clazz);
         return readParcelableInternal(loader, clazz);
     }
 
     /**
-     *
      * @param clazz The type of the parcelable expected or {@code null} for performing no checks.
      */
     @SuppressWarnings("unchecked")
     @Nullable
-    private <T> T readParcelableInternal(@Nullable ClassLoader loader, @Nullable Class<T> clazz) {
-        if (clazz != null && !Parcelable.class.isAssignableFrom(clazz)) {
-            throw new BadParcelableException("About to unparcel a parcelable object "
-                    + " but class required " + clazz.getName() + " is not Parcelable");
-        }
+    private <T extends Parcelable> T readParcelableInternal(@Nullable ClassLoader loader,
+            @Nullable Class<? super T> clazz) {
         Parcelable.Creator<?> creator = readParcelableCreatorInternal(loader, clazz);
         if (creator == null) {
             return null;
@@ -3928,7 +4268,11 @@ public final class Parcel {
      * read the {@link Parcelable.Creator}.
      *
      * @see #writeParcelableCreator
+     *
+     * @deprecated Use the type-safer version {@link #readParcelableCreator(ClassLoader, Class)}
+     *       starting from Android {@link Build.VERSION_CODES#TIRAMISU}.
      */
+    @Deprecated
     @Nullable
     public final Parcelable.Creator<?> readParcelableCreator(@Nullable ClassLoader loader) {
         return readParcelableCreatorInternal(loader, /* clazz */ null);
@@ -3936,8 +4280,11 @@ public final class Parcel {
 
     /**
      * Same as {@link #readParcelableCreator(ClassLoader)} but accepts {@code clazz} parameter
-     * as the required type. If the item to be deserialized is not an instance of that class
-     * or any of its children classes a {@link BadParcelableException} will be thrown.
+     * as the required type.
+     *
+     * @throws BadParcelableException Throws BadParcelableException if the item to be deserialized
+     * is not an instance of that class or any of its children classes or there there was an error
+     * trying to read the {@link Parcelable.Creator}.
      */
     @Nullable
     public <T> Parcelable.Creator<T> readParcelableCreator(
@@ -4045,9 +4392,16 @@ public final class Parcel {
      * The given class loader will be used to load any enclosed
      * Parcelables.
      * @return the Parcelable array, or null if the array is null
+     *
+     * @deprecated Use the type-safer version {@link #readParcelableArray(ClassLoader, Class)}
+     *      starting from Android {@link Build.VERSION_CODES#TIRAMISU}. Also consider changing the
+     *      format to use {@link #createTypedArray(Parcelable.Creator)} if possible (eg. if the
+     *      items' class is final) since this is also more performant. Note that changing to the
+     *      latter also requires changing the writes.
      */
+    @Deprecated
     @Nullable
-    public final Parcelable[] readParcelableArray(@Nullable ClassLoader loader) {
+    public Parcelable[] readParcelableArray(@Nullable ClassLoader loader) {
         int N = readInt();
         if (N < 0) {
             return null;
@@ -4059,17 +4413,25 @@ public final class Parcel {
         return p;
     }
 
-    /** @hide */
+    /**
+     * Same as {@link #readParcelableArray(ClassLoader)}  but accepts {@code clazz} parameter as
+     * the type required for each item.
+     *
+     * @throws BadParcelableException Throws BadParcelableException if the item to be deserialized
+     * is not an instance of that class or any of its children classes or there was an error
+     * trying to instantiate an element.
+     */
+    @SuppressLint({"ArrayReturn", "NullableCollection"})
+    @SuppressWarnings("unchecked")
     @Nullable
-    public final <T extends Parcelable> T[] readParcelableArray(@Nullable ClassLoader loader,
-            @NonNull Class<T> clazz) {
-        int N = readInt();
-        if (N < 0) {
+    public <T> T[] readParcelableArray(@Nullable ClassLoader loader, @NonNull Class<T> clazz) {
+        int n = readInt();
+        if (n < 0) {
             return null;
         }
-        T[] p = (T[]) Array.newInstance(clazz, N);
-        for (int i = 0; i < N; i++) {
-            p[i] = readParcelable(loader);
+        T[] p = (T[]) Array.newInstance(clazz, n);
+        for (int i = 0; i < n; i++) {
+            p[i] = readParcelableInternal(loader, clazz);
         }
         return p;
     }
@@ -4078,14 +4440,44 @@ public final class Parcel {
      * Read and return a new Serializable object from the parcel.
      * @return the Serializable object, or null if the Serializable name
      * wasn't found in the parcel.
+     *
+     * Unlike {@link #readSerializable(ClassLoader, Class)}, it uses the nearest valid class loader
+     * up the execution stack to instantiate the Serializable object.
+     *
+     * @deprecated Use the type-safer version {@link #readSerializable(ClassLoader, Class)} starting
+     *       from Android {@link Build.VERSION_CODES#TIRAMISU}.
      */
+    @Deprecated
     @Nullable
-    public final Serializable readSerializable() {
-        return readSerializable(null);
+    public Serializable readSerializable() {
+        return readSerializableInternal(/* loader */ null, /* clazz */ null);
     }
 
+    /**
+     * Same as {@link #readSerializable()} but accepts {@code loader} and {@code clazz} parameters.
+     *
+     * @param loader A ClassLoader from which to instantiate the Serializable object,
+     * or null for the default class loader.
+     * @param clazz The type of the object expected.
+     *
+     * @throws BadParcelableException Throws BadParcelableException if the item to be deserialized
+     * is not an instance of that class or any of its children class or there there was an error
+     * deserializing the object.
+     */
     @Nullable
-    private final Serializable readSerializable(@Nullable final ClassLoader loader) {
+    public <T extends Serializable> T readSerializable(@Nullable ClassLoader loader,
+            @NonNull Class<? super T> clazz) {
+        Objects.requireNonNull(clazz);
+        return readSerializableInternal(
+                loader == null ? getClass().getClassLoader() : loader, clazz);
+    }
+
+    /**
+     * @param clazz The type of the serializable expected or {@code null} for performing no checks
+     */
+    @Nullable
+    private <T extends Serializable> T readSerializableInternal(@Nullable final ClassLoader loader,
+            @Nullable Class<? super T> clazz) {
         String name = readString();
         if (name == null) {
             // For some reason we were unable to read the name of the Serializable (either there
@@ -4094,9 +4486,20 @@ public final class Parcel {
             return null;
         }
 
-        byte[] serializedData = createByteArray();
-        ByteArrayInputStream bais = new ByteArrayInputStream(serializedData);
         try {
+            if (clazz != null && loader != null) {
+                // If custom classloader is provided, resolve the type of serializable using the
+                // name, then check the type before deserialization. As in this case we can resolve
+                // the class the same way as ObjectInputStream, using the provided classloader.
+                Class<?> cl = Class.forName(name, false, loader);
+                if (!clazz.isAssignableFrom(cl)) {
+                    throw new BadParcelableException("Serializable object "
+                            + cl.getName() + " is not a subclass of required class "
+                            + clazz.getName() + " provided in the parameter");
+                }
+            }
+            byte[] serializedData = createByteArray();
+            ByteArrayInputStream bais = new ByteArrayInputStream(serializedData);
             ObjectInputStream ois = new ObjectInputStream(bais) {
                 @Override
                 protected Class<?> resolveClass(ObjectStreamClass osClass)
@@ -4104,22 +4507,31 @@ public final class Parcel {
                     // try the custom classloader if provided
                     if (loader != null) {
                         Class<?> c = Class.forName(osClass.getName(), false, loader);
-                        if (c != null) {
-                            return c;
-                        }
+                        return Objects.requireNonNull(c);
                     }
                     return super.resolveClass(osClass);
                 }
             };
-            return (Serializable) ois.readObject();
+            T object = (T) ois.readObject();
+            if (clazz != null && loader == null) {
+                // If custom classloader is not provided, check the type of the serializable using
+                // the deserialized object, as we cannot resolve the class the same way as
+                // ObjectInputStream.
+                if (!clazz.isAssignableFrom(object.getClass())) {
+                    throw new BadParcelableException("Serializable object "
+                            + object.getClass().getName() + " is not a subclass of required class "
+                            + clazz.getName() + " provided in the parameter");
+                }
+            }
+            return object;
         } catch (IOException ioe) {
-            throw new RuntimeException("Parcelable encountered " +
-                "IOException reading a Serializable object (name = " + name +
-                ")", ioe);
+            throw new BadParcelableException("Parcelable encountered "
+                    + "IOException reading a Serializable object (name = "
+                    + name + ")", ioe);
         } catch (ClassNotFoundException cnfe) {
-            throw new RuntimeException("Parcelable encountered " +
-                "ClassNotFoundException reading a Serializable object (name = "
-                + name + ")", cnfe);
+            throw new BadParcelableException("Parcelable encountered "
+                    + "ClassNotFoundException reading a Serializable object (name = "
+                    + name + ")", cnfe);
         }
     }
 
@@ -4206,13 +4618,23 @@ public final class Parcel {
         destroy();
     }
 
-    /* package */ void readMapInternal(@NonNull Map outVal, int N,
+    /**
+     * To be replaced by {@link #readMapInternal(Map, int, ClassLoader, Class, Class)}, but keep
+     * the old API for compatibility usages.
+     */
+    /* package */ void readMapInternal(@NonNull Map outVal, int n,
             @Nullable ClassLoader loader) {
-        while (N > 0) {
-            Object key = readValue(loader);
-            Object value = readValue(loader);
+        readMapInternal(outVal, n, loader, /* clazzKey */null, /* clazzValue */null);
+    }
+
+    /* package */ <K, V> void readMapInternal(@NonNull Map<? super K, ? super V> outVal, int n,
+            @Nullable ClassLoader loader, @Nullable Class<K> clazzKey,
+            @Nullable Class<V> clazzValue) {
+        while (n > 0) {
+            K key = readValue(loader, clazzKey);
+            V value = readValue(loader, clazzValue);
             outVal.put(key, value);
-            N--;
+            n--;
         }
     }
 
@@ -4287,9 +4709,12 @@ public final class Parcel {
         return result;
     }
 
-    private void readListInternal(@NonNull List outVal, int n,
-            @Nullable ClassLoader loader) {
-        readListInternal(outVal, n, loader, null);
+    /**
+     * The method is replaced by {@link #readListInternal(List, int, ClassLoader, Class)}, however
+     * we are keeping this unused method here to allow unsupported app usages.
+     */
+    private void readListInternal(@NonNull List outVal, int n, @Nullable ClassLoader loader) {
+        readListInternal(outVal, n, loader,  /* clazz */ null);
     }
 
     /**
@@ -4305,24 +4730,86 @@ public final class Parcel {
         }
     }
 
+    /**
+     * @param clazz The type of the object expected or {@code null} for performing no checks.
+     */
+    @SuppressLint({"ConcreteCollection", "NullableCollection"})
+    @Nullable
+    private <T> ArrayList<T> readArrayListInternal(@Nullable ClassLoader loader,
+            @Nullable Class<? extends T> clazz) {
+        int n = readInt();
+        if (n < 0) {
+            return null;
+        }
+        ArrayList<T> l = new ArrayList<>(n);
+        readListInternal(l, n, loader, clazz);
+        return l;
+    }
+
+    /**
+     * The method is replaced by {@link #readArrayInternal(ClassLoader, Class)}, however
+     * we are keeping this unused method here to allow unsupported app usages.
+     */
     private void readArrayInternal(@NonNull Object[] outVal, int N,
             @Nullable ClassLoader loader) {
         for (int i = 0; i < N; i++) {
-            Object value = readValue(loader);
-            //Log.d(TAG, "Unmarshalling value=" + value);
+            Object value = readValue(loader, /* clazz */ null);
             outVal[i] = value;
         }
     }
 
+    /**
+     * @param clazz The type of the object expected or {@code null} for performing no checks.
+     */
+    @SuppressWarnings("unchecked")
+    @Nullable
+    private <T> T[] readArrayInternal(@Nullable ClassLoader loader, @Nullable Class<T> clazz) {
+        int n = readInt();
+        if (n < 0) {
+            return null;
+        }
+        T[] outVal = (T[]) ((clazz == null) ? new Object[n] : Array.newInstance(clazz, n));
+
+        for (int i = 0; i < n; i++) {
+            T value = readValue(loader, clazz);
+            outVal[i] = value;
+        }
+        return outVal;
+    }
+
+    /**
+     * The method is replaced by {@link #readSparseArray(ClassLoader, Class)}, however
+     * we are keeping this unused method here to allow unsupported app usages.
+     */
     private void readSparseArrayInternal(@NonNull SparseArray outVal, int N,
             @Nullable ClassLoader loader) {
         while (N > 0) {
             int key = readInt();
             Object value = readValue(loader);
-            //Log.i(TAG, "Unmarshalling key=" + key + " value=" + value);
             outVal.append(key, value);
             N--;
         }
+    }
+
+    /**
+     * @param clazz The type of the object expected or {@code null} for performing no checks.
+     */
+    @Nullable
+    private <T> SparseArray<T> readSparseArrayInternal(@Nullable ClassLoader loader,
+            @Nullable Class<? extends T> clazz) {
+        int n = readInt();
+        if (n < 0) {
+            return null;
+        }
+        SparseArray<T> outVal = new SparseArray<>(n);
+
+        while (n > 0) {
+            int key = readInt();
+            T value = readValue(loader, clazz);
+            outVal.append(key, value);
+            n--;
+        }
+        return outVal;
     }
 
 
@@ -4348,8 +4835,8 @@ public final class Parcel {
     /**
      * @hide For testing
      */
-    public long getBlobAshmemSize() {
-        return nativeGetBlobAshmemSize(mNativePtr);
+    public long getOpenAshmemSize() {
+        return nativeGetOpenAshmemSize(mNativePtr);
     }
 
     private static String valueTypeToString(int type) {

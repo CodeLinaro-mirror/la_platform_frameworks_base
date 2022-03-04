@@ -18,6 +18,7 @@ package com.android.server.wm.flicker.quickswitch
 
 import android.app.Instrumentation
 import android.platform.test.annotations.Postsubmit
+import android.platform.test.annotations.Presubmit
 import android.platform.test.annotations.RequiresDevice
 import android.view.Surface
 import android.view.WindowManagerPolicyConstants
@@ -32,11 +33,9 @@ import com.android.server.wm.flicker.dsl.FlickerBuilder
 import com.android.server.wm.flicker.helpers.NonResizeableAppHelper
 import com.android.server.wm.flicker.helpers.SimpleAppHelper
 import com.android.server.wm.flicker.helpers.WindowUtils
-import com.android.server.wm.flicker.helpers.isRotated
 import com.android.server.wm.flicker.navBarLayerIsVisible
 import com.android.server.wm.flicker.navBarLayerRotatesAndScales
 import com.android.server.wm.flicker.navBarWindowIsVisible
-import com.android.server.wm.flicker.startRotation
 import com.android.server.wm.flicker.statusBarLayerIsVisible
 import com.android.server.wm.flicker.statusBarWindowIsVisible
 import com.android.server.wm.traces.common.FlickerComponentName
@@ -68,7 +67,7 @@ class QuickSwitchBetweenTwoAppsBackTest(private val testSpec: FlickerTestParamet
     private val testApp1 = SimpleAppHelper(instrumentation)
     private val testApp2 = NonResizeableAppHelper(instrumentation)
 
-    private val startDisplayBounds = WindowUtils.getDisplayBounds(testSpec.config.startRotation)
+    private val startDisplayBounds = WindowUtils.getDisplayBounds(testSpec.startRotation)
 
     @FlickerBuilderProvider
     fun buildFlicker(): FlickerBuilder {
@@ -92,7 +91,7 @@ class QuickSwitchBetweenTwoAppsBackTest(private val testSpec: FlickerTestParamet
                         startDisplayBounds.bounds.bottom,
                         2 * startDisplayBounds.bounds.right / 3,
                         startDisplayBounds.bounds.bottom,
-                        if (testSpec.config.startRotation.isRotated()) 75 else 30
+                        if (testSpec.isLandscapeOrSeascapeAtStart) 75 else 30
                 )
 
                 wmHelper.waitForFullScreenApp(testApp1.component)
@@ -135,7 +134,7 @@ class QuickSwitchBetweenTwoAppsBackTest(private val testSpec: FlickerTestParamet
     /**
      * Checks that the transition starts with [testApp2] being the top window.
      */
-    @Postsubmit
+    @Presubmit
     @Test
     fun startsWithApp2WindowBeingOnTop() {
         testSpec.assertWmStart {
@@ -286,7 +285,7 @@ class QuickSwitchBetweenTwoAppsBackTest(private val testSpec: FlickerTestParamet
     /**
      * Checks that the navbar layer is visible throughout the entire transition.
      */
-    @Postsubmit
+    @Presubmit
     @Test
     fun navBarLayerAlwaysIsVisible() = testSpec.navBarLayerIsVisible()
 
@@ -295,21 +294,21 @@ class QuickSwitchBetweenTwoAppsBackTest(private val testSpec: FlickerTestParamet
      *
      * NOTE: This doesn't check that the navbar is visible or not.
      */
-    @Postsubmit
+    @Presubmit
     @Test
     fun navbarIsAlwaysInRightPosition() = testSpec.navBarLayerRotatesAndScales()
 
     /**
      * Checks that the status bar window is visible throughout the entire transition.
      */
-    @Postsubmit
+    @Presubmit
     @Test
     fun statusBarWindowIsAlwaysVisible() = testSpec.statusBarWindowIsVisible()
 
     /**
      * Checks that the status bar layer is visible throughout the entire transition.
      */
-    @Postsubmit
+    @Presubmit
     @Test
     fun statusBarLayerIsAlwaysVisible() = testSpec.statusBarLayerIsVisible()
 

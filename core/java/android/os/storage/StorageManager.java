@@ -80,6 +80,7 @@ import android.os.ServiceManager;
 import android.os.ServiceManager.ServiceNotFoundException;
 import android.os.SystemProperties;
 import android.os.UserHandle;
+import android.provider.DeviceConfig;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.sysprop.VoldProperties;
@@ -272,6 +273,15 @@ public class StorageManager {
     public static final int FLAG_STORAGE_CE = IInstalld.FLAG_STORAGE_CE;
     /** {@hide} */
     public static final int FLAG_STORAGE_EXTERNAL = IInstalld.FLAG_STORAGE_EXTERNAL;
+
+    /** {@hide} */
+    @IntDef(prefix = "FLAG_STORAGE_",  value = {
+            FLAG_STORAGE_DE,
+            FLAG_STORAGE_CE,
+            FLAG_STORAGE_EXTERNAL
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface StorageFlags {}
 
     /** {@hide} */
     public static final int FLAG_FOR_WRITE = 1 << 8;
@@ -1391,13 +1401,7 @@ public class StorageManager {
                 }
                 packageName = packageNames[0];
             }
-            final int uid = ActivityThread.getPackageManager().getPackageUid(packageName,
-                    PackageManager.MATCH_DEBUG_TRIAGED_MISSING, userId);
-            if (uid <= 0) {
-                Log.w(TAG, "Missing UID; no storage volumes available");
-                return new StorageVolume[0];
-            }
-            return storageManager.getVolumeList(uid, packageName, flags);
+            return storageManager.getVolumeList(userId, packageName, flags);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -1434,11 +1438,47 @@ public class StorageManager {
         throw new IllegalStateException("Missing primary storage");
     }
 
-    private static final int DEFAULT_THRESHOLD_PERCENTAGE = 5;
-    private static final long DEFAULT_THRESHOLD_MAX_BYTES = DataUnit.MEBIBYTES.toBytes(500);
+    /**
+     * Devices having above STORAGE_THRESHOLD_PERCENT_HIGH of total space free are considered to be
+     * in high free space category.
+     *
+     * @hide
+     */
+    public static final int DEFAULT_STORAGE_THRESHOLD_PERCENT_HIGH = 20;
+    /** {@hide} */
+    @TestApi
+    public static final String
+            STORAGE_THRESHOLD_PERCENT_HIGH_KEY = "storage_threshold_percent_high";
+    /**
+     * Devices having below STORAGE_THRESHOLD_PERCENT_LOW of total space free are considered to be
+     * in low free space category and can be configured via
+     * Settings.Global.SYS_STORAGE_THRESHOLD_PERCENTAGE.
+     *
+     * @hide
+     */
+    public static final int DEFAULT_STORAGE_THRESHOLD_PERCENT_LOW = 5;
+    /**
+     * For devices in high free space category, CACHE_RESERVE_PERCENT_HIGH percent of total space is
+     * allocated for cache.
+     *
+     * @hide
+     */
+    public static final int DEFAULT_CACHE_RESERVE_PERCENT_HIGH = 10;
+    /** {@hide} */
+    @TestApi
+    public static final String CACHE_RESERVE_PERCENT_HIGH_KEY = "cache_reserve_percent_high";
+    /**
+     * For devices in low free space category, CACHE_RESERVE_PERCENT_LOW percent of total space is
+     * allocated for cache.
+     *
+     * @hide
+     */
+    public static final int DEFAULT_CACHE_RESERVE_PERCENT_LOW = 2;
+    /** {@hide} */
+    @TestApi
+    public static final String CACHE_RESERVE_PERCENT_LOW_KEY = "cache_reserve_percent_low";
 
-    private static final int DEFAULT_CACHE_PERCENTAGE = 10;
-    private static final long DEFAULT_CACHE_MAX_BYTES = DataUnit.GIBIBYTES.toBytes(5);
+    private static final long DEFAULT_THRESHOLD_MAX_BYTES = DataUnit.MEBIBYTES.toBytes(500);
 
     private static final long DEFAULT_FULL_THRESHOLD_BYTES = DataUnit.MEBIBYTES.toBytes(1);
 
@@ -1462,7 +1502,8 @@ public class StorageManager {
     @UnsupportedAppUsage
     public long getStorageLowBytes(File path) {
         final long lowPercent = Settings.Global.getInt(mResolver,
-                Settings.Global.SYS_STORAGE_THRESHOLD_PERCENTAGE, DEFAULT_THRESHOLD_PERCENTAGE);
+                Settings.Global.SYS_STORAGE_THRESHOLD_PERCENTAGE,
+                DEFAULT_STORAGE_THRESHOLD_PERCENT_LOW);
         final long lowBytes = (path.getTotalSpace() * lowPercent) / 100;
 
         final long maxLowBytes = Settings.Global.getLong(mResolver,
@@ -1472,28 +1513,64 @@ public class StorageManager {
     }
 
     /**
+     * Compute the minimum number of bytes of storage on the device that could
+     * be reserved for cached data depending on the device state which is then passed on
+     * to getStorageCacheBytes.
+     *
+     * @hide
+     */
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+    @TestApi
+    @SuppressLint("StreamFiles")
+    public long computeStorageCacheBytes(@NonNull File path) {
+        final int storageThresholdPercentHigh = DeviceConfig.getInt(
+                DeviceConfig.NAMESPACE_STORAGE_NATIVE_BOOT,
+                STORAGE_THRESHOLD_PERCENT_HIGH_KEY, DEFAULT_STORAGE_THRESHOLD_PERCENT_HIGH);
+        final int cacheReservePercentHigh = DeviceConfig.getInt(
+                DeviceConfig.NAMESPACE_STORAGE_NATIVE_BOOT,
+                CACHE_RESERVE_PERCENT_HIGH_KEY, DEFAULT_CACHE_RESERVE_PERCENT_HIGH);
+        final int cacheReservePercentLow = DeviceConfig.getInt(
+                DeviceConfig.NAMESPACE_STORAGE_NATIVE_BOOT,
+                CACHE_RESERVE_PERCENT_LOW_KEY, DEFAULT_CACHE_RESERVE_PERCENT_LOW);
+        final long totalBytes = path.getTotalSpace();
+        final long usableBytes = path.getUsableSpace();
+        final long storageThresholdHighBytes = totalBytes * storageThresholdPercentHigh / 100;
+        final long storageThresholdLowBytes = getStorageLowBytes(path);
+        long result;
+        if (usableBytes > storageThresholdHighBytes) {
+            // If free space is >storageThresholdPercentHigh of total space,
+            // reserve cacheReservePercentHigh of total space
+            result = totalBytes * cacheReservePercentHigh / 100;
+        } else if (usableBytes < storageThresholdLowBytes) {
+            // If free space is <min(storageThresholdPercentLow of total space, 500MB),
+            // reserve cacheReservePercentLow of total space
+            result = totalBytes * cacheReservePercentLow / 100;
+        } else {
+            // Else, linearly interpolate the amount of space to reserve
+            double slope = (cacheReservePercentHigh - cacheReservePercentLow) * totalBytes
+                    / (100.0 * (storageThresholdHighBytes - storageThresholdLowBytes));
+            double intercept = totalBytes * cacheReservePercentLow / 100.0
+                    - storageThresholdLowBytes * slope;
+            result = Math.round(slope * usableBytes + intercept);
+        }
+        return result;
+    }
+
+    /**
      * Return the minimum number of bytes of storage on the device that should
      * be reserved for cached data.
      *
      * @hide
      */
-    public long getStorageCacheBytes(File path, @AllocateFlags int flags) {
-        final long cachePercent = Settings.Global.getInt(mResolver,
-                Settings.Global.SYS_STORAGE_CACHE_PERCENTAGE, DEFAULT_CACHE_PERCENTAGE);
-        final long cacheBytes = (path.getTotalSpace() * cachePercent) / 100;
-
-        final long maxCacheBytes = Settings.Global.getLong(mResolver,
-                Settings.Global.SYS_STORAGE_CACHE_MAX_BYTES, DEFAULT_CACHE_MAX_BYTES);
-
-        final long result = Math.min(cacheBytes, maxCacheBytes);
+    public long getStorageCacheBytes(@NonNull File path, @AllocateFlags int flags) {
         if ((flags & StorageManager.FLAG_ALLOCATE_AGGRESSIVE) != 0) {
             return 0;
         } else if ((flags & StorageManager.FLAG_ALLOCATE_DEFY_ALL_RESERVED) != 0) {
             return 0;
         } else if ((flags & StorageManager.FLAG_ALLOCATE_DEFY_HALF_RESERVED) != 0) {
-            return result / 2;
+            return computeStorageCacheBytes(path) / 2;
         } else {
-            return result;
+            return computeStorageCacheBytes(path);
         }
     }
 

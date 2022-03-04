@@ -5808,6 +5808,7 @@ public class Notification implements Parcelable
                     p, result);
             buildCustomContentIntoTemplate(mContext, standard, customContent,
                     p, result);
+            makeHeaderExpanded(standard);
             return standard;
         }
 
@@ -6791,7 +6792,7 @@ public class Notification implements Parcelable
 
         // We show these sorts of notifications immediately in the absence of
         // any explicit app declaration
-        if (isMediaNotification() || hasMediaSession()
+        if (isMediaNotification()
                     || CATEGORY_CALL.equals(category)
                     || CATEGORY_NAVIGATION.equals(category)
                     || (actions != null && actions.length > 0)) {
@@ -6808,14 +6809,6 @@ public class Notification implements Parcelable
      */
     public boolean isForegroundDisplayForceDeferred() {
         return FOREGROUND_SERVICE_DEFERRED == mFgsDeferBehavior;
-    }
-
-    /**
-     * @return whether this notification has a media session attached
-     * @hide
-     */
-    public boolean hasMediaSession() {
-        return extras.getParcelable(Notification.EXTRA_MEDIA_SESSION) != null;
     }
 
     /**
@@ -6861,18 +6854,20 @@ public class Notification implements Parcelable
     }
 
     /**
-     * @return true if this is a media notification
+     * @return true if this is a media style notification with a media session
      *
      * @hide
      */
     public boolean isMediaNotification() {
         Class<? extends Style> style = getNotificationStyle();
-        if (MediaStyle.class.equals(style)) {
-            return true;
-        } else if (DecoratedMediaCustomViewStyle.class.equals(style)) {
-            return true;
-        }
-        return false;
+        boolean isMediaStyle = (MediaStyle.class.equals(style)
+                || DecoratedMediaCustomViewStyle.class.equals(style));
+
+        boolean hasMediaSession = (extras.getParcelable(Notification.EXTRA_MEDIA_SESSION) != null
+                && extras.getParcelable(Notification.EXTRA_MEDIA_SESSION)
+                instanceof MediaSession.Token);
+
+        return isMediaStyle && hasMediaSession;
     }
 
     /**
@@ -7915,7 +7910,7 @@ public class Notification implements Parcelable
          * Adds a message for display by this notification. Convenience call for a simple
          * {@link Message} in {@link #addMessage(Notification.MessagingStyle.Message)}.
          * @param text A {@link CharSequence} to be displayed as the message content
-         * @param timestamp Time at which the message arrived
+         * @param timestamp Time in milliseconds at which the message arrived
          * @param sender A {@link CharSequence} to be used for displaying the name of the
          * sender. Should be <code>null</code> for messages by the current user, in which case
          * the platform will insert {@link #getUserDisplayName()}.
@@ -7937,7 +7932,7 @@ public class Notification implements Parcelable
          * Adds a message for display by this notification. Convenience call for a simple
          * {@link Message} in {@link #addMessage(Notification.MessagingStyle.Message)}.
          * @param text A {@link CharSequence} to be displayed as the message content
-         * @param timestamp Time at which the message arrived
+         * @param timestamp Time in milliseconds at which the message arrived
          * @param sender The {@link Person} who sent the message.
          * Should be <code>null</code> for messages by the current user, in which case
          * the platform will insert the user set in {@code MessagingStyle(Person)}.

@@ -371,6 +371,10 @@ public class UiTranslationController {
                     Log.v(TAG, "onVirtualViewTranslationCompleted: received response for "
                             + "AutofillId " + autofillId);
                 }
+                view.onVirtualViewTranslationResponses(virtualChildResponse);
+                if (mCurrentState == STATE_UI_TRANSLATION_PAUSED) {
+                    return;
+                }
                 mActivity.runOnUiThread(() -> {
                     if (view.getViewTranslationCallback() == null) {
                         if (DEBUG) {
@@ -379,7 +383,6 @@ public class UiTranslationController {
                         }
                         return;
                     }
-                    view.onVirtualViewTranslationResponses(virtualChildResponse);
                     if (view.getViewTranslationCallback() != null) {
                         view.getViewTranslationCallback().onShowTranslation(view);
                     }
@@ -427,12 +430,17 @@ public class UiTranslationController {
                             + " may be gone.");
                     continue;
                 }
+                int currentState;
+                currentState = mCurrentState;
                 mActivity.runOnUiThread(() -> {
                     ViewTranslationCallback callback = view.getViewTranslationCallback();
                     if (view.getViewTranslationResponse() != null
                             && view.getViewTranslationResponse().equals(response)) {
                         if (callback instanceof TextViewTranslationCallback) {
-                            if (((TextViewTranslationCallback) callback).isShowingTranslation()) {
+                            TextViewTranslationCallback textViewCallback =
+                                    (TextViewTranslationCallback) callback;
+                            if (textViewCallback.isShowingTranslation()
+                                    || textViewCallback.isAnimationRunning()) {
                                 if (DEBUG) {
                                     Log.d(TAG, "Duplicate ViewTranslationResponse for " + autofillId
                                             + ". Ignoring.");
@@ -460,6 +468,9 @@ public class UiTranslationController {
                         callback.enableContentPadding();
                     }
                     view.onViewTranslationResponse(response);
+                    if (currentState == STATE_UI_TRANSLATION_PAUSED) {
+                        return;
+                    }
                     callback.onShowTranslation(view);
                 });
             }
@@ -615,7 +626,7 @@ public class UiTranslationController {
 
     private void addViewIfNeeded(IntArray sourceViewIds, View view) {
         final AutofillId autofillId = view.getAutofillId();
-        if ((sourceViewIds.indexOf(autofillId.getViewId()) >= 0)
+        if (autofillId != null && (sourceViewIds.indexOf(autofillId.getViewId()) >= 0)
                 && !mViews.containsKey(autofillId)) {
             mViews.put(autofillId, new WeakReference<>(view));
         }
@@ -655,8 +666,13 @@ public class UiTranslationController {
             Log.e(TAG, "Can not find TranslationManager when trying to create translator.");
             return null;
         }
-        final TranslationContext translationContext = new TranslationContext(sourceSpec,
-                targetSpec, /* translationFlags= */ 0);
+        final TranslationContext translationContext =
+                new TranslationContext.Builder(sourceSpec, targetSpec)
+                        .setActivityId(
+                                new ActivityId(
+                                        mActivity.getTaskId(),
+                                        mActivity.getShareableActivityToken()))
+                        .build();
         final Translator translator = tm.createTranslator(translationContext);
         if (translator != null) {
             final Pair<TranslationSpec, TranslationSpec> specs = new Pair<>(sourceSpec, targetSpec);

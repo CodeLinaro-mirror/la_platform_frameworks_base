@@ -18,15 +18,16 @@
 
 #include <apex/window.h>
 #include <fcntl.h>
+#include <gui/TraceUtils.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <ui/Fence.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <functional>
 
-#include <gui/TraceUtils.h>
 #include "../Properties.h"
 #include "AnimationContext.h"
 #include "Frame.h"
@@ -509,6 +510,8 @@ nsecs_t CanvasContext::draw() {
     Frame frame = mRenderPipeline->getFrame();
     SkRect windowDirty = computeDirtyRect(frame, &dirty);
 
+    ATRACE_FORMAT("Drawing " RECT_STRING, SK_RECT_ARGS(dirty));
+
     bool drew = mRenderPipeline->draw(frame, windowDirty, dirty, mLightGeometry, &mLayerUpdateQueue,
                                       mContentDrawBounds, mOpaque, mLightInfo, mRenderNodes,
                                       &(profiler()));
@@ -523,8 +526,9 @@ nsecs_t CanvasContext::draw() {
         if (vsyncId != UiFrameInfoBuilder::INVALID_VSYNC_ID) {
             const auto inputEventId =
                     static_cast<int32_t>(mCurrentFrameInfo->get(FrameInfoIndex::InputEventId));
-            native_window_set_frame_timeline_info(mNativeSurface->getNativeWindow(), vsyncId,
-                                                  inputEventId);
+            native_window_set_frame_timeline_info(
+                    mNativeSurface->getNativeWindow(), vsyncId, inputEventId,
+                    mCurrentFrameInfo->get(FrameInfoIndex::FrameStartTime));
         }
     }
 
@@ -739,6 +743,9 @@ void CanvasContext::onSurfaceStatsAvailable(void* context, int32_t surfaceContro
             instance->mRenderThread.getASurfaceControlFunctions();
 
     nsecs_t gpuCompleteTime = functions.getAcquireTimeFunc(stats);
+    if (gpuCompleteTime == Fence::SIGNAL_TIME_PENDING) {
+        gpuCompleteTime = -1;
+    }
     uint64_t frameNumber = functions.getFrameNumberFunc(stats);
 
     FrameInfo* frameInfo = instance->getFrameInfoFromLast4(frameNumber, surfaceControlId);

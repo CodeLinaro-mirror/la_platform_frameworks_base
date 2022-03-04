@@ -25,18 +25,12 @@ import static com.android.server.job.JobSchedulerService.sElapsedRealtimeClock;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.job.JobInfo;
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
 import android.net.ConnectivityManager;
 import android.net.ConnectivityManager.NetworkCallback;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkPolicyManager;
 import android.net.NetworkRequest;
-import android.os.BatteryManager;
-import android.os.BatteryManagerInternal;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -55,6 +49,7 @@ import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.server.JobSchedulerBackgroundThread;
 import com.android.server.LocalServices;
 import com.android.server.job.JobSchedulerService;
 import com.android.server.job.JobSchedulerService.Constants;
@@ -106,8 +101,6 @@ public final class ConnectivityController extends RestrictingController implemen
 
     private final ConnectivityManager mConnManager;
     private final NetworkPolicyManagerInternal mNetPolicyManagerInternal;
-
-    private final ChargingTracker mChargingTracker;
 
     /** List of tracked jobs keyed by source UID. */
     @GuardedBy("mLock")
@@ -176,8 +169,8 @@ public final class ConnectivityController extends RestrictingController implemen
             }
             // Prioritize the top app. If neither are top apps, then use a later prioritization
             // check.
-            final int topPriority = prioritizeExistenceOver(JobInfo.PRIORITY_TOP_APP - 1,
-                    us1.basePriority, us2.basePriority);
+            final int topPriority = prioritizeExistenceOver(JobInfo.BIAS_TOP_APP - 1,
+                    us1.baseBias, us2.baseBias);
             if (topPriority != 0) {
                 return topPriority;
             }
@@ -190,8 +183,8 @@ public final class ConnectivityController extends RestrictingController implemen
             // They both have runnable EJs.
             // Prioritize an FGS+ app. If neither are FGS+ apps, then use a later prioritization
             // check.
-            final int fgsPriority = prioritizeExistenceOver(JobInfo.PRIORITY_FOREGROUND_SERVICE - 1,
-                    us1.basePriority, us2.basePriority);
+            final int fgsPriority = prioritizeExistenceOver(JobInfo.BIAS_FOREGROUND_SERVICE - 1,
+                    us1.baseBias, us2.baseBias);
             if (fgsPriority != 0) {
                 return fgsPriority;
             }
@@ -202,8 +195,8 @@ public final class ConnectivityController extends RestrictingController implemen
                 return 1;
             }
             // Order by any latent important proc states.
-            if (us1.basePriority != us2.basePriority) {
-                return us2.basePriority - us1.basePriority;
+            if (us1.baseBias != us2.baseBias) {
+                return us2.baseBias - us1.baseBias;
             }
             // Order by enqueue time.
             if (us1.earliestEnqueueTime < us2.earliestEnqueueTime) {
@@ -237,9 +230,6 @@ public final class ConnectivityController extends RestrictingController implemen
         // network changes against the active network for each UID with jobs.
         final NetworkRequest request = new NetworkRequest.Builder().clearCapabilities().build();
         mConnManager.registerNetworkCallback(request, mNetworkCallback);
-
-        mChargingTracker = new ChargingTracker();
-        mChargingTracker.startTracking();
     }
 
     @GuardedBy("mLock")
@@ -527,12 +517,23 @@ public final class ConnectivityController extends RestrictingController implemen
 
     @GuardedBy("mLock")
     @Override
-    public void onUidPriorityChangedLocked(int uid, int newPriority) {
+    public void onUidBiasChangedLocked(int uid, int prevBias, int newBias) {
         UidStats uidStats = mUidStats.get(uid);
-        if (uidStats != null && uidStats.basePriority != newPriority) {
-            uidStats.basePriority = newPriority;
+        if (uidStats != null && uidStats.baseBias != newBias) {
+            uidStats.baseBias = newBias;
             postAdjustCallbacks();
         }
+    }
+
+    @Override
+    @GuardedBy("mLock")
+    public void onBatteryStateChangedLocked() {
+        // Update job bookkeeping out of band to avoid blocking broadcast progress.
+        JobSchedulerBackgroundThread.getHandler().post(() -> {
+            synchronized (mLock) {
+                updateTrackedJobsLocked(-1, null);
+            }
+        });
     }
 
     private boolean isUsable(NetworkCapabilities capabilities) {
@@ -591,7 +592,7 @@ public final class ConnectivityController extends RestrictingController implemen
         // Minimum chunk size isn't defined. Check using the estimated upload/download sizes.
 
         if (capabilities.hasCapability(NET_CAPABILITY_NOT_METERED)
-                && mChargingTracker.isCharging()) {
+                && mService.isBatteryCharging()) {
             // We're charging and on an unmetered network. We don't have to be as conservative about
             // making sure the job will run within its max execution time. Let's just hope the app
             // supports interruptible work.
@@ -928,7 +929,7 @@ public final class ConnectivityController extends RestrictingController implemen
         final int unbypassableBlockedReasons;
         // TOP will probably have fewer reasons, so we may not have to worry about returning
         // BG_BLOCKED for a TOP app. However, better safe than sorry.
-        if (uidStats.basePriority >= JobInfo.PRIORITY_BOUND_FOREGROUND_SERVICE
+        if (uidStats.baseBias >= JobInfo.BIAS_BOUND_FOREGROUND_SERVICE
                 || (jobStatus.getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) != 0) {
             if (DEBUG) {
                 Slog.d(TAG, "Using FG bypass for " + jobStatus.getSourceUid());
@@ -1068,51 +1069,6 @@ public final class ConnectivityController extends RestrictingController implemen
                         mStateChangedListener.onRunJobNow(js);
                     }
                 }
-            }
-        }
-    }
-
-    private final class ChargingTracker extends BroadcastReceiver {
-        /**
-         * Track whether we're "charging", where charging means that we're ready to commit to
-         * doing work.
-         */
-        private boolean mCharging;
-
-        ChargingTracker() {}
-
-        public void startTracking() {
-            IntentFilter filter = new IntentFilter();
-            filter.addAction(BatteryManager.ACTION_CHARGING);
-            filter.addAction(BatteryManager.ACTION_DISCHARGING);
-            mContext.registerReceiver(this, filter);
-
-            // Initialise tracker state.
-            final BatteryManagerInternal batteryManagerInternal =
-                    LocalServices.getService(BatteryManagerInternal.class);
-            mCharging = batteryManagerInternal.isPowered(BatteryManager.BATTERY_PLUGGED_ANY);
-        }
-
-        public boolean isCharging() {
-            return mCharging;
-        }
-
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            synchronized (mLock) {
-                final String action = intent.getAction();
-                if (BatteryManager.ACTION_CHARGING.equals(action)) {
-                    if (mCharging) {
-                        return;
-                    }
-                    mCharging = true;
-                } else if (BatteryManager.ACTION_DISCHARGING.equals(action)) {
-                    if (!mCharging) {
-                        return;
-                    }
-                    mCharging = false;
-                }
-                updateTrackedJobsLocked(-1, null);
             }
         }
     }
@@ -1281,7 +1237,7 @@ public final class ConnectivityController extends RestrictingController implemen
 
     private static class UidStats {
         public final int uid;
-        public int basePriority;
+        public int baseBias;
         public final ArraySet<JobStatus> runningJobs = new ArraySet<>();
         public int numReadyWithConnectivity;
         public int numRequestedNetworkAvailable;
@@ -1298,7 +1254,7 @@ public final class ConnectivityController extends RestrictingController implemen
         private void dumpLocked(IndentingPrintWriter pw, final long nowElapsed) {
             pw.print("UidStats{");
             pw.print("uid", uid);
-            pw.print("pri", basePriority);
+            pw.print("pri", baseBias);
             pw.print("#run", runningJobs.size());
             pw.print("#readyWithConn", numReadyWithConnectivity);
             pw.print("#netAvail", numRequestedNetworkAvailable);

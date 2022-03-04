@@ -77,6 +77,7 @@ public class DozeScreenState implements DozeMachine.Part {
     private final Provider<UdfpsController> mUdfpsControllerProvider;
     @Nullable private UdfpsController mUdfpsController;
     private final DozeLog mDozeLog;
+    private final DozeScreenBrightness mDozeScreenBrightness;
 
     private int mPendingScreenState = Display.STATE_UNKNOWN;
     private SettableWakeLock mWakeLock;
@@ -90,7 +91,8 @@ public class DozeScreenState implements DozeMachine.Part {
             WakeLock wakeLock,
             AuthController authController,
             Provider<UdfpsController> udfpsControllerProvider,
-            DozeLog dozeLog) {
+            DozeLog dozeLog,
+            DozeScreenBrightness dozeScreenBrightness) {
         mDozeService = service;
         mHandler = handler;
         mParameters = parameters;
@@ -99,12 +101,18 @@ public class DozeScreenState implements DozeMachine.Part {
         mAuthController = authController;
         mUdfpsControllerProvider = udfpsControllerProvider;
         mDozeLog = dozeLog;
+        mDozeScreenBrightness = dozeScreenBrightness;
 
         updateUdfpsController();
         if (mUdfpsController == null) {
             mAuthController.addCallback(new AuthController.Callback() {
                 @Override
                 public void onAllAuthenticatorsRegistered() {
+                    updateUdfpsController();
+                }
+
+                @Override
+                public void onEnrollmentsChanged() {
                     updateUdfpsController();
                 }
             });
@@ -155,15 +163,11 @@ public class DozeScreenState implements DozeMachine.Part {
 
             // Delay screen state transitions even longer while animations are running.
             boolean shouldDelayTransitionEnteringDoze = newState == DOZE_AOD
-                    && mParameters.shouldControlScreenOff() && !turningOn;
+                    && mParameters.shouldDelayDisplayDozeTransition() && !turningOn;
 
             // Delay screen state transition longer if UDFPS is actively authenticating a fp
             boolean shouldDelayTransitionForUDFPS = newState == DOZE_AOD
                     && mUdfpsController != null && mUdfpsController.isFingerDown();
-
-            if (shouldDelayTransitionEnteringDoze || shouldDelayTransitionForUDFPS) {
-                mWakeLock.setAcquired(true);
-            }
 
             if (!messagePending) {
                 if (DEBUG) {
@@ -172,6 +176,18 @@ public class DozeScreenState implements DozeMachine.Part {
                 }
 
                 if (shouldDelayTransitionEnteringDoze) {
+                    if (justInitialized) {
+                        // If we are delaying transitioning to doze and the display was not
+                        // turned on we set it to 'on' first to make sure that the animation
+                        // is visible before eventually moving it to doze state.
+                        // The display might be off at this point for example on foldable devices
+                        // when we switch displays and go to doze at the same time.
+                        applyScreenState(Display.STATE_ON);
+
+                        // Restore pending screen state as it gets cleared by 'applyScreenState'
+                        mPendingScreenState = screenState;
+                    }
+
                     mHandler.postDelayed(mApplyPendingScreenState, ENTER_DOZE_DELAY);
                 } else if (shouldDelayTransitionForUDFPS) {
                     mDozeLog.traceDisplayStateDelayedByUdfps(mPendingScreenState);
@@ -181,6 +197,10 @@ public class DozeScreenState implements DozeMachine.Part {
                 }
             } else if (DEBUG) {
                 Log.d(TAG, "Pending display state change to " + screenState);
+            }
+
+            if (shouldDelayTransitionEnteringDoze || shouldDelayTransitionForUDFPS) {
+                mWakeLock.setAcquired(true);
             }
         } else if (turningOff) {
             mDozeHost.prepareForGentleSleep(() -> applyScreenState(screenState));
@@ -204,6 +224,12 @@ public class DozeScreenState implements DozeMachine.Part {
         if (screenState != Display.STATE_UNKNOWN) {
             if (DEBUG) Log.d(TAG, "setDozeScreenState(" + screenState + ")");
             mDozeService.setDozeScreenState(screenState);
+            if (screenState == Display.STATE_DOZE) {
+                // If we're entering doze, update the doze screen brightness. We might have been
+                // clamping it to the dim brightness during the screen off animation, and we should
+                // now change it to the brightness we actually want according to the sensor.
+                mDozeScreenBrightness.updateBrightnessAndReady(false /* force */);
+            }
             mPendingScreenState = Display.STATE_UNKNOWN;
             mWakeLock.setAcquired(false);
         }

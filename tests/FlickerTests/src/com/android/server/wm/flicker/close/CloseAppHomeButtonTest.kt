@@ -16,6 +16,7 @@
 
 package com.android.server.wm.flicker.close
 
+import android.platform.test.annotations.Presubmit
 import androidx.test.filters.FlakyTest
 import androidx.test.filters.RequiresDevice
 import com.android.server.wm.flicker.FlickerParametersRunnerFactory
@@ -23,6 +24,8 @@ import com.android.server.wm.flicker.FlickerTestParameter
 import com.android.server.wm.flicker.FlickerTestParameterFactory
 import com.android.server.wm.flicker.annotation.Group4
 import com.android.server.wm.flicker.dsl.FlickerBuilder
+import com.android.server.wm.flicker.helpers.isShellTransitionsEnabled
+import org.junit.Assume.assumeFalse
 import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -64,9 +67,9 @@ import org.junit.runners.Parameterized
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 @Group4
 class CloseAppHomeButtonTest(testSpec: FlickerTestParameter) : CloseAppTransition(testSpec) {
-    override val transition: FlickerBuilder.(Map<String, Any?>) -> Unit
+    override val transition: FlickerBuilder.() -> Unit
         get() = {
-            super.transition(this, it)
+            super.transition(this)
             transitions {
                 device.pressHome()
                 wmHelper.waitForHomeActivityVisible()
@@ -77,6 +80,42 @@ class CloseAppHomeButtonTest(testSpec: FlickerTestParameter) : CloseAppTransitio
     @FlakyTest
     @Test
     override fun navBarLayerRotatesAndScales() = super.navBarLayerRotatesAndScales()
+
+    /** {@inheritDoc} */
+    @FlakyTest(bugId = 206753786)
+    @Test
+    override fun statusBarLayerRotatesScales() {
+        // This test doesn't work in shell transitions because of b/206753786
+        assumeFalse(isShellTransitionsEnabled)
+        super.statusBarLayerRotatesScales()
+    }
+
+    /** {@inheritDoc} */
+    @Presubmit
+    @Test
+    override fun launcherLayerReplacesApp() {
+        // This test doesn't work in shell transitions because of b/206086894
+        assumeFalse(isShellTransitionsEnabled)
+        super.launcherLayerReplacesApp()
+    }
+
+    /** {@inheritDoc} */
+    @Presubmit
+    @Test
+    override fun entireScreenCovered() {
+        // This test doesn't work in shell transitions because of b/206086894
+        assumeFalse(isShellTransitionsEnabled)
+        super.entireScreenCovered()
+    }
+
+    /** {@inheritDoc} */
+    @Presubmit
+    @Test
+    override fun visibleLayersShownMoreThanOneConsecutiveEntry() {
+        // This test doesn't work in shell transitions because of b/215885246
+        assumeFalse(isShellTransitionsEnabled)
+        super.visibleLayersShownMoreThanOneConsecutiveEntry()
+    }
 
     companion object {
         /**

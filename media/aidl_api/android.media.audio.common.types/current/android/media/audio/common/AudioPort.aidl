@@ -38,8 +38,8 @@ parcelable AudioPort {
   int id;
   @utf8InCpp String name;
   android.media.audio.common.AudioProfile[] profiles;
+  android.media.audio.common.AudioIoFlags flags;
   android.media.audio.common.ExtraAudioDescriptor[] extraAudioDescriptors;
   android.media.audio.common.AudioGain[] gains;
-  android.media.audio.common.AudioPortConfig activeConfig;
   android.media.audio.common.AudioPortExt ext;
 }
