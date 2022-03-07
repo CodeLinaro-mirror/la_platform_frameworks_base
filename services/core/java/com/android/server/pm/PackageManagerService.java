@@ -290,6 +290,7 @@ import com.android.internal.os.SomeArgs;
 import com.android.internal.os.Zygote;
 import com.android.internal.telephony.CarrierAppUtils;
 import com.android.internal.util.ArrayUtils;
+import com.android.internal.util.CollectionUtils;
 import com.android.internal.util.ConcurrentUtils;
 import com.android.internal.util.DumpUtils;
 import com.android.internal.util.FastXmlSerializer;
@@ -3944,13 +3945,9 @@ public class PackageManagerService extends IPackageManager.Stub
         Iterator<ResolveInfo> iter = matches.iterator();
         while (iter.hasNext()) {
             final ResolveInfo rInfo = iter.next();
-            final PackageSetting ps = mSettings.mPackages.get(rInfo.activityInfo.packageName);
-            if (ps != null) {
-                final PermissionsState permissionsState = ps.getPermissionsState();
-                if (permissionsState.hasPermission(Manifest.permission.INSTALL_PACKAGES, 0)
-                        || Build.IS_ENG) {
-                    continue;
-                }
+            if (checkPermission(Manifest.permission.INSTALL_PACKAGES,
+                    rInfo.activityInfo.packageName, 0) == PERMISSION_GRANTED || Build.IS_ENG) {
+                continue;
             }
             iter.remove();
         }
@@ -4126,8 +4123,24 @@ public class PackageManagerService extends IPackageManager.Stub
             final int[] gids = (flags & PackageManager.GET_GIDS) == 0
                     ? EMPTY_INT_ARRAY : permissionsState.computeGids(userId);
             // Compute granted permissions only if package has requested permissions
-            final Set<String> permissions = ArrayUtils.isEmpty(p.requestedPermissions)
+            Set<String> permissions = ArrayUtils.isEmpty(p.requestedPermissions)
                     ? Collections.emptySet() : permissionsState.getPermissions(userId);
+            if (state.instantApp) {
+                permissions = new ArraySet<>(permissions);
+                permissions.removeIf(permissionName -> {
+                    BasePermission permission = mPermissionManager.getPermissionTEMP(
+                            permissionName);
+                    if (permission == null) {
+                        return true;
+                    }
+                    if (!permission.isInstant()) {
+                        EventLog.writeEvent(0x534e4554, "140256621", UserHandle.getUid(userId,
+                                ps.appId), permissionName);
+                        return true;
+                    }
+                    return false;
+                });
+            }
 
             PackageInfo packageInfo = PackageParser.generatePackageInfo(p, gids, flags,
                     ps.firstInstallTime, ps.lastUpdateTime, permissions, state, userId);
@@ -6361,6 +6374,7 @@ public class PackageManagerService extends IPackageManager.Stub
 
     @Override
     public List<String> getAllPackages() {
+        enforceSystemOrRootOrShell("getAllPackages is limited to privileged callers");
         final int callingUid = Binder.getCallingUid();
         final int callingUserId = UserHandle.getUserId(callingUid);
         synchronized (mPackages) {
@@ -8611,10 +8625,9 @@ public class PackageManagerService extends IPackageManager.Stub
     private void addPackageHoldingPermissions(ArrayList<PackageInfo> list, PackageSetting ps,
             String[] permissions, boolean[] tmp, int flags, int userId) {
         int numMatch = 0;
-        final PermissionsState permissionsState = ps.getPermissionsState();
         for (int i=0; i<permissions.length; i++) {
             final String permission = permissions[i];
-            if (permissionsState.hasPermission(permission, userId)) {
+            if (checkPermission(permission, ps.name, userId) == PERMISSION_GRANTED) {
                 tmp[i] = true;
                 numMatch++;
             } else {
@@ -12281,12 +12294,17 @@ public class PackageManagerService extends IPackageManager.Stub
                 mPermissionManager.addAllPermissionGroups(pkg, chatty);
             }
 
+            // If a permission has had its defining app changed, or it has had its protection
+            // upgraded, we need to revoke apps that hold it
+            final List<String> permissionsWithChangedDefinition;
             // Don't allow ephemeral applications to define new permissions.
             if ((scanFlags & SCAN_AS_INSTANT_APP) != 0) {
+                permissionsWithChangedDefinition = null;
                 Slog.w(TAG, "Permissions from package " + pkg.packageName
                         + " ignored: instant apps cannot define new permissions.");
             } else {
-                mPermissionManager.addAllPermissions(pkg, chatty);
+                permissionsWithChangedDefinition =
+                        mPermissionManager.addAllPermissions(pkg, chatty);
             }
 
             int collectionSize = pkg.instrumentation.size();
@@ -12331,7 +12349,10 @@ public class PackageManagerService extends IPackageManager.Stub
                 }
             }
 
-            if (oldPkg != null) {
+            boolean hasOldPkg = oldPkg != null;
+            boolean hasPermissionDefinitionChanges =
+                    !CollectionUtils.isEmpty(permissionsWithChangedDefinition);
+            if (hasOldPkg || hasPermissionDefinitionChanges) {
                 // We need to call revokeRuntimePermissionsIfGroupChanged async as permission
                 // revoke callbacks from this method might need to kill apps which need the
                 // mPackages lock on a different thread. This would dead lock.
@@ -12342,9 +12363,19 @@ public class PackageManagerService extends IPackageManager.Stub
                 // won't be granted yet, hence new packages are no problem.
                 final ArrayList<String> allPackageNames = new ArrayList<>(mPackages.keySet());
 
-                AsyncTask.execute(() ->
+                AsyncTask.execute(() -> {
+                    if (hasOldPkg) {
                         mPermissionManager.revokeRuntimePermissionsIfGroupChanged(pkg, oldPkg,
-                                allPackageNames, mPermissionCallback));
+                                allPackageNames, mPermissionCallback);
+                        mPermissionManager.revokeStoragePermissionsIfScopeExpanded(pkg, oldPkg,
+                                mPermissionCallback);
+                    }
+                    if (hasPermissionDefinitionChanges) {
+                        mPermissionManager.revokeRuntimePermissionsIfPermissionDefinitionChanged(
+                                permissionsWithChangedDefinition, allPackageNames,
+                                mPermissionCallback);
+                    }
+                });
             }
         }
 
@@ -19558,7 +19589,8 @@ public class PackageManagerService extends IPackageManager.Stub
         }
 
         final int userId = user == null ? UserHandle.USER_ALL : user.getIdentifier();
-        if (ps.getPermissionsState().hasPermission(Manifest.permission.SUSPEND_APPS, userId)) {
+        if (checkPermission(Manifest.permission.SUSPEND_APPS, packageName, userId)
+                 == PERMISSION_GRANTED) {
             unsuspendForSuspendingPackage(packageName, userId);
         }
         if ((!systemApp || (flags & PackageManager.DELETE_SYSTEM_APP) != 0)
