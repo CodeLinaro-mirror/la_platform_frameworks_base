@@ -303,8 +303,35 @@ status_t BootAnimation::initTexture(Texture* texture, AssetManager& assets,
     const int w = bitmapInfo.width;
     const int h = bitmapInfo.height;
 
-    texture->w = w;
-    texture->h = h;
+    bool isResized = false;
+    if (name == "images/android-logo-mask.png") {
+        // only android-logo-mask need resize
+        const float aspectRatio = float(w) / float(h);
+        DisplayMode displayMode;
+        if (mDisplayToken != nullptr) {
+            const status_t error =
+                SurfaceComposerClient::getActiveDisplayMode(mDisplayToken, &displayMode);
+            if (error != NO_ERROR) {
+                SLOGE("Can't get active display configuration.");
+            }
+        }
+        ui::Size resolution = displayMode.resolution;
+        if (resolution.width != 0 && w > resolution.width) {
+            texture->h = resolution.width / aspectRatio;
+            texture->w = resolution.width;
+            isResized = true;
+        }
+        if (resolution.height != 0 && h > resolution.height) {
+            texture->h = resolution.height;
+            texture->w = resolution.height * aspectRatio;
+            isResized = true;
+        }
+    }
+
+    if (!isResized) {
+        texture->w = w;
+        texture->h = h;
+    }
 
     glGenTextures(1, &texture->name);
     glBindTexture(GL_TEXTURE_2D, texture->name);
