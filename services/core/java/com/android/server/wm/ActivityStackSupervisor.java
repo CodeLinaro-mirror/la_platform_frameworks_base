@@ -157,6 +157,7 @@ import java.util.Arrays;
 import android.os.AsyncTask;
 
 import vendor.qti.hardware.servicetracker.V1_2.IServicetracker;
+import android.os.SystemProperties;
 
 // TODO: This class has become a dumping ground. Let's
 // - Move things relating to the hierarchy to RootWindowContainer
@@ -1780,7 +1781,12 @@ public class ActivityStackSupervisor implements RecentTasks.Callbacks {
 
         mRootWindowContainer.applySleepTokens(false /* applyToStacks */);
 
-        checkReadyForSleepLocked(true /* allowDelay */);
+        boolean isQcomWatch = SystemProperties.getBoolean("ro.product.qti.qcom_watch", false);
+        if (isQcomWatch) {
+            checkReadyForSleepLocked(false /* allowDelay */);
+        } else {
+            checkReadyForSleepLocked(true /* allowDelay */);
+        }
     }
 
     boolean shutdownLocked(int timeout) {
