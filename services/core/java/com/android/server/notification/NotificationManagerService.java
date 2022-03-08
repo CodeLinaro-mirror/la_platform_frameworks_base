@@ -2024,6 +2024,18 @@ public class NotificationManagerService extends SystemService {
         if (0 == Settings.Global.getInt(getContext().getContentResolver(),
                     Settings.Global.DEVICE_PROVISIONED, 0)) {
             mDisableNotificationEffects = true;
+            getContext().getContentResolver().registerContentObserver(
+                    Settings.Global.getUriFor(Settings.Global.DEVICE_PROVISIONED), false,
+                    new ContentObserver(new Handler(Looper.getMainLooper())) {
+                        @Override
+                        public void onChange(boolean selfChange) {
+                            if(1 == Settings.Global.getInt(getContext().getContentResolver(),
+                    Settings.Global.DEVICE_PROVISIONED, 0)){
+                                    mDisableNotificationEffects = false;
+                                    getContext().getContentResolver().unregisterContentObserver(this);
+                            }
+                        }
+                    });
         }
         mZenModeHelper.initZenMode();
         mInterruptionFilter = mZenModeHelper.getZenModeListenerInterruptionFilter();
