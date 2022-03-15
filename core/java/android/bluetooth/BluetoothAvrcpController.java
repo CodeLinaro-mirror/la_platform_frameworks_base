@@ -316,6 +316,33 @@ public final class BluetoothAvrcpController implements BluetoothProfile {
        return 0;
     }
 
+    /**
+     * Get remote AVRCP version.
+     * @hide
+     */
+    @RequiresBluetoothConnectPermission
+    @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+    public int getRemoteVersion(BluetoothDevice device) {
+        Log.d(TAG, "getRemoteVersion dev = " + device);
+        final IBluetoothAvrcpController service =
+                getService();
+        if (service != null && isEnabled()) {
+            try {
+                if (getConnectionState(device) == BluetoothProfile.STATE_CONNECTED) {
+                    return service.getRemoteVersion(device, mAttributionSource);
+                } else {
+                    Log.w(TAG, "getRemoteVersion failed, avrcp connection is required");
+                    return 0;
+                }
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error talking to BT service in getRemoteVersion()", e);
+                return 0;
+            }
+       }
+       if (service == null) Log.w(TAG, "Proxy not attached to service");
+       return 0;
+    }
+
     private boolean isEnabled() {
         return mAdapter.getState() == BluetoothAdapter.STATE_ON;
     }
