@@ -640,6 +640,7 @@ static void PreApplicationInit() {
   // Set the jemalloc decay time to 1.
   mallopt(M_DECAY_TIME, 1);
 
+#ifdef __aarch64__
   void *mBelugaHandle = nullptr;
   void (*mBeluga)() = nullptr;
   mBelugaHandle = dlopen("libbeluga.so", RTLD_NOW);
@@ -652,6 +653,7 @@ static void PreApplicationInit() {
       mBeluga();
     dlclose(mBelugaHandle);
   }
+#endif
 }
 
 static void SetUpSeccompFilter(uid_t uid, bool is_child_zygote) {
