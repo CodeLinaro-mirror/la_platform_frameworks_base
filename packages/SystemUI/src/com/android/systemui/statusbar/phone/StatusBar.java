@@ -3563,11 +3563,18 @@ public class StatusBar extends SystemUI implements DemoMode,
     //The wear issues related
     @Override
     public void onFullscreenStateChanged(boolean isFullscreen, boolean isImmersive) {
-	if(!isFullscreen && isImmersive){
-		onStateChanged(StatusBarState.FULLSCREEN_USER_SWITCHER);
-	}else{
-		onStateChanged(StatusBarState.SHADE);
-	}
+        switch (mState) {
+            case StatusBarState.FULLSCREEN_USER_SWITCHER:
+                if (!isFullscreen && !isImmersive) {
+                    onStateChanged(StatusBarState.SHADE);
+                }
+            break;
+            case StatusBarState.SHADE:
+                if (isFullscreen || isImmersive) {
+                    onStateChanged(StatusBarState.FULLSCREEN_USER_SWITCHER);
+                }
+            break;
+        }
     }
 
     @Override
