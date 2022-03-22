@@ -410,6 +410,7 @@ public class WifiTracker implements LifecycleObserver, OnStart, OnStop, OnDestro
     }
 
     private void unregisterScoreCache() {
+        mScoreCache.unregisterListener();
         mNetworkScoreManager.unregisterNetworkScoreCache(NetworkKey.TYPE_WIFI, mScoreCache);
 
         // We do not want to clear the existing scores in the cache, as this method is called during
