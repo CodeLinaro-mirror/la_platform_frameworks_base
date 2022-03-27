@@ -15,7 +15,7 @@
  */
 
 package android.bluetooth;
-
+import android.util.CloseGuard;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -35,6 +35,7 @@ public abstract class BluetoothProfileConnector<T> {
     private final int mProfileId;
     private BluetoothProfile.ServiceListener mServiceListener;
     private final BluetoothProfile mProfileProxy;
+    private final CloseGuard mCloseGuard = new CloseGuard();
     private Context mContext;
     private final String mProfileName;
     private final String mServiceName;
@@ -78,10 +79,19 @@ public abstract class BluetoothProfileConnector<T> {
         mServiceName = serviceName;
     }
 
+    /** {@hide} */
+    @Override
+    public void finalize() {
+        mServiceListener = null;
+        mCloseGuard.warnIfOpen();
+        doUnbind();
+    }
+
     private boolean doBind() {
         synchronized (mConnection) {
             if (mService == null) {
                 logDebug("Binding service...");
+                mCloseGuard.open("doUnbind");
                 try {
                     Intent intent = new Intent(mServiceName);
                     ComponentName comp = intent.resolveSystemService(
@@ -105,6 +115,7 @@ public abstract class BluetoothProfileConnector<T> {
         synchronized (mConnection) {
             if (mService != null) {
                 logDebug("Unbinding service...");
+                mCloseGuard.close();
                 try {
                     mContext.unbindService(mConnection);
                 } catch (IllegalArgumentException ie) {
