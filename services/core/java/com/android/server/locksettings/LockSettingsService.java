@@ -2281,7 +2281,7 @@ public class LockSettingsService extends ILockSettings.Stub {
 
     private void removeUser(int userId, boolean unknownUser) {
         Slog.i(TAG, "RemoveUser: " + userId);
-        mSpManager.removeUser(userId);
+        mSpManager.removeUser(getGateKeeperService(), userId);
         mStrongAuth.removeUser(userId);
 
         final KeyStore ks = KeyStore.getInstance();
