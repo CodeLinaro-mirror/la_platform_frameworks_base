@@ -4445,6 +4445,23 @@
          A value of 1 means enter TWM power off mode after shutdown.-->
     <integer name="config_shutdownBehavior">0</integer>
 
+    <!-- The file path of default alarm ringtone for offloading. -->
+    <string translatable="false" name="config_defaultOffloadAlarmRingtoneFilePath"></string>
+
+    <!-- default snooze button id for AON Alarm.
+         1 means the volume down button id.
+         2 means the volume up button id. -->
+    <integer name="config_defaultOffloadAlarmSnoozeButtoneId">1</integer>
+
+    <!-- default dismiss button id for AON Alarm.
+         1 means the volume down button id.
+         2 means the volume up button id. -->
+    <integer name="config_defaultOffloadAlarmDismissButtoneId">2</integer>
+
+    <!-- default vibration id for AON Alarm.
+         -1 means invalid.-->
+    <integer name="config_defaultOffloadAlarmVibrationId">-1</integer>
+
     <!-- Whether Wrist Rotation is supported, used for DisplayRotation rotate per
          mUserRotation. -->
     <bool name="config_supportWristRotation">false</bool>

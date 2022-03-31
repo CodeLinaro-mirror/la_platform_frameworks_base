@@ -4096,5 +4096,9 @@
   <java-symbol type="integer" name="config_offloadBrightenAlpha" />
   <java-symbol type="integer" name="config_offloadDimmingAlpha" />
   <java-symbol type="integer" name="config_shutdownBehavior" />
+  <java-symbol type="string" name="config_defaultOffloadAlarmRingtoneFilePath" />
+  <java-symbol type="integer" name="config_defaultOffloadAlarmSnoozeButtoneId" />
+  <java-symbol type="integer" name="config_defaultOffloadAlarmDismissButtoneId" />
+  <java-symbol type="integer" name="config_defaultOffloadAlarmVibrationId" />
   <java-symbol type="bool" name="config_supportWristRotation" />
 </resources>
