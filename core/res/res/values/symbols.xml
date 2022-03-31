@@ -4095,4 +4095,5 @@
   <java-symbol type="integer" name="config_offloadBrightenAlpha" />
   <java-symbol type="integer" name="config_offloadDimmingAlpha" />
   <java-symbol type="integer" name="config_shutdownBehavior" />
+  <java-symbol type="bool" name="config_supportWristRotation" />
 </resources>
