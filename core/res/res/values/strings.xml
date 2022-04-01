@@ -578,6 +578,9 @@
     <!-- label for item that TWM in phone options dialog [CHAR LIMIT=24] -->
     <string name="global_action_twm">TWM</string>
 
+    <!-- Toast for entering TWM failed [CHAR LIMIT=100] -->
+    <string name="global_action_twm_failed_toast">Failed to enter TWM when charging.</string>
+
     <!-- Take bug report menu title [CHAR LIMIT=30] -->
     <string name="bugreport_title">Bug report</string>
     <!-- Message in bugreport dialog describing what it does [CHAR LIMIT=NONE] -->
