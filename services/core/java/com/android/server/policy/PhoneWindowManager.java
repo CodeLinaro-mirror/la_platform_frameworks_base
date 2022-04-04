@@ -261,6 +261,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     static final int SHORT_PRESS_POWER_REALLY_GO_TO_SLEEP_AND_GO_HOME = 3;
     static final int SHORT_PRESS_POWER_GO_HOME = 4;
     static final int SHORT_PRESS_POWER_CLOSE_IME_OR_GO_HOME = 5;
+    static final int SHORT_PRESS_POWER_GO_TO_SLEEP_AND_GO_HOME = 6;
 
     // must match: config_LongPressOnPowerBehavior in config.xml
     static final int LONG_PRESS_POWER_NOTHING = 0;
@@ -996,6 +997,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     }
                     break;
                 }
+                case SHORT_PRESS_POWER_GO_TO_SLEEP_AND_GO_HOME:
+                    if (sleepDefaultDisplayFromPowerButton(eventTime, 0)) {
+                        launchHomeFromHotKey(DEFAULT_DISPLAY);
+                    }
+                    break;
             }
         }
     }
