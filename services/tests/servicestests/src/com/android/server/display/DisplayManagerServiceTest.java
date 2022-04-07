@@ -358,7 +358,8 @@ public class DisplayManagerServiceTest {
         displayDeviceInfo.displayCutout = new DisplayCutout(
                 Insets.of(0, 10, 0, 0),
                 zeroRect, new Rect(0, 0, 10, 10), zeroRect, zeroRect);
-        displayDeviceInfo.flags = DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY;
+	displayDeviceInfo.flags = DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY;
+        displayDeviceInfo.address = new TestUtils.TestDisplayAddress();
         displayDevice.setDisplayDeviceInfo(displayDeviceInfo);
         displayManager.getDisplayDeviceRepository()
                 .onDisplayDeviceEvent(displayDevice, DisplayAdapter.DISPLAY_DEVICE_EVENT_ADDED);
@@ -1061,7 +1062,8 @@ public class DisplayManagerServiceTest {
         displayDeviceInfo.displayCutout = new DisplayCutout(
                 Insets.of(0, 10, 0, 0),
                 zeroRect, new Rect(0, 0, 10, 10), zeroRect, zeroRect);
-        displayDeviceInfo.flags = DisplayDeviceInfo.FLAG_DEFAULT_DISPLAY;
+	 displayDeviceInfo.flags = DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY;
+        displayDeviceInfo.address = new TestUtils.TestDisplayAddress();
         displayDevice.setDisplayDeviceInfo(displayDeviceInfo);
         displayManager.getDisplayDeviceRepository()
                 .onDisplayDeviceEvent(displayDevice, DisplayAdapter.DISPLAY_DEVICE_EVENT_ADDED);
